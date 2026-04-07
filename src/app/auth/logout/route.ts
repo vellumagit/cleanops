@@ -1,20 +1,24 @@
 /**
- * Logout route. POST or GET both work; we accept both so a simple
- * <Link href="/auth/logout"> from the sidebar can sign the user out.
+ * Logout route — POST only.
+ *
+ * IMPORTANT: This MUST NOT be reachable via GET. If it were, the Next.js
+ * <Link> prefetcher would silently sign the user out the instant a logout
+ * link mounted in the viewport (e.g. the sidebar user chip), because the
+ * prefetch request executes the handler and the resulting Set-Cookie
+ * headers are applied to the user's browser.
+ *
+ * All logout UI must be a <form method="POST" action="/auth/logout">.
  */
 
 import { NextResponse, type NextRequest } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
-async function handle(request: NextRequest) {
+export async function POST(request: NextRequest) {
   const supabase = await createSupabaseServerClient();
   await supabase.auth.signOut();
 
   const url = request.nextUrl.clone();
   url.pathname = "/login";
   url.search = "";
-  return NextResponse.redirect(url);
+  return NextResponse.redirect(url, { status: 303 });
 }
-
-export const GET = handle;
-export const POST = handle;

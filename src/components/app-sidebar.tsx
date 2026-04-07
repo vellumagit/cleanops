@@ -139,13 +139,15 @@ export function AppSidebar({ organizationName, role, userName }: Props) {
               {role}
             </span>
           </div>
-          <Link
-            href="/auth/logout"
-            className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-            aria-label="Sign out"
-          >
-            <LogOut className="h-3.5 w-3.5" />
-          </Link>
+          <form action="/auth/logout" method="post">
+            <button
+              type="submit"
+              className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+              aria-label="Sign out"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+            </button>
+          </form>
         </div>
       </div>
     </aside>
