@@ -1,0 +1,134 @@
+"use client";
+
+import { useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { toast } from "sonner";
+import { Clock as ClockIcon, MapPin } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { clockInAction, clockOutAction } from "./actions";
+
+type Coords = { lat: number | null; lng: number | null };
+
+async function getCoords(): Promise<Coords> {
+  if (typeof window === "undefined" || !("geolocation" in navigator)) {
+    return { lat: null, lng: null };
+  }
+  return new Promise((resolve) => {
+    navigator.geolocation.getCurrentPosition(
+      (pos) =>
+        resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      () => resolve({ lat: null, lng: null }),
+      { enableHighAccuracy: true, timeout: 5000, maximumAge: 30_000 },
+    );
+  });
+}
+
+function buildFormData(coords: Coords) {
+  const fd = new FormData();
+  if (coords.lat != null) fd.set("lat", String(coords.lat));
+  if (coords.lng != null) fd.set("lng", String(coords.lng));
+  return fd;
+}
+
+export function ClockCard({
+  isClockedIn,
+  openSinceIso,
+  openBookingLabel,
+}: {
+  isClockedIn: boolean;
+  openSinceIso: string | null;
+  openBookingLabel: string | null;
+}) {
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
+
+  function handleIn() {
+    startTransition(async () => {
+      const coords = await getCoords();
+      const result = await clockInAction(buildFormData(coords));
+      if (result.ok) {
+        toast.success("Clocked in");
+        router.refresh();
+      } else {
+        toast.error(result.error);
+      }
+    });
+  }
+
+  function handleOut() {
+    startTransition(async () => {
+      const coords = await getCoords();
+      const result = await clockOutAction(buildFormData(coords));
+      if (result.ok) {
+        toast.success("Clocked out");
+        router.refresh();
+      } else {
+        toast.error(result.error);
+      }
+    });
+  }
+
+  return (
+    <div className="rounded-lg border border-border bg-card p-5">
+      <div className="flex items-center gap-3">
+        <div
+          className={
+            isClockedIn
+              ? "flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
+              : "flex h-12 w-12 items-center justify-center rounded-full bg-muted text-muted-foreground"
+          }
+        >
+          <ClockIcon className="h-6 w-6" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold">
+            {isClockedIn ? "On the clock" : "Off the clock"}
+          </p>
+          {isClockedIn && openSinceIso ? (
+            <p className="text-xs text-muted-foreground">
+              Since{" "}
+              {new Date(openSinceIso).toLocaleTimeString("en-US", {
+                hour: "numeric",
+                minute: "2-digit",
+              })}
+              {openBookingLabel ? ` · ${openBookingLabel}` : ""}
+            </p>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              Tap below to start your shift.
+            </p>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-5">
+        {isClockedIn ? (
+          <Button
+            type="button"
+            size="lg"
+            variant="destructive"
+            onClick={handleOut}
+            disabled={isPending}
+            className="h-12 w-full text-base"
+          >
+            {isPending ? "Clocking out…" : "Clock out"}
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            size="lg"
+            onClick={handleIn}
+            disabled={isPending}
+            className="h-12 w-full text-base"
+          >
+            {isPending ? "Clocking in…" : "Clock in"}
+          </Button>
+        )}
+        <p className="mt-2 flex items-center justify-center gap-1 text-[11px] text-muted-foreground">
+          <MapPin className="h-3 w-3" />
+          We&apos;ll record your location for payroll verification.
+        </p>
+      </div>
+    </div>
+  );
+}
