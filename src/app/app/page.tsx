@@ -59,27 +59,20 @@ export default async function DashboardPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm">Phase 3a is live</CardTitle>
+          <CardTitle className="text-sm">Phase 3b is live</CardTitle>
         </CardHeader>
         <CardContent className="text-sm text-muted-foreground">
           <p>
-            Sidebar navigation, the reusable{" "}
-            <code className="rounded bg-muted px-1 py-0.5 text-[11px]">
-              DataTable
-            </code>{" "}
-            and{" "}
-            <code className="rounded bg-muted px-1 py-0.5 text-[11px]">
-              StatusBadge
-            </code>{" "}
-            components are shipped. Every sidebar link still goes to a
-            placeholder &mdash; the real list pages land in Phase 3b, and this
-            dashboard gets its metric cards, today&rsquo;s jobs, and activity
-            feed in Phase 3c.
+            Every sidebar link now points to a real, RLS-aware list page
+            backed by the seeded data &mdash; clients, bookings, estimates,
+            contracts, invoices, employees, packages, inventory, reviews, and
+            training. Each table is fully searchable client-side.
           </p>
           <p className="mt-2">
-            The numbers above are pulled live from the seeded data through RLS
-            &mdash; this is the first page proving the full stack (auth +
-            tenancy + DB + types + UI) is wired end to end.
+            Phase 3c will rebuild this dashboard itself: hero metric cards
+            with deltas, today&rsquo;s jobs, week summary, top performers, and
+            an activity feed. After that, Phase 4 brings full CRUD on each
+            entity through the ops console.
           </p>
         </CardContent>
       </Card>
