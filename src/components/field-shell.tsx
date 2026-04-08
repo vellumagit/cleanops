@@ -46,9 +46,12 @@ export function FieldShell({
     <div className="flex min-h-screen flex-col bg-muted/30">
       <header className="sticky top-0 z-20 flex items-center justify-between border-b border-border bg-card/80 px-4 py-3 backdrop-blur">
         <div className="flex items-center gap-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground text-xs font-bold shadow-sm">
-            S3
-          </div>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/sollos-logo.svg"
+            alt="Sollos 3"
+            className="h-8 w-8 shrink-0 rounded-lg"
+          />
           <div className="flex min-w-0 flex-col leading-tight">
             <span className="truncate text-sm font-semibold">
               {organizationName}

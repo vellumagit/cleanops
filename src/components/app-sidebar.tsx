@@ -99,9 +99,12 @@ export function AppSidebar({ organizationName, role, userName }: Props) {
     <aside className="flex h-screen w-60 shrink-0 flex-col border-r border-slate-800 bg-slate-900 text-slate-200">
       {/* Brand */}
       <div className="flex items-center gap-2.5 border-b border-slate-800 px-4 py-4">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-500 text-white text-sm font-bold shadow-sm">
-          S3
-        </div>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/sollos-logo.svg"
+          alt="Sollos 3"
+          className="h-8 w-8 shrink-0 rounded-lg"
+        />
         <div className="flex min-w-0 flex-col leading-tight">
           <span className="truncate text-sm font-bold text-white">
             Sollos 3

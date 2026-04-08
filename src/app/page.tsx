@@ -11,9 +11,12 @@ export default function Home() {
       {/* Top nav */}
       <header className="relative z-10 mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-5">
         <Link href="/" className="flex items-center gap-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground text-sm font-bold shadow-sm">
-            S3
-          </div>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/sollos-logo.svg"
+            alt="Sollos 3"
+            className="h-8 w-8 shrink-0 rounded-lg"
+          />
           <span className="text-base font-semibold tracking-tight">
             Sollos 3
           </span>

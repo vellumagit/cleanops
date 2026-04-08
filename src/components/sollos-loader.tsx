@@ -36,10 +36,15 @@ export function SollosLoader({
       aria-label="Loading Sollos 3"
       className="sollos-loader"
     >
-      {/* Word mark with halo */}
+      {/* Logo with halo */}
       <div className="relative flex items-center justify-center">
         <span className="sollos-loader-halo" aria-hidden />
-        <span className="sollos-loader-mark">S3</span>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/sollos-logo.svg"
+          alt="Sollos 3"
+          className="sollos-loader-logo"
+        />
       </div>
 
       {/* Product tagline */}
@@ -51,7 +56,12 @@ export function SollosLoader({
       {/* Powered by Velluma */}
       <div className="sollos-loader-footer">
         <span className="sollos-loader-footer-label">Powered by</span>
-        <span className="sollos-loader-velluma">Velluma</span>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/velluma-logo.svg"
+          alt="Velluma"
+          className="sollos-loader-velluma-logo"
+        />
       </div>
 
       <span className="sr-only">Loading Sollos 3…</span>

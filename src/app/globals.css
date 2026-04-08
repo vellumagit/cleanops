@@ -376,7 +376,7 @@
   z-index: -1;
 }
 
-/* The word mark */
+/* The word mark (legacy text version — kept for fallback) */
 .sollos-loader-mark {
   position: relative;
   font-family: var(--font-sans), system-ui, sans-serif;
@@ -403,7 +403,22 @@
     sollos-flicker 6s ease-in-out infinite 1400ms;
 }
 
-/* Glow halo that sits behind the word mark */
+/* SVG logo mark (current hero of the loader) */
+.sollos-loader-logo {
+  position: relative;
+  display: block;
+  height: clamp(4rem, 12vw, 8rem);
+  width: auto;
+  filter:
+    drop-shadow(0 0 18px rgba(99, 102, 241, 0.55))
+    drop-shadow(0 0 60px rgba(99, 102, 241, 0.35));
+  animation:
+    sollos-rise 700ms cubic-bezier(0.22, 1, 0.36, 1) both,
+    sollos-pulse 2.4s ease-in-out infinite 700ms,
+    sollos-flicker 6s ease-in-out infinite 1400ms;
+}
+
+/* Glow halo that sits behind the logo */
 .sollos-loader-halo {
   position: absolute;
   inset: 0;
@@ -415,12 +430,17 @@
 }
 
 .sollos-loader-halo::before {
-  content: "S3";
-  font-family: var(--font-sans), system-ui, sans-serif;
-  font-size: clamp(3rem, 11vw, 7rem);
-  font-weight: 900;
-  letter-spacing: -0.05em;
-  color: #6366f1;
+  content: "";
+  width: clamp(6rem, 18vw, 12rem);
+  height: clamp(6rem, 18vw, 12rem);
+  border-radius: 9999px;
+  background: radial-gradient(
+    circle at center,
+    rgba(99, 102, 241, 0.55) 0%,
+    rgba(99, 102, 241, 0.25) 35%,
+    rgba(99, 102, 241, 0) 70%
+  );
+  filter: blur(6px);
   animation: sollos-pulse 2.4s ease-in-out infinite;
 }
 
@@ -499,10 +519,20 @@
   color: #6366f1;
 }
 
+/* Velluma wordmark image variant */
+.sollos-loader-velluma-logo {
+  display: block;
+  height: 22px;
+  width: auto;
+  opacity: 0.9;
+  filter: drop-shadow(0 0 12px rgba(99, 102, 241, 0.35));
+}
+
 /* Respect prefers-reduced-motion — strip animations but keep the visual */
 @media (prefers-reduced-motion: reduce) {
   .sollos-loader::before,
   .sollos-loader-mark,
+  .sollos-loader-logo,
   .sollos-loader-halo::before,
   .sollos-loader-tagline,
   .sollos-loader-bar,
