@@ -36,6 +36,16 @@ export default function Home() {
           Built on Next.js, Supabase and Vercel. Multi-tenant, RLS-enforced,
           audit-logged.
         </p>
+
+        <nav className="mt-6 flex items-center justify-center gap-4 text-xs text-muted-foreground">
+          <Link href="/privacy" className="hover:text-foreground">
+            Privacy
+          </Link>
+          <span>·</span>
+          <Link href="/terms" className="hover:text-foreground">
+            Terms
+          </Link>
+        </nav>
       </div>
     </main>
   );

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Award, ChevronRight } from "lucide-react";
+import { Award, ChevronRight, CreditCard, ScrollText } from "lucide-react";
 import { PageShell } from "@/components/page-shell";
 
 export const metadata = { title: "Settings" };
@@ -11,6 +11,20 @@ const SECTIONS = [
     title: "Bonus rules",
     description:
       "Set the rating thresholds that earn employees a performance bonus.",
+  },
+  {
+    href: "/app/settings/audit-log",
+    icon: ScrollText,
+    title: "Audit log",
+    description:
+      "Append-only record of who created, updated, deleted or paid what.",
+  },
+  {
+    href: "/app/settings/billing",
+    icon: CreditCard,
+    title: "Billing",
+    description:
+      "Plan, payment method, and Stripe customer portal (scaffolded).",
   },
 ];
 

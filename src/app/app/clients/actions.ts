@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
+import { logAuditEvent } from "@/lib/audit";
 import { ClientSchema } from "@/lib/validators/clients";
 
 type Field = keyof typeof ClientSchema.shape;
@@ -29,19 +30,31 @@ export async function createClientAction(
 
   const { membership, supabase } = await getActionContext();
 
-  const { error } = await supabase.from("clients").insert({
-    organization_id: membership.organization_id,
-    name: parsed.data.name,
-    email: parsed.data.email ?? null,
-    phone: parsed.data.phone ?? null,
-    address: parsed.data.address ?? null,
-    notes: parsed.data.notes ?? null,
-    preferred_contact: parsed.data.preferred_contact,
-  });
+  const { data: inserted, error } = await supabase
+    .from("clients")
+    .insert({
+      organization_id: membership.organization_id,
+      name: parsed.data.name,
+      email: parsed.data.email ?? null,
+      phone: parsed.data.phone ?? null,
+      address: parsed.data.address ?? null,
+      notes: parsed.data.notes ?? null,
+      preferred_contact: parsed.data.preferred_contact,
+    })
+    .select("id")
+    .single();
 
-  if (error) {
-    return { errors: { _form: error.message }, values: raw };
+  if (error || !inserted) {
+    return { errors: { _form: error?.message ?? "Insert failed" }, values: raw };
   }
+
+  await logAuditEvent({
+    membership,
+    action: "create",
+    entity: "client",
+    entity_id: inserted.id,
+    after: { name: parsed.data.name, email: parsed.data.email ?? null },
+  });
 
   revalidatePath("/app/clients");
   revalidatePath("/app");
@@ -57,7 +70,13 @@ export async function updateClientAction(
   const parsed = parseForm(ClientSchema, raw);
   if (!parsed.ok) return { errors: parsed.errors, values: raw };
 
-  const { supabase } = await getActionContext();
+  const { membership, supabase } = await getActionContext();
+
+  const { data: previous } = await supabase
+    .from("clients")
+    .select("name, email, phone, address, notes, preferred_contact")
+    .eq("id", id)
+    .maybeSingle();
 
   const { error } = await supabase
     .from("clients")
@@ -75,6 +94,22 @@ export async function updateClientAction(
     return { errors: { _form: error.message }, values: raw };
   }
 
+  await logAuditEvent({
+    membership,
+    action: "update",
+    entity: "client",
+    entity_id: id,
+    before: previous ?? null,
+    after: {
+      name: parsed.data.name,
+      email: parsed.data.email ?? null,
+      phone: parsed.data.phone ?? null,
+      address: parsed.data.address ?? null,
+      notes: parsed.data.notes ?? null,
+      preferred_contact: parsed.data.preferred_contact,
+    },
+  });
+
   revalidatePath("/app/clients");
   revalidatePath(`/app/clients/${id}/edit`);
   revalidatePath("/app");
@@ -84,9 +119,25 @@ export async function updateClientAction(
 export async function deleteClientAction(formData: FormData) {
   const id = String(formData.get("id") ?? "");
   if (!id) return;
-  const { supabase } = await getActionContext();
+  const { membership, supabase } = await getActionContext();
+
+  const { data: previous } = await supabase
+    .from("clients")
+    .select("name, email")
+    .eq("id", id)
+    .maybeSingle();
+
   const { error } = await supabase.from("clients").delete().eq("id", id);
   if (error) throw error;
+
+  await logAuditEvent({
+    membership,
+    action: "delete",
+    entity: "client",
+    entity_id: id,
+    before: previous ?? null,
+  });
+
   revalidatePath("/app/clients");
   revalidatePath("/app");
   redirect("/app/clients");
