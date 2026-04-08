@@ -101,9 +101,9 @@ export function AppSidebar({ organizationName, role, userName }: Props) {
       <div className="flex items-center gap-2.5 border-b border-slate-800 px-4 py-4">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src="/sollos-logo.svg"
+          src="/sollos-logo.png"
           alt="Sollos 3"
-          className="h-8 w-8 shrink-0 rounded-lg"
+          className="h-8 w-8 shrink-0 rounded-lg [filter:brightness(0)_invert(1)]"
         />
         <div className="flex min-w-0 flex-col leading-tight">
           <span className="truncate text-sm font-bold text-white">

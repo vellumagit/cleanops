@@ -403,13 +403,18 @@
     sollos-flicker 6s ease-in-out infinite 1400ms;
 }
 
-/* SVG logo mark (current hero of the loader) */
+/* Logo mark (current hero of the loader).
+ *
+ * The incoming Sollos 3 logo is black-on-transparent, so on the loader's
+ * near-black background we flip it to pure white with brightness(0)+invert(1)
+ * before layering the indigo glow drop-shadows on top. */
 .sollos-loader-logo {
   position: relative;
   display: block;
   height: clamp(4rem, 12vw, 8rem);
   width: auto;
   filter:
+    brightness(0) invert(1)
     drop-shadow(0 0 18px rgba(99, 102, 241, 0.55))
     drop-shadow(0 0 60px rgba(99, 102, 241, 0.35));
   animation:
@@ -519,13 +524,16 @@
   color: #6366f1;
 }
 
-/* Velluma wordmark image variant */
+/* Velluma wordmark image variant. Black source logo → flipped to white on
+ * the loader's dark background, with a soft indigo halo. */
 .sollos-loader-velluma-logo {
   display: block;
-  height: 22px;
+  height: 28px;
   width: auto;
-  opacity: 0.9;
-  filter: drop-shadow(0 0 12px rgba(99, 102, 241, 0.35));
+  opacity: 0.85;
+  filter:
+    brightness(0) invert(1)
+    drop-shadow(0 0 12px rgba(99, 102, 241, 0.35));
 }
 
 /* Respect prefers-reduced-motion — strip animations but keep the visual */

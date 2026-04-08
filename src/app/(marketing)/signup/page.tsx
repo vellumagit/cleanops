@@ -19,7 +19,7 @@ export default function SignupPage() {
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src="/sollos-logo.svg"
+            src="/sollos-logo.png"
             alt="Sollos 3"
             className="h-8 w-8 shrink-0 rounded-lg"
           />

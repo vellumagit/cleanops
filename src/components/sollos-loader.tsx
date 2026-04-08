@@ -41,7 +41,7 @@ export function SollosLoader({
         <span className="sollos-loader-halo" aria-hidden />
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src="/sollos-logo.svg"
+          src="/sollos-logo.png"
           alt="Sollos 3"
           className="sollos-loader-logo"
         />
@@ -58,7 +58,7 @@ export function SollosLoader({
         <span className="sollos-loader-footer-label">Powered by</span>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src="/velluma-logo.svg"
+          src="/velluma-logo.png"
           alt="Velluma"
           className="sollos-loader-velluma-logo"
         />
