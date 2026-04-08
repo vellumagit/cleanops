@@ -23,13 +23,13 @@ export default function TermsPage() {
 
       <div className="prose prose-sm mt-8 max-w-none text-sm leading-7 text-foreground">
         <p>
-          By creating an account on CleanOps you agree to these terms. They are
+          By creating an account on Sollos 3 you agree to these terms. They are
           intentionally short and written in plain English.
         </p>
 
         <h2 className="mt-8 text-base font-semibold">1. The service</h2>
         <p>
-          CleanOps is a software-as-a-service product that helps cleaning
+          Sollos 3 is a software-as-a-service product that helps cleaning
           companies run their operations. Features may evolve over time. We
           will give 30 days&rsquo; notice before removing functionality you
           rely on.
@@ -39,8 +39,8 @@ export default function TermsPage() {
         <p>
           You are responsible for keeping your login credentials secure and for
           everything that happens under your account. Notify us immediately at{" "}
-          <a href="mailto:security@cleanops.app" className="underline">
-            security@cleanops.app
+          <a href="mailto:security@sollos.app" className="underline">
+            security@sollos.app
           </a>{" "}
           if you suspect compromise.
         </p>
@@ -48,7 +48,7 @@ export default function TermsPage() {
         <h2 className="mt-8 text-base font-semibold">3. Acceptable use</h2>
         <p>You agree not to:</p>
         <ul className="ml-5 list-disc space-y-1">
-          <li>Use CleanOps for anything illegal or to harm others.</li>
+          <li>Use Sollos 3 for anything illegal or to harm others.</li>
           <li>
             Attempt to access another customer&rsquo;s data or interfere with
             the service.
@@ -64,7 +64,7 @@ export default function TermsPage() {
 
         <h2 className="mt-8 text-base font-semibold">4. Your data</h2>
         <p>
-          You own the data you put into CleanOps. We act as a processor on
+          You own the data you put into Sollos 3. We act as a processor on
           your behalf. See our{" "}
           <Link href="/privacy" className="underline">
             Privacy Policy
@@ -104,8 +104,8 @@ export default function TermsPage() {
         <h2 className="mt-8 text-base font-semibold">9. Contact</h2>
         <p>
           Questions:{" "}
-          <a href="mailto:legal@cleanops.app" className="underline">
-            legal@cleanops.app
+          <a href="mailto:legal@sollos.app" className="underline">
+            legal@sollos.app
           </a>
           .
         </p>

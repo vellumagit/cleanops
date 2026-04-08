@@ -23,7 +23,7 @@ export default function PrivacyPage() {
 
       <div className="prose prose-sm mt-8 max-w-none text-sm leading-7 text-foreground">
         <p>
-          CleanOps (&ldquo;we&rdquo;, &ldquo;us&rdquo;) provides operations
+          Sollos 3 (&ldquo;we&rdquo;, &ldquo;us&rdquo;) provides operations
           software for cleaning companies. This policy describes what we
           collect, why, and how it&rsquo;s protected. We treat customer data as
           a liability — we collect the minimum needed to run the product.
@@ -88,8 +88,8 @@ export default function PrivacyPage() {
         <p>
           You may request a copy of, correction of, or deletion of your data
           at any time by emailing{" "}
-          <a href="mailto:privacy@cleanops.app" className="underline">
-            privacy@cleanops.app
+          <a href="mailto:privacy@sollos.app" className="underline">
+            privacy@sollos.app
           </a>
           .
         </p>
@@ -97,8 +97,8 @@ export default function PrivacyPage() {
         <h2 className="mt-8 text-base font-semibold">Contact</h2>
         <p>
           Questions about this policy:{" "}
-          <a href="mailto:privacy@cleanops.app" className="underline">
-            privacy@cleanops.app
+          <a href="mailto:privacy@sollos.app" className="underline">
+            privacy@sollos.app
           </a>
           .
         </p>

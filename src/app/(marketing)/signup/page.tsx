@@ -4,29 +4,45 @@ import { SignupForm } from "./signup-form";
 
 export const metadata: Metadata = {
   title: "Sign up",
-  description: "Create your CleanOps account.",
+  description: "Create your Sollos 3 workspace.",
 };
 
 export default function SignupPage() {
   return (
-    <main className="flex flex-1 items-center justify-center px-6 py-16">
-      <div className="w-full max-w-md">
-        <div className="mb-8 text-center">
-          <h1 className="text-3xl font-semibold tracking-tight">
-            Get started with CleanOps
-          </h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            Create your company workspace in 30 seconds.
-          </p>
-        </div>
+    <main className="sollos-wash relative flex flex-1 items-center justify-center px-6 py-16">
+      <div className="sollos-dots absolute inset-0" aria-hidden />
 
-        <SignupForm />
+      <div className="relative z-10 w-full max-w-md">
+        <Link
+          href="/"
+          className="mx-auto mb-8 flex w-max items-center gap-2"
+        >
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground text-sm font-bold shadow-sm">
+            S3
+          </div>
+          <span className="text-base font-semibold tracking-tight">
+            Sollos 3
+          </span>
+        </Link>
+
+        <div className="sollos-card p-6 shadow-lg shadow-indigo-500/5">
+          <div className="mb-6 text-center">
+            <h1 className="text-2xl font-bold tracking-tight">
+              Start your workspace
+            </h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Spin up Sollos 3 for your company in 30 seconds.
+            </p>
+          </div>
+
+          <SignupForm />
+        </div>
 
         <p className="mt-6 text-center text-sm text-muted-foreground">
           Already have an account?{" "}
           <Link
             href="/login"
-            className="font-medium text-foreground underline-offset-4 hover:underline"
+            className="font-semibold text-primary underline-offset-4 hover:underline"
           >
             Sign in
           </Link>

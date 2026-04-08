@@ -1,6 +1,8 @@
-# CleanOps
+# Sollos 3
 
 Multi-tenant operations software for cleaning companies. Built as a SaaS from day one — single tenant in production now, additional tenants onboardable without code changes.
+
+> The internal repo / package name is still `cleanops` from the original scaffold. The product name, all user-facing copy, and the visual identity are Sollos 3. Renaming the package would churn the lockfile + deploy history for zero user-visible benefit.
 
 ## Stack
 

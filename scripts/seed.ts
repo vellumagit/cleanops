@@ -1,5 +1,5 @@
 /**
- * CleanOps dev seed script.
+ * Sollos 3 dev seed script.
  *
  * Usage:
  *   pnpm seed               # seeds into the first (oldest) org in the DB
@@ -106,7 +106,7 @@ async function die(msg: string, err?: unknown): Promise<never> {
 // -----------------------------------------------------------------------------
 
 async function main() {
-  console.log("🌱 CleanOps dev seed");
+  console.log("🌱 Sollos 3 dev seed");
   console.log("────────────────────");
 
   // Step 1: find target org
@@ -816,7 +816,7 @@ async function main() {
     const welcome = [
       {
         sender: owner?.id ?? firstEmployee?.id ?? null,
-        body: "Welcome to CleanOps! Use #general for team-wide updates.",
+        body: "Welcome to Sollos 3! Use #general for team-wide updates.",
         offsetMinutes: -90,
       },
       {

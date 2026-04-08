@@ -1,26 +1,37 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Inter, JetBrains_Mono } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+/**
+ * Sollos 3 uses Inter as the product font (same as api.velluma.co/dashboard
+ * and velluma.co). JetBrains Mono is loaded for the few places we show code
+ * or fixed-width IDs (audit log entity IDs, migration names, etc).
+ *
+ * Both fonts are exposed as CSS variables so Tailwind's `font-sans` +
+ * `font-mono` utilities resolve through them without any extra config.
+ */
+
+const inter = Inter({
   subsets: ["latin"],
+  variable: "--font-sans",
+  display: "swap",
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const jetbrains = JetBrains_Mono({
   subsets: ["latin"],
+  variable: "--font-geist-mono",
+  display: "swap",
 });
 
 export const metadata: Metadata = {
   title: {
-    default: "CleanOps",
-    template: "%s · CleanOps",
+    default: "Sollos 3",
+    template: "%s · Sollos 3",
   },
   description:
-    "Operations software for cleaning companies — bookings, scheduling, employees, invoicing, and field tools in one place.",
+    "Sollos 3 — operations software for cleaning companies. Bookings, scheduling, employees, invoicing, chat and field tools in one place.",
 };
 
 export default function RootLayout({
@@ -31,7 +42,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${inter.variable} ${jetbrains.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col bg-background text-foreground">
         <TooltipProvider>{children}</TooltipProvider>

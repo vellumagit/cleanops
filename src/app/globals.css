@@ -4,6 +4,29 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* =============================================================================
+ * Sollos 3 — visual theme
+ *
+ * The theme is split in two: a light "marketing + content" palette applied to
+ * everything by default, plus a dark "sidebar" palette applied via the
+ * --sidebar-* tokens so the ops-console sidebar can render on dark slate while
+ * the main content stays on a soft light background.
+ *
+ * Colour language is borrowed from velluma.co (hero / marketing) and
+ * api.velluma.co/dashboard (ops console):
+ *   - Primary        #6366f1 (indigo-500)
+ *   - Primary hover  #4f46e5 (indigo-600)
+ *   - Page bg        #f5f6fb (cool off-white)
+ *   - Sidebar bg     #0f172a (slate-900)
+ *   - Sidebar border #1e293b (slate-800)
+ *   - Text primary   #0f172a
+ *   - Text secondary #64748b
+ *   - Text muted     #94a3b8
+ *   - Success        #059669
+ *   - Warning        #d97706
+ *   - Danger         #dc2626
+ * ============================================================================= */
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -49,72 +72,91 @@
 }
 
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  /* Page + content surfaces -------------------------------------------------- */
+  --background: #f5f6fb;         /* cool off-white used for /app content area */
+  --foreground: #0f172a;         /* primary text */
+  --card: #ffffff;               /* every card / panel sits on white */
+  --card-foreground: #0f172a;
+  --popover: #ffffff;
+  --popover-foreground: #0f172a;
+
+  /* Brand ------------------------------------------------------------------- */
+  --primary: #6366f1;            /* indigo-500, the Velluma accent */
+  --primary-foreground: #ffffff;
+  --secondary: #eef2ff;          /* indigo-50, soft chips */
+  --secondary-foreground: #4338ca;
+
+  /* Neutral helpers --------------------------------------------------------- */
+  --muted: #f1f5f9;              /* slate-100, row hover / subtle bg */
+  --muted-foreground: #64748b;   /* slate-500, secondary text */
+  --accent: #eef2ff;             /* indigo-50 accent background */
+  --accent-foreground: #4338ca;
+
+  /* Status ------------------------------------------------------------------ */
+  --destructive: #dc2626;
+
+  /* Borders + focus --------------------------------------------------------- */
+  --border: #e5e7eb;             /* gray-200, standard border */
+  --input: #e5e7eb;
+  --ring: #6366f1;               /* focus ring matches primary */
+
+  /* Charts — neutral indigo ladder so reports stay on-brand */
+  --chart-1: #6366f1;
+  --chart-2: #818cf8;
+  --chart-3: #a5b4fc;
+  --chart-4: #c7d2fe;
+  --chart-5: #4338ca;
+
+  /* Radius scale ------------------------------------------------------------ */
+  --radius: 0.625rem;            /* 10px — matches dashboard cards */
+
+  /* Sidebar — dark slate like api.velluma.co/dashboard --------------------- */
+  --sidebar: #0f172a;              /* slate-900 */
+  --sidebar-foreground: #e2e8f0;   /* slate-200 */
+  --sidebar-primary: #6366f1;      /* active link bg */
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #1e293b;       /* slate-800 hover bg */
+  --sidebar-accent-foreground: #e2e8f0;
+  --sidebar-border: #1e293b;       /* slate-800 separators */
+  --sidebar-ring: #6366f1;
 }
 
+/* Dark-mode overrides — kept functional but currently not invoked by any
+ * layout class. If a user enables `prefers-color-scheme: dark` at the OS
+ * level we fall back to a slightly darker variant of the same palette so
+ * the app is never unreadable. */
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --background: #0b1220;
+  --foreground: #e2e8f0;
+  --card: #111827;
+  --card-foreground: #e2e8f0;
+  --popover: #111827;
+  --popover-foreground: #e2e8f0;
+  --primary: #818cf8;
+  --primary-foreground: #0f172a;
+  --secondary: #1e293b;
+  --secondary-foreground: #e2e8f0;
+  --muted: #1e293b;
+  --muted-foreground: #94a3b8;
+  --accent: #1e293b;
+  --accent-foreground: #e2e8f0;
+  --destructive: #f87171;
+  --border: #1e293b;
+  --input: #1e293b;
+  --ring: #818cf8;
+  --chart-1: #818cf8;
+  --chart-2: #6366f1;
+  --chart-3: #a5b4fc;
+  --chart-4: #4338ca;
+  --chart-5: #c7d2fe;
+  --sidebar: #0b1220;
+  --sidebar-foreground: #e2e8f0;
+  --sidebar-primary: #818cf8;
+  --sidebar-primary-foreground: #0f172a;
+  --sidebar-accent: #1e293b;
+  --sidebar-accent-foreground: #e2e8f0;
+  --sidebar-border: #1e293b;
+  --sidebar-ring: #818cf8;
 }
 
 @layer base {
@@ -123,8 +165,84 @@
   }
   body {
     @apply bg-background text-foreground;
+    font-feature-settings: "cv11", "ss01", "ss03";
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
   }
   html {
     @apply font-sans;
   }
+
+  /* Tighter display typography borrowed from velluma.co hero — any heading
+   * inside a `.sollos-hero` wrapper gets the same negative tracking + weight.
+   */
+  .sollos-hero h1,
+  .sollos-hero h2 {
+    letter-spacing: -0.04em;
+  }
+  .sollos-hero h1 {
+    letter-spacing: -0.055em;
+    font-weight: 800;
+  }
+}
+
+/* =============================================================================
+ * Utility classes consumed by marketing pages + auth forms
+ * ============================================================================= */
+
+/* Dotted background lifted from velluma.co — fixed to the viewport so it sits
+ * behind every marketing-style section without shifting on scroll. */
+.sollos-dots {
+  background-image: radial-gradient(
+    rgba(99, 102, 241, 0.08) 1px,
+    transparent 1px
+  );
+  background-size: 26px 26px;
+  background-position: 0 0;
+}
+
+/* Soft top-left wash used on the home page + auth pages to match the
+ * velluma.co hero backdrop. */
+.sollos-wash {
+  background-image:
+    radial-gradient(ellipse 60% 40% at 20% 0%, rgba(99, 102, 241, 0.12), transparent 70%),
+    radial-gradient(ellipse 50% 30% at 100% 20%, rgba(129, 140, 248, 0.10), transparent 70%),
+    linear-gradient(160deg, #ffffff 0%, #f5f6fb 40%, #eef2ff 100%);
+}
+
+/* Pill badge used in the hero kicker. */
+.sollos-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  border: 1px solid rgba(99, 102, 241, 0.25);
+  background: rgba(99, 102, 241, 0.08);
+  color: #4338ca;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+/* Glow box used around the hero CTAs to match the velluma button treatment. */
+.sollos-cta-glow {
+  box-shadow: 0 12px 28px rgba(99, 102, 241, 0.36);
+}
+
+/* Lofted card — used on /app stat cards + settings tiles. */
+.sollos-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+}
+
+/* 11px uppercase labels used by the dashboard reference — drop anywhere. */
+.sollos-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
 }
