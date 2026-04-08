@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { DataTable, type DataTableColumn } from "@/components/data-table";
 import { StatusBadge } from "@/components/status-badge";
 import { formatCurrencyCents, humanizeEnum } from "@/lib/format";
@@ -15,7 +16,14 @@ export type ClientRow = {
   created_at: string;
 };
 
-export function ClientsTable({ rows }: { rows: ClientRow[] }) {
+export function ClientsTable({
+  rows,
+  canEdit,
+}: {
+  rows: ClientRow[];
+  canEdit: boolean;
+}) {
+  const router = useRouter();
   const columns: DataTableColumn<ClientRow>[] = [
     {
       key: "name",
@@ -65,10 +73,12 @@ export function ClientsTable({ rows }: { rows: ClientRow[] }) {
       columns={columns}
       getRowId={(r) => r.id}
       searchPlaceholder="Search clients by name, email, or phone…"
+      onRowClick={
+        canEdit ? (r) => router.push(`/app/clients/${r.id}/edit`) : undefined
+      }
       emptyState={{
         title: "No clients yet",
-        description:
-          "Clients you add will appear here. CRUD lands in Phase 4.",
+        description: "Add your first client with the New client button.",
       }}
     />
   );

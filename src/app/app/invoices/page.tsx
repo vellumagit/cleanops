@@ -1,12 +1,16 @@
+import Link from "next/link";
+import { Plus } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
+import { buttonVariants } from "@/components/ui/button";
 import { InvoicesTable, type InvoiceRow } from "./invoices-table";
 
 export const metadata = { title: "Invoices" };
 
 export default async function InvoicesPage() {
-  await requireMembership();
+  const membership = await requireMembership();
+  const canEdit = membership.role === "owner" || membership.role === "admin";
   const supabase = await createSupabaseServerClient();
 
   const { data, error } = await supabase
@@ -43,8 +47,19 @@ export default async function InvoicesPage() {
     <PageShell
       title="Invoices"
       description="Bills sent to clients. Auto-generatable from completed bookings."
+      actions={
+        canEdit ? (
+          <Link
+            href="/app/invoices/new"
+            className={buttonVariants({ variant: "default" })}
+          >
+            <Plus className="h-4 w-4" />
+            New invoice
+          </Link>
+        ) : null
+      }
     >
-      <InvoicesTable rows={rows} />
+      <InvoicesTable rows={rows} canEdit={canEdit} />
     </PageShell>
   );
 }

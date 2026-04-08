@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { DataTable, type DataTableColumn } from "@/components/data-table";
 import { StatusBadge } from "@/components/status-badge";
 import { formatCurrencyCents, formatDurationMinutes } from "@/lib/format";
@@ -14,7 +15,14 @@ export type PackageRow = {
   included_count: number;
 };
 
-export function PackagesTable({ rows }: { rows: PackageRow[] }) {
+export function PackagesTable({
+  rows,
+  canEdit,
+}: {
+  rows: PackageRow[];
+  canEdit: boolean;
+}) {
+  const router = useRouter();
   const columns: DataTableColumn<PackageRow>[] = [
     {
       key: "name",
@@ -72,9 +80,12 @@ export function PackagesTable({ rows }: { rows: PackageRow[] }) {
       columns={columns}
       getRowId={(r) => r.id}
       searchPlaceholder="Search packages…"
+      onRowClick={
+        canEdit ? (r) => router.push(`/app/packages/${r.id}/edit`) : undefined
+      }
       emptyState={{
         title: "No packages yet",
-        description: "Build reusable service packages in Phase 4.",
+        description: "Add your first service package.",
       }}
     />
   );

@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { DataTable, type DataTableColumn } from "@/components/data-table";
 import { StatusBadge, invoiceStatusTone } from "@/components/status-badge";
 import { formatCurrencyCents, formatDate, humanizeEnum } from "@/lib/format";
@@ -15,7 +16,14 @@ export type InvoiceRow = {
   client_name: string;
 };
 
-export function InvoicesTable({ rows }: { rows: InvoiceRow[] }) {
+export function InvoicesTable({
+  rows,
+  canEdit,
+}: {
+  rows: InvoiceRow[];
+  canEdit: boolean;
+}) {
+  const router = useRouter();
   const columns: DataTableColumn<InvoiceRow>[] = [
     {
       key: "client",
@@ -74,6 +82,9 @@ export function InvoicesTable({ rows }: { rows: InvoiceRow[] }) {
       columns={columns}
       getRowId={(r) => r.id}
       searchPlaceholder="Search by client…"
+      onRowClick={
+        canEdit ? (r) => router.push(`/app/invoices/${r.id}/edit`) : undefined
+      }
       emptyState={{
         title: "No invoices yet",
         description:

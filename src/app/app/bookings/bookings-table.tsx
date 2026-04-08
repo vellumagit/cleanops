@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { DataTable, type DataTableColumn } from "@/components/data-table";
 import {
   StatusBadge,
@@ -30,7 +31,14 @@ export type BookingRow = {
   assigned_name: string | null;
 };
 
-export function BookingsTable({ rows }: { rows: BookingRow[] }) {
+export function BookingsTable({
+  rows,
+  canEdit,
+}: {
+  rows: BookingRow[];
+  canEdit: boolean;
+}) {
+  const router = useRouter();
   const columns: DataTableColumn<BookingRow>[] = [
     {
       key: "scheduled",
@@ -99,9 +107,12 @@ export function BookingsTable({ rows }: { rows: BookingRow[] }) {
       columns={columns}
       getRowId={(r) => r.id}
       searchPlaceholder="Search by client, service, or assignee…"
+      onRowClick={
+        canEdit ? (r) => router.push(`/app/bookings/${r.id}/edit`) : undefined
+      }
       emptyState={{
         title: "No bookings yet",
-        description: "Bookings will appear here once jobs are scheduled.",
+        description: "Schedule your first job with the New booking button.",
       }}
     />
   );

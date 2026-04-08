@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { DataTable, type DataTableColumn } from "@/components/data-table";
 import { StatusBadge } from "@/components/status-badge";
 import { humanizeEnum } from "@/lib/format";
@@ -14,7 +15,14 @@ export type InventoryRow = {
   assigned_name: string | null;
 };
 
-export function InventoryTable({ rows }: { rows: InventoryRow[] }) {
+export function InventoryTable({
+  rows,
+  canEdit,
+}: {
+  rows: InventoryRow[];
+  canEdit: boolean;
+}) {
+  const router = useRouter();
   const columns: DataTableColumn<InventoryRow>[] = [
     {
       key: "name",
@@ -77,9 +85,12 @@ export function InventoryTable({ rows }: { rows: InventoryRow[] }) {
       columns={columns}
       getRowId={(r) => r.id}
       searchPlaceholder="Search inventory…"
+      onRowClick={
+        canEdit ? (r) => router.push(`/app/inventory/${r.id}/edit`) : undefined
+      }
       emptyState={{
         title: "No inventory yet",
-        description: "Track supplies and equipment in Phase 4.",
+        description: "Add your first item with the New item button.",
       }}
     />
   );

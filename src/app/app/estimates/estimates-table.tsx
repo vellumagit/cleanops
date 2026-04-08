@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { DataTable, type DataTableColumn } from "@/components/data-table";
 import { StatusBadge, estimateStatusTone } from "@/components/status-badge";
 import { formatCurrencyCents, formatDate, humanizeEnum } from "@/lib/format";
@@ -15,7 +16,14 @@ export type EstimateRow = {
   client_name: string;
 };
 
-export function EstimatesTable({ rows }: { rows: EstimateRow[] }) {
+export function EstimatesTable({
+  rows,
+  canEdit,
+}: {
+  rows: EstimateRow[];
+  canEdit: boolean;
+}) {
+  const router = useRouter();
   const columns: DataTableColumn<EstimateRow>[] = [
     {
       key: "client",
@@ -75,6 +83,9 @@ export function EstimatesTable({ rows }: { rows: EstimateRow[] }) {
       columns={columns}
       getRowId={(r) => r.id}
       searchPlaceholder="Search by client or service…"
+      onRowClick={
+        canEdit ? (r) => router.push(`/app/estimates/${r.id}/edit`) : undefined
+      }
       emptyState={{
         title: "No estimates yet",
         description:

@@ -1,12 +1,16 @@
+import Link from "next/link";
+import { Plus } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
+import { buttonVariants } from "@/components/ui/button";
 import { BookingsTable, type BookingRow } from "./bookings-table";
 
 export const metadata = { title: "Bookings" };
 
 export default async function BookingsPage() {
-  await requireMembership();
+  const membership = await requireMembership();
+  const canEdit = membership.role === "owner" || membership.role === "admin";
   const supabase = await createSupabaseServerClient();
 
   const { data, error } = await supabase
@@ -46,8 +50,19 @@ export default async function BookingsPage() {
     <PageShell
       title="Bookings"
       description="All cleaning jobs scheduled across your team."
+      actions={
+        canEdit ? (
+          <Link
+            href="/app/bookings/new"
+            className={buttonVariants({ variant: "default" })}
+          >
+            <Plus className="h-4 w-4" />
+            New booking
+          </Link>
+        ) : null
+      }
     >
-      <BookingsTable rows={rows} />
+      <BookingsTable rows={rows} canEdit={canEdit} />
     </PageShell>
   );
 }

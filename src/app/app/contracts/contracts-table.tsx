@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { DataTable, type DataTableColumn } from "@/components/data-table";
 import { StatusBadge, contractStatusTone } from "@/components/status-badge";
 import { formatCurrencyCents, formatDate, humanizeEnum } from "@/lib/format";
@@ -15,7 +16,14 @@ export type ContractRow = {
   client_name: string;
 };
 
-export function ContractsTable({ rows }: { rows: ContractRow[] }) {
+export function ContractsTable({
+  rows,
+  canEdit,
+}: {
+  rows: ContractRow[];
+  canEdit: boolean;
+}) {
+  const router = useRouter();
   const columns: DataTableColumn<ContractRow>[] = [
     {
       key: "client",
@@ -83,6 +91,9 @@ export function ContractsTable({ rows }: { rows: ContractRow[] }) {
       columns={columns}
       getRowId={(r) => r.id}
       searchPlaceholder="Search by client, service, or terms…"
+      onRowClick={
+        canEdit ? (r) => router.push(`/app/contracts/${r.id}/edit`) : undefined
+      }
       emptyState={{
         title: "No contracts yet",
         description: "Recurring service agreements will live here.",

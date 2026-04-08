@@ -1,12 +1,16 @@
+import Link from "next/link";
+import { Plus } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
+import { buttonVariants } from "@/components/ui/button";
 import { PackagesTable, type PackageRow } from "./packages-table";
 
 export const metadata = { title: "Packages" };
 
 export default async function PackagesPage() {
-  await requireMembership();
+  const membership = await requireMembership();
+  const canEdit = membership.role === "owner" || membership.role === "admin";
   const supabase = await createSupabaseServerClient();
 
   const { data, error } = await supabase
@@ -32,8 +36,19 @@ export default async function PackagesPage() {
     <PageShell
       title="Packages"
       description="Reusable service packages you offer to clients."
+      actions={
+        canEdit ? (
+          <Link
+            href="/app/packages/new"
+            className={buttonVariants({ variant: "default" })}
+          >
+            <Plus className="h-4 w-4" />
+            New package
+          </Link>
+        ) : null
+      }
     >
-      <PackagesTable rows={rows} />
+      <PackagesTable rows={rows} canEdit={canEdit} />
     </PageShell>
   );
 }

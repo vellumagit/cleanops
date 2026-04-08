@@ -1,12 +1,16 @@
+import Link from "next/link";
+import { Plus } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
+import { buttonVariants } from "@/components/ui/button";
 import { InventoryTable, type InventoryRow } from "./inventory-table";
 
 export const metadata = { title: "Inventory" };
 
 export default async function InventoryPage() {
-  await requireMembership();
+  const membership = await requireMembership();
+  const canEdit = membership.role === "owner" || membership.role === "admin";
   const supabase = await createSupabaseServerClient();
 
   const { data, error } = await supabase
@@ -40,8 +44,19 @@ export default async function InventoryPage() {
     <PageShell
       title="Inventory"
       description="Cleaning supplies and equipment, with reorder thresholds."
+      actions={
+        canEdit ? (
+          <Link
+            href="/app/inventory/new"
+            className={buttonVariants({ variant: "default" })}
+          >
+            <Plus className="h-4 w-4" />
+            New item
+          </Link>
+        ) : null
+      }
     >
-      <InventoryTable rows={rows} />
+      <InventoryTable rows={rows} canEdit={canEdit} />
     </PageShell>
   );
 }
