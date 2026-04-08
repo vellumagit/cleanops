@@ -65,6 +65,50 @@ export type Database = {
           },
         ]
       }
+      bonus_rules: {
+        Row: {
+          amount_cents: number
+          created_at: string
+          enabled: boolean
+          id: string
+          min_avg_rating: number
+          min_reviews_count: number
+          organization_id: string
+          period_days: number
+          updated_at: string
+        }
+        Insert: {
+          amount_cents?: number
+          created_at?: string
+          enabled?: boolean
+          id?: string
+          min_avg_rating?: number
+          min_reviews_count?: number
+          organization_id: string
+          period_days?: number
+          updated_at?: string
+        }
+        Update: {
+          amount_cents?: number
+          created_at?: string
+          enabled?: boolean
+          id?: string
+          min_avg_rating?: number
+          min_reviews_count?: number
+          organization_id?: string
+          period_days?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bonus_rules_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: true
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       bonuses: {
         Row: {
           amount_cents: number

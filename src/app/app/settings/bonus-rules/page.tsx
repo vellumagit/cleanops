@@ -1,0 +1,46 @@
+import { requireMembership } from "@/lib/auth";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { PageShell } from "@/components/page-shell";
+import { BonusRuleForm } from "./bonus-rule-form";
+
+export const metadata = { title: "Bonus rules" };
+
+const DEFAULTS = {
+  enabled: false,
+  min_avg_rating: "4.80",
+  min_reviews_count: "5",
+  period_days: "30",
+  amount_dollars: "50.00",
+};
+
+export default async function BonusRulesPage() {
+  const membership = await requireMembership(["owner", "admin"]);
+  const supabase = await createSupabaseServerClient();
+
+  const { data: rule } = await supabase
+    .from("bonus_rules")
+    .select("*")
+    .eq("organization_id", membership.organization_id)
+    .maybeSingle();
+
+  const defaults = rule
+    ? {
+        enabled: rule.enabled,
+        min_avg_rating: String(rule.min_avg_rating),
+        min_reviews_count: String(rule.min_reviews_count),
+        period_days: String(rule.period_days),
+        amount_dollars: (rule.amount_cents / 100).toFixed(2),
+      }
+    : DEFAULTS;
+
+  return (
+    <PageShell
+      title="Bonus rules"
+      description="Configure how performance bonuses are computed from client reviews."
+    >
+      <div className="max-w-3xl rounded-lg border border-border bg-card p-6">
+        <BonusRuleForm defaults={defaults} />
+      </div>
+    </PageShell>
+  );
+}
