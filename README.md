@@ -93,13 +93,13 @@ Push to `main` → Vercel auto-deploys. Environment variables are set in the Ver
 This project follows the phased build plan in `C:\Users\musil\.claude\plans\logical-soaring-engelbart.md`.
 
 - ✅ **Phase 0** — Foundation (scaffold, dependencies, shadcn, env, git, deploy)
-- ⏳ **Phase 1** — Auth + multi-tenancy spine
-- ⏳ **Phase 2** — Domain schema + RLS
-- ⏳ **Phase 3** — Ops console shell + read-only listings
-- ⏳ **Phase 4** — Ops console CRUD
-- ⏳ **Phase 5** — Scheduling
-- ⏳ **Phase 6** — Field app
-- ⏳ **Phase 7** — Reviews + bonuses
-- ⏳ **Phase 8** — Chat
-- ⏳ **Phase 9** — Seed data
+- ✅ **Phase 1** — Auth + multi-tenancy spine
+- ✅ **Phase 2** — Domain schema + RLS
+- ✅ **Phase 3** — Ops console shell + read-only listings
+- ✅ **Phase 4** — Ops console CRUD
+- ✅ **Phase 5** — Scheduling
+- ✅ **Phase 6** — Field app
+- ✅ **Phase 7** — Reviews + bonuses
+- ✅ **Phase 8** — Chat
+- ✅ **Phase 9** — Seed data
 - ⏳ **Phase 10** — Pre-launch hardening

@@ -22,6 +22,8 @@
  *        - 8 reviews with varied ratings
  *        - 2 training modules with 3 steps each, assigned to all employees
  *        - 10 inventory items (some below reorder threshold)
+ *        - 1 bonus rule (so the bonus engine has something to evaluate)
+ *        - #general chat thread re-provisioned with a few welcome messages
  *
  * Uses the service-role client so RLS doesn't interfere. Reads env vars from
  * `.env.local` which tsx loads automatically via --env-file.
@@ -732,6 +734,115 @@ async function main() {
       reorder_threshold: 4,
     },
   ]);
+
+  // Step 13: bonus rule (Phase 7)
+  console.log("🏆 Creating bonus rule…");
+  await admin
+    .from("bonus_rules")
+    .upsert(
+      {
+        organization_id: orgId,
+        enabled: true,
+        min_avg_rating: 4.8,
+        min_reviews_count: 3,
+        period_days: 30,
+        amount_cents: cents(75),
+      },
+      { onConflict: "organization_id" },
+    );
+
+  // Step 14: chat — re-provision #general and seed a few welcome messages.
+  // The Phase 8 trigger only fires on membership INSERT, so after a --force
+  // wipe (which dropped chat_threads/members) we have to recreate the thread
+  // and re-attach every active membership in the org explicitly.
+  console.log("💬 Provisioning #general chat + welcome messages…");
+
+  const { data: orgMembers } = await admin
+    .from("memberships")
+    .select("id, profile_id, role")
+    .eq("organization_id", orgId)
+    .eq("status", "active");
+
+  let generalThreadId: string | null = null;
+  const { data: existingGeneral } = await admin
+    .from("chat_threads")
+    .select("id")
+    .eq("organization_id", orgId)
+    .eq("kind", "group")
+    .eq("name", "general")
+    .maybeSingle();
+
+  if (existingGeneral) {
+    generalThreadId = existingGeneral.id;
+  } else {
+    const { data: newThread, error: threadErr } = await admin
+      .from("chat_threads")
+      .insert({
+        organization_id: orgId,
+        kind: "group",
+        name: "general",
+      })
+      .select("id")
+      .single();
+    if (threadErr || !newThread)
+      await die("chat_threads insert failed", threadErr);
+    generalThreadId = newThread!.id;
+  }
+
+  // Ensure every active member is in #general
+  if (orgMembers && generalThreadId) {
+    for (const m of orgMembers) {
+      const { data: existing } = await admin
+        .from("chat_thread_members")
+        .select("thread_id")
+        .eq("thread_id", generalThreadId)
+        .eq("membership_id", m.id)
+        .maybeSingle();
+      if (!existing) {
+        await admin.from("chat_thread_members").insert({
+          organization_id: orgId,
+          thread_id: generalThreadId,
+          membership_id: m.id,
+        });
+      }
+    }
+  }
+
+  // Seed a small welcome conversation. Sender = first employee + owner if any.
+  if (generalThreadId) {
+    const owner = (orgMembers ?? []).find((m) => m.role === "owner");
+    const firstEmployee = employeeMemberships[0];
+    const secondEmployee = employeeMemberships[1];
+    const welcome = [
+      {
+        sender: owner?.id ?? firstEmployee?.id ?? null,
+        body: "Welcome to CleanOps! Use #general for team-wide updates.",
+        offsetMinutes: -90,
+      },
+      {
+        sender: firstEmployee?.id ?? null,
+        body: "Thanks! Excited to be onboard 🧽",
+        offsetMinutes: -60,
+      },
+      {
+        sender: secondEmployee?.id ?? null,
+        body: "Heads up — glass cleaner is running low in the supply closet.",
+        offsetMinutes: -15,
+      },
+    ];
+    for (const msg of welcome) {
+      if (!msg.sender) continue;
+      const created = new Date();
+      created.setMinutes(created.getMinutes() + msg.offsetMinutes);
+      await admin.from("chat_messages").insert({
+        organization_id: orgId,
+        thread_id: generalThreadId,
+        sender_id: msg.sender,
+        body: msg.body,
+        created_at: created.toISOString(),
+      });
+    }
+  }
 
   // ----- Done -----
   console.log("");
