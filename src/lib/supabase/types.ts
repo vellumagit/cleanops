@@ -607,6 +607,56 @@ export type Database = {
           },
         ]
       }
+      freelancer_contacts: {
+        Row: {
+          active: boolean
+          created_at: string
+          email: string | null
+          full_name: string
+          id: string
+          last_accepted_at: string | null
+          last_offered_at: string | null
+          notes: string | null
+          organization_id: string
+          phone: string
+          updated_at: string
+        }
+        Insert: {
+          active?: boolean
+          created_at?: string
+          email?: string | null
+          full_name: string
+          id?: string
+          last_accepted_at?: string | null
+          last_offered_at?: string | null
+          notes?: string | null
+          organization_id: string
+          phone: string
+          updated_at?: string
+        }
+        Update: {
+          active?: boolean
+          created_at?: string
+          email?: string | null
+          full_name?: string
+          id?: string
+          last_accepted_at?: string | null
+          last_offered_at?: string | null
+          notes?: string | null
+          organization_id?: string
+          phone?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "freelancer_contacts_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       inventory_items: {
         Row: {
           assigned_to: string | null
@@ -872,6 +922,141 @@ export type Database = {
             columns: ["organization_id"]
             isOneToOne: false
             referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      job_offer_dispatches: {
+        Row: {
+          claim_token: string
+          contact_id: string
+          delivery_error: string | null
+          delivery_status: string
+          id: string
+          offer_id: string
+          organization_id: string
+          responded_at: string | null
+          sent_at: string
+          twilio_sid: string | null
+        }
+        Insert: {
+          claim_token: string
+          contact_id: string
+          delivery_error?: string | null
+          delivery_status?: string
+          id?: string
+          offer_id: string
+          organization_id: string
+          responded_at?: string | null
+          sent_at?: string
+          twilio_sid?: string | null
+        }
+        Update: {
+          claim_token?: string
+          contact_id?: string
+          delivery_error?: string | null
+          delivery_status?: string
+          id?: string
+          offer_id?: string
+          organization_id?: string
+          responded_at?: string | null
+          sent_at?: string
+          twilio_sid?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "job_offer_dispatches_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "freelancer_contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "job_offer_dispatches_offer_id_fkey"
+            columns: ["offer_id"]
+            isOneToOne: false
+            referencedRelation: "job_offers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "job_offer_dispatches_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      job_offers: {
+        Row: {
+          booking_id: string
+          created_at: string
+          expires_at: string | null
+          filled_at: string | null
+          filled_contact_id: string | null
+          id: string
+          notes: string | null
+          organization_id: string
+          pay_cents: number
+          posted_by: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          booking_id: string
+          created_at?: string
+          expires_at?: string | null
+          filled_at?: string | null
+          filled_contact_id?: string | null
+          id?: string
+          notes?: string | null
+          organization_id: string
+          pay_cents: number
+          posted_by: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          booking_id?: string
+          created_at?: string
+          expires_at?: string | null
+          filled_at?: string | null
+          filled_contact_id?: string | null
+          id?: string
+          notes?: string | null
+          organization_id?: string
+          pay_cents?: number
+          posted_by?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "job_offers_booking_id_fkey"
+            columns: ["booking_id"]
+            isOneToOne: false
+            referencedRelation: "bookings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "job_offers_filled_contact_id_fkey"
+            columns: ["filled_contact_id"]
+            isOneToOne: false
+            referencedRelation: "freelancer_contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "job_offers_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "job_offers_posted_by_fkey"
+            columns: ["posted_by"]
+            isOneToOne: false
+            referencedRelation: "memberships"
             referencedColumns: ["id"]
           },
         ]

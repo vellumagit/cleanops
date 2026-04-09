@@ -10,6 +10,7 @@ import {
   ScrollText,
   Users,
   UserRound,
+  UserPlus,
   Star,
   Award,
   Receipt,
@@ -64,6 +65,7 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { href: "/app/clients", label: "Clients", icon: Users },
       { href: "/app/employees", label: "Employees", icon: UserRound },
+      { href: "/app/freelancers", label: "Freelancer bench", icon: UserPlus },
       { href: "/app/reviews", label: "Reviews", icon: Star },
       { href: "/app/bonuses", label: "Bonuses", icon: Award },
       { href: "/app/training", label: "Training", icon: GraduationCap },

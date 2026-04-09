@@ -180,6 +180,50 @@ Stub `/privacy` and `/terms` pages live so paying customers have something
 to point at. Replace the wording with counsel-reviewed copy before the
 first paid customer onboards.
 
+## Freelancer bench + SMS dispatch (Phase 11)
+
+Cleaning companies get last-minute callouts. The freelancer bench lets
+admins maintain a contact list of on-call cleaners (not Sollos users — no
+account needed) and broadcast a single shift to the whole list via SMS.
+The first freelancer to tap the unique claim link in their text gets the
+job; everyone else sees a "too slow" page.
+
+**Where it lives**
+- `/app/freelancers` — contact CRUD + all broadcasted offers
+- `/app/bookings/[id]/offer` — "Send to bench" form with live SMS preview
+- `/app/freelancers/offers/[id]` — offer detail with per-dispatch status
+- `/claim/[token]` — public no-login landing page the freelancer opens
+  from the SMS. Pre-claim it shows pay + time + rough area; post-claim it
+  reveals the full address and client phone.
+
+**How the race is safe**
+The claim action runs with the service-role client and updates
+`job_offers` with a `status = 'open'` guard — only one caller can flip it
+to `filled`. The second caller's update returns zero rows and the page
+falls into the "already claimed" state.
+
+**Twilio activation**
+Twilio is wired in but disabled by default — `TWILIO_ENABLED=false` in
+`.env.local.example`. While disabled:
+- No SMS is sent. `sendSms()` logs the payload to the server console.
+- Dispatch rows are marked `delivery_status = 'skipped_disabled'`.
+- You can still preview every claim link by clicking them on the offer
+  detail page — the entire claim flow works end-to-end without a Twilio
+  account.
+
+To go live:
+1. Create a Twilio account and buy a local long-code number (~$1.15/mo)
+2. Register an A2P 10DLC brand + campaign (required for US SMS to
+   actually deliver — ~$55 one-time + $11/mo). See Twilio's A2P 10DLC
+   guide.
+3. Fill `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`
+   and set `TWILIO_ENABLED=true` in your environment (local + Vercel).
+4. Test by sending yourself an offer from `/app/freelancers`.
+
+**Cost profile** (rough): ~$55 first month + $11/mo carrier fees + about
+$0.014 per SMS segment. A 160-char offer to 10 freelancers costs ~$0.14
+per broadcast.
+
 ## Deployment
 
 Push to `main` → Vercel auto-deploys. Environment variables are set in the Vercel dashboard, never committed.
@@ -199,3 +243,4 @@ This project follows the phased build plan in `C:\Users\musil\.claude\plans\logi
 - ✅ **Phase 8** — Chat
 - ✅ **Phase 9** — Seed data
 - ✅ **Phase 10** — Pre-launch hardening (audit log viewer, CSP + security headers, privacy/terms stubs, Stripe scaffold, Sentry/Resend env, backup drill docs)
+- ✅ **Phase 11** — Freelancer bench + SMS shift dispatch (Twilio-gated)
