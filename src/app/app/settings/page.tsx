@@ -1,5 +1,12 @@
 import Link from "next/link";
-import { Award, ChevronRight, CreditCard, ScrollText } from "lucide-react";
+import {
+  Award,
+  Banknote,
+  ChevronRight,
+  CreditCard,
+  Plug,
+  ScrollText,
+} from "lucide-react";
 import { PageShell } from "@/components/page-shell";
 
 export const metadata = { title: "Settings" };
@@ -18,6 +25,20 @@ const SECTIONS = [
     title: "Audit log",
     description:
       "Append-only record of who created, updated, deleted or paid what.",
+  },
+  {
+    href: "/app/settings/integrations",
+    icon: Plug,
+    title: "Integrations",
+    description:
+      "Connect Stripe, Square, or QuickBooks so customers can pay online.",
+  },
+  {
+    href: "/app/settings/payment-methods",
+    icon: Banknote,
+    title: "Payment instructions",
+    description:
+      "Zelle, check, wire — what your clients see on their invoice.",
   },
   {
     href: "/app/settings/billing",

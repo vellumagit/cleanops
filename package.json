@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "seed": "tsx --env-file=.env.local scripts/seed.ts",
+    "wipe": "tsx --env-file=.env.local scripts/wipe.ts",
     "db:push": "supabase db push --linked --include-all",
     "db:types": "supabase gen types typescript --linked --schema public > src/lib/supabase/types.ts"
   },

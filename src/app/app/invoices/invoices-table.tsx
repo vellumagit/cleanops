@@ -7,7 +7,7 @@ import { formatCurrencyCents, formatDate, humanizeEnum } from "@/lib/format";
 
 export type InvoiceRow = {
   id: string;
-  status: "draft" | "sent" | "paid" | "overdue";
+  status: "draft" | "sent" | "partially_paid" | "paid" | "overdue" | "void";
   amount_cents: number;
   due_date: string | null;
   sent_at: string | null;
@@ -83,7 +83,7 @@ export function InvoicesTable({
       getRowId={(r) => r.id}
       searchPlaceholder="Search by client…"
       onRowClick={
-        canEdit ? (r) => router.push(`/app/invoices/${r.id}/edit`) : undefined
+        canEdit ? (r) => router.push(`/app/invoices/${r.id}`) : undefined
       }
       emptyState={{
         title: "No invoices yet",

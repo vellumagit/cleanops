@@ -224,6 +224,76 @@ To go live:
 $0.014 per SMS segment. A 160-char offer to 10 freelancers costs ~$0.14
 per broadcast.
 
+## Invoicing + payment integrations (Phase 12)
+
+Sollos is the dashboard; the cleaning company is the merchant of record.
+Money never touches a Sollos-owned account. When a client pays an
+invoice, funds move directly from the client into the cleaning company's
+connected processor account (Stripe, Square, or QuickBooks Payments).
+
+### Part 1 — what's live now
+
+- **Manual payment recording.** The invoice detail page
+  (`/app/invoices/[id]`) has a "Record payment" form for cash, check,
+  Zelle, Venmo, wire, etc. Payments are stored in `invoice_payments`
+  and a DB trigger recomputes the parent invoice's `status` and
+  `paid_at` based on the sum of payments — this is how `partially_paid`
+  works.
+- **Public invoice view.** Every invoice gets a capability-based public
+  token (16 random bytes, base64url-encoded). Share
+  `/i/<public_token>` with the client — no login required. They see
+  the total, line items, payment instructions, and a grayed-out
+  "Pay with card — coming soon" CTA that lights up in Part 2.
+- **Send / void actions.** Admins can flip `draft → sent` (stamps
+  `sent_at`) and void invoices (sets `voided_at` and blocks new
+  payments).
+- **Default payment instructions.** Configure once in
+  `/app/settings/payment-methods` (Zelle handle, mailing address, wire
+  details, etc). Every public invoice page pulls this as a fallback
+  unless an individual invoice overrides it.
+- **Integration scaffolding.** `/app/settings/integrations` has three
+  provider cards (Stripe, Square, QuickBooks) that show "Coming soon"
+  until the platform OAuth credentials land in env, then "Not connected"
+  until the org clicks Connect. The underlying tables
+  (`integration_connections`, `integration_events`) and encryption
+  helpers (`src/lib/crypto.ts`, AES-256-GCM) are in place.
+- **Token encryption at rest.** All OAuth access/refresh tokens will be
+  encrypted with a key loaded from `INTEGRATION_ENCRYPTION_KEY`. Generate
+  one with:
+  ```bash
+  node -e "console.log('base64:' + require('crypto').randomBytes(32).toString('base64'))"
+  ```
+
+### Part 2 — what's coming next (blocked on provider registration)
+
+1. Register Sollos as an OAuth app on each provider dashboard:
+   - **Stripe Connect Standard** — https://dashboard.stripe.com/settings/connect
+   - **Square** — https://developer.squareup.com/apps
+   - **Intuit / QuickBooks** — https://developer.intuit.com/app/developer/dashboard
+2. Add the redirect URIs (`/api/integrations/<provider>/callback`) and
+   populate the env vars in `.env.local.example` (Stripe Connect client
+   id, Square app id/secret, Intuit client id/secret, etc).
+3. Build the `/api/integrations/<provider>/callback` route handlers
+   that complete the OAuth dance and insert into
+   `integration_connections` (tokens encrypted via `encryptSecret()`).
+4. Build `/api/integrations/<provider>/webhook` route handlers with
+   idempotency via `integration_events (provider, event_id)` unique
+   index.
+5. Add "Pay now" buttons to the public invoice view — Checkout Session
+   for Stripe, Payment Link for Square, Intuit Payments for QBO.
+
+### Security posture
+
+- `integration_connections.access_token_ciphertext` / `refresh_token_ciphertext`
+  store AES-256-GCM ciphertext (wire format: `v1:iv:tag:ciphertext`).
+  Even with service-role access, raw tokens never leave the app process.
+- `integration_events` has a unique index on `(provider, event_id)` so
+  replayed webhooks are dropped safely.
+- `audit_log` has a BEFORE UPDATE/DELETE trigger that raises, so even
+  the service-role key can't rewrite history.
+- `invoice_payments` with `provider IS NOT NULL` can NOT be deleted
+  manually from the UI — only via a refund webhook from the processor.
+
 ## Deployment
 
 Push to `main` → Vercel auto-deploys. Environment variables are set in the Vercel dashboard, never committed.
@@ -244,3 +314,4 @@ This project follows the phased build plan in `C:\Users\musil\.claude\plans\logi
 - ✅ **Phase 9** — Seed data
 - ✅ **Phase 10** — Pre-launch hardening (audit log viewer, CSP + security headers, privacy/terms stubs, Stripe scaffold, Sentry/Resend env, backup drill docs)
 - ✅ **Phase 11** — Freelancer bench + SMS shift dispatch (Twilio-gated)
+- 🚧 **Phase 12** — Invoicing + payment integrations (Part 1 shipped: manual payments, public invoice view, integration scaffolding; Part 2 blocked on Stripe/Square/Intuit OAuth app registration)

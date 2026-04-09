@@ -391,6 +391,7 @@ export type Database = {
           organization_id: string
           phone: string | null
           preferred_contact: Database["public"]["Enums"]["preferred_contact"]
+          quickbooks_customer_id: string | null
           updated_at: string
         }
         Insert: {
@@ -404,6 +405,7 @@ export type Database = {
           organization_id: string
           phone?: string | null
           preferred_contact?: Database["public"]["Enums"]["preferred_contact"]
+          quickbooks_customer_id?: string | null
           updated_at?: string
         }
         Update: {
@@ -417,6 +419,7 @@ export type Database = {
           organization_id?: string
           phone?: string | null
           preferred_contact?: Database["public"]["Enums"]["preferred_contact"]
+          quickbooks_customer_id?: string | null
           updated_at?: string
         }
         Relationships: [
@@ -657,6 +660,119 @@ export type Database = {
           },
         ]
       }
+      integration_connections: {
+        Row: {
+          access_token_ciphertext: string | null
+          connected_at: string
+          connected_by: string | null
+          external_account_id: string | null
+          external_account_label: string | null
+          id: string
+          last_error: string | null
+          metadata: Json
+          organization_id: string
+          provider: Database["public"]["Enums"]["integration_provider"]
+          refresh_token_ciphertext: string | null
+          scope: string | null
+          status: Database["public"]["Enums"]["integration_status"]
+          token_expires_at: string | null
+          updated_at: string
+        }
+        Insert: {
+          access_token_ciphertext?: string | null
+          connected_at?: string
+          connected_by?: string | null
+          external_account_id?: string | null
+          external_account_label?: string | null
+          id?: string
+          last_error?: string | null
+          metadata?: Json
+          organization_id: string
+          provider: Database["public"]["Enums"]["integration_provider"]
+          refresh_token_ciphertext?: string | null
+          scope?: string | null
+          status?: Database["public"]["Enums"]["integration_status"]
+          token_expires_at?: string | null
+          updated_at?: string
+        }
+        Update: {
+          access_token_ciphertext?: string | null
+          connected_at?: string
+          connected_by?: string | null
+          external_account_id?: string | null
+          external_account_label?: string | null
+          id?: string
+          last_error?: string | null
+          metadata?: Json
+          organization_id?: string
+          provider?: Database["public"]["Enums"]["integration_provider"]
+          refresh_token_ciphertext?: string | null
+          scope?: string | null
+          status?: Database["public"]["Enums"]["integration_status"]
+          token_expires_at?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "integration_connections_connected_by_fkey"
+            columns: ["connected_by"]
+            isOneToOne: false
+            referencedRelation: "memberships"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "integration_connections_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      integration_events: {
+        Row: {
+          error: string | null
+          event_id: string
+          event_type: string
+          id: string
+          organization_id: string | null
+          payload: Json
+          processed_at: string | null
+          provider: Database["public"]["Enums"]["integration_provider"]
+          received_at: string
+        }
+        Insert: {
+          error?: string | null
+          event_id: string
+          event_type: string
+          id?: string
+          organization_id?: string | null
+          payload: Json
+          processed_at?: string | null
+          provider: Database["public"]["Enums"]["integration_provider"]
+          received_at?: string
+        }
+        Update: {
+          error?: string | null
+          event_id?: string
+          event_type?: string
+          id?: string
+          organization_id?: string | null
+          payload?: Json
+          processed_at?: string | null
+          provider?: Database["public"]["Enums"]["integration_provider"]
+          received_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "integration_events_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       inventory_items: {
         Row: {
           assigned_to: string | null
@@ -862,6 +978,76 @@ export type Database = {
           },
         ]
       }
+      invoice_payments: {
+        Row: {
+          amount_cents: number
+          created_at: string
+          id: string
+          invoice_id: string
+          method: Database["public"]["Enums"]["payment_method"]
+          notes: string | null
+          organization_id: string
+          provider: Database["public"]["Enums"]["integration_provider"] | null
+          provider_fee_cents: number | null
+          provider_payment_id: string | null
+          received_at: string
+          recorded_by: string | null
+          reference: string | null
+        }
+        Insert: {
+          amount_cents: number
+          created_at?: string
+          id?: string
+          invoice_id: string
+          method: Database["public"]["Enums"]["payment_method"]
+          notes?: string | null
+          organization_id: string
+          provider?: Database["public"]["Enums"]["integration_provider"] | null
+          provider_fee_cents?: number | null
+          provider_payment_id?: string | null
+          received_at?: string
+          recorded_by?: string | null
+          reference?: string | null
+        }
+        Update: {
+          amount_cents?: number
+          created_at?: string
+          id?: string
+          invoice_id?: string
+          method?: Database["public"]["Enums"]["payment_method"]
+          notes?: string | null
+          organization_id?: string
+          provider?: Database["public"]["Enums"]["integration_provider"] | null
+          provider_fee_cents?: number | null
+          provider_payment_id?: string | null
+          received_at?: string
+          recorded_by?: string | null
+          reference?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "invoice_payments_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "invoices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "invoice_payments_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "invoice_payments_recorded_by_fkey"
+            columns: ["recorded_by"]
+            isOneToOne: false
+            referencedRelation: "memberships"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       invoices: {
         Row: {
           amount_cents: number
@@ -870,11 +1056,15 @@ export type Database = {
           created_at: string
           due_date: string | null
           id: string
+          number: string | null
           organization_id: string
           paid_at: string | null
+          payment_instructions: string | null
+          public_token: string | null
           sent_at: string | null
           status: Database["public"]["Enums"]["invoice_status"]
           updated_at: string
+          voided_at: string | null
         }
         Insert: {
           amount_cents?: number
@@ -883,11 +1073,15 @@ export type Database = {
           created_at?: string
           due_date?: string | null
           id?: string
+          number?: string | null
           organization_id: string
           paid_at?: string | null
+          payment_instructions?: string | null
+          public_token?: string | null
           sent_at?: string | null
           status?: Database["public"]["Enums"]["invoice_status"]
           updated_at?: string
+          voided_at?: string | null
         }
         Update: {
           amount_cents?: number
@@ -896,11 +1090,15 @@ export type Database = {
           created_at?: string
           due_date?: string | null
           id?: string
+          number?: string | null
           organization_id?: string
           paid_at?: string | null
+          payment_instructions?: string | null
+          public_token?: string | null
           sent_at?: string | null
           status?: Database["public"]["Enums"]["invoice_status"]
           updated_at?: string
+          voided_at?: string | null
         }
         Relationships: [
           {
@@ -1112,6 +1310,7 @@ export type Database = {
       organizations: {
         Row: {
           created_at: string
+          default_payment_instructions: string | null
           id: string
           name: string
           slug: string
@@ -1119,6 +1318,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          default_payment_instructions?: string | null
           id?: string
           name: string
           slug: string
@@ -1126,6 +1326,7 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          default_payment_instructions?: string | null
           id?: string
           name?: string
           slug?: string
@@ -1562,10 +1763,28 @@ export type Database = {
       contract_status: "active" | "ended" | "cancelled"
       estimate_line_kind: "labour" | "supplies" | "extras"
       estimate_status: "draft" | "sent" | "approved" | "declined"
+      integration_provider: "stripe" | "square" | "quickbooks"
+      integration_status: "active" | "disconnected" | "error"
       inventory_category: "chemical" | "equipment" | "consumable"
-      invoice_status: "draft" | "sent" | "paid" | "overdue"
+      invoice_status:
+        | "draft"
+        | "sent"
+        | "partially_paid"
+        | "paid"
+        | "overdue"
+        | "void"
       membership_role: "owner" | "admin" | "employee"
       membership_status: "active" | "invited" | "disabled"
+      payment_method:
+        | "cash"
+        | "check"
+        | "bank_transfer"
+        | "zelle"
+        | "venmo"
+        | "cashapp"
+        | "card"
+        | "ach"
+        | "other"
       preferred_contact: "phone" | "email" | "sms"
       service_type: "standard" | "deep" | "move_out" | "recurring"
     }
@@ -1708,10 +1927,30 @@ export const Constants = {
       contract_status: ["active", "ended", "cancelled"],
       estimate_line_kind: ["labour", "supplies", "extras"],
       estimate_status: ["draft", "sent", "approved", "declined"],
+      integration_provider: ["stripe", "square", "quickbooks"],
+      integration_status: ["active", "disconnected", "error"],
       inventory_category: ["chemical", "equipment", "consumable"],
-      invoice_status: ["draft", "sent", "paid", "overdue"],
+      invoice_status: [
+        "draft",
+        "sent",
+        "partially_paid",
+        "paid",
+        "overdue",
+        "void",
+      ],
       membership_role: ["owner", "admin", "employee"],
       membership_status: ["active", "invited", "disabled"],
+      payment_method: [
+        "cash",
+        "check",
+        "bank_transfer",
+        "zelle",
+        "venmo",
+        "cashapp",
+        "card",
+        "ach",
+        "other",
+      ],
       preferred_contact: ["phone", "email", "sms"],
       service_type: ["standard", "deep", "move_out", "recurring"],
     },

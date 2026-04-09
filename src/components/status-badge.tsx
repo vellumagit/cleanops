@@ -80,17 +80,21 @@ export function bookingStatusTone(
 }
 
 export function invoiceStatusTone(
-  status: "draft" | "sent" | "paid" | "overdue",
+  status: "draft" | "sent" | "partially_paid" | "paid" | "overdue" | "void",
 ): StatusTone {
   switch (status) {
     case "paid":
       return "green";
+    case "partially_paid":
+      return "blue";
     case "sent":
       return "blue";
     case "draft":
       return "amber";
     case "overdue":
       return "red";
+    case "void":
+      return "neutral";
   }
 }
 
