@@ -178,6 +178,48 @@ async function wipeSeedAuthUsers(): Promise<number> {
   return removed;
 }
 
+async function reseedGeneralThreads(): Promise<void> {
+  // Call the DB function ensure_general_thread for each org, then add
+  // all active memberships to it — same logic the migration backfill uses.
+  const { data: orgs } = await admin
+    .from("organizations")
+    .select("id");
+
+  for (const org of orgs ?? []) {
+    const { data: threadId, error: fnErr } = await admin.rpc(
+      "ensure_general_thread",
+      { target_org: org.id },
+    );
+
+    if (fnErr) {
+      console.error(`  ✖ org ${org.id}: ${fnErr.message}`);
+      continue;
+    }
+
+    const { data: members } = await admin
+      .from("memberships")
+      .select("id, organization_id")
+      .eq("organization_id", org.id)
+      .eq("status", "active");
+
+    let added = 0;
+    for (const m of members ?? []) {
+      const { error: insertErr } = await admin
+        .from("chat_thread_members")
+        .upsert(
+          {
+            organization_id: m.organization_id,
+            thread_id: threadId as string,
+            membership_id: m.id,
+          },
+          { onConflict: "thread_id,membership_id" },
+        );
+      if (!insertErr) added += 1;
+    }
+    console.log(`  ✓ org ${org.id.slice(0, 8)}… → #general thread + ${added} member(s)`);
+  }
+}
+
 async function main() {
   console.log("Sollos 3 wipe");
   console.log(`Target: ${SUPABASE_URL}`);
@@ -199,6 +241,10 @@ async function main() {
   console.log("");
   console.log("Removing seed auth users…");
   const removedUsers = await wipeSeedAuthUsers();
+
+  console.log("");
+  console.log("Re-seeding #general chat threads…");
+  await reseedGeneralThreads();
 
   console.log("");
   console.log(`Done. Deleted ${total} domain rows and ${removedUsers} seed auth users.`);
