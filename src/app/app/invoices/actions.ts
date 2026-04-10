@@ -79,7 +79,7 @@ export async function createInvoiceAction(
 
   revalidatePath("/app/invoices");
   revalidatePath("/app");
-  redirect("/app/invoices");
+  redirect(`/app/invoices/${inserted.id}/edit`);
 }
 
 export async function updateInvoiceAction(
