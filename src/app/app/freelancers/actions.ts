@@ -35,7 +35,8 @@ function readContactForm(formData: FormData) {
     phone: String(formData.get("phone") ?? ""),
     email: String(formData.get("email") ?? ""),
     notes: String(formData.get("notes") ?? ""),
-    active: String(formData.get("active") ?? "true"),
+    // Unchecked checkboxes are absent from formData — "true" only if present.
+    active: formData.has("active") ? "true" : "false",
   };
 }
 
