@@ -33,35 +33,50 @@ export async function fetchChatThreads(
 ): Promise<ChatThreadSummary[]> {
   const supabase = await createSupabaseServerClient();
 
-  const { data: memberships, error } = await supabase
+  // Step 1: get thread IDs the current member belongs to.
+  const { data: myRows, error: myErr } = await supabase
     .from("chat_thread_members")
+    .select("thread_id")
+    .eq("membership_id", membership.id);
+
+  if (myErr) {
+    console.error("[chat] fetchChatThreads step 1 failed:", myErr.message);
+    return [];
+  }
+
+  const threadIds = (myRows ?? []).map((r) => r.thread_id);
+  if (threadIds.length === 0) return [];
+
+  // Step 2: fetch those threads with their members + profile names.
+  // This avoids the ambiguous self-referencing join that PostgREST
+  // can fail to resolve on certain Supabase versions.
+  const { data: threadRows, error: threadErr } = await supabase
+    .from("chat_threads")
     .select(
       `
-        thread:chat_threads (
-          id,
-          kind,
-          name,
-          created_at,
-          members:chat_thread_members (
-            membership_id,
-            membership:memberships (
-              id,
-              profile:profiles ( full_name )
-            )
+        id,
+        kind,
+        name,
+        created_at,
+        members:chat_thread_members (
+          membership_id,
+          membership:memberships (
+            id,
+            profile:profiles ( full_name )
           )
         )
       `,
     )
-    .eq("membership_id", membership.id);
+    .in("id", threadIds);
 
-  if (error) throw error;
+  if (threadErr) {
+    console.error("[chat] fetchChatThreads step 2 failed:", threadErr.message);
+    return [];
+  }
 
   const threads: ChatThreadSummary[] = [];
 
-  for (const row of memberships ?? []) {
-    const t = row.thread;
-    if (!t) continue;
-
+  for (const t of threadRows ?? []) {
     let display_name: string;
     let other_member_id: string | null = null;
 
@@ -117,7 +132,10 @@ export async function fetchChatMessages(
     .order("created_at", { ascending: false })
     .limit(limit);
 
-  if (error) throw error;
+  if (error) {
+    console.error("[chat] fetchChatMessages failed:", error.message);
+    return [];
+  }
 
   const rows = (data ?? []).map((m) => ({
     id: m.id,
@@ -146,7 +164,10 @@ export async function fetchTeammates(
     .eq("status", "active")
     .neq("id", membership.id);
 
-  if (error) throw error;
+  if (error) {
+    console.error("[chat] fetchTeammates failed:", error.message);
+    return [];
+  }
 
   return (data ?? []).map((m) => ({
     id: m.id,
