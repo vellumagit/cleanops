@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, Pencil, Send, Ban, ExternalLink } from "lucide-react";
+import { ArrowLeft, Pencil, Send, Ban, ExternalLink, Star } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
@@ -19,6 +19,7 @@ import {
 import {
   sendInvoiceAction,
   voidInvoiceAction,
+  generateReviewTokenAction,
 } from "../actions";
 import { SubmitButton } from "@/components/submit-button";
 import { RecordPaymentForm } from "./record-payment-form";
@@ -73,6 +74,16 @@ export default async function InvoiceDetailPage({
 
   if (error) throw error;
   if (!invoice) notFound();
+
+  // Fetch review_token separately (column not yet in generated types)
+  const { data: reviewData } = (await supabase
+    .from("invoices")
+    .select("review_token")
+    .eq("id", id)
+    .single()) as unknown as {
+    data: { review_token: string | null } | null;
+  };
+  const reviewToken = reviewData?.review_token ?? null;
 
   const status = invoice.status as InvoiceStatus;
   const paidCents =
@@ -178,6 +189,29 @@ export default async function InvoiceDetailPage({
                   View public link
                 </Link>
               )}
+              {status === "paid" && reviewToken ? (
+                <Link
+                  href={`/review/${reviewToken}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={buttonVariants({ variant: "outline", size: "sm" })}
+                >
+                  <Star className="h-4 w-4" />
+                  Review link
+                </Link>
+              ) : status === "paid" ? (
+                <form action={generateReviewTokenAction}>
+                  <input type="hidden" name="id" value={invoice.id} />
+                  <SubmitButton
+                    variant="outline"
+                    size="sm"
+                    pendingLabel="Generating…"
+                  >
+                    <Star className="h-4 w-4" />
+                    Generate review link
+                  </SubmitButton>
+                </form>
+              ) : null}
               {!isVoid && (
                 <form
                   action={voidInvoiceAction}

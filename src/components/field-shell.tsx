@@ -11,6 +11,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { PwaInstallBanner } from "@/components/pwa-install-banner";
 
 type FieldNavItem = {
   href: string;
@@ -70,6 +71,8 @@ export function FieldShell({
           </button>
         </form>
       </header>
+
+      <PwaInstallBanner />
 
       <main className="mx-auto w-full max-w-2xl flex-1 px-4 pb-28 pt-4">
         {children}

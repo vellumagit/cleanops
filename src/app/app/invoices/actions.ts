@@ -9,6 +9,7 @@ import {
   InvoicePaymentSchema,
   type PAYMENT_METHODS,
 } from "@/lib/validators/invoice-payment";
+import { generateClaimToken } from "@/lib/claim-token";
 
 type Field = keyof typeof InvoiceSchema.shape;
 export type InvoiceFormState = ActionState<Field>;
@@ -341,6 +342,50 @@ export async function voidInvoiceAction(formData: FormData) {
 
   revalidatePath(`/app/invoices/${id}`);
   revalidatePath("/app/invoices");
+}
+
+/**
+ * Generate a review token for a paid invoice so the client can leave a review
+ * via the public /review/:token page. Idempotent — returns existing token if
+ * one is already set.
+ */
+export async function generateReviewTokenAction(formData: FormData) {
+  const id = String(formData.get("id") ?? "");
+  if (!id) return;
+
+  const { membership, supabase } = await getActionContext();
+
+  // Check if token already exists
+  const { data: invoice } = (await supabase
+    .from("invoices")
+    .select("id, review_token, status")
+    .eq("id", id)
+    .maybeSingle()) as unknown as {
+    data: { id: string; review_token: string | null; status: string } | null;
+  };
+
+  if (!invoice) return;
+
+  // Only allow for paid invoices
+  if (invoice.status !== "paid") return;
+
+  if (!invoice.review_token) {
+    const token = generateClaimToken(16);
+    await supabase
+      .from("invoices")
+      .update({ review_token: token } as never)
+      .eq("id", id);
+
+    await logAuditEvent({
+      membership,
+      action: "update",
+      entity: "invoice",
+      entity_id: id,
+      after: { review_token_generated: true },
+    });
+  }
+
+  revalidatePath(`/app/invoices/${id}`);
 }
 
 export async function deleteInvoiceAction(formData: FormData) {

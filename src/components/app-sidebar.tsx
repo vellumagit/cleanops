@@ -18,19 +18,18 @@ import {
   GraduationCap,
   Boxes,
   MessageSquare,
+  Rocket,
   Settings,
   LogOut,
+  Bell,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { NotificationBell } from "@/components/notification-bell";
 
 /**
- * Sollos 3 ops-console sidebar — dark slate surface matching
- * api.velluma.co/dashboard. Grouped sections with uppercase headers so the
- * navigation density stays scannable as the product grows.
- *
- * Colour choices are hard-coded to slate-{900,800,400,200} + indigo-500
- * because the rest of the app runs on a light theme and I don't want the
- * global token swap to also recolour the sidebar.
+ * Sollos 3 ops-console sidebar — dark slate surface. Grouped sections with
+ * uppercase headers so the navigation density stays scannable as the
+ * product grows.
  */
 
 type NavItem = {
@@ -82,6 +81,7 @@ const NAV_SECTIONS: NavSection[] = [
 ];
 
 const FOOTER_NAV: NavItem[] = [
+  { href: "/app/notifications", label: "Notifications", icon: Bell },
   { href: "/app/settings", label: "Settings", icon: Settings },
 ];
 
@@ -89,10 +89,15 @@ type Props = {
   organizationName: string;
   role: string;
   userName: string | null;
+  showSetup?: boolean;
+  logoUrl?: string | null;
+  brandColor?: string | null;
+  unreadNotifications?: number;
 };
 
-export function AppSidebar({ organizationName, role, userName }: Props) {
+export function AppSidebar({ organizationName, role, userName, showSetup, logoUrl, brandColor, unreadNotifications = 0 }: Props) {
   const pathname = usePathname();
+  const accent = brandColor ? `#${brandColor}` : "#6366f1";
 
   const isActive = (href: string) =>
     href === "/app" ? pathname === "/app" : pathname.startsWith(href);
@@ -103,19 +108,45 @@ export function AppSidebar({ organizationName, role, userName }: Props) {
       <div className="flex items-center gap-2.5 border-b border-slate-800 px-4 py-4">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src="/sollos-logo.png"
-          alt="Sollos 3"
-          className="h-8 w-8 shrink-0 rounded-lg [filter:brightness(0)_invert(1)]"
+          src={logoUrl || "/sollos-logo.png"}
+          alt={organizationName}
+          className={cn(
+            "h-8 w-8 shrink-0 rounded-lg object-contain",
+            !logoUrl && "[filter:brightness(0)_invert(1)]",
+          )}
         />
-        <div className="flex min-w-0 flex-col leading-tight">
+        <div className="flex min-w-0 flex-1 flex-col leading-tight">
           <span className="truncate text-sm font-bold text-white">
-            Sollos 3
+            {logoUrl ? organizationName : "Sollos 3"}
           </span>
           <span className="truncate text-[11px] text-slate-400">
-            {organizationName}
+            Cleaning operations hub
           </span>
         </div>
+        <NotificationBell count={unreadNotifications} />
       </div>
+
+      {/* Get started — only visible during onboarding */}
+      {showSetup && (
+        <div className="border-b border-slate-800 px-3 py-3">
+          <Link
+            href="/app/setup"
+            className={cn(
+              "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-[13px] transition-colors",
+              pathname === "/app/setup"
+                ? "font-semibold text-white shadow-sm"
+                : "text-indigo-300 hover:opacity-80",
+            )}
+            style={{
+              backgroundColor:
+                pathname === "/app/setup" ? accent : `${accent}18`,
+            }}
+          >
+            <Rocket className="h-4 w-4 shrink-0" />
+            <span className="truncate">Get started</span>
+          </Link>
+        </div>
+      )}
 
       {/* Sections */}
       <nav className="flex-1 overflow-y-auto px-3 py-4">
@@ -135,9 +166,10 @@ export function AppSidebar({ organizationName, role, userName }: Props) {
                       className={cn(
                         "flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] transition-colors",
                         active
-                          ? "bg-indigo-500 font-semibold text-white shadow-sm"
+                          ? "font-semibold text-white shadow-sm"
                           : "text-slate-400 hover:bg-slate-800 hover:text-slate-100",
                       )}
+                      style={active ? { backgroundColor: accent } : undefined}
                     >
                       <Icon className="h-4 w-4 shrink-0" />
                       <span className="truncate">{item.label}</span>
@@ -163,9 +195,10 @@ export function AppSidebar({ organizationName, role, userName }: Props) {
                   className={cn(
                     "flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] transition-colors",
                     active
-                      ? "bg-indigo-500 font-semibold text-white shadow-sm"
+                      ? "font-semibold text-white shadow-sm"
                       : "text-slate-400 hover:bg-slate-800 hover:text-slate-100",
                   )}
+                  style={active ? { backgroundColor: accent } : undefined}
                 >
                   <Icon className="h-4 w-4 shrink-0" />
                   <span className="truncate">{item.label}</span>
@@ -176,7 +209,10 @@ export function AppSidebar({ organizationName, role, userName }: Props) {
         </ul>
 
         <div className="flex items-center gap-2 rounded-md border border-slate-800 bg-slate-950/40 px-2.5 py-2">
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-indigo-500/20 text-[11px] font-semibold text-indigo-300">
+          <div
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold"
+            style={{ backgroundColor: `${accent}33`, color: `${accent}cc` }}
+          >
             {(userName ?? "U").slice(0, 1).toUpperCase()}
           </div>
           <div className="flex min-w-0 flex-1 flex-col leading-tight">
@@ -200,6 +236,17 @@ export function AppSidebar({ organizationName, role, userName }: Props) {
 
         <p className="mt-2 text-center text-[10px] text-slate-600">
           Sollos 3 · v1.0
+        </p>
+        <p className="mt-0.5 text-center text-[9px] text-slate-600">
+          Powered by{" "}
+          <a
+            href="https://velluma.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-slate-500 hover:text-slate-400"
+          >
+            Velluma
+          </a>
         </p>
       </div>
     </aside>

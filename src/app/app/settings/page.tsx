@@ -4,14 +4,30 @@ import {
   Banknote,
   ChevronRight,
   CreditCard,
+  Palette,
   Plug,
   ScrollText,
+  Users,
 } from "lucide-react";
 import { PageShell } from "@/components/page-shell";
 
 export const metadata = { title: "Settings" };
 
 const SECTIONS = [
+  {
+    href: "/app/settings/members",
+    icon: Users,
+    title: "Team members",
+    description:
+      "Manage roles, pay rates, and access for everyone on your team.",
+  },
+  {
+    href: "/app/settings/branding",
+    icon: Palette,
+    title: "Branding",
+    description:
+      "Upload your logo and set your brand colour for invoices and public pages.",
+  },
   {
     href: "/app/settings/bonus-rules",
     icon: Award,

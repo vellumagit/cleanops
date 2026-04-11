@@ -100,7 +100,7 @@ export function EmployeesTable({ rows }: { rows: EmployeeRow[] }) {
       searchPlaceholder="Search by name, phone, or role…"
       emptyState={{
         title: "No teammates yet",
-        description: "Invite your team in Phase 4.",
+        description: "Click Invite to add your first team member.",
       }}
     />
   );

@@ -10,6 +10,7 @@ export const metadata: Metadata = {
 type SearchParams = Promise<{
   next?: string;
   confirm?: string;
+  joined?: string;
   email?: string;
 }>;
 
@@ -21,6 +22,7 @@ export default async function LoginPage({
   const params = await searchParams;
   const next = params.next ?? "/app";
   const confirmEmail = params.confirm ? params.email : undefined;
+  const joinedEmail = params.joined ? params.email : undefined;
 
   return (
     <main className="sollos-wash relative flex flex-1 items-center justify-center px-6 py-16">
@@ -59,6 +61,17 @@ export default async function LoginPage({
             >
               Check <span className="font-semibold">{confirmEmail}</span> for a
               confirmation link before signing in.
+            </div>
+          )}
+
+          {joinedEmail && (
+            <div
+              role="status"
+              className="mb-4 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-400"
+            >
+              Account created! Confirm your email at{" "}
+              <span className="font-semibold">{joinedEmail}</span>, then sign
+              in below.
             </div>
           )}
 

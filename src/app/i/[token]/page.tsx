@@ -54,6 +54,23 @@ export default async function PublicInvoicePage({
 
   if (!invoice) notFound();
 
+  // Fetch branding (columns not yet in generated types)
+  const orgId = invoice.organization?.id;
+  let orgBranding: { logo_url: string | null; brand_color: string | null } = {
+    logo_url: null,
+    brand_color: null,
+  };
+  if (orgId) {
+    const { data } = await admin
+      .from("organizations")
+      .select("logo_url, brand_color")
+      .eq("id", orgId)
+      .single() as unknown as {
+      data: { logo_url: string | null; brand_color: string | null } | null;
+    };
+    if (data) orgBranding = data;
+  }
+
   const lineItems = [...(invoice.line_items ?? [])].sort(
     (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0),
   );
@@ -78,9 +95,9 @@ export default async function PublicInvoicePage({
         <div className="mx-auto mb-6 flex w-max items-center gap-2">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src="/sollos-logo.png"
-            alt="Sollos 3"
-            className="h-8 w-8 shrink-0 rounded-lg"
+            src={orgBranding.logo_url || "/sollos-logo.png"}
+            alt={invoice.organization?.name ?? "Sollos 3"}
+            className="h-8 w-8 shrink-0 rounded-lg object-contain"
           />
           <span className="text-base font-semibold tracking-tight">
             {invoice.organization?.name ?? "Sollos 3"}

@@ -1,11 +1,13 @@
 import Link from "next/link";
 import {
   ArrowDownRight,
+  ArrowRight,
   ArrowUpRight,
   Calendar,
   CheckCircle2,
   DollarSign,
   Receipt,
+  Rocket,
   Star,
   TrendingUp,
 } from "lucide-react";
@@ -48,6 +50,7 @@ export default async function DashboardPage() {
     recentReviews,
     recentBookings,
     recentPaidInvoices,
+    orgSettings,
   ] = await Promise.all([
     supabase
       .from("bookings")
@@ -106,7 +109,17 @@ export default async function DashboardPage() {
       .not("paid_at", "is", null)
       .order("paid_at", { ascending: false })
       .limit(5),
+    supabase
+      .from("organizations")
+      .select("onboarding_completed_at")
+      .eq("id", membership.organization_id)
+      .single() as unknown as { data: { onboarding_completed_at: string | null } | null },
   ]);
+
+  // -------- Onboarding state --------
+  const showOnboarding =
+    !orgSettings.data?.onboarding_completed_at &&
+    (membership.role === "owner" || membership.role === "admin");
 
   // -------- Compute derived metrics --------
   const todaysJobsList = todaysJobs.data ?? [];
@@ -231,6 +244,27 @@ export default async function DashboardPage() {
           })}
         </p>
       </div>
+
+      {/* ONBOARDING BANNER */}
+      {showOnboarding && (
+        <Link
+          href="/app/setup"
+          className="mb-6 flex items-center gap-4 rounded-lg border border-border bg-card p-4 shadow-sm transition-all hover:shadow-md hover:border-slate-300 dark:hover:border-slate-600"
+        >
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-indigo-50 dark:bg-indigo-950/40">
+            <Rocket className="h-5 w-5 text-indigo-500" />
+          </div>
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-foreground">
+              Finish setting up your workspace
+            </p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              A few quick steps to get {membership.organization_name} up and running.
+            </p>
+          </div>
+          <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+        </Link>
+      )}
 
       {/* HERO METRIC CARDS */}
       <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
