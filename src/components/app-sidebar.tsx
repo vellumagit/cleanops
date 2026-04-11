@@ -6,6 +6,7 @@ import {
   LayoutDashboard,
   Calendar,
   CalendarCheck,
+  CalendarDays,
   FileText,
   ScrollText,
   Users,
@@ -49,8 +50,9 @@ const NAV_SECTIONS: NavSection[] = [
   {
     label: "Operations",
     items: [
-      { href: "/app/bookings", label: "Bookings", icon: Calendar },
-      { href: "/app/calendar", label: "Calendar", icon: CalendarCheck },
+      { href: "/app/bookings", label: "Bookings", icon: CalendarCheck },
+      { href: "/app/calendar", label: "Calendar", icon: CalendarDays },
+      { href: "/app/scheduling", label: "Scheduling", icon: Calendar },
       { href: "/app/estimates", label: "Estimates", icon: FileText },
       { href: "/app/contracts", label: "Contracts", icon: ScrollText },
       { href: "/app/packages", label: "Packages", icon: Package },

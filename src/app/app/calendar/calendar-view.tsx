@@ -166,42 +166,46 @@ export function CalendarView({ events }: Props) {
         </div>
       </div>
 
-      {/* Calendar grid */}
-      <div className="rounded-lg border border-border bg-card overflow-hidden">
-        {view === "month" && (
-          <MonthView
-            currentDate={currentDate}
-            events={filteredEvents}
-            onSelectEvent={setSelectedEvent}
-            onDayClick={(d) => {
-              setCurrentDate(d);
-              setView("day");
-            }}
-          />
-        )}
-        {view === "week" && (
-          <WeekView
-            currentDate={currentDate}
-            events={filteredEvents}
-            onSelectEvent={setSelectedEvent}
-          />
-        )}
-        {view === "day" && (
-          <DayView
-            currentDate={currentDate}
-            events={filteredEvents}
-            onSelectEvent={setSelectedEvent}
-          />
+      {/* Calendar grid + side detail panel */}
+      <div className="flex gap-4">
+        <div className={`rounded-lg border border-border bg-card overflow-hidden transition-all ${selectedEvent ? "flex-1 min-w-0" : "w-full"}`}>
+          {view === "month" && (
+            <MonthView
+              currentDate={currentDate}
+              events={filteredEvents}
+              onSelectEvent={setSelectedEvent}
+              onDayClick={(d) => {
+                setCurrentDate(d);
+                setView("day");
+              }}
+            />
+          )}
+          {view === "week" && (
+            <WeekView
+              currentDate={currentDate}
+              events={filteredEvents}
+              onSelectEvent={setSelectedEvent}
+            />
+          )}
+          {view === "day" && (
+            <DayView
+              currentDate={currentDate}
+              events={filteredEvents}
+              onSelectEvent={setSelectedEvent}
+            />
+          )}
+        </div>
+
+        {/* Event detail side panel */}
+        {selectedEvent && (
+          <div className="w-72 shrink-0 self-start sticky top-4">
+            <EventDetail
+              event={selectedEvent}
+              onClose={() => setSelectedEvent(null)}
+            />
+          </div>
         )}
       </div>
-
-      {/* Event detail panel */}
-      {selectedEvent && (
-        <EventDetail
-          event={selectedEvent}
-          onClose={() => setSelectedEvent(null)}
-        />
-      )}
     </div>
   );
 }
