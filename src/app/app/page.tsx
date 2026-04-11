@@ -249,20 +249,18 @@ export default async function DashboardPage() {
       {showOnboarding && (
         <Link
           href="/app/setup"
-          className="mb-6 flex items-center gap-4 rounded-lg border border-border bg-card p-4 shadow-sm transition-all hover:shadow-md hover:border-slate-300 dark:hover:border-slate-600"
+          className="mb-6 flex items-center gap-3 rounded-lg border border-border bg-card px-4 py-3 transition-colors hover:bg-muted/50"
         >
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-indigo-50 dark:bg-indigo-950/40">
-            <Rocket className="h-5 w-5 text-indigo-500" />
-          </div>
+          <Rocket className="h-4 w-4 shrink-0 text-muted-foreground" />
           <div className="flex-1">
-            <p className="text-sm font-semibold text-foreground">
+            <p className="text-sm font-medium text-foreground">
               Finish setting up your workspace
             </p>
             <p className="mt-0.5 text-xs text-muted-foreground">
               A few quick steps to get {membership.organization_name} up and running.
             </p>
           </div>
-          <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <ArrowRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         </Link>
       )}
 

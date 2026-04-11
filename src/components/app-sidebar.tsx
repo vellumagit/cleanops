@@ -27,9 +27,7 @@ import { cn } from "@/lib/utils";
 import { NotificationBell } from "@/components/notification-bell";
 
 /**
- * Sollos 3 ops-console sidebar — dark slate surface. Grouped sections with
- * uppercase headers so the navigation density stays scannable as the
- * product grows.
+ * Sollos 3 ops-console sidebar — minimal dark surface, zinc palette.
  */
 
 type NavItem = {
@@ -97,29 +95,28 @@ type Props = {
 
 export function AppSidebar({ organizationName, role, userName, showSetup, logoUrl, brandColor, unreadNotifications = 0 }: Props) {
   const pathname = usePathname();
-  const accent = brandColor ? `#${brandColor}` : "#6366f1";
 
   const isActive = (href: string) =>
     href === "/app" ? pathname === "/app" : pathname.startsWith(href);
 
   return (
-    <aside className="flex h-screen w-60 shrink-0 flex-col border-r border-slate-800 bg-slate-900 text-slate-200">
-      {/* Brand */}
-      <div className="flex items-center gap-2.5 border-b border-slate-800 px-4 py-4">
+    <aside className="flex h-screen w-56 shrink-0 flex-col bg-zinc-900 text-zinc-400">
+      {/* Brand header */}
+      <div className="flex items-center gap-2.5 px-4 py-4">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={logoUrl || "/sollos-logo.png"}
           alt={organizationName}
           className={cn(
-            "h-8 w-8 shrink-0 rounded-lg object-contain",
+            "h-7 w-7 shrink-0 rounded-md object-contain",
             !logoUrl && "[filter:brightness(0)_invert(1)]",
           )}
         />
         <div className="flex min-w-0 flex-1 flex-col leading-tight">
-          <span className="truncate text-sm font-bold text-white">
+          <span className="truncate text-[13px] font-semibold text-zinc-100">
             {logoUrl ? organizationName : "Sollos 3"}
           </span>
-          <span className="truncate text-[11px] text-slate-400">
+          <span className="truncate text-[10px] text-zinc-500">
             Cleaning operations hub
           </span>
         </div>
@@ -128,34 +125,33 @@ export function AppSidebar({ organizationName, role, userName, showSetup, logoUr
 
       {/* Get started — only visible during onboarding */}
       {showSetup && (
-        <div className="border-b border-slate-800 px-3 py-3">
+        <div className="px-3 pb-2">
           <Link
             href="/app/setup"
             className={cn(
-              "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-[13px] transition-colors",
+              "flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] transition-colors",
               pathname === "/app/setup"
-                ? "font-semibold text-white shadow-sm"
-                : "text-indigo-300 hover:opacity-80",
+                ? "bg-zinc-800 font-medium text-zinc-100"
+                : "text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200",
             )}
-            style={{
-              backgroundColor:
-                pathname === "/app/setup" ? accent : `${accent}18`,
-            }}
           >
-            <Rocket className="h-4 w-4 shrink-0" />
+            <Rocket className="h-3.5 w-3.5 shrink-0" />
             <span className="truncate">Get started</span>
           </Link>
         </div>
       )}
 
+      {/* Divider */}
+      <div className="mx-3 border-t border-zinc-800" />
+
       {/* Sections */}
-      <nav className="flex-1 overflow-y-auto px-3 py-4">
+      <nav className="flex-1 overflow-y-auto px-3 py-3">
         {NAV_SECTIONS.map((section) => (
-          <div key={section.label} className="mb-5 last:mb-0">
-            <p className="mb-1.5 px-2 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">
+          <div key={section.label} className="mb-4 last:mb-0">
+            <p className="mb-1 px-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-zinc-600">
               {section.label}
             </p>
-            <ul className="space-y-0.5">
+            <ul className="space-y-px">
               {section.items.map((item) => {
                 const active = isActive(item.href);
                 const Icon = item.icon;
@@ -164,14 +160,18 @@ export function AppSidebar({ organizationName, role, userName, showSetup, logoUr
                     <Link
                       href={item.href}
                       className={cn(
-                        "flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] transition-colors",
+                        "flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] transition-colors",
                         active
-                          ? "font-semibold text-white shadow-sm"
-                          : "text-slate-400 hover:bg-slate-800 hover:text-slate-100",
+                          ? "bg-zinc-800 font-medium text-zinc-100"
+                          : "text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200",
                       )}
-                      style={active ? { backgroundColor: accent } : undefined}
+                      style={
+                        active && brandColor
+                          ? { backgroundColor: `#${brandColor}22`, color: `#${brandColor}` }
+                          : undefined
+                      }
                     >
-                      <Icon className="h-4 w-4 shrink-0" />
+                      <Icon className="h-3.5 w-3.5 shrink-0" />
                       <span className="truncate">{item.label}</span>
                     </Link>
                   </li>
@@ -183,8 +183,8 @@ export function AppSidebar({ organizationName, role, userName, showSetup, logoUr
       </nav>
 
       {/* Footer */}
-      <div className="border-t border-slate-800 px-3 py-3">
-        <ul className="mb-2 space-y-0.5">
+      <div className="border-t border-zinc-800 px-3 py-3">
+        <ul className="mb-2 space-y-px">
           {FOOTER_NAV.map((item) => {
             const active = isActive(item.href);
             const Icon = item.icon;
@@ -193,14 +193,18 @@ export function AppSidebar({ organizationName, role, userName, showSetup, logoUr
                 <Link
                   href={item.href}
                   className={cn(
-                    "flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] transition-colors",
+                    "flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] transition-colors",
                     active
-                      ? "font-semibold text-white shadow-sm"
-                      : "text-slate-400 hover:bg-slate-800 hover:text-slate-100",
+                      ? "bg-zinc-800 font-medium text-zinc-100"
+                      : "text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200",
                   )}
-                  style={active ? { backgroundColor: accent } : undefined}
+                  style={
+                    active && brandColor
+                      ? { backgroundColor: `#${brandColor}22`, color: `#${brandColor}` }
+                      : undefined
+                  }
                 >
-                  <Icon className="h-4 w-4 shrink-0" />
+                  <Icon className="h-3.5 w-3.5 shrink-0" />
                   <span className="truncate">{item.label}</span>
                 </Link>
               </li>
@@ -208,42 +212,40 @@ export function AppSidebar({ organizationName, role, userName, showSetup, logoUr
           })}
         </ul>
 
-        <div className="flex items-center gap-2 rounded-md border border-slate-800 bg-slate-950/40 px-2.5 py-2">
-          <div
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold"
-            style={{ backgroundColor: `${accent}33`, color: `${accent}cc` }}
-          >
+        {/* User card */}
+        <div className="flex items-center gap-2 rounded-md bg-zinc-800/50 px-2.5 py-2">
+          <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-zinc-700 text-[10px] font-semibold text-zinc-300">
             {(userName ?? "U").slice(0, 1).toUpperCase()}
           </div>
           <div className="flex min-w-0 flex-1 flex-col leading-tight">
-            <span className="truncate text-[12px] font-medium text-slate-100">
+            <span className="truncate text-[12px] font-medium text-zinc-200">
               {userName ?? "You"}
             </span>
-            <span className="truncate text-[10px] font-bold uppercase tracking-[0.1em] text-slate-500">
+            <span className="truncate text-[10px] text-zinc-500 capitalize">
               {role}
             </span>
           </div>
           <form action="/auth/logout" method="post">
             <button
               type="submit"
-              className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-slate-100"
+              className="rounded p-1 text-zinc-500 transition-colors hover:bg-zinc-700 hover:text-zinc-300"
               aria-label="Sign out"
             >
-              <LogOut className="h-3.5 w-3.5" />
+              <LogOut className="h-3 w-3" />
             </button>
           </form>
         </div>
 
-        <p className="mt-2 text-center text-[10px] text-slate-600">
+        <p className="mt-2 text-center text-[10px] text-zinc-600">
           Sollos 3 · v1.0
         </p>
-        <p className="mt-0.5 text-center text-[9px] text-slate-600">
+        <p className="text-center text-[9px] text-zinc-600">
           Powered by{" "}
           <a
             href="https://velluma.com"
             target="_blank"
             rel="noopener noreferrer"
-            className="text-slate-500 hover:text-slate-400"
+            className="text-zinc-500 hover:text-zinc-400"
           >
             Velluma
           </a>

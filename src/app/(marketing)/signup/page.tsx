@@ -12,7 +12,7 @@ export default function SignupPage() {
     <main className="sollos-wash relative flex flex-1 items-center justify-center px-6 py-16">
       <div className="sollos-dots absolute inset-0" aria-hidden />
 
-      <div className="relative z-10 w-full max-w-md">
+      <div className="relative z-10 w-full max-w-sm">
         <Link
           href="/"
           className="mx-auto mb-8 flex w-max items-center gap-2"
@@ -21,20 +21,20 @@ export default function SignupPage() {
           <img
             src="/sollos-logo.png"
             alt="Sollos 3"
-            className="h-8 w-8 shrink-0 rounded-lg"
+            className="h-7 w-7 shrink-0 rounded-md"
           />
-          <span className="text-base font-semibold tracking-tight">
+          <span className="text-sm font-semibold tracking-tight">
             Sollos 3
           </span>
         </Link>
 
-        <div className="sollos-card p-6 shadow-lg shadow-indigo-500/5">
-          <div className="mb-6 text-center">
-            <h1 className="text-2xl font-bold tracking-tight">
-              Start your workspace
+        <div className="sollos-card p-6">
+          <div className="mb-6">
+            <h1 className="text-lg font-semibold tracking-tight">
+              Create your workspace
             </h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Spin up Sollos 3 for your company in 30 seconds.
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              Get started in 30 seconds.
             </p>
           </div>
 
@@ -45,7 +45,7 @@ export default function SignupPage() {
           Already have an account?{" "}
           <Link
             href="/login"
-            className="font-semibold text-primary underline-offset-4 hover:underline"
+            className="font-medium text-foreground underline-offset-4 hover:underline"
           >
             Sign in
           </Link>

@@ -28,7 +28,7 @@ export default async function LoginPage({
     <main className="sollos-wash relative flex flex-1 items-center justify-center px-6 py-16">
       <div className="sollos-dots absolute inset-0" aria-hidden />
 
-      <div className="relative z-10 w-full max-w-md">
+      <div className="relative z-10 w-full max-w-sm">
         <Link
           href="/"
           className="mx-auto mb-8 flex w-max items-center gap-2"
@@ -37,27 +37,27 @@ export default async function LoginPage({
           <img
             src="/sollos-logo.png"
             alt="Sollos 3"
-            className="h-8 w-8 shrink-0 rounded-lg"
+            className="h-7 w-7 shrink-0 rounded-md"
           />
-          <span className="text-base font-semibold tracking-tight">
+          <span className="text-sm font-semibold tracking-tight">
             Sollos 3
           </span>
         </Link>
 
-        <div className="sollos-card p-6 shadow-lg shadow-indigo-500/5">
-          <div className="mb-6 text-center">
-            <h1 className="text-2xl font-bold tracking-tight">
+        <div className="sollos-card p-6">
+          <div className="mb-6">
+            <h1 className="text-lg font-semibold tracking-tight">
               Welcome back
             </h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Sign in to your Sollos 3 workspace.
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              Sign in to your workspace.
             </p>
           </div>
 
           {confirmEmail && (
             <div
               role="status"
-              className="mb-4 rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-primary"
+              className="mb-4 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600"
             >
               Check <span className="font-semibold">{confirmEmail}</span> for a
               confirmation link before signing in.
@@ -67,7 +67,7 @@ export default async function LoginPage({
           {joinedEmail && (
             <div
               role="status"
-              className="mb-4 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-400"
+              className="mb-4 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700"
             >
               Account created! Confirm your email at{" "}
               <span className="font-semibold">{joinedEmail}</span>, then sign
@@ -82,7 +82,7 @@ export default async function LoginPage({
           New to Sollos 3?{" "}
           <Link
             href="/signup"
-            className="font-semibold text-primary underline-offset-4 hover:underline"
+            className="font-medium text-foreground underline-offset-4 hover:underline"
           >
             Create a workspace
           </Link>

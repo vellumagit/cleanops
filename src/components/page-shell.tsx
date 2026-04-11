@@ -2,10 +2,6 @@ import { cn } from "@/lib/utils";
 
 /**
  * Standard outer shell for any page inside the Sollos 3 ops console.
- *
- * Matches the api.velluma.co/dashboard spacing — 32px page padding, a bold
- * H1 with tight tracking, and an optional descriptor and action slot on the
- * right.
  */
 
 type Props = {
@@ -27,11 +23,11 @@ export function PageShell({
     <div className={cn("mx-auto w-full max-w-6xl px-8 py-8", className)}>
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-extrabold tracking-tight text-foreground">
+          <h1 className="text-xl font-semibold tracking-tight text-foreground">
             {title}
           </h1>
           {description && (
-            <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+            <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>
           )}
         </div>
         {actions && (
@@ -44,16 +40,14 @@ export function PageShell({
 }
 
 /**
- * Placeholder for sub-pages that don't exist yet. Displays a friendly
- * "coming soon" empty state so the sidebar never leads to a 404.
+ * Placeholder for sub-pages that don't exist yet.
  */
 export function ComingSoon({ phase }: { phase: string }) {
   return (
-    <div className="sollos-card flex flex-col items-center justify-center border-dashed px-6 py-20 text-center">
-      <p className="text-sm font-semibold text-foreground">Ships in {phase}</p>
+    <div className="sollos-card flex flex-col items-center justify-center border-dashed px-6 py-16 text-center">
+      <p className="text-sm font-medium text-foreground">Ships in {phase}</p>
       <p className="mt-1 max-w-md text-xs text-muted-foreground">
-        This section of the ops console is part of the upcoming build phase.
-        Check the phase tracker in the README.
+        This section is part of an upcoming build phase.
       </p>
     </div>
   );
