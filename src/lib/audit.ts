@@ -34,7 +34,9 @@ export type AuditEntity =
   | "bonus"
   | "bonus_rule"
   | "membership"
-  | "settings";
+  | "settings"
+  | "api_key"
+  | "webhook_subscription";
 
 export type AuditAction =
   | "create"
@@ -45,7 +47,8 @@ export type AuditAction =
   | "mark_paid"
   | "assign"
   | "invite"
-  | "deactivate";
+  | "deactivate"
+  | "revoke";
 
 type LogArgs = {
   membership: CurrentMembership;

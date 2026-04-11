@@ -4,6 +4,7 @@ import {
   Banknote,
   ChevronRight,
   CreditCard,
+  KeyRound,
   Palette,
   Plug,
   ScrollText,
@@ -48,6 +49,13 @@ const SECTIONS = [
     title: "Integrations",
     description:
       "Connect Stripe, Square, or QuickBooks so customers can pay online.",
+  },
+  {
+    href: "/app/settings/api-keys",
+    icon: KeyRound,
+    title: "API Keys",
+    description:
+      "Generate keys to connect Make.com, Zapier, n8n, or custom integrations.",
   },
   {
     href: "/app/settings/payment-methods",
