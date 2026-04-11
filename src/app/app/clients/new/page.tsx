@@ -5,7 +5,7 @@ import { ClientForm } from "../client-form";
 export const metadata = { title: "New client" };
 
 export default async function NewClientPage() {
-  await requireMembership(["owner", "admin"]);
+  await requireMembership(["owner", "admin", "manager"]);
   return (
     <PageShell
       title="New client"

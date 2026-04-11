@@ -6,7 +6,7 @@ import { fetchBookingFormOptions } from "../options";
 export const metadata = { title: "New booking" };
 
 export default async function NewBookingPage() {
-  await requireMembership(["owner", "admin"]);
+  await requireMembership(["owner", "admin", "manager"]);
   const options = await fetchBookingFormOptions();
 
   return (

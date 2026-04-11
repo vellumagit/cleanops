@@ -6,7 +6,7 @@ import { fetchInventoryFormOptions } from "../options";
 export const metadata = { title: "New inventory item" };
 
 export default async function NewInventoryPage() {
-  await requireMembership(["owner", "admin"]);
+  await requireMembership(["owner", "admin", "manager"]);
   const { members } = await fetchInventoryFormOptions();
 
   return (

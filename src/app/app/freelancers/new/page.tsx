@@ -5,7 +5,7 @@ import { FreelancerForm } from "../freelancer-form";
 export const metadata = { title: "New freelancer" };
 
 export default async function NewFreelancerPage() {
-  await requireMembership(["owner", "admin"]);
+  await requireMembership(["owner", "admin", "manager"]);
   return (
     <PageShell
       title="New freelancer"

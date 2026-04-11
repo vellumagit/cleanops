@@ -30,7 +30,7 @@ import {
 export type MemberRow = {
   id: string;
   profile_id: string;
-  role: "owner" | "admin" | "employee";
+  role: "owner" | "admin" | "manager" | "employee";
   status: "active" | "invited" | "disabled";
   pay_rate_cents: number | null;
   created_at: string;
@@ -56,6 +56,8 @@ function roleTone(r: MemberRow["role"]): StatusTone {
       return "blue";
     case "admin":
       return "blue";
+    case "manager":
+      return "amber";
     case "employee":
       return "neutral";
   }
@@ -121,6 +123,7 @@ function EditMemberDialog({
                 <SelectContent>
                   <SelectItem value="owner">Owner</SelectItem>
                   <SelectItem value="admin">Admin</SelectItem>
+                  <SelectItem value="manager">Manager</SelectItem>
                   <SelectItem value="employee">Employee</SelectItem>
                 </SelectContent>
               </Select>

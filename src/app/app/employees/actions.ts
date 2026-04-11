@@ -31,7 +31,7 @@ export async function sendInvitationAction(
 
   // Only owners and admins can invite
   if (!["owner", "admin"].includes(membership.role)) {
-    return { errors: { _form: "You don't have permission to invite team members." }, values: raw };
+    return { errors: { _form: "You don\u0027t have permission to invite team members." }, values: raw };
   }
 
   // Check if this email already has an active membership in this org
@@ -78,7 +78,7 @@ export async function sendInvitationAction(
     .insert({
       organization_id: membership.organization_id,
       email: parsed.data.email,
-      role: parsed.data.role as "admin" | "employee",
+      role: parsed.data.role as "admin" | "manager" | "employee",
       invited_by: membership.profile_id,
     })
     .select("id, token")
@@ -150,7 +150,7 @@ export async function revokeInvitationAction(formData: FormData) {
 /* ------------------------------------------------------------------ */
 
 const UpdateMemberSchema = z.object({
-  role: z.enum(["owner", "admin", "employee"]).optional(),
+  role: z.enum(["owner", "admin", "manager", "employee"]).optional(),
   status: z.enum(["active", "disabled"]).optional(),
   pay_rate: z
     .string()

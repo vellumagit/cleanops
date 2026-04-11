@@ -10,7 +10,7 @@ import { isTwilioEnabled } from "@/lib/twilio";
 export const metadata = { title: "Freelancer bench" };
 
 export default async function FreelancersPage() {
-  const membership = await requireMembership(["owner", "admin"]);
+  const membership = await requireMembership(["owner", "admin", "manager"]);
   const canEdit = true;
   const supabase = await createSupabaseServerClient();
 

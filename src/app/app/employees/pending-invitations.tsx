@@ -10,7 +10,7 @@ import { formatDate, humanizeEnum } from "@/lib/format";
 export type InvitationRow = {
   id: string;
   email: string;
-  role: "owner" | "admin" | "employee";
+  role: "owner" | "admin" | "manager" | "employee";
   token: string;
   created_at: string;
   expires_at: string;
@@ -38,7 +38,7 @@ function InvitationCard({
       <div className="flex min-w-0 flex-col gap-0.5">
         <div className="flex items-center gap-2">
           <span className="truncate text-sm font-medium">{inv.email}</span>
-          <StatusBadge tone={inv.role === "admin" ? "blue" : "neutral"}>
+          <StatusBadge tone={inv.role === "admin" ? "blue" : inv.role === "manager" ? "amber" : "neutral"}>
             {humanizeEnum(inv.role)}
           </StatusBadge>
           {inv.expired ? (

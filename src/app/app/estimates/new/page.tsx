@@ -6,7 +6,7 @@ import { EstimateForm } from "../estimate-form";
 export const metadata = { title: "New estimate" };
 
 export default async function NewEstimatePage() {
-  await requireMembership(["owner", "admin"]);
+  await requireMembership(["owner", "admin", "manager"]);
   const supabase = await createSupabaseServerClient();
   const { data: clients } = await supabase
     .from("clients")

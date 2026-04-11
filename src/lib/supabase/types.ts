@@ -1773,7 +1773,7 @@ export type Database = {
         | "paid"
         | "overdue"
         | "void"
-      membership_role: "owner" | "admin" | "employee"
+      membership_role: "owner" | "admin" | "manager" | "employee"
       membership_status: "active" | "invited" | "disabled"
       payment_method:
         | "cash"
@@ -1938,7 +1938,7 @@ export const Constants = {
         "overdue",
         "void",
       ],
-      membership_role: ["owner", "admin", "employee"],
+      membership_role: ["owner", "admin", "manager", "employee"],
       membership_status: ["active", "invited", "disabled"],
       payment_method: [
         "cash",

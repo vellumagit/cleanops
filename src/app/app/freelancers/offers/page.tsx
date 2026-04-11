@@ -23,7 +23,7 @@ function offerTone(status: OfferStatus): StatusTone {
 }
 
 export default async function JobOffersPage() {
-  await requireMembership(["owner", "admin"]);
+  await requireMembership(["owner", "admin", "manager"]);
   const supabase = await createSupabaseServerClient();
 
   const { data, error } = await supabase

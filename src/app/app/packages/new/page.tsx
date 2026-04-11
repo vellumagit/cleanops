@@ -5,7 +5,7 @@ import { PackageForm } from "../package-form";
 export const metadata = { title: "New package" };
 
 export default async function NewPackagePage() {
-  await requireMembership(["owner", "admin"]);
+  await requireMembership(["owner", "admin", "manager"]);
   return (
     <PageShell
       title="New package"

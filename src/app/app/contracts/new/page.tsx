@@ -6,7 +6,7 @@ import { fetchContractFormOptions } from "../options";
 export const metadata = { title: "New contract" };
 
 export default async function NewContractPage() {
-  await requireMembership(["owner", "admin"]);
+  await requireMembership(["owner", "admin", "manager"]);
   const { clients, estimates } = await fetchContractFormOptions();
 
   return (

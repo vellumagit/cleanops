@@ -6,7 +6,7 @@ import { formatCurrencyCents, formatDate, humanizeEnum } from "@/lib/format";
 
 export type EmployeeRow = {
   id: string;
-  role: "owner" | "admin" | "employee";
+  role: "owner" | "admin" | "manager" | "employee";
   status: "active" | "invited" | "disabled";
   pay_rate_cents: number | null;
   created_at: string;
@@ -31,6 +31,8 @@ function roleTone(r: EmployeeRow["role"]): StatusTone {
       return "blue";
     case "admin":
       return "blue";
+    case "manager":
+      return "amber";
     case "employee":
       return "neutral";
   }

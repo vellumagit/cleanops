@@ -6,7 +6,7 @@ import { fetchInvoiceFormOptions } from "../options";
 export const metadata = { title: "New invoice" };
 
 export default async function NewInvoicePage() {
-  await requireMembership(["owner", "admin"]);
+  await requireMembership(["owner", "admin", "manager"]);
   const { clients, bookings } = await fetchInvoiceFormOptions();
 
   return (

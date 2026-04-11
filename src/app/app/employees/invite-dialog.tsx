@@ -163,6 +163,7 @@ export function InviteDialog({ siteUrl }: { siteUrl: string }) {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="employee">Employee</SelectItem>
+                <SelectItem value="manager">Manager</SelectItem>
                 <SelectItem value="admin">Admin</SelectItem>
               </SelectContent>
             </Select>
@@ -170,7 +171,8 @@ export function InviteDialog({ siteUrl }: { siteUrl: string }) {
               <p className="text-xs text-destructive">{state.errors.role}</p>
             )}
             <p className="text-xs text-muted-foreground">
-              Employees see the field app. Admins see the full ops console.
+              Employees see the field app. Managers see the dashboard but
+              can&apos;t change settings. Admins have full access.
             </p>
           </div>
 

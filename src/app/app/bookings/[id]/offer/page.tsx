@@ -20,7 +20,7 @@ export default async function NewJobOfferPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  await requireMembership(["owner", "admin"]);
+  await requireMembership(["owner", "admin", "manager"]);
   const { id: bookingId } = await params;
   const supabase = await createSupabaseServerClient();
 

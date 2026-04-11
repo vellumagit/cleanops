@@ -6,7 +6,7 @@ import { fetchReviewFormOptions } from "../options";
 export const metadata = { title: "New review" };
 
 export default async function NewReviewPage() {
-  await requireMembership(["owner", "admin"]);
+  await requireMembership(["owner", "admin", "manager"]);
   const options = await fetchReviewFormOptions();
 
   return (

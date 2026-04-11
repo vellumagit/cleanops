@@ -11,6 +11,7 @@ export default async function EmployeesPage() {
   const membership = await requireMembership();
   const supabase = await createSupabaseServerClient();
   const isAdmin = membership.role === "owner" || membership.role === "admin";
+  const canInvite = isAdmin; // managers can view but not invite
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
 
   const { data, error } = await supabase

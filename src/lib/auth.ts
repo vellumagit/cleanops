@@ -133,7 +133,7 @@ export async function requireMembership(
   }
 
   if (allowed && !allowed.includes(membership.role)) {
-    // Role mismatch — bounce admins/owners to /app, employees to /field
+    // Role mismatch — bounce employees to /field, everyone else to /app
     if (membership.role === "employee") {
       redirect("/field");
     }

@@ -5,7 +5,7 @@ import { z } from "zod";
  */
 export const InvitationSchema = z.object({
   email: z.string().email("Enter a valid email address"),
-  role: z.enum(["admin", "employee"], {
+  role: z.enum(["admin", "manager", "employee"], {
     message: "Choose a role",
   }),
   pay_rate: z
