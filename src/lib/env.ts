@@ -75,6 +75,10 @@ const BaseSchema = z.object({
   QUICKBOOKS_CLIENT_ID: z.string().optional(),
   QUICKBOOKS_CLIENT_SECRET: z.string().optional(),
   QUICKBOOKS_ENVIRONMENT: z.enum(["sandbox", "production"]).optional(),
+
+  // Google Calendar
+  GOOGLE_CALENDAR_CLIENT_ID: z.string().optional(),
+  GOOGLE_CALENDAR_CLIENT_SECRET: z.string().optional(),
 });
 
 type Env = z.infer<typeof BaseSchema>;
@@ -159,4 +163,13 @@ export function isTwilioConfigured(): boolean {
 
 export function isResendConfigured(): boolean {
   return !!getEnv().RESEND_API_KEY;
+}
+
+export function isGoogleCalendarConfigured(): boolean {
+  const e = getEnv();
+  return (
+    !!e.GOOGLE_CALENDAR_CLIENT_ID &&
+    !!e.GOOGLE_CALENDAR_CLIENT_SECRET &&
+    !!e.INTEGRATION_ENCRYPTION_KEY
+  );
 }
