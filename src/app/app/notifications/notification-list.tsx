@@ -84,53 +84,71 @@ export function NotificationList({
           const iconColor = TYPE_COLORS[n.type] ?? "text-slate-400";
           const isUnread = !n.read_at;
 
-          const content = (
-            <div
+          return (
+            <li
+              key={n.id}
               className={cn(
                 "flex items-start gap-3 px-4 py-3 transition-colors",
-                isUnread
-                  ? "bg-card"
-                  : "bg-muted/20 opacity-70",
+                isUnread ? "bg-card" : "bg-muted/20 opacity-70",
               )}
             >
-              <div
-                className={cn(
-                  "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
-                  isUnread ? "bg-muted" : "bg-muted/50",
-                )}
-              >
-                <Icon className={cn("h-4 w-4", iconColor)} />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-baseline gap-2">
-                  <p
+              {n.href ? (
+                <Link href={n.href} className="flex min-w-0 flex-1 items-start gap-3 hover:opacity-80">
+                  <div
                     className={cn(
-                      "text-sm",
-                      isUnread ? "font-semibold" : "font-medium",
+                      "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
+                      isUnread ? "bg-muted" : "bg-muted/50",
                     )}
                   >
-                    {n.title}
-                  </p>
-                  {isUnread && (
-                    <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" />
-                  )}
-                </div>
-                {n.body && (
-                  <p className="mt-0.5 text-xs text-muted-foreground">
-                    {n.body}
-                  </p>
-                )}
-                <p className="mt-1 text-[11px] text-muted-foreground/60">
-                  {formatDistanceToNow(new Date(n.created_at), {
-                    addSuffix: true,
-                  })}
-                </p>
-              </div>
-
+                    <Icon className={cn("h-4 w-4", iconColor)} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-baseline gap-2">
+                      <p className={cn("text-sm", isUnread ? "font-semibold" : "font-medium")}>
+                        {n.title}
+                      </p>
+                      {isUnread && (
+                        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" />
+                      )}
+                    </div>
+                    {n.body && (
+                      <p className="mt-0.5 text-xs text-muted-foreground">{n.body}</p>
+                    )}
+                    <p className="mt-1 text-[11px] text-muted-foreground/60">
+                      {formatDistanceToNow(new Date(n.created_at), { addSuffix: true })}
+                    </p>
+                  </div>
+                </Link>
+              ) : (
+                <>
+                  <div
+                    className={cn(
+                      "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
+                      isUnread ? "bg-muted" : "bg-muted/50",
+                    )}
+                  >
+                    <Icon className={cn("h-4 w-4", iconColor)} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-baseline gap-2">
+                      <p className={cn("text-sm", isUnread ? "font-semibold" : "font-medium")}>
+                        {n.title}
+                      </p>
+                      {isUnread && (
+                        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" />
+                      )}
+                    </div>
+                    {n.body && (
+                      <p className="mt-0.5 text-xs text-muted-foreground">{n.body}</p>
+                    )}
+                    <p className="mt-1 text-[11px] text-muted-foreground/60">
+                      {formatDistanceToNow(new Date(n.created_at), { addSuffix: true })}
+                    </p>
+                  </div>
+                </>
+              )}
               {isUnread && (
-                <form
-                  action={markNotificationReadAction.bind(null, n.id)}
-                >
+                <form action={markNotificationReadAction.bind(null, n.id)}>
                   <button
                     type="submit"
                     className="mt-1 rounded p-1 text-muted-foreground/40 hover:bg-muted hover:text-foreground"
@@ -140,20 +158,8 @@ export function NotificationList({
                   </button>
                 </form>
               )}
-            </div>
+            </li>
           );
-
-          if (n.href) {
-            return (
-              <li key={n.id}>
-                <Link href={n.href} className="block hover:bg-muted/30">
-                  {content}
-                </Link>
-              </li>
-            );
-          }
-
-          return <li key={n.id}>{content}</li>;
         })}
       </ul>
     </div>
