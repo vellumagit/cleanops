@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowLeft, CheckCircle2, CalendarDays, Plug, XCircle } from "lucide-react";
+import { ArrowLeft, BookOpen, CheckCircle2, CalendarDays, Plug, XCircle } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
@@ -10,16 +10,21 @@ import {
   isStripeConnectConfigured,
   isSquareConfigured,
   isGoogleCalendarConfigured,
+  isSageConfigured,
 } from "@/lib/env";
 import { formatDateTime } from "@/lib/format";
 import {
   connectGoogleCalendarAction,
   disconnectGoogleCalendarAction,
 } from "./google-calendar-actions";
+import {
+  connectSageAction,
+  disconnectSageAction,
+} from "./sage-actions";
 
 export const metadata = { title: "Integrations" };
 
-type ProviderKey = "stripe" | "square" | "quickbooks" | "google_calendar";
+type ProviderKey = "stripe" | "square" | "quickbooks" | "google_calendar" | "sage";
 
 type ProviderCard = {
   key: ProviderKey;
@@ -27,7 +32,7 @@ type ProviderCard = {
   blurb: string;
   platformReady: boolean;
   accentClass: string;
-  category: "payments" | "productivity";
+  category: "payments" | "productivity" | "accounting";
 };
 
 /**
@@ -81,6 +86,9 @@ export default async function IntegrationsPage() {
       accentClass: "from-teal-500/10 to-emerald-500/10",
       category: "payments",
     },
+  ];
+
+  const accountingCards: ProviderCard[] = [
     {
       key: "quickbooks",
       name: "QuickBooks Online",
@@ -88,7 +96,16 @@ export default async function IntegrationsPage() {
         "Sync invoices + customers into QuickBooks so your bookkeeper isn't doing double entry.",
       platformReady: isQuickBooksConfigured(),
       accentClass: "from-lime-500/10 to-green-500/10",
-      category: "payments",
+      category: "accounting",
+    },
+    {
+      key: "sage",
+      name: "Sage Accounting",
+      blurb:
+        "Sync invoices + contacts into Sage Business Cloud so your books stay up to date automatically.",
+      platformReady: isSageConfigured(),
+      accentClass: "from-emerald-500/10 to-teal-500/10",
+      category: "accounting",
     },
   ];
 
@@ -108,6 +125,8 @@ export default async function IntegrationsPage() {
     const conn = byProvider.get(card.key);
     const isConnected = conn?.status === "active";
     const isGcal = card.key === "google_calendar";
+    const isSage = card.key === "sage";
+    const hasLiveOAuth = isGcal || isSage;
 
     return (
       <li
@@ -163,8 +182,8 @@ export default async function IntegrationsPage() {
                     </dd>
                   </div>
                 </dl>
-                {isGcal ? (
-                  <form action={disconnectGoogleCalendarAction}>
+                {hasLiveOAuth ? (
+                  <form action={isGcal ? disconnectGoogleCalendarAction : disconnectSageAction}>
                     <button
                       type="submit"
                       className="mt-3 inline-flex w-full items-center justify-center gap-1 rounded-md border border-border bg-background px-3 py-2 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
@@ -185,13 +204,13 @@ export default async function IntegrationsPage() {
                 )}
               </>
             ) : card.platformReady ? (
-              isGcal ? (
-                <form action={connectGoogleCalendarAction}>
+              hasLiveOAuth ? (
+                <form action={isGcal ? connectGoogleCalendarAction : connectSageAction}>
                   <button
                     type="submit"
                     className="inline-flex w-full items-center justify-center rounded-md bg-foreground px-3 py-2 text-xs font-medium text-background hover:bg-foreground/90 transition-colors"
                   >
-                    Connect Google Calendar
+                    Connect {card.name}
                   </button>
                 </form>
               ) : (
@@ -250,8 +269,19 @@ export default async function IntegrationsPage() {
               to the processor account you connect here.
             </p>
           </div>
-          <ul className="grid gap-4 md:grid-cols-3">
+          <ul className="grid gap-4 md:grid-cols-2">
             {paymentCards.map(renderCard)}
+          </ul>
+        </div>
+
+        {/* Accounting */}
+        <div>
+          <div className="mb-3 flex items-center gap-2">
+            <BookOpen className="h-4 w-4 text-muted-foreground" />
+            <h2 className="text-sm font-semibold">Accounting</h2>
+          </div>
+          <ul className="grid gap-4 md:grid-cols-2">
+            {accountingCards.map(renderCard)}
           </ul>
         </div>
 

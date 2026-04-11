@@ -79,6 +79,10 @@ const BaseSchema = z.object({
   // Google Calendar
   GOOGLE_CALENDAR_CLIENT_ID: z.string().optional(),
   GOOGLE_CALENDAR_CLIENT_SECRET: z.string().optional(),
+
+  // Sage Business Cloud Accounting
+  SAGE_CLIENT_ID: z.string().optional(),
+  SAGE_CLIENT_SECRET: z.string().optional(),
 });
 
 type Env = z.infer<typeof BaseSchema>;
@@ -163,6 +167,15 @@ export function isTwilioConfigured(): boolean {
 
 export function isResendConfigured(): boolean {
   return !!getEnv().RESEND_API_KEY;
+}
+
+export function isSageConfigured(): boolean {
+  const e = getEnv();
+  return (
+    !!e.SAGE_CLIENT_ID &&
+    !!e.SAGE_CLIENT_SECRET &&
+    !!e.INTEGRATION_ENCRYPTION_KEY
+  );
 }
 
 export function isGoogleCalendarConfigured(): boolean {
