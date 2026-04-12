@@ -87,24 +87,49 @@ export default async function PublicInvoicePage({
     invoice.organization?.default_payment_instructions ??
     null;
 
+  const brandCss = orgBranding.brand_color
+    ? {
+        "--brand": `#${orgBranding.brand_color}`,
+        "--brand-rgb": (() => {
+          const h = orgBranding.brand_color;
+          return `${parseInt(h.slice(0, 2), 16)},${parseInt(h.slice(2, 4), 16)},${parseInt(h.slice(4, 6), 16)}`;
+        })(),
+        "--brand-light": (() => {
+          const h = orgBranding.brand_color;
+          return `rgba(${parseInt(h.slice(0, 2), 16)},${parseInt(h.slice(2, 4), 16)},${parseInt(h.slice(4, 6), 16)},0.10)`;
+        })(),
+      }
+    : {};
+
   return (
-    <main className="sollos-wash relative flex flex-1 justify-center px-4 py-10">
+    <main
+      className="sollos-wash relative flex flex-1 justify-center px-4 py-10"
+      style={brandCss as React.CSSProperties}
+    >
       <div className="sollos-dots absolute inset-0" aria-hidden />
       <div className="relative z-10 w-full max-w-2xl">
-        {/* Brand */}
-        <div className="mx-auto mb-6 flex w-max items-center gap-2">
+        {/* Brand header */}
+        <div className="mx-auto mb-6 flex w-max items-center gap-3">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={orgBranding.logo_url || "/sollos-logo.png"}
             alt={invoice.organization?.name ?? "Sollos 3"}
-            className="h-8 w-8 shrink-0 rounded-lg object-contain"
+            className="h-10 w-10 shrink-0 rounded-lg object-contain"
           />
-          <span className="text-base font-semibold tracking-tight">
+          <span className="text-lg font-semibold tracking-tight">
             {invoice.organization?.name ?? "Sollos 3"}
           </span>
         </div>
 
-        <div className="sollos-card p-6 shadow-lg shadow-indigo-500/5 sm:p-8">
+        <div className="sollos-card overflow-hidden shadow-lg sm:p-0">
+          {/* Brand accent bar */}
+          <div
+            className="h-1.5 w-full"
+            style={{
+              backgroundColor: `var(--brand, #6366f1)`,
+            }}
+          />
+          <div className="p-6 sm:p-8">
           {/* Header */}
           <div className="flex flex-wrap items-start justify-between gap-4 border-b border-border pb-5">
             <div>
@@ -217,7 +242,10 @@ export default async function PublicInvoicePage({
               <button
                 type="button"
                 disabled
-                className="mt-3 inline-flex w-full items-center justify-center rounded-md border border-dashed border-border bg-background/60 px-4 py-3 text-sm font-medium text-muted-foreground"
+                className="mt-3 inline-flex w-full items-center justify-center rounded-md px-4 py-3 text-sm font-semibold text-white opacity-60"
+                style={{
+                  backgroundColor: `var(--brand, #6366f1)`,
+                }}
                 title="Online payment coming soon"
               >
                 Pay with card — coming soon
@@ -269,7 +297,8 @@ export default async function PublicInvoicePage({
               </ul>
             </div>
           )}
-        </div>
+          </div>{/* close p-6 sm:p-8 inner wrapper */}
+        </div>{/* close sollos-card */}
 
         <p className="mt-6 text-center text-[11px] text-muted-foreground">
           Questions? Reply to the email this invoice came from and{" "}

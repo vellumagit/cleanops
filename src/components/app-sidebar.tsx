@@ -157,6 +157,14 @@ export function AppSidebar({
         <NotificationBell count={unreadNotifications} />
       </div>
 
+      {/* Brand accent stripe */}
+      {brandColor && (
+        <div
+          className="mx-3 h-0.5 rounded-full"
+          style={{ backgroundColor: `#${brandColor}` }}
+        />
+      )}
+
       {/* Get started — only visible during onboarding */}
       {showSetup && (
         <div className="px-3 pb-2">
@@ -254,7 +262,21 @@ export function AppSidebar({
 
         {/* User card */}
         <div className="flex items-center gap-2 rounded-md bg-zinc-800/50 px-2.5 py-2">
-          <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-zinc-700 text-[10px] font-semibold text-zinc-300">
+          <div
+            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold"
+            style={
+              brandColor
+                ? {
+                    backgroundColor: `#${brandColor}33`,
+                    color: `#${brandColor}`,
+                    border: `1.5px solid #${brandColor}55`,
+                  }
+                : {
+                    backgroundColor: "rgb(63 63 70)", // zinc-700
+                    color: "rgb(212 212 216)", // zinc-300
+                  }
+            }
+          >
             {(userName ?? "U").slice(0, 1).toUpperCase()}
           </div>
           <div className="flex min-w-0 flex-1 flex-col leading-tight">

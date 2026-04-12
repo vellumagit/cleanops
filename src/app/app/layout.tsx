@@ -1,6 +1,7 @@
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { AppSidebar } from "@/components/app-sidebar";
+import { BrandProvider } from "@/components/brand-provider";
 
 export default async function AppLayout({
   children,
@@ -19,13 +20,14 @@ export default async function AppLayout({
         .maybeSingle(),
       supabase
         .from("organizations")
-        .select("onboarding_completed_at, logo_url, brand_color")
+        .select("onboarding_completed_at, logo_url, brand_color, name")
         .eq("id", membership.organization_id)
         .single() as unknown as {
         data: {
           onboarding_completed_at: string | null;
           logo_url: string | null;
           brand_color: string | null;
+          name: string | null;
         } | null;
       },
       supabase
@@ -40,7 +42,7 @@ export default async function AppLayout({
     (membership.role === "owner" || membership.role === "admin");
 
   return (
-    <div className="flex min-h-[100dvh] lg:h-screen">
+    <BrandProvider brandColor={org?.brand_color ?? null} className="flex min-h-[100dvh] lg:h-screen">
       <AppSidebar
         organizationName={membership.organization_name}
         role={membership.role}
@@ -54,6 +56,6 @@ export default async function AppLayout({
       <div className="flex min-w-0 flex-1 flex-col overflow-y-auto pt-14 lg:pt-0">
         {children}
       </div>
-    </div>
+    </BrandProvider>
   );
 }

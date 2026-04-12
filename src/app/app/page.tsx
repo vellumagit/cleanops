@@ -51,6 +51,7 @@ export default async function DashboardPage() {
     recentBookings,
     recentPaidInvoices,
     orgSettings,
+    orgBranding,
   ] = await Promise.all([
     supabase
       .from("bookings")
@@ -114,6 +115,13 @@ export default async function DashboardPage() {
       .select("onboarding_completed_at")
       .eq("id", membership.organization_id)
       .single() as unknown as { data: { onboarding_completed_at: string | null } | null },
+    supabase
+      .from("organizations")
+      .select("logo_url, brand_color")
+      .eq("id", membership.organization_id)
+      .single() as unknown as {
+      data: { logo_url: string | null; brand_color: string | null } | null;
+    },
   ]);
 
   // -------- Onboarding state --------
@@ -227,16 +235,29 @@ export default async function DashboardPage() {
     .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
     .slice(0, 10);
 
+  const brandHex = orgBranding.data?.brand_color ?? null;
+  const orgLogo = orgBranding.data?.logo_url ?? null;
+
   return (
-    <div className="mx-auto w-full max-w-6xl px-8 py-10">
+    <div className="mx-auto w-full max-w-6xl px-4 py-5 sm:px-6 lg:px-8 lg:py-10">
       <div className="mb-8 flex items-end justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Welcome back to {membership.organization_name}.
-          </p>
+        <div className="flex items-center gap-3">
+          {orgLogo && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={orgLogo}
+              alt={membership.organization_name}
+              className="h-10 w-10 shrink-0 rounded-lg object-contain"
+            />
+          )}
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Welcome back to {membership.organization_name}.
+            </p>
+          </div>
         </div>
-        <p className="text-xs text-muted-foreground">
+        <p className="hidden text-xs text-muted-foreground sm:block">
           {now.toLocaleDateString("en-US", {
             weekday: "long",
             month: "long",
@@ -418,8 +439,11 @@ export default async function DashboardPage() {
                       </div>
                       <div className="h-1.5 overflow-hidden rounded-full bg-muted">
                         <div
-                          className="h-full rounded-full bg-emerald-500"
-                          style={{ width: `${pct}%` }}
+                          className="h-full rounded-full"
+                          style={{
+                            width: `${pct}%`,
+                            backgroundColor: `var(--brand, #10b981)`,
+                          }}
                         />
                       </div>
                     </div>
@@ -498,7 +522,15 @@ function HeroCard({
         <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
           {label}
         </p>
-        <span className="text-muted-foreground">{icon}</span>
+        <span
+          className="flex h-8 w-8 items-center justify-center rounded-lg"
+          style={{
+            backgroundColor: `var(--brand-light, rgba(99,102,241,0.1))`,
+            color: `var(--brand, #6366f1)`,
+          }}
+        >
+          {icon}
+        </span>
       </div>
       <p className="mt-2 text-2xl font-semibold tabular-nums">{value}</p>
       <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">

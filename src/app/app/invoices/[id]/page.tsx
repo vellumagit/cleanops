@@ -123,8 +123,15 @@ export default async function InvoiceDetailPage({
     >
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div className="space-y-6">
-          {/* Header card */}
-          <div className="rounded-lg border border-border bg-card p-6">
+          {/* Header card — brand accent */}
+          <div className="overflow-hidden rounded-lg border border-border bg-card">
+            <div
+              className="h-1 w-full"
+              style={{
+                backgroundColor: `var(--brand, #6366f1)`,
+              }}
+            />
+            <div className="p-6">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="sollos-label">Invoice</p>
@@ -229,7 +236,8 @@ export default async function InvoiceDetailPage({
                 </form>
               )}
             </div>
-          </div>
+            </div>{/* close p-6 inner wrapper */}
+          </div>{/* close overflow-hidden card */}
 
           {/* Line items */}
           <div className="rounded-lg border border-border bg-card">

@@ -5,7 +5,6 @@ import { usePathname } from "next/navigation";
 import {
   Briefcase,
   Clock,
-  GraduationCap,
   MessageSquare,
   Rss,
   UserRound,
@@ -32,14 +31,21 @@ const FIELD_NAV: FieldNavItem[] = [
  * Mobile-first shell for the employee field app. A sticky header with the
  * org name + sign-out, and a fixed bottom tab bar so cleaners can switch
  * sections one-handed on a phone.
+ *
+ * Brand colour flows via CSS custom properties from BrandProvider (--brand,
+ * --brand-rgb) and is used for the active nav tab, header accent, and logo.
  */
 export function FieldShell({
   organizationName,
   userName,
+  logoUrl,
+  brandColor,
   children,
 }: {
   organizationName: string;
   userName: string | null;
+  logoUrl?: string | null;
+  brandColor?: string | null;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
@@ -47,13 +53,21 @@ export function FieldShell({
   return (
     <div className="flex min-h-[100dvh] flex-col bg-muted/30">
       {/* ── Sticky header ── */}
-      <header className="sticky top-0 z-20 flex items-center justify-between border-b border-border bg-card/80 px-4 py-3 backdrop-blur supports-[padding-top:env(safe-area-inset-top)]:pt-[max(0.75rem,env(safe-area-inset-top))]">
+      <header
+        className="sticky top-0 z-20 flex items-center justify-between border-b bg-card/80 px-4 py-3 backdrop-blur supports-[padding-top:env(safe-area-inset-top)]:pt-[max(0.75rem,env(safe-area-inset-top))]"
+        style={{
+          borderBottomColor: brandColor
+            ? `rgba(var(--brand-rgb), 0.25)`
+            : undefined,
+          borderBottomWidth: brandColor ? "2px" : undefined,
+        }}
+      >
         <div className="flex items-center gap-2.5">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src="/sollos-logo.png"
-            alt="Sollos 3"
-            className="h-9 w-9 shrink-0 rounded-lg"
+            src={logoUrl || "/sollos-logo.png"}
+            alt={organizationName}
+            className="h-9 w-9 shrink-0 rounded-lg object-contain"
           />
           <div className="flex min-w-0 flex-col leading-snug">
             <span className="truncate text-[15px] font-semibold">
@@ -101,12 +115,22 @@ export function FieldShell({
                       ? "text-primary"
                       : "text-muted-foreground active:text-foreground",
                   )}
+                  style={
+                    active && brandColor
+                      ? { color: `var(--brand)` }
+                      : undefined
+                  }
                 >
                   <Icon
                     className={cn(
                       "h-6 w-6",
                       active ? "text-primary" : "text-muted-foreground",
                     )}
+                    style={
+                      active && brandColor
+                        ? { color: `var(--brand)` }
+                        : undefined
+                    }
                   />
                   <span>{item.label}</span>
                 </Link>
