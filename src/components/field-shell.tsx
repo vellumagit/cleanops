@@ -7,6 +7,7 @@ import {
   Clock,
   GraduationCap,
   MessageSquare,
+  Rss,
   UserRound,
   type LucideIcon,
 } from "lucide-react";
@@ -22,7 +23,7 @@ type FieldNavItem = {
 const FIELD_NAV: FieldNavItem[] = [
   { href: "/field/jobs", label: "Jobs", icon: Briefcase },
   { href: "/field/clock", label: "Clock", icon: Clock },
-  { href: "/field/training", label: "Training", icon: GraduationCap },
+  { href: "/field/feed", label: "Feed", icon: Rss },
   { href: "/field/chat", label: "Chat", icon: MessageSquare },
   { href: "/field/profile", label: "Profile", icon: UserRound },
 ];

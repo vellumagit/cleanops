@@ -1,3 +1,5 @@
+import Link from "next/link";
+import { ChevronRight, GraduationCap } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { FieldHeader } from "@/components/field-shell";
@@ -42,6 +44,18 @@ export default async function FieldProfilePage() {
             phone: profile?.phone ?? "",
           }}
         />
+      </div>
+
+      {/* Quick links */}
+      <div className="mt-5 space-y-2">
+        <Link
+          href="/field/training"
+          className="flex items-center gap-3 rounded-xl border border-border bg-card p-4 transition-colors active:bg-muted"
+        >
+          <GraduationCap className="h-5 w-5 text-muted-foreground" />
+          <span className="flex-1 text-[15px] font-medium">Training modules</span>
+          <ChevronRight className="h-5 w-5 text-muted-foreground" />
+        </Link>
       </div>
     </>
   );

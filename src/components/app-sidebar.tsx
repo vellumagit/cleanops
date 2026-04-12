@@ -20,6 +20,7 @@ import {
   GraduationCap,
   Boxes,
   MessageSquare,
+  Rss,
   Rocket,
   Settings,
   LogOut,
@@ -80,7 +81,10 @@ const NAV_SECTIONS: NavSection[] = [
   },
   {
     label: "Comms",
-    items: [{ href: "/app/chat", label: "Chat", icon: MessageSquare }],
+    items: [
+      { href: "/app/feed", label: "Feed", icon: Rss },
+      { href: "/app/chat", label: "Chat", icon: MessageSquare },
+    ],
   },
 ];
 
