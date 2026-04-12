@@ -24,13 +24,27 @@ export default async function EstimatesPage() {
         sent_at,
         decided_at,
         service_description,
+        pdf_url,
         client:clients ( name )
       `,
     )
     .order("created_at", { ascending: false })
-    .limit(200);
+    .limit(200) as unknown as {
+    data: Array<{
+      id: string;
+      status: "draft" | "sent" | "approved" | "declined";
+      total_cents: number;
+      created_at: string;
+      sent_at: string | null;
+      decided_at: string | null;
+      service_description: string | null;
+      pdf_url: string | null;
+      client: { name: string } | null;
+    }> | null;
+    error: { message: string } | null;
+  };
 
-  if (error) throw error;
+  if (error) throw new Error(error.message);
 
   const rows: EstimateRow[] = (data ?? []).map((e) => ({
     id: e.id,
@@ -41,6 +55,7 @@ export default async function EstimatesPage() {
     decided_at: e.decided_at,
     service_description: e.service_description,
     client_name: e.client?.name ?? "—",
+    pdf_url: e.pdf_url,
   }));
 
   return (

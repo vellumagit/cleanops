@@ -21,10 +21,21 @@ export default async function EditEstimatePage({
     supabase
       .from("estimates")
       .select(
-        "id, client_id, service_description, notes, status, total_cents",
+        "id, client_id, service_description, notes, status, total_cents, pdf_url",
       )
       .eq("id", id)
-      .maybeSingle(),
+      .maybeSingle() as unknown as {
+      data: {
+        id: string;
+        client_id: string;
+        service_description: string | null;
+        notes: string | null;
+        status: string;
+        total_cents: number;
+        pdf_url: string | null;
+      } | null;
+      error: unknown;
+    },
     supabase.from("clients").select("id, name").order("name"),
   ]);
 
@@ -45,6 +56,7 @@ export default async function EditEstimatePage({
               notes: estimate.notes,
               status: estimate.status,
               total_dollars: centsToDollarString(estimate.total_cents),
+              pdf_url: estimate.pdf_url,
             }}
           />
         </div>

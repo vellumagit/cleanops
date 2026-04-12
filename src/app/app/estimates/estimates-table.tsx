@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { FileText } from "lucide-react";
 import { DataTable, type DataTableColumn } from "@/components/data-table";
 import { StatusBadge, estimateStatusTone } from "@/components/status-badge";
 import { formatCurrencyCents, formatDate, humanizeEnum } from "@/lib/format";
@@ -14,6 +15,7 @@ export type EstimateRow = {
   decided_at: string | null;
   service_description: string | null;
   client_name: string;
+  pdf_url: string | null;
 };
 
 export function EstimatesTable({
@@ -28,7 +30,14 @@ export function EstimatesTable({
     {
       key: "client",
       header: "Client",
-      render: (r) => <span className="font-medium">{r.client_name}</span>,
+      render: (r) => (
+        <span className="flex items-center gap-1.5 font-medium">
+          {r.client_name}
+          {r.pdf_url && (
+            <span title="PDF attached"><FileText className="h-3.5 w-3.5 shrink-0 text-red-500" /></span>
+          )}
+        </span>
+      ),
       searchValue: (r) => r.client_name,
     },
     {
