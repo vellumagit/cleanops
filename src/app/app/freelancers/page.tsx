@@ -5,6 +5,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
 import { FreelancersTable, type FreelancerRow } from "./freelancers-table";
+import { UnassignedBookings, type UnassignedBookingRow } from "./unassigned-bookings";
 import { isTwilioEnabled } from "@/lib/twilio";
 
 export const metadata = { title: "Freelancer bench" };
@@ -14,17 +15,41 @@ export default async function FreelancersPage() {
   const canEdit = true;
   const supabase = await createSupabaseServerClient();
 
-  const { data, error } = await supabase
-    .from("freelancer_contacts")
-    .select(
-      "id, full_name, phone, email, active, last_offered_at, last_accepted_at",
-    )
-    .order("created_at", { ascending: false });
+  const [{ data: contacts, error: contactsErr }, { data: bookings, error: bookingsErr }] =
+    await Promise.all([
+      supabase
+        .from("freelancer_contacts")
+        .select(
+          "id, full_name, phone, email, active, last_offered_at, last_accepted_at",
+        )
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("bookings")
+        .select(
+          `id, scheduled_at, duration_minutes, service_type, status, total_cents,
+           client:clients ( name )`,
+        )
+        .is("assigned_to", null)
+        .in("status", ["pending", "confirmed"])
+        .order("scheduled_at", { ascending: true })
+        .limit(50),
+    ]);
 
-  if (error) throw error;
+  if (contactsErr) throw contactsErr;
+  if (bookingsErr) throw bookingsErr;
 
-  const rows: FreelancerRow[] = data ?? [];
+  const rows: FreelancerRow[] = contacts ?? [];
   const twilioOn = isTwilioEnabled();
+
+  const unassignedRows: UnassignedBookingRow[] = (bookings ?? []).map((b) => ({
+    id: b.id,
+    scheduled_at: b.scheduled_at,
+    duration_minutes: b.duration_minutes,
+    service_type: b.service_type,
+    status: b.status as "pending" | "confirmed",
+    total_cents: b.total_cents,
+    client_name: b.client?.name ?? "—",
+  }));
 
   return (
     <PageShell
@@ -59,6 +84,14 @@ export default async function FreelancersPage() {
           you&rsquo;re ready to start sending real SMS.
         </div>
       )}
+
+      {/* Unassigned bookings ready to deploy */}
+      {unassignedRows.length > 0 && (
+        <div className="mb-6">
+          <UnassignedBookings rows={unassignedRows} />
+        </div>
+      )}
+
       <FreelancersTable rows={rows} canEdit={canEdit} />
     </PageShell>
   );

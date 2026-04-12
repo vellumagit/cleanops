@@ -1,6 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { Users } from "lucide-react";
 import { DataTable, type DataTableColumn } from "@/components/data-table";
 import {
   StatusBadge,
@@ -76,11 +78,34 @@ export function BookingsTable({
     {
       key: "assigned",
       header: "Assigned",
-      render: (r) => (
-        <span className="text-muted-foreground">
-          {r.assigned_name ?? "Unassigned"}
-        </span>
-      ),
+      render: (r) => {
+        if (r.assigned_name) {
+          return (
+            <span className="text-muted-foreground">{r.assigned_name}</span>
+          );
+        }
+        // Unassigned — show "Send to bench" button
+        const isActionable =
+          r.status !== "completed" && r.status !== "cancelled";
+        return (
+          <span className="flex items-center gap-1.5">
+            <span className="text-amber-500 text-xs font-medium">
+              Unassigned
+            </span>
+            {isActionable && canEdit && (
+              <Link
+                href={`/app/bookings/${r.id}/offer`}
+                onClick={(e) => e.stopPropagation()}
+                className="inline-flex items-center gap-1 rounded-md bg-amber-500 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-amber-600 transition-colors"
+                title="Send to freelancer bench"
+              >
+                <Users className="h-3 w-3" />
+                Bench
+              </Link>
+            )}
+          </span>
+        );
+      },
       searchValue: (r) => r.assigned_name,
     },
     {
