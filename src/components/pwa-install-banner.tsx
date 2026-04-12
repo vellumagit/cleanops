@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Download, X } from "lucide-react";
+import { Download, X, Share, SquarePlus } from "lucide-react";
 
 /**
  * PWA install banner for the field app.
@@ -11,7 +11,7 @@ import { Download, X } from "lucide-react";
  * shows a native install prompt on tap.
  *
  * On iOS Safari: shows manual instructions (iOS doesn't support the install
- * prompt API).
+ * prompt API). On iOS non-Safari: tells user to switch to Safari.
  *
  * The banner is dismissible — stores the dismissal in localStorage so it
  * doesn't nag. Shows again after 7 days.
@@ -28,6 +28,12 @@ function isIOS() {
   return /iPad|iPhone|iPod/.test(navigator.userAgent) && !("MSStream" in window);
 }
 
+function isSafari() {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent;
+  return /Safari/.test(ua) && !/Chrome|CriOS|FxiOS|EdgiOS/.test(ua);
+}
+
 function isStandalone() {
   if (typeof window === "undefined") return false;
   return (
@@ -40,6 +46,7 @@ export function PwaInstallBanner() {
   const [deferredPrompt, setDeferredPrompt] =
     useState<BeforeInstallPromptEvent | null>(null);
   const [showIOS, setShowIOS] = useState(false);
+  const [inSafari, setInSafari] = useState(false);
   const [dismissed, setDismissed] = useState(true); // default hidden
 
   useEffect(() => {
@@ -64,6 +71,7 @@ export function PwaInstallBanner() {
     // iOS — no event, detect via UA
     if (isIOS()) {
       setShowIOS(true);
+      setInSafari(isSafari());
     }
 
     return () => window.removeEventListener("beforeinstallprompt", handler);
@@ -95,7 +103,7 @@ export function PwaInstallBanner() {
   }
 
   return (
-    <div className="mx-4 mb-4 flex items-start gap-3 rounded-xl border border-primary/20 bg-primary/5 p-3">
+    <div className="mx-4 mb-4 flex items-start gap-3 rounded-xl border border-primary/20 bg-primary/5 p-4">
       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
         <Download className="h-5 w-5 text-primary" />
       </div>
@@ -104,20 +112,25 @@ export function PwaInstallBanner() {
           Install Sollos
         </p>
         {showIOS ? (
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            Tap{" "}
-            <span className="inline-flex items-center rounded bg-muted px-1 py-0.5 font-medium">
-              Share
-            </span>{" "}
-            then{" "}
-            <span className="inline-flex items-center rounded bg-muted px-1 py-0.5 font-medium">
-              Add to Home Screen
-            </span>{" "}
-            to install.
-          </p>
+          inSafari ? (
+            <div className="mt-1 text-sm text-muted-foreground">
+              Tap{" "}
+              <span className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-xs font-semibold text-foreground">
+                <Share className="h-3 w-3" />
+              </span>{" "}
+              below, then scroll down and tap{" "}
+              <span className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-xs font-semibold text-foreground">
+                <SquarePlus className="h-3 w-3" /> Add to Home Screen
+              </span>
+            </div>
+          ) : (
+            <p className="mt-1 text-sm text-muted-foreground">
+              Open this page in <strong>Safari</strong> to install on your home screen.
+            </p>
+          )
         ) : (
           <>
-            <p className="mt-0.5 text-xs text-muted-foreground">
+            <p className="mt-0.5 text-sm text-muted-foreground">
               Add to your home screen for quick access.
             </p>
             <Button
