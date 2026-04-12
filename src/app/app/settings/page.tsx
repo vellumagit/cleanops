@@ -11,6 +11,7 @@ import {
   Users,
 } from "lucide-react";
 import { PageShell } from "@/components/page-shell";
+import { PwaInstallCard } from "@/components/pwa-install-button";
 
 export const metadata = { title: "Settings" };
 
@@ -79,7 +80,9 @@ export default function SettingsPage() {
       title="Settings"
       description="Organization, members, billing, and integrations."
     >
-      <ul className="space-y-2">
+      <PwaInstallCard />
+
+      <ul className="space-y-2 mt-4">
         {SECTIONS.map((s) => {
           const Icon = s.icon;
           return (
