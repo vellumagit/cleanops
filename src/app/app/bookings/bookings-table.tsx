@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Users } from "lucide-react";
+import { Users, Repeat } from "lucide-react";
 import { DataTable, type DataTableColumn } from "@/components/data-table";
 import {
   StatusBadge,
@@ -31,6 +31,7 @@ export type BookingRow = {
   total_cents: number;
   client_name: string;
   assigned_name: string | null;
+  series_id: string | null;
 };
 
 export function BookingsTable({
@@ -53,7 +54,19 @@ export function BookingsTable({
     {
       key: "client",
       header: "Client",
-      render: (r) => <span className="font-medium">{r.client_name}</span>,
+      render: (r) => (
+        <span className="flex items-center gap-1.5">
+          <span className="font-medium">{r.client_name}</span>
+          {r.series_id && (
+            <span
+              className="inline-flex items-center gap-0.5 rounded-full bg-blue-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-blue-600 dark:text-blue-400"
+              title="Part of a recurring series"
+            >
+              <Repeat className="h-2.5 w-2.5" />
+            </span>
+          )}
+        </span>
+      ),
       searchValue: (r) => r.client_name,
     },
     {
