@@ -49,7 +49,7 @@ export default async function FieldClockPage() {
     <>
       <FieldHeader
         title="Clock"
-        description="Track your shift. Geolocation is captured at clock-in and clock-out."
+        description="Track your shift. Location is captured at clock-in and out."
       />
 
       <ClockCard
@@ -58,16 +58,16 @@ export default async function FieldClockPage() {
         openBookingLabel={openBookingLabel}
       />
 
-      <section className="mt-6">
-        <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+      <section className="mt-7">
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
           Last 7 days
         </h2>
         {!history || history.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-border bg-card px-4 py-8 text-center text-xs text-muted-foreground">
+          <div className="rounded-xl border border-dashed border-border bg-card px-5 py-10 text-center text-sm text-muted-foreground">
             No completed shifts yet this week.
           </div>
         ) : (
-          <ul className="space-y-2">
+          <ul className="space-y-2.5">
             {history.map((entry) => {
               const minutes =
                 entry.clock_out_at && entry.clock_in_at
@@ -76,18 +76,18 @@ export default async function FieldClockPage() {
               return (
                 <li
                   key={entry.id}
-                  className="flex items-center justify-between rounded-lg border border-border bg-card px-3 py-2 text-sm"
+                  className="flex items-center justify-between rounded-xl border border-border bg-card px-4 py-3"
                 >
                   <div className="min-w-0">
-                    <div className="truncate font-medium">
+                    <div className="truncate text-[15px] font-semibold">
                       {entry.booking?.client?.name ?? "Generic shift"}
                     </div>
-                    <div className="text-xs text-muted-foreground">
+                    <div className="text-sm text-muted-foreground">
                       {formatDateTime(entry.clock_in_at)}
                     </div>
                   </div>
                   <div className="shrink-0 text-right">
-                    <div className="font-medium tabular-nums">
+                    <div className="text-[15px] font-semibold tabular-nums">
                       {formatDurationMinutes(minutes)}
                     </div>
                   </div>

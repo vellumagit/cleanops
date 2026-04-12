@@ -65,46 +65,46 @@ export default async function FieldJobsPage() {
       />
 
       {jobs.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-border bg-card px-4 py-12 text-center text-sm text-muted-foreground">
+        <div className="rounded-xl border border-dashed border-border bg-card px-5 py-14 text-center text-base text-muted-foreground">
           No jobs assigned to you yet. Check back after your manager schedules
           you.
         </div>
       ) : (
-        <div className="space-y-6">
+        <div className="space-y-7">
           {Array.from(groups.entries()).map(([day, dayJobs]) => (
             <section key={day}>
-              <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
                 {day}
               </h2>
-              <ul className="space-y-2">
+              <ul className="space-y-3">
                 {dayJobs.map((job) => (
                   <li key={job.id}>
                     <Link
                       href={`/field/jobs/${job.id}`}
-                      className="flex items-center gap-3 rounded-lg border border-border bg-card p-3 transition-colors active:bg-muted"
+                      className="flex items-center gap-3 rounded-xl border border-border bg-card p-4 transition-colors active:bg-muted"
                     >
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
-                          <span className="truncate font-medium">
+                          <span className="truncate text-base font-semibold">
                             {job.client?.name ?? "—"}
                           </span>
                           <StatusBadge tone={bookingStatusTone(job.status)}>
                             {humanizeEnum(job.status)}
                           </StatusBadge>
                         </div>
-                        <div className="mt-1 text-xs text-muted-foreground">
+                        <div className="mt-1.5 text-sm text-muted-foreground">
                           {formatDateTime(job.scheduled_at)} ·{" "}
                           {formatDurationMinutes(job.duration_minutes)} ·{" "}
                           {humanizeEnum(job.service_type)}
                         </div>
                         {job.address ? (
-                          <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
-                            <MapPin className="h-3 w-3 shrink-0" />
+                          <div className="mt-1.5 flex items-center gap-1.5 text-sm text-muted-foreground">
+                            <MapPin className="h-3.5 w-3.5 shrink-0" />
                             <span className="line-clamp-1">{job.address}</span>
                           </div>
                         ) : null}
                       </div>
-                      <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground" />
                     </Link>
                   </li>
                 ))}

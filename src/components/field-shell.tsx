@@ -44,20 +44,21 @@ export function FieldShell({
   const pathname = usePathname();
 
   return (
-    <div className="flex min-h-screen flex-col bg-muted/30">
-      <header className="sticky top-0 z-20 flex items-center justify-between border-b border-border bg-card/80 px-4 py-3 backdrop-blur">
-        <div className="flex items-center gap-2">
+    <div className="flex min-h-[100dvh] flex-col bg-muted/30">
+      {/* ── Sticky header ── */}
+      <header className="sticky top-0 z-20 flex items-center justify-between border-b border-border bg-card/80 px-4 py-3 backdrop-blur supports-[padding-top:env(safe-area-inset-top)]:pt-[max(0.75rem,env(safe-area-inset-top))]">
+        <div className="flex items-center gap-2.5">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src="/sollos-logo.png"
             alt="Sollos 3"
-            className="h-8 w-8 shrink-0 rounded-lg"
+            className="h-9 w-9 shrink-0 rounded-lg"
           />
-          <div className="flex min-w-0 flex-col leading-tight">
-            <span className="truncate text-sm font-semibold">
+          <div className="flex min-w-0 flex-col leading-snug">
+            <span className="truncate text-[15px] font-semibold">
               {organizationName}
             </span>
-            <span className="truncate text-[11px] text-muted-foreground">
+            <span className="truncate text-xs text-muted-foreground">
               {userName ?? "Field crew"}
             </span>
           </div>
@@ -65,7 +66,7 @@ export function FieldShell({
         <form action="/auth/logout" method="post">
           <button
             type="submit"
-            className="rounded px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+            className="rounded-md px-3 py-1.5 text-sm text-muted-foreground hover:bg-muted hover:text-foreground active:bg-muted/80"
           >
             Sign out
           </button>
@@ -74,11 +75,13 @@ export function FieldShell({
 
       <PwaInstallBanner />
 
-      <main className="mx-auto w-full max-w-2xl flex-1 px-4 pb-28 pt-4">
+      {/* ── Main content ── */}
+      <main className="mx-auto w-full max-w-2xl flex-1 px-4 pb-24 pt-5">
         {children}
       </main>
 
-      <nav className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-card pb-[env(safe-area-inset-bottom)]">
+      {/* ── Bottom tab bar ── */}
+      <nav className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-card/95 backdrop-blur pb-[env(safe-area-inset-bottom)]">
         <ul className="mx-auto flex max-w-2xl">
           {FIELD_NAV.map((item) => {
             const active =
@@ -92,23 +95,19 @@ export function FieldShell({
                   href={item.href}
                   prefetch={false}
                   className={cn(
-                    "flex flex-col items-center gap-0.5 py-2 text-[11px] transition-colors",
+                    "flex flex-col items-center gap-1 py-2.5 text-xs font-medium transition-colors",
                     active
-                      ? "text-foreground"
-                      : "text-muted-foreground hover:text-foreground",
+                      ? "text-primary"
+                      : "text-muted-foreground active:text-foreground",
                   )}
                 >
                   <Icon
                     className={cn(
-                      "h-5 w-5",
-                      active && "text-primary",
+                      "h-6 w-6",
+                      active ? "text-primary" : "text-muted-foreground",
                     )}
                   />
-                  <span
-                    className={cn(active && "font-semibold text-foreground")}
-                  >
-                    {item.label}
-                  </span>
+                  <span>{item.label}</span>
                 </Link>
               </li>
             );
@@ -120,8 +119,7 @@ export function FieldShell({
 }
 
 /**
- * A friendly section header that mirrors PageShell but is tuned for the
- * tighter mobile field app.
+ * A friendly section header tuned for the mobile field app.
  */
 export function FieldHeader({
   title,
@@ -133,11 +131,11 @@ export function FieldHeader({
   actions?: React.ReactNode;
 }) {
   return (
-    <div className="mb-4 flex items-start justify-between gap-3">
+    <div className="mb-5 flex items-start justify-between gap-3">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
+        <h1 className="text-2xl font-bold tracking-tight">{title}</h1>
         {description ? (
-          <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
+          <p className="mt-1 text-sm text-muted-foreground">{description}</p>
         ) : null}
       </div>
       {actions ? <div className="shrink-0">{actions}</div> : null}

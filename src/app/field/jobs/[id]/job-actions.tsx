@@ -3,6 +3,7 @@
 import { useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { Play, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { startJobAction, completeJobAction } from "../actions";
 
@@ -73,22 +74,24 @@ export function JobActionButtons({
 
   if (isDone) {
     return (
-      <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-center text-sm font-medium text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-300">
+      <div className="flex items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-base font-semibold text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-300">
+        <CheckCircle2 className="h-5 w-5" />
         Job complete. Nice work.
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-3">
       {!isStarted ? (
         <Button
           type="button"
           size="lg"
-          className="h-12 text-base"
+          className="h-14 text-base font-semibold"
           onClick={handleStart}
           disabled={isPending}
         >
+          <Play className="mr-2 h-5 w-5" />
           {isPending ? "Starting…" : "Start job"}
         </Button>
       ) : null}
@@ -96,11 +99,12 @@ export function JobActionButtons({
         <Button
           type="button"
           size="lg"
-          className="h-12 text-base"
+          className="h-14 text-base font-semibold"
           variant="default"
           onClick={handleComplete}
           disabled={isPending}
         >
+          <CheckCircle2 className="mr-2 h-5 w-5" />
           {isPending ? "Completing…" : "Complete job"}
         </Button>
       ) : null}

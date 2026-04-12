@@ -2,6 +2,7 @@ import { cn } from "@/lib/utils";
 
 /**
  * Standard outer shell for any page inside the Sollos 3 ops console.
+ * Responsive: tighter padding on mobile, wider on desktop.
  */
 
 type Props = {
@@ -20,9 +21,9 @@ export function PageShell({
   className,
 }: Props) {
   return (
-    <div className={cn("mx-auto w-full max-w-6xl px-8 py-8", className)}>
-      <div className="mb-6 flex items-start justify-between gap-4">
-        <div>
+    <div className={cn("mx-auto w-full max-w-6xl px-4 py-5 sm:px-6 lg:px-8 lg:py-8", className)}>
+      <div className="mb-5 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+        <div className="min-w-0">
           <h1 className="text-xl font-semibold tracking-tight text-foreground">
             {title}
           </h1>

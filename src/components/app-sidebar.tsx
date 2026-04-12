@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -23,12 +24,15 @@ import {
   Settings,
   LogOut,
   Bell,
+  Menu,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { NotificationBell } from "@/components/notification-bell";
 
 /**
- * Sollos 3 ops-console sidebar — minimal dark surface, zinc palette.
+ * Sollos 3 ops-console sidebar — responsive: hamburger on mobile,
+ * fixed sidebar on desktop (lg+).
  */
 
 type NavItem = {
@@ -95,14 +99,38 @@ type Props = {
   unreadNotifications?: number;
 };
 
-export function AppSidebar({ organizationName, role, userName, showSetup, logoUrl, brandColor, unreadNotifications = 0 }: Props) {
+export function AppSidebar({
+  organizationName,
+  role,
+  userName,
+  showSetup,
+  logoUrl,
+  brandColor,
+  unreadNotifications = 0,
+}: Props) {
   const pathname = usePathname();
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  // Close drawer on route change
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [pathname]);
+
+  // Prevent body scroll when drawer is open
+  useEffect(() => {
+    if (mobileOpen) {
+      document.body.style.overflow = "hidden";
+      return () => {
+        document.body.style.overflow = "";
+      };
+    }
+  }, [mobileOpen]);
 
   const isActive = (href: string) =>
     href === "/app" ? pathname === "/app" : pathname.startsWith(href);
 
-  return (
-    <aside className="flex h-screen w-56 shrink-0 flex-col bg-zinc-900 text-zinc-400">
+  const sidebarContent = (
+    <>
       {/* Brand header */}
       <div className="flex items-center gap-2.5 px-4 py-4">
         {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -162,18 +190,21 @@ export function AppSidebar({ organizationName, role, userName, showSetup, logoUr
                     <Link
                       href={item.href}
                       className={cn(
-                        "flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] transition-colors",
+                        "flex items-center gap-2 rounded-md px-2.5 py-2 text-sm transition-colors lg:py-1.5 lg:text-[13px]",
                         active
                           ? "bg-zinc-800 font-medium text-zinc-100"
                           : "text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200",
                       )}
                       style={
                         active && brandColor
-                          ? { backgroundColor: `#${brandColor}22`, color: `#${brandColor}` }
+                          ? {
+                              backgroundColor: `#${brandColor}22`,
+                              color: `#${brandColor}`,
+                            }
                           : undefined
                       }
                     >
-                      <Icon className="h-3.5 w-3.5 shrink-0" />
+                      <Icon className="h-4 w-4 shrink-0 lg:h-3.5 lg:w-3.5" />
                       <span className="truncate">{item.label}</span>
                     </Link>
                   </li>
@@ -195,18 +226,21 @@ export function AppSidebar({ organizationName, role, userName, showSetup, logoUr
                 <Link
                   href={item.href}
                   className={cn(
-                    "flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] transition-colors",
+                    "flex items-center gap-2 rounded-md px-2.5 py-2 text-sm transition-colors lg:py-1.5 lg:text-[13px]",
                     active
                       ? "bg-zinc-800 font-medium text-zinc-100"
                       : "text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200",
                   )}
                   style={
                     active && brandColor
-                      ? { backgroundColor: `#${brandColor}22`, color: `#${brandColor}` }
+                      ? {
+                          backgroundColor: `#${brandColor}22`,
+                          color: `#${brandColor}`,
+                        }
                       : undefined
                   }
                 >
-                  <Icon className="h-3.5 w-3.5 shrink-0" />
+                  <Icon className="h-4 w-4 shrink-0 lg:h-3.5 lg:w-3.5" />
                   <span className="truncate">{item.label}</span>
                 </Link>
               </li>
@@ -253,6 +287,70 @@ export function AppSidebar({ organizationName, role, userName, showSetup, logoUr
           </a>
         </p>
       </div>
-    </aside>
+    </>
+  );
+
+  return (
+    <>
+      {/* ── Mobile top bar (visible below lg) ── */}
+      <div className="fixed inset-x-0 top-0 z-30 flex items-center justify-between border-b border-border bg-zinc-900 px-4 py-3 lg:hidden">
+        <div className="flex items-center gap-2.5">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={logoUrl || "/sollos-logo.png"}
+            alt={organizationName}
+            className={cn(
+              "h-7 w-7 shrink-0 rounded-md object-contain",
+              !logoUrl && "[filter:brightness(0)_invert(1)]",
+            )}
+          />
+          <span className="truncate text-sm font-semibold text-zinc-100">
+            {logoUrl ? organizationName : "Sollos 3"}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <NotificationBell count={unreadNotifications} />
+          <button
+            type="button"
+            onClick={() => setMobileOpen(true)}
+            className="rounded-md p-2 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
+            aria-label="Open menu"
+          >
+            <Menu className="h-6 w-6" />
+          </button>
+        </div>
+      </div>
+
+      {/* ── Mobile overlay + drawer ── */}
+      {mobileOpen && (
+        <>
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 z-40 bg-black/60 lg:hidden"
+            onClick={() => setMobileOpen(false)}
+          />
+          {/* Drawer */}
+          <aside className="fixed inset-y-0 left-0 z-50 flex w-72 flex-col bg-zinc-900 text-zinc-400 shadow-2xl lg:hidden">
+            {/* Close button */}
+            <div className="flex justify-end px-3 pt-3">
+              <button
+                type="button"
+                onClick={() => setMobileOpen(false)}
+                className="rounded-md p-2 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
+                aria-label="Close menu"
+              >
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+            {sidebarContent}
+          </aside>
+        </>
+      )}
+
+      {/* ── Desktop sidebar (lg+) ── */}
+      <aside className="hidden h-screen w-56 shrink-0 flex-col bg-zinc-900 text-zinc-400 lg:flex">
+        {sidebarContent}
+      </aside>
+    </>
   );
 }

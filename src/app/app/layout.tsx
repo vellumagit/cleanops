@@ -40,7 +40,7 @@ export default async function AppLayout({
     (membership.role === "owner" || membership.role === "admin");
 
   return (
-    <div className="flex h-screen">
+    <div className="flex min-h-[100dvh] lg:h-screen">
       <AppSidebar
         organizationName={membership.organization_name}
         role={membership.role}
@@ -50,7 +50,8 @@ export default async function AppLayout({
         brandColor={org?.brand_color ?? null}
         unreadNotifications={unreadNotifications ?? 0}
       />
-      <div className="flex min-w-0 flex-1 flex-col overflow-y-auto">
+      {/* pt-14 on mobile for the fixed top bar, lg:pt-0 when sidebar is visible */}
+      <div className="flex min-w-0 flex-1 flex-col overflow-y-auto pt-14 lg:pt-0">
         {children}
       </div>
     </div>

@@ -21,16 +21,16 @@ export default async function FieldProfilePage() {
         description="Keep your contact info up to date so your team can reach you."
       />
 
-      <div className="rounded-lg border border-border bg-card p-4">
-        <div className="mb-4 flex items-center gap-3">
-          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted text-lg font-semibold">
+      <div className="rounded-xl border border-border bg-card p-5">
+        <div className="mb-5 flex items-center gap-4">
+          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted text-xl font-bold">
             {(profile?.full_name ?? "U").slice(0, 1).toUpperCase()}
           </div>
           <div className="min-w-0">
-            <div className="truncate text-sm font-semibold">
+            <div className="truncate text-lg font-bold">
               {profile?.full_name ?? "Unnamed crew"}
             </div>
-            <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+            <div className="text-sm uppercase tracking-wide text-muted-foreground">
               {membership.role} · {membership.organization_name}
             </div>
           </div>
@@ -43,10 +43,6 @@ export default async function FieldProfilePage() {
           }}
         />
       </div>
-
-      <p className="mt-3 text-center text-[11px] text-muted-foreground">
-        Avatar uploads land in a follow-up patch.
-      </p>
     </>
   );
 }

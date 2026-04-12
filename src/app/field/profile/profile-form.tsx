@@ -25,7 +25,7 @@ export function ProfileForm({
   }, [state]);
 
   return (
-    <form action={formAction} className="space-y-4">
+    <form action={formAction} className="space-y-5">
       <FormError message={state.errors?._form} />
 
       <FormField
@@ -38,6 +38,7 @@ export function ProfileForm({
           id="full_name"
           name="full_name"
           required
+          className="h-12 text-base"
           defaultValue={v.full_name ?? defaults.full_name}
         />
       </FormField>
@@ -48,12 +49,13 @@ export function ProfileForm({
           name="phone"
           type="tel"
           inputMode="tel"
+          className="h-12 text-base"
           defaultValue={v.phone ?? defaults.phone}
         />
       </FormField>
 
-      <div className="pt-1">
-        <SubmitButton pendingLabel="Saving…" className="h-11 w-full text-base">
+      <div className="pt-2">
+        <SubmitButton pendingLabel="Saving…" className="h-14 w-full text-base font-semibold">
           Save changes
         </SubmitButton>
       </div>

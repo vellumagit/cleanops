@@ -3,7 +3,7 @@
 import { useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Clock as ClockIcon, MapPin } from "lucide-react";
+import { Clock as ClockIcon, LogIn, LogOut, MapPin } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { clockInAction, clockOutAction } from "./actions";
 
@@ -69,23 +69,23 @@ export function ClockCard({
   }
 
   return (
-    <div className="rounded-lg border border-border bg-card p-5">
-      <div className="flex items-center gap-3">
+    <div className="rounded-xl border border-border bg-card p-5">
+      <div className="flex items-center gap-4">
         <div
           className={
             isClockedIn
-              ? "flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
-              : "flex h-12 w-12 items-center justify-center rounded-full bg-muted text-muted-foreground"
+              ? "flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
+              : "flex h-14 w-14 items-center justify-center rounded-full bg-muted text-muted-foreground"
           }
         >
-          <ClockIcon className="h-6 w-6" />
+          <ClockIcon className="h-7 w-7" />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold">
+          <p className="text-lg font-bold">
             {isClockedIn ? "On the clock" : "Off the clock"}
           </p>
           {isClockedIn && openSinceIso ? (
-            <p className="text-xs text-muted-foreground">
+            <p className="text-sm text-muted-foreground">
               Since{" "}
               {new Date(openSinceIso).toLocaleTimeString("en-US", {
                 hour: "numeric",
@@ -94,7 +94,7 @@ export function ClockCard({
               {openBookingLabel ? ` · ${openBookingLabel}` : ""}
             </p>
           ) : (
-            <p className="text-xs text-muted-foreground">
+            <p className="text-sm text-muted-foreground">
               Tap below to start your shift.
             </p>
           )}
@@ -109,8 +109,9 @@ export function ClockCard({
             variant="destructive"
             onClick={handleOut}
             disabled={isPending}
-            className="h-12 w-full text-base"
+            className="h-14 w-full text-base font-semibold"
           >
+            <LogOut className="mr-2 h-5 w-5" />
             {isPending ? "Clocking out…" : "Clock out"}
           </Button>
         ) : (
@@ -119,13 +120,14 @@ export function ClockCard({
             size="lg"
             onClick={handleIn}
             disabled={isPending}
-            className="h-12 w-full text-base"
+            className="h-14 w-full text-base font-semibold"
           >
+            <LogIn className="mr-2 h-5 w-5" />
             {isPending ? "Clocking in…" : "Clock in"}
           </Button>
         )}
-        <p className="mt-2 flex items-center justify-center gap-1 text-[11px] text-muted-foreground">
-          <MapPin className="h-3 w-3" />
+        <p className="mt-3 flex items-center justify-center gap-1.5 text-xs text-muted-foreground">
+          <MapPin className="h-3.5 w-3.5" />
           We&apos;ll record your location for payroll verification.
         </p>
       </div>
