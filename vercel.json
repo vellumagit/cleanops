@@ -3,6 +3,14 @@
     {
       "path": "/api/cron/unfilled-shifts",
       "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/cron/upcoming-jobs",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/stale-estimates",
+      "schedule": "0 9 * * *"
     }
   ]
 }

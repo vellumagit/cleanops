@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
 import { EstimateSchema } from "@/lib/validators/estimates";
+import { autoBookingOnEstimateApproval } from "@/lib/automations";
 
 type Field = keyof typeof EstimateSchema.shape;
 export type EstimateFormState = ActionState<Field>;
@@ -92,8 +93,15 @@ export async function updateEstimateAction(
     .eq("id", id);
 
   if (error) return { errors: { _form: error.message }, values: raw };
+
+  // If the estimate was just approved, auto-create a pending booking
+  if (parsed.data.status === "approved") {
+    autoBookingOnEstimateApproval(id).catch(() => {});
+  }
+
   revalidatePath("/app/estimates");
   revalidatePath(`/app/estimates/${id}/edit`);
+  revalidatePath("/app/bookings");
   revalidatePath("/app");
   redirect("/app/estimates");
 }

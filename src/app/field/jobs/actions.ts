@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { getActionContext } from "@/lib/actions";
+import { autoInvoiceOnJobComplete } from "@/lib/automations";
 
 export type JobActionResult = { ok: true } | { ok: false; error: string };
 
@@ -122,8 +123,12 @@ export async function completeJobAction(
     .is("clock_out_at", null);
   if (closeEntryError) return { ok: false, error: closeEntryError.message };
 
+  // Fire-and-forget: auto-generate a draft invoice for the completed job
+  autoInvoiceOnJobComplete(bookingId).catch(() => {});
+
   revalidatePath("/field/jobs");
   revalidatePath(`/field/jobs/${bookingId}`);
   revalidatePath("/field/clock");
+  revalidatePath("/app/invoices");
   return { ok: true };
 }
