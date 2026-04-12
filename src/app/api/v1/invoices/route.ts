@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { authenticateApiKey } from "@/lib/api-key-auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { dispatchWebhookEvent } from "@/lib/webhooks";
+import { findOrCreateClient } from "@/lib/find-or-create-client";
 
 /**
  * GET /api/v1/invoices
@@ -60,25 +61,43 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { client_id, amount_cents, due_date } = body as {
-    client_id?: string;
-    amount_cents?: number;
-    due_date?: string;
-  };
+  const admin = createSupabaseAdminClient();
 
-  if (!client_id) return NextResponse.json({ error: "client_id is required" }, { status: 400 });
+  // ── Resolve client_id ─────────────────────────────────────
+  let clientId = body.client_id as string | undefined;
+  if (!clientId) {
+    const clientName = body.client_name as string | undefined;
+    if (!clientName || typeof clientName !== "string" || !clientName.trim()) {
+      return NextResponse.json(
+        { error: "Provide either client_id (UUID) or client_name" },
+        { status: 400 },
+      );
+    }
+    clientId = (await findOrCreateClient(admin, auth.organizationId, {
+      name: clientName.trim(),
+      email: (body.client_email as string)?.trim(),
+      phone: (body.client_phone as string)?.trim(),
+      address: (body.client_address as string)?.trim(),
+    })) ?? undefined;
+    if (!clientId) {
+      return NextResponse.json({ error: "Failed to resolve client" }, { status: 500 });
+    }
+  }
+
+  const amount_cents = body.amount_cents as number | undefined;
+  const due_date = body.due_date as string | undefined;
+
   if (amount_cents == null) return NextResponse.json({ error: "amount_cents is required" }, { status: 400 });
   if (!due_date) return NextResponse.json({ error: "due_date is required" }, { status: 400 });
 
   const status = (body.status as string) ?? "draft";
   const now = new Date().toISOString();
 
-  const admin = createSupabaseAdminClient();
   const { data, error } = await admin
     .from("invoices" as never)
     .insert({
       organization_id: auth.organizationId,
-      client_id,
+      client_id: clientId,
       amount_cents,
       due_date,
       status,

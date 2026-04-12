@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { authenticateApiKey } from "@/lib/api-key-auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { dispatchWebhookEvent } from "@/lib/webhooks";
+import { findOrCreateClient } from "@/lib/find-or-create-client";
 
 /**
  * GET /api/v1/bookings — List bookings for the authenticated org.
@@ -60,7 +61,13 @@ export async function GET(request: NextRequest) {
 /**
  * POST /api/v1/bookings — Create a booking.
  *
- * Body: { client_id, scheduled_at, duration_minutes, service_type?,
+ * Accepts EITHER:
+ *   - `client_id` (UUID) — use an existing client directly
+ *   - `client_name` + optional `client_email` / `client_phone` / `client_address`
+ *     → looks up by email first, then name, creates if not found
+ *
+ * Body: { client_id?, client_name?, client_email?, client_phone?,
+ *         client_address?, scheduled_at, duration_minutes, service_type?,
  *         status?, total_cents?, hourly_rate_cents?, address?, notes?,
  *         assigned_to?, package_id? }
  */
@@ -75,22 +82,42 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const { client_id, scheduled_at, duration_minutes } = body as {
-    client_id?: string;
-    scheduled_at?: string;
-    duration_minutes?: number;
-  };
+  const admin = createSupabaseAdminClient();
 
-  if (!client_id) return NextResponse.json({ error: "client_id is required" }, { status: 400 });
+  // ── Resolve client_id ─────────────────────────────────────
+  let clientId = body.client_id as string | undefined;
+  const clientName = body.client_name as string | undefined;
+  const clientEmail = body.client_email as string | undefined;
+
+  if (!clientId) {
+    if (!clientName || typeof clientName !== "string" || !clientName.trim()) {
+      return NextResponse.json(
+        { error: "Provide either client_id (UUID) or client_name" },
+        { status: 400 },
+      );
+    }
+    clientId = (await findOrCreateClient(admin, auth.organizationId, {
+      name: clientName.trim(),
+      email: clientEmail?.trim(),
+      phone: (body.client_phone as string)?.trim(),
+      address: (body.client_address as string)?.trim(),
+    })) ?? undefined;
+    if (!clientId) {
+      return NextResponse.json({ error: "Failed to resolve client" }, { status: 500 });
+    }
+  }
+
+  const scheduled_at = body.scheduled_at as string | undefined;
+  const duration_minutes = body.duration_minutes as number | undefined;
+
   if (!scheduled_at) return NextResponse.json({ error: "scheduled_at is required" }, { status: 400 });
   if (!duration_minutes) return NextResponse.json({ error: "duration_minutes is required" }, { status: 400 });
 
-  const admin = createSupabaseAdminClient();
   const { data, error } = await admin
     .from("bookings" as never)
     .insert({
       organization_id: auth.organizationId,
-      client_id,
+      client_id: clientId,
       scheduled_at,
       duration_minutes,
       service_type: (body.service_type as string) ?? "standard",
