@@ -16,7 +16,7 @@
  * in .env.local (e.g. "America/Chicago", "Europe/London").
  * Falls back to America/New_York — most Sollos 3 early customers are US-East.
  */
-const DEFAULT_TZ =
+export const DEFAULT_TZ =
   (typeof process !== "undefined"
     ? process.env?.NEXT_PUBLIC_DEFAULT_TIMEZONE
     : undefined) ?? "America/New_York";
@@ -33,7 +33,11 @@ export function formatCurrencyCents(cents: number | null | undefined): string {
 /** Format an ISO timestamp as a short date, e.g. "Apr 7, 2026". */
 export function formatDate(iso: string | null | undefined): string {
   if (!iso) return "—";
-  const d = new Date(iso);
+  // Date-only strings ("2026-04-13") are UTC midnight — applying a timezone
+  // offset rolls them back by a day. Append noon UTC so the date stays stable
+  // across all timezones from UTC-12 to UTC+14.
+  const safeIso = /^\d{4}-\d{2}-\d{2}$/.test(iso) ? `${iso}T12:00:00Z` : iso;
+  const d = new Date(safeIso);
   if (Number.isNaN(d.getTime())) return "—";
   return d.toLocaleDateString("en-US", {
     month: "short",
@@ -46,7 +50,9 @@ export function formatDate(iso: string | null | undefined): string {
 /** Format an ISO timestamp as a date + time, e.g. "Apr 7, 2026 · 9:30 AM". */
 export function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return "—";
-  const d = new Date(iso);
+  // Date-only strings shouldn't reach here, but handle them gracefully.
+  const safeIso = /^\d{4}-\d{2}-\d{2}$/.test(iso) ? `${iso}T12:00:00Z` : iso;
+  const d = new Date(safeIso);
   if (Number.isNaN(d.getTime())) return "—";
   return `${d.toLocaleDateString("en-US", {
     month: "short",
