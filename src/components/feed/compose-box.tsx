@@ -72,7 +72,7 @@ export function ComposeBox({ authorName }: { authorName: string }) {
             rows={3}
             maxLength={5000}
             disabled={isPending}
-            className="w-full resize-none rounded-lg border-0 bg-transparent p-0 text-[15px] placeholder:text-muted-foreground focus:outline-none focus:ring-0 disabled:opacity-50"
+            className="w-full resize-none rounded-lg border-0 bg-transparent p-0 text-base placeholder:text-muted-foreground focus:outline-none focus:ring-0 disabled:opacity-50"
             onKeyDown={(e) => {
               if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                 e.preventDefault();

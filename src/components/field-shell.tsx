@@ -91,7 +91,7 @@ export function FieldShell({
       <PwaInstallBanner />
 
       {/* ── Main content ── */}
-      <main className="mx-auto w-full max-w-2xl flex-1 px-4 pb-24 pt-5">
+      <main className="mx-auto w-full max-w-2xl flex-1 px-4 pb-28 pt-5">
         {children}
       </main>
 

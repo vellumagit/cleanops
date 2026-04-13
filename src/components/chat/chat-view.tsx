@@ -359,9 +359,15 @@ export function ChatView({
                       handleSend(e);
                     }
                   }}
+                  onFocus={(e) => {
+                    // On mobile, scroll the input into view after the keyboard opens
+                    setTimeout(() => {
+                      e.target.scrollIntoView({ behavior: "smooth", block: "center" });
+                    }, 300);
+                  }}
                   placeholder="Type a message…"
                   rows={1}
-                  className="flex max-h-32 min-h-9 flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
+                  className="flex max-h-32 min-h-9 flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-base shadow-xs outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
                 />
                 <Button
                   type="submit"
