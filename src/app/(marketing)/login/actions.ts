@@ -47,19 +47,31 @@ export async function loginAction(
     redirect(next);
   }
 
-  // Otherwise, look up the user's role and redirect accordingly
-  const { data: membership } = await supabase
+  // Otherwise, look up the user's role and redirect accordingly.
+  // Prefer the highest-privilege membership so an owner who is also
+  // listed as an employee in another org still lands on the dashboard.
+  const { data: memberships } = await supabase
     .from("memberships")
     .select("role")
     .eq("status", "active")
     .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .limit(10);
 
-  // Employees go to the field app; everyone else to the admin console
-  if (membership?.role === "employee") {
+  const roles = (memberships ?? []).map((m) => m.role);
+  const hasAdminAccess =
+    roles.includes("owner") ||
+    roles.includes("admin") ||
+    roles.includes("manager");
+
+  if (hasAdminAccess) {
+    redirect("/app");
+  }
+
+  // Pure employee — send to the field app
+  if (roles.length > 0) {
     redirect("/field");
   }
 
+  // No membership at all — send to onboarding
   redirect("/app");
 }

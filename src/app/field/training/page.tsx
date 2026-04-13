@@ -27,7 +27,8 @@ export default async function FieldTrainingPage() {
       `,
     )
     .eq("employee_id", membership.id)
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    .limit(100);
 
   if (error) throw error;
 

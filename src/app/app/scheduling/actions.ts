@@ -66,7 +66,8 @@ export async function rescheduleBookingAction(
       .eq("assigned_to", assignedTo)
       .gte("scheduled_at", dayStart.toISOString())
       .lt("scheduled_at", dayEnd.toISOString())
-      .neq("id", id);
+      .neq("id", id)
+      .limit(50);
     if (conflictError) return { ok: false, error: conflictError.message };
 
     const overlap = (sameDay ?? []).find((other) => {

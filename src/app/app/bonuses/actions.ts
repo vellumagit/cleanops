@@ -48,7 +48,8 @@ export async function computeBonusesAction(): Promise<ComputeResult> {
     .select("employee_id, rating, submitted_at")
     .eq("organization_id", membership.organization_id)
     .gte("submitted_at", periodStartIso)
-    .not("employee_id", "is", null);
+    .not("employee_id", "is", null)
+    .limit(5000);
 
   if (reviewsErr) return { ok: false, error: reviewsErr.message };
 
@@ -173,7 +174,8 @@ export async function computeEfficiencyBonusesAction(): Promise<ComputeResult> {
     .eq("organization_id" as never, membership.organization_id as never)
     .eq("status", "completed")
     .gte("scheduled_at", periodStartIso)
-    .not("assigned_to", "is", null);
+    .not("assigned_to", "is", null)
+    .limit(5000);
 
   if (bookingsErr) return { ok: false, error: bookingsErr.message };
   if (!bookings || bookings.length === 0) {
@@ -188,7 +190,8 @@ export async function computeEfficiencyBonusesAction(): Promise<ComputeResult> {
     .select("booking_id, employee_id, clock_in_at, clock_out_at")
     .eq("organization_id", membership.organization_id)
     .in("booking_id", bookingIds)
-    .not("clock_out_at", "is", null);
+    .not("clock_out_at", "is", null)
+    .limit(10000);
 
   if (teErr) return { ok: false, error: teErr.message };
 

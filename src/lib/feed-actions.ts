@@ -31,11 +31,17 @@ export async function createFeedPostAction(
       return { ok: false, error: "Image must be under 5MB." };
     }
 
-    const ext = imageFile.name.split(".").pop()?.toLowerCase() ?? "jpg";
-    const allowed = ["jpg", "jpeg", "png", "gif", "webp"];
-    if (!allowed.includes(ext)) {
+    // Validate by MIME type (server-side) — don't trust the extension alone
+    const allowedTypes = [
+      "image/jpeg",
+      "image/png",
+      "image/gif",
+      "image/webp",
+    ];
+    if (!allowedTypes.includes(imageFile.type)) {
       return { ok: false, error: "Only JPG, PNG, GIF, and WebP images allowed." };
     }
+    const ext = imageFile.name.split(".").pop()?.toLowerCase() ?? "jpg";
 
     const path = `${membership.organization_id}/feed/${Date.now()}.${ext}`;
     const { error: uploadErr } = await supabase.storage

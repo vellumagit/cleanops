@@ -18,7 +18,8 @@ export default async function ClientsPage() {
     .select(
       "id, name, email, phone, address, balance_cents, preferred_contact, created_at",
     )
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    .limit(500);
 
   if (error) throw error;
 

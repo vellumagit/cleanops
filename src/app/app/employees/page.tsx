@@ -26,7 +26,8 @@ export default async function EmployeesPage() {
         profile:profiles ( full_name, phone )
       `,
     )
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    .limit(500);
 
   if (error) throw error;
 
@@ -48,7 +49,8 @@ export default async function EmployeesPage() {
       .select("id, email, role, token, created_at, expires_at, accepted_at")
       .eq("organization_id", membership.organization_id)
       .is("accepted_at", null)
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false })
+      .limit(100);
 
     invitations = (inviteData ?? []).map((inv) => ({
       id: inv.id,

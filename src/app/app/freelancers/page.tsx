@@ -22,7 +22,8 @@ export default async function FreelancersPage() {
         .select(
           "id, full_name, phone, email, active, last_offered_at, last_accepted_at",
         )
-        .order("created_at", { ascending: false }),
+        .order("created_at", { ascending: false })
+        .limit(500),
       supabase
         .from("bookings")
         .select(

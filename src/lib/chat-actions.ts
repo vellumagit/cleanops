@@ -118,7 +118,8 @@ export async function createDmThreadAction(
   const { data: myThreads } = await supabase
     .from("chat_thread_members")
     .select("thread_id, thread:chat_threads ( id, kind )")
-    .eq("membership_id", membership.id);
+    .eq("membership_id", membership.id)
+    .limit(500);
 
   const myDmThreadIds = (myThreads ?? [])
     .filter((m) => m.thread?.kind === "dm")

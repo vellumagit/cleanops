@@ -2,7 +2,7 @@
 
 import { useActionState } from "react";
 import Link from "next/link";
-import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import {
@@ -62,10 +62,9 @@ export function ResetPasswordForm() {
 
       <div className="space-y-1.5">
         <Label htmlFor="password">New password</Label>
-        <Input
+        <PasswordInput
           id="password"
           name="password"
-          type="password"
           autoComplete="new-password"
           required
           minLength={8}
@@ -78,10 +77,9 @@ export function ResetPasswordForm() {
 
       <div className="space-y-1.5">
         <Label htmlFor="confirm_password">Confirm password</Label>
-        <Input
+        <PasswordInput
           id="confirm_password"
           name="confirm_password"
-          type="password"
           autoComplete="new-password"
           required
           minLength={8}

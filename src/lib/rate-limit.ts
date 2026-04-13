@@ -1,21 +1,45 @@
 /**
- * Simple in-memory sliding-window rate limiter.
+ * Sliding-window rate limiter backed by Upstash Redis.
  *
- * This is fine for a single Vercel serverless instance. In production with
- * many concurrent functions, you'd swap this for Upstash Redis — but for
- * the current traffic level this prevents abuse without adding a dependency.
- *
- * Each key (typically org ID) gets a window of `windowMs` milliseconds and
- * is allowed `maxRequests` in that window.
+ * Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN in your Vercel
+ * environment to enable distributed rate limiting across all serverless
+ * instances.  If those vars are missing the limiter falls back to a
+ * per-instance in-memory map — still useful for local dev.
  */
 
 import "server-only";
 
-type Entry = { count: number; resetAt: number };
+import { Ratelimit } from "@upstash/ratelimit";
+import { Redis } from "@upstash/redis";
 
+/* ─── Redis-backed limiter (production) ─────────────────────── */
+
+let redisLimiter: Ratelimit | null = null;
+
+function getRedisLimiter(): Ratelimit | null {
+  if (redisLimiter) return redisLimiter;
+
+  const url = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+
+  if (!url || !token) return null;
+
+  redisLimiter = new Ratelimit({
+    redis: new Redis({ url, token }),
+    // 120 requests per 60-second sliding window, per key
+    limiter: Ratelimit.slidingWindow(120, "60 s"),
+    analytics: true,
+    prefix: "cleanops:rl",
+  });
+
+  return redisLimiter;
+}
+
+/* ─── In-memory fallback (dev / no Redis configured) ────────── */
+
+type Entry = { count: number; resetAt: number };
 const store = new Map<string, Entry>();
 
-// Clean up stale entries every 60 seconds so memory doesn't grow unbounded
 const CLEANUP_INTERVAL = 60_000;
 let lastCleanup = Date.now();
 
@@ -28,18 +52,12 @@ function maybeCleanup() {
   }
 }
 
-/**
- * Check whether a request should be allowed.
- *
- * @returns `{ allowed: true }` or `{ allowed: false, retryAfterSeconds }`
- */
-export function checkRateLimit(
+function memoryLimit(
   key: string,
-  maxRequests = 120,
-  windowMs = 60_000,
+  maxRequests: number,
+  windowMs: number,
 ): { allowed: true } | { allowed: false; retryAfterSeconds: number } {
   maybeCleanup();
-
   const now = Date.now();
   let entry = store.get(key);
 
@@ -56,4 +74,35 @@ export function checkRateLimit(
   }
 
   return { allowed: true };
+}
+
+/* ─── Public API ────────────────────────────────────────────── */
+
+/**
+ * Check whether a request should be allowed.
+ *
+ * @returns `{ allowed: true }` or `{ allowed: false, retryAfterSeconds }`
+ */
+export async function checkRateLimit(
+  key: string,
+  maxRequests = 120,
+  windowMs = 60_000,
+): Promise<{ allowed: true } | { allowed: false; retryAfterSeconds: number }> {
+  const redis = getRedisLimiter();
+
+  if (redis) {
+    try {
+      const result = await redis.limit(key);
+      if (result.success) return { allowed: true };
+      const retryAfterSeconds = Math.ceil(
+        Math.max(result.reset - Date.now(), 1000) / 1000,
+      );
+      return { allowed: false, retryAfterSeconds };
+    } catch (err) {
+      // Redis is down — fall through to in-memory so the API stays up
+      console.warn("[rate-limit] Redis error, falling back to memory:", err);
+    }
+  }
+
+  return memoryLimit(key, maxRequests, windowMs);
 }

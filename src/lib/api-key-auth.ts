@@ -95,7 +95,7 @@ export async function authenticateApiKey(
   }
 
   // 3. Rate limit by org
-  const limit = checkRateLimit(`api:${row.organization_id}`);
+  const limit = await checkRateLimit(`api:${row.organization_id}`);
   if (!limit.allowed) {
     return {
       ok: false,

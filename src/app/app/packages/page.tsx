@@ -18,7 +18,8 @@ export default async function PackagesPage() {
     .select(
       "id, name, description, duration_minutes, price_cents, is_active, included",
     )
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    .limit(200);
 
   if (error) throw error;
 

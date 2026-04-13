@@ -102,7 +102,8 @@ export async function notifyUpcomingJobs() {
       .from("notifications" as never)
       .select("href")
       .eq("type" as never, "general" as never)
-      .gte("created_at" as never, cutoff as never)) as unknown as {
+      .gte("created_at" as never, cutoff as never)
+      .limit(500)) as unknown as {
       data: Array<{ href: string | null }> | null;
     };
 
@@ -178,7 +179,8 @@ export async function autoAssignTraining(
     const { data: existing } = await db
       .from("training_assignments")
       .select("module_id")
-      .eq("employee_id", membershipId);
+      .eq("employee_id", membershipId)
+      .limit(500);
 
     const assignedIds = new Set((existing ?? []).map((a) => a.module_id));
     const toAssign = modules.filter((m) => !assignedIds.has(m.id));
@@ -302,7 +304,8 @@ export async function alertStaleEstimates() {
       .select("href")
       .eq("type" as never, "general" as never)
       .gte("created_at" as never, cutoff.toISOString() as never)
-      .ilike("title" as never, "%stale estimate%" as never)) as unknown as {
+      .ilike("title" as never, "%stale estimate%" as never)
+      .limit(500)) as unknown as {
       data: Array<{ href: string | null }> | null;
     };
 

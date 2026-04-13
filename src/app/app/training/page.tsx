@@ -24,7 +24,8 @@ export default async function TrainingPage() {
         assignments:training_assignments ( id, completed_at )
       ` as never,
     )
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    .limit(200);
 
   if (error) throw error;
 

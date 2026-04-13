@@ -26,7 +26,8 @@ export default async function InventoryPage() {
         assigned:memberships ( profile:profiles ( full_name ) )
       `,
     )
-    .order("name", { ascending: true });
+    .order("name", { ascending: true })
+    .limit(500);
 
   if (error) throw error;
 
