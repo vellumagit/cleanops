@@ -34,6 +34,8 @@ import { NotificationBell } from "@/components/notification-bell";
 /**
  * Sollos 3 ops-console sidebar — responsive: hamburger on mobile,
  * fixed sidebar on desktop (lg+).
+ *
+ * Now with per-section colour coding and per-tab notification badges.
  */
 
 type NavItem = {
@@ -47,15 +49,23 @@ type NavItem = {
 type NavSection = {
   label: string;
   items: NavItem[];
+  /** Accent colour for this section's icons */
+  accent: string;
+  /** Active tab background tint */
+  activeBg: string;
 };
 
 const NAV_SECTIONS: NavSection[] = [
   {
     label: "Overview",
+    accent: "text-zinc-300",
+    activeBg: "bg-zinc-800",
     items: [{ href: "/app", label: "Dashboard", icon: LayoutDashboard }],
   },
   {
     label: "Operations",
+    accent: "text-sky-400",
+    activeBg: "bg-sky-500/10",
     items: [
       { href: "/app/bookings", label: "Bookings", icon: CalendarCheck },
       { href: "/app/calendar", label: "Calendar", icon: CalendarDays },
@@ -68,6 +78,8 @@ const NAV_SECTIONS: NavSection[] = [
   },
   {
     label: "People",
+    accent: "text-violet-400",
+    activeBg: "bg-violet-500/10",
     items: [
       { href: "/app/clients", label: "Clients", icon: Users, roles: ["owner", "admin", "manager"] },
       { href: "/app/employees", label: "Employees", icon: UserRound, roles: ["owner", "admin"] },
@@ -79,10 +91,14 @@ const NAV_SECTIONS: NavSection[] = [
   },
   {
     label: "Money",
+    accent: "text-emerald-400",
+    activeBg: "bg-emerald-500/10",
     items: [{ href: "/app/invoices", label: "Invoices", icon: Receipt, roles: ["owner", "admin", "manager"] }],
   },
   {
     label: "Comms",
+    accent: "text-amber-400",
+    activeBg: "bg-amber-500/10",
     items: [
       { href: "/app/feed", label: "Feed", icon: Rss },
       { href: "/app/chat", label: "Chat", icon: MessageSquare },
@@ -95,6 +111,15 @@ const FOOTER_NAV: NavItem[] = [
   { href: "/app/settings", label: "Settings", icon: Settings, roles: ["owner", "admin"] },
 ];
 
+/** Badge labels for specific tabs */
+const BADGE_LABELS: Record<string, string> = {
+  "/app/bookings": "today",
+  "/app/invoices": "overdue",
+  "/app/estimates": "pending",
+  "/app/chat": "new",
+  "/app/reviews": "this week",
+};
+
 type Props = {
   organizationName: string;
   role: string;
@@ -103,6 +128,8 @@ type Props = {
   logoUrl?: string | null;
   brandColor?: string | null;
   unreadNotifications?: number;
+  /** Per-tab badge counts, keyed by href (e.g. "/app/bookings": 3) */
+  tabBadges?: Record<string, number>;
 };
 
 export function AppSidebar({
@@ -113,6 +140,7 @@ export function AppSidebar({
   logoUrl,
   brandColor,
   unreadNotifications = 0,
+  tabBadges = {},
 }: Props) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -167,26 +195,49 @@ export function AppSidebar({
         />
       )}
 
-      {/* Get started — only visible during onboarding */}
+      {/* Get started — vibrant gradient banner during onboarding */}
       {showSetup && (
-        <div className="px-3 pb-2">
+        <div className="px-3 pt-3 pb-1">
           <Link
             href="/app/setup"
             className={cn(
-              "flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] transition-colors",
+              "group relative flex items-center gap-2.5 overflow-hidden rounded-lg px-3 py-2.5 text-[13px] font-medium transition-all",
               pathname === "/app/setup"
-                ? "bg-zinc-800 font-medium text-zinc-100"
-                : "text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200",
+                ? "bg-gradient-to-r from-indigo-500 to-violet-500 text-white shadow-lg shadow-indigo-500/25"
+                : "bg-gradient-to-r from-indigo-500/20 to-violet-500/20 text-indigo-300 hover:from-indigo-500/30 hover:to-violet-500/30 hover:text-indigo-200",
             )}
           >
-            <Rocket className="h-3.5 w-3.5 shrink-0" />
-            <span className="truncate">Get started</span>
+            <div
+              className={cn(
+                "flex h-6 w-6 items-center justify-center rounded-md",
+                pathname === "/app/setup"
+                  ? "bg-white/20"
+                  : "bg-indigo-500/30",
+              )}
+            >
+              <Rocket className="h-3.5 w-3.5" />
+            </div>
+            <div className="flex-1">
+              <span className="block">Get started</span>
+              <span
+                className={cn(
+                  "block text-[10px] font-normal",
+                  pathname === "/app/setup"
+                    ? "text-white/70"
+                    : "text-indigo-400/70",
+                )}
+              >
+                Set up your workspace
+              </span>
+            </div>
+            {/* Animated sparkle */}
+            <div className="absolute -right-1 -top-1 h-8 w-8 rounded-full bg-white/5 blur-md transition-opacity group-hover:opacity-100 opacity-0" />
           </Link>
         </div>
       )}
 
       {/* Divider */}
-      <div className="mx-3 border-t border-zinc-800" />
+      <div className="mx-3 mt-2 border-t border-zinc-800/80" />
 
       {/* Sections */}
       <nav className="flex-1 overflow-y-auto px-3 py-3">
@@ -196,41 +247,77 @@ export function AppSidebar({
           );
           if (visibleItems.length === 0) return null;
           return (
-          <div key={section.label} className="mb-4 last:mb-0">
-            <p className="mb-1 px-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-zinc-600">
-              {section.label}
-            </p>
-            <ul className="space-y-px">
-              {visibleItems.map((item) => {
-                const active = isActive(item.href);
-                const Icon = item.icon;
-                return (
-                  <li key={item.href}>
-                    <Link
-                      href={item.href}
-                      className={cn(
-                        "flex items-center gap-2 rounded-md px-2.5 py-2 text-sm transition-colors lg:py-1.5 lg:text-[13px]",
-                        active
-                          ? "bg-zinc-800 font-medium text-zinc-100"
-                          : "text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200",
-                      )}
-                      style={
-                        active && brandColor
-                          ? {
-                              backgroundColor: `#${brandColor}22`,
-                              color: `#${brandColor}`,
-                            }
-                          : undefined
-                      }
-                    >
-                      <Icon className="h-4 w-4 shrink-0 lg:h-3.5 lg:w-3.5" />
-                      <span className="truncate">{item.label}</span>
-                    </Link>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
+            <div key={section.label} className="mb-5 last:mb-0">
+              {/* Section header with coloured dot */}
+              <div className="mb-1.5 flex items-center gap-1.5 px-2">
+                <div
+                  className={cn(
+                    "h-1.5 w-1.5 rounded-full",
+                    section.accent.replace("text-", "bg-"),
+                  )}
+                />
+                <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">
+                  {section.label}
+                </p>
+              </div>
+
+              <ul className="space-y-px">
+                {visibleItems.map((item) => {
+                  const active = isActive(item.href);
+                  const Icon = item.icon;
+                  const badge = tabBadges[item.href] ?? 0;
+
+                  return (
+                    <li key={item.href}>
+                      <Link
+                        href={item.href}
+                        className={cn(
+                          "flex items-center gap-2 rounded-md px-2.5 py-2 text-sm transition-all lg:py-1.5 lg:text-[13px]",
+                          active
+                            ? `${section.activeBg} font-medium text-zinc-100`
+                            : "text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200",
+                        )}
+                        style={
+                          active && brandColor
+                            ? {
+                                backgroundColor: `#${brandColor}22`,
+                                color: `#${brandColor}`,
+                              }
+                            : undefined
+                        }
+                      >
+                        <Icon
+                          className={cn(
+                            "h-4 w-4 shrink-0 lg:h-3.5 lg:w-3.5",
+                            active
+                              ? brandColor
+                                ? undefined
+                                : section.accent
+                              : "text-zinc-500",
+                          )}
+                        />
+                        <span className="flex-1 truncate">{item.label}</span>
+
+                        {/* Per-tab badge */}
+                        {badge > 0 && (
+                          <span
+                            className={cn(
+                              "flex h-[18px] min-w-[18px] items-center justify-center rounded-full px-1 text-[10px] font-semibold tabular-nums",
+                              active
+                                ? "bg-white/15 text-zinc-100"
+                                : "bg-zinc-800 text-zinc-400",
+                            )}
+                            title={`${badge} ${BADGE_LABELS[item.href] ?? ""}`}
+                          >
+                            {badge > 99 ? "99+" : badge}
+                          </span>
+                        )}
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
           );
         })}
       </nav>
@@ -241,6 +328,9 @@ export function AppSidebar({
           {FOOTER_NAV.filter((item) => !item.roles || item.roles.includes(role)).map((item) => {
             const active = isActive(item.href);
             const Icon = item.icon;
+            const isNotif = item.href === "/app/notifications";
+            const badge = isNotif ? unreadNotifications : 0;
+
             return (
               <li key={item.href}>
                 <Link
@@ -261,7 +351,14 @@ export function AppSidebar({
                   }
                 >
                   <Icon className="h-4 w-4 shrink-0 lg:h-3.5 lg:w-3.5" />
-                  <span className="truncate">{item.label}</span>
+                  <span className="flex-1 truncate">{item.label}</span>
+
+                  {/* Notification badge on the Notifications tab */}
+                  {badge > 0 && (
+                    <span className="flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white tabular-nums">
+                      {badge > 99 ? "99+" : badge}
+                    </span>
+                  )}
                 </Link>
               </li>
             );
