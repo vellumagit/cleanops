@@ -83,6 +83,10 @@ const BaseSchema = z.object({
   // Sage Business Cloud Accounting
   SAGE_CLIENT_ID: z.string().optional(),
   SAGE_CLIENT_SECRET: z.string().optional(),
+
+  // Web Push (VAPID keys)
+  NEXT_PUBLIC_VAPID_PUBLIC_KEY: z.string().optional(),
+  VAPID_PRIVATE_KEY: z.string().optional(),
 });
 
 type Env = z.infer<typeof BaseSchema>;
@@ -185,4 +189,9 @@ export function isGoogleCalendarConfigured(): boolean {
     !!e.GOOGLE_CALENDAR_CLIENT_SECRET &&
     !!e.INTEGRATION_ENCRYPTION_KEY
   );
+}
+
+export function isPushConfigured(): boolean {
+  const e = getEnv();
+  return !!e.NEXT_PUBLIC_VAPID_PUBLIC_KEY && !!e.VAPID_PRIVATE_KEY;
 }

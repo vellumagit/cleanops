@@ -19,19 +19,31 @@ export default async function FieldChatPage({
   const membership = await requireMembership();
   const params = await searchParams;
 
-  const [threads, teammates] = await Promise.all([
-    fetchChatThreads(membership),
-    fetchTeammates(membership),
-  ]);
+  let threads: Awaited<ReturnType<typeof fetchChatThreads>> = [];
+  let teammates: Awaited<ReturnType<typeof fetchTeammates>> = [];
+
+  try {
+    [threads, teammates] = await Promise.all([
+      fetchChatThreads(membership),
+      fetchTeammates(membership),
+    ]);
+  } catch (err) {
+    console.error("[chat] Failed to load threads/teammates:", err);
+  }
 
   const requested = params.thread ?? null;
   const activeThread = requested
     ? threads.find((t) => t.id === requested) ?? null
     : null;
 
-  const initialMessages = activeThread
-    ? await fetchChatMessages(activeThread.id)
-    : [];
+  let initialMessages: Awaited<ReturnType<typeof fetchChatMessages>> = [];
+  if (activeThread) {
+    try {
+      initialMessages = await fetchChatMessages(activeThread.id);
+    } catch (err) {
+      console.error("[chat] Failed to load messages:", err);
+    }
+  }
 
   return (
     <>

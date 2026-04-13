@@ -2,6 +2,7 @@ import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { FieldShell } from "@/components/field-shell";
 import { BrandProvider } from "@/components/brand-provider";
+import { PushPrompt } from "@/components/push-prompt";
 
 export default async function FieldLayout({
   children,
@@ -36,6 +37,10 @@ export default async function FieldLayout({
         logoUrl={org?.logo_url ?? null}
         brandColor={org?.brand_color ?? null}
       >
+        <PushPrompt
+          membershipId={membership.id}
+          organizationId={membership.organization_id}
+        />
         {children}
       </FieldShell>
     </BrandProvider>

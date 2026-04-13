@@ -17,7 +17,7 @@ export async function loginAction(
     email: String(formData.get("email") ?? "").trim(),
     password: String(formData.get("password") ?? ""),
   };
-  const next = String(formData.get("next") ?? "/app");
+  const next = String(formData.get("next") ?? "");
 
   const parsed = LoginSchema.safeParse(raw);
   if (!parsed.success) {
@@ -42,7 +42,24 @@ export async function loginAction(
     };
   }
 
-  // Only allow internal redirects, never external URLs
-  const safeNext = next.startsWith("/") && !next.startsWith("//") ? next : "/app";
-  redirect(safeNext);
+  // If the caller specified an explicit redirect (e.g. ?next=/field), use it
+  if (next && next.startsWith("/") && !next.startsWith("//")) {
+    redirect(next);
+  }
+
+  // Otherwise, look up the user's role and redirect accordingly
+  const { data: membership } = await supabase
+    .from("memberships")
+    .select("role")
+    .eq("status", "active")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  // Employees go to the field app; everyone else to the admin console
+  if (membership?.role === "employee") {
+    redirect("/field");
+  }
+
+  redirect("/app");
 }

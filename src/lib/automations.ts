@@ -6,6 +6,7 @@
 
 import "server-only";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { sendPushToMembership, sendPushToOrg } from "@/lib/push";
 
 const admin = () => createSupabaseAdminClient();
 
@@ -130,6 +131,20 @@ export async function notifyUpcomingJobs() {
     if (rows.length === 0) return 0;
 
     await (db.from("notifications" as never).insert(rows as never) as unknown as Promise<unknown>);
+
+    // Fire push notifications to each assigned employee
+    await Promise.allSettled(
+      rows.map((r) =>
+        r.recipient_membership_id
+          ? sendPushToMembership(r.recipient_membership_id, {
+              title: r.title,
+              body: r.body,
+              href: r.href,
+            })
+          : Promise.resolve(),
+      ),
+    );
+
     return rows.length;
   } catch (err) {
     console.error("[auto] notifyUpcomingJobs failed:", err);
@@ -200,45 +215,57 @@ export async function autoBookingOnEstimateApproval(estimateId: string) {
 
     if (!estimate) return;
 
-    // Check if a booking already exists linked to this estimate (via notes)
-    // We use a soft-link approach since there's no estimate_id FK on bookings
-    const tag = `[From estimate ${estimateId.slice(0, 8)}]`;
-
+    // Check if a booking already exists linked to this estimate via proper FK
     const { data: existing } = await db
       .from("bookings")
       .select("id")
-      .eq("organization_id", estimate.organization_id)
-      .eq("client_id", estimate.client_id)
-      .ilike("notes", `%${tag}%`)
+      .eq("estimate_id" as never, estimateId as never)
       .limit(1)
       .maybeSingle();
 
     if (existing) return; // already converted
+
+    // Infer service_type from the estimate's description
+    const serviceType = inferServiceType(estimate.service_description);
 
     // Create a pending booking — manager still needs to set date/time/assignment
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
     tomorrow.setHours(9, 0, 0, 0);
 
-    await (db.from("bookings").insert({
+    const { data: newBooking } = (await (db.from("bookings").insert({
       organization_id: estimate.organization_id,
       client_id: estimate.client_id,
+      estimate_id: estimateId,
       scheduled_at: tomorrow.toISOString(),
       duration_minutes: 120,
-      service_type: "standard",
+      service_type: serviceType,
       status: "pending",
       total_cents: estimate.total_cents,
-      notes: `${tag}\n${estimate.service_description ?? ""}`.trim(),
-    } as never) as unknown as Promise<unknown>);
+      notes: estimate.service_description ?? "",
+    } as never).select("id").single() as unknown as Promise<{
+      data: { id: string } | null;
+    }>));
+
+    const bookingHref = newBooking
+      ? `/app/bookings/${newBooking.id}`
+      : "/app/bookings";
 
     // Create a notification for the org
+    const notifPayload = {
+      title: "Estimate approved — booking created",
+      body: `A new pending ${humanize(serviceType).toLowerCase()} booking was auto-created. Set the date and assign a cleaner.`,
+      href: bookingHref,
+    };
+
     await (db.from("notifications" as never).insert({
       organization_id: estimate.organization_id,
       type: "general",
-      title: "Estimate approved — booking created",
-      body: `A new pending booking was auto-created from the approved estimate. Set the date and assign a cleaner.`,
-      href: "/app/bookings",
+      ...notifPayload,
     } as never) as unknown as Promise<unknown>);
+
+    // Push to all org members (org-wide notification)
+    sendPushToOrg(estimate.organization_id, notifPayload).catch(() => {});
 
     console.log(`[auto] Booking created from approved estimate ${estimateId}`);
   } catch (err) {
@@ -298,6 +325,20 @@ export async function alertStaleEstimates() {
     });
 
     await (db.from("notifications" as never).insert(rows as never) as unknown as Promise<unknown>);
+
+    // Push to each org (org-wide notifications)
+    const orgIds = [...new Set(rows.map((r) => r.organization_id))];
+    await Promise.allSettled(
+      orgIds.map((orgId) => {
+        const orgRows = rows.filter((r) => r.organization_id === orgId);
+        return sendPushToOrg(orgId, {
+          title: `${orgRows.length} stale estimate${orgRows.length > 1 ? "s" : ""} need follow-up`,
+          body: orgRows.map((r) => r.body).join(" · "),
+          href: "/app/estimates",
+        });
+      }),
+    );
+
     return rows.length;
   } catch (err) {
     console.error("[auto] alertStaleEstimates failed:", err);
@@ -334,4 +375,19 @@ export async function postSystemFeedEvent(
 function humanize(s: string | null | undefined): string {
   if (!s) return "Cleaning";
   return s.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/** Infer service_type enum from free-text estimate description. */
+function inferServiceType(
+  description: string | null | undefined,
+): "standard" | "deep" | "move_out" | "recurring" {
+  if (!description) return "standard";
+  const d = description.toLowerCase();
+  if (d.includes("move out") || d.includes("move-out") || d.includes("moveout") || d.includes("end of tenancy"))
+    return "move_out";
+  if (d.includes("deep clean") || d.includes("deep-clean") || d.includes("spring clean"))
+    return "deep";
+  if (d.includes("recurring") || d.includes("weekly") || d.includes("bi-weekly") || d.includes("monthly"))
+    return "recurring";
+  return "standard";
 }

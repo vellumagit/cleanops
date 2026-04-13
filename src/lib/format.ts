@@ -3,7 +3,23 @@
  *
  * Keep these pure and dependency-free so they can be called from server
  * components, client components, and the seed script alike.
+ *
+ * TIMEZONE NOTE: All dates in the database are stored as UTC ISO strings.
+ * Display functions format them in the app-wide default timezone so that
+ * server-rendered HTML (UTC on Vercel) and client-rendered output (browser
+ * local tz) show the same time. When org-level timezone support is added,
+ * replace DEFAULT_TZ with the org's preference.
  */
+
+/**
+ * App-wide display timezone. Override with NEXT_PUBLIC_DEFAULT_TIMEZONE
+ * in .env.local (e.g. "America/Chicago", "Europe/London").
+ * Falls back to America/New_York — most Sollos 3 early customers are US-East.
+ */
+const DEFAULT_TZ =
+  (typeof process !== "undefined"
+    ? process.env?.NEXT_PUBLIC_DEFAULT_TIMEZONE
+    : undefined) ?? "America/New_York";
 
 /** Format an integer cents value as USD currency, e.g. 12500 → "$125.00". */
 export function formatCurrencyCents(cents: number | null | undefined): string {
@@ -23,6 +39,7 @@ export function formatDate(iso: string | null | undefined): string {
     month: "short",
     day: "numeric",
     year: "numeric",
+    timeZone: DEFAULT_TZ,
   });
 }
 
@@ -35,9 +52,11 @@ export function formatDateTime(iso: string | null | undefined): string {
     month: "short",
     day: "numeric",
     year: "numeric",
+    timeZone: DEFAULT_TZ,
   })} · ${d.toLocaleTimeString("en-US", {
     hour: "numeric",
     minute: "2-digit",
+    timeZone: DEFAULT_TZ,
   })}`;
 }
 

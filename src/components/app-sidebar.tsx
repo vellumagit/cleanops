@@ -40,6 +40,8 @@ type NavItem = {
   href: string;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
+  /** Roles that can see this item. If omitted, visible to all. */
+  roles?: string[];
 };
 
 type NavSection = {
@@ -57,19 +59,19 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { href: "/app/bookings", label: "Bookings", icon: CalendarCheck },
       { href: "/app/calendar", label: "Calendar", icon: CalendarDays },
-      { href: "/app/scheduling", label: "Scheduling", icon: Calendar },
-      { href: "/app/estimates", label: "Estimates", icon: FileText },
-      { href: "/app/contracts", label: "Contracts", icon: ScrollText },
-      { href: "/app/packages", label: "Packages", icon: Package },
+      { href: "/app/scheduling", label: "Scheduling", icon: Calendar, roles: ["owner", "admin", "manager"] },
+      { href: "/app/estimates", label: "Estimates", icon: FileText, roles: ["owner", "admin", "manager"] },
+      { href: "/app/contracts", label: "Contracts", icon: ScrollText, roles: ["owner", "admin", "manager"] },
+      { href: "/app/packages", label: "Packages", icon: Package, roles: ["owner", "admin", "manager"] },
       { href: "/app/inventory", label: "Inventory", icon: Boxes },
     ],
   },
   {
     label: "People",
     items: [
-      { href: "/app/clients", label: "Clients", icon: Users },
-      { href: "/app/employees", label: "Employees", icon: UserRound },
-      { href: "/app/freelancers", label: "Freelancer bench", icon: UserPlus },
+      { href: "/app/clients", label: "Clients", icon: Users, roles: ["owner", "admin", "manager"] },
+      { href: "/app/employees", label: "Employees", icon: UserRound, roles: ["owner", "admin"] },
+      { href: "/app/freelancers", label: "Freelancer bench", icon: UserPlus, roles: ["owner", "admin"] },
       { href: "/app/reviews", label: "Reviews", icon: Star },
       { href: "/app/bonuses", label: "Bonuses", icon: Award },
       { href: "/app/training", label: "Training", icon: GraduationCap },
@@ -77,7 +79,7 @@ const NAV_SECTIONS: NavSection[] = [
   },
   {
     label: "Money",
-    items: [{ href: "/app/invoices", label: "Invoices", icon: Receipt }],
+    items: [{ href: "/app/invoices", label: "Invoices", icon: Receipt, roles: ["owner", "admin", "manager"] }],
   },
   {
     label: "Comms",
@@ -90,7 +92,7 @@ const NAV_SECTIONS: NavSection[] = [
 
 const FOOTER_NAV: NavItem[] = [
   { href: "/app/notifications", label: "Notifications", icon: Bell },
-  { href: "/app/settings", label: "Settings", icon: Settings },
+  { href: "/app/settings", label: "Settings", icon: Settings, roles: ["owner", "admin"] },
 ];
 
 type Props = {
@@ -188,13 +190,18 @@ export function AppSidebar({
 
       {/* Sections */}
       <nav className="flex-1 overflow-y-auto px-3 py-3">
-        {NAV_SECTIONS.map((section) => (
+        {NAV_SECTIONS.map((section) => {
+          const visibleItems = section.items.filter(
+            (item) => !item.roles || item.roles.includes(role),
+          );
+          if (visibleItems.length === 0) return null;
+          return (
           <div key={section.label} className="mb-4 last:mb-0">
             <p className="mb-1 px-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-zinc-600">
               {section.label}
             </p>
             <ul className="space-y-px">
-              {section.items.map((item) => {
+              {visibleItems.map((item) => {
                 const active = isActive(item.href);
                 const Icon = item.icon;
                 return (
@@ -224,13 +231,14 @@ export function AppSidebar({
               })}
             </ul>
           </div>
-        ))}
+          );
+        })}
       </nav>
 
       {/* Footer */}
       <div className="border-t border-zinc-800 px-3 py-3">
         <ul className="mb-2 space-y-px">
-          {FOOTER_NAV.map((item) => {
+          {FOOTER_NAV.filter((item) => !item.roles || item.roles.includes(role)).map((item) => {
             const active = isActive(item.href);
             const Icon = item.icon;
             return (

@@ -21,7 +21,7 @@ export default async function LoginPage({
   searchParams: SearchParams;
 }) {
   const params = await searchParams;
-  const next = params.next ?? "/app";
+  const next = params.next ?? "";
   const confirmEmail = params.confirm ? params.email : undefined;
   const joinedEmail = params.joined ? params.email : undefined;
   const authError = params.auth_error;

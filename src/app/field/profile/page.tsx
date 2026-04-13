@@ -4,6 +4,7 @@ import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { FieldHeader } from "@/components/field-shell";
 import { ProfileForm } from "./profile-form";
+import { PushToggle } from "@/components/push-prompt";
 
 export const metadata = { title: "Profile" };
 
@@ -43,6 +44,18 @@ export default async function FieldProfilePage() {
             full_name: profile?.full_name ?? "",
             phone: profile?.phone ?? "",
           }}
+        />
+      </div>
+
+      {/* Notifications */}
+      <div className="mt-5 rounded-xl border border-border bg-card p-5">
+        <h2 className="mb-3 text-sm font-semibold">Push notifications</h2>
+        <p className="mb-3 text-xs text-muted-foreground">
+          Get alerts on this device for new jobs, messages, and schedule changes — even when the app is in the background.
+        </p>
+        <PushToggle
+          membershipId={membership.id}
+          organizationId={membership.organization_id}
         />
       </div>
 

@@ -10,6 +10,7 @@ import {
   ScrollText,
   Users,
 } from "lucide-react";
+import { requireMembership } from "@/lib/auth";
 import { PageShell } from "@/components/page-shell";
 import { PwaInstallCard } from "@/components/pwa-install-button";
 
@@ -74,7 +75,8 @@ const SECTIONS = [
   },
 ];
 
-export default function SettingsPage() {
+export default async function SettingsPage() {
+  await requireMembership(["owner", "admin"]);
   return (
     <PageShell
       title="Settings"

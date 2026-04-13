@@ -1,4 +1,6 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
+import { ArrowRight } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
@@ -17,27 +19,36 @@ export default async function EditEstimatePage({
   const { id } = await params;
   const supabase = await createSupabaseServerClient();
 
-  const [{ data: estimate, error }, { data: clients }] = await Promise.all([
-    supabase
-      .from("estimates")
-      .select(
-        "id, client_id, service_description, notes, status, total_cents, pdf_url",
-      )
-      .eq("id", id)
-      .maybeSingle() as unknown as {
-      data: {
-        id: string;
-        client_id: string;
-        service_description: string | null;
-        notes: string | null;
-        status: string;
-        total_cents: number;
-        pdf_url: string | null;
-      } | null;
-      error: unknown;
-    },
-    supabase.from("clients").select("id, name").order("name"),
-  ]);
+  const [{ data: estimate, error }, { data: clients }, { data: linkedBooking }] =
+    await Promise.all([
+      supabase
+        .from("estimates")
+        .select(
+          "id, client_id, service_description, notes, status, total_cents, pdf_url",
+        )
+        .eq("id", id)
+        .maybeSingle() as unknown as {
+        data: {
+          id: string;
+          client_id: string;
+          service_description: string | null;
+          notes: string | null;
+          status: string;
+          total_cents: number;
+          pdf_url: string | null;
+        } | null;
+        error: unknown;
+      },
+      supabase.from("clients").select("id, name").order("name"),
+      supabase
+        .from("bookings")
+        .select("id, status, scheduled_at")
+        .eq("estimate_id" as never, id as never)
+        .limit(1)
+        .maybeSingle() as unknown as {
+        data: { id: string; status: string; scheduled_at: string } | null;
+      },
+    ]);
 
   if (error) throw error;
   if (!estimate) notFound();
@@ -45,6 +56,21 @@ export default async function EditEstimatePage({
   return (
     <PageShell title="Edit estimate">
       <div className="max-w-2xl space-y-6">
+        {linkedBooking && (
+          <Link
+            href={`/app/bookings/${linkedBooking.id}`}
+            className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700 transition-colors hover:bg-emerald-100"
+          >
+            <ArrowRight className="h-4 w-4" />
+            <span>
+              This estimate was converted to a{" "}
+              <span className="font-semibold">{linkedBooking.status}</span>{" "}
+              booking.{" "}
+              <span className="underline underline-offset-2">View booking →</span>
+            </span>
+          </Link>
+        )}
+
         <div className="rounded-lg border border-border bg-card p-6">
           <EstimateForm
             mode="edit"

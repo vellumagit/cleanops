@@ -4,6 +4,7 @@ import "server-only";
 import { revalidatePath } from "next/cache";
 import { getActionContext } from "@/lib/actions";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { sendPushToMembership } from "@/lib/push";
 
 type Result<T = void> =
   | ({ ok: true } & (T extends void ? object : T))
@@ -43,6 +44,36 @@ export async function sendChatMessageAction(
   if (error || !data) {
     return { ok: false, error: error?.message ?? "Could not send message" };
   }
+
+  // Fire-and-forget push notifications to other thread members
+  const adminDb = createSupabaseAdminClient();
+  Promise.all([
+    adminDb
+      .from("chat_thread_members")
+      .select("membership_id")
+      .eq("thread_id", threadId)
+      .neq("membership_id", membership.id),
+    adminDb
+      .from("profiles")
+      .select("full_name")
+      .eq("id", membership.profile_id)
+      .maybeSingle(),
+  ])
+    .then(([membersResult, profileResult]) => {
+      const members = membersResult?.data;
+      if (!members || members.length === 0) return;
+      const senderName = profileResult?.data?.full_name ?? "Someone";
+      const preview =
+        trimmed.length > 80 ? trimmed.slice(0, 80) + "..." : trimmed;
+      for (const m of members) {
+        sendPushToMembership(m.membership_id, {
+          title: `New message from ${senderName}`,
+          body: preview,
+          href: "/field/chat",
+        }).catch(() => {});
+      }
+    })
+    .catch(() => {});
 
   revalidatePath("/app/chat");
   revalidatePath("/field/chat");

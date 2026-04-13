@@ -53,12 +53,13 @@ export default async function BookingDetailPage({
   const { id } = await params;
   const supabase = await createSupabaseServerClient();
 
-  const { data: booking, error } = await supabase
+  const { data: booking, error } = (await supabase
     .from("bookings")
     .select(
       `
         id, scheduled_at, duration_minutes, service_type, status,
         total_cents, hourly_rate_cents, address, notes, created_at,
+        estimate_id,
         client:clients ( id, name, phone, email, address ),
         package:packages ( id, name ),
         assigned:memberships!bookings_assigned_to_fkey (
@@ -67,7 +68,25 @@ export default async function BookingDetailPage({
       `,
     )
     .eq("id", id)
-    .maybeSingle();
+    .maybeSingle()) as unknown as {
+    data: {
+      id: string;
+      scheduled_at: string;
+      duration_minutes: number;
+      service_type: string;
+      status: string;
+      total_cents: number;
+      hourly_rate_cents: number | null;
+      address: string | null;
+      notes: string | null;
+      created_at: string;
+      estimate_id: string | null;
+      client: { id: string; name: string; phone: string | null; email: string | null; address: string | null } | null;
+      package: { id: string; name: string } | null;
+      assigned: { id: string; profile: { full_name: string } | null } | null;
+    } | null;
+    error: { message: string } | null;
+  };
 
   if (error) throw error;
   if (!booking) notFound();
@@ -262,6 +281,19 @@ export default async function BookingDetailPage({
                   {formatCurrencyCents(booking.hourly_rate_cents)}
                 </dd>
               </div>
+              {booking.estimate_id && (
+                <div className="flex justify-between gap-3">
+                  <dt className="text-muted-foreground">From estimate</dt>
+                  <dd>
+                    <Link
+                      href={`/app/estimates/${booking.estimate_id}/edit`}
+                      className="font-medium text-primary underline-offset-4 hover:underline"
+                    >
+                      View estimate
+                    </Link>
+                  </dd>
+                </div>
+              )}
             </dl>
           </div>
         </aside>

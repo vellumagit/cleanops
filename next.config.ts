@@ -44,7 +44,7 @@ const csp = [
   `style-src 'self' 'unsafe-inline'`,
   `img-src 'self' data: blob: ${supabaseHttp}`,
   `font-src 'self' data:`,
-  `connect-src 'self' ${supabaseHttp} ${supabaseWs} https://api.stripe.com https://*.ingest.sentry.io`,
+  `connect-src 'self' ${supabaseHttp} ${supabaseWs} https://api.stripe.com https://*.ingest.sentry.io https://fcm.googleapis.com https://updates.push.services.mozilla.com`,
   `frame-src https://js.stripe.com https://hooks.stripe.com`,
   `worker-src 'self' blob:`,
   `manifest-src 'self'`,
