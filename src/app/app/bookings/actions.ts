@@ -364,7 +364,7 @@ export async function deleteBookingAction(formData: FormData) {
     data: { google_calendar_event_id: string | null } | null;
   };
 
-  const { error } = await supabase.from("bookings").delete().eq("id", id);
+  const { error } = await supabase.from("bookings").delete().eq("id", id).eq("organization_id", membership.organization_id);
   if (error) throw error;
 
   // Delete from Google Calendar

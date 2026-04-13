@@ -52,7 +52,7 @@ export async function updateInventoryAction(
   const parsed = parseForm(InventorySchema, raw);
   if (!parsed.ok) return { errors: parsed.errors, values: raw };
 
-  const { supabase } = await getActionContext();
+  const { membership, supabase } = await getActionContext();
   const { error } = await supabase
     .from("inventory_items")
     .update({
@@ -63,7 +63,8 @@ export async function updateInventoryAction(
       assigned_to: parsed.data.assigned_to,
       notes: parsed.data.notes ?? null,
     })
-    .eq("id", id);
+    .eq("id", id)
+    .eq("organization_id", membership.organization_id);
 
   if (error) return { errors: { _form: error.message }, values: raw };
   revalidatePath("/app/inventory");
@@ -74,11 +75,12 @@ export async function updateInventoryAction(
 export async function deleteInventoryAction(formData: FormData) {
   const id = String(formData.get("id") ?? "");
   if (!id) return;
-  const { supabase } = await getActionContext();
+  const { membership, supabase } = await getActionContext();
   const { error } = await supabase
     .from("inventory_items")
     .delete()
-    .eq("id", id);
+    .eq("id", id)
+    .eq("organization_id", membership.organization_id);
   if (error) throw error;
   revalidatePath("/app/inventory");
   redirect("/app/inventory");

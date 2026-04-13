@@ -45,8 +45,8 @@ export async function createReviewAction(
 export async function deleteReviewAction(formData: FormData) {
   const id = String(formData.get("id") ?? "");
   if (!id) return;
-  const { supabase } = await getActionContext();
-  const { error } = await supabase.from("reviews").delete().eq("id", id);
+  const { membership, supabase } = await getActionContext();
+  const { error } = await supabase.from("reviews").delete().eq("id", id).eq("organization_id", membership.organization_id);
   if (error) throw error;
   revalidatePath("/app/reviews");
 }

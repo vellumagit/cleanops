@@ -151,7 +151,8 @@ export async function deleteFreelancerContactAction(formData: FormData) {
   const { error } = await supabase
     .from("freelancer_contacts")
     .delete()
-    .eq("id", id);
+    .eq("id", id)
+    .eq("organization_id", membership.organization_id);
   if (error) throw error;
 
   await logAuditEvent({

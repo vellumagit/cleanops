@@ -51,10 +51,12 @@ export async function computeBonusesAction(): Promise<ComputeResult> {
   const periodStartDate = periodStartIso.slice(0, 10);
   const periodEndDate = periodEnd.toISOString().slice(0, 10);
 
-  // Pull every review for this org in the window. RLS already scopes to org.
+  // Pull every review for this org in the window.
+  // Explicit org filter as defense-in-depth — this computes financial data.
   const { data: reviews, error: reviewsErr } = await supabase
     .from("reviews")
     .select("employee_id, rating, submitted_at")
+    .eq("organization_id", membership.organization_id)
     .gte("submitted_at", periodStartIso)
     .not("employee_id", "is", null);
 
@@ -75,6 +77,7 @@ export async function computeBonusesAction(): Promise<ComputeResult> {
   const { data: existing, error: existingErr } = await supabase
     .from("bonuses")
     .select("employee_id")
+    .eq("organization_id", membership.organization_id)
     .eq("period_start", periodStartDate)
     .eq("period_end", periodEndDate);
 
@@ -141,7 +144,8 @@ export async function markBonusPaidAction(
   const { error } = await supabase
     .from("bonuses")
     .update({ status: "paid", paid_at: new Date().toISOString() })
-    .eq("id", id);
+    .eq("id", id)
+    .eq("organization_id", membership.organization_id);
 
   if (error) return { ok: false, error: error.message };
 

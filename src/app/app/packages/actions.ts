@@ -53,7 +53,7 @@ export async function updatePackageAction(
   const parsed = parseForm(PackageSchema, raw);
   if (!parsed.ok) return { errors: parsed.errors, values: raw };
 
-  const { supabase } = await getActionContext();
+  const { membership, supabase } = await getActionContext();
   const { error } = await supabase
     .from("packages")
     .update({
@@ -64,7 +64,8 @@ export async function updatePackageAction(
       is_active: parsed.data.is_active,
       included: parsed.data.included,
     })
-    .eq("id", id);
+    .eq("id", id)
+    .eq("organization_id", membership.organization_id);
 
   if (error) return { errors: { _form: error.message }, values: raw };
   revalidatePath("/app/packages");
@@ -76,8 +77,8 @@ export async function updatePackageAction(
 export async function deletePackageAction(formData: FormData) {
   const id = String(formData.get("id") ?? "");
   if (!id) return;
-  const { supabase } = await getActionContext();
-  const { error } = await supabase.from("packages").delete().eq("id", id);
+  const { membership, supabase } = await getActionContext();
+  const { error } = await supabase.from("packages").delete().eq("id", id).eq("organization_id", membership.organization_id);
   if (error) throw error;
   revalidatePath("/app/packages");
   redirect("/app/packages");

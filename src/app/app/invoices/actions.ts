@@ -371,10 +371,15 @@ export async function generateReviewTokenAction(formData: FormData) {
 
   if (!invoice.review_token) {
     const token = generateClaimToken(16);
-    await supabase
+    const { error: tokenErr } = await supabase
       .from("invoices")
       .update({ review_token: token } as never)
       .eq("id", id);
+
+    if (tokenErr) {
+      console.error("[invoices] generateReviewToken failed:", tokenErr.message);
+      return;
+    }
 
     await logAuditEvent({
       membership,

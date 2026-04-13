@@ -57,7 +57,7 @@ export async function updateContractAction(
   const parsed = parseForm(ContractSchema, raw);
   if (!parsed.ok) return { errors: parsed.errors, values: raw };
 
-  const { supabase } = await getActionContext();
+  const { membership, supabase } = await getActionContext();
   const { error } = await supabase
     .from("contracts")
     .update({
@@ -70,7 +70,8 @@ export async function updateContractAction(
       payment_terms: parsed.data.payment_terms ?? null,
       status: parsed.data.status,
     })
-    .eq("id", id);
+    .eq("id", id)
+    .eq("organization_id", membership.organization_id);
 
   if (error) return { errors: { _form: error.message }, values: raw };
   revalidatePath("/app/contracts");
@@ -82,8 +83,8 @@ export async function updateContractAction(
 export async function deleteContractAction(formData: FormData) {
   const id = String(formData.get("id") ?? "");
   if (!id) return;
-  const { supabase } = await getActionContext();
-  const { error } = await supabase.from("contracts").delete().eq("id", id);
+  const { membership, supabase } = await getActionContext();
+  const { error } = await supabase.from("contracts").delete().eq("id", id).eq("organization_id", membership.organization_id);
   if (error) throw error;
   revalidatePath("/app/contracts");
   redirect("/app/contracts");

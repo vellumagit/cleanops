@@ -127,7 +127,7 @@ export async function deleteClientAction(formData: FormData) {
     .eq("id", id)
     .maybeSingle();
 
-  const { error } = await supabase.from("clients").delete().eq("id", id);
+  const { error } = await supabase.from("clients").delete().eq("id", id).eq("organization_id", membership.organization_id);
   if (error) throw error;
 
   await logAuditEvent({

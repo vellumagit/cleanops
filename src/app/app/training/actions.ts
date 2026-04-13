@@ -257,7 +257,7 @@ export async function deleteTrainingModuleAction(formData: FormData) {
     .maybeSingle();
 
   // Steps cascade via FK on delete
-  const { error } = await supabase.from("training_modules").delete().eq("id", id);
+  const { error } = await supabase.from("training_modules").delete().eq("id", id).eq("organization_id", membership.organization_id);
   if (error) throw error;
 
   await logAuditEvent({

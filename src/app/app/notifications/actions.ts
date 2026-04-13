@@ -7,12 +7,13 @@ import { getActionContext } from "@/lib/actions";
  * Mark a single notification as read.
  */
 export async function markNotificationReadAction(notificationId: string) {
-  const { supabase } = await getActionContext();
+  const { membership, supabase } = await getActionContext();
 
   await supabase
     .from("notifications" as never)
     .update({ read_at: new Date().toISOString() } as never)
-    .eq("id", notificationId);
+    .eq("id", notificationId)
+    .eq("organization_id" as never, membership.organization_id as never);
 
   revalidatePath("/app");
 }

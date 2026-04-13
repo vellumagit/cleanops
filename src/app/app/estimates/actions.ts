@@ -121,8 +121,7 @@ export async function createEstimateAction(
       return { errors: { pdf: upload.error }, values: raw };
     }
     if (upload.url) {
-      const admin = createSupabaseAdminClient();
-      await admin
+      await supabase
         .from("estimates" as never)
         .update({ pdf_url: upload.url } as never)
         .eq("id", estimate.id);
@@ -188,8 +187,9 @@ export async function updateEstimateAction(
     updatePayload.pdf_url = pdfUrl;
   }
 
-  const admin = createSupabaseAdminClient();
-  const { error } = await admin
+  // Use the user's scoped client so RLS is enforced — never bypass it for
+  // regular CRUD mutations (admin client is only for storage and webhooks).
+  const { error } = await supabase
     .from("estimates" as never)
     .update(updatePayload as never)
     .eq("id", id);
