@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Star, Zap } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
@@ -25,16 +26,46 @@ export default async function BonusesPage() {
           reason,
           status,
           paid_at,
+          bonus_type,
           employee:memberships ( profile:profiles ( full_name ) )
-        `,
+        ` as never,
       )
       .order("created_at", { ascending: false })
-      .limit(200),
+      .limit(200) as unknown as {
+      data:
+        | {
+            id: string;
+            amount_cents: number;
+            period_start: string;
+            period_end: string;
+            reason: string | null;
+            status: string;
+            paid_at: string | null;
+            bonus_type: string;
+            employee: { profile: { full_name: string | null } | null } | null;
+          }[]
+        | null;
+      error: { message: string } | null;
+    },
     supabase
       .from("bonus_rules")
-      .select("enabled, min_avg_rating, min_reviews_count, period_days, amount_cents")
+      .select(
+        "enabled, min_avg_rating, min_reviews_count, period_days, amount_cents, efficiency_enabled, efficiency_min_hours_saved, efficiency_min_jobs, efficiency_amount_cents",
+      )
       .eq("organization_id", membership.organization_id)
-      .maybeSingle(),
+      .maybeSingle() as unknown as {
+      data: {
+        enabled: boolean;
+        min_avg_rating: number;
+        min_reviews_count: number;
+        period_days: number;
+        amount_cents: number;
+        efficiency_enabled: boolean;
+        efficiency_min_hours_saved: number;
+        efficiency_min_jobs: number;
+        efficiency_amount_cents: number;
+      } | null;
+    },
   ]);
 
   if (bonusesResult.error) throw bonusesResult.error;
@@ -45,8 +76,9 @@ export default async function BonusesPage() {
     period_start: b.period_start,
     period_end: b.period_end,
     reason: b.reason,
-    status: b.status,
+    status: b.status as "pending" | "paid",
     paid_at: b.paid_at,
+    bonus_type: b.bonus_type ?? "review",
     employee_name: b.employee?.profile?.full_name ?? null,
   }));
 
@@ -55,49 +87,81 @@ export default async function BonusesPage() {
   return (
     <PageShell
       title="Bonuses"
-      description="Performance bonuses earned by employees from client reviews."
+      description="Performance bonuses earned by employees."
       actions={canEdit ? <ComputeBonusesButton /> : null}
     >
       <div className="space-y-4">
-        <div className="rounded-lg border border-border bg-card p-4 text-xs text-muted-foreground">
-          {rule ? (
-            rule.enabled ? (
-              <>
-                <span className="font-medium text-foreground">
-                  Engine enabled.
-                </span>{" "}
-                Award ${(rule.amount_cents / 100).toFixed(2)} when an employee
-                averages ≥{Number(rule.min_avg_rating).toFixed(2)} stars across
-                at least {rule.min_reviews_count} reviews in the last{" "}
-                {rule.period_days} days.
-              </>
-            ) : (
-              <>
-                <span className="font-medium text-foreground">
-                  Engine disabled.
-                </span>{" "}
-                Enable it in{" "}
-                <Link
-                  href="/app/settings/bonus-rules"
-                  className="underline underline-offset-2"
-                >
-                  Settings → Bonus rules
-                </Link>{" "}
-                to start awarding bonuses.
-              </>
-            )
-          ) : (
-            <>
-              No bonus rule configured.{" "}
-              <Link
-                href="/app/settings/bonus-rules"
-                className={buttonVariants({ variant: "link", size: "sm" })}
-              >
-                Set one up
-              </Link>
-            </>
-          )}
-        </div>
+        {/* Rule summary cards */}
+        {rule ? (
+          <div className="grid gap-3 sm:grid-cols-2">
+            {/* Review bonus card */}
+            <div className="rounded-lg border border-border bg-card p-4 text-xs text-muted-foreground">
+              <div className="mb-2 flex items-center gap-1.5">
+                <Star className="h-3.5 w-3.5 text-violet-500" />
+                <span className="text-xs font-semibold text-foreground">
+                  Review bonuses
+                </span>
+              </div>
+              {rule.enabled ? (
+                <p>
+                  Award ${(rule.amount_cents / 100).toFixed(2)} when an employee
+                  averages ≥{Number(rule.min_avg_rating).toFixed(2)} stars
+                  across at least {rule.min_reviews_count} reviews in the last{" "}
+                  {rule.period_days} days.
+                </p>
+              ) : (
+                <p>
+                  Disabled.{" "}
+                  <Link
+                    href="/app/settings/bonus-rules"
+                    className="underline underline-offset-2"
+                  >
+                    Enable →
+                  </Link>
+                </p>
+              )}
+            </div>
+
+            {/* Efficiency bonus card */}
+            <div className="rounded-lg border border-border bg-card p-4 text-xs text-muted-foreground">
+              <div className="mb-2 flex items-center gap-1.5">
+                <Zap className="h-3.5 w-3.5 text-emerald-500" />
+                <span className="text-xs font-semibold text-foreground">
+                  Efficiency bonuses
+                </span>
+              </div>
+              {rule.efficiency_enabled ? (
+                <p>
+                  Award $
+                  {(rule.efficiency_amount_cents / 100).toFixed(2)} when an
+                  employee saves ≥{Number(rule.efficiency_min_hours_saved)}h
+                  across at least {rule.efficiency_min_jobs} jobs in the last{" "}
+                  {rule.period_days} days.
+                </p>
+              ) : (
+                <p>
+                  Disabled.{" "}
+                  <Link
+                    href="/app/settings/bonus-rules"
+                    className="underline underline-offset-2"
+                  >
+                    Enable →
+                  </Link>
+                </p>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-lg border border-border bg-card p-4 text-xs text-muted-foreground">
+            No bonus rules configured.{" "}
+            <Link
+              href="/app/settings/bonus-rules"
+              className={buttonVariants({ variant: "link", size: "sm" })}
+            >
+              Set them up
+            </Link>
+          </div>
+        )}
 
         <BonusesTable rows={rows} canEdit={canEdit} />
       </div>

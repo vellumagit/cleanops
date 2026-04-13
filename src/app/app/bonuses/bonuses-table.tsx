@@ -2,6 +2,7 @@
 
 import { useTransition } from "react";
 import { toast } from "sonner";
+import { Star, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DataTable, type DataTableColumn } from "@/components/data-table";
 import { StatusBadge, bonusStatusTone } from "@/components/status-badge";
@@ -17,7 +18,25 @@ export type BonusRow = {
   reason: string | null;
   status: "pending" | "paid";
   paid_at: string | null;
+  bonus_type: string;
 };
+
+function TypeBadge({ type }: { type: string }) {
+  if (type === "efficiency") {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">
+        <Zap className="h-2.5 w-2.5" />
+        Efficiency
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-semibold text-violet-700 dark:bg-violet-900/30 dark:text-violet-400">
+      <Star className="h-2.5 w-2.5" />
+      Review
+    </span>
+  );
+}
 
 function PayCell({ id, status }: { id: string; status: "pending" | "paid" }) {
   const [pending, startTransition] = useTransition();
@@ -56,6 +75,11 @@ export function BonusesTable({
         <span className="font-medium">{r.employee_name ?? "—"}</span>
       ),
       searchValue: (r) => r.employee_name,
+    },
+    {
+      key: "type",
+      header: "Type",
+      render: (r) => <TypeBadge type={r.bonus_type} />,
     },
     {
       key: "period",

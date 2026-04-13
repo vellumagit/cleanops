@@ -14,6 +14,10 @@ function readFormValues(formData: FormData) {
     min_reviews_count: String(formData.get("min_reviews_count") ?? ""),
     period_days: String(formData.get("period_days") ?? ""),
     amount_cents: String(formData.get("amount_cents") ?? ""),
+    efficiency_enabled: String(formData.get("efficiency_enabled") ?? ""),
+    efficiency_min_hours_saved: String(formData.get("efficiency_min_hours_saved") ?? ""),
+    efficiency_min_jobs: String(formData.get("efficiency_min_jobs") ?? ""),
+    efficiency_amount_cents: String(formData.get("efficiency_amount_cents") ?? ""),
   };
 }
 
@@ -29,12 +33,18 @@ export async function upsertBonusRuleAction(
   const { error } = await supabase.from("bonus_rules").upsert(
     {
       organization_id: membership.organization_id,
+      // Review bonuses
       enabled: parsed.data.enabled,
       min_avg_rating: parsed.data.min_avg_rating,
       min_reviews_count: parsed.data.min_reviews_count,
       period_days: parsed.data.period_days,
       amount_cents: parsed.data.amount_cents,
-    },
+      // Efficiency bonuses
+      efficiency_enabled: parsed.data.efficiency_enabled,
+      efficiency_min_hours_saved: parsed.data.efficiency_min_hours_saved,
+      efficiency_min_jobs: parsed.data.efficiency_min_jobs,
+      efficiency_amount_cents: parsed.data.efficiency_amount_cents,
+    } as never,
     { onConflict: "organization_id" },
   );
 

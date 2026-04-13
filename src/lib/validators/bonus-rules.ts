@@ -2,6 +2,7 @@ import { z } from "zod";
 import { dollarStringToCents } from "./common";
 
 export const BonusRuleSchema = z.object({
+  // ── Review-based bonuses ──
   enabled: z
     .string()
     .optional()
@@ -28,6 +29,27 @@ export const BonusRuleSchema = z.object({
       "Period must be between 1 and 365 days",
     ),
   amount_cents: dollarStringToCents,
+
+  // ── Efficiency bonuses ──
+  efficiency_enabled: z
+    .string()
+    .optional()
+    .transform((s) => s === "on" || s === "true"),
+  efficiency_min_hours_saved: z
+    .string()
+    .transform((s) => Number(s))
+    .refine(
+      (n) => Number.isFinite(n) && n >= 0.5,
+      "Must be at least 0.5 hours",
+    ),
+  efficiency_min_jobs: z
+    .string()
+    .transform((s) => Number(s))
+    .refine(
+      (n) => Number.isInteger(n) && n >= 1,
+      "At least 1 job is required",
+    ),
+  efficiency_amount_cents: dollarStringToCents,
 });
 
 export type BonusRuleInput = z.infer<typeof BonusRuleSchema>;
