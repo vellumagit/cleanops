@@ -215,14 +215,13 @@ export function SetupChecklist({
           return (
             <Link
               key={step.key}
-              href={done ? "#" : step.href}
+              href={step.href}
               className={cn(
                 "group flex items-center gap-4 rounded-xl border p-4 transition-all",
                 done
-                  ? `${step.color.doneBorder} ${step.color.doneBg}`
+                  ? `${step.color.doneBorder} ${step.color.doneBg} hover:shadow-sm`
                   : "border-border bg-card shadow-sm hover:shadow-md hover:border-slate-300 dark:hover:border-slate-600 hover:-translate-y-0.5",
               )}
-              tabIndex={done ? -1 : undefined}
             >
               {/* Step number / check — colour-coded */}
               <div
@@ -288,6 +287,7 @@ export function SetupChecklist({
         <form action={completeOnboardingAction}>
           {allDone ? (
             <Button
+              type="submit"
               size="lg"
               className="gap-2 px-8 bg-gradient-to-r from-indigo-500 to-violet-500 hover:from-indigo-600 hover:to-violet-600 text-white shadow-lg shadow-indigo-500/25 border-0"
             >
@@ -296,6 +296,7 @@ export function SetupChecklist({
             </Button>
           ) : (
             <Button
+              type="submit"
               variant="link"
               size="sm"
               className="text-muted-foreground hover:text-foreground"

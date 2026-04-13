@@ -70,7 +70,7 @@ export function NotificationList({
             {unreadCount} unread notification{unreadCount !== 1 ? "s" : ""}
           </p>
           <form action={markAllNotificationsReadAction}>
-            <Button variant="ghost" size="sm" className="gap-1.5 text-xs">
+            <Button type="submit" variant="ghost" size="sm" className="gap-1.5 text-xs">
               <CheckCheck className="h-3.5 w-3.5" />
               Mark all read
             </Button>
