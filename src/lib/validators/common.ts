@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { DEFAULT_TZ } from "@/lib/format";
+
 /**
  * Shared zod helpers used across CRUD form validators.
  */
@@ -67,15 +69,70 @@ export const optionalDate = z
   .optional();
 
 /**
- * Convert a Postgres ISO timestamp into the value format expected by
- * <input type="datetime-local"> (YYYY-MM-DDTHH:mm).
+ * Convert a Postgres ISO timestamp (UTC) into the value format expected by
+ * <input type="datetime-local"> (YYYY-MM-DDTHH:mm) in the **org timezone**.
+ *
+ * This ensures the form shows the same wall-clock time the user intended,
+ * regardless of whether the server runs in UTC (Vercel) or local dev.
  */
 export function toDatetimeLocal(iso: string | null | undefined): string {
   if (!iso) return "";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  // Format in the org's timezone so the form shows wall-clock time
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: DEFAULT_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(d);
+  const get = (type: string) =>
+    parts.find((p) => p.type === type)?.value ?? "00";
+  return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}`;
+}
+
+/**
+ * Convert a datetime-local string (wall-clock in org timezone) to a proper
+ * UTC ISO string. This is the inverse of `toDatetimeLocal`.
+ *
+ * `<input type="datetime-local">` produces strings like "2026-04-13T14:00".
+ * On Vercel (UTC server), `new Date("2026-04-13T14:00")` parses this as UTC,
+ * but the user meant 2:00 PM in their org's timezone. This function computes
+ * the correct UTC offset and produces the right ISO string.
+ */
+export function localInputToUtcIso(datetimeLocal: string): string {
+  // Parse the components from the input string
+  const d = new Date(datetimeLocal);
+  if (Number.isNaN(d.getTime())) return d.toISOString(); // fallback
+
+  // The input was parsed as if it were local/UTC. We need to find what UTC
+  // instant corresponds to this wall-clock time in the org's timezone.
+  //
+  // Strategy: format "now" in the org tz to find the current UTC offset,
+  // then apply it. For DST correctness we format the *target* date.
+  const naive = new Date(datetimeLocal + "Z"); // force UTC parse
+  const utcMs = naive.getTime();
+
+  // Render this UTC instant in the org tz to see what wall-clock it maps to
+  const inTz = new Date(
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: DEFAULT_TZ,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    }).format(naive),
+  );
+  // The offset is: what the tz clock shows minus the actual UTC
+  const offsetMs = inTz.getTime() - utcMs;
+  // Subtract the offset to go from wall-clock → UTC
+  return new Date(utcMs - offsetMs).toISOString();
 }
 
 /** Convert cents to a plain dollar string suitable for an Input field. */

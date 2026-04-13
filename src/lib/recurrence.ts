@@ -9,14 +9,13 @@ import {
   addDays,
   addWeeks,
   addMonths,
-  setHours,
-  setMinutes,
   getDay,
   isBefore,
   isAfter,
   startOfDay,
   parseISO,
 } from "date-fns";
+import { localInputToUtcIso } from "@/lib/validators/common";
 
 export type RecurrencePattern =
   | "weekly"
@@ -40,11 +39,18 @@ export type SeriesRule = {
 };
 
 /**
- * Apply HH:MM time to a date object.
+ * Apply HH:MM time to a date in the org's timezone and return a proper
+ * UTC Date. Uses localInputToUtcIso so recurring bookings get the right
+ * wall-clock time regardless of server timezone.
  */
 function applyTime(date: Date, time: string): Date {
-  const [h, m] = time.split(":").map(Number);
-  return setMinutes(setHours(date, h ?? 0), m ?? 0);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const y = date.getFullYear();
+  const mo = pad(date.getMonth() + 1);
+  const d = pad(date.getDate());
+  // Build a datetime-local string and convert via org timezone
+  const dtLocal = `${y}-${mo}-${d}T${time}`;
+  return new Date(localInputToUtcIso(dtLocal));
 }
 
 /**

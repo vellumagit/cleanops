@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   dollarStringToCents,
+  localInputToUtcIso,
   optionalDollarStringToCents,
   optionalText,
 } from "./common";
@@ -42,7 +43,7 @@ export const BookingSchema = z.object({
   scheduled_at: z
     .string()
     .min(1, "Pick a date and time")
-    .transform((s) => new Date(s).toISOString())
+    .transform((s) => localInputToUtcIso(s))
     .refine((s) => !Number.isNaN(new Date(s).getTime()), "Invalid date"),
   duration_minutes: z
     .string()

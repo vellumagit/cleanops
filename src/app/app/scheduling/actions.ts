@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { getActionContext } from "@/lib/actions";
+import { DEFAULT_TZ } from "@/lib/format";
 
 export type RescheduleResult =
   | { ok: true }
@@ -41,16 +42,36 @@ export async function rescheduleBookingAction(
   if (!current) return { ok: false, error: "Booking not found" };
 
   const previous = new Date(current.scheduled_at);
+  // Extract the wall-clock hour and minute in the org's timezone
+  const prevParts = new Intl.DateTimeFormat("en-US", {
+    timeZone: DEFAULT_TZ,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(previous);
+  const prevHour = Number(prevParts.find((p) => p.type === "hour")?.value ?? 0);
+  const prevMin = Number(prevParts.find((p) => p.type === "minute")?.value ?? 0);
+
+  // Build the new datetime-local string and convert to UTC
   const [y, m, d] = targetDate.split("-").map(Number);
-  const next = new Date(
-    y,
-    m - 1,
-    d,
-    previous.getHours(),
-    previous.getMinutes(),
-    0,
-    0,
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const naiveStr = `${targetDate}T${pad(prevHour)}:${pad(prevMin)}:00Z`;
+  // Compute UTC offset for this date in the org's timezone
+  const naiveMs = new Date(naiveStr).getTime();
+  const inTz = new Date(
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: DEFAULT_TZ,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    }).format(new Date(naiveStr)),
   );
+  const offsetMs = inTz.getTime() - naiveMs;
+  const next = new Date(naiveMs - offsetMs);
   const nextEnd = new Date(
     next.getTime() + current.duration_minutes * 60_000,
   );
