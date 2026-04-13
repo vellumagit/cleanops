@@ -12,6 +12,7 @@ type SearchParams = Promise<{
   confirm?: string;
   joined?: string;
   email?: string;
+  auth_error?: string;
 }>;
 
 export default async function LoginPage({
@@ -23,6 +24,7 @@ export default async function LoginPage({
   const next = params.next ?? "/app";
   const confirmEmail = params.confirm ? params.email : undefined;
   const joinedEmail = params.joined ? params.email : undefined;
+  const authError = params.auth_error;
 
   return (
     <main className="sollos-wash relative flex flex-1 items-center justify-center px-6 py-16">
@@ -53,6 +55,16 @@ export default async function LoginPage({
               Sign in to your workspace.
             </p>
           </div>
+
+          {authError && (
+            <div
+              role="alert"
+              className="mb-4 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive"
+            >
+              Email confirmation failed. The link may have expired — try
+              signing in below and a new confirmation email will be sent.
+            </div>
+          )}
 
           {confirmEmail && (
             <div
