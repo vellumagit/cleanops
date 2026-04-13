@@ -76,6 +76,13 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: path.join(__dirname),
   },
+  experimental: {
+    // Raise server action body limit for image/PDF uploads via forms.
+    // Default is 1 MB; feed images + estimate PDFs can be up to 10 MB.
+    serverActions: {
+      bodySizeLimit: "10mb",
+    },
+  },
   async headers() {
     return [
       {
