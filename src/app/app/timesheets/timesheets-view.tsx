@@ -260,9 +260,10 @@ export function TimesheetsView({
             <button
               type="button"
               onClick={applyDateRange}
-              className="h-8 rounded-lg bg-foreground px-3 text-xs font-medium text-background transition-opacity hover:opacity-90"
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-foreground px-3 text-xs font-medium text-background transition-opacity hover:opacity-90"
             >
               <CalendarRange className="h-3.5 w-3.5" />
+              Apply
             </button>
           </div>
         </div>

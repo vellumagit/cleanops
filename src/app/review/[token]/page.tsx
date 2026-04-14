@@ -49,7 +49,7 @@ export default async function PublicReviewPage({
     `,
     )
     .eq("id", tokenMatch.id)
-    .single()) as unknown as {
+    .maybeSingle()) as unknown as {
     data: {
       id: string;
       number: string | null;
@@ -76,7 +76,7 @@ export default async function PublicReviewPage({
       .from("organizations")
       .select("logo_url, brand_color")
       .eq("id", orgId)
-      .single()) as unknown as {
+      .maybeSingle()) as unknown as {
       data: { logo_url: string | null; brand_color: string | null } | null;
     };
     if (data) orgBranding = data;

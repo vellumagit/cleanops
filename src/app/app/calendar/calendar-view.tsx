@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   format,
   startOfMonth,
@@ -30,28 +30,46 @@ import {
   User,
   Receipt,
   Clock,
+  ExternalLink,
 } from "lucide-react";
 import type { CalendarEvent } from "./page";
 
 type ViewMode = "month" | "week" | "day";
 
-type EventSource = "booking" | "invoice";
+type EventSource = "booking" | "invoice" | "google_calendar";
 
 type Props = {
   events: CalendarEvent[];
+  hasGoogleCalendar?: boolean;
 };
 
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 
-export function CalendarView({ events }: Props) {
+export function CalendarView({ events, hasGoogleCalendar }: Props) {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [view, setView] = useState<ViewMode>("month");
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
   const [enabledSources, setEnabledSources] = useState<Set<EventSource>>(
-    new Set(["booking", "invoice"]),
+    new Set(["booking", "invoice", "google_calendar"]),
   );
+
+  // Restore Google Calendar toggle from localStorage
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("cleanops_gcal_overlay");
+      if (stored === "false") {
+        setEnabledSources((prev) => {
+          const next = new Set(prev);
+          next.delete("google_calendar");
+          return next;
+        });
+      }
+    } catch {
+      // localStorage unavailable
+    }
+  }, []);
 
   const filteredEvents = useMemo(
     () => events.filter((e) => enabledSources.has(e.type)),
@@ -63,6 +81,17 @@ export function CalendarView({ events }: Props) {
       const next = new Set(prev);
       if (next.has(source)) next.delete(source);
       else next.add(source);
+      // Persist Google Calendar toggle
+      if (source === "google_calendar") {
+        try {
+          localStorage.setItem(
+            "cleanops_gcal_overlay",
+            next.has(source) ? "true" : "false",
+          );
+        } catch {
+          // localStorage unavailable
+        }
+      }
       return next;
     });
   }
@@ -138,6 +167,15 @@ export function CalendarView({ events }: Props) {
               enabled={enabledSources.has("invoice")}
               onToggle={() => toggleSource("invoice")}
             />
+            {hasGoogleCalendar && (
+              <SourceToggle
+                label="Google Cal"
+                icon={<CalendarDays className="h-3 w-3" />}
+                color="#8b5cf6"
+                enabled={enabledSources.has("google_calendar")}
+                onToggle={() => toggleSource("google_calendar")}
+              />
+            )}
           </div>
 
           <div className="h-4 w-px bg-border" />
@@ -369,12 +407,14 @@ function MonthView({
                         style={{ backgroundColor: ev.color }}
                       />
                       <span className="truncate text-foreground">
-                        {ev.type === "booking"
+                        {ev.type === "booking" || ev.type === "google_calendar"
                           ? format(new Date(ev.start), "h:mma")
                           : "Due"}{" "}
-                        {ev.meta && "client" in ev.meta
-                          ? ev.meta.client
-                          : ""}
+                        {ev.type === "google_calendar"
+                          ? ev.title
+                          : ev.meta && "client" in ev.meta
+                            ? ev.meta.client
+                            : ""}
                       </span>
                     </button>
                   ))}
@@ -492,7 +532,11 @@ function WeekView({
                       <button
                         key={ev.id}
                         onClick={() => onSelectEvent(ev)}
-                        className="absolute left-0.5 right-0.5 z-10 overflow-hidden rounded px-1.5 py-0.5 text-left text-[10px] leading-tight text-white transition-opacity hover:opacity-80"
+                        className={`absolute left-0.5 right-0.5 z-10 overflow-hidden rounded px-1.5 py-0.5 text-left text-[10px] leading-tight text-white transition-opacity hover:opacity-80 ${
+                          ev.type === "google_calendar"
+                            ? "border border-dashed border-white/30 opacity-85"
+                            : ""
+                        }`}
                         style={{
                           top: `${topOffset}px`,
                           height: `${Math.min(height, 112)}px`,
@@ -504,9 +548,11 @@ function WeekView({
                           {format(new Date(ev.start), "h:mm")}
                         </span>
                         <span className="block truncate opacity-90">
-                          {ev.meta && "client" in ev.meta
-                            ? ev.meta.client
-                            : ev.title}
+                          {ev.type === "google_calendar"
+                            ? ev.title
+                            : ev.meta && "client" in ev.meta
+                              ? ev.meta.client
+                              : ev.title}
                         </span>
                       </button>
                     );
@@ -609,7 +655,11 @@ function DayView({
                     <button
                       key={ev.id}
                       onClick={() => onSelectEvent(ev)}
-                      className="absolute left-1 right-4 z-10 overflow-hidden rounded-md px-3 py-1.5 text-left text-xs text-white transition-opacity hover:opacity-80"
+                      className={`absolute left-1 right-4 z-10 overflow-hidden rounded-md px-3 py-1.5 text-left text-xs text-white transition-opacity hover:opacity-80 ${
+                        ev.type === "google_calendar"
+                          ? "border border-dashed border-white/30 opacity-85"
+                          : ""
+                      }`}
                       style={{
                         top: `${topOffset}px`,
                         height: `${Math.min(height, 192)}px`,
@@ -618,7 +668,7 @@ function DayView({
                     >
                       <span className="font-semibold">
                         {format(evStart, "h:mm a")}
-                        {ev.type === "booking" &&
+                        {(ev.type === "booking" || ev.type === "google_calendar") &&
                           ` – ${format(evEnd, "h:mm a")}`}
                       </span>
                       <span className="ml-2 opacity-90">{ev.title}</span>
@@ -704,6 +754,33 @@ function EventDetail({
               }).format(event.meta.amount / 100)}
             </span>
           </div>
+        )}
+
+        {event.type === "google_calendar" && (
+          <>
+            {event.meta.location && (
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <MapPin className="h-3.5 w-3.5 shrink-0" />
+                <span>{event.meta.location}</span>
+              </div>
+            )}
+            {event.meta.description && (
+              <p className="text-muted-foreground text-[11px] mt-1 line-clamp-4">
+                {event.meta.description}
+              </p>
+            )}
+            {event.meta.htmlLink && (
+              <a
+                href={event.meta.htmlLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-2 inline-flex items-center gap-1 text-[11px] text-violet-500 hover:underline"
+              >
+                <ExternalLink className="h-3 w-3" />
+                Open in Google Calendar
+              </a>
+            )}
+          </>
         )}
 
         <div className="mt-1">

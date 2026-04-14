@@ -50,7 +50,7 @@ export async function submitReviewAction(
     .from("invoices")
     .select("review_token" as never)
     .eq("id", invoiceId)
-    .single()) as unknown as { data: { review_token: string | null } | null };
+    .maybeSingle()) as unknown as { data: { review_token: string | null } | null };
 
   if (!tokenRow || tokenRow.review_token !== token) {
     return { success: false, error: "Invalid or expired review link." };

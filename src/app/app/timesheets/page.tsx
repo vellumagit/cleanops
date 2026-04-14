@@ -155,11 +155,14 @@ export default async function TimesheetsPage({
 
     let earnedCents = 0;
     if (payType === "hourly") {
-      earnedCents = Math.round((actualMinutes / 60) * payRateCents);
+      // Integer-only math to avoid floating-point rounding errors:
+      // (minutes * rateCents) / 60 keeps everything in whole numbers until final division
+      earnedCents = Math.round((actualMinutes * payRateCents) / 60);
     } else if (payType === "flat") {
       earnedCents = payRateCents;
     } else if (payType === "percent" && e.booking?.total_cents) {
-      earnedCents = Math.round((payRateCents / 10000) * e.booking.total_cents);
+      // payRateCents here is the percentage × 100 (e.g. 1500 = 15%)
+      earnedCents = Math.round((e.booking.total_cents * payRateCents) / 10000);
     }
 
     return {

@@ -9,6 +9,7 @@ import { DEFAULT_TZ } from "@/lib/format";
 /** Trim and treat empty string as undefined. */
 export const trimmed = z
   .string()
+  .max(2000, "Text must be 2000 characters or fewer")
   .transform((s) => s.trim())
   .transform((s) => (s.length === 0 ? undefined : s));
 

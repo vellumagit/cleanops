@@ -9,6 +9,7 @@ import {
   InvoicePaymentSchema,
   type PAYMENT_METHODS,
 } from "@/lib/validators/invoice-payment";
+import { localInputToUtcIso } from "@/lib/validators/common";
 import { generateClaimToken } from "@/lib/claim-token";
 
 type Field = keyof typeof InvoiceSchema.shape;
@@ -197,7 +198,7 @@ export async function recordInvoicePaymentAction(
       method: parsed.data.method as (typeof PAYMENT_METHODS)[number],
       reference: parsed.data.reference ?? null,
       notes: parsed.data.notes ?? null,
-      received_at: new Date(parsed.data.received_at).toISOString(),
+      received_at: localInputToUtcIso(parsed.data.received_at),
       recorded_by: membership.id,
     })
     .select("id")

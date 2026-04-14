@@ -15,7 +15,7 @@ export default async function SetupPage() {
     .from("organizations")
     .select("onboarding_completed_at")
     .eq("id", membership.organization_id)
-    .single() as unknown as { data: { onboarding_completed_at: string | null } | null };
+    .maybeSingle() as unknown as { data: { onboarding_completed_at: string | null } | null };
 
   if (org?.onboarding_completed_at) {
     redirect("/app");
@@ -38,7 +38,7 @@ export default async function SetupPage() {
         .from("organizations")
         .select("default_payment_instructions, logo_url, brand_color")
         .eq("id", membership.organization_id)
-        .single() as unknown as {
+        .maybeSingle() as unknown as {
         data: {
           default_payment_instructions: string | null;
           logo_url: string | null;

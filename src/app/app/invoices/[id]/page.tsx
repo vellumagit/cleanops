@@ -80,7 +80,7 @@ export default async function InvoiceDetailPage({
     .from("invoices")
     .select("review_token")
     .eq("id", id)
-    .single()) as unknown as {
+    .maybeSingle()) as unknown as {
     data: { review_token: string | null } | null;
   };
   const reviewToken = reviewData?.review_token ?? null;

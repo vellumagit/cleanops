@@ -402,6 +402,69 @@ export async function deleteCalendarEvent(
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// Pull: list events from Google Calendar
+// ---------------------------------------------------------------------------
+
+export type GoogleCalendarListEvent = {
+  id: string;
+  summary: string;
+  description?: string;
+  location?: string;
+  start: string; // ISO datetime
+  end: string; // ISO datetime
+  htmlLink?: string;
+};
+
+/**
+ * Fetch events from the connected Google Calendar in a given time range.
+ * Returns an empty array if no connection exists or on any failure.
+ */
+export async function listCalendarEvents(
+  organizationId: string,
+  timeMin: string,
+  timeMax: string,
+): Promise<GoogleCalendarListEvent[]> {
+  const conn = await getConnection(organizationId);
+  if (!conn) return [];
+
+  const calendarId = (conn.metadata?.calendar_id as string) || "primary";
+
+  const params = new URLSearchParams({
+    timeMin,
+    timeMax,
+    singleEvents: "true", // expand recurring events
+    orderBy: "startTime",
+    maxResults: "250",
+  });
+
+  const res = await gcalFetch(
+    conn.access_token,
+    `/calendars/${encodeURIComponent(calendarId)}/events?${params.toString()}`,
+  );
+
+  if (!res.ok) {
+    console.error("[gcal] Failed to list events:", res.status, await res.text());
+    return [];
+  }
+
+  const data = await res.json();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return ((data.items ?? []) as any[])
+    .filter((item) => item.status !== "cancelled")
+    // Filter out events pushed from Sollos to avoid duplicates
+    .filter((item) => !(item.description ?? "").includes("Managed by Sollos"))
+    .map((item) => ({
+      id: item.id,
+      summary: item.summary ?? "(No title)",
+      description: item.description,
+      location: item.location,
+      start: item.start?.dateTime ?? item.start?.date ?? "",
+      end: item.end?.dateTime ?? item.end?.date ?? "",
+      htmlLink: item.htmlLink,
+    }));
+}
+
 /**
  * Check if an org has an active Google Calendar connection.
  * Lightweight check — no token decryption.

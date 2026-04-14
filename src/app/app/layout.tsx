@@ -49,7 +49,7 @@ export default async function AppLayout({
       .from("organizations")
       .select("onboarding_completed_at, logo_url, brand_color, name")
       .eq("id", membership.organization_id)
-      .single() as unknown as {
+      .maybeSingle() as unknown as {
       data: {
         onboarding_completed_at: string | null;
         logo_url: string | null;

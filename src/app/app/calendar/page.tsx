@@ -2,6 +2,7 @@ import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
 import { CalendarView } from "./calendar-view";
+import { listCalendarEvents } from "@/lib/google-calendar";
 import {
   startOfMonth,
   endOfMonth,
@@ -43,7 +44,22 @@ type InvoiceEvent = {
   };
 };
 
-export type CalendarEvent = BookingEvent | InvoiceEvent;
+type GoogleCalEvent = {
+  id: string;
+  type: "google_calendar";
+  title: string;
+  start: string;
+  end: string;
+  status: string;
+  color: string;
+  meta: {
+    description?: string;
+    location?: string;
+    htmlLink?: string;
+  };
+};
+
+export type CalendarEvent = BookingEvent | InvoiceEvent | GoogleCalEvent;
 
 function getStatusColor(status: string): string {
   switch (status) {
@@ -84,7 +100,7 @@ export default async function CalendarPage() {
   const rangeStart = startOfMonth(subMonths(now, 1));
   const rangeEnd = endOfMonth(addMonths(now, 1));
 
-  const [bookingsResult, invoicesResult] = await Promise.all([
+  const [bookingsResult, invoicesResult, gcalEvents] = await Promise.all([
     supabase
       .from("bookings")
       .select(
@@ -105,6 +121,12 @@ export default async function CalendarPage() {
       .gte("due_date", format(rangeStart, "yyyy-MM-dd"))
       .lte("due_date", format(rangeEnd, "yyyy-MM-dd"))
       .order("due_date"),
+
+    listCalendarEvents(
+      membership.organization_id,
+      rangeStart.toISOString(),
+      rangeEnd.toISOString(),
+    ),
   ]);
 
   const bookingEvents: CalendarEvent[] = (bookingsResult.data ?? []).map(
@@ -161,14 +183,32 @@ export default async function CalendarPage() {
     },
   );
 
-  const events = [...bookingEvents, ...invoiceEvents];
+  const googleEvents: CalendarEvent[] = gcalEvents.map((ge) => ({
+    id: `gcal_${ge.id}`,
+    type: "google_calendar" as const,
+    title: ge.summary,
+    start: ge.start.length === 10 ? `${ge.start}T00:00:00` : ge.start,
+    end: (ge.end || ge.start).length === 10
+      ? `${ge.end || ge.start}T23:59:59`
+      : ge.end || ge.start,
+    status: "external",
+    color: "#8b5cf6", // purple
+    meta: {
+      description: ge.description,
+      location: ge.location,
+      htmlLink: ge.htmlLink,
+    },
+  }));
+
+  const events = [...bookingEvents, ...invoiceEvents, ...googleEvents];
+  const hasGoogleCalendar = gcalEvents.length > 0;
 
   return (
     <PageShell
       title="Calendar"
       description="View bookings, invoices, and events across your organization."
     >
-      <CalendarView events={events} />
+      <CalendarView events={events} hasGoogleCalendar={hasGoogleCalendar} />
     </PageShell>
   );
 }

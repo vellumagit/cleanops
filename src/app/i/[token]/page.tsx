@@ -65,7 +65,7 @@ export default async function PublicInvoicePage({
       .from("organizations")
       .select("logo_url, brand_color")
       .eq("id", orgId)
-      .single() as unknown as {
+      .maybeSingle() as unknown as {
       data: { logo_url: string | null; brand_color: string | null } | null;
     };
     if (data) orgBranding = data;

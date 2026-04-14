@@ -13,7 +13,7 @@ export default async function BrandingPage() {
     .from("organizations")
     .select("id, name, logo_url, brand_color")
     .eq("id", membership.organization_id)
-    .single() as unknown as {
+    .maybeSingle() as unknown as {
     data: {
       id: string;
       name: string;
