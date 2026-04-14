@@ -24,6 +24,7 @@ export default async function BookingsPage() {
         status,
         total_cents,
         series_id,
+        address,
         client:clients ( id, name ),
         assigned:memberships!bookings_assigned_to_fkey (
           id,
@@ -41,6 +42,7 @@ export default async function BookingsPage() {
       status: string;
       total_cents: number;
       series_id: string | null;
+      address: string | null;
       client: { id: string; name: string } | null;
       assigned: { id: string; profile: { full_name: string } | null } | null;
     }> | null;
@@ -59,6 +61,7 @@ export default async function BookingsPage() {
     client_name: b.client?.name ?? "—",
     assigned_name: b.assigned?.profile?.full_name ?? null,
     series_id: b.series_id ?? null,
+    address: b.address ?? null,
   }));
 
   // Count active series for this org
