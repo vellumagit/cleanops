@@ -85,7 +85,7 @@ export default async function BookingsPage() {
                 className={buttonVariants({ variant: "outline" })}
               >
                 <Repeat className="h-4 w-4" />
-                Series ({seriesCount})
+                Recurring ({seriesCount})
               </Link>
             )}
             <Link

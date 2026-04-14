@@ -86,9 +86,10 @@ export function BookingsTable({
   const [query, setQuery] = useState("");
   const [serviceFilter, setServiceFilter] = useState<string>("all");
   const [assigneeFilter, setAssigneeFilter] = useState<string>("all");
+  const [clientFilter, setClientFilter] = useState<string>("all");
   const [showFilters, setShowFilters] = useState(false);
 
-  // Derive unique services and assignees for dropdown filters
+  // Derive unique values for dropdown filters
   const services = useMemo(
     () => [...new Set(rows.map((r) => r.service_type))].sort(),
     [rows],
@@ -100,6 +101,10 @@ export function BookingsTable({
           rows.map((r) => r.assigned_name).filter(Boolean) as string[],
         ),
       ].sort(),
+    [rows],
+  );
+  const clients = useMemo(
+    () => [...new Set(rows.map((r) => r.client_name))].sort(),
     [rows],
   );
 
@@ -136,8 +141,13 @@ export function BookingsTable({
       }
     }
 
+    // Client filter
+    if (clientFilter !== "all") {
+      result = result.filter((r) => r.client_name === clientFilter);
+    }
+
     return result;
-  }, [rows, tab, query, serviceFilter, assigneeFilter]);
+  }, [rows, tab, query, serviceFilter, assigneeFilter, clientFilter]);
 
   // Tab counts
   const tabCounts = useMemo(() => {
@@ -149,7 +159,7 @@ export function BookingsTable({
   }, [rows]);
 
   const hasActiveFilters =
-    serviceFilter !== "all" || assigneeFilter !== "all";
+    serviceFilter !== "all" || assigneeFilter !== "all" || clientFilter !== "all";
 
   return (
     <div className="space-y-3">
@@ -209,7 +219,8 @@ export function BookingsTable({
           {hasActiveFilters && (
             <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-foreground text-[10px] font-bold text-background">
               {(serviceFilter !== "all" ? 1 : 0) +
-                (assigneeFilter !== "all" ? 1 : 0)}
+                (assigneeFilter !== "all" ? 1 : 0) +
+                (clientFilter !== "all" ? 1 : 0)}
             </span>
           )}
         </button>
@@ -220,6 +231,7 @@ export function BookingsTable({
             onClick={() => {
               setServiceFilter("all");
               setAssigneeFilter("all");
+              setClientFilter("all");
             }}
             className="inline-flex h-8 items-center gap-1 rounded-lg border border-input px-2.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
           >
@@ -261,6 +273,26 @@ export function BookingsTable({
       {/* Filter dropdowns (collapsible) */}
       {showFilters && (
         <div className="flex flex-wrap gap-3 rounded-lg border border-border bg-card p-3">
+          <div>
+            <label className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+              Client
+            </label>
+            <div className="relative mt-1">
+              <select
+                value={clientFilter}
+                onChange={(e) => setClientFilter(e.target.value)}
+                className="h-8 appearance-none rounded-md border border-input bg-transparent pl-2.5 pr-7 text-xs"
+              >
+                <option value="all">All clients</option>
+                {clients.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
+            </div>
+          </div>
           <div>
             <label className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
               Service type
@@ -399,7 +431,7 @@ function TableView({
                     {r.series_id && (
                       <span
                         className="inline-flex items-center gap-0.5 rounded-full bg-blue-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-blue-600 dark:text-blue-400"
-                        title="Part of a recurring series"
+                        title="Recurring booking"
                       >
                         <Repeat className="h-2.5 w-2.5" />
                       </span>

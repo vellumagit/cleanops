@@ -39,7 +39,7 @@ function CancelButton({ seriesId, clientName }: { seriesId: string; clientName: 
       onClick={() => {
         if (
           !confirm(
-            `Cancel the recurring series for "${clientName}"? All future bookings in this series will be cancelled.`,
+            `Cancel recurring bookings for "${clientName}"? All future bookings will be cancelled.`,
           )
         )
           return;
@@ -50,7 +50,7 @@ function CancelButton({ seriesId, clientName }: { seriesId: string; clientName: 
         });
       }}
       className="inline-flex items-center gap-1 rounded-md bg-red-500/10 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-500/20 transition-colors disabled:opacity-50 dark:text-red-400"
-      title="Cancel series and all future bookings"
+      title="Cancel recurring bookings"
     >
       <Pause className="h-3 w-3" />
       {pending ? "Cancelling…" : "Cancel"}
@@ -150,7 +150,7 @@ export function SeriesTable({ rows }: { rows: SeriesRow[] }) {
       getRowId={(r) => r.id}
       searchPlaceholder="Search by client…"
       emptyState={{
-        title: "No recurring series",
+        title: "No recurring bookings",
         description:
           "Create a recurring booking from the New booking form to set up automatic scheduling.",
       }}

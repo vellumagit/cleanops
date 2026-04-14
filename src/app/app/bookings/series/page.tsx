@@ -6,7 +6,7 @@ import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
 import { SeriesTable, type SeriesRow } from "./series-table";
 
-export const metadata = { title: "Recurring series" };
+export const metadata = { title: "Recurring bookings" };
 
 export default async function SeriesPage() {
   await requireMembership(["owner", "admin", "manager"]);
@@ -105,7 +105,7 @@ export default async function SeriesPage() {
 
   return (
     <PageShell
-      title="Recurring series"
+      title="Recurring bookings"
       description="Manage your recurring booking schedules."
       actions={
         <Link
