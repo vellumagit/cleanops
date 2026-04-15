@@ -119,13 +119,13 @@ export default function Home() {
       {/* Trust bar */}
       <section className="relative z-10 mx-auto w-full max-w-4xl px-6 pb-16">
         <div className="flex flex-wrap items-center justify-center gap-8 rounded-xl border border-border bg-white/80 px-8 py-5 shadow-sm backdrop-blur-sm">
-          <Stat value="500+" label="Bookings managed" />
+          <Stat value="One place" label="For your whole operation" />
           <div className="hidden h-8 w-px bg-border sm:block" />
-          <Stat value="99.9%" label="Uptime" />
+          <Stat value="5 min" label="To set up your business" />
           <div className="hidden h-8 w-px bg-border sm:block" />
-          <Stat value="< 2 min" label="Average invoice sent" />
+          <Stat value="Any device" label="Laptop, phone, tablet" />
           <div className="hidden h-8 w-px bg-border sm:block" />
-          <Stat value="24/7" label="Your data, always accessible" />
+          <Stat value="Always on" label="Access your jobs 24/7" />
         </div>
       </section>
 
@@ -136,7 +136,7 @@ export default function Home() {
             Everything you need to run your cleaning business
           </h2>
           <p className="mx-auto mt-3 max-w-lg text-sm text-muted-foreground">
-            No more duct-taping 6 different apps together. Sollos 3 handles it all.
+            Stop paying for six different apps that don&apos;t talk to each other. Sollos does it all in one.
           </p>
         </div>
 
@@ -199,19 +199,20 @@ export default function Home() {
               Freelancer bench
             </div>
             <h2 className="text-2xl font-bold tracking-tight sm:text-3xl">
-              Need coverage? Blast your bench.
+              Someone called out? Fill the shift in minutes.
             </h2>
             <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-              Keep a roster of on-call freelancers. When a shift needs filling,
-              broadcast it to your bench via SMS. The first to claim gets the
-              job — or set multiple positions and fill a whole crew at once.
+              Keep a list of freelance cleaners you trust. When a job needs
+              covering, text them all at once with a link they tap to claim it.
+              First one to say yes gets the job — or fill a whole crew when you
+              need three people on a big property.
             </p>
             <ul className="mt-5 space-y-2.5">
               {[
-                "One-tap SMS claim links — no app download needed",
-                "Multi-position shifts — fill 1 or 10 spots per offer",
-                "Real-time tracking — see who claimed what, when",
-                "Atomic race handling — no double-bookings, ever",
+                "One tap to claim — no app download for your freelancers",
+                "Fill one spot or ten — broadcast as many positions as you need",
+                "See who claimed what, live — no guessing who's coming",
+                "No double-bookings — the system locks it in the moment someone claims",
               ].map((item) => (
                 <li key={item} className="flex items-start gap-2 text-sm text-muted-foreground">
                   <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
@@ -303,16 +304,16 @@ export default function Home() {
               Your whole schedule, one view.
             </h2>
             <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-              Connect Google Calendar and see personal events alongside your
-              cleaning bookings. Sollos pushes confirmed jobs to Google so your
-              team always knows what&apos;s next — and pulls your existing
-              events in so you never double-book.
+              Connect your Google Calendar and Sollos shows your personal events
+              right next to your cleaning jobs. When you book a new job, it
+              automatically shows up on your Google Calendar too — so you never
+              double-book a dentist appointment over a deep clean.
             </p>
             <ul className="mt-5 space-y-2.5">
               {[
-                "Two-way sync — bookings appear in Google, Google events appear in Sollos",
-                "Toggleable overlay — show or hide personal events with one click",
-                "No conflicts — see everything before you schedule",
+                "Works both ways — jobs go to Google, Google events show in Sollos",
+                "Hide personal events with one click when you want to focus",
+                "See your whole day before you take on another job",
               ].map((item) => (
                 <li key={item} className="flex items-start gap-2 text-sm text-muted-foreground">
                   <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
@@ -487,48 +488,48 @@ function FooterLink({
 const FEATURES = [
   {
     icon: CalendarCheck,
-    title: "Bookings & scheduling",
-    body: "Create jobs, assign them to your crew, and see everything on one calendar. Set duration in hours or minutes, create recurring schedules, and filter by status.",
+    title: "Jobs & scheduling",
+    body: "Book jobs, assign them to your cleaners, and see your whole week on one calendar. Set it up once for recurring customers and Sollos fills in the rest.",
   },
   {
     icon: Users,
-    title: "Team management",
-    body: "Add employees, set roles, track hours. Need emergency coverage? Blast your freelancer bench in one tap and fill multiple positions at once.",
+    title: "Your team, organized",
+    body: "Add your cleaners, set what they can see, and track their hours automatically. Need last-minute coverage? Text your freelancer backup list in one tap.",
   },
   {
     icon: CreditCard,
-    title: "Invoicing & payments",
-    body: "Send invoices, accept online payments, and track who owes what — no more chasing cheques.",
+    title: "Invoices & payments",
+    body: "Send professional invoices in seconds and let clients pay online with a card. No more chasing cheques or waiting weeks to get paid.",
   },
   {
     icon: Clock,
-    title: "Field clock-in",
-    body: "Your cleaners clock in and out from their phone with GPS verification. You see who's on-site in real time.",
+    title: "Know who's on the job",
+    body: "Your cleaners clock in and out from their phone when they arrive and leave. You see who's where, in real time, without having to call anyone.",
   },
   {
     icon: MessageSquare,
-    title: "Team chat",
-    body: "Built-in real-time messaging so your crew can coordinate without giving out personal numbers.",
+    title: "Built-in team chat",
+    body: "Your cleaners can message you and each other without sharing personal phone numbers. Everything's in one place, searchable, and private.",
   },
   {
     icon: Smartphone,
-    title: "Mobile-first field app",
-    body: "Your team gets a clean mobile interface for schedules, clock-in, and chat. No app store download — it's a PWA.",
+    title: "Works on any device",
+    body: "Use it on your laptop at the office or your phone on the road. Your cleaners don't need to download anything — it just works in their browser.",
   },
   {
     icon: MapPin,
-    title: "Client management",
-    body: "Full client profiles with contact info, addresses, service history, and notes. Never lose track of a customer again.",
+    title: "Client records",
+    body: "Every client's address, contact info, job history, and notes in one place. Remember that one thing Mrs. Johnson always asks for? Sollos does.",
   },
   {
     icon: FileText,
-    title: "Estimates & contracts",
-    body: "Create professional estimates, convert them to bookings with one click, and keep everything linked.",
+    title: "Estimates & quotes",
+    body: "Send clean-looking estimates to new leads, turn the ones they accept into jobs with a click, and keep the paper trail without the paper.",
   },
   {
     icon: BarChart3,
-    title: "Reports & timesheets",
-    body: "Payroll-ready timesheets, revenue tracking, and employee performance — all calculated automatically.",
+    title: "Payroll & reports",
+    body: "See how much your team worked, how much you made, and how much you owe — all added up for you. No more late-night spreadsheet math.",
   },
 ];
 
@@ -553,22 +554,22 @@ const STEPS = [
 const TRUST_ITEMS = [
   {
     icon: Shield,
-    title: "Row-level security",
-    body: "Every query is scoped to your organization. Your data is physically isolated from other tenants.",
+    title: "Your data stays yours",
+    body: "Your business info is kept separate from every other company on Sollos. Only you and your team can see it.",
   },
   {
     icon: Star,
-    title: "No data selling",
-    body: "We don't sell your data, share it with advertisers, or use it to train AI models. Period.",
+    title: "Never sold, never shared",
+    body: "We don't sell your data, share it with advertisers, or use it to train AI. That's a promise.",
   },
   {
     icon: Clock,
-    title: "Daily backups",
-    body: "Your data is backed up daily with a 7-day rotation. Point-in-time recovery available.",
+    title: "Backed up every day",
+    body: "Your data is backed up automatically every day, so you never have to worry about losing a single invoice or client record.",
   },
   {
     icon: Zap,
-    title: "99.9% uptime",
-    body: "Hosted on Vercel's edge network with Supabase for the database. Fast and reliable.",
+    title: "Fast and reliable",
+    body: "Built on the same infrastructure that powers major companies. Loads fast, stays up.",
   },
 ];
