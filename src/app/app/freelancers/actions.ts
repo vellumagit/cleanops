@@ -181,6 +181,7 @@ function readOfferForm(formData: FormData) {
     booking_id: String(formData.get("booking_id") ?? ""),
     pay_dollars: String(formData.get("pay_dollars") ?? ""),
     notes: String(formData.get("notes") ?? ""),
+    positions_needed: String(formData.get("positions_needed") ?? "1"),
     expires_in_minutes: String(formData.get("expires_in_minutes") ?? "30"),
   };
 }
@@ -266,7 +267,9 @@ export async function createJobOfferAction(
       notes: parsed.data.notes ?? null,
       status: "open",
       expires_at: expiresAt,
-    })
+      positions_needed: parsed.data.positions_needed,
+      positions_filled: 0,
+    } as never)
     .select("id")
     .single();
 
@@ -313,6 +316,7 @@ export async function createJobOfferAction(
       payCents: parsed.data.pay_dollars,
       addressShort,
       claimUrl: `${base}/claim/${d.claim_token}`,
+      positionsNeeded: parsed.data.positions_needed,
     });
 
     const result = await sendSms(contact.phone, body);

@@ -88,6 +88,25 @@ export default async function JobOfferDetailPage({
     .eq("offer_id", id)
     .order("sent_at", { ascending: true });
 
+  // Fetch positions data (columns not in generated types yet).
+  const { data: posData } = await supabase
+    .from("job_offers")
+    .select("positions_needed, positions_filled" as never)
+    .eq("id", id)
+    .maybeSingle();
+  const posRow = posData as Record<string, number> | null;
+  const positionsNeeded = posRow?.positions_needed ?? 1;
+  const positionsFilled = posRow?.positions_filled ?? 0;
+
+  // Fetch all claims for this offer to know which contacts claimed.
+  const { data: claims } = await supabase
+    .from("job_offer_claims" as never)
+    .select("contact_id")
+    .eq("offer_id", id);
+  const claimedContactIds = new Set(
+    ((claims ?? []) as Array<{ contact_id: string }>).map((c) => c.contact_id),
+  );
+
   const status = offer.status as OfferStatus;
   const base = claimBaseUrl();
 
@@ -129,11 +148,17 @@ export default async function JobOfferDetailPage({
               </StatusBadge>
             </div>
 
-            <dl className="mt-5 grid grid-cols-2 gap-4 text-sm sm:grid-cols-3">
+            <dl className="mt-5 grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
               <div>
                 <dt className="text-xs text-muted-foreground">Pay</dt>
                 <dd className="mt-0.5 font-semibold tabular-nums text-foreground">
                   {formatCurrencyCents(offer.pay_cents)}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs text-muted-foreground">Positions</dt>
+                <dd className="mt-0.5 font-medium tabular-nums text-foreground">
+                  {positionsFilled} / {positionsNeeded} filled
                 </dd>
               </div>
               <div>
@@ -188,7 +213,7 @@ export default async function JobOfferDetailPage({
               ) : (
                 dispatches.map((d) => {
                   const claimed =
-                    offer.filled_contact_id === d.contact?.id;
+                    d.contact?.id ? claimedContactIds.has(d.contact.id) : false;
                   return (
                     <li
                       key={d.id}
@@ -252,17 +277,16 @@ export default async function JobOfferDetailPage({
                 token.
               </li>
               <li>
-                2. The first to tap <Copy className="inline h-3 w-3" /> and
-                claim wins — the offer state flips to{" "}
-                <code className="font-mono text-[11px]">filled</code>{" "}
-                atomically.
+                2. {positionsNeeded > 1
+                  ? `Up to ${positionsNeeded} freelancers can claim a spot. The offer stays open until all positions are filled.`
+                  : <>The first to tap <Copy className="inline h-3 w-3" /> and claim wins — the offer state flips to <code className="font-mono text-[11px]">filled</code> atomically.</>}
               </li>
               <li>
-                3. Other freelancers who tap their link after that see a
+                3. Freelancers who tap after all spots are taken see a
                 &ldquo;sorry, already filled&rdquo; page.
               </li>
               <li>
-                4. The winning freelancer sees the full address and client
+                4. Freelancers who claim see the full address and client
                 details on their claim page.
               </li>
             </ol>

@@ -117,6 +117,7 @@ export function composeOfferSms(args: {
   payCents: number;
   addressShort: string;
   claimUrl: string;
+  positionsNeeded?: number;
 }): string {
   const when = new Date(args.scheduledAt).toLocaleString("en-US", {
     weekday: "short",
@@ -131,5 +132,10 @@ export function composeOfferSms(args: {
       : `${args.durationMinutes} min`;
   const dollars = `$${(args.payCents / 100).toFixed(0)}`;
   const service = args.serviceType.replace(/_/g, " ");
-  return `Sollos 3: Coverage needed. ${service} ${when}, ${duration}, ${dollars}. ${args.addressShort}. First to claim gets it: ${args.claimUrl}`;
+  const positions = args.positionsNeeded ?? 1;
+  const cta =
+    positions > 1
+      ? `${positions} spots available — claim yours`
+      : "First to claim gets it";
+  return `Sollos 3: Coverage needed. ${service} ${when}, ${duration}, ${dollars}. ${args.addressShort}. ${cta}: ${args.claimUrl}`;
 }

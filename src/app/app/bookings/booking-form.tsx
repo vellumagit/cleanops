@@ -34,6 +34,8 @@ export type BookingFormDefaults = {
 
 type Option = { id: string; label: string };
 
+type DurationUnit = "minutes" | "hours";
+
 const DAY_LABELS = [
   { value: 0, label: "Sun" },
   { value: 1, label: "Mon" },
@@ -43,6 +45,27 @@ const DAY_LABELS = [
   { value: 5, label: "Fri" },
   { value: 6, label: "Sat" },
 ];
+
+/**
+ * Convert a stored duration (always in minutes) to the display value for
+ * the selected unit.
+ */
+function toDisplayValue(minutes: number, unit: DurationUnit): string {
+  if (unit === "hours") {
+    const hours = Math.round((minutes / 60) * 100) / 100;
+    return String(hours);
+  }
+  return String(minutes);
+}
+
+/**
+ * Convert the user's input back to minutes for the hidden form field.
+ */
+function toMinutes(value: string, unit: DurationUnit): number {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return unit === "hours" ? Math.round(n * 60) : Math.round(n);
+}
 
 export function BookingForm({
   mode,
@@ -62,6 +85,16 @@ export function BookingForm({
   const [isRecurring, setIsRecurring] = useState(false);
   const [recurrencePattern, setRecurrencePattern] = useState("weekly");
   const [selectedDays, setSelectedDays] = useState<number[]>([]);
+
+  // Duration unit toggle — default to hours when value is a clean multiple
+  // of 60, otherwise minutes.
+  const defaultMinutes = defaults?.duration_minutes ?? 0;
+  const defaultUnit: DurationUnit =
+    defaultMinutes > 0 && defaultMinutes % 60 === 0 ? "hours" : "minutes";
+  const [durationUnit, setDurationUnit] = useState<DurationUnit>(defaultUnit);
+  const [durationDisplay, setDurationDisplay] = useState<string>(
+    defaultMinutes > 0 ? toDisplayValue(defaultMinutes, defaultUnit) : "",
+  );
 
   // Single-booking action
   const singleAction =
@@ -87,6 +120,55 @@ export function BookingForm({
       prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day].sort(),
     );
   }
+
+  // When the unit changes, convert the current display value to the new unit.
+  function handleUnitChange(newUnit: DurationUnit) {
+    if (newUnit === durationUnit) return;
+    const currentMinutes = toMinutes(durationDisplay, durationUnit);
+    setDurationUnit(newUnit);
+    if (currentMinutes > 0) {
+      setDurationDisplay(toDisplayValue(currentMinutes, newUnit));
+    }
+  }
+
+  // The hidden field always submits minutes.
+  const computedMinutes = toMinutes(durationDisplay, durationUnit);
+
+  /** Shared duration input rendered in both one-time and recurring blocks. */
+  const durationInput = (
+    <FormField
+      label="Duration"
+      htmlFor="duration_display"
+      required
+      error={state.errors?.duration_minutes}
+    >
+      <div className="flex gap-2">
+        <Input
+          id="duration_display"
+          type="number"
+          min={durationUnit === "hours" ? 0.25 : 1}
+          max={durationUnit === "hours" ? 24 : 1440}
+          step={durationUnit === "hours" ? 0.25 : 1}
+          required
+          value={durationDisplay}
+          onChange={(e) => setDurationDisplay(e.target.value)}
+          className="flex-1"
+          placeholder={durationUnit === "hours" ? "e.g. 2.5" : "e.g. 150"}
+        />
+        <FormSelect
+          id="duration_unit"
+          value={durationUnit}
+          onChange={(e) => handleUnitChange(e.target.value as DurationUnit)}
+          className="w-[110px] shrink-0"
+        >
+          <option value="minutes">Minutes</option>
+          <option value="hours">Hours</option>
+        </FormSelect>
+      </div>
+      {/* Hidden field submits the canonical minutes value */}
+      <input type="hidden" name="duration_minutes" value={computedMinutes} />
+    </FormField>
+  );
 
   return (
     <form action={formAction} className="space-y-5">
@@ -126,7 +208,7 @@ export function BookingForm({
       {isEditingSeries && (
         <div className="flex items-center gap-2 rounded-md bg-blue-500/10 border border-blue-500/20 px-3 py-2 text-xs text-blue-700 dark:text-blue-300">
           <Repeat className="h-3.5 w-3.5 shrink-0" />
-          This booking is part of a recurring series. Editing it only changes this single occurrence.
+          This booking is part of a recurring schedule. Editing it only changes this single occurrence.
         </div>
       )}
 
@@ -315,54 +397,12 @@ export function BookingForm({
             />
           </FormField>
 
-          <FormField
-            label="Duration (minutes)"
-            htmlFor="duration_minutes"
-            required
-            error={state.errors?.duration_minutes}
-          >
-            <Input
-              id="duration_minutes"
-              name="duration_minutes"
-              type="number"
-              min={1}
-              max={1440}
-              required
-              defaultValue={
-                v.duration_minutes ??
-                (defaults?.duration_minutes != null
-                  ? String(defaults.duration_minutes)
-                  : "")
-              }
-            />
-          </FormField>
+          {durationInput}
         </div>
       )}
 
       {/* Duration — for recurring (time is in recurrence section) */}
-      {isRecurring && (
-        <FormField
-          label="Duration (minutes)"
-          htmlFor="duration_minutes"
-          required
-          error={state.errors?.duration_minutes}
-        >
-          <Input
-            id="duration_minutes"
-            name="duration_minutes"
-            type="number"
-            min={1}
-            max={1440}
-            required
-            defaultValue={
-              v.duration_minutes ??
-              (defaults?.duration_minutes != null
-                ? String(defaults.duration_minutes)
-                : "")
-            }
-          />
-        </FormField>
-      )}
+      {isRecurring && durationInput}
 
       <div className="grid gap-5 sm:grid-cols-3">
         <FormField
@@ -487,10 +527,10 @@ export function BookingForm({
         >
           Cancel
         </Link>
-        <SubmitButton pendingLabel={isRecurring ? "Creating series…" : "Saving…"}>
+        <SubmitButton pendingLabel={isRecurring ? "Creating…" : "Saving…"}>
           {mode === "create"
             ? isRecurring
-              ? "Create recurring series"
+              ? "Create recurring booking"
               : "Create booking"
             : "Save changes"}
         </SubmitButton>

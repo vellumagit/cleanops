@@ -11,22 +11,30 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
  * the capability: 16 URL-safe chars = 96 bits of entropy per dispatch, so
  * it is not guessable at any practical rate.
  *
- * Race handling: the UPDATE is guarded by `status = 'open'` so only one
- * caller can succeed in flipping an offer to `filled`. The second caller
- * gets zero updated rows and we return a "already filled" result.
+ * Multi-position support:
+ *   - `positions_needed` controls how many freelancers can claim one offer.
+ *   - Each claim atomically increments `positions_filled` and inserts a
+ *     `job_offer_claims` row.
+ *   - The offer flips to `status = 'filled'` only when
+ *     `positions_filled = positions_needed`.
+ *   - The same contact cannot claim the same offer twice (UNIQUE constraint).
+ *
+ * Race handling: the UPDATE is guarded by `status = 'open'` AND
+ * `positions_filled < positions_needed` so concurrent claims beyond the
+ * limit are rejected. The per-contact uniqueness is enforced by the
+ * `job_offer_claims (offer_id, contact_id)` UNIQUE constraint.
  */
 
 export type ClaimResult =
-  | { ok: true }
-  | { ok: false; reason: "already_filled" | "expired" | "cancelled" | "invalid" | "error"; message?: string };
+  | { ok: true; spotsRemaining: number }
+  | { ok: false; reason: "already_filled" | "already_claimed" | "expired" | "cancelled" | "invalid" | "error"; message?: string };
 
 export async function claimOfferAction(token: string): Promise<ClaimResult> {
   if (!token) return { ok: false, reason: "invalid" };
 
   const admin = createSupabaseAdminClient();
 
-  // 1. Look up the dispatch by token. This also gives us the offer id,
-  //    contact id, and organization id we need to update siblings.
+  // 1. Look up the dispatch by token.
   const { data: dispatch, error: dispatchErr } = await admin
     .from("job_offer_dispatches")
     .select(
@@ -39,16 +47,28 @@ export async function claimOfferAction(token: string): Promise<ClaimResult> {
     return { ok: false, reason: "invalid" };
   }
 
-  const offer = dispatch.offer;
+  // Fetch positions columns separately (not in generated types yet).
+  const { data: positionsData } = await admin
+    .from("job_offers")
+    .select("positions_needed, positions_filled" as never)
+    .eq("id", dispatch.offer.id)
+    .maybeSingle();
+
+  const posRow = positionsData as Record<string, number> | null;
+
+  const offer = {
+    ...dispatch.offer,
+    positions_needed: posRow?.positions_needed ?? 1,
+    positions_filled: posRow?.positions_filled ?? 0,
+  };
 
   if (offer.status === "cancelled") return { ok: false, reason: "cancelled" };
   if (offer.status === "expired") return { ok: false, reason: "expired" };
 
   if (offer.expires_at && new Date(offer.expires_at).getTime() < Date.now()) {
-    // Lazily mark expired so the state is consistent with the clock.
     await admin
       .from("job_offers")
-      .update({ status: "expired" })
+      .update({ status: "expired" } as never)
       .eq("id", offer.id)
       .eq("status", "open");
     return { ok: false, reason: "expired" };
@@ -58,28 +78,62 @@ export async function claimOfferAction(token: string): Promise<ClaimResult> {
     return { ok: false, reason: "already_filled" };
   }
 
-  // 2. Atomic claim. `status = 'open'` is the race guard.
+  // Check if this contact already claimed this offer.
+  const { data: existingClaim } = await admin
+    .from("job_offer_claims" as never)
+    .select("id")
+    .eq("offer_id", offer.id)
+    .eq("contact_id", dispatch.contact_id)
+    .maybeSingle();
+
+  if (existingClaim) {
+    return { ok: false, reason: "already_claimed", message: "You already claimed this shift." };
+  }
+
+  // 2. Determine the new filled count and whether this claim completes the offer.
+  const newFilledCount = (offer.positions_filled ?? 0) + 1;
+  const positionsNeeded = offer.positions_needed ?? 1;
+  const isFinalClaim = newFilledCount >= positionsNeeded;
+
+  // Atomic claim: only succeeds if the offer is still 'open'.
+  // We update positions_filled and optionally flip status to 'filled'.
+  const updatePayload: Record<string, unknown> = {
+    positions_filled: newFilledCount,
+    filled_contact_id: dispatch.contact_id,
+    filled_at: new Date().toISOString(),
+  };
+  if (isFinalClaim) {
+    updatePayload.status = "filled";
+  }
+
   const { data: updated, error: updateErr } = await admin
     .from("job_offers")
-    .update({
-      status: "filled",
-      filled_contact_id: dispatch.contact_id,
-      filled_at: new Date().toISOString(),
-    })
+    .update(updatePayload as never)
     .eq("id", offer.id)
     .eq("status", "open")
-    .select("id")
+    // Guard against concurrent over-filling
+    .lt("positions_filled" as never, positionsNeeded)
+    .select("id, positions_filled")
     .maybeSingle();
 
   if (updateErr) {
     return { ok: false, reason: "error", message: updateErr.message };
   }
   if (!updated) {
-    // Someone else won the race between the status check and the update.
+    // Either someone else won the last spot or offer was closed.
     return { ok: false, reason: "already_filled" };
   }
 
-  // 3. Stamp the dispatch row that actually claimed + the contact's
+  // 3. Record the claim in job_offer_claims for multi-position tracking.
+  await admin.from("job_offer_claims" as never).insert({
+    organization_id: dispatch.organization_id,
+    offer_id: offer.id,
+    contact_id: dispatch.contact_id,
+    dispatch_id: dispatch.id,
+    claimed_at: new Date().toISOString(),
+  } as never);
+
+  // 4. Stamp the dispatch row that actually claimed + the contact's
   //    last_accepted_at.
   await admin
     .from("job_offer_dispatches")
@@ -91,19 +145,23 @@ export async function claimOfferAction(token: string): Promise<ClaimResult> {
     .update({ last_accepted_at: new Date().toISOString() })
     .eq("id", dispatch.contact_id);
 
-  // 4. Audit log — written with service-role so we bypass the insert
-  //    policy but still get a row tagged to the org. No actor_id since the
-  //    claimant is not a membership.
+  // 5. Audit log.
+  const spotsRemaining = positionsNeeded - newFilledCount;
   await admin.from("audit_log").insert({
     organization_id: dispatch.organization_id,
     actor_id: null,
     action: "status_change",
     entity: "settings",
     entity_id: offer.id,
-    before: { entity_name: "job_offer", status: "open" } as never,
+    before: {
+      entity_name: "job_offer",
+      status: "open",
+      positions_filled: offer.positions_filled,
+    } as never,
     after: {
       entity_name: "job_offer",
-      status: "filled",
+      status: isFinalClaim ? "filled" : "open",
+      positions_filled: newFilledCount,
       filled_contact_id: dispatch.contact_id,
       via: "public_claim_link",
     } as never,
@@ -115,5 +173,5 @@ export async function claimOfferAction(token: string): Promise<ClaimResult> {
   }
   revalidatePath(`/claim/${token}`);
 
-  return { ok: true };
+  return { ok: true, spotsRemaining };
 }

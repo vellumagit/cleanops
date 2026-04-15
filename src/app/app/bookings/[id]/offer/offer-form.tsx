@@ -29,8 +29,8 @@ type Props = {
 
 /**
  * Client component — handles the multi-select checkboxes, the pay dollar
- * field, and a live preview of the rendered SMS text so the admin sees
- * exactly what will go out before hitting send.
+ * field, positions needed, and a live preview of the rendered SMS text so
+ * the admin sees exactly what will go out before hitting send.
  */
 export function JobOfferForm({ bookingId, contacts, booking }: Props) {
   const [state, formAction] = useActionState(createJobOfferAction, empty);
@@ -39,6 +39,7 @@ export function JobOfferForm({ bookingId, contacts, booking }: Props) {
     () => new Set(contacts.map((c) => c.id)),
   );
   const [payDollars, setPayDollars] = useState<string>("180");
+  const [positionsNeeded, setPositionsNeeded] = useState<number>(1);
 
   function toggle(id: string) {
     setSelected((prev) => {
@@ -75,8 +76,12 @@ export function JobOfferForm({ bookingId, contacts, booking }: Props) {
     const service = booking.service_type.replace(/_/g, " ");
     const addr = booking.address?.split("\n")[0]?.trim() ?? "On-site";
     const addrShort = addr.length > 60 ? addr.slice(0, 57) + "…" : addr;
-    return `Sollos 3: Coverage needed. ${service} ${when}, ${duration}, ${dollars}. ${addrShort}. First to claim gets it: https://…/claim/<token>`;
-  }, [booking, payDollars]);
+    const spots =
+      positionsNeeded > 1
+        ? `${positionsNeeded} spots available`
+        : "First to claim gets it";
+    return `Sollos 3: Coverage needed. ${service} ${when}, ${duration}, ${dollars}. ${addrShort}. ${spots}: https://…/claim/<token>`;
+  }, [booking, payDollars, positionsNeeded]);
 
   const segmentCount = Math.max(1, Math.ceil(preview.length / 160));
 
@@ -85,13 +90,13 @@ export function JobOfferForm({ bookingId, contacts, booking }: Props) {
       <FormError message={state.errors?._form} />
       <input type="hidden" name="booking_id" value={bookingId} />
 
-      <div className="grid gap-5 sm:grid-cols-2">
+      <div className="grid gap-5 sm:grid-cols-3">
         <FormField
           label="Pay ($)"
           htmlFor="pay_dollars"
           required
           error={state.errors?.pay_dollars}
-          hint="Flat amount offered to the freelancer who claims this shift."
+          hint="Flat amount per freelancer."
         >
           <Input
             id="pay_dollars"
@@ -105,11 +110,32 @@ export function JobOfferForm({ bookingId, contacts, booking }: Props) {
         </FormField>
 
         <FormField
+          label="Positions needed"
+          htmlFor="positions_needed"
+          required
+          error={state.errors?.positions_needed}
+          hint="How many freelancers needed."
+        >
+          <Input
+            id="positions_needed"
+            name="positions_needed"
+            type="number"
+            min={1}
+            max={50}
+            required
+            value={positionsNeeded}
+            onChange={(e) =>
+              setPositionsNeeded(Math.max(1, Number(e.target.value) || 1))
+            }
+          />
+        </FormField>
+
+        <FormField
           label="Expires in (minutes)"
           htmlFor="expires_in_minutes"
           required
           error={state.errors?.expires_in_minutes}
-          hint="Between 5 and 1440 (24 hours)."
+          hint="5 to 1440 (24 hours)."
         >
           <Input
             id="expires_in_minutes"

@@ -63,7 +63,21 @@ export default async function ClaimPage({
     return <Shell><InvalidState /></Shell>;
   }
 
-  const offer = dispatch.offer;
+  // Fetch positions columns separately (not in generated types yet).
+  const { data: offerPositions } = await admin
+    .from("job_offers")
+    .select("positions_needed, positions_filled" as never)
+    .eq("id", dispatch.offer.id)
+    .maybeSingle();
+
+  const offer = dispatch.offer as typeof dispatch.offer & {
+    positions_needed: number;
+    positions_filled: number;
+  };
+  // Merge positions data (defaults for pre-migration rows).
+  offer.positions_needed = (offerPositions as Record<string, number> | null)?.positions_needed ?? 1;
+  offer.positions_filled = (offerPositions as Record<string, number> | null)?.positions_filled ?? 0;
+
   const booking = offer.booking;
   const now = Date.now();
   const expiredByClock =
@@ -76,23 +90,49 @@ export default async function ClaimPage({
   } else if (offer.status === "expired" || (offer.status === "open" && expiredByClock)) {
     view = <ExpiredState />;
   } else if (offer.status === "filled") {
-    if (offer.filled_contact_id === dispatch.contact_id) {
+    // Check if THIS contact claimed one of the spots.
+    const { data: myClaim } = await admin
+      .from("job_offer_claims" as never)
+      .select("id")
+      .eq("offer_id", offer.id)
+      .eq("contact_id", dispatch.contact_id)
+      .maybeSingle();
+
+    if (myClaim || offer.filled_contact_id === dispatch.contact_id) {
       view = <GotItState booking={booking} contactName={dispatch.contact?.full_name ?? null} pay={offer.pay_cents} />;
     } else {
       view = <LostRaceState />;
     }
   } else {
-    // open + not yet expired → show the claim CTA
-    view = (
-      <OpenState
-        token={token}
-        contactName={dispatch.contact?.full_name ?? null}
-        pay={offer.pay_cents}
-        booking={booking}
-        notes={offer.notes}
-        expiresAt={offer.expires_at}
-      />
-    );
+    // open + not yet expired → check if this contact already claimed a spot
+    const { data: myClaim } = await admin
+      .from("job_offer_claims" as never)
+      .select("id")
+      .eq("offer_id", offer.id)
+      .eq("contact_id", dispatch.contact_id)
+      .maybeSingle();
+
+    const positionsNeeded = offer.positions_needed ?? 1;
+    const positionsFilled = offer.positions_filled ?? 0;
+    const spotsRemaining = positionsNeeded - positionsFilled;
+
+    if (myClaim) {
+      // Already claimed — show the "you got it" state
+      view = <GotItState booking={booking} contactName={dispatch.contact?.full_name ?? null} pay={offer.pay_cents} />;
+    } else {
+      view = (
+        <OpenState
+          token={token}
+          contactName={dispatch.contact?.full_name ?? null}
+          pay={offer.pay_cents}
+          booking={booking}
+          notes={offer.notes}
+          expiresAt={offer.expires_at}
+          positionsNeeded={positionsNeeded}
+          spotsRemaining={spotsRemaining}
+        />
+      );
+    }
   }
 
   return <Shell>{view}</Shell>;
@@ -120,7 +160,7 @@ function Shell({ children }: { children: React.ReactNode }) {
           {children}
         </div>
         <p className="mt-6 text-center text-[11px] text-muted-foreground">
-          This link was sent to one freelancer. First to claim gets the shift.
+          This link was sent to you. Claim your spot before it fills up.
         </p>
       </div>
     </main>
@@ -146,6 +186,8 @@ function OpenState({
   booking,
   notes,
   expiresAt,
+  positionsNeeded = 1,
+  spotsRemaining,
 }: {
   token: string;
   contactName: string | null;
@@ -153,10 +195,12 @@ function OpenState({
   booking: BookingForClaim;
   notes: string | null;
   expiresAt: string | null;
+  positionsNeeded?: number;
+  spotsRemaining?: number;
 }) {
-  // We deliberately withhold the full address and client details until
-  // the claim is actually locked in. The neighborhood / rough area could
-  // be surfaced here later if the admin wants.
+  const spots = spotsRemaining ?? positionsNeeded;
+  const isMultiPosition = positionsNeeded > 1;
+
   return (
     <div className="space-y-5">
       <div>
@@ -165,7 +209,9 @@ function OpenState({
           {contactName ? `Hey ${contactName.split(" ")[0]}, ` : ""}coverage needed
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Tap below if you can take it. First come, first served.
+          {isMultiPosition
+            ? `${spots} of ${positionsNeeded} spot${positionsNeeded === 1 ? "" : "s"} still open. Tap below to claim yours.`
+            : "Tap below if you can take it. First come, first served."}
         </p>
       </div>
 
@@ -181,6 +227,13 @@ function OpenState({
           <Row label="Duration">
             {formatDurationMinutes(booking.duration_minutes)}
           </Row>
+          {isMultiPosition && (
+            <Row label="Spots">
+              <span className="tabular-nums">
+                {spots} of {positionsNeeded} open
+              </span>
+            </Row>
+          )}
           <Row label="Area">
             {shortArea(booking.address) ?? "On-site (shared after claim)"}
           </Row>

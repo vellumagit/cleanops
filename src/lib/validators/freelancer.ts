@@ -43,6 +43,15 @@ export const JobOfferSchema = z.object({
   booking_id: requiredText("Booking id"),
   pay_dollars: dollarStringToCents,
   notes: optionalText,
+  positions_needed: z
+    .string()
+    .optional()
+    .default("1")
+    .transform((s) => {
+      const n = Number(s);
+      return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 1;
+    })
+    .refine((n) => n >= 1 && n <= 50, "Positions must be between 1 and 50"),
   expires_in_minutes: z
     .string()
     .transform((s) => {

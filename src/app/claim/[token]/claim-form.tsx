@@ -32,7 +32,9 @@ export function ClaimForm({ token }: { token: string }) {
           className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200"
         >
           {result.reason === "already_filled" &&
-            "Another freelancer claimed this shift first. Sorry!"}
+            "All positions have been filled. Sorry!"}
+          {result.reason === "already_claimed" &&
+            "You already claimed this shift!"}
           {result.reason === "expired" && "This offer has expired."}
           {result.reason === "cancelled" &&
             "This offer was cancelled by the company."}
