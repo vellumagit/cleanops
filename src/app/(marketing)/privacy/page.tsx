@@ -1,113 +1,357 @@
 import Link from "next/link";
 
-export const metadata = { title: "Privacy Policy" };
+export const metadata = {
+  title: "Privacy Policy",
+  description:
+    "Sollos 3 privacy policy — what data we collect, how we use it, and how it's protected.",
+};
 
-const LAST_UPDATED = "April 7, 2026";
+const LAST_UPDATED = "April 14, 2026";
 
 export default function PrivacyPage() {
   return (
-    <main className="mx-auto w-full max-w-3xl px-6 py-16">
-      <Link
-        href="/"
-        className="text-xs text-muted-foreground hover:text-foreground"
-      >
-        ← Back home
-      </Link>
+    <main className="sollos-wash relative min-h-screen">
+      <div className="sollos-dots absolute inset-0" aria-hidden />
 
-      <h1 className="mt-6 text-3xl font-semibold tracking-tight">
-        Privacy Policy
-      </h1>
-      <p className="mt-1 text-xs text-muted-foreground">
-        Last updated: {LAST_UPDATED}
-      </p>
+      <div className="relative z-10 mx-auto w-full max-w-3xl px-6 py-16">
+        <Link
+          href="/"
+          className="text-xs text-muted-foreground hover:text-foreground"
+        >
+          &larr; Back home
+        </Link>
 
-      <div className="prose prose-sm mt-8 max-w-none text-sm leading-7 text-foreground">
-        <p>
-          Sollos 3 (&ldquo;we&rdquo;, &ldquo;us&rdquo;) provides operations
-          software for cleaning companies. This policy describes what we
-          collect, why, and how it&rsquo;s protected. We treat customer data as
-          a liability — we collect the minimum needed to run the product.
+        <h1 className="mt-6 text-3xl font-bold tracking-tight">
+          Privacy Policy
+        </h1>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Last updated: {LAST_UPDATED}
         </p>
 
-        <h2 className="mt-8 text-base font-semibold">What we collect</h2>
-        <ul className="ml-5 list-disc space-y-1">
-          <li>
-            <strong>Account data</strong> — name, email, password hash,
-            organization name.
-          </li>
-          <li>
-            <strong>Operational data</strong> — clients, bookings, employees,
-            invoices and related records that customers enter into the product.
-          </li>
-          <li>
-            <strong>Field data</strong> — clock-in / clock-out timestamps and
-            (with consent) the geolocation captured at clock-in.
-          </li>
-          <li>
-            <strong>Telemetry</strong> — error reports and basic uptime metrics
-            via Sentry. No third-party analytics or ad trackers.
-          </li>
-        </ul>
+        <div className="mt-8 space-y-8 text-sm leading-7 text-foreground">
+          {/* Intro */}
+          <p>
+            Sollos 3 (&ldquo;we&rdquo;, &ldquo;us&rdquo;, &ldquo;our&rdquo;)
+            provides operations software for cleaning companies. This privacy
+            policy describes what personal information we collect, how we use it,
+            and the choices you have. We treat customer data as a liability — we
+            collect the minimum needed to run the product and nothing more.
+          </p>
 
-        <h2 className="mt-8 text-base font-semibold">How we use it</h2>
-        <p>
-          To run the product. We do not sell data, share it with advertisers,
-          or use it to train any model. Each customer&rsquo;s data is isolated
-          in their own tenant via Postgres row-level security.
-        </p>
+          {/* What we collect */}
+          <section>
+            <h2 className="text-base font-semibold">1. What we collect</h2>
+            <ul className="mt-3 ml-5 list-disc space-y-2">
+              <li>
+                <strong>Account data</strong> — your name, email address,
+                password hash, and the organization name you choose during
+                sign-up.
+              </li>
+              <li>
+                <strong>Operational data</strong> — clients, bookings, invoices,
+                estimates, employees, freelancer contacts, chat messages,
+                timesheets, and other records you enter into the product.
+              </li>
+              <li>
+                <strong>Field data</strong> — clock-in / clock-out timestamps
+                and, with your consent, the GPS coordinates captured at clock-in
+                for verification purposes.
+              </li>
+              <li>
+                <strong>Payment data</strong> — when billing is enabled, payment
+                information is collected and processed directly by Stripe. We do
+                not store credit card numbers on our servers.
+              </li>
+              <li>
+                <strong>Usage and diagnostic data</strong> — error reports and
+                basic application performance metrics collected via Sentry. We do
+                not use third-party analytics, advertising trackers, or cookies
+                for profiling.
+              </li>
+            </ul>
+          </section>
 
-        <h2 className="mt-8 text-base font-semibold">Sub-processors</h2>
-        <ul className="ml-5 list-disc space-y-1">
-          <li>
-            <strong>Supabase</strong> — primary database, authentication, file
-            storage and realtime delivery.
-          </li>
-          <li>
-            <strong>Vercel</strong> — application hosting and edge network.
-          </li>
-          <li>
-            <strong>Sentry</strong> — error tracking.
-          </li>
-          <li>
-            <strong>Resend</strong> — transactional email.
-          </li>
-          <li>
-            <strong>Stripe</strong> — payment processing (when billing is
-            enabled).
-          </li>
-        </ul>
+          {/* How we use it */}
+          <section>
+            <h2 className="text-base font-semibold">2. How we use your data</h2>
+            <p className="mt-3">We use the information we collect to:</p>
+            <ul className="mt-2 ml-5 list-disc space-y-1">
+              <li>Provide, maintain, and improve the Sollos 3 service.</li>
+              <li>
+                Authenticate your identity and enforce access controls within
+                your organization.
+              </li>
+              <li>
+                Send transactional emails (password resets, booking
+                confirmations, invoice delivery).
+              </li>
+              <li>
+                Send SMS notifications to freelancer contacts when a shift offer
+                is broadcast (via Twilio, when enabled by the organization
+                admin).
+              </li>
+              <li>Diagnose and fix bugs, outages, and performance issues.</li>
+              <li>
+                Comply with legal obligations and respond to lawful requests.
+              </li>
+            </ul>
+            <p className="mt-3">
+              <strong>
+                We do not sell your data, share it with advertisers, or use it to
+                train any machine learning model.
+              </strong>
+            </p>
+          </section>
 
-        <h2 className="mt-8 text-base font-semibold">Retention</h2>
-        <p>
-          Customer data is retained for the life of the account. Deleting your
-          organization purges all associated rows within 30 days. Daily backups
-          rotate on a 7-day cycle.
-        </p>
+          {/* Google user data */}
+          <section>
+            <h2 className="text-base font-semibold">
+              3. Google user data disclosure
+            </h2>
+            <p className="mt-3">
+              Sollos 3 offers an optional Google Calendar integration. When you
+              choose to connect your Google account, we request access to the
+              following scopes:
+            </p>
+            <ul className="mt-2 ml-5 list-disc space-y-1">
+              <li>
+                <code className="rounded bg-muted px-1.5 py-0.5 text-xs font-mono">
+                  calendar.events
+                </code>{" "}
+                — to read your existing Google Calendar events and display them
+                alongside your Sollos 3 bookings, and to create calendar events
+                for confirmed bookings.
+              </li>
+            </ul>
+            <p className="mt-3">
+              <strong>How we use Google Calendar data:</strong>
+            </p>
+            <ul className="mt-2 ml-5 list-disc space-y-1">
+              <li>
+                We read your calendar events to display them as an overlay in the
+                Sollos 3 calendar view, so you can see personal and work events
+                in one place.
+              </li>
+              <li>
+                We create events in your Google Calendar when bookings are
+                confirmed, so your schedule stays in sync.
+              </li>
+              <li>
+                We store your Google OAuth refresh token (encrypted) in our
+                database so the integration stays connected between sessions.
+              </li>
+            </ul>
+            <p className="mt-3">
+              <strong>What we do NOT do with Google data:</strong>
+            </p>
+            <ul className="mt-2 ml-5 list-disc space-y-1">
+              <li>
+                We do not share your Google Calendar data with any third party.
+              </li>
+              <li>
+                We do not use your Google Calendar data for advertising,
+                profiling, or any purpose other than the calendar sync feature
+                described above.
+              </li>
+              <li>
+                We do not store the contents of your Google Calendar events in
+                our database — they are fetched in real time and displayed only
+                during your active session.
+              </li>
+              <li>
+                We do not transfer your Google data to any AI or machine learning
+                model.
+              </li>
+            </ul>
+            <p className="mt-3">
+              You can disconnect Google Calendar at any time from{" "}
+              <strong>Settings &rarr; Integrations</strong> in Sollos 3. When you
+              disconnect, we immediately delete your stored OAuth tokens. Sollos
+              3&rsquo;s use and transfer of information received from Google APIs
+              adheres to the{" "}
+              <a
+                href="https://developers.google.com/terms/api-services-user-data-policy"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline underline-offset-2"
+              >
+                Google API Services User Data Policy
+              </a>
+              , including the Limited Use requirements.
+            </p>
+          </section>
 
-        <h2 className="mt-8 text-base font-semibold">Your rights</h2>
-        <p>
-          You may request a copy of, correction of, or deletion of your data
-          at any time by emailing{" "}
-          <a href="mailto:privacy@sollos.app" className="underline">
-            privacy@sollos.app
-          </a>
-          .
-        </p>
+          {/* Data isolation */}
+          <section>
+            <h2 className="text-base font-semibold">4. Data isolation</h2>
+            <p className="mt-3">
+              Sollos 3 is a multi-tenant application. Each customer&rsquo;s data
+              is logically isolated using Postgres row-level security (RLS)
+              policies. Every database query is automatically scoped to your
+              organization — it is not possible for one customer to access
+              another customer&rsquo;s data through the application.
+            </p>
+          </section>
 
-        <h2 className="mt-8 text-base font-semibold">Contact</h2>
-        <p>
-          Questions about this policy:{" "}
-          <a href="mailto:privacy@sollos.app" className="underline">
-            privacy@sollos.app
-          </a>
-          .
-        </p>
+          {/* Sub-processors */}
+          <section>
+            <h2 className="text-base font-semibold">5. Sub-processors</h2>
+            <p className="mt-3">
+              We use the following third-party services to operate Sollos 3:
+            </p>
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-border text-left">
+                    <th className="py-2 pr-4 font-semibold">Provider</th>
+                    <th className="py-2 pr-4 font-semibold">Purpose</th>
+                    <th className="py-2 font-semibold">Data processed</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  <tr>
+                    <td className="py-2 pr-4 font-medium">Supabase</td>
+                    <td className="py-2 pr-4">Database, auth, file storage, realtime</td>
+                    <td className="py-2">All operational data</td>
+                  </tr>
+                  <tr>
+                    <td className="py-2 pr-4 font-medium">Vercel</td>
+                    <td className="py-2 pr-4">Application hosting, edge network</td>
+                    <td className="py-2">HTTP requests, server logs</td>
+                  </tr>
+                  <tr>
+                    <td className="py-2 pr-4 font-medium">Sentry</td>
+                    <td className="py-2 pr-4">Error tracking</td>
+                    <td className="py-2">Stack traces, browser metadata</td>
+                  </tr>
+                  <tr>
+                    <td className="py-2 pr-4 font-medium">Resend</td>
+                    <td className="py-2 pr-4">Transactional email</td>
+                    <td className="py-2">Recipient email, message content</td>
+                  </tr>
+                  <tr>
+                    <td className="py-2 pr-4 font-medium">Stripe</td>
+                    <td className="py-2 pr-4">Payment processing</td>
+                    <td className="py-2">Payment details (PCI-compliant)</td>
+                  </tr>
+                  <tr>
+                    <td className="py-2 pr-4 font-medium">Twilio</td>
+                    <td className="py-2 pr-4">SMS delivery (freelancer bench)</td>
+                    <td className="py-2">Phone numbers, message content</td>
+                  </tr>
+                  <tr>
+                    <td className="py-2 pr-4 font-medium">Google</td>
+                    <td className="py-2 pr-4">Calendar sync (optional)</td>
+                    <td className="py-2">OAuth tokens, calendar event data</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
 
-        <p className="mt-10 text-xs text-muted-foreground">
-          This is a stub policy intended to give launch customers something to
-          point at. Final language will be reviewed by counsel before any
-          paying customer is onboarded.
-        </p>
+          {/* Cookies */}
+          <section>
+            <h2 className="text-base font-semibold">6. Cookies</h2>
+            <p className="mt-3">
+              Sollos 3 uses only essential cookies required for authentication
+              and session management. We do not use tracking cookies, advertising
+              cookies, or any third-party cookie-based analytics.
+            </p>
+          </section>
+
+          {/* Retention */}
+          <section>
+            <h2 className="text-base font-semibold">7. Data retention</h2>
+            <p className="mt-3">
+              Customer data is retained for the life of the account. When you
+              delete your organization, all associated data is purged within 30
+              days. Daily database backups rotate on a 7-day cycle.
+            </p>
+          </section>
+
+          {/* Your rights */}
+          <section>
+            <h2 className="text-base font-semibold">8. Your rights</h2>
+            <p className="mt-3">
+              Depending on your jurisdiction, you may have the right to:
+            </p>
+            <ul className="mt-2 ml-5 list-disc space-y-1">
+              <li>Access a copy of the personal data we hold about you.</li>
+              <li>Correct inaccurate personal data.</li>
+              <li>
+                Request deletion of your data (subject to legal retention
+                requirements).
+              </li>
+              <li>Object to or restrict certain processing activities.</li>
+              <li>
+                Export your data in a structured, machine-readable format.
+              </li>
+            </ul>
+            <p className="mt-3">
+              To exercise any of these rights, email{" "}
+              <a
+                href="mailto:privacy@sollos3.com"
+                className="underline underline-offset-2"
+              >
+                privacy@sollos3.com
+              </a>
+              . We will respond within 30 days.
+            </p>
+          </section>
+
+          {/* Children */}
+          <section>
+            <h2 className="text-base font-semibold">
+              9. Children&rsquo;s privacy
+            </h2>
+            <p className="mt-3">
+              Sollos 3 is a business-to-business product. We do not knowingly
+              collect personal information from anyone under the age of 16. If we
+              learn that we have collected data from a child, we will delete it
+              promptly.
+            </p>
+          </section>
+
+          {/* Changes */}
+          <section>
+            <h2 className="text-base font-semibold">10. Changes to this policy</h2>
+            <p className="mt-3">
+              We may update this privacy policy from time to time. Material
+              changes will be announced by email and inside the product at least
+              30 days before they take effect. The &ldquo;last updated&rdquo;
+              date at the top of this page reflects the most recent revision.
+            </p>
+          </section>
+
+          {/* Contact */}
+          <section>
+            <h2 className="text-base font-semibold">11. Contact us</h2>
+            <p className="mt-3">
+              If you have questions about this privacy policy or our data
+              practices, contact us at:
+            </p>
+            <ul className="mt-2 ml-5 list-disc space-y-1">
+              <li>
+                Email:{" "}
+                <a
+                  href="mailto:privacy@sollos3.com"
+                  className="underline underline-offset-2"
+                >
+                  privacy@sollos3.com
+                </a>
+              </li>
+              <li>
+                Website:{" "}
+                <a
+                  href="https://sollos3.com"
+                  className="underline underline-offset-2"
+                >
+                  sollos3.com
+                </a>
+              </li>
+            </ul>
+          </section>
+        </div>
       </div>
     </main>
   );
