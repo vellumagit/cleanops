@@ -1,7 +1,8 @@
 import Link from "next/link";
-import { ArrowLeft, BookOpen, CheckCircle2, CalendarDays, Plug, XCircle } from "lucide-react";
+import { ArrowLeft, BookOpen, CheckCircle2, CalendarDays, Plug, XCircle, AlertTriangle } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
 import { StatusBadge } from "@/components/status-badge";
@@ -21,6 +22,7 @@ import {
   connectSageAction,
   disconnectSageAction,
 } from "./sage-actions";
+import { StripeDisconnectButton } from "./stripe-connect-actions";
 
 export const metadata = { title: "Integrations" };
 
@@ -53,6 +55,25 @@ export default async function IntegrationsPage() {
     .from("integration_connections")
     .select("provider, status, external_account_id, connected_at, updated_at")
     .eq("organization_id", membership.organization_id);
+
+  // Stripe Connect status lives on the organizations row (not
+  // integration_connections) because we only store the account id + cached
+  // capabilities — no OAuth tokens.
+  const admin = createSupabaseAdminClient();
+  const { data: orgStripe } = await admin
+    .from("organizations")
+    .select(
+      "stripe_account_id, stripe_charges_enabled, stripe_payouts_enabled, stripe_details_submitted, stripe_connected_at",
+    )
+    .eq("id", membership.organization_id)
+    .maybeSingle();
+  const stripeInfo = orgStripe as {
+    stripe_account_id: string | null;
+    stripe_charges_enabled: boolean;
+    stripe_payouts_enabled: boolean;
+    stripe_details_submitted: boolean;
+    stripe_connected_at: string | null;
+  } | null;
 
   const byProvider = new Map<
     ProviderKey,
@@ -122,11 +143,24 @@ export default async function IntegrationsPage() {
   ];
 
   function renderCard(card: ProviderCard) {
-    const conn = byProvider.get(card.key);
-    const isConnected = conn?.status === "active";
+    const isStripe = card.key === "stripe";
     const isGcal = card.key === "google_calendar";
     const isSage = card.key === "sage";
-    const hasLiveOAuth = isGcal || isSage;
+    const hasLiveOAuth = isGcal || isSage || isStripe;
+
+    // Stripe state lives on organizations, not integration_connections
+    const stripeConnected = Boolean(stripeInfo?.stripe_account_id);
+    const stripeFullyEnabled =
+      stripeConnected &&
+      stripeInfo?.stripe_charges_enabled &&
+      stripeInfo?.stripe_payouts_enabled;
+    const stripeNeedsAction =
+      stripeConnected && !stripeFullyEnabled;
+
+    const conn = byProvider.get(card.key);
+    const isConnected = isStripe
+      ? stripeConnected
+      : conn?.status === "active";
 
     return (
       <li
@@ -165,24 +199,85 @@ export default async function IntegrationsPage() {
             {isConnected ? (
               <>
                 <dl className="space-y-1 text-[11px]">
-                  {conn?.external_account_id && (
-                    <div className="flex justify-between gap-2">
-                      <dt className="text-muted-foreground">Account</dt>
-                      <dd className="font-mono text-foreground">
-                        {conn.external_account_id.length > 24
-                          ? conn.external_account_id.slice(0, 24) + "…"
-                          : conn.external_account_id}
-                      </dd>
-                    </div>
+                  {isStripe ? (
+                    <>
+                      {stripeInfo?.stripe_account_id && (
+                        <div className="flex justify-between gap-2">
+                          <dt className="text-muted-foreground">Account</dt>
+                          <dd className="font-mono text-foreground">
+                            {stripeInfo.stripe_account_id.length > 24
+                              ? stripeInfo.stripe_account_id.slice(0, 24) + "…"
+                              : stripeInfo.stripe_account_id}
+                          </dd>
+                        </div>
+                      )}
+                      {stripeInfo?.stripe_connected_at && (
+                        <div className="flex justify-between gap-2">
+                          <dt className="text-muted-foreground">Since</dt>
+                          <dd className="text-foreground">
+                            {formatDateTime(stripeInfo.stripe_connected_at)}
+                          </dd>
+                        </div>
+                      )}
+                      <div className="flex justify-between gap-2">
+                        <dt className="text-muted-foreground">Charges</dt>
+                        <dd className={stripeInfo?.stripe_charges_enabled ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}>
+                          {stripeInfo?.stripe_charges_enabled ? "Enabled" : "Pending"}
+                        </dd>
+                      </div>
+                      <div className="flex justify-between gap-2">
+                        <dt className="text-muted-foreground">Payouts</dt>
+                        <dd className={stripeInfo?.stripe_payouts_enabled ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}>
+                          {stripeInfo?.stripe_payouts_enabled ? "Enabled" : "Pending"}
+                        </dd>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      {conn?.external_account_id && (
+                        <div className="flex justify-between gap-2">
+                          <dt className="text-muted-foreground">Account</dt>
+                          <dd className="font-mono text-foreground">
+                            {conn.external_account_id.length > 24
+                              ? conn.external_account_id.slice(0, 24) + "…"
+                              : conn.external_account_id}
+                          </dd>
+                        </div>
+                      )}
+                      <div className="flex justify-between gap-2">
+                        <dt className="text-muted-foreground">Since</dt>
+                        <dd className="text-foreground">
+                          {formatDateTime(conn!.connected_at)}
+                        </dd>
+                      </div>
+                    </>
                   )}
-                  <div className="flex justify-between gap-2">
-                    <dt className="text-muted-foreground">Since</dt>
-                    <dd className="text-foreground">
-                      {formatDateTime(conn!.connected_at)}
-                    </dd>
-                  </div>
                 </dl>
-                {hasLiveOAuth ? (
+                {isStripe && stripeNeedsAction && (
+                  <div className="mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-[11px] text-amber-700 dark:text-amber-200">
+                    <div className="flex items-start gap-1.5">
+                      <AlertTriangle className="h-3 w-3 flex-shrink-0 mt-0.5" />
+                      <span>
+                        {!stripeInfo?.stripe_details_submitted
+                          ? "Finish onboarding in Stripe to start accepting payments."
+                          : "Stripe is still verifying your account. This can take a few minutes to a few days."}
+                      </span>
+                    </div>
+                  </div>
+                )}
+                {isStripe ? (
+                  <>
+                    {stripeNeedsAction && (
+                      <Link
+                        href="/api/integrations/stripe/connect"
+                        className="mt-3 inline-flex w-full items-center justify-center rounded-md bg-foreground px-3 py-2 text-xs font-medium text-background hover:bg-foreground/90 transition-colors"
+                      >
+                        Continue onboarding
+                      </Link>
+                    )}
+                    <StripeDisconnectButton />
+                  </>
+                ) : hasLiveOAuth ? (
                   <form action={isGcal ? disconnectGoogleCalendarAction : disconnectSageAction}>
                     <button
                       type="submit"
@@ -204,7 +299,14 @@ export default async function IntegrationsPage() {
                 )}
               </>
             ) : card.platformReady ? (
-              hasLiveOAuth ? (
+              isStripe ? (
+                <Link
+                  href="/api/integrations/stripe/connect"
+                  className="inline-flex w-full items-center justify-center rounded-md bg-foreground px-3 py-2 text-xs font-medium text-background hover:bg-foreground/90 transition-colors"
+                >
+                  Connect {card.name}
+                </Link>
+              ) : hasLiveOAuth ? (
                 <form action={isGcal ? connectGoogleCalendarAction : connectSageAction}>
                   <button
                     type="submit"

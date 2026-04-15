@@ -3,6 +3,8 @@ import { notFound } from "next/navigation";
 import { ArrowLeft, Pencil, Send, Ban, ExternalLink, Star } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { StripePaymentLinkButton } from "./stripe-payment-link-button";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
 import {
@@ -50,9 +52,23 @@ export default async function InvoiceDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  await requireMembership(["owner", "admin", "manager"]);
+  const membership = await requireMembership(["owner", "admin", "manager"]);
   const { id } = await params;
   const supabase = await createSupabaseServerClient();
+
+  // Check Stripe Connect status on the org — payment link only makes sense
+  // if the org has charges enabled.
+  const admin = createSupabaseAdminClient();
+  const { data: orgStripe } = await admin
+    .from("organizations")
+    .select("stripe_account_id, stripe_charges_enabled")
+    .eq("id", membership.organization_id)
+    .maybeSingle();
+  const stripeReady = Boolean(
+    (orgStripe as { stripe_account_id: string | null; stripe_charges_enabled: boolean } | null)
+      ?.stripe_account_id &&
+      (orgStripe as { stripe_charges_enabled: boolean } | null)?.stripe_charges_enabled,
+  );
 
   const { data: invoice, error } = await supabase
     .from("invoices")
@@ -184,6 +200,9 @@ export default async function InvoiceDetailPage({
                     Mark as sent
                   </SubmitButton>
                 </form>
+              )}
+              {stripeReady && !isVoid && balanceCents > 0 && (
+                <StripePaymentLinkButton invoiceId={invoice.id} />
               )}
               {invoice.public_token && (
                 <Link

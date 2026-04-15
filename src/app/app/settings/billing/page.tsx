@@ -1,12 +1,12 @@
 import Link from "next/link";
-import { ChevronLeft, CreditCard, ExternalLink, Sparkles } from "lucide-react";
+import { ChevronLeft, CreditCard, Sparkles } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { isStripeEnabled } from "@/lib/stripe";
 import { PageShell } from "@/components/page-shell";
-import { buttonVariants } from "@/components/ui/button";
 import { RedeemForm } from "./redeem-form";
+import { ManageInStripeButton, SubscribeButton } from "./billing-actions";
 
 export const metadata = { title: "Billing" };
 
@@ -31,10 +31,11 @@ export default async function BillingPage() {
   const { data: subscription } = await supabase
     .from("subscriptions")
     .select(
-      "status, current_period_end, cancel_at_period_end, trial_ends_at, stripe_price_id",
+      "status, current_period_end, cancel_at_period_end, trial_ends_at, stripe_price_id, stripe_subscription_id",
     )
     .eq("organization_id", membership.organization_id)
     .maybeSingle();
+  const hasSubscription = Boolean(subscription?.stripe_subscription_id);
 
   // Read the billing_override via the admin client because the generated
   // types may not yet include the new columns.
@@ -86,10 +87,8 @@ export default async function BillingPage() {
 
       {!enabled && !hasOverride && (
         <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-xs text-amber-700 dark:text-amber-200">
-          Billing is scaffolded but not yet enabled in this environment. The
-          Stripe webhook route, the <code>subscriptions</code> table, and this
-          page are all live — set <code>STRIPE_ENABLED=true</code> and wire up
-          the Stripe SDK to start charging.
+          Billing is scaffolded but not yet enabled in this environment. Set{" "}
+          <code>STRIPE_ENABLED=true</code> in Vercel to start charging.
         </div>
       )}
 
@@ -135,25 +134,24 @@ export default async function BillingPage() {
               </div>
             </dl>
 
-            {!hasOverride && (
+            {!hasOverride && enabled && hasSubscription && (
               <div className="mt-5 flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  disabled
-                  className={buttonVariants({ size: "sm" })}
-                  title={
-                    enabled
-                      ? "Open Stripe customer portal"
-                      : "Enable Stripe to use the customer portal"
-                  }
-                >
-                  <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
-                  Manage in Stripe
-                </button>
+                <ManageInStripeButton />
                 <p className="text-xs text-muted-foreground">
-                  {enabled
-                    ? "You'll be redirected to Stripe to update payment method and download invoices."
-                    : "Available once Stripe is enabled."}
+                  Update payment method and download invoices in Stripe.
+                </p>
+              </div>
+            )}
+            {!hasOverride && enabled && !hasSubscription && (
+              <div className="mt-5 flex flex-wrap items-center gap-2">
+                <SubscribeButton plan="starter" label="Start Starter — $49/mo" />
+                <SubscribeButton
+                  plan="growth"
+                  label="Start Growth — $99/mo"
+                  variant="outline"
+                />
+                <p className="ml-1 text-xs text-muted-foreground">
+                  21-day free trial · No credit card charged today
                 </p>
               </div>
             )}

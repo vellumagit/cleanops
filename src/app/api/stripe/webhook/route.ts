@@ -1,30 +1,73 @@
 /**
- * Stripe webhook route — scaffolded but DISABLED until STRIPE_ENABLED=true.
+ * Stripe billing webhook — handles subscription lifecycle events for our
+ * own SaaS billing (charging Sollos 3 customers their $49/$99 subscription).
  *
- * Stripe sends signed POST requests to this URL whenever a subscription
- * changes state. The handler should:
+ * Security:
+ *   1. Signature MUST verify against STRIPE_WEBHOOK_SECRET.
+ *   2. Idempotency: we record every event.id in `stripe_events` and
+ *      short-circuit duplicates.
+ *   3. Service-role client is used because subscription writes bypass RLS
+ *      by design (the org's users don't directly write this table).
  *
- *   1. Read the raw body and the `stripe-signature` header.
- *   2. Verify the signature against STRIPE_WEBHOOK_SECRET.
- *   3. Switch on `event.type` and upsert the corresponding row in the
- *      `subscriptions` table using the service-role client.
- *
- * For now we return 503 unless the feature flag is on. When you flip the
- * flag, replace `verifyStripeSignaturePlaceholder` with the real verifier
- * (see src/lib/stripe.ts for the migration steps).
+ * Events handled:
+ *   - checkout.session.completed       (first successful checkout)
+ *   - customer.subscription.created
+ *   - customer.subscription.updated
+ *   - customer.subscription.deleted
+ *   - invoice.payment_succeeded
+ *   - invoice.payment_failed
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import type Stripe from "stripe";
 import {
   isStripeEnabled,
-  verifyStripeSignaturePlaceholder,
+  verifyWebhookSignature,
+  isEventAlreadyProcessed,
+  recordEvent,
+  getPlanFromPriceId,
 } from "@/lib/stripe";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
-// Stripe sends application/json — disable Next's automatic body parsing so
-// the raw text is preserved for signature verification.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+async function upsertSubscriptionFromStripe(sub: Stripe.Subscription) {
+  const admin = createSupabaseAdminClient();
+  const organization_id =
+    (sub.metadata && sub.metadata.organization_id) || null;
+  if (!organization_id) return;
+
+  const firstItem = sub.items.data[0];
+  const priceId = firstItem?.price.id ?? null;
+  const plan = getPlanFromPriceId(priceId);
+  // In the Dahlia API version, current_period_end lives on the subscription
+  // item, not the subscription. Fall back to the item if needed.
+  const currentPeriodEnd =
+    (sub as unknown as { current_period_end?: number }).current_period_end ??
+    firstItem?.current_period_end ??
+    null;
+
+  await admin.from("subscriptions").upsert(
+    {
+      organization_id,
+      stripe_customer_id:
+        typeof sub.customer === "string" ? sub.customer : sub.customer.id,
+      stripe_subscription_id: sub.id,
+      stripe_price_id: priceId,
+      plan_tier: plan,
+      status: sub.status,
+      current_period_end: currentPeriodEnd
+        ? new Date(currentPeriodEnd * 1000).toISOString()
+        : null,
+      cancel_at_period_end: sub.cancel_at_period_end,
+      trial_ends_at: sub.trial_end
+        ? new Date(sub.trial_end * 1000).toISOString()
+        : null,
+    } as never,
+    { onConflict: "organization_id" },
+  );
+}
 
 export async function POST(req: NextRequest) {
   if (!isStripeEnabled()) {
@@ -37,61 +80,85 @@ export async function POST(req: NextRequest) {
   const rawBody = await req.text();
   const signature = req.headers.get("stripe-signature");
 
-  const event = verifyStripeSignaturePlaceholder(rawBody, signature);
-  if (!event) {
-    // The placeholder always returns null. Once the real verifier is wired
-    // up, a null result here means the signature failed to validate.
+  let event: Stripe.Event;
+  try {
+    event = verifyWebhookSignature(rawBody, signature, "STRIPE_WEBHOOK_SECRET");
+  } catch (err) {
+    console.error("[stripe webhook] signature verification failed", err);
     return NextResponse.json(
       { error: "Invalid Stripe signature." },
       { status: 400 },
     );
   }
 
-  const admin = createSupabaseAdminClient();
-
-  // Skeleton dispatch — fill in once the real Stripe types are imported.
-  switch (event.type) {
-    case "customer.subscription.created":
-    case "customer.subscription.updated":
-    case "customer.subscription.deleted": {
-      const sub = event.data.object as {
-        id?: string;
-        customer?: string;
-        status?: string;
-        items?: { data?: Array<{ price?: { id?: string } }> };
-        current_period_end?: number;
-        cancel_at_period_end?: boolean;
-        trial_end?: number | null;
-        metadata?: { organization_id?: string };
-      };
-
-      const organization_id = sub.metadata?.organization_id;
-      if (!organization_id) break;
-
-      await admin.from("subscriptions").upsert(
-        {
-          organization_id,
-          stripe_customer_id: sub.customer ?? null,
-          stripe_subscription_id: sub.id ?? null,
-          stripe_price_id: sub.items?.data?.[0]?.price?.id ?? null,
-          status: sub.status ?? null,
-          current_period_end: sub.current_period_end
-            ? new Date(sub.current_period_end * 1000).toISOString()
-            : null,
-          cancel_at_period_end: sub.cancel_at_period_end ?? false,
-          trial_ends_at: sub.trial_end
-            ? new Date(sub.trial_end * 1000).toISOString()
-            : null,
-        },
-        { onConflict: "organization_id" },
-      );
-      break;
-    }
-
-    default:
-      // Ignore unsubscribed events. Stripe accepts a 200 here.
-      break;
+  // Idempotency — Stripe retries, so we dedupe on event id.
+  if (await isEventAlreadyProcessed(event.id)) {
+    return NextResponse.json({ received: true, duplicate: true });
   }
 
+  try {
+    switch (event.type) {
+      case "checkout.session.completed": {
+        const session = event.data.object as Stripe.Checkout.Session;
+        const organization_id =
+          (session.metadata && session.metadata.organization_id) || null;
+        if (organization_id && session.subscription) {
+          // Pull the subscription to get up-to-date status + period info.
+          // We do this via the Stripe API on the subscription id so the
+          // upsert is consistent with the subscription.* events.
+          // The subscription.created event is also fired, so this is a
+          // belt-and-braces write in case events arrive out of order.
+          const subId =
+            typeof session.subscription === "string"
+              ? session.subscription
+              : session.subscription.id;
+          const { getStripe } = await import("@/lib/stripe");
+          const stripe = getStripe();
+          const sub = await stripe.subscriptions.retrieve(subId);
+          await upsertSubscriptionFromStripe(sub);
+        }
+        break;
+      }
+
+      case "customer.subscription.created":
+      case "customer.subscription.updated":
+      case "customer.subscription.deleted": {
+        const sub = event.data.object as Stripe.Subscription;
+        await upsertSubscriptionFromStripe(sub);
+        break;
+      }
+
+      case "invoice.payment_succeeded":
+      case "invoice.payment_failed": {
+        // We don't mirror invoice rows for SaaS billing — Stripe's portal
+        // is the source of truth. But we can refresh subscription status,
+        // since a failed payment may flip status to 'past_due'.
+        const invoice = event.data.object as Stripe.Invoice;
+        const subRef = (invoice as unknown as { subscription?: string | { id: string } | null }).subscription;
+        if (subRef) {
+          const subId = typeof subRef === "string" ? subRef : subRef.id;
+          const { getStripe } = await import("@/lib/stripe");
+          const stripe = getStripe();
+          const sub = await stripe.subscriptions.retrieve(subId);
+          await upsertSubscriptionFromStripe(sub);
+        }
+        break;
+      }
+
+      default:
+        // Ignore other events — Stripe wants a 200 so it stops retrying.
+        break;
+    }
+  } catch (err) {
+    console.error("[stripe webhook] handler error", event.type, err);
+    // Re-throw by returning 500 so Stripe retries. Do NOT record the event
+    // as processed on failure.
+    return NextResponse.json(
+      { error: "Webhook handler failed" },
+      { status: 500 },
+    );
+  }
+
+  await recordEvent(event.id, event.type, null);
   return NextResponse.json({ received: true });
 }
