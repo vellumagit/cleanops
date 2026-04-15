@@ -28,6 +28,7 @@ export const RecurrencePatternEnum = z.enum([
   "tri_weekly",
   "monthly",
   "custom_weekly",
+  "monthly_nth",
 ]);
 
 export const BookingSchema = z.object({
@@ -85,6 +86,24 @@ export const RecurringBookingSchema = z.object({
         .filter((n) => Number.isFinite(n) && n >= 0 && n <= 6);
     })
     .optional(),
+  /** For monthly_nth: 1..4 = Nth, 5 = last */
+  monthly_nth: z
+    .string()
+    .transform((s) => (s && s.trim() !== "" ? Number(s) : undefined))
+    .optional()
+    .refine(
+      (n) => n === undefined || (Number.isFinite(n) && n >= 1 && n <= 5),
+      "Invalid ordinal",
+    ),
+  /** For monthly_nth: 0=Sun .. 6=Sat */
+  monthly_dow: z
+    .string()
+    .transform((s) => (s && s.trim() !== "" ? Number(s) : undefined))
+    .optional()
+    .refine(
+      (n) => n === undefined || (Number.isFinite(n) && n >= 0 && n <= 6),
+      "Invalid weekday",
+    ),
   /** HH:MM time */
   start_time: z
     .string()

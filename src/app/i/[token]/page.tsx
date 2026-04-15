@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { getOrgCurrency } from "@/lib/org-currency";
 import { formatCurrencyCents, formatDate } from "@/lib/format";
 import { humanizePaymentMethod } from "@/lib/validators/invoice-payment";
 
@@ -70,6 +71,8 @@ export default async function PublicInvoicePage({
     };
     if (data) orgBranding = data;
   }
+
+  const currency = orgId ? await getOrgCurrency(orgId) : "CAD";
 
   const lineItems = [...(invoice.line_items ?? [])].sort(
     (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0),
@@ -152,7 +155,7 @@ export default async function PublicInvoicePage({
                       : "text-foreground"
                 }`}
               >
-                {formatCurrencyCents(balanceCents)}
+                {formatCurrencyCents(balanceCents, currency)}
               </p>
               {invoice.due_date && !isVoid && !isPaid && (
                 <p className="mt-0.5 text-xs text-muted-foreground">
@@ -200,11 +203,11 @@ export default async function PublicInvoicePage({
                         <p className="font-medium">{li.label}</p>
                         <p className="text-xs text-muted-foreground">
                           {Number(li.quantity).toFixed(2)} ×{" "}
-                          {formatCurrencyCents(li.unit_price_cents)}
+                          {formatCurrencyCents(li.unit_price_cents, currency)}
                         </p>
                       </div>
                       <span className="font-mono tabular-nums">
-                        {formatCurrencyCents(subtotal)}
+                        {formatCurrencyCents(subtotal, currency)}
                       </span>
                     </li>
                   );
@@ -215,18 +218,18 @@ export default async function PublicInvoicePage({
             <dl className="mt-4 space-y-2 border-t border-border pt-4 text-sm">
               <SummaryRow
                 label="Total"
-                value={formatCurrencyCents(invoice.amount_cents)}
+                value={formatCurrencyCents(invoice.amount_cents, currency)}
               />
               {paidCents > 0 && (
                 <SummaryRow
                   label="Paid to date"
-                  value={`− ${formatCurrencyCents(paidCents)}`}
+                  value={`− ${formatCurrencyCents(paidCents, currency)}`}
                   tone="green"
                 />
               )}
               <SummaryRow
                 label="Balance"
-                value={formatCurrencyCents(balanceCents)}
+                value={formatCurrencyCents(balanceCents, currency)}
                 bold
               />
             </dl>
@@ -281,7 +284,7 @@ export default async function PublicInvoicePage({
                   >
                     <div>
                       <p className="font-medium tabular-nums">
-                        {formatCurrencyCents(p.amount_cents)}
+                        {formatCurrencyCents(p.amount_cents, currency)}
                       </p>
                       <p className="text-xs text-muted-foreground">
                         {formatDate(p.received_at)} ·{" "}

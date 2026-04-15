@@ -7,6 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { buttonVariants } from "@/components/ui/button";
 import { FormError, FormField } from "@/components/form-field";
 import { SubmitButton } from "@/components/submit-button";
+import { DurationInput } from "@/components/duration-input";
 import {
   createPackageAction,
   updatePackageAction,
@@ -75,19 +76,15 @@ export function PackageForm({
 
       <div className="grid gap-5 sm:grid-cols-2">
         <FormField
-          label="Duration (minutes)"
+          label="Duration"
           htmlFor="duration_minutes"
           required
           error={state.errors?.duration_minutes}
         >
-          <Input
-            id="duration_minutes"
+          <DurationInput
             name="duration_minutes"
-            type="number"
-            min={1}
-            max={1440}
+            defaultMinutes={Number(v.duration_minutes) || 0}
             required
-            defaultValue={v.duration_minutes}
           />
         </FormField>
 

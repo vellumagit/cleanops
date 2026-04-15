@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { getOrgCurrency } from "@/lib/org-currency";
 import {
   StatusBadge,
   bookingStatusTone,
@@ -31,6 +32,7 @@ export const metadata = { title: "Dashboard" };
 export default async function DashboardPage() {
   const membership = await requireMembership();
   const supabase = await createSupabaseServerClient();
+  const currency = await getOrgCurrency(membership.organization_id);
 
   // -------- Time windows in the org's display timezone --------
   // On Vercel the server clock is UTC. We need "today" to mean today in the
@@ -211,7 +213,7 @@ export default async function DashboardPage() {
         kind: "booking_created",
         at: b.created_at,
         title: `New booking · ${b.client?.name ?? "—"}`,
-        meta: formatCurrencyCents(b.total_cents),
+        meta: formatCurrencyCents(b.total_cents, currency),
         href: "/app/bookings",
       }),
     ),
@@ -230,7 +232,7 @@ export default async function DashboardPage() {
         kind: "invoice_paid",
         at: i.paid_at!,
         title: `Invoice paid · ${i.client?.name ?? "—"}`,
-        meta: formatCurrencyCents(i.amount_cents),
+        meta: formatCurrencyCents(i.amount_cents, currency),
         href: "/app/invoices",
       }),
     ),
@@ -296,7 +298,7 @@ export default async function DashboardPage() {
         <HeroCard
           icon={<DollarSign className="h-4 w-4" />}
           label="Today's revenue"
-          value={formatCurrencyCents(todaysRevenue)}
+          value={formatCurrencyCents(todaysRevenue, currency)}
           sub={`${todaysJobsList.length} job${
             todaysJobsList.length === 1 ? "" : "s"
           } scheduled`}
@@ -311,14 +313,14 @@ export default async function DashboardPage() {
         <HeroCard
           icon={<TrendingUp className="h-4 w-4" />}
           label="This week's revenue"
-          value={formatCurrencyCents(thisWeekRevenue)}
+          value={formatCurrencyCents(thisWeekRevenue, currency)}
           delta={pctDelta(thisWeekRevenue, lastWeekRevenue)}
           sub="completed jobs only"
         />
         <HeroCard
           icon={<Receipt className="h-4 w-4" />}
           label="Outstanding invoices"
-          value={formatCurrencyCents(openInvoicesTotal)}
+          value={formatCurrencyCents(openInvoicesTotal, currency)}
           sub={`${openInv.length} open · ${
             overdueInvoiceCount.count ?? 0
           } overdue`}
@@ -363,7 +365,7 @@ export default async function DashboardPage() {
                       {formatBookingStatus(b.status)}
                     </StatusBadge>
                     <span className="w-16 text-right text-sm font-medium tabular-nums">
-                      {formatCurrencyCents(b.total_cents)}
+                      {formatCurrencyCents(b.total_cents, currency)}
                     </span>
                   </div>
                 </li>

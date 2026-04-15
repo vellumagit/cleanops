@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Plus } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { getOrgCurrency } from "@/lib/org-currency";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
 import { InvoicesTable, type InvoiceRow } from "./invoices-table";
@@ -12,6 +13,7 @@ export default async function InvoicesPage() {
   const membership = await requireMembership();
   const canEdit = membership.role === "owner" || membership.role === "admin";
   const supabase = await createSupabaseServerClient();
+  const currency = await getOrgCurrency(membership.organization_id);
 
   const { data, error } = await supabase
     .from("invoices")
@@ -59,7 +61,7 @@ export default async function InvoicesPage() {
         ) : null
       }
     >
-      <InvoicesTable rows={rows} canEdit={canEdit} />
+      <InvoicesTable rows={rows} canEdit={canEdit} currency={currency} />
     </PageShell>
   );
 }

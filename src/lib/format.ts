@@ -21,12 +21,24 @@ export const DEFAULT_TZ =
     ? process.env?.NEXT_PUBLIC_DEFAULT_TIMEZONE
     : undefined) ?? "America/New_York";
 
-/** Format an integer cents value as USD currency, e.g. 12500 → "$125.00". */
-export function formatCurrencyCents(cents: number | null | undefined): string {
+export type CurrencyCode = "CAD" | "USD";
+
+/**
+ * Format an integer cents value as currency, e.g. 12500 → "CA$125.00".
+ * Defaults to CAD because our first paying customer is Canadian. Callers
+ * that know their org's currency should pass it explicitly.
+ */
+export function formatCurrencyCents(
+  cents: number | null | undefined,
+  currency: CurrencyCode = "CAD",
+): string {
   if (cents == null) return "—";
-  return new Intl.NumberFormat("en-US", {
+  // Use narrowSymbol so the output is unambiguous ("CA$" vs "$", "US$" vs "$")
+  // when CAD and USD can both appear in the same UI.
+  return new Intl.NumberFormat(currency === "CAD" ? "en-CA" : "en-US", {
     style: "currency",
-    currency: "USD",
+    currency,
+    currencyDisplay: "narrowSymbol",
   }).format(cents / 100);
 }
 

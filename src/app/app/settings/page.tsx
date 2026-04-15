@@ -3,6 +3,7 @@ import {
   Award,
   Banknote,
   ChevronRight,
+  Coins,
   CreditCard,
   KeyRound,
   Palette,
@@ -30,6 +31,13 @@ const SECTIONS = [
     title: "Branding",
     description:
       "Upload your logo and set your brand colour for invoices and public pages.",
+  },
+  {
+    href: "/app/settings/currency",
+    icon: Coins,
+    title: "Currency",
+    description:
+      "Choose whether amounts display in Canadian or US dollars.",
   },
   {
     href: "/app/settings/bonus-rules",

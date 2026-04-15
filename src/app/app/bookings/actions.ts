@@ -37,6 +37,8 @@ function readRecurringFormValues(formData: FormData) {
     assigned_to: String(formData.get("assigned_to") ?? ""),
     recurrence_pattern: String(formData.get("recurrence_pattern") ?? "weekly"),
     custom_days: String(formData.get("custom_days") ?? ""),
+    monthly_nth: String(formData.get("monthly_nth") ?? ""),
+    monthly_dow: String(formData.get("monthly_dow") ?? ""),
     start_time: String(formData.get("start_time") ?? ""),
     starts_at: String(formData.get("starts_at") ?? ""),
     ends_at: String(formData.get("ends_at") ?? ""),
@@ -157,6 +159,17 @@ export async function createRecurringBookingAction(
     };
   }
 
+  // Validate monthly_nth inputs
+  if (
+    parsed.data.recurrence_pattern === "monthly_nth" &&
+    (parsed.data.monthly_nth == null || parsed.data.monthly_dow == null)
+  ) {
+    return {
+      errors: { _form: "Pick both an ordinal (1st, 2nd, etc.) and a weekday for monthly scheduling." },
+      values: raw,
+    };
+  }
+
   // 1. Create the booking series
   const { data: series, error: seriesErr } = await (supabase
     .from("booking_series" as never)
@@ -166,6 +179,12 @@ export async function createRecurringBookingAction(
       pattern: parsed.data.recurrence_pattern,
       custom_days: parsed.data.recurrence_pattern === "custom_weekly"
         ? parsed.data.custom_days
+        : null,
+      monthly_nth: parsed.data.recurrence_pattern === "monthly_nth"
+        ? parsed.data.monthly_nth ?? null
+        : null,
+      monthly_dow: parsed.data.recurrence_pattern === "monthly_nth"
+        ? parsed.data.monthly_dow ?? null
         : null,
       start_time: parsed.data.start_time,
       starts_at: parsed.data.starts_at,
@@ -198,6 +217,8 @@ export async function createRecurringBookingAction(
     starts_at: parsed.data.starts_at,
     ends_at: parsed.data.ends_at ?? null,
     generate_ahead: parsed.data.generate_ahead,
+    monthly_nth: parsed.data.monthly_nth ?? null,
+    monthly_dow: parsed.data.monthly_dow ?? null,
   };
 
   const occurrences = generateOccurrences(rule, parsed.data.generate_ahead, null);

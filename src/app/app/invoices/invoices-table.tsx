@@ -3,7 +3,12 @@
 import { useRouter } from "next/navigation";
 import { DataTable, type DataTableColumn } from "@/components/data-table";
 import { StatusBadge, invoiceStatusTone } from "@/components/status-badge";
-import { formatCurrencyCents, formatDate, humanizeEnum } from "@/lib/format";
+import {
+  formatCurrencyCents,
+  formatDate,
+  humanizeEnum,
+  type CurrencyCode,
+} from "@/lib/format";
 
 export type InvoiceRow = {
   id: string;
@@ -19,9 +24,11 @@ export type InvoiceRow = {
 export function InvoicesTable({
   rows,
   canEdit,
+  currency,
 }: {
   rows: InvoiceRow[];
   canEdit: boolean;
+  currency: CurrencyCode;
 }) {
   const router = useRouter();
   const columns: DataTableColumn<InvoiceRow>[] = [
@@ -72,7 +79,7 @@ export function InvoicesTable({
       header: "Amount",
       headerClassName: "text-right",
       className: "text-right tabular-nums font-medium",
-      render: (r) => formatCurrencyCents(r.amount_cents),
+      render: (r) => formatCurrencyCents(r.amount_cents, currency),
     },
   ];
 

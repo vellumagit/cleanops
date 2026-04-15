@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { buttonVariants } from "@/components/ui/button";
 import { FormError, FormField, FormSelect } from "@/components/form-field";
 import { SubmitButton } from "@/components/submit-button";
+import { DurationInput } from "@/components/duration-input";
 import {
   createBookingAction,
   createRecurringBookingAction,
@@ -34,8 +35,6 @@ export type BookingFormDefaults = {
 
 type Option = { id: string; label: string };
 
-type DurationUnit = "minutes" | "hours";
-
 const DAY_LABELS = [
   { value: 0, label: "Sun" },
   { value: 1, label: "Mon" },
@@ -45,27 +44,6 @@ const DAY_LABELS = [
   { value: 5, label: "Fri" },
   { value: 6, label: "Sat" },
 ];
-
-/**
- * Convert a stored duration (always in minutes) to the display value for
- * the selected unit.
- */
-function toDisplayValue(minutes: number, unit: DurationUnit): string {
-  if (unit === "hours") {
-    const hours = Math.round((minutes / 60) * 100) / 100;
-    return String(hours);
-  }
-  return String(minutes);
-}
-
-/**
- * Convert the user's input back to minutes for the hidden form field.
- */
-function toMinutes(value: string, unit: DurationUnit): number {
-  const n = Number(value);
-  if (!Number.isFinite(n) || n <= 0) return 0;
-  return unit === "hours" ? Math.round(n * 60) : Math.round(n);
-}
 
 export function BookingForm({
   mode,
@@ -85,16 +63,10 @@ export function BookingForm({
   const [isRecurring, setIsRecurring] = useState(false);
   const [recurrencePattern, setRecurrencePattern] = useState("weekly");
   const [selectedDays, setSelectedDays] = useState<number[]>([]);
+  const [monthlyNth, setMonthlyNth] = useState<string>("2");
+  const [monthlyDow, setMonthlyDow] = useState<string>("2");
 
-  // Duration unit toggle — default to hours when value is a clean multiple
-  // of 60, otherwise minutes.
   const defaultMinutes = defaults?.duration_minutes ?? 0;
-  const defaultUnit: DurationUnit =
-    defaultMinutes > 0 && defaultMinutes % 60 === 0 ? "hours" : "minutes";
-  const [durationUnit, setDurationUnit] = useState<DurationUnit>(defaultUnit);
-  const [durationDisplay, setDurationDisplay] = useState<string>(
-    defaultMinutes > 0 ? toDisplayValue(defaultMinutes, defaultUnit) : "",
-  );
 
   // Single-booking action
   const singleAction =
@@ -121,52 +93,19 @@ export function BookingForm({
     );
   }
 
-  // When the unit changes, convert the current display value to the new unit.
-  function handleUnitChange(newUnit: DurationUnit) {
-    if (newUnit === durationUnit) return;
-    const currentMinutes = toMinutes(durationDisplay, durationUnit);
-    setDurationUnit(newUnit);
-    if (currentMinutes > 0) {
-      setDurationDisplay(toDisplayValue(currentMinutes, newUnit));
-    }
-  }
-
-  // The hidden field always submits minutes.
-  const computedMinutes = toMinutes(durationDisplay, durationUnit);
-
   /** Shared duration input rendered in both one-time and recurring blocks. */
   const durationInput = (
     <FormField
       label="Duration"
-      htmlFor="duration_display"
+      htmlFor="duration_minutes"
       required
       error={state.errors?.duration_minutes}
     >
-      <div className="flex gap-2">
-        <Input
-          id="duration_display"
-          type="number"
-          min={durationUnit === "hours" ? 0.25 : 1}
-          max={durationUnit === "hours" ? 24 : 1440}
-          step={durationUnit === "hours" ? 0.25 : 1}
-          required
-          value={durationDisplay}
-          onChange={(e) => setDurationDisplay(e.target.value)}
-          className="flex-1"
-          placeholder={durationUnit === "hours" ? "e.g. 2.5" : "e.g. 150"}
-        />
-        <FormSelect
-          id="duration_unit"
-          value={durationUnit}
-          onChange={(e) => handleUnitChange(e.target.value as DurationUnit)}
-          className="w-[110px] shrink-0"
-        >
-          <option value="minutes">Minutes</option>
-          <option value="hours">Hours</option>
-        </FormSelect>
-      </div>
-      {/* Hidden field submits the canonical minutes value */}
-      <input type="hidden" name="duration_minutes" value={computedMinutes} />
+      <DurationInput
+        name="duration_minutes"
+        defaultMinutes={defaultMinutes}
+        required
+      />
     </FormField>
   );
 
@@ -277,7 +216,8 @@ export function BookingForm({
                 <option value="weekly">Weekly</option>
                 <option value="bi_weekly">Every 2 weeks</option>
                 <option value="tri_weekly">Every 3 weeks</option>
-                <option value="monthly">Monthly</option>
+                <option value="monthly">Monthly (same date)</option>
+                <option value="monthly_nth">Monthly (Nth weekday)</option>
                 <option value="custom_weekly">Custom weekly</option>
               </FormSelect>
             </FormField>
@@ -296,6 +236,52 @@ export function BookingForm({
               />
             </FormField>
           </div>
+
+          {/* Monthly-Nth picker */}
+          {recurrencePattern === "monthly_nth" && (
+            <div className="grid gap-4 sm:grid-cols-2">
+              <FormField label="Which occurrence" htmlFor="monthly_nth" required>
+                <FormSelect
+                  id="monthly_nth"
+                  name="monthly_nth"
+                  value={monthlyNth}
+                  onChange={(e) => setMonthlyNth(e.target.value)}
+                >
+                  <option value="1">1st</option>
+                  <option value="2">2nd</option>
+                  <option value="3">3rd</option>
+                  <option value="4">4th</option>
+                  <option value="5">Last</option>
+                </FormSelect>
+              </FormField>
+              <FormField label="Weekday" htmlFor="monthly_dow" required>
+                <FormSelect
+                  id="monthly_dow"
+                  name="monthly_dow"
+                  value={monthlyDow}
+                  onChange={(e) => setMonthlyDow(e.target.value)}
+                >
+                  {DAY_LABELS.map((d) => (
+                    <option key={d.value} value={d.value}>
+                      {d.label === "Sun"
+                        ? "Sunday"
+                        : d.label === "Mon"
+                          ? "Monday"
+                          : d.label === "Tue"
+                            ? "Tuesday"
+                            : d.label === "Wed"
+                              ? "Wednesday"
+                              : d.label === "Thu"
+                                ? "Thursday"
+                                : d.label === "Fri"
+                                  ? "Friday"
+                                  : "Saturday"}
+                    </option>
+                  ))}
+                </FormSelect>
+              </FormField>
+            </div>
+          )}
 
           {/* Custom days picker */}
           {recurrencePattern === "custom_weekly" && (

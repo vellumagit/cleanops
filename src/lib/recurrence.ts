@@ -13,6 +13,8 @@ import {
   isBefore,
   isAfter,
   startOfDay,
+  startOfMonth,
+  lastDayOfMonth,
   parseISO,
 } from "date-fns";
 import { localInputToUtcIso } from "@/lib/validators/common";
@@ -22,7 +24,8 @@ export type RecurrencePattern =
   | "bi_weekly"
   | "tri_weekly"
   | "monthly"
-  | "custom_weekly";
+  | "custom_weekly"
+  | "monthly_nth";
 
 export type SeriesRule = {
   pattern: RecurrencePattern;
@@ -36,7 +39,46 @@ export type SeriesRule = {
   ends_at: string | null;
   /** How many instances to generate ahead */
   generate_ahead: number;
+  /** For monthly_nth: 1..4 = Nth, 5 = last */
+  monthly_nth?: number | null;
+  /** For monthly_nth: 0=Sun .. 6=Sat */
+  monthly_dow?: number | null;
 };
+
+/**
+ * Return the date of the Nth occurrence of `dow` (0=Sun..6=Sat) in the
+ * given month. If nth=5 ("last"), find the last matching weekday of the
+ * month. Returns null if the requested occurrence doesn't exist
+ * (e.g. "5th Wednesday" in a month that only has 4 Wednesdays).
+ */
+export function nthWeekdayOfMonth(
+  year: number,
+  month: number, // 0-based (0=Jan)
+  nth: number,
+  dow: number,
+): Date | null {
+  if (nth < 1 || nth > 5 || dow < 0 || dow > 6) return null;
+
+  const monthStart = startOfMonth(new Date(year, month, 1));
+
+  if (nth === 5) {
+    // "Last" — walk backwards from end of month to find the last matching dow.
+    const end = lastDayOfMonth(monthStart);
+    for (let i = 0; i < 7; i++) {
+      const d = addDays(end, -i);
+      if (getDay(d) === dow) return d;
+    }
+    return null;
+  }
+
+  // Nth (1..4): find first matching dow, then add (nth-1) weeks.
+  const firstDow = getDay(monthStart);
+  const offset = (dow - firstDow + 7) % 7;
+  const target = addDays(monthStart, offset + (nth - 1) * 7);
+  // Bail if we rolled past the month (e.g. "5th Monday" masquerading as 4th).
+  if (target.getMonth() !== month) return null;
+  return target;
+}
 
 /**
  * Apply HH:MM time to a date in the org's timezone and return a proper
@@ -70,6 +112,10 @@ export function generateOccurrences(
 
   if (rule.pattern === "custom_weekly") {
     return generateCustomWeekly(rule, count, after);
+  }
+
+  if (rule.pattern === "monthly_nth") {
+    return generateMonthlyNth(rule, count, after);
   }
 
   // For standard patterns: weekly/bi_weekly/tri_weekly/monthly
@@ -126,6 +172,55 @@ function advanceToNext(
 }
 
 /**
+ * Monthly Nth: generates occurrences on the Nth specific weekday of each
+ * month. E.g., the 2nd Tuesday of every month.
+ */
+function generateMonthlyNth(
+  rule: SeriesRule,
+  count: number,
+  after: Date | null,
+): string[] {
+  const results: string[] = [];
+  const nth = rule.monthly_nth ?? null;
+  const dow = rule.monthly_dow ?? null;
+  if (nth == null || dow == null) return results;
+
+  const startDate = parseISO(rule.starts_at);
+  const endDate = rule.ends_at ? parseISO(rule.ends_at) : null;
+
+  // Walk month-by-month from the series start.
+  let cursor = startOfMonth(startDate);
+  const maxMonths = 120; // 10-year safety cap
+  let iterations = 0;
+
+  while (results.length < count && iterations < maxMonths) {
+    iterations++;
+    const candidate = nthWeekdayOfMonth(
+      cursor.getFullYear(),
+      cursor.getMonth(),
+      nth,
+      dow,
+    );
+
+    if (candidate) {
+      const occurrence = applyTime(candidate, rule.start_time);
+
+      if (endDate && isAfter(startOfDay(candidate), endDate)) break;
+
+      if (!isBefore(startOfDay(candidate), startOfDay(startDate))) {
+        if (!after || isAfter(occurrence, after)) {
+          results.push(occurrence.toISOString());
+        }
+      }
+    }
+
+    cursor = addMonths(cursor, 1);
+  }
+
+  return results;
+}
+
+/**
  * Custom weekly: generates occurrences on specific days of the week.
  * E.g., every Monday and Thursday.
  */
@@ -176,8 +271,19 @@ export function describeRecurrence(
   pattern: RecurrencePattern,
   customDays: number[] | null,
   startTime: string,
+  monthlyNth: number | null = null,
+  monthlyDow: number | null = null,
 ): string {
   const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const longDayNames = [
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+  ];
   const time12 = formatTime12(startTime);
 
   switch (pattern) {
@@ -195,6 +301,12 @@ export function describeRecurrence(
         .map((d) => dayNames[d])
         .join(", ");
       return `Every ${names} at ${time12}`;
+    }
+    case "monthly_nth": {
+      const ordinals = ["", "1st", "2nd", "3rd", "4th", "Last"];
+      const ord = monthlyNth ? ordinals[monthlyNth] : "?";
+      const day = monthlyDow != null ? longDayNames[monthlyDow] : "?";
+      return `${ord} ${day} of every month at ${time12}`;
     }
   }
 }

@@ -4,6 +4,7 @@ import { ArrowLeft, Pencil, Send, Ban, ExternalLink, Star } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { getOrgCurrency } from "@/lib/org-currency";
 import { StripePaymentLinkButton } from "./stripe-payment-link-button";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
@@ -55,6 +56,7 @@ export default async function InvoiceDetailPage({
   const membership = await requireMembership(["owner", "admin", "manager"]);
   const { id } = await params;
   const supabase = await createSupabaseServerClient();
+  const currency = await getOrgCurrency(membership.organization_id);
 
   // Check Stripe Connect status on the org — payment link only makes sense
   // if the org has charges enabled.
@@ -170,15 +172,15 @@ export default async function InvoiceDetailPage({
             </div>
 
             <dl className="mt-6 grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
-              <Metric label="Total" value={formatCurrencyCents(invoice.amount_cents)} />
+              <Metric label="Total" value={formatCurrencyCents(invoice.amount_cents, currency)} />
               <Metric
                 label="Paid"
-                value={formatCurrencyCents(paidCents)}
+                value={formatCurrencyCents(paidCents, currency)}
                 tone="green"
               />
               <Metric
                 label="Balance"
-                value={formatCurrencyCents(balanceCents)}
+                value={formatCurrencyCents(balanceCents, currency)}
                 tone={balanceCents > 0 ? "amber" : "neutral"}
               />
               <Metric
@@ -287,11 +289,11 @@ export default async function InvoiceDetailPage({
                         <p className="font-medium">{li.label}</p>
                         <p className="text-xs text-muted-foreground">
                           {Number(li.quantity).toFixed(2)} ×{" "}
-                          {formatCurrencyCents(li.unit_price_cents)}
+                          {formatCurrencyCents(li.unit_price_cents, currency)}
                         </p>
                       </div>
                       <span className="font-mono tabular-nums">
-                        {formatCurrencyCents(subtotal)}
+                        {formatCurrencyCents(subtotal, currency)}
                       </span>
                     </li>
                   );
@@ -334,7 +336,7 @@ export default async function InvoiceDetailPage({
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <span className="font-medium">
-                          {formatCurrencyCents(p.amount_cents)}
+                          {formatCurrencyCents(p.amount_cents, currency)}
                         </span>
                         <StatusBadge tone="neutral">
                           {humanizePaymentMethod(p.method)}
