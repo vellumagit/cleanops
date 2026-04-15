@@ -1,10 +1,12 @@
 import Link from "next/link";
-import { ChevronLeft, CreditCard, ExternalLink } from "lucide-react";
+import { ChevronLeft, CreditCard, ExternalLink, Sparkles } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { isStripeEnabled } from "@/lib/stripe";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
+import { RedeemForm } from "./redeem-form";
 
 export const metadata = { title: "Billing" };
 
@@ -34,6 +36,21 @@ export default async function BillingPage() {
     .eq("organization_id", membership.organization_id)
     .maybeSingle();
 
+  // Read the billing_override via the admin client because the generated
+  // types may not yet include the new columns.
+  const admin = createSupabaseAdminClient();
+  const { data: orgRow } = await admin
+    .from("organizations")
+    .select("billing_override, billing_override_at")
+    .eq("id", membership.organization_id)
+    .maybeSingle();
+
+  const override = orgRow as {
+    billing_override: "free_forever" | "comp" | null;
+    billing_override_at: string | null;
+  } | null;
+
+  const hasOverride = Boolean(override?.billing_override);
   const enabled = isStripeEnabled();
 
   return (
@@ -50,7 +67,24 @@ export default async function BillingPage() {
         </Link>
       }
     >
-      {!enabled && (
+      {hasOverride && (
+        <div className="mb-4 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-xs text-emerald-700 dark:text-emerald-200">
+          <div className="flex items-center gap-2">
+            <Sparkles className="h-4 w-4" />
+            <span className="font-medium">
+              {override?.billing_override === "free_forever"
+                ? "Free forever"
+                : "Comped account"}
+            </span>
+          </div>
+          <p className="mt-1 pl-6">
+            This account is not billed. Activated on{" "}
+            {formatDate(override?.billing_override_at ?? null)}.
+          </p>
+        </div>
+      )}
+
+      {!enabled && !hasOverride && (
         <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-xs text-amber-700 dark:text-amber-200">
           Billing is scaffolded but not yet enabled in this environment. The
           Stripe webhook route, the <code>subscriptions</code> table, and this
@@ -74,48 +108,60 @@ export default async function BillingPage() {
               <div>
                 <dt className="text-muted-foreground">Status</dt>
                 <dd className="mt-0.5 font-medium capitalize">
-                  {formatStatus(subscription?.status ?? null)}
+                  {hasOverride
+                    ? override?.billing_override === "free_forever"
+                      ? "Free forever"
+                      : "Comped"
+                    : formatStatus(subscription?.status ?? null)}
                 </dd>
               </div>
               <div>
                 <dt className="text-muted-foreground">Renews</dt>
                 <dd className="mt-0.5 font-medium">
-                  {subscription?.cancel_at_period_end
-                    ? `Cancels ${formatDate(subscription.current_period_end)}`
-                    : formatDate(subscription?.current_period_end ?? null)}
+                  {hasOverride
+                    ? "Never"
+                    : subscription?.cancel_at_period_end
+                      ? `Cancels ${formatDate(subscription.current_period_end)}`
+                      : formatDate(subscription?.current_period_end ?? null)}
                 </dd>
               </div>
               <div>
                 <dt className="text-muted-foreground">Trial ends</dt>
                 <dd className="mt-0.5 font-medium">
-                  {formatDate(subscription?.trial_ends_at ?? null)}
+                  {hasOverride
+                    ? "—"
+                    : formatDate(subscription?.trial_ends_at ?? null)}
                 </dd>
               </div>
             </dl>
 
-            <div className="mt-5 flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                disabled
-                className={buttonVariants({ size: "sm" })}
-                title={
-                  enabled
-                    ? "Open Stripe customer portal"
-                    : "Enable Stripe to use the customer portal"
-                }
-              >
-                <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
-                Manage in Stripe
-              </button>
-              <p className="text-xs text-muted-foreground">
-                {enabled
-                  ? "You'll be redirected to Stripe to update payment method and download invoices."
-                  : "Available once Stripe is enabled."}
-              </p>
-            </div>
+            {!hasOverride && (
+              <div className="mt-5 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  disabled
+                  className={buttonVariants({ size: "sm" })}
+                  title={
+                    enabled
+                      ? "Open Stripe customer portal"
+                      : "Enable Stripe to use the customer portal"
+                  }
+                >
+                  <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
+                  Manage in Stripe
+                </button>
+                <p className="text-xs text-muted-foreground">
+                  {enabled
+                    ? "You'll be redirected to Stripe to update payment method and download invoices."
+                    : "Available once Stripe is enabled."}
+                </p>
+              </div>
+            )}
           </div>
         </div>
       </div>
+
+      {!hasOverride && <RedeemForm />}
     </PageShell>
   );
 }
