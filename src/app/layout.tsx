@@ -32,18 +32,37 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+
 export const metadata: Metadata = {
+  metadataBase: new URL(SITE_URL),
   title: {
-    default: "Sollos 3",
+    default: "Sollos 3 — Operations software for cleaning companies",
     template: "%s · Sollos 3",
   },
   description:
-    "Sollos 3 — operations software for cleaning companies. Bookings, scheduling, employees, invoicing, chat and field tools in one place.",
+    "Bookings, scheduling, invoicing, team chat, on-call freelancer bench, and field tools — all in one place. Built for cleaning businesses.",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
     title: "Sollos 3",
+  },
+  openGraph: {
+    type: "website",
+    siteName: "Sollos 3",
+    title: "Sollos 3 — Operations software for cleaning companies",
+    description:
+      "Bookings, scheduling, invoicing, team chat, on-call freelancer bench, and field tools — all in one place.",
+    url: SITE_URL,
+    // OG image auto-generated from src/app/opengraph-image.tsx
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Sollos 3 — Operations software for cleaning companies",
+    description:
+      "Bookings, scheduling, invoicing, team chat, on-call freelancer bench, and field tools — all in one place.",
+    // Twitter image auto-generated from opengraph-image.tsx fallback
   },
   other: {
     "mobile-web-app-capable": "yes",

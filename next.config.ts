@@ -1,8 +1,9 @@
 import path from "node:path";
 import type { NextConfig } from "next";
+import { withSentryConfig } from "@sentry/nextjs";
 
 /**
- * Security headers + CSP for CleanOps.
+ * Security headers + CSP for Sollos 3.
  *
  * The CSP intentionally allows:
  *   - 'self' for everything by default
@@ -95,4 +96,18 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+// Only apply Sentry's build wrapper when a DSN is set. Without it, the
+// wrapper becomes a no-op pass-through, so shipping this line is safe.
+const sentryEnabled = Boolean(process.env.NEXT_PUBLIC_SENTRY_DSN);
+
+export default sentryEnabled
+  ? withSentryConfig(nextConfig, {
+      org: process.env.SENTRY_ORG,
+      project: process.env.SENTRY_PROJECT,
+      authToken: process.env.SENTRY_AUTH_TOKEN,
+      silent: true,
+      widenClientFileUpload: true,
+      disableLogger: true,
+      automaticVercelMonitors: false,
+    })
+  : nextConfig;

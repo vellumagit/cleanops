@@ -9,7 +9,7 @@
  *   3. Logs every delivery attempt to `webhook_deliveries` for debugging
  *   4. Retries failed deliveries with exponential backoff (up to 3 attempts)
  *
- * Each delivery is signed with `X-CleanOps-Signature` so the recipient
+ * Each delivery is signed with `X-Sollos-Signature` so the recipient
  * can verify authenticity.
  */
 
@@ -157,8 +157,8 @@ async function attemptDelivery(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-CleanOps-Signature": `sha256=${signature}`,
-        "User-Agent": "CleanOps-Webhook/1.0",
+        "X-Sollos-Signature": `sha256=${signature}`,
+        "User-Agent": "Sollos-Webhook/1.0",
       },
       body,
       signal: AbortSignal.timeout(10_000),
