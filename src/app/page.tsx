@@ -16,6 +16,8 @@ import {
   MapPin,
   FileText,
   UserPlus,
+  Check,
+  Building2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -45,10 +47,10 @@ export default function Home() {
             Features
           </Link>
           <Link
-            href="#how-it-works"
+            href="#pricing"
             className="hidden rounded-full px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:inline-flex"
           >
-            How it works
+            Pricing
           </Link>
           <Link
             href="/login"
@@ -63,7 +65,7 @@ export default function Home() {
               "rounded-full px-4 shadow-sm sollos-cta-glow",
             )}
           >
-            Start free
+            Start free trial
           </Link>
         </nav>
       </header>
@@ -95,24 +97,24 @@ export default function Home() {
               "rounded-full px-6 text-sm font-semibold sollos-cta-glow",
             )}
           >
-            Get started for free
+            Start 21-day free trial
             <ArrowRight className="ml-1.5 h-4 w-4" />
           </Link>
           <Link
-            href="/login"
+            href="#pricing"
             className={cn(
               buttonVariants({ size: "lg", variant: "outline" }),
               "rounded-full border-border bg-white px-6 text-sm font-semibold shadow-sm hover:bg-muted",
             )}
           >
-            Sign in
+            See pricing
           </Link>
         </div>
 
         <div className="mt-6 flex flex-wrap items-center justify-center gap-x-5 gap-y-1 text-xs text-muted-foreground">
-          <span className="flex items-center gap-1"><CheckCircle2 className="h-3 w-3 text-emerald-500" /> Free to start</span>
-          <span className="flex items-center gap-1"><CheckCircle2 className="h-3 w-3 text-emerald-500" /> No credit card</span>
-          <span className="flex items-center gap-1"><CheckCircle2 className="h-3 w-3 text-emerald-500" /> Set up in 5 minutes</span>
+          <span className="flex items-center gap-1"><CheckCircle2 className="h-3 w-3 text-emerald-500" /> 21 days free</span>
+          <span className="flex items-center gap-1"><CheckCircle2 className="h-3 w-3 text-emerald-500" /> No credit card required</span>
+          <span className="flex items-center gap-1"><CheckCircle2 className="h-3 w-3 text-emerald-500" /> Cancel anytime</span>
         </div>
       </section>
 
@@ -358,14 +360,208 @@ export default function Home() {
         </div>
       </section>
 
+      {/* Pricing */}
+      <section id="pricing" className="relative z-10 mx-auto w-full max-w-5xl px-6 pb-20">
+        <div className="text-center mb-12">
+          <div className="sollos-kicker inline-flex items-center gap-1.5 rounded-full border border-border bg-white px-3 py-1 text-xs font-medium text-muted-foreground shadow-sm">
+            <CreditCard className="h-3 w-3 text-emerald-500" />
+            Simple pricing
+          </div>
+          <h2 className="mt-4 text-2xl font-bold tracking-tight sm:text-3xl">
+            One price. Every feature. No surprises.
+          </h2>
+          <p className="mx-auto mt-3 max-w-xl text-sm text-muted-foreground">
+            Pick the plan that fits your team size. Every plan includes every feature —
+            we don&apos;t hide things behind upgrades. Try it free for 21 days, no card required.
+          </p>
+        </div>
+
+        <div className="grid gap-5 lg:grid-cols-3">
+          {/* Starter */}
+          <div className="relative rounded-2xl border border-border bg-white p-6 shadow-sm flex flex-col">
+            <div>
+              <h3 className="text-sm font-semibold">Starter</h3>
+              <p className="mt-1 text-xs text-muted-foreground">
+                For solo owners and small crews.
+              </p>
+            </div>
+            <div className="mt-5 flex items-baseline gap-1">
+              <span className="text-4xl font-extrabold tracking-tight">$49</span>
+              <span className="text-sm text-muted-foreground">/month</span>
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Up to <strong className="text-foreground">5 employees</strong>
+            </p>
+
+            <ul className="mt-6 space-y-2.5 text-sm flex-1">
+              {[
+                "All features, zero restrictions",
+                "Unlimited clients and jobs",
+                "Unlimited invoices",
+                "Team chat and clock-in",
+                "Freelancer bench SMS",
+                "Google Calendar sync",
+                "Email support",
+              ].map((item) => (
+                <li key={item} className="flex items-start gap-2 text-muted-foreground">
+                  <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+                  <span>{item}</span>
+                </li>
+              ))}
+            </ul>
+
+            <Link
+              href="/signup"
+              className={cn(
+                buttonVariants({ size: "lg", variant: "outline" }),
+                "mt-6 w-full rounded-full border-border text-sm font-semibold",
+              )}
+            >
+              Start 21-day trial
+            </Link>
+          </div>
+
+          {/* Growth — highlighted */}
+          <div className="relative rounded-2xl border-2 border-foreground bg-white p-6 shadow-lg flex flex-col">
+            <div className="absolute -top-3 left-1/2 -translate-x-1/2">
+              <span className="rounded-full bg-foreground px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-background">
+                Most popular
+              </span>
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold">Growth</h3>
+              <p className="mt-1 text-xs text-muted-foreground">
+                For established cleaning operations.
+              </p>
+            </div>
+            <div className="mt-5 flex items-baseline gap-1">
+              <span className="text-4xl font-extrabold tracking-tight">$99</span>
+              <span className="text-sm text-muted-foreground">/month</span>
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Up to <strong className="text-foreground">25 employees</strong>
+            </p>
+
+            <ul className="mt-6 space-y-2.5 text-sm flex-1">
+              <li className="flex items-start gap-2 font-medium text-foreground">
+                <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+                <span>Everything in Starter, plus:</span>
+              </li>
+              {[
+                "Up to 25 employees",
+                "Priority email support",
+                "Onboarding call included",
+                "Advanced reports and exports",
+                "Custom branding on invoices",
+                "Bulk import of clients & jobs",
+              ].map((item) => (
+                <li key={item} className="flex items-start gap-2 text-muted-foreground">
+                  <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+                  <span>{item}</span>
+                </li>
+              ))}
+            </ul>
+
+            <Link
+              href="/signup"
+              className={cn(
+                buttonVariants({ size: "lg" }),
+                "mt-6 w-full rounded-full text-sm font-semibold sollos-cta-glow",
+              )}
+            >
+              Start 21-day trial
+            </Link>
+          </div>
+
+          {/* Enterprise */}
+          <div className="relative rounded-2xl border border-border bg-white p-6 shadow-sm flex flex-col">
+            <div>
+              <h3 className="text-sm font-semibold flex items-center gap-1.5">
+                <Building2 className="h-3.5 w-3.5 text-indigo-500" />
+                Enterprise
+              </h3>
+              <p className="mt-1 text-xs text-muted-foreground">
+                For large operations with custom needs.
+              </p>
+            </div>
+            <div className="mt-5 flex items-baseline gap-1">
+              <span className="text-4xl font-extrabold tracking-tight">Custom</span>
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              <strong className="text-foreground">25+ employees</strong>
+            </p>
+
+            <ul className="mt-6 space-y-2.5 text-sm flex-1">
+              <li className="flex items-start gap-2 font-medium text-foreground">
+                <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+                <span>Everything in Growth, plus:</span>
+              </li>
+              {[
+                "Unlimited employees",
+                "Dedicated account manager",
+                "Custom integrations",
+                "SSO (single sign-on)",
+                "Priority phone support",
+                "Custom training for your team",
+                "SLA and uptime guarantees",
+              ].map((item) => (
+                <li key={item} className="flex items-start gap-2 text-muted-foreground">
+                  <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+                  <span>{item}</span>
+                </li>
+              ))}
+            </ul>
+
+            <Link
+              href="mailto:sales@sollos3.com?subject=Enterprise%20inquiry"
+              className={cn(
+                buttonVariants({ size: "lg", variant: "outline" }),
+                "mt-6 w-full rounded-full border-border text-sm font-semibold",
+              )}
+            >
+              Contact sales
+            </Link>
+          </div>
+        </div>
+
+        {/* FAQ teaser */}
+        <div className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {[
+            {
+              q: "Can I change plans later?",
+              a: "Yes, upgrade or downgrade anytime. We prorate the difference.",
+            },
+            {
+              q: "Do I need a credit card to try it?",
+              a: "No. Start your 21-day trial with just your email.",
+            },
+            {
+              q: "What happens after the trial?",
+              a: "Pick a plan to keep going, or your account pauses — your data stays safe for 30 days.",
+            },
+            {
+              q: "Is my data locked in?",
+              a: "Never. Export everything to CSV anytime, for any reason.",
+            },
+          ].map((item) => (
+            <div key={item.q} className="rounded-lg border border-border bg-white/60 p-4">
+              <p className="text-xs font-semibold text-foreground">{item.q}</p>
+              <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+                {item.a}
+              </p>
+            </div>
+          ))}
+        </div>
+      </section>
+
       {/* Final CTA */}
       <section className="relative z-10 mx-auto w-full max-w-3xl px-6 pb-20 text-center">
         <h2 className="text-2xl font-bold tracking-tight sm:text-3xl">
           Ready to stop juggling spreadsheets?
         </h2>
         <p className="mx-auto mt-3 max-w-md text-sm text-muted-foreground">
-          Join cleaning companies that run their entire operation from one
-          dashboard. Free to start, no credit card required.
+          Try every feature free for 21 days. No credit card, no contracts,
+          no sales calls. Just sign up and go.
         </p>
         <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
           <Link
@@ -375,7 +571,7 @@ export default function Home() {
               "rounded-full px-6 text-sm font-semibold sollos-cta-glow",
             )}
           >
-            Get started for free
+            Start 21-day free trial
             <ArrowRight className="ml-1.5 h-4 w-4" />
           </Link>
         </div>
@@ -412,8 +608,9 @@ export default function Home() {
               </p>
               <ul className="mt-3 space-y-2">
                 <FooterLink href="#features">Features</FooterLink>
+                <FooterLink href="/pricing">Pricing</FooterLink>
                 <FooterLink href="#how-it-works">How it works</FooterLink>
-                <FooterLink href="/signup">Sign up</FooterLink>
+                <FooterLink href="/signup">Start free trial</FooterLink>
                 <FooterLink href="/login">Sign in</FooterLink>
               </ul>
             </div>
