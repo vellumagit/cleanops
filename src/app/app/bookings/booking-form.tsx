@@ -52,6 +52,7 @@ export function BookingForm({
   clients,
   packages,
   employees,
+  currency = "CAD",
 }: {
   mode: "create" | "edit";
   id?: string;
@@ -59,6 +60,7 @@ export function BookingForm({
   clients: Option[];
   packages: Option[];
   employees: Option[];
+  currency?: "CAD" | "USD";
 }) {
   const [isRecurring, setIsRecurring] = useState(false);
   const [recurrencePattern, setRecurrencePattern] = useState("weekly");
@@ -457,7 +459,7 @@ export function BookingForm({
 
       <div className="grid gap-5 sm:grid-cols-2">
         <FormField
-          label="Total (USD)"
+          label={`Total (${currency})`}
           htmlFor="total_cents"
           required
           error={state.errors?.total_cents}
@@ -473,7 +475,7 @@ export function BookingForm({
         </FormField>
 
         <FormField
-          label="Hourly rate (USD)"
+          label={`Hourly rate (${currency})`}
           htmlFor="hourly_rate_cents"
           error={state.errors?.hourly_rate_cents}
           hint="Optional — for time-and-materials jobs"

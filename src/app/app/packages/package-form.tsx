@@ -29,10 +29,12 @@ export function PackageForm({
   mode,
   id,
   defaults,
+  currency = "CAD",
 }: {
   mode: "create" | "edit";
   id?: string;
   defaults?: Defaults;
+  currency?: "CAD" | "USD";
 }) {
   const action =
     mode === "create"
@@ -89,7 +91,7 @@ export function PackageForm({
         </FormField>
 
         <FormField
-          label="Price (USD)"
+          label={`Price (${currency})`}
           htmlFor="price_cents"
           required
           error={state.errors?.price_cents}

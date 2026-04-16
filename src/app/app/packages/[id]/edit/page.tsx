@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { getOrgCurrency } from "@/lib/org-currency";
 import { PageShell } from "@/components/page-shell";
 import { centsToDollarString } from "@/lib/validators/common";
 import { PackageForm } from "../../package-form";
@@ -13,9 +14,10 @@ export default async function EditPackagePage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  await requireMembership(["owner", "admin", "manager"]);
+  const membership = await requireMembership(["owner", "admin", "manager"]);
   const { id } = await params;
   const supabase = await createSupabaseServerClient();
+  const currency = await getOrgCurrency(membership.organization_id);
 
   const { data: pkg, error } = await supabase
     .from("packages")
@@ -37,6 +39,7 @@ export default async function EditPackagePage({
           <PackageForm
             mode="edit"
             id={pkg.id}
+            currency={currency}
             defaults={{
               name: pkg.name,
               description: pkg.description,

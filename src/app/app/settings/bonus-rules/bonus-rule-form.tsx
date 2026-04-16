@@ -27,7 +27,13 @@ export type BonusRuleDefaults = {
   efficiency_amount_dollars: string;
 };
 
-export function BonusRuleForm({ defaults }: { defaults: BonusRuleDefaults }) {
+export function BonusRuleForm({
+  defaults,
+  currency = "CAD",
+}: {
+  defaults: BonusRuleDefaults;
+  currency?: "CAD" | "USD";
+}) {
   const [state, formAction] = useActionState(upsertBonusRuleAction, empty);
   const v = state.values ?? {};
 
@@ -120,7 +126,7 @@ export function BonusRuleForm({ defaults }: { defaults: BonusRuleDefaults }) {
           </FormField>
 
           <FormField
-            label="Bonus amount (USD)"
+            label={`Bonus amount (${currency})`}
             htmlFor="amount_cents"
             required
             error={state.errors?.amount_cents}
@@ -198,7 +204,7 @@ export function BonusRuleForm({ defaults }: { defaults: BonusRuleDefaults }) {
           </FormField>
 
           <FormField
-            label="Bonus amount (USD)"
+            label={`Bonus amount (${currency})`}
             htmlFor="efficiency_amount_cents"
             required
             error={state.errors?.efficiency_amount_cents}

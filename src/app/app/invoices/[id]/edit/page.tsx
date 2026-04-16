@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { getOrgCurrency } from "@/lib/org-currency";
 import { PageShell } from "@/components/page-shell";
 import { centsToDollarString } from "@/lib/validators/common";
 import { InvoiceForm } from "../../invoice-form";
@@ -15,9 +16,10 @@ export default async function EditInvoicePage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  await requireMembership(["owner", "admin", "manager"]);
+  const membership = await requireMembership(["owner", "admin", "manager"]);
   const { id } = await params;
   const supabase = await createSupabaseServerClient();
+  const currency = await getOrgCurrency(membership.organization_id);
 
   const { data: invoice, error } = await supabase
     .from("invoices")
@@ -48,6 +50,7 @@ export default async function EditInvoicePage({
           <InvoiceForm
             mode="edit"
             id={invoice.id}
+            currency={currency}
             clients={clients}
             bookings={bookings}
             defaults={{

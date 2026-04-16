@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { ArrowRight } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { getOrgCurrency } from "@/lib/org-currency";
 import { PageShell } from "@/components/page-shell";
 import { centsToDollarString } from "@/lib/validators/common";
 import { EstimateForm } from "../../estimate-form";
@@ -15,9 +16,10 @@ export default async function EditEstimatePage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  await requireMembership(["owner", "admin", "manager"]);
+  const membership = await requireMembership(["owner", "admin", "manager"]);
   const { id } = await params;
   const supabase = await createSupabaseServerClient();
+  const currency = await getOrgCurrency(membership.organization_id);
 
   const [{ data: estimate, error }, { data: clients }, { data: linkedBooking }] =
     await Promise.all([
@@ -75,6 +77,7 @@ export default async function EditEstimatePage({
           <EstimateForm
             mode="edit"
             id={estimate.id}
+            currency={currency}
             clients={(clients ?? []).map((c) => ({ id: c.id, label: c.name }))}
             defaults={{
               client_id: estimate.client_id,

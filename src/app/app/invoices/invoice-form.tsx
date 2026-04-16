@@ -28,12 +28,14 @@ export function InvoiceForm({
   defaults,
   clients,
   bookings,
+  currency = "CAD",
 }: {
   mode: "create" | "edit";
   id?: string;
   defaults?: Defaults;
   clients: { id: string; label: string }[];
   bookings: { id: string; label: string }[];
+  currency?: "CAD" | "USD";
 }) {
   const action =
     mode === "create"
@@ -108,7 +110,7 @@ export function InvoiceForm({
         </FormField>
 
         <FormField
-          label="Amount (USD)"
+          label={`Amount (${currency})`}
           htmlFor="amount_cents"
           required
           error={state.errors?.amount_cents}

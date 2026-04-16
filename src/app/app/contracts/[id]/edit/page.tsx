@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { getOrgCurrency } from "@/lib/org-currency";
 import { PageShell } from "@/components/page-shell";
 import { centsToDollarString } from "@/lib/validators/common";
 import { ContractForm } from "../../contract-form";
@@ -14,9 +15,10 @@ export default async function EditContractPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  await requireMembership(["owner", "admin", "manager"]);
+  const membership = await requireMembership(["owner", "admin", "manager"]);
   const { id } = await params;
   const supabase = await createSupabaseServerClient();
+  const currency = await getOrgCurrency(membership.organization_id);
 
   const { data: contract, error } = await supabase
     .from("contracts")
@@ -38,6 +40,7 @@ export default async function EditContractPage({
           <ContractForm
             mode="edit"
             id={contract.id}
+            currency={currency}
             clients={clients}
             estimates={estimates}
             defaults={{

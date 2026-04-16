@@ -32,12 +32,14 @@ export function ContractForm({
   defaults,
   clients,
   estimates,
+  currency = "CAD",
 }: {
   mode: "create" | "edit";
   id?: string;
   defaults?: Defaults;
   clients: { id: string; label: string }[];
   estimates: { id: string; label: string }[];
+  currency?: "CAD" | "USD";
 }) {
   const action =
     mode === "create"
@@ -160,7 +162,7 @@ export function ContractForm({
       </div>
 
       <FormField
-        label="Agreed price (USD)"
+        label={`Agreed price (${currency})`}
         htmlFor="agreed_price_cents"
         required
         error={state.errors?.agreed_price_cents}

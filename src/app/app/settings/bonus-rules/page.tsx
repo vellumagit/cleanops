@@ -1,5 +1,6 @@
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { getOrgCurrency } from "@/lib/org-currency";
 import { PageShell } from "@/components/page-shell";
 import { BonusRuleForm } from "./bonus-rule-form";
 
@@ -22,6 +23,7 @@ const DEFAULTS = {
 export default async function BonusRulesPage() {
   const membership = await requireMembership(["owner", "admin"]);
   const supabase = await createSupabaseServerClient();
+  const currency = await getOrgCurrency(membership.organization_id);
 
   const { data: rule } = await supabase
     .from("bonus_rules")
@@ -61,7 +63,7 @@ export default async function BonusRulesPage() {
       description="Configure how performance bonuses are computed from reviews and job efficiency."
     >
       <div className="max-w-3xl rounded-lg border border-border bg-card p-6">
-        <BonusRuleForm defaults={defaults} />
+        <BonusRuleForm defaults={defaults} currency={currency} />
       </div>
     </PageShell>
   );

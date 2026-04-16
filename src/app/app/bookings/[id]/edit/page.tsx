@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { getOrgCurrency } from "@/lib/org-currency";
 import { PageShell } from "@/components/page-shell";
 import {
   centsToDollarString,
@@ -17,9 +18,10 @@ export default async function EditBookingPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  await requireMembership(["owner", "admin", "manager"]);
+  const membership = await requireMembership(["owner", "admin", "manager"]);
   const { id } = await params;
   const supabase = await createSupabaseServerClient();
+  const currency = await getOrgCurrency(membership.organization_id);
 
   const [{ data: booking, error }, options] = await Promise.all([
     supabase
@@ -42,6 +44,7 @@ export default async function EditBookingPage({
           <BookingForm
             mode="edit"
             id={booking.id}
+            currency={currency}
             {...options}
             defaults={{
               client_id: booking.client_id,

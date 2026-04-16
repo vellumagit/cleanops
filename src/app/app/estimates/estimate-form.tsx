@@ -31,11 +31,13 @@ export function EstimateForm({
   id,
   defaults,
   clients,
+  currency = "CAD",
 }: {
   mode: "create" | "edit";
   id?: string;
   defaults?: Defaults;
   clients: { id: string; label: string }[];
+  currency?: "CAD" | "USD";
 }) {
   const action =
     mode === "create"
@@ -124,7 +126,7 @@ export function EstimateForm({
         </FormField>
 
         <FormField
-          label="Total (USD)"
+          label={`Total (${currency})`}
           htmlFor="total_cents"
           required
           error={state.errors?.total_cents}
