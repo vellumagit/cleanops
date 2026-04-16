@@ -11,6 +11,10 @@ import {
 } from "@/lib/validators/invoice-payment";
 import { localInputToUtcIso } from "@/lib/validators/common";
 import { generateClaimToken } from "@/lib/claim-token";
+import { sendOrgEmail } from "@/lib/email";
+import { invoiceSentEmail } from "@/lib/email-templates";
+import { formatCurrencyCents } from "@/lib/format";
+import { getOrgCurrency } from "@/lib/org-currency";
 
 type Field = keyof typeof InvoiceSchema.shape;
 export type InvoiceFormState = ActionState<Field>;
@@ -270,9 +274,8 @@ export async function deleteInvoicePaymentAction(formData: FormData) {
 }
 
 /**
- * Mark an invoice as "sent". Flips status draft → sent and stamps sent_at.
- * In a later phase this also triggers the Resend email delivery — for now
- * it just flips the state so the public token/link can be shared manually.
+ * Mark an invoice as "sent". Flips status draft → sent, stamps sent_at,
+ * and emails the client a link to the public invoice page.
  */
 export async function sendInvoiceAction(formData: FormData) {
   const id = String(formData.get("id") ?? "");
@@ -282,7 +285,9 @@ export async function sendInvoiceAction(formData: FormData) {
 
   const { data: prev } = await supabase
     .from("invoices")
-    .select("id, status, sent_at, public_token")
+    .select(
+      "id, number, status, sent_at, public_token, amount_cents, due_date, client:clients ( name, email )",
+    )
     .eq("id", id)
     .maybeSingle();
   if (!prev) return;
@@ -304,6 +309,44 @@ export async function sendInvoiceAction(formData: FormData) {
     before: { status: prev.status },
     after: { status: "sent" },
   });
+
+  // Send email to client (fire-and-forget — don't block on delivery)
+  const clientEmail = prev.client?.email;
+  if (clientEmail && prev.public_token) {
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+    const currency = await getOrgCurrency(membership.organization_id);
+
+    // Fetch org branding for the email
+    const { data: orgData } = await supabase
+      .from("organizations")
+      .select("name, brand_color")
+      .eq("id", membership.organization_id)
+      .maybeSingle() as unknown as {
+      data: { name: string; brand_color: string | null } | null;
+    };
+
+    const template = invoiceSentEmail({
+      clientName: prev.client?.name ?? "there",
+      invoiceNumber: prev.number ?? id.slice(0, 8).toUpperCase(),
+      amountFormatted: formatCurrencyCents(prev.amount_cents, currency),
+      dueDate: prev.due_date
+        ? new Date(prev.due_date).toLocaleDateString("en-US", {
+            month: "short",
+            day: "numeric",
+            year: "numeric",
+          })
+        : "On receipt",
+      publicUrl: `${siteUrl}/i/${prev.public_token}`,
+      orgName: orgData?.name ?? membership.organization_name,
+      brandColor: orgData?.brand_color ?? undefined,
+    });
+
+    sendOrgEmail(membership.organization_id, {
+      to: clientEmail,
+      toName: prev.client?.name ?? undefined,
+      ...template,
+    });
+  }
 
   revalidatePath(`/app/invoices/${id}`);
   revalidatePath("/app/invoices");

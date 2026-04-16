@@ -100,8 +100,33 @@ export async function sendInvitationAction(
     },
   });
 
-  // TODO: When Resend is wired up, send the invite email here.
-  // For now, the admin copies the link from the invitations list.
+  // Send the invite email (fire-and-forget)
+  {
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+    const { sendOrgEmail } = await import("@/lib/email");
+    const { teamInviteEmail } = await import("@/lib/email-templates");
+
+    // Fetch branding
+    const { data: orgData } = await supabase
+      .from("organizations")
+      .select("name, brand_color")
+      .eq("id", membership.organization_id)
+      .maybeSingle() as unknown as {
+      data: { name: string; brand_color: string | null } | null;
+    };
+
+    const template = teamInviteEmail({
+      orgName: orgData?.name ?? membership.organization_name,
+      role: parsed.data.role,
+      signupUrl: `${siteUrl}/signup?invite=${invitation.token}`,
+      brandColor: orgData?.brand_color ?? undefined,
+    });
+
+    sendOrgEmail(membership.organization_id, {
+      to: parsed.data.email,
+      ...template,
+    });
+  }
 
   revalidatePath("/app/employees");
   revalidatePath("/app/settings/members");

@@ -6,6 +6,7 @@ import {
   Coins,
   CreditCard,
   KeyRound,
+  Mail,
   Palette,
   Plug,
   ScrollText,
@@ -38,6 +39,13 @@ const SECTIONS = [
     title: "Currency",
     description:
       "Choose whether amounts display in Canadian or US dollars.",
+  },
+  {
+    href: "/app/settings/email",
+    icon: Mail,
+    title: "Email",
+    description:
+      "Set the sender address for invoices, confirmations, and notifications.",
   },
   {
     href: "/app/settings/bonus-rules",

@@ -38,9 +38,10 @@ const BaseSchema = z.object({
   TWILIO_AUTH_TOKEN: z.string().optional(),
   TWILIO_FROM_NUMBER: z.string().optional(),
 
-  // Resend (transactional email)
-  RESEND_API_KEY: z.string().optional(),
+  // MailerSend (transactional email)
+  MAILERSEND_API_KEY: z.string().optional(),
   EMAIL_FROM: z.string().optional(),
+  EMAIL_FROM_NAME: z.string().optional(),
 
   // Sentry
   NEXT_PUBLIC_SENTRY_DSN: z.string().optional(),
@@ -169,8 +170,8 @@ export function isTwilioConfigured(): boolean {
   );
 }
 
-export function isResendConfigured(): boolean {
-  return !!getEnv().RESEND_API_KEY;
+export function isEmailConfigured(): boolean {
+  return !!getEnv().MAILERSEND_API_KEY;
 }
 
 export function isSageConfigured(): boolean {
