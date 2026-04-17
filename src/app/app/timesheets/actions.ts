@@ -59,6 +59,48 @@ export async function createPtoRequestAction(
   return { ok: true };
 }
 
+// Employee self-service — submits a PENDING request that admins approve
+export async function submitSelfPtoRequestAction(
+  formData: FormData,
+): Promise<Result> {
+  const { membership, supabase } = await getActionContext();
+
+  const start_date = String(formData.get("start_date") ?? "");
+  const end_date = String(formData.get("end_date") ?? "");
+  const hours = Number(formData.get("hours") ?? 8);
+  const reason = String(formData.get("reason") ?? "").trim();
+
+  if (!start_date || !end_date) {
+    return { ok: false, error: "Start date and end date are required." };
+  }
+
+  if (new Date(end_date) < new Date(start_date)) {
+    return { ok: false, error: "End date must be on or after start date." };
+  }
+
+  if (hours <= 0 || hours > 200) {
+    return { ok: false, error: "Hours must be between 1 and 200." };
+  }
+
+  const { error } = await (supabase
+    .from("pto_requests" as never)
+    .insert({
+      organization_id: membership.organization_id,
+      employee_id: membership.id,
+      start_date,
+      end_date,
+      hours,
+      reason: reason || null,
+      status: "pending",
+    } as never) as unknown as Promise<{ error: { message: string } | null }>);
+
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/field/profile");
+  revalidatePath("/app/timesheets");
+  return { ok: true };
+}
+
 export async function updatePtoStatusAction(
   formData: FormData,
 ): Promise<Result> {

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Plus } from "lucide-react";
+import { Plus, Upload } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
@@ -31,13 +31,22 @@ export default async function ClientsPage() {
       description="Customers your team serves."
       actions={
         canEdit ? (
-          <Link
-            href="/app/clients/new"
-            className={buttonVariants({ variant: "default" })}
-          >
-            <Plus className="h-4 w-4" />
-            New client
-          </Link>
+          <div className="flex items-center gap-2">
+            <Link
+              href="/app/clients/import"
+              className={buttonVariants({ variant: "outline", size: "sm" })}
+            >
+              <Upload className="h-4 w-4" />
+              Import CSV
+            </Link>
+            <Link
+              href="/app/clients/new"
+              className={buttonVariants({ variant: "default" })}
+            >
+              <Plus className="h-4 w-4" />
+              New client
+            </Link>
+          </div>
         ) : null
       }
     >

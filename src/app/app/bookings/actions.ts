@@ -10,7 +10,7 @@ import {
   deleteCalendarEvent,
 } from "@/lib/google-calendar";
 import { generateOccurrences, type SeriesRule } from "@/lib/recurrence";
-import { notifyBookingAssignment } from "@/lib/automations";
+import { notifyBookingAssignment, sendBookingConfirmation } from "@/lib/automations";
 import { canCreateData } from "@/lib/subscription";
 
 type Field = keyof typeof BookingSchema.shape;
@@ -122,6 +122,9 @@ export async function createBookingAction(
     .single();
 
   if (error) return { errors: { _form: error.message }, values: raw };
+
+  // Email booking confirmation to client (fire-and-forget)
+  sendBookingConfirmation(booking.id);
 
   // Notify assigned employee (fire-and-forget)
   if (parsed.data.assigned_to) {

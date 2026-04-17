@@ -372,6 +372,64 @@ export async function postSystemFeedEvent(
 }
 
 // ─────────────────────────────────────────────────────────────────
+// 7a. Send booking confirmation email to client on booking creation
+// ─────────────────────────────────────────────────────────────────
+
+export async function sendBookingConfirmation(bookingId: string) {
+  try {
+    const db = admin();
+    const { sendOrgEmail } = await import("@/lib/email");
+    const { bookingConfirmationEmail } = await import("@/lib/email-templates");
+
+    const { data: booking } = await db
+      .from("bookings")
+      .select(`
+        id, organization_id, scheduled_at, service_type, address,
+        client:clients ( name, email )
+      `)
+      .eq("id", bookingId)
+      .maybeSingle();
+
+    if (!booking || !booking.client?.email) return;
+
+    const { data: org } = await db
+      .from("organizations")
+      .select("name, brand_color")
+      .eq("id", booking.organization_id)
+      .maybeSingle() as unknown as {
+      data: { name: string; brand_color: string | null } | null;
+    };
+
+    const dateTime = new Date(booking.scheduled_at).toLocaleString("en-US", {
+      weekday: "long",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+
+    const template = bookingConfirmationEmail({
+      clientName: booking.client.name ?? "there",
+      orgName: org?.name ?? "your service provider",
+      serviceName: humanize(booking.service_type),
+      dateTime,
+      address: booking.address ?? "(address to be confirmed)",
+      brandColor: org?.brand_color ?? undefined,
+    });
+
+    sendOrgEmail(booking.organization_id, {
+      to: booking.client.email,
+      toName: booking.client.name ?? undefined,
+      ...template,
+    });
+
+    console.log(`[auto] Booking confirmation sent to ${booking.client.email}`);
+  } catch (err) {
+    console.error("[auto] sendBookingConfirmation failed:", err);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
 // 7. Notify employee when they're assigned to a booking
 // ─────────────────────────────────────────────────────────────────
 
@@ -664,6 +722,108 @@ export async function autoExtendRecurringSeries(): Promise<number> {
     return totalGenerated;
   } catch (err) {
     console.error("[auto] autoExtendRecurringSeries failed:", err);
+    return 0;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// 11. Auto-compute review bonuses (called by weekly cron)
+// ─────────────────────────────────────────────────────────────────
+
+export async function autoComputeReviewBonuses(): Promise<number> {
+  try {
+    const db = admin();
+
+    // Find every org with an enabled review bonus rule
+    const { data: rules } = await db
+      .from("bonus_rules")
+      .select("*")
+      .eq("enabled", true);
+
+    if (!rules || rules.length === 0) return 0;
+
+    let totalCreated = 0;
+
+    for (const rule of rules) {
+      const r = rule as {
+        organization_id: string;
+        period_days: number;
+        min_avg_rating: number;
+        min_reviews_count: number;
+        amount_cents: number;
+      };
+
+      const periodEnd = new Date();
+      const periodStart = new Date(periodEnd);
+      periodStart.setUTCDate(periodStart.getUTCDate() - r.period_days);
+      const periodStartIso = periodStart.toISOString();
+      const periodStartDate = periodStartIso.slice(0, 10);
+      const periodEndDate = periodEnd.toISOString().slice(0, 10);
+
+      const { data: reviews } = await db
+        .from("reviews")
+        .select("employee_id, rating")
+        .eq("organization_id", r.organization_id)
+        .gte("submitted_at", periodStartIso)
+        .not("employee_id", "is", null)
+        .limit(5000);
+
+      if (!reviews || reviews.length === 0) continue;
+
+      const byEmployee = new Map<string, { sum: number; count: number }>();
+      for (const rv of reviews) {
+        if (!rv.employee_id) continue;
+        const b = byEmployee.get(rv.employee_id) ?? { sum: 0, count: 0 };
+        b.sum += rv.rating;
+        b.count += 1;
+        byEmployee.set(rv.employee_id, b);
+      }
+
+      // Dedupe — don't re-award for the same period
+      const { data: existing } = await db
+        .from("bonuses")
+        .select("employee_id")
+        .eq("organization_id", r.organization_id)
+        .eq("period_start", periodStartDate)
+        .eq("period_end", periodEndDate);
+      const alreadyAwarded = new Set(
+        (existing ?? []).map((b) => b.employee_id),
+      );
+
+      const toCreate: unknown[] = [];
+      for (const [employeeId, bucket] of byEmployee.entries()) {
+        if (bucket.count < r.min_reviews_count) continue;
+        const avg = bucket.sum / bucket.count;
+        if (avg < r.min_avg_rating) continue;
+        if (alreadyAwarded.has(employeeId)) continue;
+
+        toCreate.push({
+          organization_id: r.organization_id,
+          employee_id: employeeId,
+          period_start: periodStartDate,
+          period_end: periodEndDate,
+          amount_cents: r.amount_cents,
+          reason: `Avg ${avg.toFixed(2)} across ${bucket.count} reviews (last ${r.period_days}d)`,
+          bonus_type: "review",
+        });
+      }
+
+      if (toCreate.length > 0) {
+        await (db.from("bonuses").insert(toCreate as never) as unknown as Promise<unknown>);
+        totalCreated += toCreate.length;
+
+        // Notify the org that bonuses were computed
+        sendPushToOrg(r.organization_id, {
+          title: "Bonuses computed",
+          body: `${toCreate.length} new bonus${toCreate.length > 1 ? "es" : ""} awarded from recent reviews.`,
+          href: "/app/bonuses",
+        }).catch(() => {});
+      }
+    }
+
+    return totalCreated;
+  } catch (err) {
+    console.error("[auto] autoComputeReviewBonuses failed:", err);
     return 0;
   }
 }

@@ -26,6 +26,8 @@ import {
   Settings,
   LogOut,
   Bell,
+  BarChart3,
+  Banknote,
   Menu,
   X,
 } from "lucide-react";
@@ -95,7 +97,11 @@ const NAV_SECTIONS: NavSection[] = [
     label: "Money",
     accent: "text-emerald-400",
     activeBg: "bg-emerald-500/10",
-    items: [{ href: "/app/invoices", label: "Invoices", icon: Receipt, roles: ["owner", "admin", "manager"] }],
+    items: [
+      { href: "/app/invoices", label: "Invoices", icon: Receipt, roles: ["owner", "admin", "manager"] },
+      { href: "/app/reports", label: "Reports", icon: BarChart3, roles: ["owner", "admin"] },
+      { href: "/app/payroll", label: "Payroll", icon: Banknote, roles: ["owner", "admin"] },
+    ],
   },
   {
     label: "Comms",
