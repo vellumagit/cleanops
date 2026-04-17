@@ -99,7 +99,7 @@ export default function OpengraphImage() {
             color: "rgba(255,255,255,0.55)",
           }}
         >
-          <div style={{ display: "flex" }}>21-day free trial · No credit card</div>
+          <div style={{ display: "flex" }}>14-day free trial · No credit card</div>
           <div style={{ display: "flex" }}>sollos3.com</div>
         </div>
       </div>

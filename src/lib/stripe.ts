@@ -149,7 +149,7 @@ export async function createCheckoutSession(args: {
     cancel_url: args.cancelUrl,
     allow_promotion_codes: true,
     subscription_data: {
-      trial_period_days: 21,
+      trial_period_days: 14,
       metadata: { organization_id: args.organizationId },
     },
     metadata: { organization_id: args.organizationId },

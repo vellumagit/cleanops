@@ -1,8 +1,10 @@
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { getSubscriptionGate } from "@/lib/subscription";
 import { AppSidebar } from "@/components/app-sidebar";
 import { BrandProvider } from "@/components/brand-provider";
 import { PushPrompt } from "@/components/push-prompt";
+import { TrialBanner } from "@/components/trial-banner";
 import { DEFAULT_TZ } from "@/lib/format";
 
 export default async function AppLayout({
@@ -13,6 +15,7 @@ export default async function AppLayout({
   const membership = await requireMembership();
 
   const supabase = await createSupabaseServerClient();
+  const subscriptionGate = await getSubscriptionGate(membership.organization_id);
 
   // Compute today's boundaries in the org's timezone
   const now = new Date();
@@ -125,6 +128,7 @@ export default async function AppLayout({
       />
       {/* pt-14 on mobile for the fixed top bar, lg:pt-0 when sidebar is visible */}
       <div className="flex min-w-0 flex-1 flex-col overflow-y-auto pt-14 lg:pt-0">
+        <TrialBanner gate={subscriptionGate} />
         <PushPrompt
           membershipId={membership.id}
           organizationId={membership.organization_id}

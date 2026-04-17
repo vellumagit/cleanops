@@ -97,7 +97,7 @@ export default function Home() {
               "rounded-full px-6 text-sm font-semibold sollos-cta-glow",
             )}
           >
-            Start 21-day free trial
+            Start 14-day free trial
             <ArrowRight className="ml-1.5 h-4 w-4" />
           </Link>
           <Link
@@ -112,7 +112,7 @@ export default function Home() {
         </div>
 
         <div className="mt-6 flex flex-wrap items-center justify-center gap-x-5 gap-y-1 text-xs text-muted-foreground">
-          <span className="flex items-center gap-1"><CheckCircle2 className="h-3 w-3 text-emerald-500" /> 21 days free</span>
+          <span className="flex items-center gap-1"><CheckCircle2 className="h-3 w-3 text-emerald-500" /> 14 days free</span>
           <span className="flex items-center gap-1"><CheckCircle2 className="h-3 w-3 text-emerald-500" /> No credit card required</span>
           <span className="flex items-center gap-1"><CheckCircle2 className="h-3 w-3 text-emerald-500" /> Cancel anytime</span>
         </div>
@@ -372,7 +372,7 @@ export default function Home() {
           </h2>
           <p className="mx-auto mt-3 max-w-xl text-sm text-muted-foreground">
             Pick the plan that fits your team size. Every plan includes every feature —
-            we don&apos;t hide things behind upgrades. Try it free for 21 days, no card required.
+            we don&apos;t hide things behind upgrades. Try it free for 14 days, no card required.
           </p>
         </div>
 
@@ -417,7 +417,7 @@ export default function Home() {
                 "mt-6 w-full rounded-full border-border text-sm font-semibold",
               )}
             >
-              Start 21-day trial
+              Start 14-day trial
             </Link>
           </div>
 
@@ -469,7 +469,7 @@ export default function Home() {
                 "mt-6 w-full rounded-full text-sm font-semibold sollos-cta-glow",
               )}
             >
-              Start 21-day trial
+              Start 14-day trial
             </Link>
           </div>
 
@@ -533,7 +533,7 @@ export default function Home() {
             },
             {
               q: "Do I need a credit card to try it?",
-              a: "No. Start your 21-day trial with just your email.",
+              a: "No. Start your 14-day trial with just your email.",
             },
             {
               q: "What happens after the trial?",
@@ -560,7 +560,7 @@ export default function Home() {
           Ready to stop juggling spreadsheets?
         </h2>
         <p className="mx-auto mt-3 max-w-md text-sm text-muted-foreground">
-          Try every feature free for 21 days. No credit card, no contracts,
+          Try every feature free for 14 days. No credit card, no contracts,
           no sales calls. Just sign up and go.
         </p>
         <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
@@ -571,7 +571,7 @@ export default function Home() {
               "rounded-full px-6 text-sm font-semibold sollos-cta-glow",
             )}
           >
-            Start 21-day free trial
+            Start 14-day free trial
             <ArrowRight className="ml-1.5 h-4 w-4" />
           </Link>
         </div>

@@ -151,7 +151,7 @@ export default async function BillingPage() {
                   variant="outline"
                 />
                 <p className="ml-1 text-xs text-muted-foreground">
-                  21-day free trial · No credit card charged today
+                  14-day free trial · No credit card charged today
                 </p>
               </div>
             )}

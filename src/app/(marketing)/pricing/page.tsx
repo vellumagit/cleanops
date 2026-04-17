@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 export const metadata = {
   title: "Pricing",
   description:
-    "Simple, transparent pricing for Sollos 3. Start with a 21-day free trial — no credit card required.",
+    "Simple, transparent pricing for Sollos 3. Start with a 14-day free trial — no credit card required.",
 };
 
 export default function PricingPage() {
@@ -70,7 +70,7 @@ export default function PricingPage() {
         </h1>
         <p className="mx-auto mt-4 max-w-xl text-base text-muted-foreground">
           Pick the plan that fits your team. Every plan includes every feature.
-          Try it free for 21 days — no credit card required.
+          Try it free for 14 days — no credit card required.
         </p>
       </section>
 
@@ -117,7 +117,7 @@ export default function PricingPage() {
                 "mt-6 w-full rounded-full border-border text-sm font-semibold",
               )}
             >
-              Start 21-day trial
+              Start 14-day trial
             </Link>
           </div>
 
@@ -169,7 +169,7 @@ export default function PricingPage() {
                 "mt-6 w-full rounded-full text-sm font-semibold sollos-cta-glow",
               )}
             >
-              Start 21-day trial
+              Start 14-day trial
               <ArrowRight className="ml-1.5 h-4 w-4" />
             </Link>
           </div>
@@ -291,7 +291,7 @@ export default function PricingPage() {
           Still have questions?
         </h2>
         <p className="mx-auto mt-3 max-w-md text-sm text-muted-foreground">
-          The fastest way to see if Sollos is right for you is to try it. 21 days free, no card required.
+          The fastest way to see if Sollos is right for you is to try it. 14 days free, no card required.
         </p>
         <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
           <Link
@@ -378,7 +378,7 @@ const COMPARISON_ROWS: Array<{
 const FAQS = [
   {
     q: "Do I need a credit card to start my trial?",
-    a: "No. You can start your 21-day free trial with just your email and company name. We'll only ask for a card when you pick a plan at the end of the trial.",
+    a: "No. You can start your 14-day free trial with just your email and company name. We'll only ask for a card when you pick a plan at the end of the trial.",
   },
   {
     q: "What happens when my trial ends?",
