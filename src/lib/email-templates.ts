@@ -273,3 +273,42 @@ export function paymentReceiptEmail(args: {
   const text = `Payment received — ${args.invoiceNumber}\n\nAmount: ${args.amountFormatted}\nReceived: ${args.paidDate}\n\nView: ${args.publicUrl}`;
   return { subject, html, text };
 }
+
+// ---------------------------------------------------------------------------
+// Trial expiring warning
+// ---------------------------------------------------------------------------
+
+export function trialExpiringEmail(args: {
+  userName: string;
+  orgName: string;
+  daysLeft: number;
+  billingUrl: string;
+}) {
+  const urgency =
+    args.daysLeft <= 1
+      ? "Your free trial ends today"
+      : `${args.daysLeft} days left in your free trial`;
+
+  const subject = `${urgency} — ${args.orgName}`;
+  const html = layout(
+    `
+    <h1 style="margin:0 0 8px;font-size:20px;color:#18181b;">${urgency}</h1>
+    <p style="margin:0 0 20px;font-size:14px;color:#52525b;">
+      Hi ${args.userName}, your Sollos trial for <strong>${args.orgName}</strong>
+      ${args.daysLeft <= 1
+        ? "expires today. After today, you'll lose the ability to create new bookings, invoices, and estimates."
+        : `has ${args.daysLeft} days remaining. Subscribe now to keep everything running smoothly when the trial ends.`}
+    </p>
+    <p style="margin:0 0 20px;font-size:13px;color:#52525b;">
+      Your data is safe either way — subscribing just keeps the full feature set unlocked.
+    </p>
+    ${button("Choose a Plan", args.billingUrl)}
+    <p style="margin:0;font-size:12px;color:#a1a1aa;">
+      Questions? Reply to this email and we'll help.
+    </p>
+    `,
+    { orgName: args.orgName },
+  );
+  const text = `${urgency}\n\nHi ${args.userName}, your Sollos trial for ${args.orgName} ${args.daysLeft <= 1 ? "expires today." : `has ${args.daysLeft} days left.`}\n\nSubscribe: ${args.billingUrl}`;
+  return { subject, html, text };
+}

@@ -16,6 +16,7 @@ import { invoiceSentEmail } from "@/lib/email-templates";
 import { formatCurrencyCents } from "@/lib/format";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { autoOnInvoicePaid } from "@/lib/automations";
+import { canCreateData } from "@/lib/subscription";
 
 type Field = keyof typeof InvoiceSchema.shape;
 export type InvoiceFormState = ActionState<Field>;
@@ -53,6 +54,11 @@ export async function createInvoiceAction(
   if (!parsed.ok) return { errors: parsed.errors, values: raw };
 
   const { membership, supabase } = await getActionContext();
+
+  if (!(await canCreateData(membership.organization_id))) {
+    return { errors: { _form: "Your subscription has expired. Subscribe to create new invoices." }, values: raw };
+  }
+
   const stamps = maybeStamp(parsed.data.status);
   const { data: inserted, error } = await supabase
     .from("invoices")

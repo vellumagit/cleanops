@@ -11,6 +11,7 @@ import {
 } from "@/lib/google-calendar";
 import { generateOccurrences, type SeriesRule } from "@/lib/recurrence";
 import { notifyBookingAssignment } from "@/lib/automations";
+import { canCreateData } from "@/lib/subscription";
 
 type Field = keyof typeof BookingSchema.shape;
 export type BookingFormState = ActionState<Field & string>;
@@ -96,6 +97,11 @@ export async function createBookingAction(
   if (!parsed.ok) return { errors: parsed.errors, values: raw };
 
   const { membership, supabase } = await getActionContext();
+
+  if (!(await canCreateData(membership.organization_id))) {
+    return { errors: { _form: "Your subscription has expired. Subscribe to create new bookings." }, values: raw };
+  }
+
   const { data: booking, error } = await supabase
     .from("bookings")
     .insert({

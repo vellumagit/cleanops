@@ -6,6 +6,7 @@ import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
 import { EstimateSchema } from "@/lib/validators/estimates";
 import { autoBookingOnEstimateApproval } from "@/lib/automations";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { canCreateData } from "@/lib/subscription";
 
 type Field = keyof typeof EstimateSchema.shape;
 export type EstimateFormState = ActionState<Field | "pdf">;
@@ -91,6 +92,11 @@ export async function createEstimateAction(
   if (!parsed.ok) return { errors: parsed.errors, values: raw };
 
   const { membership, supabase } = await getActionContext();
+
+  if (!(await canCreateData(membership.organization_id))) {
+    return { errors: { _form: "Your subscription has expired. Subscribe to create new estimates." }, values: raw };
+  }
+
   const stamps = maybeStamp(parsed.data.status);
   const { data: estimate, error } = await supabase
     .from("estimates")
