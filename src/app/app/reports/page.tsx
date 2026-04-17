@@ -1,6 +1,8 @@
+import { Download } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
+import { buttonVariants } from "@/components/ui/button";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { formatCurrencyCents, formatDate } from "@/lib/format";
 
@@ -140,6 +142,15 @@ export default async function ReportsPage({
     <PageShell
       title="Reports"
       description={`Performance from ${formatDate(from)} to ${formatDate(to)}`}
+      actions={
+        <a
+          href={`/app/reports/export?from=${from}&to=${to}`}
+          className={buttonVariants({ variant: "outline", size: "sm" })}
+        >
+          <Download className="h-4 w-4" />
+          Export CSV
+        </a>
+      }
     >
       <form className="mb-6 flex flex-wrap items-end gap-3">
         <div>

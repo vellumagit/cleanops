@@ -1,0 +1,134 @@
+import Link from "next/link";
+import { ArrowLeft, Zap } from "lucide-react";
+import { requireMembership } from "@/lib/auth";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { PageShell } from "@/components/page-shell";
+import { buttonVariants } from "@/components/ui/button";
+import { SubmitButton } from "@/components/submit-button";
+import { toggleAutomationAction, type AutomationKey } from "./actions";
+
+export const metadata = { title: "Automations" };
+
+type AutomationDef = {
+  key: AutomationKey;
+  title: string;
+  description: string;
+  trigger: string;
+};
+
+const AUTOMATIONS: AutomationDef[] = [
+  {
+    key: "auto_invoice_on_job_complete",
+    title: "Auto-draft invoice on job complete",
+    description:
+      "Creates a draft invoice for the client automatically when a booking is marked completed. You still need to review and send it.",
+    trigger: "Booking → Completed",
+  },
+  {
+    key: "booking_confirmation_email",
+    title: "Booking confirmation email",
+    description:
+      "Sends the client an email when a new booking is created or confirmed for them.",
+    trigger: "Booking → Created",
+  },
+  {
+    key: "invoice_paid_receipt",
+    title: "Receipt + review request on payment",
+    description:
+      "Sends the client a payment receipt and a link to leave a review after their invoice is marked paid.",
+    trigger: "Invoice → Paid",
+  },
+  {
+    key: "review_submitted_notify",
+    title: "Notify admin on new review",
+    description:
+      "Sends an in-app notification to owners and admins when a client submits a review.",
+    trigger: "Review → Submitted",
+  },
+  {
+    key: "booking_assignment_notify",
+    title: "Notify employee on booking assignment",
+    description:
+      "Sends a push notification to the assigned employee when a booking is assigned to them.",
+    trigger: "Booking → Assigned",
+  },
+];
+
+export default async function AutomationsPage() {
+  const membership = await requireMembership(["owner", "admin"]);
+  const admin = createSupabaseAdminClient();
+
+  const { data: org } = (await admin
+    .from("organizations")
+    .select("automation_settings")
+    .eq("id", membership.organization_id)
+    .maybeSingle()) as unknown as {
+    data: { automation_settings: Record<string, { enabled: boolean }> } | null;
+  };
+
+  const settings = org?.automation_settings ?? {};
+
+  function isEnabled(key: AutomationKey): boolean {
+    // Default to enabled if no preference set
+    return settings[key]?.enabled !== false;
+  }
+
+  return (
+    <PageShell
+      title="Automations"
+      description="Control which automatic actions fire in the background."
+      actions={
+        <Link
+          href="/app/settings"
+          className={buttonVariants({ variant: "outline", size: "sm" })}
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back
+        </Link>
+      }
+    >
+      <div className="mb-4 rounded-lg border border-blue-500/30 bg-blue-500/5 p-4 text-sm text-muted-foreground">
+        <div className="flex items-start gap-2">
+          <Zap className="mt-0.5 h-4 w-4 shrink-0 text-blue-500" />
+          <p>
+            Automations run silently in the background. They never block primary
+            actions — if one fails, it fails quietly.
+          </p>
+        </div>
+      </div>
+      <ul className="space-y-3">
+        {AUTOMATIONS.map((a) => {
+          const on = isEnabled(a.key);
+          return (
+            <li key={a.key} className="rounded-lg border border-border bg-card p-4">
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-medium">{a.title}</span>
+                    <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                      {a.trigger}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {a.description}
+                  </p>
+                </div>
+                <form action={toggleAutomationAction} className="shrink-0">
+                  <input type="hidden" name="key" value={a.key} />
+                  <input type="hidden" name="enabled" value={on ? "false" : "true"} />
+                  <SubmitButton
+                    variant={on ? "default" : "outline"}
+                    size="sm"
+                    pendingLabel={on ? "Disabling…" : "Enabling…"}
+                  >
+                    {on ? "Enabled" : "Disabled"}
+                  </SubmitButton>
+                </form>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </PageShell>
+  );
+}

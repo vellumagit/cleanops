@@ -11,6 +11,8 @@ import {
   Plug,
   ScrollText,
   Users,
+  Webhook,
+  Zap,
 } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { PageShell } from "@/components/page-shell";
@@ -88,6 +90,20 @@ const SECTIONS = [
     title: "Billing",
     description:
       "Plan, payment method, and Stripe customer portal (scaffolded).",
+  },
+  {
+    href: "/app/settings/automations",
+    icon: Zap,
+    title: "Automations",
+    description:
+      "Toggle which background automations fire when jobs complete, invoices are paid, and more.",
+  },
+  {
+    href: "/app/settings/webhooks",
+    icon: Webhook,
+    title: "Webhooks",
+    description:
+      "Send real-time POST requests to external systems when bookings, invoices, or reviews change.",
   },
 ];
 
