@@ -1,12 +1,14 @@
 import { notFound } from "next/navigation";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { PageShell } from "@/components/page-shell";
 import { centsToDollarString } from "@/lib/validators/common";
 import { ContractForm } from "../../contract-form";
 import { fetchContractFormOptions } from "../../options";
 import { DeleteContractForm } from "./delete-form";
+import { ContractDocuments } from "../../contract-documents";
 
 export const metadata = { title: "Edit contract" };
 
@@ -31,7 +33,43 @@ export default async function EditContractPage({
   if (error) throw error;
   if (!contract) notFound();
 
-  const { clients, estimates } = await fetchContractFormOptions();
+  const admin = createSupabaseAdminClient();
+
+  const [{ clients, estimates }, { data: docsRaw }] = await Promise.all([
+    fetchContractFormOptions(),
+    admin
+      .from("contract_documents" as never)
+      .select("id, name, file_size, mime_type, created_at, storage_path")
+      .eq("contract_id" as never, id as never)
+      .eq("organization_id" as never, membership.organization_id as never)
+      .order("created_at" as never, { ascending: false } as never) as unknown as Promise<{
+      data: Array<{
+        id: string;
+        name: string;
+        file_size: number | null;
+        mime_type: string | null;
+        created_at: string;
+        storage_path: string;
+      }> | null;
+    }>,
+  ]);
+
+  // Generate signed URLs (1 hour) for each doc
+  const docs = await Promise.all(
+    (docsRaw ?? []).map(async (d) => {
+      const { data: signedData } = await admin.storage
+        .from("contract-docs")
+        .createSignedUrl(d.storage_path, 3600);
+      return {
+        id: d.id,
+        name: d.name,
+        file_size: d.file_size,
+        mime_type: d.mime_type,
+        created_at: d.created_at,
+        download_url: signedData?.signedUrl ?? "",
+      };
+    }),
+  );
 
   return (
     <PageShell title="Edit contract">
@@ -55,6 +93,13 @@ export default async function EditContractPage({
               payment_terms: contract.payment_terms,
               status: contract.status,
             }}
+          />
+        </div>
+        <div className="rounded-lg border border-border bg-card p-6">
+          <ContractDocuments
+            contractId={contract.id}
+            docs={docs}
+            canEdit={membership.role !== "employee"}
           />
         </div>
         <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-6">
