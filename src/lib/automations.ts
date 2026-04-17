@@ -372,6 +372,303 @@ export async function postSystemFeedEvent(
 }
 
 // ─────────────────────────────────────────────────────────────────
+// 7. Notify employee when they're assigned to a booking
+// ─────────────────────────────────────────────────────────────────
+
+export async function notifyBookingAssignment(
+  organizationId: string,
+  bookingId: string,
+  assignedTo: string,
+  meta: { clientName: string; scheduledAt: string; serviceType: string; address: string | null },
+) {
+  try {
+    const db = admin();
+    const when = new Date(meta.scheduledAt).toLocaleDateString("en-US", {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+    const title = "You've been assigned a job";
+    const body = `${humanize(meta.serviceType)} for ${meta.clientName} on ${when}${meta.address ? ` — ${meta.address}` : ""}`;
+
+    await (db.from("notifications" as never).insert({
+      organization_id: organizationId,
+      recipient_membership_id: assignedTo,
+      type: "general",
+      title,
+      body,
+      href: `/field/jobs/${bookingId}`,
+    } as never) as unknown as Promise<unknown>);
+
+    sendPushToMembership(assignedTo, { title, body, href: `/field/jobs/${bookingId}` }).catch(() => {});
+    console.log(`[auto] Notified ${assignedTo} about booking assignment ${bookingId}`);
+  } catch (err) {
+    console.error("[auto] notifyBookingAssignment failed:", err);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// 8. Auto-send review request + receipt when invoice is fully paid
+// ─────────────────────────────────────────────────────────────────
+
+export async function autoOnInvoicePaid(invoiceId: string) {
+  try {
+    const db = admin();
+    const { sendOrgEmail } = await import("@/lib/email");
+    const { reviewRequestEmail, paymentReceiptEmail } = await import("@/lib/email-templates");
+    const { formatCurrencyCents } = await import("@/lib/format");
+    const { getOrgCurrency } = await import("@/lib/org-currency");
+    const { generateClaimToken } = await import("@/lib/claim-token");
+
+    const { data: invoice } = await db
+      .from("invoices")
+      .select(`
+        id, number, organization_id, amount_cents, public_token, paid_at, booking_id,
+        client:clients ( id, name, email )
+      `)
+      .eq("id", invoiceId)
+      .maybeSingle();
+
+    if (!invoice || !invoice.client?.email) return;
+
+    const { data: orgData } = await db
+      .from("organizations")
+      .select("name, brand_color")
+      .eq("id", invoice.organization_id)
+      .maybeSingle() as unknown as {
+      data: { name: string; brand_color: string | null } | null;
+    };
+
+    const orgName = orgData?.name ?? "Your service provider";
+    const brandColor = orgData?.brand_color ?? undefined;
+    const currency = await getOrgCurrency(invoice.organization_id);
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+
+    // A) Send payment receipt
+    const receiptTemplate = paymentReceiptEmail({
+      clientName: invoice.client.name ?? "there",
+      orgName,
+      invoiceNumber: invoice.number ?? invoiceId.slice(0, 8).toUpperCase(),
+      amountFormatted: formatCurrencyCents(invoice.amount_cents, currency),
+      paidDate: new Date(invoice.paid_at ?? new Date()).toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      }),
+      publicUrl: invoice.public_token ? `${siteUrl}/i/${invoice.public_token}` : siteUrl,
+      brandColor,
+    });
+
+    sendOrgEmail(invoice.organization_id, {
+      to: invoice.client.email,
+      toName: invoice.client.name ?? undefined,
+      ...receiptTemplate,
+    });
+
+    // B) Auto-generate review token and send review request
+    // Check if review_token already exists
+    const { data: existing } = (await db
+      .from("invoices")
+      .select("review_token")
+      .eq("id", invoiceId)
+      .maybeSingle()) as unknown as {
+      data: { review_token: string | null } | null;
+    };
+
+    let reviewToken = existing?.review_token ?? null;
+    if (!reviewToken) {
+      reviewToken = generateClaimToken();
+      await db
+        .from("invoices")
+        .update({ review_token: reviewToken } as never)
+        .eq("id", invoiceId);
+    }
+
+    const reviewTemplate = reviewRequestEmail({
+      clientName: invoice.client.name ?? "there",
+      orgName,
+      reviewUrl: `${siteUrl}/review/${reviewToken}`,
+      brandColor,
+    });
+
+    // Delay review request by ~2 seconds so it doesn't arrive in the
+    // same instant as the receipt (looks spammy). Fire-and-forget.
+    setTimeout(() => {
+      sendOrgEmail(invoice.organization_id, {
+        to: invoice.client.email!,
+        toName: invoice.client.name ?? undefined,
+        ...reviewTemplate,
+      });
+    }, 2000);
+
+    console.log(`[auto] Receipt + review request sent for invoice ${invoiceId}`);
+  } catch (err) {
+    console.error("[auto] autoOnInvoicePaid failed:", err);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// 9. Notify admin(s) when a review is submitted
+// ─────────────────────────────────────────────────────────────────
+
+export async function notifyReviewSubmitted(
+  organizationId: string,
+  review: { rating: number; clientName: string; employeeName: string | null; reviewId: string },
+) {
+  try {
+    const db = admin();
+    const stars = "★".repeat(review.rating) + "☆".repeat(5 - review.rating);
+    const title = `New ${review.rating}-star review`;
+    const body = `${review.clientName} left a ${stars} review${review.employeeName ? ` for ${review.employeeName}` : ""}.`;
+
+    await (db.from("notifications" as never).insert({
+      organization_id: organizationId,
+      type: "general",
+      title,
+      body,
+      href: `/app/reviews`,
+    } as never) as unknown as Promise<unknown>);
+
+    sendPushToOrg(organizationId, { title, body, href: "/app/reviews" }).catch(() => {});
+    console.log(`[auto] Review notification sent for ${organizationId}`);
+  } catch (err) {
+    console.error("[auto] notifyReviewSubmitted failed:", err);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// 10. Auto-extend recurring booking series (called by cron)
+// ─────────────────────────────────────────────────────────────────
+
+export async function autoExtendRecurringSeries(): Promise<number> {
+  try {
+    const db = admin();
+    const { generateOccurrences } = await import("@/lib/recurrence");
+    const { createCalendarEvent } = await import("@/lib/google-calendar");
+
+    // Find active series where the latest generated booking is within
+    // 2 weeks — meaning we're running low and need to generate more.
+    const { data: series } = (await db
+      .from("booking_series" as never)
+      .select("*")
+      .eq("active" as never, true as never)) as unknown as {
+      data: Array<{
+        id: string;
+        organization_id: string;
+        client_id: string;
+        pattern: string;
+        custom_days: number[] | null;
+        monthly_nth: number | null;
+        monthly_dow: number | null;
+        start_time: string;
+        starts_at: string;
+        ends_at: string | null;
+        generate_ahead: number;
+        duration_minutes: number;
+        service_type: string;
+        package_id: string | null;
+        assigned_to: string | null;
+        total_cents: number;
+        hourly_rate_cents: number | null;
+        address: string | null;
+        notes: string | null;
+      }> | null;
+    };
+
+    if (!series || series.length === 0) return 0;
+
+    let totalGenerated = 0;
+
+    for (const s of series) {
+      // Find the latest booking in this series
+      const { data: latest } = await db
+        .from("bookings")
+        .select("scheduled_at")
+        .eq("series_id" as never, s.id as never)
+        .order("scheduled_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (!latest) continue;
+
+      const latestDate = new Date(latest.scheduled_at);
+      const twoWeeksOut = new Date();
+      twoWeeksOut.setDate(twoWeeksOut.getDate() + 14);
+
+      // If the latest booking is more than 2 weeks out, no need to generate
+      if (latestDate > twoWeeksOut) continue;
+
+      // Generate next batch
+      const occurrences = generateOccurrences(
+        {
+          pattern: s.pattern as import("@/lib/recurrence").RecurrencePattern,
+          custom_days: s.custom_days,
+          monthly_nth: s.monthly_nth,
+          monthly_dow: s.monthly_dow,
+          start_time: s.start_time,
+          starts_at: s.starts_at,
+          ends_at: s.ends_at,
+          generate_ahead: s.generate_ahead,
+        },
+        s.generate_ahead,
+        latestDate,
+      );
+
+      if (occurrences.length === 0) continue;
+
+      const rows = occurrences.map((scheduled_at) => ({
+        organization_id: s.organization_id,
+        client_id: s.client_id,
+        package_id: s.package_id,
+        assigned_to: s.assigned_to,
+        scheduled_at,
+        duration_minutes: s.duration_minutes,
+        service_type: s.service_type,
+        status: "confirmed" as const,
+        total_cents: s.total_cents,
+        hourly_rate_cents: s.hourly_rate_cents,
+        address: s.address,
+        notes: s.notes ? `[Recurring] ${s.notes}` : "[Recurring]",
+        series_id: s.id,
+      }));
+
+      const { data: inserted } = (await (db
+        .from("bookings")
+        .insert(rows as never)
+        .select("id, scheduled_at") as unknown as Promise<{
+        data: Array<{ id: string; scheduled_at: string }> | null;
+      }>));
+
+      // Sync to calendar
+      if (inserted) {
+        for (const b of inserted) {
+          createCalendarEvent(s.organization_id, {
+            id: b.id,
+            scheduled_at: b.scheduled_at,
+            duration_minutes: s.duration_minutes,
+            service_type: s.service_type,
+            address: s.address,
+            notes: s.notes,
+            client_name: undefined,
+            employee_name: undefined,
+          }).catch(() => {});
+        }
+      }
+
+      totalGenerated += occurrences.length;
+      console.log(`[auto] Extended series ${s.id}: +${occurrences.length} bookings`);
+    }
+
+    return totalGenerated;
+  } catch (err) {
+    console.error("[auto] autoExtendRecurringSeries failed:", err);
+    return 0;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────
 

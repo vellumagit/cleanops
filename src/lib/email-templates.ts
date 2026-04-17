@@ -228,3 +228,48 @@ export function bookingConfirmationEmail(args: {
   const text = `Booking confirmed — ${args.orgName}\n\nService: ${args.serviceName}\nWhen: ${args.dateTime}\nWhere: ${args.address}`;
   return { subject, html, text };
 }
+
+// ---------------------------------------------------------------------------
+// Payment receipt
+// ---------------------------------------------------------------------------
+
+export function paymentReceiptEmail(args: {
+  clientName: string;
+  orgName: string;
+  invoiceNumber: string;
+  amountFormatted: string;
+  paidDate: string;
+  publicUrl: string;
+  brandColor?: string;
+}) {
+  const subject = `Payment received — ${args.invoiceNumber}`;
+  const html = layout(
+    `
+    <h1 style="margin:0 0 8px;font-size:20px;color:#18181b;">Payment received</h1>
+    <p style="margin:0 0 20px;font-size:14px;color:#52525b;">
+      Hi ${args.clientName}, we received your payment. Thank you!
+    </p>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin-bottom:16px;">
+      <tr>
+        <td style="font-size:13px;color:#71717a;padding:6px 0;">Invoice</td>
+        <td style="font-size:13px;color:#18181b;padding:6px 0;text-align:right;font-weight:600;">${args.invoiceNumber}</td>
+      </tr>
+      <tr>
+        <td style="font-size:13px;color:#71717a;padding:6px 0;">Amount</td>
+        <td style="font-size:13px;color:#18181b;padding:6px 0;text-align:right;font-weight:600;">${args.amountFormatted}</td>
+      </tr>
+      <tr>
+        <td style="font-size:13px;color:#71717a;padding:6px 0;">Received</td>
+        <td style="font-size:13px;color:#18181b;padding:6px 0;text-align:right;">${args.paidDate}</td>
+      </tr>
+    </table>
+    ${button("View Invoice", args.publicUrl, args.brandColor ? `#${args.brandColor.replace(/^#/, "")}` : DEFAULT_BRAND)}
+    <p style="margin:0;font-size:12px;color:#a1a1aa;">
+      This is your receipt. No further action needed.
+    </p>
+    `,
+    { brandColor: args.brandColor, orgName: args.orgName },
+  );
+  const text = `Payment received — ${args.invoiceNumber}\n\nAmount: ${args.amountFormatted}\nReceived: ${args.paidDate}\n\nView: ${args.publicUrl}`;
+  return { subject, html, text };
+}

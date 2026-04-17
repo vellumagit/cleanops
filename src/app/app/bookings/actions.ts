@@ -10,6 +10,7 @@ import {
   deleteCalendarEvent,
 } from "@/lib/google-calendar";
 import { generateOccurrences, type SeriesRule } from "@/lib/recurrence";
+import { notifyBookingAssignment } from "@/lib/automations";
 
 type Field = keyof typeof BookingSchema.shape;
 export type BookingFormState = ActionState<Field & string>;
@@ -115,6 +116,22 @@ export async function createBookingAction(
     .single();
 
   if (error) return { errors: { _form: error.message }, values: raw };
+
+  // Notify assigned employee (fire-and-forget)
+  if (parsed.data.assigned_to) {
+    const labels = await getBookingLabels(supabase, parsed.data.client_id, parsed.data.assigned_to);
+    notifyBookingAssignment(
+      membership.organization_id,
+      booking.id,
+      parsed.data.assigned_to,
+      {
+        clientName: labels.clientName ?? "A client",
+        scheduledAt: parsed.data.scheduled_at,
+        serviceType: parsed.data.service_type,
+        address: parsed.data.address ?? null,
+      },
+    );
+  }
 
   // Sync to Google Calendar (fire-and-forget — don't block the action)
   const labels = await getBookingLabels(
@@ -303,14 +320,33 @@ export async function updateBookingAction(
 
   const { membership, supabase } = await getActionContext();
 
-  // Fetch the existing event ID before updating
+  // Fetch the existing booking to detect assignee changes
   const { data: existing } = (await supabase
     .from("bookings")
-    .select("google_calendar_event_id")
+    .select("google_calendar_event_id, assigned_to")
     .eq("id", id)
     .maybeSingle()) as unknown as {
-    data: { google_calendar_event_id: string | null } | null;
+    data: { google_calendar_event_id: string | null; assigned_to: string | null } | null;
   };
+
+  // If the assignee changed, notify the new employee
+  const assigneeChanged =
+    parsed.data.assigned_to &&
+    parsed.data.assigned_to !== existing?.assigned_to;
+  if (assigneeChanged) {
+    const labels = await getBookingLabels(supabase, parsed.data.client_id, parsed.data.assigned_to!);
+    notifyBookingAssignment(
+      membership.organization_id,
+      id,
+      parsed.data.assigned_to!,
+      {
+        clientName: labels.clientName ?? "A client",
+        scheduledAt: parsed.data.scheduled_at,
+        serviceType: parsed.data.service_type,
+        address: parsed.data.address ?? null,
+      },
+    );
+  }
 
   const { error } = await supabase
     .from("bookings")

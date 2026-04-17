@@ -15,6 +15,7 @@ import { sendOrgEmail } from "@/lib/email";
 import { invoiceSentEmail } from "@/lib/email-templates";
 import { formatCurrencyCents } from "@/lib/format";
 import { getOrgCurrency } from "@/lib/org-currency";
+import { autoOnInvoicePaid } from "@/lib/automations";
 
 type Field = keyof typeof InvoiceSchema.shape;
 export type InvoiceFormState = ActionState<Field>;
@@ -180,7 +181,7 @@ export async function recordInvoicePaymentAction(
   // anyway, but fetching first lets us return a clean error.
   const { data: invoice, error: invErr } = await supabase
     .from("invoices")
-    .select("id, organization_id, amount_cents, voided_at")
+    .select("id, organization_id, amount_cents, voided_at, payments:invoice_payments ( amount_cents )")
     .eq("id", invoiceId)
     .maybeSingle();
   if (invErr || !invoice) {
@@ -228,6 +229,18 @@ export async function recordInvoicePaymentAction(
   revalidatePath(`/app/invoices/${invoice.id}`);
   revalidatePath("/app/invoices");
   revalidatePath("/app");
+
+  // Check if the invoice is now fully paid (trigger recomputes status async,
+  // so we check the amounts ourselves)
+  const totalPaid =
+    (invoice.payments?.reduce(
+      (sum: number, p: { amount_cents: number }) => sum + (p.amount_cents ?? 0),
+      0,
+    ) ?? 0) + parsed.data.amount_dollars; // amount_dollars is actually cents (schema-transformed)
+  if (totalPaid >= invoice.amount_cents) {
+    autoOnInvoicePaid(invoice.id);
+  }
+
   return {};
 }
 
