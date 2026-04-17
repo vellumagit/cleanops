@@ -206,7 +206,7 @@ export async function createPayrollRunAction(
     },
   });
 
-  revalidatePath("/app/payroll");
+  revalidatePath("/app/payroll", "page");
   return { ok: true, id: run.id };
 }
 
@@ -234,8 +234,10 @@ export async function finalizePayrollRunAction(formData: FormData) {
     after: { status: "finalized" },
   });
 
-  revalidatePath("/app/payroll");
-  revalidatePath(`/app/payroll/${id}`);
+  // Revalidate at "page" scope to avoid re-running the app layout's
+  // many parallel nav-badge queries on every server action.
+  revalidatePath("/app/payroll", "page");
+  revalidatePath(`/app/payroll/${id}`, "page");
 }
 
 export async function markPayrollPaidAction(formData: FormData) {
@@ -261,18 +263,20 @@ export async function markPayrollPaidAction(formData: FormData) {
     entity_id: id,
   });
 
-  revalidatePath("/app/payroll");
-  revalidatePath(`/app/payroll/${id}`);
+  // Revalidate at "page" scope to avoid re-running the app layout's
+  // many parallel nav-badge queries on every server action.
+  revalidatePath("/app/payroll", "page");
+  revalidatePath(`/app/payroll/${id}`, "page");
 }
 
 export async function deletePayrollRunAction(formData: FormData) {
   const id = String(formData.get("id") ?? "");
+  const confirmPhrase = String(formData.get("confirm") ?? "");
   if (!id) return;
 
   const { membership, supabase } = await getActionContext();
   if (!["owner", "admin"].includes(membership.role)) return;
 
-  // Only drafts can be deleted — finalized/paid runs are immutable
   const { data: run } = await (supabase
     .from("payroll_runs" as never)
     .select("status")
@@ -281,7 +285,12 @@ export async function deletePayrollRunAction(formData: FormData) {
     data: { status: string } | null;
   }>);
 
-  if (run?.status !== "draft") return;
+  if (!run) return;
+
+  // Draft runs can be deleted freely.
+  // Finalized/paid runs require the admin to type "DELETE" to confirm —
+  // this is a sensitive financial record and we don't want accidents.
+  if (run.status !== "draft" && confirmPhrase !== "DELETE") return;
 
   await (supabase
     .from("payroll_runs" as never)
@@ -289,6 +298,14 @@ export async function deletePayrollRunAction(formData: FormData) {
     .eq("id" as never, id as never)
     .eq("organization_id" as never, membership.organization_id as never) as unknown as Promise<unknown>);
 
-  revalidatePath("/app/payroll");
+  await logAuditEvent({
+    membership,
+    action: "delete",
+    entity: "bonus",
+    entity_id: id,
+    before: { status: run.status },
+  });
+
+  revalidatePath("/app/payroll", "page");
   redirect("/app/payroll");
 }

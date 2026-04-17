@@ -23,6 +23,7 @@ import {
 } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { TimesheetEntry, EmployeeMeta, PtoEntry } from "./types";
+import { PtoApprovalPanel } from "./pto-approval-panel";
 
 type EmpSummary = {
   id: string;
@@ -320,6 +321,9 @@ export function TimesheetsView({
           </div>
         </div>
       </div>
+
+      {/* ─── PTO approval panel (pending requests) ─────────── */}
+      <PtoApprovalPanel requests={ptoEntries} />
 
       {/* ─── View toggle ───────────────────────────────────── */}
       <div className="flex gap-1 rounded-lg bg-muted p-1 w-fit">

@@ -34,9 +34,10 @@ export type EmployeeMeta = {
 export type PtoEntry = {
   id: string;
   employee_id: string;
+  employee_name?: string;
   start_date: string;
   end_date: string;
   hours: number;
-  status: "pending" | "approved";
+  status: "pending" | "approved" | "declined" | "cancelled";
   reason: string | null;
 };

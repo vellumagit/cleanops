@@ -227,15 +227,22 @@ export default async function PayrollRunDetailPage({
             </SubmitButton>
           </form>
         )}
-        {run.status === "draft" && (
-          <form action={deletePayrollRunAction} className="ml-auto">
-            <input type="hidden" name="id" value={run.id} />
-            <SubmitButton variant="outline" size="sm" pendingLabel="Deleting…">
-              <Trash2 className="h-4 w-4" />
-              Delete draft
-            </SubmitButton>
-          </form>
-        )}
+        <form action={deletePayrollRunAction} className="ml-auto flex items-center gap-2">
+          <input type="hidden" name="id" value={run.id} />
+          {run.status !== "draft" && (
+            <input
+              type="text"
+              name="confirm"
+              placeholder='Type "DELETE" to confirm'
+              required
+              className="rounded-md border border-red-500/40 bg-background px-3 py-1.5 text-xs"
+            />
+          )}
+          <SubmitButton variant="outline" size="sm" pendingLabel="Deleting…">
+            <Trash2 className="h-4 w-4" />
+            Delete {run.status === "draft" ? "draft" : "run"}
+          </SubmitButton>
+        </form>
       </div>
     </PageShell>
   );

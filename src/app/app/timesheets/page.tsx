@@ -1,5 +1,6 @@
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { PageShell } from "@/components/page-shell";
 import { TimesheetsView } from "./timesheets-view";
 import type { TimesheetEntry, EmployeeMeta } from "./types";
@@ -79,12 +80,15 @@ export default async function TimesheetsPage({
         .in("role", ["employee", "manager"])
         .eq("status", "active")
         .limit(200),
-      supabase
+      // Use admin client: role is already gated above (owner/admin/manager),
+      // and RLS on pto_requests may not cover admins viewing others' rows.
+      createSupabaseAdminClient()
         .from("pto_requests" as never)
-        .select("id, employee_id, start_date, end_date, hours, status, reason")
-        .gte("start_date" as never, from as never)
-        .lte("end_date" as never, to as never)
-        .in("status" as never, ["pending", "approved"] as never),
+        .select("id, employee_id, start_date, end_date, hours, status, reason, created_at")
+        .eq("organization_id" as never, membership.organization_id as never)
+        .or(`and(start_date.gte.${from},start_date.lte.${to}),status.eq.pending` as never)
+        .order("created_at" as never, { ascending: false } as never)
+        .limit(500),
     ]);
 
   if (error) throw error;
@@ -204,10 +208,11 @@ export default async function TimesheetsPage({
   }>).map((p) => ({
     id: p.id,
     employee_id: p.employee_id,
+    employee_name: empMeta[p.employee_id]?.name ?? "Unknown",
     start_date: p.start_date,
     end_date: p.end_date,
     hours: Number(p.hours),
-    status: p.status as "pending" | "approved",
+    status: p.status as "pending" | "approved" | "declined" | "cancelled",
     reason: p.reason,
   }));
 

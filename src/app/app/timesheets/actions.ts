@@ -55,7 +55,7 @@ export async function createPtoRequestAction(
     // RPC may not exist yet — non-critical
   });
 
-  revalidatePath("/app/timesheets");
+  revalidatePath("/app/timesheets", "page");
   return { ok: true };
 }
 
@@ -96,8 +96,11 @@ export async function submitSelfPtoRequestAction(
 
   if (error) return { ok: false, error: error.message };
 
+  // Only revalidate the field-side page — the admin page will refresh
+  // on their own view. Cross-surface revalidation was causing 30s+
+  // freezes because the action waited for the admin layout's many
+  // parallel queries to re-run before returning.
   revalidatePath("/field/profile");
-  revalidatePath("/app/timesheets");
   return { ok: true };
 }
 
@@ -131,6 +134,6 @@ export async function updatePtoStatusAction(
 
   if (error) return { ok: false, error: error.message };
 
-  revalidatePath("/app/timesheets");
+  revalidatePath("/app/timesheets", "page");
   return { ok: true };
 }
