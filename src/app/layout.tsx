@@ -81,7 +81,6 @@ export default function RootLayout({
     >
       <head>
         <meta name="theme-color" content="#4f46e5" />
-        <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
       </head>
       <body className="min-h-full flex flex-col bg-background text-foreground">
         <TooltipProvider>{children}</TooltipProvider>

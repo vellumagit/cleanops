@@ -338,10 +338,10 @@ export async function sendInvoiceAction(formData: FormData) {
     // Fetch org branding for the email
     const { data: orgData } = await supabase
       .from("organizations")
-      .select("name, brand_color")
+      .select("name, brand_color, logo_url")
       .eq("id", membership.organization_id)
       .maybeSingle() as unknown as {
-      data: { name: string; brand_color: string | null } | null;
+      data: { name: string; brand_color: string | null; logo_url: string | null } | null;
     };
 
     const template = invoiceSentEmail({
@@ -358,6 +358,7 @@ export async function sendInvoiceAction(formData: FormData) {
       publicUrl: `${siteUrl}/i/${prev.public_token}`,
       orgName: orgData?.name ?? membership.organization_name,
       brandColor: orgData?.brand_color ?? undefined,
+      logoUrl: orgData?.logo_url ?? undefined,
     });
 
     sendOrgEmail(membership.organization_id, {

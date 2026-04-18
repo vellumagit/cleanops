@@ -10,6 +10,30 @@ import { sendPushToMembership, sendPushToOrg } from "@/lib/push";
 
 const admin = () => createSupabaseAdminClient();
 
+/**
+ * Check whether a named automation is enabled for an org. Absent setting =
+ * enabled (matches the default semantics of /app/settings/automations).
+ */
+async function isAutomationEnabled(
+  organizationId: string,
+  key: string,
+): Promise<boolean> {
+  try {
+    const { data } = await admin()
+      .from("organizations")
+      .select("automation_settings")
+      .eq("id", organizationId)
+      .maybeSingle() as unknown as {
+      data: { automation_settings: Record<string, { enabled?: boolean }> | null } | null;
+    };
+    return data?.automation_settings?.[key]?.enabled !== false;
+  } catch {
+    // If we can't read the setting, default to enabled — same posture as the
+    // settings page. Never block a primary action on a toggle lookup.
+    return true;
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────
 // 1. Auto-generate a draft invoice when a job is completed
 // ─────────────────────────────────────────────────────────────────
@@ -392,12 +416,17 @@ export async function sendBookingConfirmation(bookingId: string) {
 
     if (!booking || !booking.client?.email) return;
 
+    if (!(await isAutomationEnabled(booking.organization_id, "booking_confirmation_email"))) {
+      console.log(`[auto] Booking confirmation paused for org ${booking.organization_id}`);
+      return;
+    }
+
     const { data: org } = await db
       .from("organizations")
-      .select("name, brand_color")
+      .select("name, brand_color, logo_url")
       .eq("id", booking.organization_id)
       .maybeSingle() as unknown as {
-      data: { name: string; brand_color: string | null } | null;
+      data: { name: string; brand_color: string | null; logo_url: string | null } | null;
     };
 
     const dateTime = new Date(booking.scheduled_at).toLocaleString("en-US", {
@@ -415,6 +444,7 @@ export async function sendBookingConfirmation(bookingId: string) {
       dateTime,
       address: booking.address ?? "(address to be confirmed)",
       brandColor: org?.brand_color ?? undefined,
+      logoUrl: org?.logo_url ?? undefined,
     });
 
     sendOrgEmail(booking.organization_id, {
@@ -491,16 +521,22 @@ export async function autoOnInvoicePaid(invoiceId: string) {
 
     if (!invoice || !invoice.client?.email) return;
 
+    if (!(await isAutomationEnabled(invoice.organization_id, "invoice_paid_receipt"))) {
+      console.log(`[auto] Receipt + review request paused for org ${invoice.organization_id}`);
+      return;
+    }
+
     const { data: orgData } = await db
       .from("organizations")
-      .select("name, brand_color")
+      .select("name, brand_color, logo_url")
       .eq("id", invoice.organization_id)
       .maybeSingle() as unknown as {
-      data: { name: string; brand_color: string | null } | null;
+      data: { name: string; brand_color: string | null; logo_url: string | null } | null;
     };
 
     const orgName = orgData?.name ?? "Your service provider";
     const brandColor = orgData?.brand_color ?? undefined;
+    const logoUrl = orgData?.logo_url ?? undefined;
     const currency = await getOrgCurrency(invoice.organization_id);
     const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
 
@@ -517,6 +553,7 @@ export async function autoOnInvoicePaid(invoiceId: string) {
       }),
       publicUrl: invoice.public_token ? `${siteUrl}/i/${invoice.public_token}` : siteUrl,
       brandColor,
+      logoUrl,
     });
 
     sendOrgEmail(invoice.organization_id, {
@@ -549,6 +586,7 @@ export async function autoOnInvoicePaid(invoiceId: string) {
       orgName,
       reviewUrl: `${siteUrl}/review/${reviewToken}`,
       brandColor,
+      logoUrl,
     });
 
     // Delay review request by ~2 seconds so it doesn't arrive in the

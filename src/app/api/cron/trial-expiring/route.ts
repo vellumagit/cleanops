@@ -73,14 +73,17 @@ export async function GET(request: Request) {
 
       if (!owners || owners.length === 0) continue;
 
-      // Get the org name
+      // Get the org name + brand
       const { data: org } = await admin
         .from("organizations")
-        .select("name")
+        .select("name, brand_color")
         .eq("id", sub.organization_id)
-        .maybeSingle();
+        .maybeSingle() as unknown as {
+        data: { name: string; brand_color: string | null } | null;
+      };
 
       const orgName = org?.name ?? "your organization";
+      const brandColor = org?.brand_color ?? undefined;
 
       // Get each owner's email and name from profiles + auth
       for (const owner of owners) {
@@ -110,6 +113,7 @@ export async function GET(request: Request) {
           orgName,
           daysLeft: Math.max(0, daysLeft),
           billingUrl: `${siteUrl}/app/settings/billing`,
+          brandColor,
         });
 
         await sendEmail({

@@ -83,12 +83,14 @@ export async function saveSenderEmailAction(
     } as never)
     .eq("id", membership.organization_id);
 
-  // Fetch org name for email template
+  // Fetch org name + brand for email template
   const { data: org } = await supabase
     .from("organizations")
-    .select("name")
+    .select("name, brand_color")
     .eq("id", membership.organization_id)
-    .maybeSingle();
+    .maybeSingle() as unknown as {
+    data: { name: string; brand_color: string | null } | null;
+  };
 
   // Send verification email
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
@@ -96,6 +98,7 @@ export async function saveSenderEmailAction(
   const template = senderVerificationEmail({
     orgName: org?.name ?? "your organization",
     verifyUrl,
+    brandColor: org?.brand_color ?? undefined,
   });
 
   await sendEmail({
