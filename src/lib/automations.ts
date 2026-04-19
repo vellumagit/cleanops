@@ -7,6 +7,7 @@
 import "server-only";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { sendPushToMembership, sendPushToOrg } from "@/lib/push";
+import type { CurrencyCode } from "@/lib/format";
 
 const admin = () => createSupabaseAdminClient();
 
@@ -581,7 +582,7 @@ export async function sendOverdueReminders(): Promise<{
   // Cache org lookups — many invoices share the same org.
   const orgCache = new Map<
     string,
-    { name: string; brand_color: string | null; logo_url: string | null; enabled: boolean; currency: string } | null
+    { name: string; brand_color: string | null; logo_url: string | null; enabled: boolean; currency: CurrencyCode } | null
   >();
 
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
