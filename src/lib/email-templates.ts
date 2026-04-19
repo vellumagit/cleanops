@@ -462,3 +462,110 @@ export function trialExpiringEmail(args: {
   const text = `${urgency}\n\nHi ${args.userName}, your Sollos trial for ${args.orgName} ${args.daysLeft <= 1 ? "expires today." : `has ${args.daysLeft} days left.`}\n\nSubscribe: ${args.billingUrl}`;
   return { subject, html, text };
 }
+
+// ---------------------------------------------------------------------------
+// Booking rescheduled (org-sent — client notification)
+// ---------------------------------------------------------------------------
+
+export function bookingRescheduledEmail(args: {
+  clientName: string;
+  orgName: string;
+  serviceName: string;
+  oldDateTime: string;
+  newDateTime: string;
+  address: string;
+  brandColor?: string;
+  logoUrl?: string;
+}) {
+  const subject = `Your booking has been rescheduled — ${args.orgName}`;
+  const html = layout(
+    `
+    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;letter-spacing:-0.02em;color:#18181b;line-height:1.3;">Booking rescheduled</h1>
+    <p style="margin:0 0 24px;font-size:14px;line-height:1.55;color:#52525b;">
+      Hi ${escapeHtml(args.clientName)}, your booking with <strong style="color:#18181b;">${escapeHtml(args.orgName)}</strong> has been moved to a new time.
+    </p>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin-bottom:4px;border-top:1px solid #e4e4e7;">
+      <tr>
+        <td style="font-size:13px;color:#71717a;padding:12px 0;border-bottom:1px solid #f4f4f5;">Service</td>
+        <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;border-bottom:1px solid #f4f4f5;">${escapeHtml(args.serviceName)}</td>
+      </tr>
+      <tr>
+        <td style="font-size:13px;color:#71717a;padding:12px 0;border-bottom:1px solid #f4f4f5;">Was</td>
+        <td style="font-size:13px;color:#a1a1aa;padding:12px 0;text-align:right;text-decoration:line-through;border-bottom:1px solid #f4f4f5;">${escapeHtml(args.oldDateTime)}</td>
+      </tr>
+      <tr>
+        <td style="font-size:13px;color:#71717a;padding:12px 0;border-bottom:1px solid #f4f4f5;">Now</td>
+        <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;font-weight:600;border-bottom:1px solid #f4f4f5;">${escapeHtml(args.newDateTime)}</td>
+      </tr>
+      <tr>
+        <td style="font-size:13px;color:#71717a;padding:12px 0;">Where</td>
+        <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;">${escapeHtml(args.address)}</td>
+      </tr>
+    </table>
+    <p style="margin:20px 0 0;font-size:12px;line-height:1.5;color:#a1a1aa;">
+      This time doesn't work? Reply to this email and we'll find another slot.
+    </p>
+    `,
+    {
+      brandColor: args.brandColor,
+      orgName: args.orgName,
+      logoUrl: args.logoUrl,
+      preheader: `Moved from ${args.oldDateTime} to ${args.newDateTime}`,
+    },
+  );
+  const text = `Booking rescheduled — ${args.orgName}\n\nService: ${args.serviceName}\nWas: ${args.oldDateTime}\nNow: ${args.newDateTime}\nWhere: ${args.address}\n\nReply to this email if the new time doesn't work.`;
+  return { subject, html, text };
+}
+
+// ---------------------------------------------------------------------------
+// Invoice overdue reminder (org-sent — client notification)
+// ---------------------------------------------------------------------------
+
+export function invoiceOverdueReminderEmail(args: {
+  clientName: string;
+  invoiceNumber: string;
+  amountFormatted: string;
+  dueDate: string;
+  daysOverdue: number;
+  publicUrl: string;
+  orgName: string;
+  brandColor?: string;
+  logoUrl?: string;
+}) {
+  const plural = args.daysOverdue === 1 ? "day" : "days";
+  const subject = `Reminder: Invoice ${args.invoiceNumber} is ${args.daysOverdue} ${plural} overdue`;
+  const html = layout(
+    `
+    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;letter-spacing:-0.02em;color:#18181b;line-height:1.3;">Invoice reminder</h1>
+    <p style="margin:0 0 24px;font-size:14px;line-height:1.55;color:#52525b;">
+      Hi ${escapeHtml(args.clientName)}, this is a friendly reminder that your invoice from <strong style="color:#18181b;">${escapeHtml(args.orgName)}</strong> is now <strong style="color:#18181b;">${args.daysOverdue} ${plural} past due</strong>.
+    </p>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin-bottom:4px;border-top:1px solid #e4e4e7;">
+      <tr>
+        <td style="font-size:13px;color:#71717a;padding:12px 0;border-bottom:1px solid #f4f4f5;">Invoice</td>
+        <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;font-weight:600;border-bottom:1px solid #f4f4f5;">${escapeHtml(args.invoiceNumber)}</td>
+      </tr>
+      <tr>
+        <td style="font-size:13px;color:#71717a;padding:12px 0;border-bottom:1px solid #f4f4f5;">Amount</td>
+        <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;font-weight:600;border-bottom:1px solid #f4f4f5;">${escapeHtml(args.amountFormatted)}</td>
+      </tr>
+      <tr>
+        <td style="font-size:13px;color:#71717a;padding:12px 0;">Was due</td>
+        <td style="font-size:13px;color:#dc2626;padding:12px 0;text-align:right;">${escapeHtml(args.dueDate)}</td>
+      </tr>
+    </table>
+    ${button("View & Pay Invoice", args.publicUrl, args.brandColor ? `#${args.brandColor.replace(/^#/, "")}` : DEFAULT_BRAND)}
+    <p style="margin:0;font-size:12px;line-height:1.5;color:#a1a1aa;">
+      Already paid? Please ignore this message — it may have crossed with your payment. Questions? Reply to this email.
+    </p>
+    `,
+    {
+      brandColor: args.brandColor,
+      orgName: args.orgName,
+      logoUrl: args.logoUrl,
+      preheader: `${args.invoiceNumber} · ${args.amountFormatted} · ${args.daysOverdue} ${plural} overdue`,
+    },
+  );
+  const text = `Invoice ${args.invoiceNumber} from ${args.orgName} is ${args.daysOverdue} ${plural} overdue.\n\nAmount: ${args.amountFormatted}\nWas due: ${args.dueDate}\n\nView & pay: ${args.publicUrl}\n\nAlready paid? Ignore this message.`;
+  return { subject, html, text };
+}

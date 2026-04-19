@@ -32,11 +32,25 @@ const AUTOMATIONS: AutomationDef[] = [
     trigger: "Booking → Created",
   },
   {
+    key: "booking_rescheduled_email",
+    title: "Booking rescheduled email",
+    description:
+      "Emails the client when a booking's scheduled time changes, showing both the old and new slot.",
+    trigger: "Booking → Rescheduled",
+  },
+  {
     key: "invoice_paid_receipt",
     title: "Receipt + review request on payment",
     description:
       "Sends the client a payment receipt and a link to leave a review after their invoice is marked paid.",
     trigger: "Invoice → Paid",
+  },
+  {
+    key: "invoice_overdue_reminder",
+    title: "Overdue invoice reminder",
+    description:
+      "Sends the client a polite reminder once every 7 days while an invoice is past due. Stops automatically once the invoice is marked paid.",
+    trigger: "Invoice → Overdue (daily cron)",
   },
   {
     key: "review_submitted_notify",

@@ -460,6 +460,211 @@ export async function sendBookingConfirmation(bookingId: string) {
 }
 
 // ─────────────────────────────────────────────────────────────────
+// 7b. Email the client when a booking is rescheduled (scheduled_at changed)
+// ─────────────────────────────────────────────────────────────────
+
+export async function sendBookingRescheduled(
+  bookingId: string,
+  oldScheduledAt: string,
+) {
+  try {
+    const db = admin();
+    const { sendOrgEmail } = await import("@/lib/email");
+    const { bookingRescheduledEmail } = await import("@/lib/email-templates");
+
+    const { data: booking } = await db
+      .from("bookings")
+      .select(`
+        id, organization_id, scheduled_at, service_type, address,
+        client:clients ( name, email )
+      `)
+      .eq("id", bookingId)
+      .maybeSingle();
+
+    if (!booking || !booking.client?.email) return;
+
+    if (!(await isAutomationEnabled(booking.organization_id, "booking_rescheduled_email"))) {
+      console.log(`[auto] Booking rescheduled email paused for org ${booking.organization_id}`);
+      return;
+    }
+
+    const { data: org } = await db
+      .from("organizations")
+      .select("name, brand_color, logo_url")
+      .eq("id", booking.organization_id)
+      .maybeSingle() as unknown as {
+      data: { name: string; brand_color: string | null; logo_url: string | null } | null;
+    };
+
+    const fmt = (iso: string) =>
+      new Date(iso).toLocaleString("en-US", {
+        weekday: "long",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      });
+
+    const template = bookingRescheduledEmail({
+      clientName: booking.client.name ?? "there",
+      orgName: org?.name ?? "your service provider",
+      serviceName: humanize(booking.service_type),
+      oldDateTime: fmt(oldScheduledAt),
+      newDateTime: fmt(booking.scheduled_at),
+      address: booking.address ?? "(address on file)",
+      brandColor: org?.brand_color ?? undefined,
+      logoUrl: org?.logo_url ?? undefined,
+    });
+
+    sendOrgEmail(booking.organization_id, {
+      to: booking.client.email,
+      toName: booking.client.name ?? undefined,
+      ...template,
+    });
+
+    console.log(`[auto] Booking rescheduled email sent to ${booking.client.email}`);
+  } catch (err) {
+    console.error("[auto] sendBookingRescheduled failed:", err);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// 7c. Overdue invoice reminder cron — runs daily, sends once per 7 days per invoice
+// ─────────────────────────────────────────────────────────────────
+
+export async function sendOverdueReminders(): Promise<{
+  considered: number;
+  sent: number;
+  skipped: number;
+}> {
+  const db = admin();
+  const { sendOrgEmail } = await import("@/lib/email");
+  const { invoiceOverdueReminderEmail } = await import("@/lib/email-templates");
+  const { formatCurrencyCents } = await import("@/lib/format");
+  const { getOrgCurrency } = await import("@/lib/org-currency");
+
+  // Find every overdue, unpaid invoice whose last reminder is either null
+  // or older than 7 days. Uses the partial index from migration
+  // 20260418030000_invoice_overdue_reminders.sql.
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  const { data: candidates } = await db
+    .from("invoices")
+    .select(`
+      id, number, organization_id, amount_cents, due_date, public_token,
+      overdue_reminder_sent_at,
+      client:clients ( name, email )
+    `)
+    .eq("status", "overdue")
+    .is("paid_at", null)
+    .or(`overdue_reminder_sent_at.is.null,overdue_reminder_sent_at.lt.${sevenDaysAgo}`) as unknown as {
+    data: Array<{
+      id: string;
+      number: string | null;
+      organization_id: string;
+      amount_cents: number;
+      due_date: string | null;
+      public_token: string | null;
+      overdue_reminder_sent_at: string | null;
+      client: { name: string | null; email: string | null } | null;
+    }> | null;
+  };
+
+  const considered = candidates?.length ?? 0;
+  let sent = 0;
+  let skipped = 0;
+
+  if (!candidates || candidates.length === 0) {
+    return { considered, sent, skipped };
+  }
+
+  // Cache org lookups — many invoices share the same org.
+  const orgCache = new Map<
+    string,
+    { name: string; brand_color: string | null; logo_url: string | null; enabled: boolean; currency: string } | null
+  >();
+
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+
+  for (const inv of candidates) {
+    if (!inv.client?.email || !inv.due_date) {
+      skipped += 1;
+      continue;
+    }
+
+    let cached = orgCache.get(inv.organization_id);
+    if (cached === undefined) {
+      const enabled = await isAutomationEnabled(inv.organization_id, "invoice_overdue_reminder");
+      const { data: orgData } = await db
+        .from("organizations")
+        .select("name, brand_color, logo_url")
+        .eq("id", inv.organization_id)
+        .maybeSingle() as unknown as {
+        data: { name: string; brand_color: string | null; logo_url: string | null } | null;
+      };
+      const currency = await getOrgCurrency(inv.organization_id);
+      cached = orgData
+        ? { ...orgData, enabled, currency }
+        : null;
+      orgCache.set(inv.organization_id, cached);
+    }
+
+    if (!cached) {
+      skipped += 1;
+      continue;
+    }
+
+    if (!cached.enabled) {
+      console.log(`[auto] Overdue reminder paused for org ${inv.organization_id}`);
+      skipped += 1;
+      continue;
+    }
+
+    const dueDate = new Date(inv.due_date);
+    const daysOverdue = Math.max(
+      1,
+      Math.floor((Date.now() - dueDate.getTime()) / (24 * 60 * 60 * 1000)),
+    );
+
+    const template = invoiceOverdueReminderEmail({
+      clientName: inv.client.name ?? "there",
+      invoiceNumber: inv.number ?? inv.id.slice(0, 8).toUpperCase(),
+      amountFormatted: formatCurrencyCents(inv.amount_cents, cached.currency),
+      dueDate: dueDate.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      }),
+      daysOverdue,
+      publicUrl: inv.public_token ? `${siteUrl}/i/${inv.public_token}` : siteUrl,
+      orgName: cached.name,
+      brandColor: cached.brand_color ?? undefined,
+      logoUrl: cached.logo_url ?? undefined,
+    });
+
+    // Send first, stamp second — if the send throws we'll retry tomorrow.
+    const ok = await sendOrgEmail(inv.organization_id, {
+      to: inv.client.email,
+      toName: inv.client.name ?? undefined,
+      ...template,
+    });
+
+    if (ok) {
+      await db
+        .from("invoices")
+        .update({ overdue_reminder_sent_at: new Date().toISOString() } as never)
+        .eq("id", inv.id);
+      sent += 1;
+      console.log(`[auto] Overdue reminder sent for invoice ${inv.id} to ${inv.client.email}`);
+    } else {
+      skipped += 1;
+    }
+  }
+
+  return { considered, sent, skipped };
+}
+
+// ─────────────────────────────────────────────────────────────────
 // 7. Notify employee when they're assigned to a booking
 // ─────────────────────────────────────────────────────────────────
 

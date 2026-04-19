@@ -10,7 +10,11 @@ import {
   deleteCalendarEvent,
 } from "@/lib/google-calendar";
 import { generateOccurrences, type SeriesRule } from "@/lib/recurrence";
-import { notifyBookingAssignment, sendBookingConfirmation } from "@/lib/automations";
+import {
+  notifyBookingAssignment,
+  sendBookingConfirmation,
+  sendBookingRescheduled,
+} from "@/lib/automations";
 import { canCreateData } from "@/lib/subscription";
 
 type Field = keyof typeof BookingSchema.shape;
@@ -329,13 +333,17 @@ export async function updateBookingAction(
 
   const { membership, supabase } = await getActionContext();
 
-  // Fetch the existing booking to detect assignee changes
+  // Fetch the existing booking to detect assignee + scheduled_at changes
   const { data: existing } = (await supabase
     .from("bookings")
-    .select("google_calendar_event_id, assigned_to")
+    .select("google_calendar_event_id, assigned_to, scheduled_at")
     .eq("id", id)
     .maybeSingle()) as unknown as {
-    data: { google_calendar_event_id: string | null; assigned_to: string | null } | null;
+    data: {
+      google_calendar_event_id: string | null;
+      assigned_to: string | null;
+      scheduled_at: string | null;
+    } | null;
   };
 
   // If the assignee changed, notify the new employee
@@ -375,6 +383,14 @@ export async function updateBookingAction(
     .eq("id", id);
 
   if (error) return { errors: { _form: error.message }, values: raw };
+
+  // If the scheduled time changed, email the client (fire-and-forget)
+  if (
+    existing?.scheduled_at &&
+    existing.scheduled_at !== parsed.data.scheduled_at
+  ) {
+    sendBookingRescheduled(id, existing.scheduled_at);
+  }
 
   // Sync to Google Calendar
   const labels = await getBookingLabels(

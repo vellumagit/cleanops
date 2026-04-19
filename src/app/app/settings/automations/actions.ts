@@ -7,7 +7,9 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 export type AutomationKey =
   | "auto_invoice_on_job_complete"
   | "booking_confirmation_email"
+  | "booking_rescheduled_email"
   | "invoice_paid_receipt"
+  | "invoice_overdue_reminder"
   | "review_submitted_notify"
   | "booking_assignment_notify";
 
