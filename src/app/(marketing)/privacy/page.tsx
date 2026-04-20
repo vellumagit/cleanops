@@ -259,19 +259,78 @@ export default function PrivacyPage() {
             </p>
           </section>
 
+          {/* Security safeguards */}
+          <section>
+            <h2 className="text-base font-semibold">
+              7. Security safeguards
+            </h2>
+            <p className="mt-3">
+              We protect your data with defenses at the database, network,
+              and application layers:
+            </p>
+            <ul className="mt-2 ml-5 list-disc space-y-1">
+              <li>
+                Tenant isolation enforced by Postgres row-level security — one
+                customer&rsquo;s data cannot be read by another, even in the
+                event of an application-layer bug.
+              </li>
+              <li>
+                TLS 1.2+ in transit; AES-256 encryption at rest for database
+                and file storage.
+              </li>
+              <li>
+                Third-party OAuth tokens (Stripe, Google Calendar, Sage) are
+                additionally encrypted with AES-256-GCM before storage using a
+                platform-held key.
+              </li>
+              <li>
+                Every Stripe webhook is cryptographically signature-verified
+                and idempotently deduplicated.
+              </li>
+              <li>
+                Rate limiting on every public token URL and auth endpoint to
+                prevent brute-force enumeration and credential stuffing.
+              </li>
+              <li>
+                Payment card data never touches our servers — Stripe Checkout
+                handles all card processing.
+              </li>
+              <li>
+                Append-only audit log of sensitive mutations (payroll, invoice
+                voids, role changes, deletions).
+              </li>
+            </ul>
+            <p className="mt-3">
+              The full list of safeguards, including what we don&rsquo;t yet
+              claim (e.g. SOC 2 certification), is maintained on our{" "}
+              <Link
+                href="/security"
+                className="underline underline-offset-2"
+              >
+                Security page
+              </Link>
+              .
+            </p>
+          </section>
+
           {/* Retention */}
           <section>
-            <h2 className="text-base font-semibold">7. Data retention</h2>
+            <h2 className="text-base font-semibold">8. Data retention</h2>
             <p className="mt-3">
-              Customer data is retained for the life of the account. When you
-              delete your organization, all associated data is purged within 30
-              days. Daily database backups rotate on a 7-day cycle.
+              Customer data is retained for the life of the account. When an
+              organization owner schedules deletion from{" "}
+              <strong>Settings &rarr; Your data</strong>, the account enters a
+              30-day grace window during which the owner can cancel with zero
+              data loss. After the window elapses, every row and file is
+              permanently wiped and the organization record becomes a
+              tombstone (retained only to prevent id reuse). Daily database
+              backups rotate on a 7-day cycle.
             </p>
           </section>
 
           {/* Your rights */}
           <section>
-            <h2 className="text-base font-semibold">8. Your rights</h2>
+            <h2 className="text-base font-semibold">9. Your rights</h2>
             <p className="mt-3">
               Depending on your jurisdiction, you may have the right to:
             </p>
@@ -288,7 +347,13 @@ export default function PrivacyPage() {
               </li>
             </ul>
             <p className="mt-3">
-              To exercise any of these rights, email{" "}
+              Organization owners can self-serve both export and deletion from{" "}
+              <strong>Settings &rarr; Your data</strong> in the Sollos app —
+              no email required. The export produces a single JSON bundle
+              containing every row your organization owns. Deletion uses the
+              30-day grace window described above. For any right not covered
+              by the self-serve UI, or if you are a client or employee
+              contacting us about data held by a Sollos customer, email{" "}
               <a
                 href="mailto:privacy@sollos3.com"
                 className="underline underline-offset-2"
@@ -302,7 +367,7 @@ export default function PrivacyPage() {
           {/* Children */}
           <section>
             <h2 className="text-base font-semibold">
-              9. Children&rsquo;s privacy
+              10. Children&rsquo;s privacy
             </h2>
             <p className="mt-3">
               Sollos 3 is a business-to-business product. We do not knowingly
@@ -314,7 +379,7 @@ export default function PrivacyPage() {
 
           {/* Changes */}
           <section>
-            <h2 className="text-base font-semibold">10. Changes to this policy</h2>
+            <h2 className="text-base font-semibold">11. Changes to this policy</h2>
             <p className="mt-3">
               We may update this privacy policy from time to time. Material
               changes will be announced by email and inside the product at least
@@ -325,7 +390,7 @@ export default function PrivacyPage() {
 
           {/* Contact */}
           <section>
-            <h2 className="text-base font-semibold">11. Contact us</h2>
+            <h2 className="text-base font-semibold">12. Contact us</h2>
             <p className="mt-3">
               If you have questions about this privacy policy or our data
               practices, contact us at:

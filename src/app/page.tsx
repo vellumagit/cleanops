@@ -621,6 +621,7 @@ export default function Home() {
                 Legal
               </p>
               <ul className="mt-3 space-y-2">
+                <FooterLink href="/security">Security</FooterLink>
                 <FooterLink href="/privacy">Privacy policy</FooterLink>
                 <FooterLink href="/terms">Terms of service</FooterLink>
               </ul>
