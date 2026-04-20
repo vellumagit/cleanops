@@ -5,6 +5,7 @@ import {
   ChevronRight,
   Coins,
   CreditCard,
+  Database,
   KeyRound,
   Mail,
   Palette,
@@ -104,6 +105,13 @@ const SECTIONS = [
     title: "Webhooks",
     description:
       "Send real-time POST requests to external systems when bookings, invoices, or reviews change.",
+  },
+  {
+    href: "/app/settings/data",
+    icon: Database,
+    title: "Your data",
+    description:
+      "Export everything your organization owns. Schedule permanent deletion with a 30-day grace window.",
   },
 ];
 

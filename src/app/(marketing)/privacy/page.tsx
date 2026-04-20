@@ -6,7 +6,7 @@ export const metadata = {
     "Sollos 3 privacy policy — what data we collect, how we use it, and how it's protected.",
 };
 
-const LAST_UPDATED = "April 14, 2026";
+const LAST_UPDATED = "April 18, 2026";
 
 export default function PrivacyPage() {
   return (

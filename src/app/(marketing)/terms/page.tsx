@@ -6,7 +6,7 @@ export const metadata = {
     "Sollos 3 terms of service — the agreement between you and Sollos 3.",
 };
 
-const LAST_UPDATED = "April 14, 2026";
+const LAST_UPDATED = "April 18, 2026";
 
 export default function TermsPage() {
   return (
@@ -174,6 +174,14 @@ export default function TermsPage() {
               applicable law.
             </p>
             <p className="mt-3">
+              New accounts include a 14-day free trial. No credit card is
+              required to start the trial. You may cancel at any time before
+              the trial ends to avoid being charged. At the end of the trial,
+              if you have not selected a paid plan, account access is
+              restricted to read-only until a plan is selected; your data is
+              retained.
+            </p>
+            <p className="mt-3">
               If payment fails, we will attempt to collect for up to 14 days
               before suspending your account. Your data will be retained for 30
               days after suspension, after which it may be permanently deleted.
@@ -255,10 +263,13 @@ export default function TermsPage() {
           <section>
             <h2 className="text-base font-semibold">13. Governing law</h2>
             <p className="mt-3">
-              These Terms are governed by the laws of the jurisdiction in which
-              Sollos 3 operates. Any disputes will be resolved through binding
-              arbitration or in the courts of that jurisdiction, at our
-              discretion.
+              These Terms are governed by the laws of the Province of Ontario,
+              Canada, and the federal laws of Canada applicable therein, without
+              regard to conflict-of-law principles. You and Sollos 3 submit to
+              the exclusive jurisdiction of the courts located in Toronto,
+              Ontario for any dispute arising out of or relating to these Terms,
+              except that either party may seek injunctive relief in any court
+              of competent jurisdiction to protect its intellectual property.
             </p>
           </section>
 

@@ -40,6 +40,10 @@
     {
       "path": "/api/cron/invoice-overdue",
       "schedule": "0 10 * * *"
+    },
+    {
+      "path": "/api/cron/purge-orgs",
+      "schedule": "0 5 * * *"
     }
   ]
 }
