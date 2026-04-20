@@ -75,7 +75,7 @@ const SAFEGUARDS: Item[] = [
   {
     icon: Globe2,
     title: "Data residency and sub-processors",
-    body: "Your data is hosted in Supabase (Postgres + Storage) and Vercel (edge). Transactional email goes through MailerSend; error reports through Sentry. See our Privacy Policy for the full sub-processor list and the data each one handles.",
+    body: "Your data is hosted in Supabase (Postgres + Storage) and Vercel (edge). Transactional email goes through Resend; error reports through Sentry. See our Privacy Policy for the full sub-processor list and the data each one handles.",
   },
 ];
 

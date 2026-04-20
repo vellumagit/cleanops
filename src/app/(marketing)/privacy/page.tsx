@@ -225,7 +225,7 @@ export default function PrivacyPage() {
                     <td className="py-2">Stack traces, browser metadata</td>
                   </tr>
                   <tr>
-                    <td className="py-2 pr-4 font-medium">MailerSend</td>
+                    <td className="py-2 pr-4 font-medium">Resend</td>
                     <td className="py-2 pr-4">Transactional email</td>
                     <td className="py-2">Recipient email, message content</td>
                   </tr>
