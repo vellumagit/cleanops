@@ -6,6 +6,8 @@ import {
   formatDurationMinutes,
   humanizeEnum,
 } from "@/lib/format";
+import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
+import { RateLimitedPage } from "@/components/rate-limited-page";
 import { ClaimForm } from "./claim-form";
 
 export const metadata: Metadata = {
@@ -38,6 +40,12 @@ export default async function ClaimPage({
   params: Promise<{ token: string }>;
 }) {
   const { token } = await params;
+
+  const rl = await checkIpRateLimit("claim-token", 30, 60_000);
+  if (!rl.allowed) {
+    return <RateLimitedPage retryAfterSeconds={rl.retryAfterSeconds} />;
+  }
+
   const admin = createSupabaseAdminClient();
 
   const { data: dispatch } = await admin

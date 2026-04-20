@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { SignupSchema, slugify } from "@/lib/validators/auth";
+import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
 
 export type SignupActionState = {
   errors?: Partial<Record<"fullName" | "organizationName" | "email" | "password" | "_form", string>>;
@@ -39,6 +40,18 @@ export async function signupAction(
   }
 
   const { fullName, organizationName, email, password } = parsed.data;
+
+  // 5/min/IP — creating orgs is expensive and signup abuse = fake-tenant spam.
+  const rl = await checkIpRateLimit("auth-signup", 5, 60_000);
+  if (!rl.allowed) {
+    return {
+      errors: {
+        _form: `Too many signup attempts. Try again in ${rl.retryAfterSeconds} seconds.`,
+      },
+      values: { fullName, organizationName, email },
+    };
+  }
+
   const supabase = await createSupabaseServerClient();
 
   // Step 1: create the auth user. The on_auth_user_created trigger will

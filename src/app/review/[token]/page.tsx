@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
+import { RateLimitedPage } from "@/components/rate-limited-page";
 import { ReviewForm } from "./review-form";
 
 export const metadata: Metadata = {
@@ -26,6 +28,11 @@ export default async function PublicReviewPage({
 }) {
   const { token } = await params;
   if (!token || token.length < 8) notFound();
+
+  const rl = await checkIpRateLimit("review-token", 30, 60_000);
+  if (!rl.allowed) {
+    return <RateLimitedPage retryAfterSeconds={rl.retryAfterSeconds} />;
+  }
 
   const admin = createSupabaseAdminClient();
 

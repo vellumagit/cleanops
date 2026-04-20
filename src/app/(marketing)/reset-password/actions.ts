@@ -2,6 +2,7 @@
 
 import { z } from "zod";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
 
 const ResetSchema = z
   .object({
@@ -39,6 +40,15 @@ export async function resetPasswordAction(
       if (!fieldErrors[key]) fieldErrors[key] = issue.message;
     }
     return { errors: fieldErrors };
+  }
+
+  const rl = await checkIpRateLimit("auth-reset", 10, 60_000);
+  if (!rl.allowed) {
+    return {
+      errors: {
+        _form: `Too many requests. Try again in ${rl.retryAfterSeconds} seconds.`,
+      },
+    };
   }
 
   const supabase = await createSupabaseServerClient();

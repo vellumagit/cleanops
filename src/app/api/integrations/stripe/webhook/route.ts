@@ -22,6 +22,11 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
+  // 600/min/IP — DoS defense before signature verification.
+  const { rateLimitByIp } = await import("@/lib/rate-limit-helpers");
+  const limited = await rateLimitByIp(req, "stripe-connect-webhook", 600, 60_000);
+  if (limited) return limited;
+
   if (!isStripeConnectEnabled()) {
     return NextResponse.json(
       { error: "Stripe Connect is not configured" },

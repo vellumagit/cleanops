@@ -4,6 +4,8 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { formatCurrencyCents, formatDate } from "@/lib/format";
 import { humanizePaymentMethod } from "@/lib/validators/invoice-payment";
+import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
+import { RateLimitedPage } from "@/components/rate-limited-page";
 
 export const metadata: Metadata = {
   title: "Invoice",
@@ -31,6 +33,14 @@ export default async function PublicInvoicePage({
 }) {
   const { token } = await params;
   if (!token || token.length < 8) notFound();
+
+  // Rate limit by IP to slow token brute-force. 30 req/min per IP is
+  // generous for legitimate use (a client refreshing the page, checking on
+  // their phone and laptop) but makes enumeration impractical.
+  const rl = await checkIpRateLimit("inv-token", 30, 60_000);
+  if (!rl.allowed) {
+    return <RateLimitedPage retryAfterSeconds={rl.retryAfterSeconds} />;
+  }
 
   const admin = createSupabaseAdminClient();
 

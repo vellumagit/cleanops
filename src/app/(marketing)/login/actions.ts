@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { LoginSchema } from "@/lib/validators/auth";
+import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
 
 export type LoginActionState = {
   errors?: Partial<Record<"email" | "password" | "_form", string>>;
@@ -27,6 +28,19 @@ export async function loginAction(
       if (!fieldErrors[key]) fieldErrors[key] = issue.message;
     }
     return { errors: fieldErrors, values: { email: raw.email } };
+  }
+
+  // 10/min/IP — stops credential-stuffing brute force. Supabase itself
+  // rate-limits by user but that's per-email; we need an IP cap to stop
+  // someone trying many emails against our endpoint.
+  const rl = await checkIpRateLimit("auth-login", 10, 60_000);
+  if (!rl.allowed) {
+    return {
+      errors: {
+        _form: `Too many login attempts. Try again in ${rl.retryAfterSeconds} seconds.`,
+      },
+      values: { email: parsed.data.email },
+    };
   }
 
   const supabase = await createSupabaseServerClient();

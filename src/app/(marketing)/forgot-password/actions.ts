@@ -2,6 +2,7 @@
 
 import { z } from "zod";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
 
 const EmailSchema = z.object({
   email: z.string().email("Enter a valid email"),
@@ -23,6 +24,18 @@ export async function forgotPasswordAction(
   if (!parsed.success) {
     return {
       errors: { email: parsed.error.issues[0]?.message },
+      email: raw,
+    };
+  }
+
+  // 10/min/IP — slows credential-scraping bots without blocking a legit
+  // user who mistypes their address.
+  const rl = await checkIpRateLimit("auth-forgot", 10, 60_000);
+  if (!rl.allowed) {
+    return {
+      errors: {
+        _form: `Too many requests. Try again in ${rl.retryAfterSeconds} seconds.`,
+      },
       email: raw,
     };
   }

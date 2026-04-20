@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
+import { RateLimitedPage } from "@/components/rate-limited-page";
 import { JoinForm } from "./join-form";
 
 export const metadata: Metadata = {
@@ -27,6 +29,12 @@ export default async function JoinPage({
   params: Promise<{ token: string }>;
 }) {
   const { token } = await params;
+
+  const rl = await checkIpRateLimit("join-token", 30, 60_000);
+  if (!rl.allowed) {
+    return <RateLimitedPage retryAfterSeconds={rl.retryAfterSeconds} />;
+  }
+
   const admin = createSupabaseAdminClient();
 
   const { data: invitation } = await admin

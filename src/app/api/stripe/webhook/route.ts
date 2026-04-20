@@ -70,6 +70,13 @@ async function upsertSubscriptionFromStripe(sub: Stripe.Subscription) {
 }
 
 export async function POST(req: NextRequest) {
+  // 600/min/IP — way above Stripe's legitimate retry volume but blocks
+  // scripted DoS. Signature verification is the real auth; this is defense
+  // in depth against unauthenticated traffic before we do crypto work.
+  const { rateLimitByIp } = await import("@/lib/rate-limit-helpers");
+  const limited = await rateLimitByIp(req, "stripe-webhook", 600, 60_000);
+  if (limited) return limited;
+
   if (!isStripeEnabled()) {
     return NextResponse.json(
       { error: "Stripe is not enabled in this environment." },

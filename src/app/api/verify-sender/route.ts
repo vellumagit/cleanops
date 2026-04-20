@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { rateLimitByIp } from "@/lib/rate-limit-helpers";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,6 +12,10 @@ export const dynamic = "force-dynamic";
  * Marks the org's sender_email as verified if the token matches.
  */
 export async function GET(req: NextRequest) {
+  // 10 requests/min/IP. Legit flow hits this once; anything more is brute force.
+  const limited = await rateLimitByIp(req, "verify-sender", 10, 60_000);
+  if (limited) return limited;
+
   const token = req.nextUrl.searchParams.get("token");
   const orgId = req.nextUrl.searchParams.get("org");
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
