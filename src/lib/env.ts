@@ -43,6 +43,12 @@ const BaseSchema = z.object({
   EMAIL_FROM: z.string().optional(),
   EMAIL_FROM_NAME: z.string().optional(),
 
+  // Platform kill switch: when "true", blocks every org→client email
+  // (booking confirm/reschedule, invoice, receipt, review request, overdue
+  // reminder) regardless of per-org automation toggles. Platform emails
+  // that use sendEmail() directly are unaffected.
+  CLIENT_EMAILS_PAUSED: z.enum(["true", "false"]).optional(),
+
   // Sentry
   NEXT_PUBLIC_SENTRY_DSN: z.string().optional(),
   SENTRY_ORG: z.string().optional(),

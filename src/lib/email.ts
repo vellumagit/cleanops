@@ -164,6 +164,25 @@ export async function getOrgSender(
 }
 
 // ---------------------------------------------------------------------------
+// Platform kill switch for client-facing email
+//
+// Set CLIENT_EMAILS_PAUSED=true in Vercel env to block EVERY org→client
+// email across the whole platform (booking confirm/reschedule, invoice,
+// receipt, review request, overdue reminder) without requiring org owners
+// to flip their per-org automation toggles. Platform emails that use
+// sendEmail() directly (team invite, sender verify, trial expiring) are
+// unaffected — those are internal.
+//
+// To pause: set CLIENT_EMAILS_PAUSED=true in Vercel → Production, redeploy.
+// To resume: delete the var (or set it to anything other than "true"),
+// redeploy. Pause is ~3 min of latency end-to-end.
+// ---------------------------------------------------------------------------
+
+export function isClientEmailPaused(): boolean {
+  return process.env.CLIENT_EMAILS_PAUSED === "true";
+}
+
+// ---------------------------------------------------------------------------
 // Convenience: send an email on behalf of an org
 // ---------------------------------------------------------------------------
 
@@ -171,6 +190,13 @@ export async function sendOrgEmail(
   organizationId: string,
   args: Omit<SendEmailArgs, "from" | "fromName" | "replyTo" | "replyToName">,
 ): Promise<boolean> {
+  if (isClientEmailPaused()) {
+    console.log(
+      `[email] client emails paused at platform level — skipping "${args.subject}" for org ${organizationId}`,
+    );
+    return false;
+  }
+
   const sender = await getOrgSender(organizationId);
   return sendEmail({
     ...args,
