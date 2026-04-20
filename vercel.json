@@ -44,6 +44,10 @@
     {
       "path": "/api/cron/purge-orgs",
       "schedule": "0 5 * * *"
+    },
+    {
+      "path": "/api/cron/booking-reminders-client",
+      "schedule": "0 18 * * *"
     }
   ]
 }

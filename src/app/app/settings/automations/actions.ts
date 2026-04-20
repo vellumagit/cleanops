@@ -8,6 +8,8 @@ export type AutomationKey =
   | "auto_invoice_on_job_complete"
   | "booking_confirmation_email"
   | "booking_rescheduled_email"
+  | "booking_reminder_client_email"
+  | "estimate_sent_email"
   | "invoice_paid_receipt"
   | "invoice_overdue_reminder"
   | "review_submitted_notify"

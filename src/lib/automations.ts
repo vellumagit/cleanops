@@ -666,6 +666,282 @@ export async function sendOverdueReminders(): Promise<{
 }
 
 // ─────────────────────────────────────────────────────────────────
+// 7d. Client-facing 24-hour booking reminder (daily cron)
+//
+// Runs daily. Finds bookings scheduled between ~18h and ~30h from now
+// that haven't been client-reminded yet, and emails the client. The
+// window straddles 24h so clients get a consistent "day before" cadence
+// regardless of the exact time-of-day the job is booked for.
+//
+// Gated three ways:
+//   1. Platform kill switch via sendOrgEmail (CLIENT_EMAILS_PAUSED)
+//   2. Per-org automation toggle `booking_reminder_client_email`
+//   3. Dedup by bookings.client_reminder_sent_at — each booking is
+//      reminded at most once, ever.
+// ─────────────────────────────────────────────────────────────────
+
+export async function sendUpcomingBookingReminders(): Promise<{
+  considered: number;
+  sent: number;
+  skipped: number;
+}> {
+  const db = admin();
+  const { sendOrgEmail } = await import("@/lib/email");
+  const { bookingReminderEmail } = await import("@/lib/email-templates");
+
+  const now = Date.now();
+  const windowStart = new Date(now + 18 * 60 * 60 * 1000).toISOString();
+  const windowEnd = new Date(now + 30 * 60 * 60 * 1000).toISOString();
+
+  const { data: candidates } = await db
+    .from("bookings")
+    .select(`
+      id, organization_id, scheduled_at, service_type, address,
+      client:clients ( name, email )
+    `)
+    .is("client_reminder_sent_at" as never, null as never)
+    .in("status", ["pending", "confirmed"])
+    .gte("scheduled_at", windowStart)
+    .lte("scheduled_at", windowEnd) as unknown as {
+    data: Array<{
+      id: string;
+      organization_id: string;
+      scheduled_at: string;
+      service_type: string;
+      address: string | null;
+      client: { name: string | null; email: string | null } | null;
+    }> | null;
+  };
+
+  const considered = candidates?.length ?? 0;
+  let sent = 0;
+  let skipped = 0;
+
+  if (!candidates || candidates.length === 0) {
+    return { considered, sent, skipped };
+  }
+
+  // Cache org lookups (toggle + branding) across the batch.
+  const orgCache = new Map<
+    string,
+    { name: string; brand_color: string | null; logo_url: string | null; enabled: boolean } | null
+  >();
+
+  for (const booking of candidates) {
+    if (!booking.client?.email) {
+      skipped += 1;
+      continue;
+    }
+
+    let cached = orgCache.get(booking.organization_id);
+    if (cached === undefined) {
+      const enabled = await isAutomationEnabled(
+        booking.organization_id,
+        "booking_reminder_client_email",
+      );
+      const { data: orgData } = await db
+        .from("organizations")
+        .select("name, brand_color, logo_url")
+        .eq("id", booking.organization_id)
+        .maybeSingle() as unknown as {
+        data: { name: string; brand_color: string | null; logo_url: string | null } | null;
+      };
+      cached = orgData ? { ...orgData, enabled } : null;
+      orgCache.set(booking.organization_id, cached);
+    }
+
+    if (!cached) {
+      skipped += 1;
+      continue;
+    }
+    if (!cached.enabled) {
+      console.log(`[auto] Booking reminder paused for org ${booking.organization_id}`);
+      skipped += 1;
+      continue;
+    }
+
+    const dateTime = new Date(booking.scheduled_at).toLocaleString("en-US", {
+      weekday: "long",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+
+    const template = bookingReminderEmail({
+      clientName: booking.client.name ?? "there",
+      orgName: cached.name,
+      serviceName: humanize(booking.service_type),
+      dateTime,
+      address: booking.address ?? "(address on file)",
+      brandColor: cached.brand_color ?? undefined,
+      logoUrl: cached.logo_url ?? undefined,
+    });
+
+    const ok = await sendOrgEmail(booking.organization_id, {
+      to: booking.client.email,
+      toName: booking.client.name ?? undefined,
+      ...template,
+    });
+
+    if (ok) {
+      await db
+        .from("bookings")
+        .update({ client_reminder_sent_at: new Date().toISOString() } as never)
+        .eq("id", booking.id);
+      sent += 1;
+      console.log(
+        `[auto] Booking reminder sent for booking ${booking.id} to ${booking.client.email}`,
+      );
+    } else {
+      // sendOrgEmail returned false — either the kill switch is on, email
+      // isn't configured, or Resend rejected. Don't stamp — we'll retry
+      // on the next cron tick.
+      skipped += 1;
+    }
+  }
+
+  return { considered, sent, skipped };
+}
+
+// ─────────────────────────────────────────────────────────────────
+// 7e. Send an estimate to the client (user-initiated from the admin UI)
+//
+// Generates a public_token + expires_at on first send if not already
+// present, then emails the client with a link to /e/<token>. Idempotent:
+// re-sending bumps client_email_sent_at but keeps the existing token.
+//
+// Gated by the platform kill switch (via sendOrgEmail) and by the per-org
+// `estimate_sent_email` toggle.
+// ─────────────────────────────────────────────────────────────────
+
+export async function sendEstimateToClient(estimateId: string): Promise<{
+  ok: boolean;
+  publicToken: string | null;
+  error?: string;
+}> {
+  try {
+    const db = admin();
+    const { sendOrgEmail } = await import("@/lib/email");
+    const { estimateSentEmail } = await import("@/lib/email-templates");
+    const { formatCurrencyCents } = await import("@/lib/format");
+    const { getOrgCurrency } = await import("@/lib/org-currency");
+    const { generateClaimToken } = await import("@/lib/claim-token");
+
+    const { data: estimate } = await db
+      .from("estimates")
+      .select(`
+        id, organization_id, service_description, total_cents,
+        public_token, expires_at,
+        client:clients ( name, email )
+      `)
+      .eq("id", estimateId)
+      .maybeSingle() as unknown as {
+      data: {
+        id: string;
+        organization_id: string;
+        service_description: string | null;
+        total_cents: number;
+        public_token: string | null;
+        expires_at: string | null;
+        client: { name: string | null; email: string | null } | null;
+      } | null;
+    };
+
+    if (!estimate) return { ok: false, publicToken: null, error: "Estimate not found" };
+    if (!estimate.client?.email) {
+      return { ok: false, publicToken: null, error: "Client has no email on file" };
+    }
+
+    if (!(await isAutomationEnabled(estimate.organization_id, "estimate_sent_email"))) {
+      console.log(
+        `[auto] Estimate send paused for org ${estimate.organization_id}`,
+      );
+      return {
+        ok: false,
+        publicToken: null,
+        error: "Estimate emails are paused for this organization",
+      };
+    }
+
+    // Lazily mint a public token + 30-day expiry on first send.
+    let publicToken = estimate.public_token;
+    let expiresAt = estimate.expires_at;
+    if (!publicToken) {
+      publicToken = generateClaimToken();
+      expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      await db
+        .from("estimates")
+        .update({
+          public_token: publicToken,
+          expires_at: expiresAt,
+        } as never)
+        .eq("id", estimateId);
+    }
+
+    const { data: orgData } = await db
+      .from("organizations")
+      .select("name, brand_color, logo_url")
+      .eq("id", estimate.organization_id)
+      .maybeSingle() as unknown as {
+      data: { name: string; brand_color: string | null; logo_url: string | null } | null;
+    };
+
+    const orgName = orgData?.name ?? "Your service provider";
+    const currency = await getOrgCurrency(estimate.organization_id);
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+
+    const expiresOn = expiresAt
+      ? new Date(expiresAt).toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        })
+      : null;
+
+    const template = estimateSentEmail({
+      clientName: estimate.client.name ?? "there",
+      orgName,
+      amountFormatted: formatCurrencyCents(estimate.total_cents, currency),
+      serviceDescription: estimate.service_description ?? "",
+      publicUrl: `${siteUrl}/e/${publicToken}`,
+      expiresOn,
+      brandColor: orgData?.brand_color ?? undefined,
+      logoUrl: orgData?.logo_url ?? undefined,
+    });
+
+    const sendOk = await sendOrgEmail(estimate.organization_id, {
+      to: estimate.client.email,
+      toName: estimate.client.name ?? undefined,
+      ...template,
+    });
+
+    if (sendOk) {
+      await db
+        .from("estimates")
+        .update({
+          client_email_sent_at: new Date().toISOString(),
+          // Also stamp `sent_at` + bump status so the admin UI reflects send.
+          sent_at: new Date().toISOString(),
+          status:
+            // Don't downgrade approved/declined if they re-send.
+            undefined,
+        } as never)
+        .eq("id", estimateId);
+    }
+
+    return { ok: sendOk, publicToken };
+  } catch (err) {
+    console.error("[auto] sendEstimateToClient failed:", err);
+    return {
+      ok: false,
+      publicToken: null,
+      error: err instanceof Error ? err.message : "Unknown error",
+    };
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
 // 7. Notify employee when they're assigned to a booking
 // ─────────────────────────────────────────────────────────────────
 

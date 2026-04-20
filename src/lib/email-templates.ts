@@ -464,6 +464,110 @@ export function trialExpiringEmail(args: {
 }
 
 // ---------------------------------------------------------------------------
+// Booking reminder (org-sent — 24h-before-job heads-up to the client)
+// ---------------------------------------------------------------------------
+
+export function bookingReminderEmail(args: {
+  clientName: string;
+  orgName: string;
+  serviceName: string;
+  dateTime: string;
+  address: string;
+  brandColor?: string;
+  logoUrl?: string;
+}) {
+  const subject = `Reminder: your ${args.serviceName} with ${args.orgName} is tomorrow`;
+  const html = layout(
+    `
+    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;letter-spacing:-0.02em;color:#18181b;line-height:1.3;">See you tomorrow</h1>
+    <p style="margin:0 0 24px;font-size:14px;line-height:1.55;color:#52525b;">
+      Hi ${escapeHtml(args.clientName)}, just a friendly reminder that your
+      appointment with <strong style="color:#18181b;">${escapeHtml(args.orgName)}</strong> is coming up.
+    </p>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin-bottom:4px;border-top:1px solid #e4e4e7;">
+      <tr>
+        <td style="font-size:13px;color:#71717a;padding:12px 0;border-bottom:1px solid #f4f4f5;">Service</td>
+        <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;border-bottom:1px solid #f4f4f5;">${escapeHtml(args.serviceName)}</td>
+      </tr>
+      <tr>
+        <td style="font-size:13px;color:#71717a;padding:12px 0;border-bottom:1px solid #f4f4f5;">When</td>
+        <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;font-weight:600;border-bottom:1px solid #f4f4f5;">${escapeHtml(args.dateTime)}</td>
+      </tr>
+      <tr>
+        <td style="font-size:13px;color:#71717a;padding:12px 0;">Where</td>
+        <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;">${escapeHtml(args.address)}</td>
+      </tr>
+    </table>
+    <p style="margin:20px 0 0;font-size:12px;line-height:1.5;color:#a1a1aa;">
+      Need to reschedule or cancel? Reply to this email as soon as possible and we&rsquo;ll sort it out.
+    </p>
+    `,
+    {
+      brandColor: args.brandColor,
+      orgName: args.orgName,
+      logoUrl: args.logoUrl,
+      preheader: `${args.serviceName} · ${args.dateTime}`,
+    },
+  );
+  const text = `Reminder from ${args.orgName}\n\nService: ${args.serviceName}\nWhen: ${args.dateTime}\nWhere: ${args.address}\n\nReply to reschedule.`;
+  return { subject, html, text };
+}
+
+// ---------------------------------------------------------------------------
+// Estimate sent (org-sent — owner clicks "Send to client" on an estimate)
+// ---------------------------------------------------------------------------
+
+export function estimateSentEmail(args: {
+  clientName: string;
+  orgName: string;
+  amountFormatted: string;
+  serviceDescription: string;
+  publicUrl: string;
+  expiresOn: string | null;
+  brandColor?: string;
+  logoUrl?: string;
+}) {
+  const subject = `Your estimate from ${args.orgName}`;
+  const html = layout(
+    `
+    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;letter-spacing:-0.02em;color:#18181b;line-height:1.3;">Your estimate</h1>
+    <p style="margin:0 0 24px;font-size:14px;line-height:1.55;color:#52525b;">
+      Hi ${escapeHtml(args.clientName)}, here&rsquo;s the estimate from
+      <strong style="color:#18181b;">${escapeHtml(args.orgName)}</strong>.
+    </p>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin-bottom:4px;border-top:1px solid #e4e4e7;">
+      <tr>
+        <td style="font-size:13px;color:#71717a;padding:12px 0;border-bottom:1px solid #f4f4f5;vertical-align:top;">Service</td>
+        <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;border-bottom:1px solid #f4f4f5;">${escapeHtml(args.serviceDescription || "As discussed")}</td>
+      </tr>
+      <tr>
+        <td style="font-size:13px;color:#71717a;padding:12px 0;${args.expiresOn ? "border-bottom:1px solid #f4f4f5;" : ""}">Total</td>
+        <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;font-weight:600;${args.expiresOn ? "border-bottom:1px solid #f4f4f5;" : ""}">${escapeHtml(args.amountFormatted)}</td>
+      </tr>
+      ${args.expiresOn
+        ? `<tr>
+            <td style="font-size:13px;color:#71717a;padding:12px 0;">Valid until</td>
+            <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;">${escapeHtml(args.expiresOn)}</td>
+          </tr>`
+        : ""}
+    </table>
+    ${button("View Estimate", args.publicUrl, args.brandColor ? `#${args.brandColor.replace(/^#/, "")}` : DEFAULT_BRAND)}
+    <p style="margin:0;font-size:12px;line-height:1.5;color:#a1a1aa;">
+      Questions or ready to book? Reply to this email.
+    </p>
+    `,
+    {
+      brandColor: args.brandColor,
+      orgName: args.orgName,
+      logoUrl: args.logoUrl,
+      preheader: `${args.amountFormatted} · ${args.serviceDescription || "Estimate from " + args.orgName}`,
+    },
+  );
+  const text = `Your estimate from ${args.orgName}\n\nService: ${args.serviceDescription || "As discussed"}\nTotal: ${args.amountFormatted}${args.expiresOn ? `\nValid until: ${args.expiresOn}` : ""}\n\nView: ${args.publicUrl}`;
+  return { subject, html, text };
+}
+
+// ---------------------------------------------------------------------------
 // Booking rescheduled (org-sent — client notification)
 // ---------------------------------------------------------------------------
 

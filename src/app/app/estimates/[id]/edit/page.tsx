@@ -8,6 +8,7 @@ import { PageShell } from "@/components/page-shell";
 import { centsToDollarString } from "@/lib/validators/common";
 import { EstimateForm } from "../../estimate-form";
 import { DeleteEstimateForm } from "./delete-form";
+import { SendEstimateForm } from "./send-form";
 
 export const metadata = { title: "Edit estimate" };
 
@@ -26,7 +27,7 @@ export default async function EditEstimatePage({
       supabase
         .from("estimates")
         .select(
-          "id, client_id, service_description, notes, status, total_cents, pdf_url",
+          "id, client_id, service_description, notes, status, total_cents, pdf_url, client_email_sent_at",
         )
         .eq("id", id)
         .maybeSingle() as unknown as {
@@ -38,10 +39,16 @@ export default async function EditEstimatePage({
           status: string;
           total_cents: number;
           pdf_url: string | null;
+          client_email_sent_at: string | null;
         } | null;
         error: unknown;
       },
-      supabase.from("clients").select("id, name").order("name"),
+      supabase
+        .from("clients")
+        .select("id, name, email")
+        .order("name") as unknown as {
+        data: Array<{ id: string; name: string; email: string | null }> | null;
+      },
       supabase
         .from("bookings")
         .select("id, status, scheduled_at")
@@ -89,6 +96,15 @@ export default async function EditEstimatePage({
             }}
           />
         </div>
+
+        <SendEstimateForm
+          estimateId={estimate.id}
+          clientHasEmail={Boolean(
+            (clients ?? []).find((c) => c.id === estimate.client_id)?.email,
+          )}
+          lastSentAt={estimate.client_email_sent_at}
+        />
+
         <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-6">
           <h2 className="text-sm font-semibold text-destructive">Danger zone</h2>
           <p className="mt-1 text-xs text-muted-foreground">

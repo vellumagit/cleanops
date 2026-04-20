@@ -4,7 +4,10 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
 import { EstimateSchema } from "@/lib/validators/estimates";
-import { autoBookingOnEstimateApproval } from "@/lib/automations";
+import {
+  autoBookingOnEstimateApproval,
+  sendEstimateToClient,
+} from "@/lib/automations";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { canCreateData } from "@/lib/subscription";
 
@@ -212,6 +215,35 @@ export async function updateEstimateAction(
   revalidatePath("/app/bookings");
   revalidatePath("/app");
   redirect("/app/estimates");
+}
+
+export type SendEstimateState = { ok?: boolean; error?: string };
+
+/**
+ * Send the estimate to the client as an email with a public-token link.
+ * Generates the token on first send; subsequent sends reuse it.
+ *
+ * Gated by the platform CLIENT_EMAILS_PAUSED kill switch (via sendOrgEmail
+ * inside the automation) and by the per-org `estimate_sent_email` toggle.
+ */
+export async function sendEstimateAction(
+  _prev: SendEstimateState,
+  formData: FormData,
+): Promise<SendEstimateState> {
+  const id = String(formData.get("id") ?? "");
+  if (!id) return { error: "Missing estimate id" };
+
+  // Membership check — anyone who can view/edit estimates can send them.
+  await getActionContext();
+
+  const result = await sendEstimateToClient(id);
+  if (!result.ok) {
+    return { error: result.error ?? "Could not send estimate" };
+  }
+
+  revalidatePath(`/app/estimates/${id}/edit`);
+  revalidatePath("/app/estimates");
+  return { ok: true };
 }
 
 export async function deleteEstimateAction(formData: FormData) {

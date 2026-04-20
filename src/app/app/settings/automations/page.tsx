@@ -39,6 +39,20 @@ const AUTOMATIONS: AutomationDef[] = [
     trigger: "Booking → Rescheduled",
   },
   {
+    key: "booking_reminder_client_email",
+    title: "24-hour booking reminder to client",
+    description:
+      "Emails the client roughly 24 hours before their booking with a heads-up about the service, time, and address. Sent at most once per booking.",
+    trigger: "Daily cron, ~18:00 UTC",
+  },
+  {
+    key: "estimate_sent_email",
+    title: "Send estimate to client",
+    description:
+      "Controls the 'Send to client' button on estimates. When off, clicking Send returns an error instead of emailing.",
+    trigger: "Estimate → Send clicked",
+  },
+  {
     key: "invoice_paid_receipt",
     title: "Receipt + review request on payment",
     description:
