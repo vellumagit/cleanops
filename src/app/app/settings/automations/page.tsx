@@ -80,6 +80,41 @@ const AUTOMATIONS: AutomationDef[] = [
       "Sends a push notification to the assigned employee when a booking is assigned to them.",
     trigger: "Booking → Assigned",
   },
+  {
+    key: "unassigned_booking_alert",
+    title: "Unassigned booking alert",
+    description:
+      "Emails owners/admins when a booking is within 24 hours and still has no cleaner assigned. Silent on days where everything is staffed — no empty alerts.",
+    trigger: "Daily scan at 22:00 UTC",
+  },
+  {
+    key: "low_review_alert",
+    title: "Low review alert",
+    description:
+      "Emails owners/admins when a client leaves a review of 3 stars or less, with the full review text so you can respond quickly.",
+    trigger: "Review → Submitted (rating ≤ 3)",
+  },
+  {
+    key: "stripe_payout_alert",
+    title: "Stripe payout notification",
+    description:
+      "Emails owners when Stripe sends a payout to your bank account, with the amount and expected arrival date.",
+    trigger: "Stripe → payout.paid webhook",
+  },
+  {
+    key: "weekly_ops_digest",
+    title: "Weekly operations digest",
+    description:
+      "Monday-morning recap of last week: revenue, jobs completed/cancelled, average rating, overdue invoices, and unassigned bookings in the week ahead.",
+    trigger: "Mondays at 08:00 UTC",
+  },
+  {
+    key: "monthly_ops_digest",
+    title: "Monthly operations digest",
+    description:
+      "1st-of-month recap of the prior month: revenue, job counts, rating, top clients by revenue, top performer, and new clients added.",
+    trigger: "1st of each month at 09:00 UTC",
+  },
 ];
 
 export default async function AutomationsPage() {

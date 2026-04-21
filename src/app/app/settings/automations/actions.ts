@@ -13,7 +13,12 @@ export type AutomationKey =
   | "invoice_paid_receipt"
   | "invoice_overdue_reminder"
   | "review_submitted_notify"
-  | "booking_assignment_notify";
+  | "booking_assignment_notify"
+  | "unassigned_booking_alert"
+  | "low_review_alert"
+  | "stripe_payout_alert"
+  | "weekly_ops_digest"
+  | "monthly_ops_digest";
 
 export async function toggleAutomationAction(formData: FormData) {
   const { membership } = await getActionContext();

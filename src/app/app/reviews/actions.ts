@@ -60,6 +60,7 @@ export async function createReviewAction(
     clientName: client?.name ?? "A client",
     employeeName,
     reviewId: review.id,
+    reviewText: parsed.data.comment ?? null,
   });
 
   revalidatePath("/app/reviews");

@@ -420,6 +420,316 @@ export function paymentReceiptEmail(args: {
 }
 
 // ---------------------------------------------------------------------------
+// Admin: unassigned booking alert (Sollos → owner/admin)
+// ---------------------------------------------------------------------------
+
+export function unassignedBookingAlertEmail(args: {
+  recipientName: string;
+  orgName: string;
+  dashboardUrl: string;
+  bookings: Array<{
+    clientName: string;
+    serviceName: string;
+    dateTime: string;
+    address: string;
+    hoursUntil: number;
+  }>;
+}) {
+  const n = args.bookings.length;
+  const subject =
+    n === 1
+      ? `Action needed: 1 unassigned booking coming up`
+      : `Action needed: ${n} unassigned bookings coming up`;
+
+  const rows = args.bookings
+    .map(
+      (b) => `
+    <tr>
+      <td style="padding:12px 0;border-bottom:1px solid #f4f4f5;vertical-align:top;">
+        <div style="font-size:13px;color:#18181b;font-weight:600;">${escapeHtml(b.serviceName)}</div>
+        <div style="font-size:12px;color:#71717a;margin-top:2px;">${escapeHtml(b.clientName)} · ${escapeHtml(b.address)}</div>
+      </td>
+      <td style="padding:12px 0;border-bottom:1px solid #f4f4f5;text-align:right;vertical-align:top;">
+        <div style="font-size:13px;color:#18181b;">${escapeHtml(b.dateTime)}</div>
+        <div style="font-size:11px;color:#dc2626;margin-top:2px;font-weight:600;">in ${b.hoursUntil}h</div>
+      </td>
+    </tr>`,
+    )
+    .join("");
+
+  const html = layout(
+    `
+    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;letter-spacing:-0.02em;color:#18181b;line-height:1.3;">Bookings need staffing</h1>
+    <p style="margin:0 0 24px;font-size:14px;line-height:1.55;color:#52525b;">
+      Hi ${escapeHtml(args.recipientName)}, the following ${n === 1 ? "booking is" : `${n} bookings are`} scheduled for the next 24 hours at <strong style="color:#18181b;">${escapeHtml(args.orgName)}</strong> with no cleaner assigned.
+    </p>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin-bottom:4px;border-top:1px solid #e4e4e7;">
+      ${rows}
+    </table>
+    ${button("Open Bookings", args.dashboardUrl)}
+    <p style="margin:0;font-size:12px;line-height:1.5;color:#a1a1aa;">
+      This alert fires at most once per booking. You won&rsquo;t hear from us again about these specific jobs — unless one gets unassigned after you staff it.
+    </p>
+    `,
+    {
+      sollosHeader: true,
+      orgName: args.orgName,
+      preheader: `${n} unassigned booking${n === 1 ? "" : "s"} in the next 24 hours`,
+    },
+  );
+  const text = `Unassigned bookings — ${args.orgName}\n\n${args.bookings
+    .map(
+      (b) =>
+        `• ${b.serviceName} for ${b.clientName} — ${b.dateTime} (in ${b.hoursUntil}h) — ${b.address}`,
+    )
+    .join("\n")}\n\nOpen: ${args.dashboardUrl}`;
+  return { subject, html, text };
+}
+
+// ---------------------------------------------------------------------------
+// Admin: low review alert (Sollos → owner/admin, on ≤3★ reviews)
+// ---------------------------------------------------------------------------
+
+export function lowReviewAlertEmail(args: {
+  recipientName: string;
+  orgName: string;
+  clientName: string;
+  employeeName: string | null;
+  rating: number;
+  reviewText: string | null;
+  reviewUrl: string;
+}) {
+  const subject = `${args.rating}-star review needs attention`;
+  const stars = "★".repeat(args.rating) + "☆".repeat(5 - args.rating);
+  const html = layout(
+    `
+    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;letter-spacing:-0.02em;color:#18181b;line-height:1.3;">A review needs your attention</h1>
+    <p style="margin:0 0 16px;font-size:14px;line-height:1.55;color:#52525b;">
+      Hi ${escapeHtml(args.recipientName)}, <strong style="color:#18181b;">${escapeHtml(args.clientName)}</strong> left a low review${args.employeeName ? ` for ${escapeHtml(args.employeeName)}` : ""}. Reaching out fast usually saves the relationship.
+    </p>
+    <div style="margin:16px 0;padding:16px;border:1px solid #e4e4e7;border-radius:8px;background:#fafafa;">
+      <div style="font-size:20px;letter-spacing:2px;color:#f59e0b;">${stars}</div>
+      <div style="margin-top:6px;font-size:12px;color:#71717a;">${args.rating} out of 5</div>
+      ${args.reviewText
+        ? `<p style="margin:12px 0 0;font-size:13px;line-height:1.6;color:#18181b;white-space:pre-wrap;">"${escapeHtml(args.reviewText)}"</p>`
+        : `<p style="margin:12px 0 0;font-size:12px;color:#a1a1aa;font-style:italic;">No written feedback — just the rating.</p>`}
+    </div>
+    ${button("Open Review", args.reviewUrl)}
+    <p style="margin:0;font-size:12px;line-height:1.5;color:#a1a1aa;">
+      Low reviews only come by email. Everything else stays in the in-app notification feed.
+    </p>
+    `,
+    {
+      sollosHeader: true,
+      orgName: args.orgName,
+      preheader: `${stars} from ${args.clientName}`,
+    },
+  );
+  const text = `A ${args.rating}-star review came in from ${args.clientName}${args.employeeName ? ` for ${args.employeeName}` : ""}.\n\n${args.reviewText ?? "(No written feedback)"}\n\nOpen: ${args.reviewUrl}`;
+  return { subject, html, text };
+}
+
+// ---------------------------------------------------------------------------
+// Admin: Stripe payout notification (Sollos → owner)
+// ---------------------------------------------------------------------------
+
+export function stripePayoutAlertEmail(args: {
+  recipientName: string;
+  orgName: string;
+  amountFormatted: string;
+  arrivalDate: string;
+  payoutId: string;
+  dashboardUrl: string;
+}) {
+  const subject = `Stripe paid you ${args.amountFormatted}`;
+  const html = layout(
+    `
+    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;letter-spacing:-0.02em;color:#18181b;line-height:1.3;">You&rsquo;ve been paid</h1>
+    <p style="margin:0 0 24px;font-size:14px;line-height:1.55;color:#52525b;">
+      Hi ${escapeHtml(args.recipientName)}, Stripe just sent a payout to your bank account for <strong style="color:#18181b;">${escapeHtml(args.orgName)}</strong>.
+    </p>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin-bottom:4px;border-top:1px solid #e4e4e7;">
+      <tr>
+        <td style="font-size:13px;color:#71717a;padding:12px 0;border-bottom:1px solid #f4f4f5;">Amount</td>
+        <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;font-weight:600;border-bottom:1px solid #f4f4f5;">${escapeHtml(args.amountFormatted)}</td>
+      </tr>
+      <tr>
+        <td style="font-size:13px;color:#71717a;padding:12px 0;border-bottom:1px solid #f4f4f5;">Arrives in your bank</td>
+        <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;border-bottom:1px solid #f4f4f5;">${escapeHtml(args.arrivalDate)}</td>
+      </tr>
+      <tr>
+        <td style="font-size:13px;color:#71717a;padding:12px 0;">Payout id</td>
+        <td style="font-size:12px;color:#71717a;padding:12px 0;text-align:right;font-family:ui-monospace,Menlo,monospace;">${escapeHtml(args.payoutId)}</td>
+      </tr>
+    </table>
+    ${button("Open Dashboard", args.dashboardUrl)}
+    <p style="margin:0;font-size:12px;line-height:1.5;color:#a1a1aa;">
+      Stripe handles the actual bank transfer. You&rsquo;ll see it in your statement on or around the arrival date.
+    </p>
+    `,
+    {
+      sollosHeader: true,
+      orgName: args.orgName,
+      preheader: `${args.amountFormatted} arriving ${args.arrivalDate}`,
+    },
+  );
+  const text = `Stripe paid you ${args.amountFormatted} for ${args.orgName}.\n\nArriving: ${args.arrivalDate}\nPayout id: ${args.payoutId}\n\nDashboard: ${args.dashboardUrl}`;
+  return { subject, html, text };
+}
+
+// ---------------------------------------------------------------------------
+// Admin: Weekly ops digest (Sollos → owner, every Monday)
+// ---------------------------------------------------------------------------
+
+export type DigestStat = { label: string; value: string; sub?: string };
+
+export function weeklyOpsDigestEmail(args: {
+  recipientName: string;
+  orgName: string;
+  weekLabel: string;
+  stats: DigestStat[];
+  upcomingUnassigned: number;
+  dashboardUrl: string;
+}) {
+  const subject = `Your weekly recap — ${args.orgName}`;
+  const statRows = args.stats
+    .map(
+      (s) => `
+    <tr>
+      <td style="font-size:13px;color:#71717a;padding:12px 0;border-bottom:1px solid #f4f4f5;vertical-align:top;">
+        ${escapeHtml(s.label)}
+      </td>
+      <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;border-bottom:1px solid #f4f4f5;vertical-align:top;">
+        <div style="font-weight:600;">${escapeHtml(s.value)}</div>
+        ${s.sub ? `<div style="font-size:11px;color:#a1a1aa;margin-top:2px;font-weight:normal;">${escapeHtml(s.sub)}</div>` : ""}
+      </td>
+    </tr>`,
+    )
+    .join("");
+
+  const html = layout(
+    `
+    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;letter-spacing:-0.02em;color:#18181b;line-height:1.3;">Your week at a glance</h1>
+    <p style="margin:0 0 4px;font-size:14px;line-height:1.55;color:#52525b;">
+      Hi ${escapeHtml(args.recipientName)}, here&rsquo;s what happened at <strong style="color:#18181b;">${escapeHtml(args.orgName)}</strong>.
+    </p>
+    <p style="margin:0 0 24px;font-size:12px;color:#a1a1aa;">
+      ${escapeHtml(args.weekLabel)}
+    </p>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin-bottom:4px;border-top:1px solid #e4e4e7;">
+      ${statRows}
+    </table>
+    ${args.upcomingUnassigned > 0
+      ? `<div style="margin:20px 0;padding:12px 14px;border:1px solid #fca5a5;border-radius:8px;background:#fef2f2;">
+          <p style="margin:0;font-size:13px;color:#991b1b;">
+            <strong>${args.upcomingUnassigned}</strong> upcoming booking${args.upcomingUnassigned === 1 ? "" : "s"} still ${args.upcomingUnassigned === 1 ? "has" : "have"} no cleaner assigned.
+          </p>
+        </div>`
+      : ""}
+    ${button("Open Dashboard", args.dashboardUrl)}
+    <p style="margin:0;font-size:12px;line-height:1.5;color:#a1a1aa;">
+      You can turn this weekly recap off in Settings → Automations.
+    </p>
+    `,
+    {
+      sollosHeader: true,
+      orgName: args.orgName,
+      preheader: `${args.weekLabel} — ${args.stats[0]?.value ?? ""}`,
+    },
+  );
+  const text = `Weekly recap — ${args.orgName}\n${args.weekLabel}\n\n${args.stats
+    .map((s) => `${s.label}: ${s.value}${s.sub ? ` (${s.sub})` : ""}`)
+    .join("\n")}${args.upcomingUnassigned > 0 ? `\n\n⚠ ${args.upcomingUnassigned} upcoming booking(s) unassigned.` : ""}\n\nOpen: ${args.dashboardUrl}`;
+  return { subject, html, text };
+}
+
+// ---------------------------------------------------------------------------
+// Admin: Monthly ops digest (Sollos → owner, 1st of the month)
+// ---------------------------------------------------------------------------
+
+export function monthlyOpsDigestEmail(args: {
+  recipientName: string;
+  orgName: string;
+  monthLabel: string;
+  stats: DigestStat[];
+  topClients: Array<{ name: string; revenue: string; jobs: number }>;
+  topEmployee: { name: string; jobs: number } | null;
+  dashboardUrl: string;
+}) {
+  const subject = `${args.monthLabel} recap — ${args.orgName}`;
+  const statRows = args.stats
+    .map(
+      (s) => `
+    <tr>
+      <td style="font-size:13px;color:#71717a;padding:12px 0;border-bottom:1px solid #f4f4f5;vertical-align:top;">
+        ${escapeHtml(s.label)}
+      </td>
+      <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;border-bottom:1px solid #f4f4f5;vertical-align:top;">
+        <div style="font-weight:600;">${escapeHtml(s.value)}</div>
+        ${s.sub ? `<div style="font-size:11px;color:#a1a1aa;margin-top:2px;font-weight:normal;">${escapeHtml(s.sub)}</div>` : ""}
+      </td>
+    </tr>`,
+    )
+    .join("");
+
+  const clientRows = args.topClients.length
+    ? args.topClients
+        .map(
+          (c, i) => `
+      <tr>
+        <td style="font-size:13px;color:#a1a1aa;padding:10px 0;border-bottom:1px solid #f4f4f5;width:24px;vertical-align:top;">${i + 1}</td>
+        <td style="font-size:13px;color:#18181b;padding:10px 0;border-bottom:1px solid #f4f4f5;vertical-align:top;">
+          <div>${escapeHtml(c.name)}</div>
+          <div style="font-size:11px;color:#71717a;margin-top:2px;">${c.jobs} job${c.jobs === 1 ? "" : "s"}</div>
+        </td>
+        <td style="font-size:13px;color:#18181b;padding:10px 0;text-align:right;border-bottom:1px solid #f4f4f5;font-weight:600;vertical-align:top;">${escapeHtml(c.revenue)}</td>
+      </tr>`,
+        )
+        .join("")
+    : `<tr><td colspan="3" style="font-size:12px;color:#a1a1aa;padding:12px 0;font-style:italic;">No paid jobs in this period.</td></tr>`;
+
+  const html = layout(
+    `
+    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;letter-spacing:-0.02em;color:#18181b;line-height:1.3;">${escapeHtml(args.monthLabel)} recap</h1>
+    <p style="margin:0 0 24px;font-size:14px;line-height:1.55;color:#52525b;">
+      Hi ${escapeHtml(args.recipientName)}, here&rsquo;s how <strong style="color:#18181b;">${escapeHtml(args.orgName)}</strong> did last month.
+    </p>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin-bottom:20px;border-top:1px solid #e4e4e7;">
+      ${statRows}
+    </table>
+
+    <h2 style="margin:16px 0 6px;font-size:14px;font-weight:600;letter-spacing:-0.01em;color:#18181b;">Top clients</h2>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin-bottom:20px;border-top:1px solid #e4e4e7;">
+      ${clientRows}
+    </table>
+
+    ${args.topEmployee
+      ? `<h2 style="margin:16px 0 6px;font-size:14px;font-weight:600;letter-spacing:-0.01em;color:#18181b;">Top performer</h2>
+         <p style="margin:0 0 16px;font-size:13px;color:#52525b;">
+           <strong style="color:#18181b;">${escapeHtml(args.topEmployee.name)}</strong> worked ${args.topEmployee.jobs} job${args.topEmployee.jobs === 1 ? "" : "s"}.
+         </p>`
+      : ""}
+
+    ${button("Open Dashboard", args.dashboardUrl)}
+    <p style="margin:0;font-size:12px;line-height:1.5;color:#a1a1aa;">
+      You can turn this monthly recap off in Settings → Automations.
+    </p>
+    `,
+    {
+      sollosHeader: true,
+      orgName: args.orgName,
+      preheader: `${args.monthLabel} at ${args.orgName}`,
+    },
+  );
+  const text = `${args.monthLabel} recap — ${args.orgName}\n\n${args.stats
+    .map((s) => `${s.label}: ${s.value}${s.sub ? ` (${s.sub})` : ""}`)
+    .join(
+      "\n",
+    )}\n\nTop clients:\n${args.topClients.map((c, i) => `  ${i + 1}. ${c.name} — ${c.revenue} (${c.jobs} jobs)`).join("\n")}${args.topEmployee ? `\n\nTop performer: ${args.topEmployee.name} — ${args.topEmployee.jobs} jobs` : ""}\n\nOpen: ${args.dashboardUrl}`;
+  return { subject, html, text };
+}
+
+// ---------------------------------------------------------------------------
 // Trial expiring warning (Sollos platform email)
 // ---------------------------------------------------------------------------
 

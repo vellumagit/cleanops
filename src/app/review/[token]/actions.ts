@@ -1,6 +1,7 @@
 "use server";
 
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { notifyReviewSubmitted } from "@/lib/automations";
 
 type ReviewState = {
   success: boolean;
@@ -82,19 +83,49 @@ export async function submitReviewAction(
   }
 
   // Insert the review
-  const { error } = await admin.from("reviews").insert({
-    organization_id: invoice.organization_id,
-    booking_id: invoice.booking_id,
-    client_id: invoice.client_id,
-    employee_id: employeeId,
-    rating,
-    comment,
-  });
+  const { data: inserted, error } = await admin
+    .from("reviews")
+    .insert({
+      organization_id: invoice.organization_id,
+      booking_id: invoice.booking_id,
+      client_id: invoice.client_id,
+      employee_id: employeeId,
+      rating,
+      comment,
+    })
+    .select("id")
+    .single() as unknown as {
+    data: { id: string } | null;
+    error: { message: string } | null;
+  };
 
-  if (error) {
-    console.error("[review] insert error:", error.message);
+  if (error || !inserted) {
+    console.error("[review] insert error:", error?.message);
     return { success: false, error: "Something went wrong. Please try again." };
   }
+
+  // Fetch client + employee names for the in-app notification / low-review alert
+  const [{ data: client }, { data: emp }] = await Promise.all([
+    invoice.client_id
+      ? admin.from("clients").select("name").eq("id", invoice.client_id).maybeSingle() as unknown as Promise<{
+          data: { name: string | null } | null;
+        }>
+      : Promise.resolve({ data: null as { name: string | null } | null }),
+    employeeId
+      ? admin.from("profiles").select("full_name").eq("id", employeeId).maybeSingle() as unknown as Promise<{
+          data: { full_name: string | null } | null;
+        }>
+      : Promise.resolve({ data: null as { full_name: string | null } | null }),
+  ]);
+
+  // Fire-and-forget: in-app notification + push + low-review email alert
+  notifyReviewSubmitted(invoice.organization_id, {
+    rating,
+    clientName: client?.name ?? "A client",
+    employeeName: emp?.full_name ?? null,
+    reviewId: inserted.id,
+    reviewText: comment,
+  });
 
   return { success: true, error: null };
 }

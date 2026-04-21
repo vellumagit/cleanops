@@ -36,6 +36,67 @@ async function isAutomationEnabled(
 }
 
 // ─────────────────────────────────────────────────────────────────
+// Helper: fetch all owner/admin recipients for an org
+//
+// Mirrors the pattern in /api/cron/trial-expiring — pulls owner + admin
+// memberships, then their email via the Supabase admin API (emails live
+// on auth.users, not profiles). Used by every admin-facing automation.
+// ─────────────────────────────────────────────────────────────────
+
+type AdminRecipient = {
+  profileId: string;
+  fullName: string | null;
+  email: string;
+};
+
+async function getOrgAdminRecipients(
+  orgId: string,
+): Promise<AdminRecipient[]> {
+  const db = admin();
+  const { data: owners } = await db
+    .from("memberships")
+    .select("profile_id")
+    .eq("organization_id", orgId)
+    .in("role", ["owner", "admin"])
+    .eq("status", "active");
+
+  if (!owners || owners.length === 0) return [];
+
+  const recipients: AdminRecipient[] = [];
+  for (const o of owners as Array<{ profile_id: string }>) {
+    const { data: profile } = await db
+      .from("profiles")
+      .select("full_name")
+      .eq("id", o.profile_id)
+      .maybeSingle() as unknown as {
+      data: { full_name: string | null } | null;
+    };
+
+    // Email lives on auth.users — pull via the admin API.
+    const userRes = await fetch(
+      `${process.env.NEXT_PUBLIC_SUPABASE_URL}/auth/v1/admin/users/${o.profile_id}`,
+      {
+        headers: {
+          apikey: process.env.SUPABASE_SERVICE_ROLE_KEY!,
+          Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY!}`,
+        },
+      },
+    );
+    if (!userRes.ok) continue;
+    const userData = (await userRes.json()) as { email?: string };
+    if (!userData.email) continue;
+
+    recipients.push({
+      profileId: o.profile_id,
+      fullName: profile?.full_name ?? null,
+      email: userData.email,
+    });
+  }
+
+  return recipients;
+}
+
+// ─────────────────────────────────────────────────────────────────
 // 1. Auto-generate a draft invoice when a job is completed
 // ─────────────────────────────────────────────────────────────────
 
@@ -1093,7 +1154,13 @@ export async function autoOnInvoicePaid(invoiceId: string) {
 
 export async function notifyReviewSubmitted(
   organizationId: string,
-  review: { rating: number; clientName: string; employeeName: string | null; reviewId: string },
+  review: {
+    rating: number;
+    clientName: string;
+    employeeName: string | null;
+    reviewId: string;
+    reviewText?: string | null;
+  },
 ) {
   try {
     const db = admin();
@@ -1111,6 +1178,50 @@ export async function notifyReviewSubmitted(
 
     sendPushToOrg(organizationId, { title, body, href: "/app/reviews" }).catch(() => {});
     console.log(`[auto] Review notification sent for ${organizationId}`);
+
+    // Email alert for low ratings (≤3★). Fires only when there's a real
+    // service-recovery opportunity — not on every 4/5-star review.
+    if (review.rating <= 3) {
+      const enabled = await isAutomationEnabled(
+        organizationId,
+        "low_review_alert",
+      );
+      if (enabled) {
+        const { sendEmail } = await import("@/lib/email");
+        const { lowReviewAlertEmail } = await import("@/lib/email-templates");
+
+        const { data: org } = await db
+          .from("organizations")
+          .select("name")
+          .eq("id", organizationId)
+          .maybeSingle() as unknown as {
+          data: { name: string } | null;
+        };
+        const orgName = org?.name ?? "your organization";
+
+        const recipients = await getOrgAdminRecipients(organizationId);
+        const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+        for (const r of recipients) {
+          const template = lowReviewAlertEmail({
+            recipientName: r.fullName ?? "there",
+            orgName,
+            clientName: review.clientName,
+            employeeName: review.employeeName,
+            rating: review.rating,
+            reviewText: review.reviewText ?? null,
+            reviewUrl: `${siteUrl}/app/reviews`,
+          });
+          await sendEmail({
+            to: r.email,
+            toName: r.fullName ?? undefined,
+            ...template,
+          });
+        }
+        console.log(
+          `[auto] Low review alert sent for ${organizationId} (rating ${review.rating})`,
+        );
+      }
+    }
   } catch (err) {
     console.error("[auto] notifyReviewSubmitted failed:", err);
   }
@@ -1346,6 +1457,544 @@ export async function autoComputeReviewBonuses(): Promise<number> {
     console.error("[auto] autoComputeReviewBonuses failed:", err);
     return 0;
   }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// ADMIN AUTOMATIONS
+//
+// These email the owner/admin of an org, not the end client. They use
+// sendEmail() directly (not sendOrgEmail), so the CLIENT_EMAILS_PAUSED
+// kill switch does NOT silence them — that kill switch is scoped to
+// org→client traffic only.
+// ─────────────────────────────────────────────────────────────────
+
+// 11. Unassigned booking alert — daily scan, silent when nothing to alert
+export async function sendUnassignedBookingAlerts(): Promise<{
+  orgsAlerted: number;
+  bookingsFlagged: number;
+}> {
+  const db = admin();
+  const { sendEmail } = await import("@/lib/email");
+  const { unassignedBookingAlertEmail } = await import("@/lib/email-templates");
+
+  const now = Date.now();
+  const windowEnd = new Date(now + 24 * 60 * 60 * 1000).toISOString();
+
+  const { data: candidates } = await db
+    .from("bookings")
+    .select("id, organization_id, scheduled_at, service_type, address, client:clients ( name )")
+    .is("assigned_to", null)
+    .is("unassigned_alert_sent_at" as never, null as never)
+    .in("status", ["pending", "confirmed"])
+    .gte("scheduled_at", new Date(now).toISOString())
+    .lte("scheduled_at", windowEnd) as unknown as {
+    data: Array<{
+      id: string;
+      organization_id: string;
+      scheduled_at: string;
+      service_type: string;
+      address: string | null;
+      client: { name: string | null } | null;
+    }> | null;
+  };
+
+  if (!candidates || candidates.length === 0) {
+    return { orgsAlerted: 0, bookingsFlagged: 0 };
+  }
+
+  // Group by org.
+  const byOrg = new Map<string, typeof candidates>();
+  for (const b of candidates) {
+    const list = byOrg.get(b.organization_id) ?? [];
+    list.push(b);
+    byOrg.set(b.organization_id, list);
+  }
+
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+  let orgsAlerted = 0;
+  let bookingsFlagged = 0;
+
+  for (const [orgId, bookings] of byOrg) {
+    if (!(await isAutomationEnabled(orgId, "unassigned_booking_alert"))) {
+      console.log(`[auto] Unassigned alert paused for org ${orgId}`);
+      continue;
+    }
+
+    const { data: orgData } = await db
+      .from("organizations")
+      .select("name")
+      .eq("id", orgId)
+      .maybeSingle() as unknown as {
+      data: { name: string } | null;
+    };
+    const orgName = orgData?.name ?? "your organization";
+
+    const recipients = await getOrgAdminRecipients(orgId);
+    if (recipients.length === 0) continue;
+
+    const bookingRows = bookings.map((b) => ({
+      clientName: b.client?.name ?? "A client",
+      serviceName: humanize(b.service_type),
+      dateTime: new Date(b.scheduled_at).toLocaleString("en-US", {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      }),
+      address: b.address ?? "(no address)",
+      hoursUntil: Math.max(
+        1,
+        Math.round((new Date(b.scheduled_at).getTime() - now) / (60 * 60 * 1000)),
+      ),
+    }));
+
+    for (const r of recipients) {
+      const template = unassignedBookingAlertEmail({
+        recipientName: r.fullName ?? "there",
+        orgName,
+        dashboardUrl: `${siteUrl}/app/bookings`,
+        bookings: bookingRows,
+      });
+      await sendEmail({
+        to: r.email,
+        toName: r.fullName ?? undefined,
+        ...template,
+      });
+    }
+
+    // Stamp each booking so we don't re-alert; the trigger clears it
+    // automatically if the booking later gets an assignee.
+    await db
+      .from("bookings")
+      .update({ unassigned_alert_sent_at: new Date().toISOString() } as never)
+      .in(
+        "id",
+        bookings.map((b) => b.id),
+      );
+
+    orgsAlerted += 1;
+    bookingsFlagged += bookings.length;
+    console.log(
+      `[auto] Unassigned alert sent for org ${orgId}: ${bookings.length} booking(s)`,
+    );
+  }
+
+  return { orgsAlerted, bookingsFlagged };
+}
+
+// ─────────────────────────────────────────────────────────────────
+// 12. Stripe payout notification — called from the Connect webhook
+// ─────────────────────────────────────────────────────────────────
+
+export async function sendPayoutNotification(args: {
+  stripeAccountId: string;
+  amountCents: number;
+  currency: string;
+  arrivalDateUnix: number | null;
+  payoutId: string;
+}): Promise<void> {
+  try {
+    const db = admin();
+    const { sendEmail } = await import("@/lib/email");
+    const { stripePayoutAlertEmail } = await import("@/lib/email-templates");
+    const { formatCurrencyCents } = await import("@/lib/format");
+
+    const { data: org } = await db
+      .from("organizations")
+      .select("id, name")
+      .eq("stripe_account_id" as never, args.stripeAccountId as never)
+      .maybeSingle() as unknown as {
+      data: { id: string; name: string } | null;
+    };
+
+    if (!org) {
+      console.warn(
+        `[auto] Payout for unknown Connect account ${args.stripeAccountId}`,
+      );
+      return;
+    }
+
+    if (!(await isAutomationEnabled(org.id, "stripe_payout_alert"))) {
+      console.log(`[auto] Payout alert paused for org ${org.id}`);
+      return;
+    }
+
+    const recipients = await getOrgAdminRecipients(org.id);
+    if (recipients.length === 0) return;
+
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+    const arrivalDate = args.arrivalDateUnix
+      ? new Date(args.arrivalDateUnix * 1000).toLocaleDateString("en-US", {
+          weekday: "long",
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        })
+      : "soon";
+
+    // Stripe currencies are ISO 4217 lowercase; our formatter expects uppercase.
+    const ccy = args.currency.toUpperCase();
+    const formattable = ccy === "CAD" || ccy === "USD" ? ccy : "USD";
+    const amount = formatCurrencyCents(
+      args.amountCents,
+      formattable as "CAD" | "USD",
+    );
+
+    for (const r of recipients) {
+      const template = stripePayoutAlertEmail({
+        recipientName: r.fullName ?? "there",
+        orgName: org.name,
+        amountFormatted: amount,
+        arrivalDate,
+        payoutId: args.payoutId,
+        dashboardUrl: `${siteUrl}/app/settings/integrations`,
+      });
+      await sendEmail({
+        to: r.email,
+        toName: r.fullName ?? undefined,
+        ...template,
+      });
+    }
+
+    console.log(
+      `[auto] Payout alert sent for org ${org.id}: ${amount} (${args.payoutId})`,
+    );
+  } catch (err) {
+    console.error("[auto] sendPayoutNotification failed:", err);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// 13. Weekly ops digest — Monday 8:00 UTC
+// ─────────────────────────────────────────────────────────────────
+
+export async function sendWeeklyOpsDigests(): Promise<{
+  orgsSent: number;
+}> {
+  const db = admin();
+  const { sendEmail } = await import("@/lib/email");
+  const { weeklyOpsDigestEmail } = await import("@/lib/email-templates");
+  const { formatCurrencyCents } = await import("@/lib/format");
+  const { getOrgCurrency } = await import("@/lib/org-currency");
+
+  const now = new Date();
+  // Last 7 days, ending at "now" (which is ~Monday morning when the cron fires).
+  const end = new Date(now);
+  const start = new Date(end.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const prevStart = new Date(start.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const weekLabel = `${start.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${end.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+
+  const { data: orgs } = await db
+    .from("organizations")
+    .select("id, name")
+    .is("deleted_at", null) as unknown as {
+    data: Array<{ id: string; name: string }> | null;
+  };
+
+  if (!orgs) return { orgsSent: 0 };
+
+  let orgsSent = 0;
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+
+  for (const org of orgs) {
+    if (!(await isAutomationEnabled(org.id, "weekly_ops_digest"))) continue;
+
+    const recipients = await getOrgAdminRecipients(org.id);
+    if (recipients.length === 0) continue;
+
+    // Gather stats in parallel.
+    const [
+      { data: paidInvoices },
+      { data: prevPaidInvoices },
+      { count: completedCount },
+      { count: cancelledCount },
+      { data: reviews },
+      { count: overdueCount },
+      { count: unassignedUpcomingCount },
+    ] = await Promise.all([
+      db.from("invoices").select("amount_cents").eq("organization_id", org.id)
+        .gte("paid_at", start.toISOString())
+        .lte("paid_at", end.toISOString()) as unknown as Promise<{
+        data: Array<{ amount_cents: number }> | null;
+      }>,
+      db.from("invoices").select("amount_cents").eq("organization_id", org.id)
+        .gte("paid_at", prevStart.toISOString())
+        .lte("paid_at", start.toISOString()) as unknown as Promise<{
+        data: Array<{ amount_cents: number }> | null;
+      }>,
+      db.from("bookings").select("id", { count: "exact", head: true })
+        .eq("organization_id", org.id).eq("status", "completed")
+        .gte("scheduled_at", start.toISOString())
+        .lte("scheduled_at", end.toISOString()),
+      db.from("bookings").select("id", { count: "exact", head: true })
+        .eq("organization_id", org.id).eq("status", "cancelled")
+        .gte("updated_at" as never, start.toISOString() as never)
+        .lte("updated_at" as never, end.toISOString() as never),
+      db.from("reviews").select("rating").eq("organization_id", org.id)
+        .gte("created_at", start.toISOString())
+        .lte("created_at", end.toISOString()) as unknown as Promise<{
+        data: Array<{ rating: number }> | null;
+      }>,
+      db.from("invoices").select("id", { count: "exact", head: true })
+        .eq("organization_id", org.id).eq("status", "overdue")
+        .is("paid_at", null),
+      db.from("bookings").select("id", { count: "exact", head: true })
+        .eq("organization_id", org.id).is("assigned_to", null)
+        .in("status", ["pending", "confirmed"])
+        .gte("scheduled_at", now.toISOString())
+        .lte("scheduled_at", new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString()),
+    ]);
+
+    const revenueCents = (paidInvoices ?? []).reduce(
+      (acc, r) => acc + r.amount_cents,
+      0,
+    );
+    const prevRevenueCents = (prevPaidInvoices ?? []).reduce(
+      (acc, r) => acc + r.amount_cents,
+      0,
+    );
+    const deltaPct =
+      prevRevenueCents > 0
+        ? Math.round(((revenueCents - prevRevenueCents) / prevRevenueCents) * 100)
+        : null;
+
+    const avgRating =
+      reviews && reviews.length > 0
+        ? (reviews.reduce((a, r) => a + r.rating, 0) / reviews.length).toFixed(1)
+        : null;
+
+    const currency = await getOrgCurrency(org.id);
+
+    const stats = [
+      {
+        label: "Revenue",
+        value: formatCurrencyCents(revenueCents, currency),
+        sub:
+          deltaPct !== null
+            ? `${deltaPct >= 0 ? "+" : ""}${deltaPct}% vs prior week`
+            : "No prior-week baseline",
+      },
+      {
+        label: "Jobs completed",
+        value: String(completedCount ?? 0),
+      },
+      {
+        label: "Jobs cancelled",
+        value: String(cancelledCount ?? 0),
+      },
+      {
+        label: "Avg rating",
+        value: avgRating ? `${avgRating} ★` : "—",
+        sub:
+          reviews && reviews.length > 0
+            ? `${reviews.length} review${reviews.length === 1 ? "" : "s"}`
+            : "No reviews this week",
+      },
+      {
+        label: "Overdue invoices",
+        value: String(overdueCount ?? 0),
+      },
+    ];
+
+    for (const r of recipients) {
+      const template = weeklyOpsDigestEmail({
+        recipientName: r.fullName ?? "there",
+        orgName: org.name,
+        weekLabel,
+        stats,
+        upcomingUnassigned: unassignedUpcomingCount ?? 0,
+        dashboardUrl: `${siteUrl}/app/reports`,
+      });
+      await sendEmail({
+        to: r.email,
+        toName: r.fullName ?? undefined,
+        ...template,
+      });
+    }
+
+    orgsSent += 1;
+    console.log(`[auto] Weekly digest sent for org ${org.id}`);
+  }
+
+  return { orgsSent };
+}
+
+// ─────────────────────────────────────────────────────────────────
+// 14. Monthly ops digest — 1st of month, 9:00 UTC
+// ─────────────────────────────────────────────────────────────────
+
+export async function sendMonthlyOpsDigests(): Promise<{ orgsSent: number }> {
+  const db = admin();
+  const { sendEmail } = await import("@/lib/email");
+  const { monthlyOpsDigestEmail } = await import("@/lib/email-templates");
+  const { formatCurrencyCents } = await import("@/lib/format");
+  const { getOrgCurrency } = await import("@/lib/org-currency");
+
+  // Run window: prior calendar month UTC. If today is Nov 1, window is
+  // Oct 1 00:00 UTC through Nov 1 00:00 UTC.
+  const now = new Date();
+  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+  const monthLabel = start.toLocaleDateString("en-US", {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+
+  const { data: orgs } = await db
+    .from("organizations")
+    .select("id, name")
+    .is("deleted_at", null) as unknown as {
+    data: Array<{ id: string; name: string }> | null;
+  };
+
+  if (!orgs) return { orgsSent: 0 };
+
+  let orgsSent = 0;
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+
+  for (const org of orgs) {
+    if (!(await isAutomationEnabled(org.id, "monthly_ops_digest"))) continue;
+
+    const recipients = await getOrgAdminRecipients(org.id);
+    if (recipients.length === 0) continue;
+
+    const [
+      { data: paidInvoices },
+      { count: completedCount },
+      { count: cancelledCount },
+      { data: reviews },
+      { count: newClientsCount },
+    ] = await Promise.all([
+      db.from("invoices")
+        .select("amount_cents, client_id, client:clients ( name )")
+        .eq("organization_id", org.id)
+        .gte("paid_at", start.toISOString())
+        .lt("paid_at", end.toISOString()) as unknown as Promise<{
+        data: Array<{
+          amount_cents: number;
+          client_id: string;
+          client: { name: string | null } | null;
+        }> | null;
+      }>,
+      db.from("bookings").select("id", { count: "exact", head: true })
+        .eq("organization_id", org.id).eq("status", "completed")
+        .gte("scheduled_at", start.toISOString())
+        .lt("scheduled_at", end.toISOString()),
+      db.from("bookings").select("id", { count: "exact", head: true })
+        .eq("organization_id", org.id).eq("status", "cancelled")
+        .gte("updated_at" as never, start.toISOString() as never)
+        .lt("updated_at" as never, end.toISOString() as never),
+      db.from("reviews").select("rating").eq("organization_id", org.id)
+        .gte("created_at", start.toISOString())
+        .lt("created_at", end.toISOString()) as unknown as Promise<{
+        data: Array<{ rating: number }> | null;
+      }>,
+      db.from("clients").select("id", { count: "exact", head: true })
+        .eq("organization_id", org.id)
+        .gte("created_at", start.toISOString())
+        .lt("created_at", end.toISOString()),
+    ]);
+
+    // Aggregate top clients by revenue.
+    const clientAgg = new Map<string, { name: string; cents: number; jobs: number }>();
+    for (const inv of paidInvoices ?? []) {
+      const existing = clientAgg.get(inv.client_id) ?? {
+        name: inv.client?.name ?? "—",
+        cents: 0,
+        jobs: 0,
+      };
+      existing.cents += inv.amount_cents;
+      existing.jobs += 1;
+      clientAgg.set(inv.client_id, existing);
+    }
+    const topClients = [...clientAgg.values()]
+      .sort((a, b) => b.cents - a.cents)
+      .slice(0, 3);
+
+    const currency = await getOrgCurrency(org.id);
+
+    // Top performer by completed jobs.
+    const { data: completedByEmp } = await db
+      .from("bookings")
+      .select("assigned_to")
+      .eq("organization_id", org.id)
+      .eq("status", "completed")
+      .not("assigned_to", "is", null)
+      .gte("scheduled_at", start.toISOString())
+      .lt("scheduled_at", end.toISOString()) as unknown as {
+      data: Array<{ assigned_to: string }> | null;
+    };
+    const empCount = new Map<string, number>();
+    for (const b of completedByEmp ?? []) {
+      empCount.set(b.assigned_to, (empCount.get(b.assigned_to) ?? 0) + 1);
+    }
+    let topEmployee: { name: string; jobs: number } | null = null;
+    if (empCount.size > 0) {
+      const [topId, jobs] = [...empCount.entries()].sort((a, b) => b[1] - a[1])[0];
+      const { data: m } = await db
+        .from("memberships")
+        .select("profile:profiles ( full_name )")
+        .eq("id", topId)
+        .maybeSingle() as unknown as {
+        data: { profile: { full_name: string | null } | null } | null;
+      };
+      topEmployee = {
+        name: m?.profile?.full_name ?? "Top cleaner",
+        jobs,
+      };
+    }
+
+    const revenueCents = (paidInvoices ?? []).reduce(
+      (a, r) => a + r.amount_cents,
+      0,
+    );
+    const avgRating =
+      reviews && reviews.length > 0
+        ? (reviews.reduce((a, r) => a + r.rating, 0) / reviews.length).toFixed(1)
+        : null;
+
+    const stats = [
+      { label: "Revenue", value: formatCurrencyCents(revenueCents, currency) },
+      { label: "Jobs completed", value: String(completedCount ?? 0) },
+      { label: "Jobs cancelled", value: String(cancelledCount ?? 0) },
+      {
+        label: "Avg rating",
+        value: avgRating ? `${avgRating} ★` : "—",
+        sub: reviews && reviews.length > 0
+          ? `${reviews.length} review${reviews.length === 1 ? "" : "s"}`
+          : undefined,
+      },
+      { label: "New clients", value: String(newClientsCount ?? 0) },
+    ];
+
+    for (const r of recipients) {
+      const template = monthlyOpsDigestEmail({
+        recipientName: r.fullName ?? "there",
+        orgName: org.name,
+        monthLabel,
+        stats,
+        topClients: topClients.map((c) => ({
+          name: c.name,
+          revenue: formatCurrencyCents(c.cents, currency),
+          jobs: c.jobs,
+        })),
+        topEmployee,
+        dashboardUrl: `${siteUrl}/app/reports`,
+      });
+      await sendEmail({
+        to: r.email,
+        toName: r.fullName ?? undefined,
+        ...template,
+      });
+    }
+
+    orgsSent += 1;
+    console.log(`[auto] Monthly digest sent for org ${org.id}`);
+  }
+
+  return { orgsSent };
 }
 
 // ─────────────────────────────────────────────────────────────────

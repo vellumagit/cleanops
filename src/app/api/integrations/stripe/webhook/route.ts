@@ -16,6 +16,7 @@ import {
   isStripeConnectEnabled,
 } from "@/lib/stripe";
 import { applyAccountUpdate } from "@/lib/stripe-connect";
+import { sendPayoutNotification } from "@/lib/automations";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
@@ -117,6 +118,23 @@ export async function POST(req: NextRequest) {
               stripe_fee_cents: pi.application_fee_amount ?? null,
             } as never)
             .eq("id", invoiceId);
+        }
+        break;
+      }
+
+      case "payout.paid": {
+        // Fires on the connected account when Stripe has sent money to
+        // the merchant's bank. We notify the owner so they know the
+        // deposit is incoming.
+        const payout = event.data.object as Stripe.Payout;
+        if (accountId) {
+          await sendPayoutNotification({
+            stripeAccountId: accountId,
+            amountCents: payout.amount,
+            currency: payout.currency,
+            arrivalDateUnix: payout.arrival_date,
+            payoutId: payout.id,
+          });
         }
         break;
       }
