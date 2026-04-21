@@ -52,6 +52,10 @@ export default async function EmployeesPage() {
       .order("created_at", { ascending: false })
       .limit(100);
 
+    // Capture "now" once so every row uses the same reference point.
+    // Server component — deterministic per request.
+    // eslint-disable-next-line react-hooks/purity
+    const nowMs = Date.now();
     invitations = (inviteData ?? []).map((inv) => ({
       id: inv.id,
       email: inv.email,
@@ -59,7 +63,7 @@ export default async function EmployeesPage() {
       token: inv.token,
       created_at: inv.created_at,
       expires_at: inv.expires_at,
-      expired: new Date(inv.expires_at).getTime() < Date.now(),
+      expired: new Date(inv.expires_at).getTime() < nowMs,
     }));
   }
 

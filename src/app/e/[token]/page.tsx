@@ -74,8 +74,11 @@ export default async function PublicEstimatePage({
     estimate.organization?.brand_color ?? "#6366f1";
   const logoUrl = estimate.organization?.logo_url ?? null;
 
+  // Server component — per-request render, so Date.now() here is
+  // deterministic for this response.
   const isExpired = estimate.expires_at
-    ? new Date(estimate.expires_at).getTime() < Date.now()
+    ? // eslint-disable-next-line react-hooks/purity
+      new Date(estimate.expires_at).getTime() < Date.now()
     : false;
 
   return (

@@ -153,8 +153,12 @@ export function AppSidebar({
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  // Close drawer on route change
+  // Close drawer on route change. React 19's compiler flags the
+  // setState-in-effect, but this is the idiomatic pattern — syncing
+  // local UI state to an external routing event. The alternative
+  // (listen to router events) is more invasive and doesn't change behavior.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMobileOpen(false);
   }, [pathname]);
 

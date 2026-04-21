@@ -84,11 +84,15 @@ export default async function RecurringInvoicesPage() {
         </div>
       ) : (
         <ul className="space-y-2">
-          {series.map((s) => {
-            const cadenceLabel =
-              s.cadence === "biweekly" ? "Every 2 weeks" : s.cadence;
-            const nextRun = new Date(s.next_run_at);
-            const isOverdue = s.active && nextRun.getTime() < Date.now();
+          {(() => {
+            // Capture once for consistent "overdue" determination across rows.
+            // eslint-disable-next-line react-hooks/purity
+            const nowMs = Date.now();
+            return series.map((s) => {
+              const cadenceLabel =
+                s.cadence === "biweekly" ? "Every 2 weeks" : s.cadence;
+              const nextRun = new Date(s.next_run_at);
+              const isOverdue = s.active && nextRun.getTime() < nowMs;
             return (
               <li
                 key={s.id}
@@ -177,8 +181,9 @@ export default async function RecurringInvoicesPage() {
                   </div>
                 </div>
               </li>
-            );
-          })}
+              );
+            });
+          })()}
         </ul>
       )}
     </PageShell>

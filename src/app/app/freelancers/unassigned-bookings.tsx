@@ -21,6 +21,9 @@ export type UnassignedBookingRow = {
 };
 
 export function UnassignedBookings({ rows }: { rows: UnassignedBookingRow[] }) {
+  // Capture once per render so every row tests against the same instant.
+  // eslint-disable-next-line react-hooks/purity
+  const nowMs = Date.now();
   return (
     <div className="rounded-lg border border-amber-500/30 bg-amber-500/5">
       <div className="flex items-center gap-2 border-b border-amber-500/20 px-4 py-3">
@@ -36,7 +39,7 @@ export function UnassignedBookings({ rows }: { rows: UnassignedBookingRow[] }) {
       <div className="divide-y divide-amber-500/10">
         {rows.map((r) => {
           const isUrgent =
-            new Date(r.scheduled_at).getTime() - Date.now() < 24 * 60 * 60 * 1000;
+            new Date(r.scheduled_at).getTime() - nowMs < 24 * 60 * 60 * 1000;
 
           return (
             <div

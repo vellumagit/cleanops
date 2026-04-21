@@ -87,6 +87,10 @@ export default async function ClaimPage({
   offer.positions_filled = (offerPositions as Record<string, number> | null)?.positions_filled ?? 0;
 
   const booking = offer.booking;
+  // Server component — rendered once per request, so capturing "now" here
+  // is deterministic for the response. React 19's purity rule doesn't
+  // differentiate Server vs Client Components, so we opt out for this line.
+  // eslint-disable-next-line react-hooks/purity
   const now = Date.now();
   const expiredByClock =
     !!offer.expires_at && new Date(offer.expires_at).getTime() < now;

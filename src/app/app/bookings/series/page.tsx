@@ -55,7 +55,7 @@ export default async function SeriesPage() {
 
   // Get booking counts per series
   const seriesIds = (data ?? []).map((s) => s.id);
-  let bookingCounts: Record<string, { total: number; upcoming: number }> = {};
+  const bookingCounts: Record<string, { total: number; upcoming: number }> = {};
 
   if (seriesIds.length > 0) {
     const now = new Date().toISOString();

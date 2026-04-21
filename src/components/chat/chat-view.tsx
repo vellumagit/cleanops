@@ -66,8 +66,11 @@ export function ChatView({
   const scrollerRef = useRef<HTMLDivElement | null>(null);
 
   // Reset local messages whenever the active thread changes (or initial set
-  // changes due to a server refresh).
+  // changes due to a server refresh). React 19's compiler flags the
+  // setState-in-effect here; the idiomatic alternative is `key={activeThreadId}`
+  // on the parent to force remount, but that also loses transitions. Intentional.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMessages(initialMessages);
   }, [initialMessages, activeThreadId]);
 

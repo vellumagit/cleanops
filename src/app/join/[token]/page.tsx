@@ -69,7 +69,8 @@ export default async function JoinPage({
     );
   }
 
-  // Expired
+  // Expired — server component rendered once per request.
+  // eslint-disable-next-line react-hooks/purity
   const expired = new Date(invitation.expires_at).getTime() < Date.now();
   if (expired) {
     return (

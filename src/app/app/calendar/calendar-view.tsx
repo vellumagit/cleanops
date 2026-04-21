@@ -51,25 +51,25 @@ export function CalendarView({ events, hasGoogleCalendar }: Props) {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [view, setView] = useState<ViewMode>("month");
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
+  // Restore Google Calendar toggle from localStorage at mount time so
+  // we don't cascade-render from a setState-in-effect.
   const [enabledSources, setEnabledSources] = useState<Set<EventSource>>(
-    new Set(["booking", "invoice", "google_calendar"]),
-  );
-
-  // Restore Google Calendar toggle from localStorage
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem("cleanops_gcal_overlay");
-      if (stored === "false") {
-        setEnabledSources((prev) => {
-          const next = new Set(prev);
-          next.delete("google_calendar");
-          return next;
-        });
+    () => {
+      const defaults: EventSource[] = ["booking", "invoice", "google_calendar"];
+      if (typeof window === "undefined") return new Set(defaults);
+      try {
+        const stored = localStorage.getItem("cleanops_gcal_overlay");
+        if (stored === "false") {
+          return new Set<EventSource>(
+            defaults.filter((s) => s !== "google_calendar"),
+          );
+        }
+      } catch {
+        // localStorage blocked (private mode, iframe) — use defaults
       }
-    } catch {
-      // localStorage unavailable
-    }
-  }, []);
+      return new Set(defaults);
+    },
+  );
 
   const filteredEvents = useMemo(
     () => events.filter((e) => enabledSources.has(e.type)),

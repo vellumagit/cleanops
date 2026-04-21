@@ -151,7 +151,7 @@ async function wipeSeedAuthUsers(): Promise<number> {
   // Remove any seed-created employee auth users. Real humans stay.
   let removed = 0;
   let page = 1;
-  // eslint-disable-next-line no-constant-condition
+   
   while (true) {
     const { data, error } = await admin.auth.admin.listUsers({
       page,

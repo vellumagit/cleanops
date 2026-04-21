@@ -42,7 +42,13 @@ export default async function AppLayout({
     { count: pendingEstimates },
     { count: unreadChat },
     { count: newReviews },
-  ] = await Promise.all([
+  ] = await (async () => {
+    // Capture once — used as the lower bound on two time-windowed counts.
+    // eslint-disable-next-line react-hooks/purity
+    const nowMs = Date.now();
+    const chatSince = new Date(nowMs - 24 * 60 * 60 * 1000).toISOString();
+    const reviewsSince = new Date(nowMs - 7 * 24 * 60 * 60 * 1000).toISOString();
+    return Promise.all([
     supabase
       .from("profiles")
       .select("full_name")
@@ -87,10 +93,7 @@ export default async function AppLayout({
       .from("chat_messages" as never)
       .select("id", { count: "exact", head: true })
       .eq("organization_id", membership.organization_id)
-      .gte(
-        "created_at",
-        new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
-      )
+      .gte("created_at", chatSince)
       .neq("sender_id", membership.id) as unknown as {
       count: number | null;
     },
@@ -98,11 +101,9 @@ export default async function AppLayout({
     supabase
       .from("reviews")
       .select("id", { count: "exact", head: true })
-      .gte(
-        "submitted_at",
-        new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-      ),
+      .gte("submitted_at", reviewsSince),
   ]);
+  })();
 
   const showSetup =
     !org?.onboarding_completed_at &&
