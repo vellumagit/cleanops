@@ -58,6 +58,26 @@ export async function POST(req: NextRequest) {
   // Connect events carry the connected account id here.
   const accountId = (event as unknown as { account?: string }).account ?? null;
 
+  /**
+   * Resolve which org on our platform owns this Stripe account. Used below
+   * to enforce that any invoice touched by this event actually belongs to
+   * that org — otherwise a malicious Connect-enabled tenant could forge
+   * metadata.invoice_id to flip another org's invoices.
+   */
+  async function ownerOrgForAccount(
+    acct: string | null,
+  ): Promise<string | null> {
+    if (!acct) return null;
+    const { data } = await admin
+      .from("organizations")
+      .select("id")
+      .eq("stripe_account_id" as never, acct as never)
+      .maybeSingle() as unknown as {
+      data: { id: string } | null;
+    };
+    return data?.id ?? null;
+  }
+
   try {
     switch (event.type) {
       case "account.updated": {
@@ -88,6 +108,17 @@ export async function POST(req: NextRequest) {
         const invoiceId =
           (session.metadata && session.metadata.invoice_id) || null;
         if (invoiceId && session.payment_status === "paid") {
+          // CRITICAL: enforce that the invoice belongs to the org that
+          // owns this Stripe account. Without this filter, a malicious
+          // Connect-enabled tenant could forge metadata.invoice_id to
+          // flip another org's invoice to paid.
+          const ownerOrgId = await ownerOrgForAccount(accountId);
+          if (!ownerOrgId) {
+            console.warn(
+              `[stripe connect] checkout.session.completed for unknown account ${accountId}, skipping`,
+            );
+            break;
+          }
           await admin
             .from("invoices")
             .update({
@@ -99,7 +130,8 @@ export async function POST(req: NextRequest) {
                   ? session.payment_intent
                   : session.payment_intent?.id ?? null,
             } as never)
-            .eq("id", invoiceId);
+            .eq("id", invoiceId)
+            .eq("organization_id", ownerOrgId);
         }
         break;
       }
@@ -108,6 +140,16 @@ export async function POST(req: NextRequest) {
         const pi = event.data.object as Stripe.PaymentIntent;
         const invoiceId = pi.metadata?.invoice_id ?? null;
         if (invoiceId) {
+          // Same cross-tenant guard as checkout.session.completed —
+          // metadata is attacker-controlled when the PI is created
+          // outside our code.
+          const ownerOrgId = await ownerOrgForAccount(accountId);
+          if (!ownerOrgId) {
+            console.warn(
+              `[stripe connect] payment_intent.succeeded for unknown account ${accountId}, skipping`,
+            );
+            break;
+          }
           await admin
             .from("invoices")
             .update({
@@ -117,7 +159,8 @@ export async function POST(req: NextRequest) {
               stripe_payment_intent_id: pi.id,
               stripe_fee_cents: pi.application_fee_amount ?? null,
             } as never)
-            .eq("id", invoiceId);
+            .eq("id", invoiceId)
+            .eq("organization_id", ownerOrgId);
         }
         break;
       }
@@ -146,7 +189,16 @@ export async function POST(req: NextRequest) {
             ? charge.payment_intent
             : charge.payment_intent?.id ?? null;
         if (piId) {
-          // Find the invoice by PI id and flip it back.
+          // PI ids are globally unique (not guessable) so the cross-tenant
+          // forgery risk is lower, but we still enforce the org filter
+          // defensively in case an attacker has observed a legitimate PI id.
+          const ownerOrgId = await ownerOrgForAccount(accountId);
+          if (!ownerOrgId) {
+            console.warn(
+              `[stripe connect] charge.refunded for unknown account ${accountId}, skipping`,
+            );
+            break;
+          }
           await admin
             .from("invoices")
             .update({
@@ -154,7 +206,8 @@ export async function POST(req: NextRequest) {
               paid_at: null,
               stripe_paid_at: null,
             } as never)
-            .eq("stripe_payment_intent_id" as never, piId);
+            .eq("stripe_payment_intent_id" as never, piId)
+            .eq("organization_id", ownerOrgId);
         }
         break;
       }
