@@ -27,10 +27,27 @@ export default async function EditBookingPage({
     supabase
       .from("bookings")
       .select(
-        "id, client_id, package_id, assigned_to, scheduled_at, duration_minutes, service_type, status, total_cents, hourly_rate_cents, address, notes",
+        "id, client_id, package_id, assigned_to, scheduled_at, duration_minutes, service_type, status, total_cents, hourly_rate_cents, address, notes, series_id",
       )
       .eq("id", id)
-      .maybeSingle(),
+      .maybeSingle() as unknown as Promise<{
+      data: {
+        id: string;
+        client_id: string;
+        package_id: string | null;
+        assigned_to: string | null;
+        scheduled_at: string;
+        duration_minutes: number;
+        service_type: string;
+        status: string;
+        total_cents: number;
+        hourly_rate_cents: number | null;
+        address: string | null;
+        notes: string | null;
+        series_id: string | null;
+      } | null;
+      error: { message: string } | null;
+    }>,
     fetchBookingFormOptions(),
   ]);
 
@@ -70,7 +87,11 @@ export default async function EditBookingPage({
             invoices will be unlinked but preserved.
           </p>
           <div className="mt-4">
-            <DeleteBookingForm id={booking.id} />
+            <DeleteBookingForm
+              id={booking.id}
+              seriesId={booking.series_id}
+              scheduledAt={booking.scheduled_at}
+            />
           </div>
         </div>
       </div>

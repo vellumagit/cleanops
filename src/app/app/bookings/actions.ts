@@ -447,26 +447,145 @@ export async function updateBookingAction(
 export async function deleteBookingAction(formData: FormData) {
   const id = String(formData.get("id") ?? "");
   if (!id) return;
+  const cascade = String(formData.get("cascade_series") ?? "") === "true";
   const { membership, supabase } = await getActionContext();
 
-  // Fetch the Google Calendar event ID before deleting
+  // Fetch the Google Calendar event ID + series_id before deleting
   const { data: existing } = (await supabase
     .from("bookings")
-    .select("google_calendar_event_id")
+    .select("google_calendar_event_id, series_id")
     .eq("id", id)
     .maybeSingle()) as unknown as {
-    data: { google_calendar_event_id: string | null } | null;
+    data: {
+      google_calendar_event_id: string | null;
+      series_id: string | null;
+    } | null;
   };
 
-  const { error } = await supabase.from("bookings").delete().eq("id", id).eq("organization_id", membership.organization_id);
-  if (error) throw error;
+  // Cascade: delete every booking in this series first, then the series row.
+  // FK on bookings.series_id uses ON DELETE SET NULL, so we must clean the
+  // children explicitly — otherwise they'd be orphaned.
+  if (cascade && existing?.series_id) {
+    // Collect every Google Calendar event id in the series so we can
+    // unsync them after the row delete.
+    const { data: siblings } = (await supabase
+      .from("bookings")
+      .select("google_calendar_event_id")
+      .eq("series_id" as never, existing.series_id as never)) as unknown as {
+      data: Array<{ google_calendar_event_id: string | null }> | null;
+    };
 
-  // Delete from Google Calendar
-  if (existing?.google_calendar_event_id) {
+    await supabase
+      .from("bookings")
+      .delete()
+      .eq("series_id" as never, existing.series_id as never)
+      .eq("organization_id", membership.organization_id);
+
+    await (supabase
+      .from("booking_series" as never)
+      .delete()
+      .eq("id" as never, existing.series_id as never)
+      .eq(
+        "organization_id" as never,
+        membership.organization_id as never,
+      ) as unknown as Promise<unknown>);
+
+    // Fire-and-forget Google Calendar cleanup for every event we had.
+    for (const sib of siblings ?? []) {
+      if (sib.google_calendar_event_id) {
+        deleteCalendarEvent(
+          membership.organization_id,
+          sib.google_calendar_event_id,
+        ).catch((err) =>
+          console.error("[gcal] sync error on cascade delete:", err),
+        );
+      }
+    }
+  } else {
+    // Single-booking delete (existing behavior).
+    const { error } = await supabase
+      .from("bookings")
+      .delete()
+      .eq("id", id)
+      .eq("organization_id", membership.organization_id);
+    if (error) throw error;
+
+    if (existing?.google_calendar_event_id) {
+      deleteCalendarEvent(
+        membership.organization_id,
+        existing.google_calendar_event_id,
+      ).catch((err) => console.error("[gcal] sync error on delete:", err));
+    }
+  }
+
+  revalidatePath("/app/bookings");
+  revalidatePath("/app/bookings/series");
+  revalidatePath("/app");
+  redirect("/app/bookings");
+}
+
+/**
+ * Skip a single recurring occurrence: add its date to the series'
+ * skip_dates array AND delete this particular booking row. The nightly
+ * extend cron will not regenerate this date; everything past it keeps
+ * going as normal.
+ */
+export async function skipBookingOccurrenceAction(formData: FormData) {
+  const id = String(formData.get("id") ?? "");
+  if (!id) return;
+  const { membership, supabase } = await getActionContext();
+
+  const { data: booking } = (await supabase
+    .from("bookings")
+    .select("series_id, scheduled_at, google_calendar_event_id")
+    .eq("id", id)
+    .maybeSingle()) as unknown as {
+    data: {
+      series_id: string | null;
+      scheduled_at: string;
+      google_calendar_event_id: string | null;
+    } | null;
+  };
+
+  if (!booking || !booking.series_id) return;
+
+  const skipDate = booking.scheduled_at.slice(0, 10); // YYYY-MM-DD
+
+  // Pull the current skip_dates, append if not already there, write back.
+  const { data: seriesRow } = (await supabase
+    .from("booking_series" as never)
+    .select("skip_dates")
+    .eq("id" as never, booking.series_id as never)
+    .maybeSingle()) as unknown as {
+    data: { skip_dates: string[] | null } | null;
+  };
+
+  const existingSkips = seriesRow?.skip_dates ?? [];
+  if (!existingSkips.includes(skipDate)) {
+    await (supabase
+      .from("booking_series" as never)
+      .update({ skip_dates: [...existingSkips, skipDate] } as never)
+      .eq("id" as never, booking.series_id as never)
+      .eq(
+        "organization_id" as never,
+        membership.organization_id as never,
+      ) as unknown as Promise<unknown>);
+  }
+
+  // Delete this occurrence.
+  await supabase
+    .from("bookings")
+    .delete()
+    .eq("id", id)
+    .eq("organization_id", membership.organization_id);
+
+  if (booking.google_calendar_event_id) {
     deleteCalendarEvent(
       membership.organization_id,
-      existing.google_calendar_event_id,
-    ).catch((err) => console.error("[gcal] sync error on delete:", err));
+      booking.google_calendar_event_id,
+    ).catch((err) =>
+      console.error("[gcal] sync error on skip-occurrence:", err),
+    );
   }
 
   revalidatePath("/app/bookings");

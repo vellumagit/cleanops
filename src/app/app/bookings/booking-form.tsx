@@ -68,6 +68,9 @@ export function BookingForm({
   const [selectedDays, setSelectedDays] = useState<number[]>([]);
   const [monthlyNth, setMonthlyNth] = useState<string>("2");
   const [monthlyDow, setMonthlyDow] = useState<string>("2");
+  // Default to indefinite. New series are almost always open-ended —
+  // cleaning retainers with explicit end dates are the exception.
+  const [endsIndefinite, setEndsIndefinite] = useState(true);
 
   const defaultMinutes = defaults?.duration_minutes ?? 0;
 
@@ -338,38 +341,40 @@ export function BookingForm({
               />
             </FormField>
 
-            <FormField
-              label="End date"
-              htmlFor="ends_at"
-              hint="Leave blank for ongoing"
-            >
-              <Input
-                id="ends_at"
-                name="ends_at"
-                type="date"
-                defaultValue={v.ends_at ?? ""}
-              />
+            <FormField label="Ends" htmlFor="ends_at">
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={endsIndefinite}
+                    onChange={(e) => setEndsIndefinite(e.target.checked)}
+                    className="h-4 w-4 rounded border-input"
+                  />
+                  <span>Continue indefinitely</span>
+                </label>
+                <Input
+                  id="ends_at"
+                  name="ends_at"
+                  type="date"
+                  defaultValue={v.ends_at ?? ""}
+                  disabled={endsIndefinite}
+                  required={!endsIndefinite}
+                  className={endsIndefinite ? "opacity-50" : ""}
+                />
+              </div>
             </FormField>
           </div>
 
-          <FormField
-            label="Generate ahead"
-            htmlFor="generate_ahead"
-            hint="How many future bookings to create at once"
-          >
-            <FormSelect
-              id="generate_ahead"
-              name="generate_ahead"
-              defaultValue={v.generate_ahead ?? "8"}
-            >
-              <option value="4">4 bookings</option>
-              <option value="8">8 bookings</option>
-              <option value="12">12 bookings</option>
-              <option value="16">16 bookings</option>
-              <option value="26">26 bookings (~6 months weekly)</option>
-              <option value="52">52 bookings (~1 year weekly)</option>
-            </FormSelect>
-          </FormField>
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            Sollos generates about 2 months of bookings ahead and
+            auto-extends each night. There&rsquo;s no cap — the series
+            keeps going forever unless you set an end date or pause it.
+          </p>
+
+          {/* Hidden: generate_ahead is kept as the cron's batch size,
+              but owners don't need to think about it. 8 is the sweet
+              spot for ~2 months of weekly. */}
+          <input type="hidden" name="generate_ahead" value="8" />
         </div>
       )}
 

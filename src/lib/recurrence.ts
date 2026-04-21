@@ -95,7 +95,25 @@ export type SeriesRule = {
   monthly_nth?: number | null;
   /** For monthly_nth: 0=Sun .. 6=Sat */
   monthly_dow?: number | null;
+  /**
+   * One-off dates (YYYY-MM-DD) to skip when generating. Any occurrence
+   * whose date matches one of these is silently dropped. Used for
+   * holidays / client-requested pauses for a single occurrence.
+   */
+  skip_dates?: string[] | null;
 };
+
+/** True if the date (in YYYY-MM-DD format) appears in the skip list. */
+function isSkipped(d: Date, skipDates: string[] | null | undefined): boolean {
+  if (!skipDates || skipDates.length === 0) return false;
+  const key =
+    d.getFullYear() +
+    "-" +
+    String(d.getMonth() + 1).padStart(2, "0") +
+    "-" +
+    String(d.getDate()).padStart(2, "0");
+  return skipDates.includes(key);
+}
 
 /**
  * Return the date of the Nth occurrence of `dow` (0=Sun..6=Sat) in the
@@ -191,8 +209,11 @@ export function generateOccurrences(
 
     // Only include dates on or after the start
     if (!isBefore(startOfDay(cursor), startOfDay(startDate))) {
-      // Only include dates after the "after" cursor
-      if (!after || isAfter(occurrence, after)) {
+      // Only include dates after the "after" cursor, and not in skip list
+      if (
+        (!after || isAfter(occurrence, after)) &&
+        !isSkipped(cursor, rule.skip_dates)
+      ) {
         results.push(occurrence.toISOString());
       }
     }
@@ -262,7 +283,10 @@ function generateMonthlyNth(
       if (endDate && isAfter(startOfDay(candidate), endDate)) break;
 
       if (!isBefore(startOfDay(candidate), startOfDay(startDate))) {
-        if (!after || isAfter(occurrence, after)) {
+        if (
+          (!after || isAfter(occurrence, after)) &&
+          !isSkipped(candidate, rule.skip_dates)
+        ) {
           results.push(occurrence.toISOString());
         }
       }
@@ -306,7 +330,10 @@ function generateCustomWeekly(
 
       if (!isBefore(startOfDay(cursor), startOfDay(startDate))) {
         if (endDate && isAfter(startOfDay(cursor), endDate)) break;
-        if (!after || isAfter(occurrence, after)) {
+        if (
+          (!after || isAfter(occurrence, after)) &&
+          !isSkipped(cursor, rule.skip_dates)
+        ) {
           results.push(occurrence.toISOString());
         }
       }

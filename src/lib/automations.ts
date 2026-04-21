@@ -1387,12 +1387,19 @@ export async function autoExtendRecurringSeries(): Promise<number> {
     const { generateOccurrences } = await import("@/lib/recurrence");
     const { createCalendarEvent } = await import("@/lib/google-calendar");
 
-    // Find active series where the latest generated booking is within
-    // 2 weeks — meaning we're running low and need to generate more.
+    // Find active series, filtering out any whose parent org has been
+    // tombstoned by the purge flow. Otherwise the cron wastes cycles on
+    // dead tenants and eventually tries to insert with FK violations.
     const { data: series } = (await db
       .from("booking_series" as never)
-      .select("*")
-      .eq("active" as never, true as never)) as unknown as {
+      .select(
+        `*, organization:organizations!inner(deleted_at)`,
+      )
+      .eq("active" as never, true as never)
+      .is(
+        "organization.deleted_at" as never,
+        null as never,
+      )) as unknown as {
       data: Array<{
         id: string;
         organization_id: string;
@@ -1413,6 +1420,7 @@ export async function autoExtendRecurringSeries(): Promise<number> {
         hourly_rate_cents: number | null;
         address: string | null;
         notes: string | null;
+        skip_dates: string[] | null;
       }> | null;
     };
 
@@ -1439,7 +1447,8 @@ export async function autoExtendRecurringSeries(): Promise<number> {
       // If the latest booking is more than 2 weeks out, no need to generate
       if (latestDate > twoWeeksOut) continue;
 
-      // Generate next batch
+      // Generate next batch (honoring skip_dates so holiday exceptions
+      // don't get silently regenerated).
       const occurrences = generateOccurrences(
         {
           pattern: s.pattern as import("@/lib/recurrence").RecurrencePattern,
@@ -1450,6 +1459,7 @@ export async function autoExtendRecurringSeries(): Promise<number> {
           starts_at: s.starts_at,
           ends_at: s.ends_at,
           generate_ahead: s.generate_ahead,
+          skip_dates: s.skip_dates,
         },
         s.generate_ahead,
         latestDate,
