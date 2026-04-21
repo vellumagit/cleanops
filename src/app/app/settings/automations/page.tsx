@@ -164,6 +164,41 @@ const AUTOMATIONS: AutomationDef[] = [
       "Emails the employee 30 days and 7 days before a completed training certification expires, with a link to retake.",
     trigger: "Daily scan at 14:00 UTC",
   },
+  {
+    key: "auto_expire_stale_estimates",
+    title: "Auto-expire stale estimates",
+    description:
+      "Flips estimates in Sent status with no activity for 30 days to Expired, so your estimates list stays focused on live opportunities. Threshold configurable per-org.",
+    trigger: "Daily at 03:00 UTC",
+  },
+  {
+    key: "auto_void_overdue_invoices",
+    title: "Auto-void long-overdue invoices",
+    description:
+      "Flips invoices to Void after 90 days past due with no payment activity. Stops the overdue reminder cron from continuing to email the client. Threshold configurable per-org.",
+    trigger: "Daily at 03:30 UTC",
+  },
+  {
+    key: "auto_complete_past_bookings",
+    title: "Auto-complete past bookings",
+    description:
+      "Marks bookings still in Pending or Confirmed status as Completed once their scheduled time is more than 24 hours in the past. Prevents ghost jobs cluttering the list.",
+    trigger: "Daily at 02:00 UTC",
+  },
+  {
+    key: "auto_archive_old_records",
+    title: "Auto-archive old records",
+    description:
+      "Archives bookings, invoices, and estimates older than 2 years so the default list views stay fast. Archived rows are hidden but not deleted. Threshold configurable per-org.",
+    trigger: "Daily at 04:30 UTC",
+  },
+  {
+    key: "auto_recurring_invoices",
+    title: "Auto-generate recurring invoices",
+    description:
+      "Generates invoices on a schedule for contract clients. Set up via Settings → Recurring Invoices. Supports weekly, biweekly, monthly, and quarterly cadences.",
+    trigger: "Daily at 06:30 UTC",
+  },
 ];
 
 export default async function AutomationsPage() {

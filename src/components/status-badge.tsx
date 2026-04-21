@@ -99,7 +99,7 @@ export function invoiceStatusTone(
 }
 
 export function estimateStatusTone(
-  status: "draft" | "sent" | "approved" | "declined",
+  status: "draft" | "sent" | "approved" | "declined" | "expired",
 ): StatusTone {
   switch (status) {
     case "approved":
@@ -110,6 +110,8 @@ export function estimateStatusTone(
       return "amber";
     case "declined":
       return "red";
+    case "expired":
+      return "neutral";
   }
 }
 

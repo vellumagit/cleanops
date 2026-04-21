@@ -29,6 +29,8 @@ export default async function InvoicesPage() {
         client:clients ( name )
       `,
     )
+    // Hide auto-archived rows (older than the org's archive_after_days).
+    .is("archived_at" as never, null as never)
     .order("created_at", { ascending: false })
     .limit(200);
 

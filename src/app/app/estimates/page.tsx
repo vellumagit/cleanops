@@ -28,11 +28,12 @@ export default async function EstimatesPage() {
         client:clients ( name )
       `,
     )
+    .is("archived_at" as never, null as never)
     .order("created_at", { ascending: false })
     .limit(200) as unknown as {
     data: Array<{
       id: string;
-      status: "draft" | "sent" | "approved" | "declined";
+      status: "draft" | "sent" | "approved" | "declined" | "expired";
       total_cents: number;
       created_at: string;
       sent_at: string | null;

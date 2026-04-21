@@ -32,6 +32,9 @@ export default async function BookingsPage() {
         )
       `,
     )
+    // Hide auto-archived rows (older than the org's archive_after_days,
+    // default 2 years). Archived rows are still queryable directly by id.
+    .is("archived_at" as never, null as never)
     .order("scheduled_at", { ascending: false })
     .limit(200) as unknown as Promise<{
     data: Array<{

@@ -76,6 +76,26 @@
     {
       "path": "/api/cron/certification-expiry",
       "schedule": "0 14 * * *"
+    },
+    {
+      "path": "/api/cron/complete-bookings",
+      "schedule": "0 2 * * *"
+    },
+    {
+      "path": "/api/cron/expire-estimates",
+      "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/cron/void-invoices",
+      "schedule": "30 3 * * *"
+    },
+    {
+      "path": "/api/cron/archive-records",
+      "schedule": "30 4 * * *"
+    },
+    {
+      "path": "/api/cron/recurring-invoices",
+      "schedule": "30 6 * * *"
     }
   ]
 }

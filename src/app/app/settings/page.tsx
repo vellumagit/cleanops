@@ -10,6 +10,7 @@ import {
   Mail,
   Palette,
   Plug,
+  Repeat,
   ScrollText,
   Users,
   Webhook,
@@ -98,6 +99,13 @@ const SECTIONS = [
     title: "Automations",
     description:
       "Toggle which background automations fire when jobs complete, invoices are paid, and more.",
+  },
+  {
+    href: "/app/settings/recurring-invoices",
+    icon: Repeat,
+    title: "Recurring invoices",
+    description:
+      "Auto-generate invoices on a schedule for contract clients on a retainer.",
   },
   {
     href: "/app/settings/webhooks",

@@ -25,7 +25,12 @@ export type AutomationKey =
   | "pto_status_notify"
   | "payroll_paid_receipt"
   | "training_assigned_notify"
-  | "certification_expiry_reminder";
+  | "certification_expiry_reminder"
+  | "auto_expire_stale_estimates"
+  | "auto_void_overdue_invoices"
+  | "auto_complete_past_bookings"
+  | "auto_archive_old_records"
+  | "auto_recurring_invoices";
 
 export async function toggleAutomationAction(formData: FormData) {
   const { membership } = await getActionContext();

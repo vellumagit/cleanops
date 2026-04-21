@@ -8,7 +8,7 @@ import { formatCurrencyCents, formatDate, humanizeEnum } from "@/lib/format";
 
 export type EstimateRow = {
   id: string;
-  status: "draft" | "sent" | "approved" | "declined";
+  status: "draft" | "sent" | "approved" | "declined" | "expired";
   total_cents: number;
   created_at: string;
   sent_at: string | null;

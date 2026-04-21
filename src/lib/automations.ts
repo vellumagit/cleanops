@@ -2734,6 +2734,322 @@ export async function sendCertificationExpiryReminders(): Promise<{
 }
 
 // ─────────────────────────────────────────────────────────────────
+// SYSTEM HYGIENE AUTOMATIONS
+//
+// No human notification — these just keep state tidy. Per-org toggles
+// default to on, and per-org tuning (day thresholds) lives on columns
+// on the organizations table. NULL threshold disables the cron for
+// that org.
+// ─────────────────────────────────────────────────────────────────
+
+// 22. Auto-expire stale estimates (daily)
+export async function autoExpireStaleEstimates(): Promise<{ expired: number }> {
+  const db = admin();
+  let expired = 0;
+
+  const { data: orgs } = await db
+    .from("organizations")
+    .select("id, stale_estimate_expire_days")
+    .is("deleted_at", null) as unknown as {
+    data: Array<{ id: string; stale_estimate_expire_days: number | null }> | null;
+  };
+
+  for (const org of orgs ?? []) {
+    if (!(await isAutomationEnabled(org.id, "auto_expire_stale_estimates"))) continue;
+    const days = org.stale_estimate_expire_days ?? 30;
+    if (days < 1) continue;
+
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+    const { data, error } = await db
+      .from("estimates")
+      .update({ status: "expired" as never } as never)
+      .eq("organization_id", org.id)
+      .eq("status", "sent")
+      .lt("sent_at" as never, cutoff as never)
+      .select("id") as unknown as {
+      data: Array<{ id: string }> | null;
+      error: { message: string } | null;
+    };
+
+    if (error) {
+      console.error(`[auto] expire estimates failed for org ${org.id}:`, error.message);
+      continue;
+    }
+    if (data && data.length > 0) {
+      expired += data.length;
+      console.log(`[auto] Expired ${data.length} stale estimate(s) for org ${org.id}`);
+    }
+  }
+  return { expired };
+}
+
+// 23. Auto-void overdue invoices with no payment (daily)
+export async function autoVoidOldInvoices(): Promise<{ voided: number }> {
+  const db = admin();
+  let voided = 0;
+
+  const { data: orgs } = await db
+    .from("organizations")
+    .select("id, invoice_void_days")
+    .is("deleted_at", null) as unknown as {
+    data: Array<{ id: string; invoice_void_days: number | null }> | null;
+  };
+
+  for (const org of orgs ?? []) {
+    if (!(await isAutomationEnabled(org.id, "auto_void_overdue_invoices"))) continue;
+    const days = org.invoice_void_days ?? 90;
+    if (days < 30) continue;
+
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10); // date
+
+    const { data, error } = await db
+      .from("invoices")
+      .update({ status: "void" as never } as never)
+      .eq("organization_id", org.id)
+      .eq("status", "overdue")
+      .is("paid_at", null)
+      .lt("due_date" as never, cutoff as never)
+      .select("id") as unknown as {
+      data: Array<{ id: string }> | null;
+      error: { message: string } | null;
+    };
+
+    if (error) {
+      console.error(`[auto] void invoices failed for org ${org.id}:`, error.message);
+      continue;
+    }
+    if (data && data.length > 0) {
+      voided += data.length;
+      console.log(`[auto] Voided ${data.length} old overdue invoice(s) for org ${org.id}`);
+    }
+  }
+  return { voided };
+}
+
+// 24. Auto-complete past bookings (daily)
+export async function autoCompletePastBookings(): Promise<{ completed: number }> {
+  const db = admin();
+  let completed = 0;
+
+  const { data: orgs } = await db
+    .from("organizations")
+    .select("id, booking_auto_complete_hours")
+    .is("deleted_at", null) as unknown as {
+    data: Array<{ id: string; booking_auto_complete_hours: number | null }> | null;
+  };
+
+  for (const org of orgs ?? []) {
+    if (!(await isAutomationEnabled(org.id, "auto_complete_past_bookings"))) continue;
+    const hours = org.booking_auto_complete_hours ?? 24;
+    if (hours < 1) continue;
+
+    const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+
+    const { data, error } = await db
+      .from("bookings")
+      .update({ status: "completed" as never } as never)
+      .eq("organization_id", org.id)
+      .in("status", ["pending", "confirmed"])
+      .lt("scheduled_at", cutoff)
+      .select("id") as unknown as {
+      data: Array<{ id: string }> | null;
+      error: { message: string } | null;
+    };
+
+    if (error) {
+      console.error(`[auto] complete bookings failed for org ${org.id}:`, error.message);
+      continue;
+    }
+    if (data && data.length > 0) {
+      completed += data.length;
+      console.log(`[auto] Auto-completed ${data.length} past booking(s) for org ${org.id}`);
+    }
+  }
+  return { completed };
+}
+
+// 25. Auto-archive old records (daily)
+export async function autoArchiveOldRecords(): Promise<{
+  bookings: number;
+  invoices: number;
+  estimates: number;
+}> {
+  const db = admin();
+  const totals = { bookings: 0, invoices: 0, estimates: 0 };
+
+  const { data: orgs } = await db
+    .from("organizations")
+    .select("id, archive_after_days")
+    .is("deleted_at", null) as unknown as {
+    data: Array<{ id: string; archive_after_days: number | null }> | null;
+  };
+
+  for (const org of orgs ?? []) {
+    if (!(await isAutomationEnabled(org.id, "auto_archive_old_records"))) continue;
+    const days = org.archive_after_days ?? 730;
+    if (days < 180) continue;
+
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    const now = new Date().toISOString();
+
+    // Archive bookings where scheduled_at is older than cutoff AND status is
+    // a terminal one (completed/cancelled). Active bookings are never
+    // archived even if dated in the past (shouldn't happen if the complete
+    // cron ran, but safety first).
+    const [{ data: b }, { data: i }, { data: e }] = await Promise.all([
+      db.from("bookings").update({ archived_at: now } as never)
+        .eq("organization_id", org.id).is("archived_at", null)
+        .in("status", ["completed", "cancelled"])
+        .lt("scheduled_at", cutoff).select("id") as unknown as Promise<{
+        data: Array<{ id: string }> | null;
+      }>,
+      db.from("invoices").update({ archived_at: now } as never)
+        .eq("organization_id", org.id).is("archived_at", null)
+        .in("status", ["paid", "void"])
+        .lt("created_at", cutoff).select("id") as unknown as Promise<{
+        data: Array<{ id: string }> | null;
+      }>,
+      db.from("estimates").update({ archived_at: now } as never)
+        .eq("organization_id", org.id).is("archived_at", null)
+        .in("status", ["approved", "declined", "expired"] as never)
+        .lt("created_at", cutoff).select("id") as unknown as Promise<{
+        data: Array<{ id: string }> | null;
+      }>,
+    ]);
+
+    totals.bookings += b?.length ?? 0;
+    totals.invoices += i?.length ?? 0;
+    totals.estimates += e?.length ?? 0;
+
+    if ((b?.length ?? 0) + (i?.length ?? 0) + (e?.length ?? 0) > 0) {
+      console.log(
+        `[auto] Archived for org ${org.id}: bookings=${b?.length ?? 0} invoices=${i?.length ?? 0} estimates=${e?.length ?? 0}`,
+      );
+    }
+  }
+  return totals;
+}
+
+// 26. Auto-generate recurring invoices (daily)
+export async function autoGenerateRecurringInvoices(): Promise<{
+  generated: number;
+}> {
+  const db = admin();
+  let generated = 0;
+
+  const now = new Date();
+  const nowIso = now.toISOString();
+
+  const { data: due } = await db
+    .from("invoice_series" as never)
+    .select(`
+      id, organization_id, client_id, name, cadence,
+      amount_cents, line_items, notes, next_run_at, due_days
+    `)
+    .eq("active" as never, true as never)
+    .lte("next_run_at" as never, nowIso as never) as unknown as {
+    data: Array<{
+      id: string;
+      organization_id: string;
+      client_id: string;
+      name: string;
+      cadence: "weekly" | "biweekly" | "monthly" | "quarterly";
+      amount_cents: number;
+      line_items: unknown;
+      notes: string | null;
+      next_run_at: string;
+      due_days: number;
+    }> | null;
+  };
+
+  if (!due || due.length === 0) return { generated };
+
+  for (const series of due) {
+    if (
+      !(await isAutomationEnabled(series.organization_id, "auto_recurring_invoices"))
+    ) {
+      continue;
+    }
+
+    // Generate next invoice number.
+    const { count } = await db
+      .from("invoices")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", series.organization_id);
+    const invoiceNumber = `INV-${String((count ?? 0) + 1).padStart(4, "0")}`;
+
+    const issuedAt = new Date();
+    const dueDate = new Date(
+      issuedAt.getTime() + series.due_days * 24 * 60 * 60 * 1000,
+    );
+
+    // Insert the invoice.
+    const { data: inserted, error } = await db
+      .from("invoices")
+      .insert({
+        organization_id: series.organization_id,
+        client_id: series.client_id,
+        number: invoiceNumber,
+        status: "draft",
+        amount_cents: series.amount_cents,
+        due_date: dueDate.toISOString().slice(0, 10),
+        line_items: series.line_items,
+        notes: series.notes,
+      } as never)
+      .select("id")
+      .single() as unknown as {
+      data: { id: string } | null;
+      error: { message: string } | null;
+    };
+
+    if (error || !inserted) {
+      console.error(
+        `[auto] recurring invoice failed for series ${series.id}:`,
+        error?.message,
+      );
+      continue;
+    }
+
+    // Compute next run based on cadence.
+    const current = new Date(series.next_run_at);
+    const next = new Date(current);
+    switch (series.cadence) {
+      case "weekly":
+        next.setUTCDate(current.getUTCDate() + 7);
+        break;
+      case "biweekly":
+        next.setUTCDate(current.getUTCDate() + 14);
+        break;
+      case "monthly":
+        next.setUTCMonth(current.getUTCMonth() + 1);
+        break;
+      case "quarterly":
+        next.setUTCMonth(current.getUTCMonth() + 3);
+        break;
+    }
+
+    await db
+      .from("invoice_series" as never)
+      .update({
+        next_run_at: next.toISOString(),
+        last_generated_at: nowIso,
+        last_invoice_id: inserted.id,
+      } as never)
+      .eq("id" as never, series.id as never);
+
+    generated += 1;
+    console.log(
+      `[auto] Generated recurring invoice ${invoiceNumber} for series ${series.id} (org ${series.organization_id})`,
+    );
+  }
+
+  return { generated };
+}
+
+// ─────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────
 
