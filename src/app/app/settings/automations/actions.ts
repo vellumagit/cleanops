@@ -18,7 +18,14 @@ export type AutomationKey =
   | "low_review_alert"
   | "stripe_payout_alert"
   | "weekly_ops_digest"
-  | "monthly_ops_digest";
+  | "monthly_ops_digest"
+  | "employee_daily_schedule"
+  | "employee_weekly_schedule"
+  | "overtime_warning"
+  | "pto_status_notify"
+  | "payroll_paid_receipt"
+  | "training_assigned_notify"
+  | "certification_expiry_reminder";
 
 export async function toggleAutomationAction(formData: FormData) {
   const { membership } = await getActionContext();

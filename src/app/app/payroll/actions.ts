@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getActionContext } from "@/lib/actions";
 import { logAuditEvent } from "@/lib/audit";
+import { notifyPayrollPaid } from "@/lib/automations";
 
 type Result = { ok: true; id: string } | { ok: false; error: string };
 
@@ -262,6 +263,9 @@ export async function markPayrollPaidAction(formData: FormData) {
     entity: "bonus",
     entity_id: id,
   });
+
+  // Fire-and-forget per-employee "you were paid" receipt.
+  notifyPayrollPaid(id);
 
   // Revalidate at "page" scope to avoid re-running the app layout's
   // many parallel nav-badge queries on every server action.

@@ -115,6 +115,55 @@ const AUTOMATIONS: AutomationDef[] = [
       "1st-of-month recap of the prior month: revenue, job counts, rating, top clients by revenue, top performer, and new clients added.",
     trigger: "1st of each month at 09:00 UTC",
   },
+  {
+    key: "employee_daily_schedule",
+    title: "Employee daily schedule",
+    description:
+      "Morning email to each cleaner with every job on their plate today — time, client, address, duration, and per-job notes.",
+    trigger: "Daily at 06:00 UTC",
+  },
+  {
+    key: "employee_weekly_schedule",
+    title: "Employee weekly schedule",
+    description:
+      "Sunday-night preview of the week ahead for each cleaner. Sets expectations before Monday morning.",
+    trigger: "Sundays at 18:00 UTC",
+  },
+  {
+    key: "overtime_warning",
+    title: "Overtime warning",
+    description:
+      "Friday email to any employee whose week-to-date hours are within 20% of your overtime threshold (default 40h, configurable).",
+    trigger: "Fridays at 15:00 UTC",
+  },
+  {
+    key: "pto_status_notify",
+    title: "PTO request decision email",
+    description:
+      "Emails the employee when their time-off request is approved, declined, or cancelled. Previously only shown in-app.",
+    trigger: "PTO → Approved / Declined / Cancelled",
+  },
+  {
+    key: "payroll_paid_receipt",
+    title: "Payroll paid receipt",
+    description:
+      "Emails each employee a receipt when a payroll run is marked paid, showing amount, hours, regular/bonus/PTO breakdown.",
+    trigger: "Payroll Run → Marked Paid",
+  },
+  {
+    key: "training_assigned_notify",
+    title: "Training assignment email",
+    description:
+      "Emails the employee when a new training module is assigned to them, with a direct link to start.",
+    trigger: "Training → Assigned",
+  },
+  {
+    key: "certification_expiry_reminder",
+    title: "Certification expiry reminder",
+    description:
+      "Emails the employee 30 days and 7 days before a completed training certification expires, with a link to retake.",
+    trigger: "Daily scan at 14:00 UTC",
+  },
 ];
 
 export default async function AutomationsPage() {

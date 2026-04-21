@@ -420,6 +420,440 @@ export function paymentReceiptEmail(args: {
 }
 
 // ---------------------------------------------------------------------------
+// Employee: daily schedule email
+// ---------------------------------------------------------------------------
+
+export function employeeDailyScheduleEmail(args: {
+  recipientName: string;
+  orgName: string;
+  dateLabel: string; // e.g. "Monday, Apr 21"
+  jobs: Array<{
+    time: string; // "8:00 AM"
+    serviceName: string;
+    clientName: string;
+    address: string;
+    durationLabel: string; // "2h"
+    notes: string | null;
+  }>;
+  fieldAppUrl: string;
+}) {
+  const n = args.jobs.length;
+  const subject =
+    n === 0
+      ? `No jobs scheduled today — ${args.orgName}`
+      : n === 1
+        ? `Your job today — ${args.orgName}`
+        : `Your ${n} jobs today — ${args.orgName}`;
+
+  const rows =
+    n === 0
+      ? `<p style="margin:12px 0;font-size:13px;color:#71717a;font-style:italic;">Nothing on your schedule. Enjoy the day.</p>`
+      : args.jobs
+          .map(
+            (j) => `
+    <tr>
+      <td style="padding:14px 0;border-bottom:1px solid #f4f4f5;vertical-align:top;width:90px;">
+        <div style="font-size:15px;color:#18181b;font-weight:700;letter-spacing:-0.01em;">${escapeHtml(j.time)}</div>
+        <div style="font-size:11px;color:#71717a;margin-top:2px;">${escapeHtml(j.durationLabel)}</div>
+      </td>
+      <td style="padding:14px 0 14px 16px;border-bottom:1px solid #f4f4f5;vertical-align:top;">
+        <div style="font-size:14px;color:#18181b;font-weight:600;">${escapeHtml(j.serviceName)}</div>
+        <div style="font-size:12px;color:#52525b;margin-top:3px;">${escapeHtml(j.clientName)}</div>
+        <div style="font-size:12px;color:#71717a;margin-top:2px;">${escapeHtml(j.address)}</div>
+        ${j.notes ? `<div style="margin-top:8px;padding:8px 10px;background:#fafafa;border-radius:6px;font-size:12px;color:#52525b;line-height:1.45;white-space:pre-wrap;">${escapeHtml(j.notes)}</div>` : ""}
+      </td>
+    </tr>`,
+          )
+          .join("");
+
+  const html = layout(
+    `
+    <h1 style="margin:0 0 4px;font-size:22px;font-weight:700;letter-spacing:-0.02em;color:#18181b;line-height:1.3;">Today&rsquo;s schedule</h1>
+    <p style="margin:0 0 4px;font-size:14px;line-height:1.55;color:#52525b;">
+      Hi ${escapeHtml(args.recipientName)}, here&rsquo;s your day at <strong style="color:#18181b;">${escapeHtml(args.orgName)}</strong>.
+    </p>
+    <p style="margin:0 0 20px;font-size:12px;color:#a1a1aa;">${escapeHtml(args.dateLabel)}</p>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-top:1px solid #e4e4e7;">
+      ${rows}
+    </table>
+    ${n > 0 ? button("Open in Field App", args.fieldAppUrl) : ""}
+    <p style="margin:0;font-size:12px;line-height:1.5;color:#a1a1aa;">
+      Questions about a job? Message your manager in Sollos.
+    </p>
+    `,
+    {
+      sollosHeader: true,
+      orgName: args.orgName,
+      preheader:
+        n === 0
+          ? "No jobs today — enjoy the day"
+          : `${n} job${n === 1 ? "" : "s"} · first at ${args.jobs[0]?.time}`,
+    },
+  );
+
+  const text =
+    n === 0
+      ? `No jobs scheduled for ${args.dateLabel}. Enjoy the day.`
+      : `Your schedule for ${args.dateLabel}\n\n${args.jobs.map((j) => `${j.time} — ${j.serviceName} for ${j.clientName} (${j.durationLabel})\n  ${j.address}${j.notes ? `\n  Notes: ${j.notes}` : ""}`).join("\n\n")}\n\nOpen: ${args.fieldAppUrl}`;
+  return { subject, html, text };
+}
+
+// ---------------------------------------------------------------------------
+// Employee: weekly schedule email
+// ---------------------------------------------------------------------------
+
+export function employeeWeeklyScheduleEmail(args: {
+  recipientName: string;
+  orgName: string;
+  weekLabel: string;
+  days: Array<{
+    dateLabel: string; // "Monday, Apr 21"
+    jobs: Array<{
+      time: string;
+      serviceName: string;
+      clientName: string;
+    }>;
+  }>;
+  totalJobs: number;
+  fieldAppUrl: string;
+}) {
+  const subject = `Your week ahead — ${args.totalJobs} job${args.totalJobs === 1 ? "" : "s"}`;
+
+  const dayBlocks = args.days
+    .map((d) => {
+      if (d.jobs.length === 0) {
+        return `
+    <tr>
+      <td style="padding:14px 0;border-bottom:1px solid #f4f4f5;">
+        <div style="font-size:13px;color:#18181b;font-weight:600;">${escapeHtml(d.dateLabel)}</div>
+        <div style="margin-top:4px;font-size:12px;color:#a1a1aa;font-style:italic;">No jobs</div>
+      </td>
+    </tr>`;
+      }
+      const jobLines = d.jobs
+        .map(
+          (j) => `
+        <div style="margin-top:6px;font-size:12px;color:#52525b;line-height:1.5;">
+          <strong style="color:#18181b;">${escapeHtml(j.time)}</strong> — ${escapeHtml(j.serviceName)} for ${escapeHtml(j.clientName)}
+        </div>`,
+        )
+        .join("");
+      return `
+    <tr>
+      <td style="padding:14px 0;border-bottom:1px solid #f4f4f5;">
+        <div style="font-size:13px;color:#18181b;font-weight:600;">${escapeHtml(d.dateLabel)}</div>
+        ${jobLines}
+      </td>
+    </tr>`;
+    })
+    .join("");
+
+  const html = layout(
+    `
+    <h1 style="margin:0 0 4px;font-size:22px;font-weight:700;letter-spacing:-0.02em;color:#18181b;line-height:1.3;">Your week ahead</h1>
+    <p style="margin:0 0 4px;font-size:14px;line-height:1.55;color:#52525b;">
+      Hi ${escapeHtml(args.recipientName)}, you have <strong style="color:#18181b;">${args.totalJobs} job${args.totalJobs === 1 ? "" : "s"}</strong> scheduled this week at <strong style="color:#18181b;">${escapeHtml(args.orgName)}</strong>.
+    </p>
+    <p style="margin:0 0 20px;font-size:12px;color:#a1a1aa;">${escapeHtml(args.weekLabel)}</p>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-top:1px solid #e4e4e7;">
+      ${dayBlocks}
+    </table>
+    ${button("Open in Field App", args.fieldAppUrl)}
+    <p style="margin:0;font-size:12px;line-height:1.5;color:#a1a1aa;">
+      You&rsquo;ll also get a daily version every morning with full details for that day&rsquo;s jobs.
+    </p>
+    `,
+    {
+      sollosHeader: true,
+      orgName: args.orgName,
+      preheader: `${args.totalJobs} job${args.totalJobs === 1 ? "" : "s"} — ${args.weekLabel}`,
+    },
+  );
+  const text = `Your week ahead — ${args.orgName}\n${args.weekLabel}\n${args.totalJobs} total job${args.totalJobs === 1 ? "" : "s"}\n\n${args.days
+    .map(
+      (d) =>
+        `${d.dateLabel}:\n${d.jobs.length === 0 ? "  (no jobs)" : d.jobs.map((j) => `  ${j.time} — ${j.serviceName} for ${j.clientName}`).join("\n")}`,
+    )
+    .join("\n\n")}\n\nOpen: ${args.fieldAppUrl}`;
+  return { subject, html, text };
+}
+
+// ---------------------------------------------------------------------------
+// Employee: overtime warning
+// ---------------------------------------------------------------------------
+
+export function employeeOvertimeWarningEmail(args: {
+  recipientName: string;
+  orgName: string;
+  hoursWorked: string; // e.g. "38.5"
+  thresholdHours: string; // e.g. "40"
+  weekLabel: string;
+  isOver: boolean;
+}) {
+  const subject = args.isOver
+    ? `You&rsquo;ve passed ${args.thresholdHours}h this week`
+    : `Heads up: approaching ${args.thresholdHours}h this week`;
+  const headline = args.isOver
+    ? "You&rsquo;ve crossed into overtime"
+    : "You&rsquo;re approaching overtime";
+  const html = layout(
+    `
+    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;letter-spacing:-0.02em;color:#18181b;line-height:1.3;">${headline}</h1>
+    <p style="margin:0 0 20px;font-size:14px;line-height:1.55;color:#52525b;">
+      Hi ${escapeHtml(args.recipientName)}, a heads-up from <strong style="color:#18181b;">${escapeHtml(args.orgName)}</strong>.
+    </p>
+    <div style="margin:16px 0;padding:20px;border:1px solid #e4e4e7;border-radius:10px;background:#fafafa;text-align:center;">
+      <div style="font-size:12px;color:#71717a;text-transform:uppercase;letter-spacing:0.1em;font-weight:600;">This week so far</div>
+      <div style="margin-top:6px;font-size:36px;color:${args.isOver ? "#dc2626" : "#18181b"};font-weight:800;letter-spacing:-0.03em;">${escapeHtml(args.hoursWorked)} h</div>
+      <div style="margin-top:2px;font-size:12px;color:#71717a;">Threshold: ${escapeHtml(args.thresholdHours)} h</div>
+    </div>
+    <p style="margin:0 0 16px;font-size:13px;line-height:1.55;color:#52525b;">
+      ${args.isOver
+        ? "You're already past your weekly threshold. If this isn't expected, talk to your manager — any additional hours this week may be overtime."
+        : "You're close to your weekly threshold. If that's a concern, let your manager know before taking on more jobs this week."}
+    </p>
+    <p style="margin:0;font-size:12px;line-height:1.5;color:#a1a1aa;">
+      ${escapeHtml(args.weekLabel)}
+    </p>
+    `,
+    {
+      sollosHeader: true,
+      orgName: args.orgName,
+      preheader: `${args.hoursWorked} h of ${args.thresholdHours} h`,
+    },
+  );
+  const text = `${headline.replace(/&rsquo;/g, "'")} — ${args.orgName}\n\nYou've worked ${args.hoursWorked}h this week (threshold ${args.thresholdHours}h).\n\n${args.weekLabel}`;
+  return { subject, html, text };
+}
+
+// ---------------------------------------------------------------------------
+// Employee: PTO request status
+// ---------------------------------------------------------------------------
+
+export function employeePtoStatusEmail(args: {
+  recipientName: string;
+  orgName: string;
+  status: "approved" | "declined" | "cancelled";
+  startDate: string;
+  endDate: string;
+  hours: number;
+  reason: string | null;
+  dashboardUrl: string;
+}) {
+  const label =
+    args.status === "approved"
+      ? "approved"
+      : args.status === "declined"
+        ? "declined"
+        : "cancelled";
+  const subject = `Your time-off request was ${label}`;
+  const accentColor =
+    args.status === "approved"
+      ? "#059669"
+      : args.status === "declined"
+        ? "#dc2626"
+        : "#71717a";
+  const headline =
+    args.status === "approved"
+      ? "Your time-off is approved"
+      : args.status === "declined"
+        ? "Your time-off request was declined"
+        : "Your time-off request was cancelled";
+  const body =
+    args.status === "approved"
+      ? "Enjoy the time off. Your schedule for these dates is already adjusted."
+      : args.status === "declined"
+        ? "Your manager declined this request. Reach out to them for context if needed."
+        : "This request has been cancelled.";
+
+  const dateRange =
+    args.startDate === args.endDate
+      ? args.startDate
+      : `${args.startDate} – ${args.endDate}`;
+
+  const html = layout(
+    `
+    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;letter-spacing:-0.02em;color:${accentColor};line-height:1.3;">${headline}</h1>
+    <p style="margin:0 0 20px;font-size:14px;line-height:1.55;color:#52525b;">
+      Hi ${escapeHtml(args.recipientName)}, ${body}
+    </p>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin-bottom:4px;border-top:1px solid #e4e4e7;">
+      <tr>
+        <td style="font-size:13px;color:#71717a;padding:12px 0;border-bottom:1px solid #f4f4f5;">Dates</td>
+        <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;font-weight:600;border-bottom:1px solid #f4f4f5;">${escapeHtml(dateRange)}</td>
+      </tr>
+      <tr>
+        <td style="font-size:13px;color:#71717a;padding:12px 0;${args.reason ? "border-bottom:1px solid #f4f4f5;" : ""}">Hours</td>
+        <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;${args.reason ? "border-bottom:1px solid #f4f4f5;" : ""}">${args.hours}</td>
+      </tr>
+      ${args.reason ? `<tr>
+        <td style="font-size:13px;color:#71717a;padding:12px 0;vertical-align:top;">Reason</td>
+        <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;">${escapeHtml(args.reason)}</td>
+      </tr>` : ""}
+    </table>
+    ${button("View in Sollos", args.dashboardUrl)}
+    `,
+    {
+      sollosHeader: true,
+      orgName: args.orgName,
+      preheader: `${dateRange} · ${args.hours}h — ${label}`,
+    },
+  );
+  const text = `Your time-off request was ${label} — ${args.orgName}\n\nDates: ${dateRange}\nHours: ${args.hours}${args.reason ? `\nReason: ${args.reason}` : ""}\n\nOpen: ${args.dashboardUrl}`;
+  return { subject, html, text };
+}
+
+// ---------------------------------------------------------------------------
+// Employee: payroll paid receipt
+// ---------------------------------------------------------------------------
+
+export function employeePayrollPaidEmail(args: {
+  recipientName: string;
+  orgName: string;
+  amountFormatted: string;
+  periodStart: string;
+  periodEnd: string;
+  hoursWorked: string;
+  regularPay: string;
+  bonusPay: string;
+  ptoPay: string;
+  paidDate: string;
+  dashboardUrl: string;
+}) {
+  const subject = `You were paid ${args.amountFormatted}`;
+  const html = layout(
+    `
+    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;letter-spacing:-0.02em;color:#18181b;line-height:1.3;">Payday</h1>
+    <p style="margin:0 0 20px;font-size:14px;line-height:1.55;color:#52525b;">
+      Hi ${escapeHtml(args.recipientName)}, <strong style="color:#18181b;">${escapeHtml(args.orgName)}</strong> just marked your payroll as paid.
+    </p>
+    <div style="margin:16px 0;padding:20px;border:1px solid #e4e4e7;border-radius:10px;background:#fafafa;text-align:center;">
+      <div style="font-size:12px;color:#71717a;text-transform:uppercase;letter-spacing:0.1em;font-weight:600;">You were paid</div>
+      <div style="margin-top:6px;font-size:36px;color:#059669;font-weight:800;letter-spacing:-0.03em;">${escapeHtml(args.amountFormatted)}</div>
+      <div style="margin-top:4px;font-size:12px;color:#71717a;">on ${escapeHtml(args.paidDate)}</div>
+    </div>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin-bottom:4px;border-top:1px solid #e4e4e7;">
+      <tr>
+        <td style="font-size:13px;color:#71717a;padding:12px 0;border-bottom:1px solid #f4f4f5;">Pay period</td>
+        <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;border-bottom:1px solid #f4f4f5;">${escapeHtml(args.periodStart)} – ${escapeHtml(args.periodEnd)}</td>
+      </tr>
+      <tr>
+        <td style="font-size:13px;color:#71717a;padding:12px 0;border-bottom:1px solid #f4f4f5;">Hours worked</td>
+        <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;border-bottom:1px solid #f4f4f5;">${escapeHtml(args.hoursWorked)}</td>
+      </tr>
+      <tr>
+        <td style="font-size:13px;color:#71717a;padding:12px 0;border-bottom:1px solid #f4f4f5;">Regular pay</td>
+        <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;border-bottom:1px solid #f4f4f5;">${escapeHtml(args.regularPay)}</td>
+      </tr>
+      <tr>
+        <td style="font-size:13px;color:#71717a;padding:12px 0;border-bottom:1px solid #f4f4f5;">Bonuses</td>
+        <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;border-bottom:1px solid #f4f4f5;">${escapeHtml(args.bonusPay)}</td>
+      </tr>
+      <tr>
+        <td style="font-size:13px;color:#71717a;padding:12px 0;">PTO pay</td>
+        <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;">${escapeHtml(args.ptoPay)}</td>
+      </tr>
+    </table>
+    ${button("View Pay Details", args.dashboardUrl)}
+    <p style="margin:0;font-size:12px;line-height:1.5;color:#a1a1aa;">
+      This is confirmation from Sollos only — the actual deposit timing depends on your employer&rsquo;s payment method.
+    </p>
+    `,
+    {
+      sollosHeader: true,
+      orgName: args.orgName,
+      preheader: `${args.amountFormatted} on ${args.paidDate}`,
+    },
+  );
+  const text = `You were paid ${args.amountFormatted} — ${args.orgName}\n\nPeriod: ${args.periodStart} – ${args.periodEnd}\nHours: ${args.hoursWorked}\nRegular: ${args.regularPay}\nBonuses: ${args.bonusPay}\nPTO: ${args.ptoPay}\nPaid: ${args.paidDate}\n\nView: ${args.dashboardUrl}`;
+  return { subject, html, text };
+}
+
+// ---------------------------------------------------------------------------
+// Employee: training assigned
+// ---------------------------------------------------------------------------
+
+export function employeeTrainingAssignedEmail(args: {
+  recipientName: string;
+  orgName: string;
+  moduleTitle: string;
+  moduleDescription: string | null;
+  trainingUrl: string;
+}) {
+  const subject = `New training: ${args.moduleTitle}`;
+  const html = layout(
+    `
+    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;letter-spacing:-0.02em;color:#18181b;line-height:1.3;">New training for you</h1>
+    <p style="margin:0 0 20px;font-size:14px;line-height:1.55;color:#52525b;">
+      Hi ${escapeHtml(args.recipientName)}, <strong style="color:#18181b;">${escapeHtml(args.orgName)}</strong> assigned you a new training module.
+    </p>
+    <div style="margin:16px 0;padding:16px 20px;border:1px solid #e4e4e7;border-radius:10px;background:#fafafa;">
+      <div style="font-size:15px;color:#18181b;font-weight:600;letter-spacing:-0.01em;">${escapeHtml(args.moduleTitle)}</div>
+      ${args.moduleDescription
+        ? `<p style="margin:8px 0 0;font-size:13px;line-height:1.55;color:#52525b;white-space:pre-wrap;">${escapeHtml(args.moduleDescription)}</p>`
+        : ""}
+    </div>
+    ${button("Start Training", args.trainingUrl)}
+    <p style="margin:0;font-size:12px;line-height:1.5;color:#a1a1aa;">
+      Most modules take less than 10 minutes. You can pause and resume anytime.
+    </p>
+    `,
+    {
+      sollosHeader: true,
+      orgName: args.orgName,
+      preheader: args.moduleDescription ?? `New training: ${args.moduleTitle}`,
+    },
+  );
+  const text = `New training: ${args.moduleTitle}\n\n${args.moduleDescription ?? ""}\n\nStart: ${args.trainingUrl}`;
+  return { subject, html, text };
+}
+
+// ---------------------------------------------------------------------------
+// Employee: certification expiry reminder
+// ---------------------------------------------------------------------------
+
+export function employeeCertificationExpiryEmail(args: {
+  recipientName: string;
+  orgName: string;
+  moduleTitle: string;
+  expiresOn: string;
+  daysUntilExpiry: number;
+  trainingUrl: string;
+}) {
+  const subject =
+    args.daysUntilExpiry <= 7
+      ? `Urgent: ${args.moduleTitle} expires in ${args.daysUntilExpiry} day${args.daysUntilExpiry === 1 ? "" : "s"}`
+      : `Reminder: ${args.moduleTitle} expires in ${args.daysUntilExpiry} days`;
+
+  const headline =
+    args.daysUntilExpiry <= 7
+      ? "Certification expiring soon"
+      : "Certification expiring in 30 days";
+  const accentColor = args.daysUntilExpiry <= 7 ? "#dc2626" : "#d97706";
+
+  const html = layout(
+    `
+    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;letter-spacing:-0.02em;color:${accentColor};line-height:1.3;">${headline}</h1>
+    <p style="margin:0 0 20px;font-size:14px;line-height:1.55;color:#52525b;">
+      Hi ${escapeHtml(args.recipientName)}, your certification at <strong style="color:#18181b;">${escapeHtml(args.orgName)}</strong> will expire soon. Renew by retaking the training before it lapses.
+    </p>
+    <div style="margin:16px 0;padding:16px 20px;border:1px solid #e4e4e7;border-radius:10px;background:#fafafa;">
+      <div style="font-size:15px;color:#18181b;font-weight:600;letter-spacing:-0.01em;">${escapeHtml(args.moduleTitle)}</div>
+      <div style="margin-top:6px;font-size:12px;color:${accentColor};font-weight:600;">Expires ${escapeHtml(args.expiresOn)} (${args.daysUntilExpiry} day${args.daysUntilExpiry === 1 ? "" : "s"})</div>
+    </div>
+    ${button("Retake Training", args.trainingUrl)}
+    `,
+    {
+      sollosHeader: true,
+      orgName: args.orgName,
+      preheader: `${args.moduleTitle} — expires ${args.expiresOn}`,
+    },
+  );
+  const text = `${headline} — ${args.orgName}\n\n${args.moduleTitle}\nExpires ${args.expiresOn} (${args.daysUntilExpiry} days)\n\nRetake: ${args.trainingUrl}`;
+  return { subject, html, text };
+}
+
+// ---------------------------------------------------------------------------
 // Admin: unassigned booking alert (Sollos → owner/admin)
 // ---------------------------------------------------------------------------
 

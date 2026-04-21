@@ -60,6 +60,22 @@
     {
       "path": "/api/cron/monthly-ops-digest",
       "schedule": "0 9 1 * *"
+    },
+    {
+      "path": "/api/cron/employee-daily-schedule",
+      "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/cron/employee-weekly-schedule",
+      "schedule": "0 18 * * 0"
+    },
+    {
+      "path": "/api/cron/overtime-warnings",
+      "schedule": "0 15 * * 5"
+    },
+    {
+      "path": "/api/cron/certification-expiry",
+      "schedule": "0 14 * * *"
     }
   ]
 }

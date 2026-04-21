@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { getActionContext } from "@/lib/actions";
+import { notifyPtoStatus } from "@/lib/automations";
 
 type Result = { ok: true } | { ok: false; error: string };
 
@@ -133,6 +134,9 @@ export async function updatePtoStatusAction(
     ) as unknown as Promise<{ error: { message: string } | null }>);
 
   if (error) return { ok: false, error: error.message };
+
+  // Fire-and-forget email to the employee about the decision.
+  notifyPtoStatus(id);
 
   revalidatePath("/app/timesheets", "page");
   return { ok: true };

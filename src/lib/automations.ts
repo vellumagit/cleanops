@@ -49,6 +49,52 @@ type AdminRecipient = {
   email: string;
 };
 
+/**
+ * Fetch one membership's email + display name. Used when an event is
+ * scoped to a single employee (PTO status, payroll paid, training
+ * assigned, certification expiry).
+ */
+async function getMembershipRecipient(
+  membershipId: string,
+): Promise<AdminRecipient | null> {
+  const db = admin();
+  const { data: m } = await db
+    .from("memberships")
+    .select("profile_id, organization_id")
+    .eq("id", membershipId)
+    .maybeSingle() as unknown as {
+    data: { profile_id: string; organization_id: string } | null;
+  };
+  if (!m) return null;
+
+  const { data: profile } = await db
+    .from("profiles")
+    .select("full_name")
+    .eq("id", m.profile_id)
+    .maybeSingle() as unknown as {
+    data: { full_name: string | null } | null;
+  };
+
+  const userRes = await fetch(
+    `${process.env.NEXT_PUBLIC_SUPABASE_URL}/auth/v1/admin/users/${m.profile_id}`,
+    {
+      headers: {
+        apikey: process.env.SUPABASE_SERVICE_ROLE_KEY!,
+        Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY!}`,
+      },
+    },
+  );
+  if (!userRes.ok) return null;
+  const userData = (await userRes.json()) as { email?: string };
+  if (!userData.email) return null;
+
+  return {
+    profileId: m.profile_id,
+    fullName: profile?.full_name ?? null,
+    email: userData.email,
+  };
+}
+
 async function getOrgAdminRecipients(
   orgId: string,
 ): Promise<AdminRecipient[]> {
@@ -280,8 +326,23 @@ export async function autoAssignTraining(
       completed_step_ids: [],
     }));
 
-    await (db.from("training_assignments").insert(rows as never) as unknown as Promise<unknown>);
-    console.log(`[auto] Assigned ${toAssign.length} training modules to new member ${membershipId}`);
+    // Insert + return ids so we can fire a per-assignment email for each.
+    const { data: inserted } = await (db
+      .from("training_assignments")
+      .insert(rows as never)
+      .select("id") as unknown as Promise<{
+      data: Array<{ id: string }> | null;
+    }>);
+
+    console.log(
+      `[auto] Assigned ${toAssign.length} training modules to new member ${membershipId}`,
+    );
+
+    // Fire-and-forget email per assignment. Gated by the
+    // training_assigned_notify toggle inside notifyTrainingAssigned.
+    for (const row of inserted ?? []) {
+      notifyTrainingAssigned(row.id).catch(() => {});
+    }
   } catch (err) {
     console.error("[auto] autoAssignTraining failed:", err);
   }
@@ -1995,6 +2056,681 @@ export async function sendMonthlyOpsDigests(): Promise<{ orgsSent: number }> {
   }
 
   return { orgsSent };
+}
+
+// ─────────────────────────────────────────────────────────────────
+// EMPLOYEE AUTOMATIONS
+//
+// All employee-facing, so they use sendEmail() directly. The
+// CLIENT_EMAILS_PAUSED kill switch does NOT silence these — that
+// kill switch is scoped to org→client only.
+// ─────────────────────────────────────────────────────────────────
+
+// 15. Daily employee schedule email (cron at 06:00 UTC)
+export async function sendDailyEmployeeSchedules(): Promise<{
+  emailsSent: number;
+}> {
+  const db = admin();
+  const { sendEmail } = await import("@/lib/email");
+  const { employeeDailyScheduleEmail } = await import("@/lib/email-templates");
+
+  const now = new Date();
+  const startOfDay = new Date(now);
+  startOfDay.setUTCHours(0, 0, 0, 0);
+  const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000);
+
+  const { data: orgs } = await db
+    .from("organizations")
+    .select("id, name")
+    .is("deleted_at", null) as unknown as {
+    data: Array<{ id: string; name: string }> | null;
+  };
+
+  if (!orgs) return { emailsSent: 0 };
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+  let emailsSent = 0;
+
+  for (const org of orgs) {
+    if (!(await isAutomationEnabled(org.id, "employee_daily_schedule"))) continue;
+
+    const { data: bookings } = await db
+      .from("bookings")
+      .select(`
+        id, scheduled_at, service_type, duration_minutes, address, notes,
+        assigned_to,
+        client:clients ( name )
+      `)
+      .eq("organization_id", org.id)
+      .not("assigned_to", "is", null)
+      .in("status", ["pending", "confirmed"])
+      .gte("scheduled_at", startOfDay.toISOString())
+      .lt("scheduled_at", endOfDay.toISOString())
+      .order("scheduled_at") as unknown as {
+      data: Array<{
+        id: string;
+        scheduled_at: string;
+        service_type: string;
+        duration_minutes: number;
+        address: string | null;
+        notes: string | null;
+        assigned_to: string;
+        client: { name: string | null } | null;
+      }> | null;
+    };
+
+    if (!bookings || bookings.length === 0) continue;
+
+    // Group by employee (assigned_to = membership id)
+    const byEmployee = new Map<string, typeof bookings>();
+    for (const b of bookings) {
+      const list = byEmployee.get(b.assigned_to) ?? [];
+      list.push(b);
+      byEmployee.set(b.assigned_to, list);
+    }
+
+    for (const [membershipId, jobs] of byEmployee) {
+      const recipient = await getMembershipRecipient(membershipId);
+      if (!recipient) continue;
+
+      const template = employeeDailyScheduleEmail({
+        recipientName: recipient.fullName ?? "there",
+        orgName: org.name,
+        dateLabel: startOfDay.toLocaleDateString("en-US", {
+          weekday: "long",
+          month: "short",
+          day: "numeric",
+          timeZone: "UTC",
+        }),
+        jobs: jobs.map((j) => ({
+          time: new Date(j.scheduled_at).toLocaleTimeString("en-US", {
+            hour: "numeric",
+            minute: "2-digit",
+          }),
+          serviceName: humanize(j.service_type),
+          clientName: j.client?.name ?? "A client",
+          address: j.address ?? "(address on file)",
+          durationLabel:
+            j.duration_minutes >= 60
+              ? `${Math.round((j.duration_minutes / 60) * 10) / 10}h`
+              : `${j.duration_minutes}m`,
+          notes: j.notes,
+        })),
+        fieldAppUrl: `${siteUrl}/field/jobs`,
+      });
+
+      await sendEmail({
+        to: recipient.email,
+        toName: recipient.fullName ?? undefined,
+        ...template,
+      });
+      emailsSent += 1;
+    }
+
+    console.log(`[auto] Daily schedule emails sent for org ${org.id}`);
+  }
+
+  return { emailsSent };
+}
+
+// 16. Weekly employee schedule email (cron Sunday 18:00 UTC)
+export async function sendWeeklyEmployeeSchedules(): Promise<{
+  emailsSent: number;
+}> {
+  const db = admin();
+  const { sendEmail } = await import("@/lib/email");
+  const { employeeWeeklyScheduleEmail } = await import("@/lib/email-templates");
+
+  // Next 7 days starting tomorrow UTC 00:00.
+  const startOfTomorrow = new Date();
+  startOfTomorrow.setUTCHours(0, 0, 0, 0);
+  startOfTomorrow.setUTCDate(startOfTomorrow.getUTCDate() + 1);
+  const endOfWeek = new Date(
+    startOfTomorrow.getTime() + 7 * 24 * 60 * 60 * 1000,
+  );
+  const weekLabel = `${startOfTomorrow.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })} – ${new Date(endOfWeek.getTime() - 1).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })}`;
+
+  const { data: orgs } = await db
+    .from("organizations")
+    .select("id, name")
+    .is("deleted_at", null) as unknown as {
+    data: Array<{ id: string; name: string }> | null;
+  };
+
+  if (!orgs) return { emailsSent: 0 };
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+  let emailsSent = 0;
+
+  for (const org of orgs) {
+    if (!(await isAutomationEnabled(org.id, "employee_weekly_schedule"))) continue;
+
+    const { data: bookings } = await db
+      .from("bookings")
+      .select(`
+        id, scheduled_at, service_type, assigned_to,
+        client:clients ( name )
+      `)
+      .eq("organization_id", org.id)
+      .not("assigned_to", "is", null)
+      .in("status", ["pending", "confirmed"])
+      .gte("scheduled_at", startOfTomorrow.toISOString())
+      .lt("scheduled_at", endOfWeek.toISOString())
+      .order("scheduled_at") as unknown as {
+      data: Array<{
+        id: string;
+        scheduled_at: string;
+        service_type: string;
+        assigned_to: string;
+        client: { name: string | null } | null;
+      }> | null;
+    };
+
+    if (!bookings) continue;
+
+    const byEmployee = new Map<string, typeof bookings>();
+    for (const b of bookings) {
+      const list = byEmployee.get(b.assigned_to) ?? [];
+      list.push(b);
+      byEmployee.set(b.assigned_to, list);
+    }
+
+    for (const [membershipId, jobs] of byEmployee) {
+      if (jobs.length === 0) continue;
+      const recipient = await getMembershipRecipient(membershipId);
+      if (!recipient) continue;
+
+      // Bucket into 7 day bins
+      const dayMap = new Map<string, typeof jobs>();
+      for (let i = 0; i < 7; i += 1) {
+        const d = new Date(startOfTomorrow.getTime() + i * 24 * 60 * 60 * 1000);
+        dayMap.set(d.toISOString().slice(0, 10), []);
+      }
+      for (const j of jobs) {
+        const key = j.scheduled_at.slice(0, 10);
+        const bucket = dayMap.get(key) ?? [];
+        bucket.push(j);
+        dayMap.set(key, bucket);
+      }
+
+      const days = [...dayMap.entries()].map(([key, jobsOfDay]) => ({
+        dateLabel: new Date(key + "T12:00:00Z").toLocaleDateString("en-US", {
+          weekday: "long",
+          month: "short",
+          day: "numeric",
+          timeZone: "UTC",
+        }),
+        jobs: jobsOfDay.map((j) => ({
+          time: new Date(j.scheduled_at).toLocaleTimeString("en-US", {
+            hour: "numeric",
+            minute: "2-digit",
+          }),
+          serviceName: humanize(j.service_type),
+          clientName: j.client?.name ?? "A client",
+        })),
+      }));
+
+      const template = employeeWeeklyScheduleEmail({
+        recipientName: recipient.fullName ?? "there",
+        orgName: org.name,
+        weekLabel,
+        days,
+        totalJobs: jobs.length,
+        fieldAppUrl: `${siteUrl}/field/jobs`,
+      });
+
+      await sendEmail({
+        to: recipient.email,
+        toName: recipient.fullName ?? undefined,
+        ...template,
+      });
+      emailsSent += 1;
+    }
+
+    console.log(`[auto] Weekly schedule emails sent for org ${org.id}`);
+  }
+
+  return { emailsSent };
+}
+
+// 17. Overtime warning (cron Friday 15:00 UTC)
+export async function sendOvertimeWarnings(): Promise<{ emailsSent: number }> {
+  const db = admin();
+  const { sendEmail } = await import("@/lib/email");
+  const { employeeOvertimeWarningEmail } = await import("@/lib/email-templates");
+
+  // Week = Monday through Sunday, UTC. Friday = most of the week banked.
+  const now = new Date();
+  const day = now.getUTCDay(); // 0=Sun, 1=Mon, ... 5=Fri, 6=Sat
+  const mondayOffset = (day + 6) % 7; // Monday=0, ... Sunday=6
+  const startOfWeek = new Date(now);
+  startOfWeek.setUTCDate(now.getUTCDate() - mondayOffset);
+  startOfWeek.setUTCHours(0, 0, 0, 0);
+  const endOfWeek = new Date(startOfWeek.getTime() + 7 * 24 * 60 * 60 * 1000);
+  const weekLabel = `Week of ${startOfWeek.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })}`;
+
+  const { data: orgs } = await db
+    .from("organizations")
+    .select("id, name, overtime_threshold_hours")
+    .is("deleted_at", null) as unknown as {
+    data: Array<{ id: string; name: string; overtime_threshold_hours: number }> | null;
+  };
+
+  if (!orgs) return { emailsSent: 0 };
+  let emailsSent = 0;
+
+  for (const org of orgs) {
+    if (!(await isAutomationEnabled(org.id, "overtime_warning"))) continue;
+    const threshold = org.overtime_threshold_hours ?? 40;
+
+    // Sum hours_worked from time_entries per membership for this week.
+    const { data: entries } = await db
+      .from("time_entries")
+      .select("membership_id, clock_in_at, clock_out_at")
+      .eq("organization_id", org.id)
+      .gte("clock_in_at" as never, startOfWeek.toISOString() as never)
+      .lt("clock_in_at" as never, endOfWeek.toISOString() as never)
+      .not("clock_out_at", "is", null) as unknown as {
+      data: Array<{
+        membership_id: string;
+        clock_in_at: string;
+        clock_out_at: string;
+      }> | null;
+    };
+
+    if (!entries || entries.length === 0) continue;
+
+    // Accumulate total hours per membership.
+    const hoursByMembership = new Map<string, number>();
+    for (const e of entries) {
+      const ms =
+        new Date(e.clock_out_at).getTime() - new Date(e.clock_in_at).getTime();
+      const hours = ms / (1000 * 60 * 60);
+      hoursByMembership.set(
+        e.membership_id,
+        (hoursByMembership.get(e.membership_id) ?? 0) + hours,
+      );
+    }
+
+    // Warning band: >= 80% of threshold.
+    const warnCutoff = threshold * 0.8;
+
+    for (const [membershipId, total] of hoursByMembership) {
+      if (total < warnCutoff) continue;
+      const recipient = await getMembershipRecipient(membershipId);
+      if (!recipient) continue;
+
+      const template = employeeOvertimeWarningEmail({
+        recipientName: recipient.fullName ?? "there",
+        orgName: org.name,
+        hoursWorked: total.toFixed(1),
+        thresholdHours: threshold.toFixed(threshold % 1 === 0 ? 0 : 1),
+        weekLabel,
+        isOver: total >= threshold,
+      });
+      await sendEmail({
+        to: recipient.email,
+        toName: recipient.fullName ?? undefined,
+        ...template,
+      });
+      emailsSent += 1;
+    }
+
+    if (emailsSent > 0) {
+      console.log(`[auto] Overtime warnings sent for org ${org.id}`);
+    }
+  }
+
+  return { emailsSent };
+}
+
+// 18. PTO status notification (event — called from the approve/decline action)
+export async function notifyPtoStatus(ptoRequestId: string): Promise<void> {
+  try {
+    const db = admin();
+    const { sendEmail } = await import("@/lib/email");
+    const { employeePtoStatusEmail } = await import("@/lib/email-templates");
+
+    const { data: req } = await db
+      .from("pto_requests" as never)
+      .select(
+        "id, organization_id, employee_id, start_date, end_date, hours, reason, status",
+      )
+      .eq("id" as never, ptoRequestId as never)
+      .maybeSingle() as unknown as {
+      data: {
+        id: string;
+        organization_id: string;
+        employee_id: string;
+        start_date: string;
+        end_date: string;
+        hours: number;
+        reason: string | null;
+        status: string;
+      } | null;
+    };
+
+    if (!req) return;
+    if (!["approved", "declined", "cancelled"].includes(req.status)) return;
+
+    if (!(await isAutomationEnabled(req.organization_id, "pto_status_notify"))) {
+      console.log(`[auto] PTO status notify paused for org ${req.organization_id}`);
+      return;
+    }
+
+    const recipient = await getMembershipRecipient(req.employee_id);
+    if (!recipient) return;
+
+    const { data: org } = await db
+      .from("organizations")
+      .select("name")
+      .eq("id", req.organization_id)
+      .maybeSingle() as unknown as { data: { name: string } | null };
+
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+    const fmt = (d: string) =>
+      new Date(d).toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      });
+
+    const template = employeePtoStatusEmail({
+      recipientName: recipient.fullName ?? "there",
+      orgName: org?.name ?? "your organization",
+      status: req.status as "approved" | "declined" | "cancelled",
+      startDate: fmt(req.start_date),
+      endDate: fmt(req.end_date),
+      hours: req.hours,
+      reason: req.reason,
+      dashboardUrl: `${siteUrl}/field/profile`,
+    });
+    await sendEmail({
+      to: recipient.email,
+      toName: recipient.fullName ?? undefined,
+      ...template,
+    });
+    console.log(`[auto] PTO ${req.status} email sent to ${recipient.email}`);
+  } catch (err) {
+    console.error("[auto] notifyPtoStatus failed:", err);
+  }
+}
+
+// 19. Payroll paid receipt (event — called from markPayrollPaidAction)
+export async function notifyPayrollPaid(payrollRunId: string): Promise<void> {
+  try {
+    const db = admin();
+    const { sendEmail } = await import("@/lib/email");
+    const { employeePayrollPaidEmail } = await import("@/lib/email-templates");
+    const { formatCurrencyCents } = await import("@/lib/format");
+    const { getOrgCurrency } = await import("@/lib/org-currency");
+
+    const { data: run } = await db
+      .from("payroll_runs" as never)
+      .select("id, organization_id, period_start, period_end, paid_at")
+      .eq("id" as never, payrollRunId as never)
+      .maybeSingle() as unknown as {
+      data: {
+        id: string;
+        organization_id: string;
+        period_start: string;
+        period_end: string;
+        paid_at: string | null;
+      } | null;
+    };
+
+    if (!run) return;
+    if (!(await isAutomationEnabled(run.organization_id, "payroll_paid_receipt"))) {
+      console.log(`[auto] Payroll paid receipt paused for org ${run.organization_id}`);
+      return;
+    }
+
+    const { data: items } = await db
+      .from("payroll_items" as never)
+      .select(
+        "employee_id, hours_worked, regular_pay_cents, bonus_cents, pto_hours, pto_pay_cents, total_cents",
+      )
+      .eq("payroll_run_id" as never, payrollRunId as never) as unknown as {
+      data: Array<{
+        employee_id: string;
+        hours_worked: number;
+        regular_pay_cents: number;
+        bonus_cents: number;
+        pto_hours: number;
+        pto_pay_cents: number;
+        total_cents: number;
+      }> | null;
+    };
+
+    if (!items || items.length === 0) return;
+
+    const { data: org } = await db
+      .from("organizations")
+      .select("name")
+      .eq("id", run.organization_id)
+      .maybeSingle() as unknown as { data: { name: string } | null };
+    const currency = await getOrgCurrency(run.organization_id);
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+    const paidDate = new Date(run.paid_at ?? new Date()).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+    const periodStart = new Date(run.period_start).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+    });
+    const periodEnd = new Date(run.period_end).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+
+    for (const item of items) {
+      const recipient = await getMembershipRecipient(item.employee_id);
+      if (!recipient) continue;
+
+      const template = employeePayrollPaidEmail({
+        recipientName: recipient.fullName ?? "there",
+        orgName: org?.name ?? "your organization",
+        amountFormatted: formatCurrencyCents(item.total_cents, currency),
+        periodStart,
+        periodEnd,
+        hoursWorked: `${item.hours_worked}`,
+        regularPay: formatCurrencyCents(item.regular_pay_cents, currency),
+        bonusPay: formatCurrencyCents(item.bonus_cents, currency),
+        ptoPay: formatCurrencyCents(item.pto_pay_cents, currency),
+        paidDate,
+        dashboardUrl: `${siteUrl}/field/profile`,
+      });
+      await sendEmail({
+        to: recipient.email,
+        toName: recipient.fullName ?? undefined,
+        ...template,
+      });
+    }
+    console.log(`[auto] Payroll paid receipts sent for run ${payrollRunId}`);
+  } catch (err) {
+    console.error("[auto] notifyPayrollPaid failed:", err);
+  }
+}
+
+// 20. Training assignment notification (event)
+export async function notifyTrainingAssigned(
+  assignmentId: string,
+): Promise<void> {
+  try {
+    const db = admin();
+    const { sendEmail } = await import("@/lib/email");
+    const { employeeTrainingAssignedEmail } = await import("@/lib/email-templates");
+
+    const { data: assignment } = await db
+      .from("training_assignments")
+      .select("id, organization_id, employee_id, module_id")
+      .eq("id", assignmentId)
+      .maybeSingle() as unknown as {
+      data: {
+        id: string;
+        organization_id: string;
+        employee_id: string;
+        module_id: string;
+      } | null;
+    };
+
+    if (!assignment) return;
+    if (!(await isAutomationEnabled(assignment.organization_id, "training_assigned_notify"))) {
+      return;
+    }
+
+    const [{ data: module }, { data: org }] = await Promise.all([
+      db.from("training_modules")
+        .select("title, description")
+        .eq("id", assignment.module_id)
+        .maybeSingle() as unknown as Promise<{
+        data: { title: string; description: string | null } | null;
+      }>,
+      db.from("organizations")
+        .select("name")
+        .eq("id", assignment.organization_id)
+        .maybeSingle() as unknown as Promise<{
+        data: { name: string } | null;
+      }>,
+    ]);
+
+    if (!module) return;
+    const recipient = await getMembershipRecipient(assignment.employee_id);
+    if (!recipient) return;
+
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+    const template = employeeTrainingAssignedEmail({
+      recipientName: recipient.fullName ?? "there",
+      orgName: org?.name ?? "your organization",
+      moduleTitle: module.title,
+      moduleDescription: module.description,
+      trainingUrl: `${siteUrl}/field/training/${assignment.module_id}`,
+    });
+    await sendEmail({
+      to: recipient.email,
+      toName: recipient.fullName ?? undefined,
+      ...template,
+    });
+    console.log(`[auto] Training assigned email sent to ${recipient.email}`);
+  } catch (err) {
+    console.error("[auto] notifyTrainingAssigned failed:", err);
+  }
+}
+
+// 21. Certification expiry reminders (cron daily 14:00 UTC)
+export async function sendCertificationExpiryReminders(): Promise<{
+  sent: number;
+}> {
+  const db = admin();
+  const { sendEmail } = await import("@/lib/email");
+  const { employeeCertificationExpiryEmail } = await import("@/lib/email-templates");
+
+  const now = Date.now();
+  const in30d = new Date(now + 30 * 24 * 60 * 60 * 1000).toISOString();
+  const in7d = new Date(now + 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  // Pull all assignments expiring in the next 30 days that need an alert.
+  const { data: rows } = await db
+    .from("training_assignments")
+    .select(`
+      id, organization_id, employee_id, module_id, certification_expires_at,
+      expiry_reminder_30d_sent_at, expiry_reminder_7d_sent_at
+    `)
+    .not("certification_expires_at" as never, "is" as never, null as never)
+    .gte("certification_expires_at" as never, new Date(now).toISOString() as never)
+    .lte("certification_expires_at" as never, in30d as never) as unknown as {
+    data: Array<{
+      id: string;
+      organization_id: string;
+      employee_id: string;
+      module_id: string;
+      certification_expires_at: string;
+      expiry_reminder_30d_sent_at: string | null;
+      expiry_reminder_7d_sent_at: string | null;
+    }> | null;
+  };
+
+  if (!rows || rows.length === 0) return { sent: 0 };
+
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+  let sent = 0;
+
+  for (const a of rows) {
+    if (
+      !(await isAutomationEnabled(a.organization_id, "certification_expiry_reminder"))
+    ) {
+      continue;
+    }
+
+    const expiresAt = a.certification_expires_at;
+    const daysUntil = Math.max(
+      1,
+      Math.ceil(
+        (new Date(expiresAt).getTime() - now) / (24 * 60 * 60 * 1000),
+      ),
+    );
+
+    // Which reminder bucket? Priority: 7-day > 30-day.
+    const needs7d =
+      expiresAt <= in7d && !a.expiry_reminder_7d_sent_at;
+    const needs30d =
+      !needs7d && !a.expiry_reminder_30d_sent_at;
+
+    if (!needs7d && !needs30d) continue;
+
+    const [{ data: module }, { data: org }] = await Promise.all([
+      db.from("training_modules")
+        .select("title")
+        .eq("id", a.module_id)
+        .maybeSingle() as unknown as Promise<{
+        data: { title: string } | null;
+      }>,
+      db.from("organizations")
+        .select("name")
+        .eq("id", a.organization_id)
+        .maybeSingle() as unknown as Promise<{
+        data: { name: string } | null;
+      }>,
+    ]);
+
+    if (!module) continue;
+    const recipient = await getMembershipRecipient(a.employee_id);
+    if (!recipient) continue;
+
+    const template = employeeCertificationExpiryEmail({
+      recipientName: recipient.fullName ?? "there",
+      orgName: org?.name ?? "your organization",
+      moduleTitle: module.title,
+      expiresOn: new Date(expiresAt).toLocaleDateString("en-US", {
+        month: "long",
+        day: "numeric",
+        year: "numeric",
+      }),
+      daysUntilExpiry: daysUntil,
+      trainingUrl: `${siteUrl}/field/training/${a.module_id}`,
+    });
+    await sendEmail({
+      to: recipient.email,
+      toName: recipient.fullName ?? undefined,
+      ...template,
+    });
+
+    // Stamp the correct bucket.
+    const update = needs7d
+      ? { expiry_reminder_7d_sent_at: new Date().toISOString() }
+      : { expiry_reminder_30d_sent_at: new Date().toISOString() };
+
+    await db
+      .from("training_assignments")
+      .update(update as never)
+      .eq("id", a.id);
+
+    sent += 1;
+  }
+
+  if (sent > 0) console.log(`[auto] Certification expiry reminders sent: ${sent}`);
+  return { sent };
 }
 
 // ─────────────────────────────────────────────────────────────────
