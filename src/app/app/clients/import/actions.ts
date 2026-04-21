@@ -13,7 +13,7 @@ type ParsedRow = {
   email: string | null;
   phone: string | null;
   address: string | null;
-  preferred_contact: "email" | "phone" | "sms" | null;
+  preferred_contact: "email" | "phone" | "sms";
   notes: string | null;
 };
 
@@ -168,15 +168,26 @@ export async function importClientsAction(
       idx.preferred_contact >= 0
         ? (row[idx.preferred_contact] ?? "").trim().toLowerCase()
         : "";
-    let preferred_contact: ParsedRow["preferred_contact"] = null;
+    // DB default is 'email' (NOT NULL constraint on the column). Inserting
+    // null would violate the constraint, so default here rather than
+    // relying on the DB default (which only kicks in when the column is
+    // absent from the INSERT).
+    let preferred_contact: "email" | "phone" | "sms" = "email";
     if (preferredRaw) {
       if (["email", "phone", "sms"].includes(preferredRaw)) {
         preferred_contact = preferredRaw as "email" | "phone" | "sms";
       } else {
         errors.push(
-          `Row ${r + 1}: preferred_contact "${preferredRaw}" not recognized (use email/phone/sms); left blank`,
+          `Row ${r + 1}: preferred_contact "${preferredRaw}" not recognized (use email/phone/sms); defaulted to email`,
         );
       }
+    } else {
+      // No column in the CSV and no raw value — infer a sensible default
+      // based on which contact fields are populated.
+      const hasEmail = !!email;
+      const phoneRaw =
+        idx.phone >= 0 ? (row[idx.phone] ?? "").trim() : "";
+      if (!hasEmail && phoneRaw) preferred_contact = "phone";
     }
 
     parsed.push({
