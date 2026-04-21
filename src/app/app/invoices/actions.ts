@@ -183,6 +183,15 @@ export async function recordInvoicePaymentAction(
 
   const { membership, supabase } = await getActionContext();
 
+  // Financial operation — owner/admin only. Managers handle scheduling
+  // and crew ops, not money-in/money-out.
+  if (!["owner", "admin"].includes(membership.role)) {
+    return {
+      errors: { _form: "Only owners and admins can record payments." },
+      values: raw,
+    };
+  }
+
   // Guard: invoice must belong to the caller's org. RLS will enforce this
   // anyway, but fetching first lets us return a clean error.
   const { data: invoice, error: invErr } = await supabase
@@ -260,6 +269,11 @@ export async function deleteInvoicePaymentAction(formData: FormData) {
 
   const { membership, supabase } = await getActionContext();
 
+  // Reversing a payment is financial — owner/admin only.
+  if (!["owner", "admin"].includes(membership.role)) {
+    throw new Error("Only owners and admins can delete payments.");
+  }
+
   const { data: prev } = await supabase
     .from("invoice_payments")
     .select("id, invoice_id, amount_cents, method, reference, provider")
@@ -301,6 +315,11 @@ export async function sendInvoiceAction(formData: FormData) {
   if (!id) return;
 
   const { membership, supabase } = await getActionContext();
+
+  // Sending an invoice is a billing event — owner/admin only.
+  if (!["owner", "admin"].includes(membership.role)) {
+    throw new Error("Only owners and admins can send invoices.");
+  }
 
   const { data: prev } = await supabase
     .from("invoices")
@@ -382,6 +401,11 @@ export async function voidInvoiceAction(formData: FormData) {
 
   const { membership, supabase } = await getActionContext();
 
+  // Voiding reverses revenue recognition — owner/admin only.
+  if (!["owner", "admin"].includes(membership.role)) {
+    throw new Error("Only owners and admins can void invoices.");
+  }
+
   const { data: prev } = await supabase
     .from("invoices")
     .select("id, status, voided_at")
@@ -461,6 +485,11 @@ export async function deleteInvoiceAction(formData: FormData) {
   const id = String(formData.get("id") ?? "");
   if (!id) return;
   const { membership, supabase } = await getActionContext();
+
+  // Hard-delete of a financial document — owner/admin only.
+  if (!["owner", "admin"].includes(membership.role)) {
+    throw new Error("Only owners and admins can delete invoices.");
+  }
 
   const { data: prev } = await supabase
     .from("invoices")
