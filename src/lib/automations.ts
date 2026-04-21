@@ -159,6 +159,11 @@ export async function autoInvoiceOnJobComplete(bookingId: string) {
 
     if (!booking || !booking.client_id) return;
 
+    if (!(await isAutomationEnabled(booking.organization_id, "auto_invoice_on_job_complete"))) {
+      console.log(`[auto] Auto-invoice paused for org ${booking.organization_id}`);
+      return;
+    }
+
     // Check if an invoice already exists for this booking
     const { data: existing } = await db
       .from("invoices")
@@ -1521,6 +1526,11 @@ export async function notifyBookingAssignment(
   meta: { clientName: string; scheduledAt: string; serviceType: string; address: string | null },
 ) {
   try {
+    if (!(await isAutomationEnabled(organizationId, "booking_assignment_notify"))) {
+      console.log(`[auto] Booking assignment notify paused for org ${organizationId}`);
+      return;
+    }
+
     const db = admin();
     const when = new Date(meta.scheduledAt).toLocaleDateString("en-US", {
       weekday: "short",
@@ -1671,6 +1681,11 @@ export async function notifyReviewSubmitted(
   },
 ) {
   try {
+    if (!(await isAutomationEnabled(organizationId, "review_submitted_notify"))) {
+      console.log(`[auto] Review submitted notify paused for org ${organizationId}`);
+      return;
+    }
+
     const db = admin();
     const stars = "★".repeat(review.rating) + "☆".repeat(5 - review.rating);
     const title = `New ${review.rating}-star review`;

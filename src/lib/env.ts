@@ -60,6 +60,21 @@ const BaseSchema = z.object({
   STRIPE_SECRET_KEY: z.string().optional(),
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: z.string().optional(),
+  // Price IDs — consumed by src/lib/stripe.ts to map plan names → Stripe
+  // prices when creating checkout sessions. Missing = that tier isn't
+  // purchasable.
+  STRIPE_PRICE_STARTER: z.string().optional(),
+  STRIPE_PRICE_GROWTH: z.string().optional(),
+
+  // Cron authentication — every /api/cron/* route checks this header.
+  // Missing means the Bearer check is skipped (caller-controlled risk).
+  // Required in prod to prevent public cron triggering.
+  CRON_SECRET: z.string().optional(),
+
+  // Upstash Redis for distributed rate limiting. Missing = limiter
+  // falls back to per-instance in-memory (OK for dev, weak for prod).
+  UPSTASH_REDIS_REST_URL: z.string().url().optional(),
+  UPSTASH_REDIS_REST_TOKEN: z.string().optional(),
 
   // -- Phase 12 — Invoicing integrations -------------------------------------
 
