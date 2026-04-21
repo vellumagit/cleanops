@@ -9,6 +9,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { FormError, FormField, FormSelect } from "@/components/form-field";
 import { SubmitButton } from "@/components/submit-button";
 import { DurationInput } from "@/components/duration-input";
+import { RECURRENCE_OPTIONS } from "@/lib/recurrence";
 import {
   createBookingAction,
   createRecurringBookingAction,
@@ -215,13 +216,20 @@ export function BookingForm({
                 defaultValue={recurrencePattern}
                 onChange={(e) => setRecurrencePattern(e.target.value)}
               >
-                <option value="weekly">Weekly</option>
-                <option value="bi_weekly">Every 2 weeks</option>
-                <option value="tri_weekly">Every 3 weeks</option>
-                <option value="monthly">Monthly (same date)</option>
-                <option value="monthly_nth">Monthly (Nth weekday)</option>
-                <option value="custom_weekly">Custom weekly</option>
+                {RECURRENCE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
               </FormSelect>
+              {/* Description of the currently-selected pattern. */}
+              <p className="mt-1.5 text-xs text-muted-foreground leading-relaxed">
+                {
+                  RECURRENCE_OPTIONS.find(
+                    (o) => o.value === recurrencePattern,
+                  )?.description
+                }
+              </p>
             </FormField>
 
             <FormField

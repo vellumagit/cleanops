@@ -23,9 +23,61 @@ export type RecurrencePattern =
   | "weekly"
   | "bi_weekly"
   | "tri_weekly"
+  | "quad_weekly"
   | "monthly"
   | "custom_weekly"
   | "monthly_nth";
+
+/**
+ * Ordered options list used by the booking form. Kept here so every UI
+ * that picks a pattern stays in sync with the enum and with the
+ * human-readable explanations.
+ */
+export const RECURRENCE_OPTIONS: Array<{
+  value: RecurrencePattern;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "weekly",
+    label: "Weekly",
+    description: "Every 7 days on the same weekday.",
+  },
+  {
+    value: "bi_weekly",
+    label: "Every 2 weeks",
+    description: "Every 14 days — alternating weeks.",
+  },
+  {
+    value: "tri_weekly",
+    label: "Every 3 weeks",
+    description: "Every 21 days.",
+  },
+  {
+    value: "quad_weekly",
+    label: "Every 4 weeks",
+    description:
+      "Every 28 days — a pure 4-week cycle, 13 visits per year. Different from Monthly, which follows the calendar (12/year, drifting 1–3 days).",
+  },
+  {
+    value: "monthly",
+    label: "Monthly (same date)",
+    description:
+      "Same day-of-month every month — e.g. the 15th. 12 visits per year. Shifts forward by a day or two around months with fewer than 31 days.",
+  },
+  {
+    value: "monthly_nth",
+    label: "Monthly (Nth weekday)",
+    description:
+      'E.g. "the 2nd Tuesday of every month." Pick which occurrence (1st–4th or Last) and which weekday.',
+  },
+  {
+    value: "custom_weekly",
+    label: "Custom weekly",
+    description:
+      "Multiple specific weekdays. Useful for offices cleaned Monday + Thursday, or 3x-per-week schedules.",
+  },
+];
 
 export type SeriesRule = {
   pattern: RecurrencePattern;
@@ -164,6 +216,8 @@ function advanceToNext(
       return addWeeks(current, 2);
     case "tri_weekly":
       return addWeeks(current, 3);
+    case "quad_weekly":
+      return addWeeks(current, 4);
     case "monthly":
       return addMonths(current, 1);
     default:
@@ -293,6 +347,8 @@ export function describeRecurrence(
       return `Every 2 weeks at ${time12}`;
     case "tri_weekly":
       return `Every 3 weeks at ${time12}`;
+    case "quad_weekly":
+      return `Every 4 weeks at ${time12}`;
     case "monthly":
       return `Monthly at ${time12}`;
     case "custom_weekly": {

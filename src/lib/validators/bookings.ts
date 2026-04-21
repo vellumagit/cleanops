@@ -26,6 +26,7 @@ export const RecurrencePatternEnum = z.enum([
   "weekly",
   "bi_weekly",
   "tri_weekly",
+  "quad_weekly",
   "monthly",
   "custom_weekly",
   "monthly_nth",
