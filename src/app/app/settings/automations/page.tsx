@@ -39,6 +39,27 @@ const AUTOMATIONS: AutomationDef[] = [
     trigger: "Booking → Rescheduled",
   },
   {
+    key: "booking_cancelled_email",
+    title: "Booking cancelled email",
+    description:
+      "Emails the client when a booking's status flips to cancelled. Also pushes the assigned employee so they don't show up — both are separate automations.",
+    trigger: "Booking → Cancelled",
+  },
+  {
+    key: "rebooking_prompt_email",
+    title: "Rebooking prompt",
+    description:
+      "14+ days after a completed job, if the client has no future booking on the calendar, emails them a friendly 'ready for your next clean?' nudge. Sent at most once every 30 days per client.",
+    trigger: "Daily scan at 15:00 UTC",
+  },
+  {
+    key: "estimate_followup_email",
+    title: "Estimate follow-up",
+    description:
+      "7 days after sending an estimate that hasn't been approved or declined, emails the client a 'still interested?' check-in. A second 'last chance' email fires at 14 days before the estimate auto-expires at day 30.",
+    trigger: "Daily scan at 09:30 UTC",
+  },
+  {
     key: "booking_reminder_client_email",
     title: "24-hour booking reminder to client",
     description:

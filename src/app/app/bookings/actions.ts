@@ -13,6 +13,7 @@ import { generateOccurrences, type SeriesRule } from "@/lib/recurrence";
 import {
   notifyBookingAssignment,
   notifyBookingCancelledToEmployee,
+  sendBookingCancelledToClient,
   sendBookingConfirmation,
   sendBookingRescheduled,
 } from "@/lib/automations";
@@ -412,12 +413,13 @@ export async function updateBookingAction(
   }
 
   // If the status flipped TO cancelled (not already cancelled), push the
-  // assigned employee so they don't show up.
+  // assigned employee AND email the client.
   if (
     existing?.status !== "cancelled" &&
     parsed.data.status === "cancelled"
   ) {
     notifyBookingCancelledToEmployee(id);
+    sendBookingCancelledToClient(id);
   }
 
   // Sync to Google Calendar

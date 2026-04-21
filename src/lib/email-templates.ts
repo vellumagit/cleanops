@@ -1312,6 +1312,150 @@ export function estimateSentEmail(args: {
 }
 
 // ---------------------------------------------------------------------------
+// Booking cancelled (org-sent — client notification)
+// ---------------------------------------------------------------------------
+
+export function bookingCancelledEmail(args: {
+  clientName: string;
+  orgName: string;
+  serviceName: string;
+  dateTime: string;
+  address: string;
+  brandColor?: string;
+  logoUrl?: string;
+}) {
+  const subject = `Booking cancelled — ${args.orgName}`;
+  const html = layout(
+    `
+    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;letter-spacing:-0.02em;color:#18181b;line-height:1.3;">Booking cancelled</h1>
+    <p style="margin:0 0 24px;font-size:14px;line-height:1.55;color:#52525b;">
+      Hi ${escapeHtml(args.clientName)}, your upcoming booking with <strong style="color:#18181b;">${escapeHtml(args.orgName)}</strong> has been cancelled.
+    </p>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin-bottom:4px;border-top:1px solid #e4e4e7;">
+      <tr>
+        <td style="font-size:13px;color:#71717a;padding:12px 0;border-bottom:1px solid #f4f4f5;">Service</td>
+        <td style="font-size:13px;color:#a1a1aa;padding:12px 0;text-align:right;text-decoration:line-through;border-bottom:1px solid #f4f4f5;">${escapeHtml(args.serviceName)}</td>
+      </tr>
+      <tr>
+        <td style="font-size:13px;color:#71717a;padding:12px 0;border-bottom:1px solid #f4f4f5;">When</td>
+        <td style="font-size:13px;color:#a1a1aa;padding:12px 0;text-align:right;text-decoration:line-through;border-bottom:1px solid #f4f4f5;">${escapeHtml(args.dateTime)}</td>
+      </tr>
+      <tr>
+        <td style="font-size:13px;color:#71717a;padding:12px 0;">Where</td>
+        <td style="font-size:13px;color:#a1a1aa;padding:12px 0;text-align:right;text-decoration:line-through;">${escapeHtml(args.address)}</td>
+      </tr>
+    </table>
+    <p style="margin:20px 0 0;font-size:13px;line-height:1.55;color:#52525b;">
+      If you&rsquo;d like to reschedule or book a new service, just reply to this email.
+    </p>
+    `,
+    {
+      brandColor: args.brandColor,
+      orgName: args.orgName,
+      logoUrl: args.logoUrl,
+      preheader: `${args.serviceName} on ${args.dateTime} is cancelled`,
+    },
+  );
+  const text = `Booking cancelled — ${args.orgName}\n\nService: ${args.serviceName}\nWhen: ${args.dateTime}\nWhere: ${args.address}\n\nReply to reschedule.`;
+  return { subject, html, text };
+}
+
+// ---------------------------------------------------------------------------
+// Rebooking prompt (org-sent — "time for your next clean?")
+// ---------------------------------------------------------------------------
+
+export function rebookingPromptEmail(args: {
+  clientName: string;
+  orgName: string;
+  daysSinceLastService: number;
+  bookingUrl: string;
+  replyToAddress: string;
+  brandColor?: string;
+  logoUrl?: string;
+}) {
+  const subject = `Ready for your next clean? — ${args.orgName}`;
+  const html = layout(
+    `
+    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;letter-spacing:-0.02em;color:#18181b;line-height:1.3;">Time for another clean?</h1>
+    <p style="margin:0 0 20px;font-size:14px;line-height:1.55;color:#52525b;">
+      Hi ${escapeHtml(args.clientName)}, it&rsquo;s been about
+      <strong style="color:#18181b;">${args.daysSinceLastService} days</strong>
+      since your last service with <strong style="color:#18181b;">${escapeHtml(args.orgName)}</strong>. Ready to book another?
+    </p>
+    <p style="margin:0 0 24px;font-size:14px;line-height:1.55;color:#52525b;">
+      Reply to this email with a date and time that works, or hit the button
+      below to get in touch. We&rsquo;ll confirm a slot within a day.
+    </p>
+    ${button("Book My Next Clean", `mailto:${args.replyToAddress}?subject=${encodeURIComponent("Ready to book my next clean")}`, args.brandColor ? `#${args.brandColor.replace(/^#/, "")}` : DEFAULT_BRAND)}
+    <p style="margin:0;font-size:12px;line-height:1.5;color:#a1a1aa;">
+      Not ready yet? No rush — we&rsquo;ll reach out again later. If you&rsquo;d
+      prefer no reminders, let us know and we&rsquo;ll stop.
+    </p>
+    `,
+    {
+      brandColor: args.brandColor,
+      orgName: args.orgName,
+      logoUrl: args.logoUrl,
+      preheader: `Your last clean was ${args.daysSinceLastService} days ago — ready for another?`,
+    },
+  );
+  const text = `Time for another clean? — ${args.orgName}\n\nHi ${args.clientName}, it's been about ${args.daysSinceLastService} days since your last service. Reply with a date/time that works and we'll confirm.\n\n${args.replyToAddress}`;
+  return { subject, html, text };
+}
+
+// ---------------------------------------------------------------------------
+// Estimate follow-up (org-sent — "still interested?" at 7 or 14 days)
+// ---------------------------------------------------------------------------
+
+export function estimateFollowupEmail(args: {
+  clientName: string;
+  orgName: string;
+  amountFormatted: string;
+  publicUrl: string;
+  stage: "day7" | "day14";
+  brandColor?: string;
+  logoUrl?: string;
+}) {
+  const is7d = args.stage === "day7";
+  const subject = is7d
+    ? `Any questions on your estimate? — ${args.orgName}`
+    : `Last chance — your estimate expires soon`;
+  const headline = is7d
+    ? "Still thinking it over?"
+    : "Your estimate expires soon";
+  const body = is7d
+    ? "Just checking in on the estimate we sent last week. If you have any questions or want to tweak the scope, reply to this email and we&rsquo;ll sort it out."
+    : "The estimate we sent a couple weeks ago will auto-expire in the next few days. If you&rsquo;d still like to move forward, now&rsquo;s the time.";
+
+  const html = layout(
+    `
+    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;letter-spacing:-0.02em;color:${is7d ? "#18181b" : "#d97706"};line-height:1.3;">${headline}</h1>
+    <p style="margin:0 0 20px;font-size:14px;line-height:1.55;color:#52525b;">
+      Hi ${escapeHtml(args.clientName)}, ${body}
+    </p>
+    <div style="margin:16px 0;padding:16px 20px;border:1px solid #e4e4e7;border-radius:10px;background:#fafafa;">
+      <div style="font-size:12px;color:#71717a;text-transform:uppercase;letter-spacing:0.08em;font-weight:600;">Your estimate from ${escapeHtml(args.orgName)}</div>
+      <div style="margin-top:6px;font-size:26px;font-weight:800;letter-spacing:-0.02em;color:#18181b;">${escapeHtml(args.amountFormatted)}</div>
+    </div>
+    ${button(is7d ? "View Estimate" : "View Before It Expires", args.publicUrl, args.brandColor ? `#${args.brandColor.replace(/^#/, "")}` : DEFAULT_BRAND)}
+    <p style="margin:0;font-size:12px;line-height:1.5;color:#a1a1aa;">
+      Already decided to go another way? No hard feelings — just reply to let us know and we&rsquo;ll close it out.
+    </p>
+    `,
+    {
+      brandColor: args.brandColor,
+      orgName: args.orgName,
+      logoUrl: args.logoUrl,
+      preheader: is7d
+        ? "Any questions on your estimate?"
+        : "Your estimate expires in a few days",
+    },
+  );
+  const text = `${headline} — ${args.orgName}\n\nHi ${args.clientName}, ${body.replace(/&rsquo;/g, "'")}\n\nAmount: ${args.amountFormatted}\nView: ${args.publicUrl}`;
+  return { subject, html, text };
+}
+
+// ---------------------------------------------------------------------------
 // Booking rescheduled (org-sent — client notification)
 // ---------------------------------------------------------------------------
 

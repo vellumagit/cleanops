@@ -96,6 +96,14 @@
     {
       "path": "/api/cron/recurring-invoices",
       "schedule": "30 6 * * *"
+    },
+    {
+      "path": "/api/cron/rebooking-prompt",
+      "schedule": "0 15 * * *"
+    },
+    {
+      "path": "/api/cron/estimate-followup",
+      "schedule": "30 9 * * *"
     }
   ]
 }

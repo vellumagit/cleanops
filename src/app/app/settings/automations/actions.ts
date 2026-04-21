@@ -30,7 +30,10 @@ export type AutomationKey =
   | "auto_void_overdue_invoices"
   | "auto_complete_past_bookings"
   | "auto_archive_old_records"
-  | "auto_recurring_invoices";
+  | "auto_recurring_invoices"
+  | "booking_cancelled_email"
+  | "rebooking_prompt_email"
+  | "estimate_followup_email";
 
 export async function toggleAutomationAction(formData: FormData) {
   const { membership } = await getActionContext();

@@ -741,6 +741,364 @@ export async function notifyBookingCancelledToEmployee(bookingId: string) {
 }
 
 // ─────────────────────────────────────────────────────────────────
+// 7g. Booking cancelled — email the client (mirror of rescheduled)
+// ─────────────────────────────────────────────────────────────────
+
+export async function sendBookingCancelledToClient(bookingId: string) {
+  try {
+    const db = admin();
+    const { sendOrgEmail } = await import("@/lib/email");
+    const { bookingCancelledEmail } = await import("@/lib/email-templates");
+
+    const { data: booking } = await db
+      .from("bookings")
+      .select(`
+        id, organization_id, scheduled_at, service_type, address,
+        client:clients ( name, email )
+      `)
+      .eq("id", bookingId)
+      .maybeSingle();
+
+    if (!booking || !booking.client?.email) return;
+
+    if (!(await isAutomationEnabled(booking.organization_id, "booking_cancelled_email"))) {
+      console.log(`[auto] Booking cancelled email paused for org ${booking.organization_id}`);
+      return;
+    }
+
+    const { data: org } = await db
+      .from("organizations")
+      .select("name, brand_color, logo_url")
+      .eq("id", booking.organization_id)
+      .maybeSingle() as unknown as {
+      data: { name: string; brand_color: string | null; logo_url: string | null } | null;
+    };
+
+    const dateTime = new Date(booking.scheduled_at).toLocaleString("en-US", {
+      weekday: "long",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+
+    const template = bookingCancelledEmail({
+      clientName: booking.client.name ?? "there",
+      orgName: org?.name ?? "your service provider",
+      serviceName: humanize(booking.service_type),
+      dateTime,
+      address: booking.address ?? "(address on file)",
+      brandColor: org?.brand_color ?? undefined,
+      logoUrl: org?.logo_url ?? undefined,
+    });
+
+    sendOrgEmail(booking.organization_id, {
+      to: booking.client.email,
+      toName: booking.client.name ?? undefined,
+      ...template,
+    });
+
+    console.log(`[auto] Booking cancelled email sent to ${booking.client.email}`);
+  } catch (err) {
+    console.error("[auto] sendBookingCancelledToClient failed:", err);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// 7h. Rebooking prompt — daily cron, emails clients whose last service
+// was 14+ days ago and who have no future booking scheduled
+// ─────────────────────────────────────────────────────────────────
+
+export async function sendRebookingPrompts(): Promise<{
+  considered: number;
+  sent: number;
+}> {
+  const db = admin();
+  const { sendOrgEmail } = await import("@/lib/email");
+  const { rebookingPromptEmail } = await import("@/lib/email-templates");
+
+  const now = Date.now();
+  const fourteenDaysAgo = new Date(now - 14 * 24 * 60 * 60 * 1000).toISOString();
+  const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const nowIso = new Date(now).toISOString();
+
+  // Find clients with:
+  //   - at least one completed booking >= 14 days ago
+  //   - no future booking scheduled (pending/confirmed)
+  //   - last_rebook_prompt_at is NULL or older than 30 days
+  //   - an email on file
+  //
+  // Two queries: fetch candidate clients (by dedup + email), then filter in
+  // memory by checking their last completed booking + future bookings.
+  // PostgREST can't express this cleanly in one shot.
+  const { data: candidates } = await db
+    .from("clients")
+    .select("id, organization_id, name, email, last_rebook_prompt_at")
+    .not("email", "is", null)
+    .or(
+      `last_rebook_prompt_at.is.null,last_rebook_prompt_at.lt.${thirtyDaysAgo}`,
+    ) as unknown as {
+    data: Array<{
+      id: string;
+      organization_id: string;
+      name: string | null;
+      email: string | null;
+      last_rebook_prompt_at: string | null;
+    }> | null;
+  };
+
+  if (!candidates || candidates.length === 0) {
+    return { considered: 0, sent: 0 };
+  }
+
+  let sent = 0;
+  const considered = candidates.length;
+
+  // Cache org lookups + toggle check.
+  type OrgInfo = {
+    name: string;
+    brand_color: string | null;
+    logo_url: string | null;
+    sender_email: string | null;
+    enabled: boolean;
+  };
+  const orgCache = new Map<string, OrgInfo | null>();
+
+  for (const client of candidates) {
+    if (!client.email) continue;
+
+    // Check most recent completed booking for this client.
+    const { data: lastCompleted } = await db
+      .from("bookings")
+      .select("scheduled_at")
+      .eq("client_id", client.id)
+      .eq("status", "completed")
+      .order("scheduled_at", { ascending: false })
+      .limit(1)
+      .maybeSingle() as unknown as {
+      data: { scheduled_at: string } | null;
+    };
+
+    // Must have a completed booking and it must be 14+ days old.
+    if (!lastCompleted || lastCompleted.scheduled_at > fourteenDaysAgo) {
+      continue;
+    }
+
+    // Must have NO future booking.
+    const { count: futureCount } = await db
+      .from("bookings")
+      .select("id", { count: "exact", head: true })
+      .eq("client_id", client.id)
+      .in("status", ["pending", "confirmed"])
+      .gte("scheduled_at", nowIso);
+
+    if ((futureCount ?? 0) > 0) continue;
+
+    // Per-org gate + info.
+    let org = orgCache.get(client.organization_id);
+    if (org === undefined) {
+      const enabled = await isAutomationEnabled(
+        client.organization_id,
+        "rebooking_prompt_email",
+      );
+      const { data: orgData } = await db
+        .from("organizations")
+        .select("name, brand_color, logo_url, sender_email")
+        .eq("id", client.organization_id)
+        .maybeSingle() as unknown as {
+        data: {
+          name: string;
+          brand_color: string | null;
+          logo_url: string | null;
+          sender_email: string | null;
+        } | null;
+      };
+      org = orgData ? { ...orgData, enabled } : null;
+      orgCache.set(client.organization_id, org);
+    }
+
+    if (!org || !org.enabled) continue;
+
+    const daysSince = Math.round(
+      (now - new Date(lastCompleted.scheduled_at).getTime()) /
+        (24 * 60 * 60 * 1000),
+    );
+
+    const replyTo =
+      org.sender_email ?? process.env.EMAIL_FROM ?? "noreply@sollos3.com";
+
+    const template = rebookingPromptEmail({
+      clientName: client.name ?? "there",
+      orgName: org.name,
+      daysSinceLastService: daysSince,
+      bookingUrl: `mailto:${replyTo}`,
+      replyToAddress: replyTo,
+      brandColor: org.brand_color ?? undefined,
+      logoUrl: org.logo_url ?? undefined,
+    });
+
+    const ok = await sendOrgEmail(client.organization_id, {
+      to: client.email,
+      toName: client.name ?? undefined,
+      ...template,
+    });
+
+    if (ok) {
+      await db
+        .from("clients")
+        .update({ last_rebook_prompt_at: new Date().toISOString() } as never)
+        .eq("id", client.id);
+      sent += 1;
+      console.log(`[auto] Rebooking prompt sent to ${client.email}`);
+    }
+  }
+
+  return { considered, sent };
+}
+
+// ─────────────────────────────────────────────────────────────────
+// 7i. Estimate follow-up cron — emails client at 7d + 14d after send
+// ─────────────────────────────────────────────────────────────────
+
+export async function sendStaleEstimateFollowups(): Promise<{
+  sent7d: number;
+  sent14d: number;
+}> {
+  const db = admin();
+  const { sendOrgEmail } = await import("@/lib/email");
+  const { estimateFollowupEmail } = await import("@/lib/email-templates");
+  const { formatCurrencyCents } = await import("@/lib/format");
+  const { getOrgCurrency } = await import("@/lib/org-currency");
+
+  const now = Date.now();
+  const sevenDaysAgo = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const fourteenDaysAgo = new Date(
+    now - 14 * 24 * 60 * 60 * 1000,
+  ).toISOString();
+
+  // Pull every estimate that's still in 'sent' status + has a sent_at
+  // old enough to qualify for at least the 7-day follow-up. We'll decide
+  // per-row which stage applies.
+  const { data: candidates } = await db
+    .from("estimates")
+    .select(
+      `id, organization_id, total_cents, sent_at, public_token,
+       client_followup_7d_sent_at, client_followup_14d_sent_at,
+       client:clients ( name, email )`,
+    )
+    .eq("status", "sent")
+    .lte("sent_at", sevenDaysAgo)
+    .is("decided_at", null) as unknown as {
+    data: Array<{
+      id: string;
+      organization_id: string;
+      total_cents: number;
+      sent_at: string;
+      public_token: string | null;
+      client_followup_7d_sent_at: string | null;
+      client_followup_14d_sent_at: string | null;
+      client: { name: string | null; email: string | null } | null;
+    }> | null;
+  };
+
+  if (!candidates || candidates.length === 0) {
+    return { sent7d: 0, sent14d: 0 };
+  }
+
+  let sent7d = 0;
+  let sent14d = 0;
+
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+
+  // Cache per-org lookups.
+  type OrgInfo = {
+    name: string;
+    brand_color: string | null;
+    logo_url: string | null;
+    enabled: boolean;
+    currency: "CAD" | "USD";
+  };
+  const orgCache = new Map<string, OrgInfo | null>();
+
+  for (const est of candidates) {
+    if (!est.client?.email || !est.public_token) continue;
+
+    const isPast14 = est.sent_at <= fourteenDaysAgo;
+    const stage: "day7" | "day14" = isPast14 ? "day14" : "day7";
+
+    // Dedup: skip if we've already sent the applicable stage.
+    if (stage === "day14" && est.client_followup_14d_sent_at) continue;
+    if (stage === "day7" && est.client_followup_7d_sent_at) continue;
+
+    // Also don't double-send 7d if we're already past 14d and the 7d row
+    // is stamped — keep the progression orderly.
+    if (stage === "day14" && !est.client_followup_7d_sent_at) {
+      // We skipped the 7d window (probably because this cron wasn't
+      // running yet). Skip straight to 14d; that's the more urgent one.
+    }
+
+    let org = orgCache.get(est.organization_id);
+    if (org === undefined) {
+      const enabled = await isAutomationEnabled(
+        est.organization_id,
+        "estimate_followup_email",
+      );
+      const { data: orgData } = await db
+        .from("organizations")
+        .select("name, brand_color, logo_url")
+        .eq("id", est.organization_id)
+        .maybeSingle() as unknown as {
+        data: {
+          name: string;
+          brand_color: string | null;
+          logo_url: string | null;
+        } | null;
+      };
+      const currency = await getOrgCurrency(est.organization_id);
+      org = orgData ? { ...orgData, enabled, currency } : null;
+      orgCache.set(est.organization_id, org);
+    }
+    if (!org || !org.enabled) continue;
+
+    const template = estimateFollowupEmail({
+      clientName: est.client.name ?? "there",
+      orgName: org.name,
+      amountFormatted: formatCurrencyCents(est.total_cents, org.currency),
+      publicUrl: `${siteUrl}/e/${est.public_token}`,
+      stage,
+      brandColor: org.brand_color ?? undefined,
+      logoUrl: org.logo_url ?? undefined,
+    });
+
+    const ok = await sendOrgEmail(est.organization_id, {
+      to: est.client.email,
+      toName: est.client.name ?? undefined,
+      ...template,
+    });
+
+    if (ok) {
+      const stamp = new Date().toISOString();
+      const update =
+        stage === "day14"
+          ? { client_followup_14d_sent_at: stamp }
+          : { client_followup_7d_sent_at: stamp };
+      await db
+        .from("estimates")
+        .update(update as never)
+        .eq("id", est.id);
+
+      if (stage === "day14") sent14d += 1;
+      else sent7d += 1;
+      console.log(
+        `[auto] Estimate ${stage} follow-up sent for ${est.id} to ${est.client.email}`,
+      );
+    }
+  }
+
+  return { sent7d, sent14d };
+}
+
+// ─────────────────────────────────────────────────────────────────
 // 7c. Overdue invoice reminder cron — runs daily, sends once per 7 days per invoice
 // ─────────────────────────────────────────────────────────────────
 
