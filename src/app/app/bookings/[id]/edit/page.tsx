@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getOrgCurrency } from "@/lib/org-currency";
+import { getOrgTimezone } from "@/lib/org-timezone";
 import { PageShell } from "@/components/page-shell";
 import {
   centsToDollarString,
@@ -22,6 +23,7 @@ export default async function EditBookingPage({
   const { id } = await params;
   const supabase = await createSupabaseServerClient();
   const currency = await getOrgCurrency(membership.organization_id);
+  const orgTz = await getOrgTimezone(membership.organization_id);
 
   const [{ data: booking, error }, options] = await Promise.all([
     supabase
@@ -67,7 +69,7 @@ export default async function EditBookingPage({
               client_id: booking.client_id,
               package_id: booking.package_id,
               assigned_to: booking.assigned_to,
-              scheduled_at_local: toDatetimeLocal(booking.scheduled_at),
+              scheduled_at_local: toDatetimeLocal(booking.scheduled_at, orgTz),
               duration_minutes: booking.duration_minutes,
               service_type: booking.service_type,
               status: booking.status,

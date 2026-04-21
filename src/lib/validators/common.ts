@@ -76,13 +76,16 @@ export const optionalDate = z
  * This ensures the form shows the same wall-clock time the user intended,
  * regardless of whether the server runs in UTC (Vercel) or local dev.
  */
-export function toDatetimeLocal(iso: string | null | undefined): string {
+export function toDatetimeLocal(
+  iso: string | null | undefined,
+  tz: string = DEFAULT_TZ,
+): string {
   if (!iso) return "";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
   // Format in the org's timezone so the form shows wall-clock time
   const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: DEFAULT_TZ,
+    timeZone: tz,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -103,8 +106,13 @@ export function toDatetimeLocal(iso: string | null | undefined): string {
  * On Vercel (UTC server), `new Date("2026-04-13T14:00")` parses this as UTC,
  * but the user meant 2:00 PM in their org's timezone. This function computes
  * the correct UTC offset and produces the right ISO string.
+ *
+ * Pass `tz` to use a specific org's timezone; defaults to DEFAULT_TZ.
  */
-export function localInputToUtcIso(datetimeLocal: string): string {
+export function localInputToUtcIso(
+  datetimeLocal: string,
+  tz: string = DEFAULT_TZ,
+): string {
   // Parse the components from the input string
   const d = new Date(datetimeLocal);
   if (Number.isNaN(d.getTime())) return d.toISOString(); // fallback
@@ -112,15 +120,15 @@ export function localInputToUtcIso(datetimeLocal: string): string {
   // The input was parsed as if it were local/UTC. We need to find what UTC
   // instant corresponds to this wall-clock time in the org's timezone.
   //
-  // Strategy: format "now" in the org tz to find the current UTC offset,
-  // then apply it. For DST correctness we format the *target* date.
+  // Strategy: render this UTC instant in the org tz to see what wall-clock
+  // it maps to, compute the offset between the two, and subtract it. For
+  // DST correctness we format the *target* date, not "now".
   const naive = new Date(datetimeLocal + "Z"); // force UTC parse
   const utcMs = naive.getTime();
 
-  // Render this UTC instant in the org tz to see what wall-clock it maps to
   const inTz = new Date(
     new Intl.DateTimeFormat("en-CA", {
-      timeZone: DEFAULT_TZ,
+      timeZone: tz,
       year: "numeric",
       month: "2-digit",
       day: "2-digit",

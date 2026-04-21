@@ -6,6 +6,7 @@ import {
   Coins,
   CreditCard,
   Database,
+  Globe2,
   KeyRound,
   Mail,
   Palette,
@@ -44,6 +45,13 @@ const SECTIONS = [
     title: "Currency",
     description:
       "Choose whether amounts display in Canadian or US dollars.",
+  },
+  {
+    href: "/app/settings/timezone",
+    icon: Globe2,
+    title: "Timezone",
+    description:
+      "Set your organization's timezone. Booking times and recurrence schedules are interpreted in this zone.",
   },
   {
     href: "/app/settings/email",

@@ -42,8 +42,14 @@ export function formatCurrencyCents(
   }).format(cents / 100);
 }
 
-/** Format an ISO timestamp as a short date, e.g. "Apr 7, 2026". */
-export function formatDate(iso: string | null | undefined): string {
+/**
+ * Format an ISO timestamp as a short date, e.g. "Apr 7, 2026".
+ * Pass `tz` to use an org-specific timezone; defaults to DEFAULT_TZ.
+ */
+export function formatDate(
+  iso: string | null | undefined,
+  tz: string = DEFAULT_TZ,
+): string {
   if (!iso) return "—";
   // Date-only strings ("2026-04-13") are UTC midnight — applying a timezone
   // offset rolls them back by a day. Append noon UTC so the date stays stable
@@ -55,12 +61,18 @@ export function formatDate(iso: string | null | undefined): string {
     month: "short",
     day: "numeric",
     year: "numeric",
-    timeZone: DEFAULT_TZ,
+    timeZone: tz,
   });
 }
 
-/** Format an ISO timestamp as a date + time, e.g. "Apr 7, 2026 · 9:30 AM". */
-export function formatDateTime(iso: string | null | undefined): string {
+/**
+ * Format an ISO timestamp as a date + time, e.g. "Apr 7, 2026 · 9:30 AM".
+ * Pass `tz` to use an org-specific timezone; defaults to DEFAULT_TZ.
+ */
+export function formatDateTime(
+  iso: string | null | undefined,
+  tz: string = DEFAULT_TZ,
+): string {
   if (!iso) return "—";
   // Date-only strings shouldn't reach here, but handle them gracefully.
   const safeIso = /^\d{4}-\d{2}-\d{2}$/.test(iso) ? `${iso}T12:00:00Z` : iso;
@@ -70,11 +82,11 @@ export function formatDateTime(iso: string | null | undefined): string {
     month: "short",
     day: "numeric",
     year: "numeric",
-    timeZone: DEFAULT_TZ,
+    timeZone: tz,
   })} · ${d.toLocaleTimeString("en-US", {
     hour: "numeric",
     minute: "2-digit",
-    timeZone: DEFAULT_TZ,
+    timeZone: tz,
   })}`;
 }
 

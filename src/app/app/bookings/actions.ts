@@ -17,6 +17,8 @@ import {
   sendBookingRescheduled,
 } from "@/lib/automations";
 import { canCreateData } from "@/lib/subscription";
+import { getOrgTimezone } from "@/lib/org-timezone";
+import { localInputToUtcIso } from "@/lib/validators/common";
 
 type Field = keyof typeof BookingSchema.shape;
 export type BookingFormState = ActionState<Field & string>;
@@ -103,6 +105,13 @@ export async function createBookingAction(
 
   const { membership, supabase } = await getActionContext();
 
+  // Re-interpret the datetime-local string using the org's timezone.
+  // BookingSchema's transform used DEFAULT_TZ (falls back to a reasonable
+  // default but can drift for orgs outside Eastern). Rewriting here uses
+  // the authoritative per-org timezone.
+  const orgTz = await getOrgTimezone(membership.organization_id);
+  parsed.data.scheduled_at = localInputToUtcIso(raw.scheduled_at, orgTz);
+
   if (!(await canCreateData(membership.organization_id))) {
     return { errors: { _form: "Your subscription has expired. Subscribe to create new bookings." }, values: raw };
   }
@@ -179,6 +188,8 @@ export async function createRecurringBookingAction(
 
   const { membership, supabase } = await getActionContext();
 
+  const orgTz = await getOrgTimezone(membership.organization_id);
+
   // Validate custom_days for custom_weekly
   if (
     parsed.data.recurrence_pattern === "custom_weekly" &&
@@ -250,6 +261,7 @@ export async function createRecurringBookingAction(
     generate_ahead: parsed.data.generate_ahead,
     monthly_nth: parsed.data.monthly_nth ?? null,
     monthly_dow: parsed.data.monthly_dow ?? null,
+    tz: orgTz,
   };
 
   const occurrences = generateOccurrences(rule, parsed.data.generate_ahead, null);
@@ -333,6 +345,10 @@ export async function updateBookingAction(
   if (!parsed.ok) return { errors: parsed.errors, values: raw };
 
   const { membership, supabase } = await getActionContext();
+
+  // Re-interpret datetime-local with the org's tz (see createBookingAction).
+  const orgTz = await getOrgTimezone(membership.organization_id);
+  parsed.data.scheduled_at = localInputToUtcIso(raw.scheduled_at, orgTz);
 
   // Fetch the existing booking to detect assignee + scheduled_at + status changes
   const { data: existing } = (await supabase

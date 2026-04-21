@@ -101,6 +101,13 @@ export type SeriesRule = {
    * holidays / client-requested pauses for a single occurrence.
    */
   skip_dates?: string[] | null;
+  /**
+   * IANA timezone string (e.g. "America/Edmonton"). Drives how
+   * `start_time` is applied to each occurrence date. Defaults to
+   * DEFAULT_TZ when omitted — callers with org context should always
+   * pass the org's timezone for DST and multi-region correctness.
+   */
+  tz?: string;
 };
 
 /** True if the date (in YYYY-MM-DD format) appears in the skip list. */
@@ -151,18 +158,17 @@ export function nthWeekdayOfMonth(
 }
 
 /**
- * Apply HH:MM time to a date in the org's timezone and return a proper
+ * Apply HH:MM time to a date in the given timezone and return a proper
  * UTC Date. Uses localInputToUtcIso so recurring bookings get the right
  * wall-clock time regardless of server timezone.
  */
-function applyTime(date: Date, time: string): Date {
+function applyTime(date: Date, time: string, tz: string | undefined): Date {
   const pad = (n: number) => String(n).padStart(2, "0");
   const y = date.getFullYear();
   const mo = pad(date.getMonth() + 1);
   const d = pad(date.getDate());
-  // Build a datetime-local string and convert via org timezone
   const dtLocal = `${y}-${mo}-${d}T${time}`;
-  return new Date(localInputToUtcIso(dtLocal));
+  return new Date(localInputToUtcIso(dtLocal, tz));
 }
 
 /**
@@ -202,7 +208,7 @@ export function generateOccurrences(
 
   while (results.length < count) {
     // Apply the time
-    const occurrence = applyTime(cursor, rule.start_time);
+    const occurrence = applyTime(cursor, rule.start_time, rule.tz);
 
     // Check bounds
     if (endDate && isAfter(startOfDay(cursor), endDate)) break;
@@ -278,7 +284,7 @@ function generateMonthlyNth(
     );
 
     if (candidate) {
-      const occurrence = applyTime(candidate, rule.start_time);
+      const occurrence = applyTime(candidate, rule.start_time, rule.tz);
 
       if (endDate && isAfter(startOfDay(candidate), endDate)) break;
 
@@ -326,7 +332,7 @@ function generateCustomWeekly(
     const dayOfWeek = getDay(cursor); // 0=Sun … 6=Sat
 
     if (days.includes(dayOfWeek)) {
-      const occurrence = applyTime(cursor, rule.start_time);
+      const occurrence = applyTime(cursor, rule.start_time, rule.tz);
 
       if (!isBefore(startOfDay(cursor), startOfDay(startDate))) {
         if (endDate && isAfter(startOfDay(cursor), endDate)) break;

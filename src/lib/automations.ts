@@ -1447,8 +1447,10 @@ export async function autoExtendRecurringSeries(): Promise<number> {
       // If the latest booking is more than 2 weeks out, no need to generate
       if (latestDate > twoWeeksOut) continue;
 
-      // Generate next batch (honoring skip_dates so holiday exceptions
-      // don't get silently regenerated).
+      // Generate next batch (honoring skip_dates and the org's timezone
+      // so DST shifts + holidays don't silently drift the schedule).
+      const { getOrgTimezone } = await import("@/lib/org-timezone");
+      const orgTz = await getOrgTimezone(s.organization_id);
       const occurrences = generateOccurrences(
         {
           pattern: s.pattern as import("@/lib/recurrence").RecurrencePattern,
@@ -1460,6 +1462,7 @@ export async function autoExtendRecurringSeries(): Promise<number> {
           ends_at: s.ends_at,
           generate_ahead: s.generate_ahead,
           skip_dates: s.skip_dates,
+          tz: orgTz,
         },
         s.generate_ahead,
         latestDate,
