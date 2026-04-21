@@ -71,6 +71,10 @@ export function BookingForm({
   // Default to indefinite. New series are almost always open-ended —
   // cleaning retainers with explicit end dates are the exception.
   const [endsIndefinite, setEndsIndefinite] = useState(true);
+  // Controlled value for ends_at. Switching from uncontrolled `defaultValue`
+  // avoids a subtle React bug where toggling the `disabled` prop on a date
+  // input can leave the DOM value out of sync with what actually gets submitted.
+  const [endsAtValue, setEndsAtValue] = useState("");
 
   const defaultMinutes = defaults?.duration_minutes ?? 0;
 
@@ -356,7 +360,8 @@ export function BookingForm({
                   id="ends_at"
                   name="ends_at"
                   type="date"
-                  defaultValue={v.ends_at ?? ""}
+                  value={endsIndefinite ? "" : endsAtValue}
+                  onChange={(e) => setEndsAtValue(e.target.value)}
                   disabled={endsIndefinite}
                   required={!endsIndefinite}
                   className={endsIndefinite ? "opacity-50" : ""}

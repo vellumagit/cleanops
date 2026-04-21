@@ -20,6 +20,7 @@ import {
 import { canCreateData } from "@/lib/subscription";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { localInputToUtcIso } from "@/lib/validators/common";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 type Field = keyof typeof BookingSchema.shape;
 export type BookingFormState = ActionState<Field & string>;
@@ -481,32 +482,57 @@ export async function deleteBookingAction(formData: FormData) {
   };
 
   // Cascade: delete every booking in this series first, then the series row.
-  // FK on bookings.series_id uses ON DELETE SET NULL, so we must clean the
-  // children explicitly — otherwise they'd be orphaned.
+  // We already verified the booking belongs to the user's org via the RLS-
+  // bound fetch above. Use the admin client for the bulk delete because
+  // RLS on bookings can silently drop bulk-DELETE rows when the filter
+  // column (series_id) isn't in the policy's predicate shape — we still
+  // enforce org isolation via an explicit .eq("organization_id", ...).
   if (cascade && existing?.series_id) {
+    const admin = createSupabaseAdminClient();
+
     // Collect every Google Calendar event id in the series so we can
     // unsync them after the row delete.
-    const { data: siblings } = (await supabase
+    const { data: siblings } = (await admin
       .from("bookings")
       .select("google_calendar_event_id")
-      .eq("series_id" as never, existing.series_id as never)) as unknown as {
+      .eq("series_id" as never, existing.series_id as never)
+      .eq(
+        "organization_id",
+        membership.organization_id,
+      )) as unknown as {
       data: Array<{ google_calendar_event_id: string | null }> | null;
     };
 
-    await supabase
+    const { error: delBookingsErr, count: delBookingsCount } = await admin
       .from("bookings")
-      .delete()
+      .delete({ count: "exact" })
       .eq("series_id" as never, existing.series_id as never)
       .eq("organization_id", membership.organization_id);
+    if (delBookingsErr) {
+      console.error(
+        "[cascade-delete] bulk booking delete failed:",
+        delBookingsErr.message,
+      );
+      throw delBookingsErr;
+    }
+    console.log(
+      `[cascade-delete] removed ${delBookingsCount ?? 0} bookings from series ${existing.series_id}`,
+    );
 
-    await (supabase
+    const { error: delSeriesErr } = (await admin
       .from("booking_series" as never)
       .delete()
       .eq("id" as never, existing.series_id as never)
       .eq(
         "organization_id" as never,
         membership.organization_id as never,
-      ) as unknown as Promise<unknown>);
+      )) as unknown as { error: { message: string } | null };
+    if (delSeriesErr) {
+      console.error(
+        "[cascade-delete] series row delete failed:",
+        delSeriesErr.message,
+      );
+    }
 
     // Fire-and-forget Google Calendar cleanup for every event we had.
     for (const sib of siblings ?? []) {
