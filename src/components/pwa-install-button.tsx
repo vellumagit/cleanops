@@ -42,35 +42,35 @@ function isSafari() {
 export function PwaInstallCard() {
   const [deferredPrompt, setDeferredPrompt] =
     useState<BeforeInstallPromptEvent | null>(null);
-  const [installed, setInstalled] = useState(false);
-  const [ios, setIos] = useState(false);
-  const [inSafari, setInSafari] = useState(false);
+  // All three resolve synchronously on mount and never change after that
+  // (UA + display-mode are stable for the component's lifetime), so we
+  // compute them in the initializer instead of setState-in-effect.
+  const [installed, setInstalled] = useState(() =>
+    typeof window !== "undefined" && isStandalone(),
+  );
+  const [ios] = useState(() => typeof window !== "undefined" && isIOS());
+  const [inSafari] = useState(
+    () => typeof window !== "undefined" && isSafari(),
+  );
   const [installing, setInstalling] = useState(false);
 
   useEffect(() => {
-    if (isStandalone()) {
-      setInstalled(true);
-      return;
-    }
+    if (installed) return;
 
-    if (isIOS()) {
-      setIos(true);
-      setInSafari(isSafari());
-    }
-
-    const handler = (e: Event) => {
+    const beforeInstall = (e: Event) => {
       e.preventDefault();
       setDeferredPrompt(e as BeforeInstallPromptEvent);
     };
-    window.addEventListener("beforeinstallprompt", handler);
+    const onInstalled = () => setInstalled(true);
 
-    // Detect post-install
-    window.addEventListener("appinstalled", () => setInstalled(true));
+    window.addEventListener("beforeinstallprompt", beforeInstall);
+    window.addEventListener("appinstalled", onInstalled);
 
     return () => {
-      window.removeEventListener("beforeinstallprompt", handler);
+      window.removeEventListener("beforeinstallprompt", beforeInstall);
+      window.removeEventListener("appinstalled", onInstalled);
     };
-  }, []);
+  }, [installed]);
 
   // Register service worker
   useEffect(() => {

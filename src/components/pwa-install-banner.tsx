@@ -20,8 +20,10 @@ import { Download, X, Share, SquarePlus } from "lucide-react";
 const DISMISS_KEY = "sollos_pwa_dismissed";
 const DISMISS_DAYS = 7;
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type BeforeInstallPromptEvent = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> };
+type BeforeInstallPromptEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: string }>;
+};
 
 function isIOS() {
   if (typeof navigator === "undefined") return false;
@@ -42,40 +44,50 @@ function isStandalone() {
   );
 }
 
-export function PwaInstallBanner() {
-  const [deferredPrompt, setDeferredPrompt] =
-    useState<BeforeInstallPromptEvent | null>(null);
-  const [showIOS, setShowIOS] = useState(false);
-  const [inSafari, setInSafari] = useState(false);
-  const [dismissed, setDismissed] = useState(true); // default hidden
-
-  useEffect(() => {
-    // Already installed as PWA — never show
-    if (isStandalone()) return;
-
-    // Check dismissal
+/**
+ * Synchronous dismissal check. Runs on the client only (localStorage
+ * + Date.now + standalone mode check are all available immediately).
+ * Returns false during SSR so the banner stays hidden until hydration.
+ */
+function initialDismissed(): boolean {
+  if (typeof window === "undefined") return true;
+  if (isStandalone()) return true;
+  try {
     const raw = localStorage.getItem(DISMISS_KEY);
     if (raw) {
       const ts = parseInt(raw, 10);
-      if (Date.now() - ts < DISMISS_DAYS * 86400000) return;
+      if (Date.now() - ts < DISMISS_DAYS * 86400000) return true;
     }
-    setDismissed(false);
+  } catch {
+    // localStorage blocked (private mode, iframe) — play it safe
+    return true;
+  }
+  return false;
+}
 
-    // Android / Chrome
+export function PwaInstallBanner() {
+  const [deferredPrompt, setDeferredPrompt] =
+    useState<BeforeInstallPromptEvent | null>(null);
+  // UA detection is stable for the component's lifetime — compute once
+  // at mount instead of via setState inside an effect.
+  const [showIOS] = useState(
+    () => typeof window !== "undefined" && isIOS(),
+  );
+  const [inSafari] = useState(
+    () => typeof window !== "undefined" && isSafari(),
+  );
+  const [dismissed, setDismissed] = useState(initialDismissed);
+
+  useEffect(() => {
+    if (dismissed) return;
+
     const handler = (e: Event) => {
       e.preventDefault();
       setDeferredPrompt(e as BeforeInstallPromptEvent);
     };
     window.addEventListener("beforeinstallprompt", handler);
-
-    // iOS — no event, detect via UA
-    if (isIOS()) {
-      setShowIOS(true);
-      setInSafari(isSafari());
-    }
-
     return () => window.removeEventListener("beforeinstallprompt", handler);
-  }, []);
+  }, [dismissed]);
 
   // Register service worker on mount
   useEffect(() => {
@@ -84,7 +96,7 @@ export function PwaInstallBanner() {
     }
   }, []);
 
-  if (dismissed || isStandalone()) return null;
+  if (dismissed) return null;
   if (!deferredPrompt && !showIOS) return null;
 
   function handleDismiss() {

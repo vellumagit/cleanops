@@ -5,6 +5,30 @@ import { Bell, BellOff, X } from "lucide-react";
 
 const VAPID_PUBLIC = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? "";
 
+/**
+ * Synchronous support check. Safe to call during render (no state mutation
+ * on the APIs it touches). Returns false during SSR and on browsers that
+ * lack the Push API, or when VAPID isn't configured.
+ */
+function isPushSupported(): boolean {
+  if (typeof window === "undefined") return false;
+  if (!VAPID_PUBLIC) return false;
+  return "serviceWorker" in navigator && "PushManager" in window;
+}
+
+/**
+ * Synchronous initial state for PushPrompt — resolves the cheap checks
+ * (feature detection + permission) so we don't setState inside an effect.
+ * Returns "loading" only if we genuinely need to await the service worker
+ * ready promise.
+ */
+function initialPromptState(): PushState {
+  if (typeof window === "undefined") return "loading";
+  if (!isPushSupported()) return "unsupported";
+  if (Notification.permission === "denied") return "denied";
+  return "loading";
+}
+
 type PushState =
   | "loading"
   | "unsupported"
@@ -34,31 +58,26 @@ export function PushPrompt({
   membershipId: string;
   organizationId: string;
 }) {
-  const [state, setState] = useState<PushState>("loading");
+  const [state, setState] = useState<PushState>(initialPromptState);
 
   useEffect(() => {
-    if (!VAPID_PUBLIC) {
-      setState("unsupported");
-      return;
-    }
-    if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
-      setState("unsupported");
-      return;
-    }
+    // If the initial state already resolved ("unsupported" / "denied"), the
+    // only thing left to do is async-check the existing subscription.
+    if (state !== "loading") return;
 
-    const perm = Notification.permission;
-    if (perm === "denied") {
-      setState("denied");
-      return;
-    }
-
-    // Check if already subscribed
+    let cancelled = false;
     navigator.serviceWorker.ready
       .then((reg) => reg.pushManager.getSubscription())
       .then((sub) => {
-        setState(sub ? "subscribed" : "prompt");
+        if (!cancelled) setState(sub ? "subscribed" : "prompt");
       })
-      .catch(() => setState("prompt"));
+      .catch(() => {
+        if (!cancelled) setState("prompt");
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const subscribe = useCallback(async () => {
@@ -144,22 +163,27 @@ export function PushToggle({
   membershipId: string;
   organizationId: string;
 }) {
-  const [subscribed, setSubscribed] = useState<boolean | null>(null);
+  // Resolve the cheap check synchronously; only leave `null` (loading)
+  // when we actually need to await the service worker.
+  const [subscribed, setSubscribed] = useState<boolean | null>(() =>
+    isPushSupported() ? null : false,
+  );
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (
-      !VAPID_PUBLIC ||
-      !("serviceWorker" in navigator) ||
-      !("PushManager" in window)
-    ) {
-      setSubscribed(false);
-      return;
-    }
+    if (!isPushSupported()) return;
+    let cancelled = false;
     navigator.serviceWorker.ready
       .then((reg) => reg.pushManager.getSubscription())
-      .then((sub) => setSubscribed(!!sub))
-      .catch(() => setSubscribed(false));
+      .then((sub) => {
+        if (!cancelled) setSubscribed(!!sub);
+      })
+      .catch(() => {
+        if (!cancelled) setSubscribed(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const toggle = useCallback(async () => {
