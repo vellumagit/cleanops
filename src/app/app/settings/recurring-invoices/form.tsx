@@ -6,27 +6,46 @@ import { Label } from "@/components/ui/label";
 import { SubmitButton } from "@/components/submit-button";
 import {
   createRecurringInvoiceAction,
+  updateRecurringInvoiceAction,
   type RecurringInvoiceState,
-} from "../actions";
+} from "./actions";
+
+export type RecurringInvoiceFormDefaults = {
+  client_id: string;
+  name: string;
+  cadence: "weekly" | "biweekly" | "monthly" | "quarterly";
+  amount_dollars: string;
+  due_days: number;
+  next_run_at: string; // yyyy-mm-dd
+  notes: string;
+  line_items: string; // JSON string
+};
 
 type Props = {
   clients: Array<{ id: string; name: string }>;
-  orgName: string;
+  mode: "new" | "edit";
+  /** Required in edit mode */
+  id?: string;
+  defaults?: RecurringInvoiceFormDefaults;
 };
 
-export function NewRecurringInvoiceForm({ clients }: Props) {
+export function RecurringInvoiceForm({ clients, mode, id, defaults }: Props) {
+  const boundAction =
+    mode === "edit" && id
+      ? updateRecurringInvoiceAction.bind(null, id)
+      : createRecurringInvoiceAction;
+
   const [state, formAction] = useActionState<RecurringInvoiceState, FormData>(
-    createRecurringInvoiceAction,
+    boundAction,
     {},
   );
 
   const v = state.values ?? {};
 
-  // Default start date = tomorrow, so cron (which runs at 06:30 UTC) picks it up
-  // the following morning.
+  // Default start for new series = tomorrow.
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
-  const defaultStart = tomorrow.toISOString().slice(0, 10);
+  const defaultStart = defaults?.next_run_at ?? tomorrow.toISOString().slice(0, 10);
 
   return (
     <form action={formAction} className="space-y-5">
@@ -37,7 +56,7 @@ export function NewRecurringInvoiceForm({ clients }: Props) {
           name="name"
           required
           placeholder="e.g. Monthly retainer — Acme Corp"
-          defaultValue={v.name ?? ""}
+          defaultValue={v.name ?? defaults?.name ?? ""}
           className="mt-1"
         />
         <p className="mt-1 text-xs text-muted-foreground">
@@ -54,7 +73,7 @@ export function NewRecurringInvoiceForm({ clients }: Props) {
           id="client_id"
           name="client_id"
           required
-          defaultValue={v.client_id ?? ""}
+          defaultValue={v.client_id ?? defaults?.client_id ?? ""}
           className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
         >
           <option value="">Select a client…</option>
@@ -75,7 +94,7 @@ export function NewRecurringInvoiceForm({ clients }: Props) {
           <select
             id="cadence"
             name="cadence"
-            defaultValue={v.cadence ?? "monthly"}
+            defaultValue={v.cadence ?? defaults?.cadence ?? "monthly"}
             className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
           >
             <option value="weekly">Weekly</option>
@@ -95,7 +114,7 @@ export function NewRecurringInvoiceForm({ clients }: Props) {
             min="0"
             required
             placeholder="500.00"
-            defaultValue={v.amount_dollars ?? ""}
+            defaultValue={v.amount_dollars ?? defaults?.amount_dollars ?? ""}
             className="mt-1"
           />
           {state.errors?.amount_cents && (
@@ -108,7 +127,9 @@ export function NewRecurringInvoiceForm({ clients }: Props) {
 
       <div className="grid gap-4 sm:grid-cols-2">
         <div>
-          <Label htmlFor="next_run_at">First invoice date</Label>
+          <Label htmlFor="next_run_at">
+            {mode === "edit" ? "Next invoice date" : "First invoice date"}
+          </Label>
           <Input
             id="next_run_at"
             name="next_run_at"
@@ -118,7 +139,9 @@ export function NewRecurringInvoiceForm({ clients }: Props) {
             className="mt-1"
           />
           <p className="mt-1 text-xs text-muted-foreground">
-            The cron will generate the first invoice on (or just after) this date.
+            {mode === "edit"
+              ? "Changing this shifts when the next invoice will be generated. The cadence still applies from here."
+              : "The cron will generate the first invoice on (or just after) this date."}
           </p>
           {state.errors?.next_run_at && (
             <p className="mt-1 text-xs text-red-700">
@@ -135,7 +158,9 @@ export function NewRecurringInvoiceForm({ clients }: Props) {
             type="number"
             min="0"
             max="180"
-            defaultValue={v.due_days ?? "14"}
+            defaultValue={
+              v.due_days ?? (defaults?.due_days ?? 14).toString()
+            }
             className="mt-1"
           />
         </div>
@@ -147,7 +172,7 @@ export function NewRecurringInvoiceForm({ clients }: Props) {
           id="notes"
           name="notes"
           rows={3}
-          defaultValue={v.notes ?? ""}
+          defaultValue={v.notes ?? defaults?.notes ?? ""}
           placeholder="Notes that will appear on every generated invoice."
           className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
         />
@@ -159,7 +184,7 @@ export function NewRecurringInvoiceForm({ clients }: Props) {
           id="line_items"
           name="line_items"
           rows={4}
-          defaultValue={v.line_items ?? ""}
+          defaultValue={v.line_items ?? defaults?.line_items ?? ""}
           placeholder='[{"description":"Office cleaning retainer","quantity":1,"unit_cents":50000}]'
           className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-xs font-mono"
         />
@@ -177,7 +202,9 @@ export function NewRecurringInvoiceForm({ clients }: Props) {
         <p className="text-xs text-red-700">{state.errors._form}</p>
       )}
 
-      <SubmitButton pendingLabel="Creating…">Create series</SubmitButton>
+      <SubmitButton pendingLabel={mode === "edit" ? "Saving…" : "Creating…"}>
+        {mode === "edit" ? "Save changes" : "Create series"}
+      </SubmitButton>
     </form>
   );
 }

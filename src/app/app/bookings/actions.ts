@@ -12,6 +12,7 @@ import {
 import { generateOccurrences, type SeriesRule } from "@/lib/recurrence";
 import {
   notifyBookingAssignment,
+  notifyBookingCancelledToEmployee,
   sendBookingConfirmation,
   sendBookingRescheduled,
 } from "@/lib/automations";
@@ -333,16 +334,17 @@ export async function updateBookingAction(
 
   const { membership, supabase } = await getActionContext();
 
-  // Fetch the existing booking to detect assignee + scheduled_at changes
+  // Fetch the existing booking to detect assignee + scheduled_at + status changes
   const { data: existing } = (await supabase
     .from("bookings")
-    .select("google_calendar_event_id, assigned_to, scheduled_at")
+    .select("google_calendar_event_id, assigned_to, scheduled_at, status")
     .eq("id", id)
     .maybeSingle()) as unknown as {
     data: {
       google_calendar_event_id: string | null;
       assigned_to: string | null;
       scheduled_at: string | null;
+      status: string | null;
     } | null;
   };
 
@@ -384,12 +386,22 @@ export async function updateBookingAction(
 
   if (error) return { errors: { _form: error.message }, values: raw };
 
-  // If the scheduled time changed, email the client (fire-and-forget)
+  // If the scheduled time changed, email the client + push employee
+  // (both handled inside sendBookingRescheduled).
   if (
     existing?.scheduled_at &&
     existing.scheduled_at !== parsed.data.scheduled_at
   ) {
     sendBookingRescheduled(id, existing.scheduled_at);
+  }
+
+  // If the status flipped TO cancelled (not already cancelled), push the
+  // assigned employee so they don't show up.
+  if (
+    existing?.status !== "cancelled" &&
+    parsed.data.status === "cancelled"
+  ) {
+    notifyBookingCancelledToEmployee(id);
   }
 
   // Sync to Google Calendar

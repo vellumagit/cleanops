@@ -598,13 +598,41 @@ export async function sendBookingRescheduled(
     const { data: booking } = await db
       .from("bookings")
       .select(`
-        id, organization_id, scheduled_at, service_type, address,
+        id, organization_id, scheduled_at, service_type, address, assigned_to,
         client:clients ( name, email )
       `)
       .eq("id", bookingId)
       .maybeSingle();
 
-    if (!booking || !booking.client?.email) return;
+    if (!booking) return;
+
+    // Push the assigned employee first — the field app banner needs to
+    // update even if the client email is paused or blocked.
+    if (booking.assigned_to) {
+      const when = new Date(booking.scheduled_at).toLocaleString("en-US", {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      });
+      sendPushToMembership(booking.assigned_to, {
+        title: "Booking rescheduled",
+        body: `${humanize(booking.service_type)} moved to ${when}`,
+        href: `/field/jobs/${bookingId}`,
+      }).catch(() => {});
+      // In-app notification row so it lingers in their feed.
+      (db.from("notifications" as never).insert({
+        organization_id: booking.organization_id,
+        type: "general",
+        recipient_membership_id: booking.assigned_to,
+        title: "Booking rescheduled",
+        body: `${humanize(booking.service_type)} moved to ${when}`,
+        href: `/field/jobs/${bookingId}`,
+      } as never) as unknown as Promise<unknown>).catch(() => {});
+    }
+
+    if (!booking.client?.email) return;
 
     if (!(await isAutomationEnabled(booking.organization_id, "booking_rescheduled_email"))) {
       console.log(`[auto] Booking rescheduled email paused for org ${booking.organization_id}`);
@@ -648,6 +676,67 @@ export async function sendBookingRescheduled(
     console.log(`[auto] Booking rescheduled email sent to ${booking.client.email}`);
   } catch (err) {
     console.error("[auto] sendBookingRescheduled failed:", err);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// 7f. Push the assigned employee when a booking is cancelled
+//
+// Prevents the "employee shows up for a job that was cancelled" failure
+// mode. Fires in-app notification + push. Admin-facing push only —
+// client-facing cancellation email is a separate future feature.
+// ─────────────────────────────────────────────────────────────────
+
+export async function notifyBookingCancelledToEmployee(bookingId: string) {
+  try {
+    const db = admin();
+    const { data: booking } = await db
+      .from("bookings")
+      .select(
+        "id, organization_id, assigned_to, scheduled_at, service_type, client:clients ( name )",
+      )
+      .eq("id", bookingId)
+      .maybeSingle() as unknown as {
+      data: {
+        id: string;
+        organization_id: string;
+        assigned_to: string | null;
+        scheduled_at: string;
+        service_type: string;
+        client: { name: string | null } | null;
+      } | null;
+    };
+
+    if (!booking || !booking.assigned_to) return;
+
+    const when = new Date(booking.scheduled_at).toLocaleString("en-US", {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+    const title = "Job cancelled";
+    const body = `${humanize(booking.service_type)} for ${booking.client?.name ?? "a client"} on ${when} was cancelled. You don't need to go.`;
+
+    await (db.from("notifications" as never).insert({
+      organization_id: booking.organization_id,
+      type: "general",
+      recipient_membership_id: booking.assigned_to,
+      title,
+      body,
+      href: `/field/jobs`,
+    } as never) as unknown as Promise<unknown>);
+
+    sendPushToMembership(booking.assigned_to, {
+      title,
+      body,
+      href: `/field/jobs`,
+    }).catch(() => {});
+
+    console.log(`[auto] Cancellation push sent for booking ${bookingId}`);
+  } catch (err) {
+    console.error("[auto] notifyBookingCancelledToEmployee failed:", err);
   }
 }
 

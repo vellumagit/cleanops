@@ -104,6 +104,86 @@ export async function createRecurringInvoiceAction(
   redirect("/app/settings/recurring-invoices");
 }
 
+export async function updateRecurringInvoiceAction(
+  id: string,
+  _prev: RecurringInvoiceState,
+  formData: FormData,
+): Promise<RecurringInvoiceState> {
+  const { membership, supabase } = await getActionContext();
+  if (!["owner", "admin", "manager"].includes(membership.role)) {
+    return { errors: { _form: "Not authorized." } };
+  }
+
+  const raw = readForm(formData);
+  const parsed = SeriesSchema.safeParse(raw);
+  if (!parsed.success) {
+    const errors: Record<string, string> = {};
+    for (const issue of parsed.error.issues) {
+      const key = String(issue.path[0] ?? "_form");
+      if (!errors[key]) errors[key] = issue.message;
+    }
+    return {
+      errors,
+      values: Object.fromEntries(
+        Object.entries(raw).map(([k, v]) => [k, String(v ?? "")]),
+      ),
+    };
+  }
+
+  let lineItems: unknown = [];
+  if (parsed.data.line_items) {
+    try {
+      lineItems = JSON.parse(parsed.data.line_items);
+      if (!Array.isArray(lineItems)) {
+        return {
+          errors: { line_items: "Line items must be a JSON array" },
+          values: Object.fromEntries(
+            Object.entries(raw).map(([k, v]) => [k, String(v ?? "")]),
+          ),
+        };
+      }
+    } catch {
+      return {
+        errors: { line_items: "Line items is not valid JSON" },
+        values: Object.fromEntries(
+          Object.entries(raw).map(([k, v]) => [k, String(v ?? "")]),
+        ),
+      };
+    }
+  }
+
+  const { error } = await (supabase
+    .from("invoice_series" as never)
+    .update({
+      client_id: parsed.data.client_id,
+      name: parsed.data.name,
+      cadence: parsed.data.cadence,
+      amount_cents: parsed.data.amount_cents,
+      due_days: parsed.data.due_days,
+      next_run_at: new Date(parsed.data.next_run_at).toISOString(),
+      notes: parsed.data.notes,
+      line_items: lineItems,
+    } as never)
+    .eq("id" as never, id as never)
+    .eq(
+      "organization_id" as never,
+      membership.organization_id as never,
+    ) as unknown as Promise<{ error: { message: string } | null }>);
+
+  if (error) {
+    return {
+      errors: { _form: error.message },
+      values: Object.fromEntries(
+        Object.entries(raw).map(([k, v]) => [k, String(v ?? "")]),
+      ),
+    };
+  }
+
+  revalidatePath("/app/settings/recurring-invoices");
+  revalidatePath(`/app/settings/recurring-invoices/${id}`);
+  redirect("/app/settings/recurring-invoices");
+}
+
 export async function toggleRecurringInvoiceAction(formData: FormData) {
   const { membership, supabase } = await getActionContext();
   if (!["owner", "admin", "manager"].includes(membership.role)) return;

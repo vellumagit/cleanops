@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowLeft, Plus, Pause, Play, Trash2 } from "lucide-react";
+import { ArrowLeft, Plus, Pause, Play, Pencil, Trash2 } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getOrgCurrency } from "@/lib/org-currency";
@@ -131,6 +131,13 @@ export default async function RecurringInvoicesPage() {
                   </div>
 
                   <div className="flex items-center gap-1.5">
+                    <Link
+                      href={`/app/settings/recurring-invoices/${s.id}`}
+                      className={buttonVariants({ variant: "outline", size: "sm" })}
+                    >
+                      <Pencil className="h-4 w-4" />
+                      Edit
+                    </Link>
                     <form action={toggleRecurringInvoiceAction}>
                       <input type="hidden" name="id" value={s.id} />
                       <input

@@ -4,7 +4,7 @@ import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
-import { NewRecurringInvoiceForm } from "./form";
+import { RecurringInvoiceForm } from "../form";
 
 export const metadata = { title: "New recurring invoice" };
 
@@ -32,12 +32,12 @@ export default async function NewRecurringInvoicePage() {
       }
     >
       <div className="max-w-2xl">
-        <NewRecurringInvoiceForm
+        <RecurringInvoiceForm
+          mode="new"
           clients={(clients ?? []).map((c) => ({
             id: c.id,
             name: c.name,
           }))}
-          orgName={membership.organization_name ?? "your organization"}
         />
       </div>
     </PageShell>

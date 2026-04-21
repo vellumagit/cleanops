@@ -12,6 +12,7 @@ import {
   Plug,
   Repeat,
   ScrollText,
+  Sliders,
   Users,
   Webhook,
   Zap,
@@ -106,6 +107,13 @@ const SECTIONS = [
     title: "Recurring invoices",
     description:
       "Auto-generate invoices on a schedule for contract clients on a retainer.",
+  },
+  {
+    href: "/app/settings/thresholds",
+    icon: Sliders,
+    title: "Automation thresholds",
+    description:
+      "Tune timing on the hygiene crons: when to expire estimates, void invoices, auto-complete bookings, archive old records, and the overtime warning threshold.",
   },
   {
     href: "/app/settings/webhooks",

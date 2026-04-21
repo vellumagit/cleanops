@@ -5,17 +5,24 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
+import { ArchivedToggle } from "@/components/archived-toggle";
 import { InvoicesTable, type InvoiceRow } from "./invoices-table";
 
 export const metadata = { title: "Invoices" };
 
-export default async function InvoicesPage() {
+export default async function InvoicesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ archived?: string }>;
+}) {
   const membership = await requireMembership();
   const canEdit = membership.role === "owner" || membership.role === "admin";
   const supabase = await createSupabaseServerClient();
   const currency = await getOrgCurrency(membership.organization_id);
+  const { archived } = await searchParams;
+  const showArchived = archived === "1";
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("invoices")
     .select(
       `
@@ -28,9 +35,13 @@ export default async function InvoicesPage() {
         created_at,
         client:clients ( name )
       `,
-    )
-    // Hide auto-archived rows (older than the org's archive_after_days).
-    .is("archived_at" as never, null as never)
+    );
+
+  query = showArchived
+    ? query.not("archived_at" as never, "is" as never, null as never)
+    : query.is("archived_at" as never, null as never);
+
+  const { data, error } = await query
     .order("created_at", { ascending: false })
     .limit(200);
 
@@ -49,21 +60,35 @@ export default async function InvoicesPage() {
 
   return (
     <PageShell
-      title="Invoices"
-      description="Bills sent to clients. Auto-generatable from completed bookings."
+      title={showArchived ? "Invoices — archived" : "Invoices"}
+      description={
+        showArchived
+          ? "Paid or voided invoices older than your archive threshold."
+          : "Bills sent to clients. Auto-generatable from completed bookings."
+      }
       actions={
-        canEdit ? (
-          <Link
-            href="/app/invoices/new"
-            className={buttonVariants({ variant: "default" })}
-          >
-            <Plus className="h-4 w-4" />
-            New invoice
-          </Link>
-        ) : null
+        <div className="flex items-center gap-2">
+          <ArchivedToggle
+            basePath="/app/invoices"
+            showingArchived={showArchived}
+          />
+          {canEdit && !showArchived && (
+            <Link
+              href="/app/invoices/new"
+              className={buttonVariants({ variant: "default" })}
+            >
+              <Plus className="h-4 w-4" />
+              New invoice
+            </Link>
+          )}
+        </div>
       }
     >
-      <InvoicesTable rows={rows} canEdit={canEdit} currency={currency} />
+      <InvoicesTable
+        rows={rows}
+        canEdit={canEdit && !showArchived}
+        currency={currency}
+      />
     </PageShell>
   );
 }

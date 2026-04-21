@@ -4,16 +4,23 @@ import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
+import { ArchivedToggle } from "@/components/archived-toggle";
 import { BookingsTable, type BookingRow } from "./bookings-table";
 
 export const metadata = { title: "Bookings" };
 
-export default async function BookingsPage() {
+export default async function BookingsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ archived?: string }>;
+}) {
   const membership = await requireMembership();
   const canEdit = membership.role === "owner" || membership.role === "admin" || membership.role === "manager";
   const supabase = await createSupabaseServerClient();
+  const { archived } = await searchParams;
+  const showArchived = archived === "1";
 
-  const { data, error } = await (supabase
+  let query = supabase
     .from("bookings")
     .select(
       `
@@ -31,10 +38,14 @@ export default async function BookingsPage() {
           profile:profiles ( full_name )
         )
       `,
-    )
-    // Hide auto-archived rows (older than the org's archive_after_days,
-    // default 2 years). Archived rows are still queryable directly by id.
-    .is("archived_at" as never, null as never)
+    );
+
+  // Default: hide auto-archived rows. When ?archived=1, show ONLY archived.
+  query = showArchived
+    ? query.not("archived_at" as never, "is" as never, null as never)
+    : query.is("archived_at" as never, null as never);
+
+  const { data, error } = await (query
     .order("scheduled_at", { ascending: false })
     .limit(200) as unknown as Promise<{
     data: Array<{
@@ -77,32 +88,42 @@ export default async function BookingsPage() {
 
   return (
     <PageShell
-      title="Bookings"
-      description="All cleaning jobs scheduled across your team."
+      title={showArchived ? "Bookings — archived" : "Bookings"}
+      description={
+        showArchived
+          ? "Jobs older than your archive threshold. Read-only snapshot."
+          : "All cleaning jobs scheduled across your team."
+      }
       actions={
-        canEdit ? (
-          <div className="flex items-center gap-2">
-            {(seriesCount ?? 0) > 0 && (
+        <div className="flex items-center gap-2">
+          <ArchivedToggle
+            basePath="/app/bookings"
+            showingArchived={showArchived}
+          />
+          {canEdit && !showArchived && (
+            <>
+              {(seriesCount ?? 0) > 0 && (
+                <Link
+                  href="/app/bookings/series"
+                  className={buttonVariants({ variant: "outline" })}
+                >
+                  <Repeat className="h-4 w-4" />
+                  Recurring ({seriesCount})
+                </Link>
+              )}
               <Link
-                href="/app/bookings/series"
-                className={buttonVariants({ variant: "outline" })}
+                href="/app/bookings/new"
+                className={buttonVariants({ variant: "default" })}
               >
-                <Repeat className="h-4 w-4" />
-                Recurring ({seriesCount})
+                <Plus className="h-4 w-4" />
+                New booking
               </Link>
-            )}
-            <Link
-              href="/app/bookings/new"
-              className={buttonVariants({ variant: "default" })}
-            >
-              <Plus className="h-4 w-4" />
-              New booking
-            </Link>
-          </div>
-        ) : null
+            </>
+          )}
+        </div>
       }
     >
-      <BookingsTable rows={rows} canEdit={canEdit} />
+      <BookingsTable rows={rows} canEdit={canEdit && !showArchived} />
     </PageShell>
   );
 }

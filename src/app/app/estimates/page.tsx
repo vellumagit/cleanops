@@ -4,16 +4,23 @@ import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
+import { ArchivedToggle } from "@/components/archived-toggle";
 import { EstimatesTable, type EstimateRow } from "./estimates-table";
 
 export const metadata = { title: "Estimates" };
 
-export default async function EstimatesPage() {
+export default async function EstimatesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ archived?: string }>;
+}) {
   const membership = await requireMembership();
   const canEdit = membership.role === "owner" || membership.role === "admin";
   const supabase = await createSupabaseServerClient();
+  const { archived } = await searchParams;
+  const showArchived = archived === "1";
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("estimates")
     .select(
       `
@@ -27,10 +34,15 @@ export default async function EstimatesPage() {
         pdf_url,
         client:clients ( name )
       `,
-    )
-    .is("archived_at" as never, null as never)
+    );
+
+  query = showArchived
+    ? query.not("archived_at" as never, "is" as never, null as never)
+    : query.is("archived_at" as never, null as never);
+
+  const { data, error } = (await query
     .order("created_at", { ascending: false })
-    .limit(200) as unknown as {
+    .limit(200)) as unknown as {
     data: Array<{
       id: string;
       status: "draft" | "sent" | "approved" | "declined" | "expired";
@@ -61,21 +73,31 @@ export default async function EstimatesPage() {
 
   return (
     <PageShell
-      title="Estimates"
-      description="Quotes sent to clients before they become bookings."
+      title={showArchived ? "Estimates — archived" : "Estimates"}
+      description={
+        showArchived
+          ? "Decided or expired estimates older than your archive threshold."
+          : "Quotes sent to clients before they become bookings."
+      }
       actions={
-        canEdit ? (
-          <Link
-            href="/app/estimates/new"
-            className={buttonVariants({ variant: "default" })}
-          >
-            <Plus className="h-4 w-4" />
-            New estimate
-          </Link>
-        ) : null
+        <div className="flex items-center gap-2">
+          <ArchivedToggle
+            basePath="/app/estimates"
+            showingArchived={showArchived}
+          />
+          {canEdit && !showArchived && (
+            <Link
+              href="/app/estimates/new"
+              className={buttonVariants({ variant: "default" })}
+            >
+              <Plus className="h-4 w-4" />
+              New estimate
+            </Link>
+          )}
+        </div>
       }
     >
-      <EstimatesTable rows={rows} canEdit={canEdit} />
+      <EstimatesTable rows={rows} canEdit={canEdit && !showArchived} />
     </PageShell>
   );
 }
