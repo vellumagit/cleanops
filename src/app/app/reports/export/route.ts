@@ -1,6 +1,12 @@
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { getOrgTimezone } from "@/lib/org-timezone";
+import { localInputToUtcIso } from "@/lib/validators/common";
 import { type NextRequest } from "next/server";
+
+// Per-table cap. A header row is added when the dataset is truncated so the
+// downstream reader can see the numbers are partial.
+const ROW_LIMIT = 10000;
 
 function centsToDollars(cents: number | null | undefined): string {
   if (cents == null) return "";
@@ -33,20 +39,26 @@ export async function GET(request: NextRequest) {
   const from = searchParams.get("from") || defaultFrom.toISOString().slice(0, 10);
   const to = searchParams.get("to") || now.toISOString().slice(0, 10);
 
-  const fromIso = `${from}T00:00:00Z`;
-  const toIso = `${to}T23:59:59Z`;
+  // Respect the org's timezone for the date-range boundaries (previously
+  // hardcoded to UTC, which skewed data for non-Eastern orgs).
+  const orgTz = await getOrgTimezone(membership.organization_id);
+  const fromIso = localInputToUtcIso(`${from}T00:00:00`, orgTz);
+  const toIso = localInputToUtcIso(`${to}T23:59:59`, orgTz);
 
   const admin = createSupabaseAdminClient();
 
-  const [{ data: invoices }, { data: bookings }] = await Promise.all([
+  const [invoicesResp, bookingsResp] = await Promise.all([
     admin
       .from("invoices")
-      .select("invoice_number, status, amount_cents, created_at, paid_at, clients(name)")
+      .select(
+        "invoice_number, status, amount_cents, created_at, paid_at, clients(name)",
+        { count: "exact" },
+      )
       .eq("organization_id", membership.organization_id)
       .gte("created_at", fromIso)
       .lte("created_at", toIso)
       .order("created_at", { ascending: true })
-      .limit(10000) as unknown as {
+      .limit(ROW_LIMIT) as unknown as {
         data: Array<{
           invoice_number: string | null;
           status: string | null;
@@ -55,15 +67,19 @@ export async function GET(request: NextRequest) {
           paid_at: string | null;
           clients: { name: string } | null;
         }> | null;
+        count: number | null;
       },
     admin
       .from("bookings")
-      .select("id, status, service_type, scheduled_at, total_cents, address, clients(name)")
+      .select(
+        "id, status, service_type, scheduled_at, total_cents, address, clients(name)",
+        { count: "exact" },
+      )
       .eq("organization_id", membership.organization_id)
       .gte("scheduled_at", fromIso)
       .lte("scheduled_at", toIso)
       .order("scheduled_at", { ascending: true })
-      .limit(10000) as unknown as {
+      .limit(ROW_LIMIT) as unknown as {
         data: Array<{
           id: string | null;
           status: string | null;
@@ -73,10 +89,38 @@ export async function GET(request: NextRequest) {
           address: string | null;
           clients: { name: string } | null;
         }> | null;
+        count: number | null;
       },
   ]);
 
+  const invoices = invoicesResp.data;
+  const bookings = bookingsResp.data;
+  const invoicesTruncated = (invoicesResp.count ?? 0) > ROW_LIMIT;
+  const bookingsTruncated = (bookingsResp.count ?? 0) > ROW_LIMIT;
+
   const lines: string[] = [];
+
+  // Surface any truncation loudly at the top of the file. A spreadsheet-
+  // reading user would otherwise have no way to tell the numbers are
+  // partial.
+  if (invoicesTruncated || bookingsTruncated) {
+    lines.push("TRUNCATION WARNING");
+    if (invoicesTruncated) {
+      lines.push(
+        row(
+          `Invoices: ${ROW_LIMIT.toLocaleString()} of ${(invoicesResp.count ?? 0).toLocaleString()} rows exported. Narrow the date range for complete data.`,
+        ),
+      );
+    }
+    if (bookingsTruncated) {
+      lines.push(
+        row(
+          `Bookings: ${ROW_LIMIT.toLocaleString()} of ${(bookingsResp.count ?? 0).toLocaleString()} rows exported. Narrow the date range for complete data.`,
+        ),
+      );
+    }
+    lines.push("");
+  }
 
   // INVOICES section
   lines.push("INVOICES");

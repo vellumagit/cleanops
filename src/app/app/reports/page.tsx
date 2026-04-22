@@ -1,10 +1,18 @@
-import { Download } from "lucide-react";
+import { Download, AlertTriangle } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
 import { getOrgCurrency } from "@/lib/org-currency";
+import { getOrgTimezone } from "@/lib/org-timezone";
+import { localInputToUtcIso } from "@/lib/validators/common";
 import { formatCurrencyCents, formatDate } from "@/lib/format";
+
+// Per-table cap. Large orgs exceeding this trigger a "narrow your range"
+// warning so the user knows the numbers are incomplete instead of silently
+// trusting a truncated dataset.
+const ROW_LIMIT = 5000;
+const REVIEW_LIMIT = 2000;
 
 export const metadata = { title: "Reports" };
 
@@ -16,6 +24,7 @@ export default async function ReportsPage({
   const membership = await requireMembership(["owner", "admin"]);
   const supabase = await createSupabaseServerClient();
   const currency = await getOrgCurrency(membership.organization_id);
+  const orgTz = await getOrgTimezone(membership.organization_id);
 
   const params = await searchParams;
   const now = new Date();
@@ -25,37 +34,45 @@ export default async function ReportsPage({
   const from = params.from || defaultFrom.toISOString().slice(0, 10);
   const to = params.to || now.toISOString().slice(0, 10);
 
-  const fromIso = `${from}T00:00:00Z`;
-  const toIso = `${to}T23:59:59Z`;
+  // Convert user-picked YYYY-MM-DD values to UTC ISO boundaries using the
+  // org's timezone. Previously these were hardcoded to T00:00:00Z /
+  // T23:59:59Z which meant a Pacific-time org reading "last 90 days on
+  // Jan 1" saw Dec 31 Pacific data rolled into Jan 1 (8-hour skew).
+  const fromIso = localInputToUtcIso(`${from}T00:00:00`, orgTz);
+  const toIso = localInputToUtcIso(`${to}T23:59:59`, orgTz);
 
-  // Parallel fetch — all scoped to window
+  // Parallel fetch — all scoped to window. Request exact counts so we can
+  // detect when a table truncated and warn the user.
   const [
-    { data: invoices },
-    { data: bookings },
-    { data: reviews },
+    invoicesResp,
+    bookingsResp,
+    reviewsResp,
     { data: clients },
     { data: topClientsRaw },
   ] = await Promise.all([
     supabase
       .from("invoices")
-      .select("amount_cents, status, created_at, paid_at")
+      .select("amount_cents, status, created_at, paid_at", {
+        count: "exact",
+      })
       .gte("created_at", fromIso)
       .lte("created_at", toIso)
-      .limit(5000),
+      .limit(ROW_LIMIT),
     supabase
       .from("bookings")
       .select(
         "id, status, scheduled_at, assigned_to, service_type, total_cents, client_id",
+        { count: "exact" },
       )
       .gte("scheduled_at", fromIso)
       .lte("scheduled_at", toIso)
-      .limit(5000),
+      .limit(ROW_LIMIT),
     supabase
       .from("reviews")
-      .select("rating, submitted_at, employee_id")
+      .select("rating, submitted_at, employee_id", { count: "exact" })
       .gte("submitted_at", fromIso)
       .lte("submitted_at", toIso)
-      .limit(2000),
+      .limit(REVIEW_LIMIT),
     supabase.from("clients").select("id, name, created_at"),
     supabase
       .from("invoices")
@@ -65,6 +82,34 @@ export default async function ReportsPage({
       .lte("paid_at", toIso)
       .limit(2000),
   ]);
+
+  const invoices = invoicesResp.data;
+  const bookings = bookingsResp.data;
+  const reviews = reviewsResp.data;
+
+  // Collect any tables that hit the row cap so we can warn the user.
+  const truncated: Array<{ name: string; total: number; shown: number }> = [];
+  if ((invoicesResp.count ?? 0) > ROW_LIMIT) {
+    truncated.push({
+      name: "invoices",
+      total: invoicesResp.count ?? 0,
+      shown: ROW_LIMIT,
+    });
+  }
+  if ((bookingsResp.count ?? 0) > ROW_LIMIT) {
+    truncated.push({
+      name: "bookings",
+      total: bookingsResp.count ?? 0,
+      shown: ROW_LIMIT,
+    });
+  }
+  if ((reviewsResp.count ?? 0) > REVIEW_LIMIT) {
+    truncated.push({
+      name: "reviews",
+      total: reviewsResp.count ?? 0,
+      shown: REVIEW_LIMIT,
+    });
+  }
 
   // Aggregates
   const totalRevenue =
@@ -152,6 +197,26 @@ export default async function ReportsPage({
         </a>
       }
     >
+      {truncated.length > 0 && (
+        <div className="mb-4 flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <div>
+            <p className="font-medium">
+              Showing partial data — narrow the date range for complete
+              numbers.
+            </p>
+            <p className="mt-0.5 text-xs text-amber-800/80 dark:text-amber-200/80">
+              {truncated
+                .map(
+                  (t) =>
+                    `${t.name}: showing ${t.shown.toLocaleString()} of ${t.total.toLocaleString()}`,
+                )
+                .join(" · ")}
+            </p>
+          </div>
+        </div>
+      )}
+
       <form className="mb-6 flex flex-wrap items-end gap-3">
         <div>
           <label className="mb-1 block text-xs font-medium">From</label>
