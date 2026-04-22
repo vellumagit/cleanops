@@ -17,6 +17,8 @@ import {
   formatDurationMinutes,
   humanizeEnum,
 } from "@/lib/format";
+import { fetchJobPhotos } from "@/lib/job-photos";
+import { JobPhotos } from "@/app/field/jobs/[id]/job-photos";
 
 export const metadata = { title: "Booking" };
 
@@ -109,6 +111,13 @@ export default async function BookingDetailPage({
 
   const bookingStatus = booking.status as BookingStatus;
 
+  // Photos are read-visible to any org member (RLS enforces that). Upload
+  // + delete UI only shows for owner/admin/manager on the admin side.
+  const photos = await fetchJobPhotos(booking.id);
+  const canManagePhotos = ["owner", "admin", "manager"].includes(
+    membership.role,
+  );
+
   return (
     <PageShell
       title={humanizeEnum(booking.service_type)}
@@ -195,6 +204,13 @@ export default async function BookingDetailPage({
               </div>
             )}
           </div>
+
+          {/* Job photos */}
+          <JobPhotos
+            bookingId={booking.id}
+            photos={photos}
+            canManage={canManagePhotos}
+          />
 
           {/* Offer history */}
           {canEdit && (

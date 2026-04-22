@@ -23,6 +23,9 @@ export async function fetchFeedPosts(
 ): Promise<FeedPost[]> {
   const supabase = await createSupabaseServerClient();
 
+  // Defense in depth: RLS on feed_posts already scopes to the caller's
+  // org, but mirror the pattern used in chat-data.ts so an RLS regression
+  // can't silently leak cross-org posts.
   const { data, error } = await (supabase
     .from("feed_posts" as never)
     .select(
@@ -40,6 +43,7 @@ export async function fetchFeedPosts(
         )
       `,
     )
+    .eq("organization_id" as never, membership.organization_id as never)
     .order("pinned" as never, { ascending: false } as never)
     .order("created_at" as never, { ascending: false } as never)
     .limit(limit) as unknown as Promise<{

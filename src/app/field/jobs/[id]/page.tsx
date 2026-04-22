@@ -16,6 +16,8 @@ import {
   humanizeEnum,
 } from "@/lib/format";
 import { JobActionButtons } from "./job-actions";
+import { JobPhotos } from "./job-photos";
+import { fetchJobPhotos } from "@/lib/job-photos";
 
 export const metadata = { title: "Job detail" };
 
@@ -66,6 +68,9 @@ export default async function FieldJobDetailPage({
       </div>
     );
   }
+
+  // Fetch photos only after the assignment check passes.
+  const photos = await fetchJobPhotos(booking.id);
 
   return (
     <div className="space-y-5">
@@ -142,6 +147,12 @@ export default async function FieldJobDetailPage({
           ) : null}
         </dl>
       </div>
+
+      <JobPhotos
+        bookingId={booking.id}
+        photos={photos}
+        canManage={true}
+      />
 
       <JobActionButtons bookingId={booking.id} status={booking.status} />
     </div>
