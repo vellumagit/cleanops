@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
 import { logAuditEvent } from "@/lib/audit";
 import { ClientSchema } from "@/lib/validators/clients";
+import { redirectAfterSetup } from "@/lib/setup-return";
 
 type Field = keyof typeof ClientSchema.shape;
 export type ClientFormState = ActionState<Field>;
@@ -58,7 +59,7 @@ export async function createClientAction(
 
   revalidatePath("/app/clients");
   revalidatePath("/app");
-  redirect("/app/clients");
+  redirectAfterSetup(formData, "/app/clients");
 }
 
 export async function updateClientAction(

@@ -21,6 +21,7 @@ import { canCreateData } from "@/lib/subscription";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { localInputToUtcIso } from "@/lib/validators/common";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { redirectAfterSetup } from "@/lib/setup-return";
 
 type Field = keyof typeof BookingSchema.shape;
 export type BookingFormState = ActionState<Field & string>;
@@ -177,7 +178,7 @@ export async function createBookingAction(
 
   revalidatePath("/app/bookings");
   revalidatePath("/app");
-  redirect("/app/bookings");
+  redirectAfterSetup(formData, "/app/bookings");
 }
 
 export async function createRecurringBookingAction(
@@ -334,7 +335,7 @@ export async function createRecurringBookingAction(
   revalidatePath("/app/bookings");
   revalidatePath("/app/calendar");
   revalidatePath("/app");
-  redirect("/app/bookings");
+  redirectAfterSetup(formData, "/app/bookings");
 }
 
 export async function updateBookingAction(

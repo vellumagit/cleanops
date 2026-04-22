@@ -9,6 +9,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { FormError, FormField, FormSelect } from "@/components/form-field";
 import { SubmitButton } from "@/components/submit-button";
 import { DurationInput } from "@/components/duration-input";
+import { SetupReturnField } from "@/components/setup-return-field";
 import { RECURRENCE_OPTIONS } from "@/lib/recurrence";
 import {
   createBookingAction,
@@ -121,6 +122,7 @@ export function BookingForm({
 
   return (
     <form action={formAction} className="space-y-5">
+      <SetupReturnField />
       <FormError message={state.errors?._form} />
 
       {/* Recurring toggle — only on create */}

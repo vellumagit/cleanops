@@ -17,6 +17,7 @@ import { formatCurrencyCents } from "@/lib/format";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { autoOnInvoicePaid } from "@/lib/automations";
 import { canCreateData } from "@/lib/subscription";
+import { redirectAfterSetup } from "@/lib/setup-return";
 
 type Field = keyof typeof InvoiceSchema.shape;
 export type InvoiceFormState = ActionState<Field>;
@@ -92,7 +93,7 @@ export async function createInvoiceAction(
 
   revalidatePath("/app/invoices");
   revalidatePath("/app");
-  redirect(`/app/invoices/${inserted.id}/edit`);
+  redirectAfterSetup(formData, `/app/invoices/${inserted.id}/edit`);
 }
 
 export async function updateInvoiceAction(

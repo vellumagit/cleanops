@@ -7,6 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { buttonVariants } from "@/components/ui/button";
 import { FormError, FormField, FormSelect } from "@/components/form-field";
 import { SubmitButton } from "@/components/submit-button";
+import { SetupReturnField } from "@/components/setup-return-field";
 import {
   createClientAction,
   updateClientAction,
@@ -43,6 +44,7 @@ export function ClientForm({
 
   return (
     <form action={formAction} className="space-y-5">
+      <SetupReturnField />
       <FormError message={state.errors?._form} />
 
       <FormField

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Upload, Trash2, Check } from "lucide-react";
+import { SetupReturnField } from "@/components/setup-return-field";
 import { saveBrandingAction, type BrandingFormState } from "./actions";
 
 const initialState: BrandingFormState = {};
@@ -59,6 +60,7 @@ export function BrandingForm({
 
   return (
     <form action={formAction} className="mx-auto max-w-2xl space-y-8">
+      <SetupReturnField />
       {state.errors?._form && (
         <div
           role="alert"
@@ -180,14 +182,23 @@ export function BrandingForm({
 
           {/* Custom hex input */}
           <div className="flex items-center gap-2">
-            <div
-              className="h-8 w-8 shrink-0 rounded-full border border-border"
-              style={{
-                backgroundColor: selectedColor
-                  ? `#${selectedColor}`
-                  : "#e5e7eb",
-              }}
-            />
+            {selectedColor && /^[0-9a-fA-F]{6}$/.test(selectedColor) ? (
+              <div
+                className="h-8 w-8 shrink-0 rounded-full border border-border"
+                style={{ backgroundColor: `#${selectedColor}` }}
+                aria-label="Current brand colour"
+              />
+            ) : (
+              // Empty / invalid hex — render an obviously "unset" state
+              // (dashed border, no fill) instead of a solid grey that can
+              // read as "your brand colour IS grey".
+              <div
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border-2 border-dashed border-muted-foreground/30 text-[11px] text-muted-foreground/50"
+                aria-label="No brand colour selected yet"
+              >
+                —
+              </div>
+            )}
             <div className="relative flex-1">
               <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
                 #
@@ -196,7 +207,6 @@ export function BrandingForm({
                 name="brand_color"
                 type="text"
                 maxLength={6}
-                placeholder="4f46e5"
                 value={selectedColor}
                 onChange={(e) =>
                   setSelectedColor(e.target.value.replace(/[^0-9a-fA-F]/g, ""))
@@ -205,6 +215,9 @@ export function BrandingForm({
               />
             </div>
           </div>
+          <p className="text-[11px] text-muted-foreground">
+            Pick a preset above or enter a 6-digit hex value.
+          </p>
           {state.errors?.brand_color && (
             <p className="text-xs text-destructive">
               {state.errors.brand_color}

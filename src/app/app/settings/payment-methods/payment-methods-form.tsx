@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Textarea } from "@/components/ui/textarea";
 import { FormError, FormField } from "@/components/form-field";
 import { SubmitButton } from "@/components/submit-button";
+import { SetupReturnField } from "@/components/setup-return-field";
 import {
   savePaymentInstructionsAction,
   type PaymentMethodsFormState,
@@ -30,6 +31,7 @@ export function PaymentMethodsForm({
 
   return (
     <form action={formAction} className="space-y-4">
+      <SetupReturnField />
       <FormError message={state.errors?._form} />
 
       <FormField

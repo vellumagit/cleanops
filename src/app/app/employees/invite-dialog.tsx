@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -25,12 +26,28 @@ import { sendInvitationAction, type InviteFormState } from "./actions";
 const initialState: InviteFormState = {};
 
 export function InviteDialog({ siteUrl }: { siteUrl: string }) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const fromSetup = searchParams.get("from") === "setup";
+
   const [state, formAction, pending] = useActionState(
     sendInvitationAction,
     initialState,
   );
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+
+  function handleDone() {
+    setOpen(false);
+    // If the user arrived from the onboarding flow, bounce them back so
+    // they see the team step newly checked. Otherwise just refresh the
+    // employees list so the new invitation shows up.
+    if (fromSetup) {
+      router.push("/app/setup");
+    } else {
+      window.location.reload();
+    }
+  }
 
   const token = state.values?._token;
   const inviteLink = token ? `${siteUrl}/join/${token}` : null;
@@ -94,13 +111,7 @@ export function InviteDialog({ siteUrl }: { siteUrl: string }) {
               employees list.
             </p>
 
-            <Button
-              className="w-full"
-              onClick={() => {
-                setOpen(false);
-                window.location.reload();
-              }}
-            >
+            <Button className="w-full" onClick={handleDone}>
               Done
             </Button>
           </div>

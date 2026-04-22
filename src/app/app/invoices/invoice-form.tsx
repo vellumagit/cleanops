@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { buttonVariants } from "@/components/ui/button";
 import { FormError, FormField, FormSelect } from "@/components/form-field";
 import { SubmitButton } from "@/components/submit-button";
+import { SetupReturnField } from "@/components/setup-return-field";
 import {
   createInvoiceAction,
   updateInvoiceAction,
@@ -46,6 +47,7 @@ export function InvoiceForm({
 
   return (
     <form action={formAction} className="space-y-5">
+      <SetupReturnField />
       <FormError message={state.errors?._form} />
 
       <FormField

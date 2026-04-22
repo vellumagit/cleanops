@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { getActionContext } from "@/lib/actions";
 import { logAuditEvent } from "@/lib/audit";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { maybeRedirectToSetup } from "@/lib/setup-return";
 
 export type BrandingFormState = {
   errors?: Partial<Record<"logo" | "brand_color" | "_form", string>>;
@@ -32,6 +33,14 @@ export async function saveBrandingAction(
     return { errors: { brand_color: "Enter a valid 6-digit hex colour (e.g. 4f46e5)." } };
   }
 
+  // Admin client used for BOTH storage writes AND the organizations row
+  // update. The RLS policy on organizations allows UPDATE only when the
+  // caller has role='owner', but this action authorizes owner+admin via
+  // the explicit role check above. Using the RLS-bound client for admin
+  // users resulted in silent zero-row updates (no error, toast says
+  // "saved", nothing persists).
+  const admin = createSupabaseAdminClient();
+
   // Get current state for audit
   const { data: before } = await supabase
     .from("organizations")
@@ -42,7 +51,6 @@ export async function saveBrandingAction(
   };
 
   let logoUrl = before?.logo_url ?? null;
-  const admin = createSupabaseAdminClient();
 
   // Handle logo upload
   if (logoFile && logoFile.size > 0) {
@@ -100,7 +108,7 @@ export async function saveBrandingAction(
     brand_color: brandColor || null,
   };
 
-  const { error } = await supabase
+  const { error } = await admin
     .from("organizations")
     .update(updatePayload as never)
     .eq("id", membership.organization_id);
@@ -122,6 +130,11 @@ export async function saveBrandingAction(
 
   revalidatePath("/app/settings/branding");
   revalidatePath("/app");
+
+  // If the user came from the /app/setup onboarding flow, bounce them
+  // back so they see the newly-checked step. Otherwise the action just
+  // returns state and the form stays on-screen with a toast.
+  maybeRedirectToSetup(formData);
 
   return { success: true };
 }

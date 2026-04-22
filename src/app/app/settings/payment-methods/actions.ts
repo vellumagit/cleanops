@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
 import { logAuditEvent } from "@/lib/audit";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { maybeRedirectToSetup } from "@/lib/setup-return";
 
 // Hard cap so we don't let someone paste War and Peace into a public page.
 const PaymentInstructionsSchema = z.object({
@@ -31,13 +33,25 @@ export async function savePaymentInstructionsAction(
 
   const { membership, supabase } = await getActionContext();
 
+  if (!["owner", "admin"].includes(membership.role)) {
+    return {
+      errors: { _form: "You don't have permission to change payment settings." },
+      values: raw,
+    };
+  }
+
   const { data: prev } = await supabase
     .from("organizations")
     .select("default_payment_instructions")
     .eq("id", membership.organization_id)
     .maybeSingle();
 
-  const { error } = await supabase
+  // Use the service-role client for the update. RLS on organizations
+  // permits UPDATE only for role='owner', so an admin's save would
+  // silently land on zero rows with no error. Since this action already
+  // gates on owner+admin above, it's safe to bypass RLS here.
+  const admin = createSupabaseAdminClient();
+  const { error } = await admin
     .from("organizations")
     .update({ default_payment_instructions: parsed.data.instructions })
     .eq("id", membership.organization_id);
@@ -54,5 +68,10 @@ export async function savePaymentInstructionsAction(
   });
 
   revalidatePath("/app/settings/payment-methods");
+  revalidatePath("/app");
+
+  // Bounce back to /app/setup when user came from onboarding.
+  maybeRedirectToSetup(formData);
+
   return { values: raw };
 }
