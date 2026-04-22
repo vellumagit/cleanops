@@ -21,6 +21,14 @@ export default async function SetupPage() {
     redirect("/app");
   }
 
+  // Pull the user's first name so we can greet them personally.
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("full_name")
+    .eq("id", membership.profile_id)
+    .maybeSingle();
+  const firstName = profile?.full_name?.trim().split(/\s+/)[0] ?? null;
+
   // Check completion state for each step
   const [clients, bookings, members, orgSettings, invoices] =
     await Promise.all([
@@ -70,7 +78,11 @@ export default async function SetupPage() {
       title="Get started"
       description={`Set up ${membership.organization_name} in a few quick steps.`}
     >
-      <SetupChecklist steps={steps} orgName={membership.organization_name} />
+      <SetupChecklist
+        steps={steps}
+        orgName={membership.organization_name}
+        firstName={firstName}
+      />
     </PageShell>
   );
 }
