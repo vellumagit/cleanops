@@ -44,14 +44,19 @@ export async function dispatchWebhookEvent(
 ): Promise<void> {
   try {
     const admin = createSupabaseAdminClient();
-    const { data: subs } = await admin
-      .from("webhook_subscriptions" as never)
-      .select("id, target_url, secret")
-      .eq("organization_id", orgId)
-      .eq("event_type", eventType)
-      .eq("active", true);
+    // Reads from `webhooks` (the table the settings UI writes to). The
+    // events[] array contains zero-or-more event-type strings; we match
+    // with the array-contains operator. is_active gates delivery.
+    const { data: rows } = (await admin
+      .from("webhooks" as never)
+      .select("id, url, secret")
+      .eq("organization_id" as never, orgId as never)
+      .contains("events" as never, [eventType] as never)
+      .eq("is_active" as never, true as never)) as unknown as {
+      data: Array<{ id: string; url: string; secret: string }> | null;
+    };
 
-    if (!subs || subs.length === 0) return;
+    if (!rows || rows.length === 0) return;
 
     const eventId = randomUUID();
     const timestamp = new Date().toISOString();
@@ -63,13 +68,16 @@ export async function dispatchWebhookEvent(
       timestamp,
     });
 
-    const deliveries = (
-      subs as unknown as Array<{
-        id: string;
-        target_url: string;
-        secret: string;
-      }>
-    ).map((sub) => deliverWithRetries(admin, sub, body, eventId, orgId, eventType));
+    // Normalize to the shape the delivery helper expects.
+    const subs = rows.map((r) => ({
+      id: r.id,
+      target_url: r.url,
+      secret: r.secret,
+    }));
+
+    const deliveries = subs.map((sub) =>
+      deliverWithRetries(admin, sub, body, eventId, orgId, eventType),
+    );
 
     await Promise.allSettled(deliveries);
   } catch (err) {
@@ -98,7 +106,7 @@ async function deliverWithRetries(
     // Log the attempt
     await logDelivery(admin, {
       organization_id: orgId,
-      subscription_id: sub.id,
+      webhook_id: sub.id,
       event_id: eventId,
       event_type: eventType,
       target_url: sub.target_url,
@@ -111,6 +119,21 @@ async function deliverWithRetries(
     }).catch((err) =>
       console.error("[webhook] failed to log delivery:", err),
     );
+
+    // Update the webhook row's denormalized status so the settings UI
+    // shows recent activity. Fire-and-forget.
+    admin
+      .from("webhooks" as never)
+      .update({
+        last_triggered_at: new Date().toISOString(),
+        last_status_code: statusCode,
+      } as never)
+      .eq("id" as never, sub.id as never)
+      .then(
+        () => {},
+        (err: unknown) =>
+          console.error("[webhook] failed to touch webhook row:", err),
+      );
 
     if (success) return; // done
 
@@ -190,7 +213,7 @@ async function logDelivery(
   admin: ReturnType<typeof createSupabaseAdminClient>,
   row: {
     organization_id: string;
-    subscription_id: string;
+    webhook_id: string;
     event_id: string;
     event_type: string;
     target_url: string;

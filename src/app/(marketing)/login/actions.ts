@@ -10,6 +10,33 @@ export type LoginActionState = {
   values?: { email?: string };
 };
 
+/**
+ * Whitelist of safe post-login redirect targets. Any `?next=` value that
+ * doesn't match exactly (or isn't a sub-path of) one of these is dropped
+ * and the user falls through to the role-based default.
+ *
+ * Keep this list tight. If a new public area needs a post-login deep
+ * link, add its prefix here — never accept arbitrary paths.
+ */
+const SAFE_NEXT_PREFIXES = ["/app", "/field"];
+
+function isSafeNextPath(next: string): boolean {
+  // Must be a plain absolute path. No scheme, no protocol-relative,
+  // no backslash tricks, no percent-encoded slashes that might decode
+  // to "//". Explicit character checks reject most browser-normalization
+  // gotchas.
+  if (!next.startsWith("/")) return false;
+  if (next.startsWith("//")) return false;
+  if (next.startsWith("/\\")) return false;
+  if (next.includes("\\")) return false;
+  if (/%2f/i.test(next) || /%5c/i.test(next)) return false;
+
+  // Must match an allowed root, either exactly or as a subpath.
+  return SAFE_NEXT_PREFIXES.some(
+    (prefix) => next === prefix || next.startsWith(`${prefix}/`),
+  );
+}
+
 export async function loginAction(
   _prevState: LoginActionState,
   formData: FormData,
@@ -56,8 +83,14 @@ export async function loginAction(
     };
   }
 
-  // If the caller specified an explicit redirect (e.g. ?next=/field), use it
-  if (next && next.startsWith("/") && !next.startsWith("//")) {
+  // If the caller specified an explicit redirect (e.g. ?next=/field), use it.
+  //
+  // Allowlist-only to prevent open-redirect phishing. The previous check
+  // (`startsWith("/") && !startsWith("//")`) could be bypassed by
+  // backslash-path tricks that some browsers normalize into a protocol-
+  // relative URL (e.g. "/\example.com" → "//example.com"). Only known
+  // first-party roots are allowed here.
+  if (next && isSafeNextPath(next)) {
     redirect(next);
   }
 

@@ -11,6 +11,7 @@
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { sendEmail } from "@/lib/email";
 import { trialExpiringEmail } from "@/lib/email-templates";
+import { requireCronAuth } from "@/lib/cron-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,12 +19,8 @@ export const dynamic = "force-dynamic";
 const REMINDER_DAYS = [3, 1, 0]; // Fire at 3 days, 1 day, and day-of
 
 export async function GET(request: Request) {
-  const authHeader = request.headers.get("authorization");
-  const cronSecret = process.env.CRON_SECRET;
-
-  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const unauthorized = requireCronAuth(request);
+  if (unauthorized) return unauthorized;
 
   try {
     const admin = createSupabaseAdminClient();

@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { getActionContext } from "@/lib/actions";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { isSafeOutboundUrl } from "@/lib/url-safety";
 
 export async function createWebhookAction(formData: FormData): Promise<void> {
   const { membership } = await getActionContext();
@@ -12,7 +13,13 @@ export async function createWebhookAction(formData: FormData): Promise<void> {
   const url = String(formData.get("url") ?? "").trim();
   const events = formData.getAll("events").map(String).filter(Boolean);
 
-  if (!name || !url.startsWith("https://") || events.length === 0) return;
+  if (!name || events.length === 0) return;
+
+  // Reject SSRF-prone targets at registration time: localhost, private IP
+  // ranges, link-local (AWS/GCP metadata endpoints), and internal TLDs.
+  // Also enforces https:// scheme.
+  const urlCheck = isSafeOutboundUrl(url);
+  if (!urlCheck.ok) return;
 
   const admin = createSupabaseAdminClient();
   await admin

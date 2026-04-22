@@ -66,7 +66,7 @@ const TENANT_TABLES = [
   "training_modules",
   "training_steps",
   "webhook_deliveries",
-  "webhook_subscriptions",
+  "webhooks",
 ] as const;
 
 const DELETION_GRACE_DAYS = 30;
@@ -248,7 +248,7 @@ export async function purgeOrgData(
     "notifications",
     "push_subscriptions",
     "webhook_deliveries",
-    "webhook_subscriptions",
+    "webhooks",
     "integration_events",
     "integration_connections",
     "invitations",
