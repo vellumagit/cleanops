@@ -271,23 +271,26 @@
   background: #09090b;
 }
 
-/* Logo — white on dark, clean shadow */
+/* Logo — white on dark, clean shadow.
+   Note: no entrance animation. On mobile cold-boot (especially from
+   PWA home-screen launch) the server can take 1–3s to render data
+   while the loader is shown. A fade-in with 0-opacity initial state
+   would leave the user staring at a pure-black screen for that long.
+   Better to show branding on the very first paint. */
 .sollos-loader-logo {
   display: block;
   height: clamp(3rem, 8vw, 5rem);
   width: auto;
   filter: brightness(0) invert(1);
-  animation: sollos-rise 500ms ease-out both;
 }
 
-/* Tagline */
+/* Tagline — also instant-visible for the same reason. */
 .sollos-loader-tagline {
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.25em;
   text-transform: uppercase;
   color: #71717a;
-  animation: sollos-fade-in 600ms ease-out 300ms both;
 }
 
 /* Loading bar — thin, clean */
@@ -297,7 +300,6 @@
   height: 1px;
   background: #27272a;
   overflow: hidden;
-  animation: sollos-fade-in 600ms ease-out 400ms both;
 }
 
 .sollos-loader-bar::before {
@@ -314,7 +316,7 @@
   animation: sollos-bar 1.8s ease-in-out infinite;
 }
 
-/* Footer */
+/* Footer — visible on first paint, same reasoning as logo/tagline above. */
 .sollos-loader-footer {
   position: absolute;
   bottom: 2rem;
@@ -324,7 +326,6 @@
   flex-direction: column;
   align-items: center;
   gap: 0.5rem;
-  animation: sollos-fade-in 800ms ease-out 600ms both;
 }
 
 .sollos-loader-footer-label {

@@ -45,7 +45,10 @@ export const metadata: Metadata = {
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
-    statusBarStyle: "default",
+    // black-translucent = status bar transparent with light content.
+    // Lets our dark loader background bleed into the status bar so there's
+    // no white strip during PWA cold boot on iOS.
+    statusBarStyle: "black-translucent",
     title: "Sollos 3",
   },
   openGraph: {
