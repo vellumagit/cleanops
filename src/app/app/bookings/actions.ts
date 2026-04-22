@@ -115,6 +115,25 @@ export async function createBookingAction(
   const orgTz = await getOrgTimezone(membership.organization_id);
   parsed.data.scheduled_at = localInputToUtcIso(raw.scheduled_at, orgTz);
 
+  // Block "future-intent" bookings (pending/confirmed/en_route) from being
+  // created in the past. Back-filling a completed/cancelled job from yesterday
+  // is a real use case, so we only reject the statuses that imply the work
+  // hasn't happened yet. 24h grace lets someone create a same-day booking
+  // without fighting clock-skew.
+  const scheduledMs = new Date(parsed.data.scheduled_at).getTime();
+  const isFutureIntent = ["pending", "confirmed", "en_route"].includes(
+    parsed.data.status,
+  );
+  if (isFutureIntent && scheduledMs < Date.now() - 24 * 60 * 60 * 1000) {
+    return {
+      errors: {
+        scheduled_at:
+          "This booking is in the past. Pick a future date, or set status to Completed if you're back-filling.",
+      },
+      values: raw,
+    };
+  }
+
   if (!(await canCreateData(membership.organization_id))) {
     return { errors: { _form: "Your subscription has expired. Subscribe to create new bookings." }, values: raw };
   }
@@ -192,6 +211,24 @@ export async function createRecurringBookingAction(
   const { membership, supabase } = await getActionContext();
 
   const orgTz = await getOrgTimezone(membership.organization_id);
+
+  // Reject series that start in the past. Unlike single bookings, a
+  // recurring series starting yesterday has no legitimate interpretation —
+  // you'd just generate a bunch of past occurrences nobody wanted. A 1-day
+  // grace covers clock-skew on same-day creation.
+  const startsDate = new Date(parsed.data.starts_at);
+  if (
+    Number.isFinite(startsDate.getTime()) &&
+    startsDate.getTime() < Date.now() - 24 * 60 * 60 * 1000
+  ) {
+    return {
+      errors: {
+        _form:
+          "The start date is in the past. Pick today or a future date — we don't generate past occurrences.",
+      },
+      values: raw,
+    };
+  }
 
   // Validate custom_days for custom_weekly
   if (
