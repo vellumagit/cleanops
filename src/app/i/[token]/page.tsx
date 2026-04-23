@@ -6,6 +6,7 @@ import { formatCurrencyCents, formatDate } from "@/lib/format";
 import { humanizePaymentMethod } from "@/lib/validators/invoice-payment";
 import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
 import { RateLimitedPage } from "@/components/rate-limited-page";
+import { startSquareCheckoutAction } from "./pay-actions";
 
 export const metadata: Metadata = {
   title: "Invoice",
@@ -99,6 +100,19 @@ export default async function PublicInvoicePage({
     invoice.payment_instructions ??
     invoice.organization?.default_payment_instructions ??
     null;
+
+  // Does this org have an active Square connection? If yes the public
+  // page shows a "Pay with Square" button that mints a checkout link.
+  const { data: squareConn } = orgId
+    ? ((await admin
+        .from("integration_connections" as never)
+        .select("id")
+        .eq("organization_id" as never, orgId as never)
+        .eq("provider" as never, "square" as never)
+        .eq("status" as never, "active" as never)
+        .maybeSingle()) as unknown as { data: { id: string } | null })
+    : { data: null };
+  const squareAvailable = Boolean(squareConn);
 
   const brandCss = orgBranding.brand_color
     ? {
@@ -250,19 +264,35 @@ export default async function PublicInvoicePage({
             <div className="mt-6 rounded-lg border border-border bg-muted/20 p-5">
               <p className="sollos-label">How to pay</p>
 
-              {/* Placeholder for processor button(s). These will be
-                  wired up in Phase 12 Part 2 once OAuth is live. */}
-              <button
-                type="button"
-                disabled
-                className="mt-3 inline-flex w-full items-center justify-center rounded-md px-4 py-3 text-sm font-semibold text-white opacity-60"
-                style={{
-                  backgroundColor: `var(--brand, #6366f1)`,
-                }}
-                title="Online payment coming soon"
-              >
-                Pay with card — coming soon
-              </button>
+              {squareAvailable ? (
+                <form action={startSquareCheckoutAction}>
+                  <input type="hidden" name="token" value={token} />
+                  <button
+                    type="submit"
+                    className="mt-3 inline-flex w-full items-center justify-center rounded-md px-4 py-3 text-sm font-semibold text-white transition-opacity hover:opacity-90"
+                    style={{
+                      backgroundColor: `var(--brand, #6366f1)`,
+                    }}
+                  >
+                    Pay with card
+                  </button>
+                  <p className="mt-2 text-center text-[11px] text-muted-foreground">
+                    You&rsquo;ll be sent to Square&rsquo;s secure checkout.
+                  </p>
+                </form>
+              ) : (
+                <button
+                  type="button"
+                  disabled
+                  className="mt-3 inline-flex w-full items-center justify-center rounded-md px-4 py-3 text-sm font-semibold text-white opacity-60"
+                  style={{
+                    backgroundColor: `var(--brand, #6366f1)`,
+                  }}
+                  title="Online payment not set up yet"
+                >
+                  Pay with card — not enabled
+                </button>
+              )}
 
               {paymentInstructions ? (
                 <div className="mt-4">
