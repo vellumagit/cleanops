@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ChevronRight, GraduationCap, Calendar } from "lucide-react";
+import { ChevronRight, GraduationCap, Calendar, CalendarClock } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -131,6 +131,16 @@ export default async function FieldProfilePage() {
 
       {/* Quick links */}
       <div className="mt-5 space-y-2">
+        <Link
+          href="/field/availability"
+          className="flex items-center gap-3 rounded-xl border border-border bg-card p-4 transition-colors active:bg-muted"
+        >
+          <CalendarClock className="h-5 w-5 text-muted-foreground" />
+          <span className="flex-1 text-[15px] font-medium">
+            My availability
+          </span>
+          <ChevronRight className="h-5 w-5 text-muted-foreground" />
+        </Link>
         <Link
           href="/field/training"
           className="flex items-center gap-3 rounded-xl border border-border bg-card p-4 transition-colors active:bg-muted"
