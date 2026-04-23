@@ -7,6 +7,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { StripePaymentLinkButton } from "./stripe-payment-link-button";
 import { SendInvoiceButton } from "./send-invoice-button";
+import { ResendInvoiceButton } from "./resend-invoice-button";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
 import {
@@ -192,6 +193,9 @@ export default async function InvoiceDetailPage({
             <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-border pt-4">
               {status === "draft" && !isVoid && (
                 <SendInvoiceButton invoiceId={invoice.id} />
+              )}
+              {status !== "draft" && !isVoid && (
+                <ResendInvoiceButton invoiceId={invoice.id} />
               )}
               {stripeReady && !isVoid && balanceCents > 0 && (
                 <StripePaymentLinkButton invoiceId={invoice.id} />

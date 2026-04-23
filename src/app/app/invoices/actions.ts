@@ -397,15 +397,114 @@ export async function deleteInvoicePaymentAction(formData: FormData) {
 }
 
 /**
- * State shape for `sendInvoiceAction`. Used by `useActionState` in the
- * send button component so delivery failures can be shown inline
- * instead of silently marking the invoice as sent when the email
- * never actually went out.
+ * State shape for `sendInvoiceAction` and `resendInvoiceEmailAction`.
+ * Used by `useActionState` in the send/resend button components so
+ * delivery failures can be shown inline instead of silently marking
+ * the invoice as sent when the email never actually went out.
  */
 export type SendInvoiceState = {
   error?: string;
   ok?: boolean;
+  /** Resend message id on success — gives the user something concrete
+   *  to search for in the Resend dashboard if the email still doesn't
+   *  arrive (e.g. went to spam, bounced downstream). */
+  messageId?: string;
 };
+
+/**
+ * Shared delivery routine. Reads the invoice + client + org branding,
+ * runs every configuration / data gate, and hands off to Resend.
+ * Returns a `SendInvoiceState`-shaped result so both the initial send
+ * and the resend action can share the same success/error surface.
+ *
+ * Does NOT touch the invoices table — callers decide whether to flip
+ * status (first send) or leave it alone (resend).
+ */
+async function deliverInvoiceEmail(
+  invoiceId: string,
+): Promise<SendInvoiceState> {
+  const { membership, supabase } = await getActionContext();
+
+  if (!["owner", "admin"].includes(membership.role)) {
+    return { error: "Only owners and admins can send invoices." };
+  }
+
+  const { data: prev } = await supabase
+    .from("invoices")
+    .select(
+      "id, number, status, sent_at, public_token, amount_cents, due_date, client:clients ( name, email )",
+    )
+    .eq("id", invoiceId)
+    .maybeSingle();
+  if (!prev) return { error: "Invoice not found." };
+
+  const clientEmail = prev.client?.email;
+  if (!clientEmail) {
+    return {
+      error:
+        "This client has no email address on file. Add one on the client's record first, then try again — or share the public invoice link manually.",
+    };
+  }
+  if (!prev.public_token) {
+    return {
+      error:
+        "This invoice is missing a public token. Refresh the page; if it persists, contact support.",
+    };
+  }
+
+  if (!isEmailConfigured()) {
+    return {
+      error:
+        "Email delivery isn't configured on this environment yet — the invoice wasn't sent. Contact support to enable sending, or share the public invoice link manually.",
+    };
+  }
+  if (isClientEmailPaused()) {
+    return {
+      error:
+        "Client-facing emails are paused at the platform level. Try again later or share the public invoice link manually.",
+    };
+  }
+
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+  const currency = await getOrgCurrency(membership.organization_id);
+
+  const { data: orgData } = await supabase
+    .from("organizations")
+    .select("name, brand_color, logo_url")
+    .eq("id", membership.organization_id)
+    .maybeSingle() as unknown as {
+    data: { name: string; brand_color: string | null; logo_url: string | null } | null;
+  };
+
+  const template = invoiceSentEmail({
+    clientName: prev.client?.name ?? "there",
+    invoiceNumber: prev.number ?? invoiceId.slice(0, 8).toUpperCase(),
+    amountFormatted: formatCurrencyCents(prev.amount_cents, currency),
+    dueDate: prev.due_date
+      ? new Date(prev.due_date).toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        })
+      : "On receipt",
+    publicUrl: `${siteUrl}/i/${prev.public_token}`,
+    orgName: orgData?.name ?? membership.organization_name,
+    brandColor: orgData?.brand_color ?? undefined,
+    logoUrl: orgData?.logo_url ?? undefined,
+  });
+
+  const result = await sendOrgEmailDetailed(membership.organization_id, {
+    to: clientEmail,
+    toName: prev.client?.name ?? undefined,
+    ...template,
+  });
+  if (!result.ok) {
+    return {
+      error: `Couldn't deliver the invoice email to ${clientEmail}. Resend said: "${result.reason}". Check Settings → Email sender and your Resend domain verification, then try again.`,
+    };
+  }
+  return { ok: true, messageId: result.id };
+}
 
 /**
  * Mark an invoice as "sent". Flips status draft → sent, stamps sent_at,
@@ -424,105 +523,21 @@ export async function sendInvoiceAction(
   const id = String(formData.get("id") ?? "");
   if (!id) return { error: "Missing invoice id." };
 
+  const delivered = await deliverInvoiceEmail(id);
+  if (!delivered.ok) return delivered;
+
   const { membership, supabase } = await getActionContext();
-
-  // Sending an invoice is a billing event — owner/admin only.
-  if (!["owner", "admin"].includes(membership.role)) {
-    return { error: "Only owners and admins can send invoices." };
-  }
-
   const { data: prev } = await supabase
     .from("invoices")
-    .select(
-      "id, number, status, sent_at, public_token, amount_cents, due_date, client:clients ( name, email )",
-    )
+    .select("status, sent_at")
     .eq("id", id)
     .maybeSingle();
-  if (!prev) return { error: "Invoice not found." };
 
-  const clientEmail = prev.client?.email;
-
-  // Hard-stop if the client record has no email — previously we
-  // silently marked the invoice as sent, which is exactly the
-  // "clicked Send, no email arrived" footgun this refactor fixes.
-  if (!clientEmail) {
-    return {
-      error:
-        "This client has no email address on file. Add one on the client's record first, then try again — or share the public invoice link manually.",
-    };
-  }
-  if (!prev.public_token) {
-    return {
-      error:
-        "This invoice is missing a public token. Refresh the page; if it persists, contact support.",
-    };
-  }
-
-  // Configuration gates — give the owner an explicit reason up front
-  // instead of waiting for Resend to refuse.
-  if (!isEmailConfigured()) {
-    return {
-      error:
-        "Email delivery isn't configured on this environment yet — the invoice wasn't sent. Contact support to enable sending, or share the public invoice link manually.",
-    };
-  }
-  if (isClientEmailPaused()) {
-    return {
-      error:
-        "Client-facing emails are paused at the platform level. Try again later or share the public invoice link manually.",
-    };
-  }
-
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
-  const currency = await getOrgCurrency(membership.organization_id);
-
-  // Fetch org branding for the email
-  const { data: orgData } = await supabase
-    .from("organizations")
-    .select("name, brand_color, logo_url")
-    .eq("id", membership.organization_id)
-    .maybeSingle() as unknown as {
-    data: { name: string; brand_color: string | null; logo_url: string | null } | null;
-  };
-
-  const template = invoiceSentEmail({
-    clientName: prev.client?.name ?? "there",
-    invoiceNumber: prev.number ?? id.slice(0, 8).toUpperCase(),
-    amountFormatted: formatCurrencyCents(prev.amount_cents, currency),
-    dueDate: prev.due_date
-      ? new Date(prev.due_date).toLocaleDateString("en-US", {
-          month: "short",
-          day: "numeric",
-          year: "numeric",
-        })
-      : "On receipt",
-    publicUrl: `${siteUrl}/i/${prev.public_token}`,
-    orgName: orgData?.name ?? membership.organization_name,
-    brandColor: orgData?.brand_color ?? undefined,
-    logoUrl: orgData?.logo_url ?? undefined,
-  });
-
-  // Use the detailed variant so we can surface Resend's actual reason
-  // (domain not verified, wrong from address, rate-limited, etc.)
-  // directly to the user instead of a generic "send failed" message.
-  const result = await sendOrgEmailDetailed(membership.organization_id, {
-    to: clientEmail,
-    toName: prev.client?.name ?? undefined,
-    ...template,
-  });
-  if (!result.ok) {
-    return {
-      error: `Couldn't deliver the invoice email to ${clientEmail}. Resend said: "${result.reason}". Check Settings → Email sender and your Resend domain verification, then try again.`,
-    };
-  }
-
-  // Email either succeeded or wasn't needed (no client email on file).
-  // Safe to flip status and stamp sent_at.
   const { error } = await supabase
     .from("invoices")
     .update({
       status: "sent",
-      sent_at: prev.sent_at ?? new Date().toISOString(),
+      sent_at: prev?.sent_at ?? new Date().toISOString(),
     })
     .eq("id", id);
   if (error) return { error: error.message };
@@ -532,13 +547,37 @@ export async function sendInvoiceAction(
     action: "status_change",
     entity: "invoice",
     entity_id: id,
-    before: { status: prev.status },
+    before: { status: prev?.status ?? "draft" },
     after: { status: "sent" },
   });
 
   revalidatePath(`/app/invoices/${id}`);
   revalidatePath("/app/invoices");
-  return { ok: true };
+  return { ok: true, messageId: delivered.messageId };
+}
+
+/**
+ * Re-send the invoice email on an already-sent invoice without
+ * touching status or sent_at. Used by the "Resend email" button on
+ * invoices that are past the draft stage — critical for the "I clicked
+ * Send but nothing arrived" debug path, since once status flips to
+ * 'sent' the original button disappears and the owner has no way to
+ * re-trigger delivery without this.
+ */
+export async function resendInvoiceEmailAction(
+  _prev: SendInvoiceState,
+  formData: FormData,
+): Promise<SendInvoiceState> {
+  const id = String(formData.get("id") ?? "");
+  if (!id) return { error: "Missing invoice id." };
+
+  const delivered = await deliverInvoiceEmail(id);
+  if (!delivered.ok) return delivered;
+
+  // Refresh the page so any stale cached data updates, but status
+  // and sent_at are intentionally untouched.
+  revalidatePath(`/app/invoices/${id}`);
+  return { ok: true, messageId: delivered.messageId };
 }
 
 /**
