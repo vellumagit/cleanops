@@ -1588,34 +1588,43 @@ export type Database = {
       }
       memberships: {
         Row: {
+          contact_email: string | null
+          contact_phone: string | null
           created_at: string
+          display_name: string | null
           id: string
           organization_id: string
           pay_rate_cents: number | null
           pay_type: string
-          profile_id: string
+          profile_id: string | null
           role: Database["public"]["Enums"]["membership_role"]
           status: Database["public"]["Enums"]["membership_status"]
           updated_at: string
         }
         Insert: {
+          contact_email?: string | null
+          contact_phone?: string | null
           created_at?: string
+          display_name?: string | null
           id?: string
           organization_id: string
           pay_rate_cents?: number | null
           pay_type?: string
-          profile_id: string
+          profile_id?: string | null
           role: Database["public"]["Enums"]["membership_role"]
           status?: Database["public"]["Enums"]["membership_status"]
           updated_at?: string
         }
         Update: {
+          contact_email?: string | null
+          contact_phone?: string | null
           created_at?: string
+          display_name?: string | null
           id?: string
           organization_id?: string
           pay_rate_cents?: number | null
           pay_type?: string
-          profile_id?: string
+          profile_id?: string | null
           role?: Database["public"]["Enums"]["membership_role"]
           status?: Database["public"]["Enums"]["membership_status"]
           updated_at?: string
@@ -2282,6 +2291,8 @@ export type Database = {
           clock_out_lat: number | null
           clock_out_lng: number | null
           created_at: string
+          created_by: string | null
+          created_manually: boolean
           employee_id: string
           id: string
           notes: string | null
@@ -2296,6 +2307,8 @@ export type Database = {
           clock_out_lat?: number | null
           clock_out_lng?: number | null
           created_at?: string
+          created_by?: string | null
+          created_manually?: boolean
           employee_id: string
           id?: string
           notes?: string | null
@@ -2310,6 +2323,8 @@ export type Database = {
           clock_out_lat?: number | null
           clock_out_lng?: number | null
           created_at?: string
+          created_by?: string | null
+          created_manually?: boolean
           employee_id?: string
           id?: string
           notes?: string | null

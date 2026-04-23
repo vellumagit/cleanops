@@ -285,3 +285,148 @@ export async function updateMemberAction(
 
   return { done: true };
 }
+
+/* ------------------------------------------------------------------ */
+/*  Create a shadow employee (no invite, no login)                     */
+/*                                                                     */
+/*  For family members / subs / anyone who does the work but doesn't   */
+/*  need app access. The row has NULL profile_id, so no auth path      */
+/*  exists — they simply appear as a selectable employee across the    */
+/*  app (bookings, timesheets, payroll) with their display_name.       */
+/* ------------------------------------------------------------------ */
+
+export type ManualEmployeeFormState = {
+  errors?: Partial<Record<
+    "display_name" | "role" | "pay_rate" | "contact_email" | "contact_phone" | "_form",
+    string
+  >>;
+  values?: {
+    display_name?: string;
+    role?: string;
+    pay_rate?: string;
+    contact_email?: string;
+    contact_phone?: string;
+  };
+  done?: boolean;
+};
+
+const ManualEmployeeSchema = z.object({
+  display_name: z
+    .string()
+    .trim()
+    .min(1, "Name is required")
+    .max(120, "Keep the name under 120 characters"),
+  role: z.enum(["employee", "manager", "admin"]).catch("employee"),
+  pay_rate_cents: z
+    .string()
+    .trim()
+    .optional()
+    .transform((s) => {
+      if (!s) return null;
+      const n = Number(s.replace(/[$,\s]/g, ""));
+      if (!Number.isFinite(n) || n < 0) return null;
+      return Math.round(n * 100);
+    }),
+  contact_email: z
+    .string()
+    .trim()
+    .optional()
+    .transform((s) => (s && s.length > 0 ? s.toLowerCase() : null))
+    .refine(
+      (s) => s === null || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s),
+      "Enter a valid email address or leave blank",
+    ),
+  contact_phone: z
+    .string()
+    .trim()
+    .optional()
+    .transform((s) => (s && s.length > 0 ? s : null)),
+});
+
+export async function createManualEmployeeAction(
+  _prev: ManualEmployeeFormState,
+  formData: FormData,
+): Promise<ManualEmployeeFormState> {
+  const raw = {
+    display_name: String(formData.get("display_name") ?? ""),
+    role: String(formData.get("role") ?? "employee"),
+    pay_rate: String(formData.get("pay_rate") ?? ""),
+    contact_email: String(formData.get("contact_email") ?? ""),
+    contact_phone: String(formData.get("contact_phone") ?? ""),
+  };
+
+  const parsed = ManualEmployeeSchema.safeParse({
+    display_name: raw.display_name,
+    role: raw.role,
+    pay_rate_cents: raw.pay_rate,
+    contact_email: raw.contact_email,
+    contact_phone: raw.contact_phone,
+  });
+
+  if (!parsed.success) {
+    const errors: ManualEmployeeFormState["errors"] = {};
+    for (const issue of parsed.error.issues) {
+      const key = issue.path[0] as keyof NonNullable<
+        ManualEmployeeFormState["errors"]
+      >;
+      // Normalize zod's field name back to the form field name.
+      const mapped = key === ("pay_rate_cents" as never) ? "pay_rate" : key;
+      if (!errors[mapped]) errors[mapped] = issue.message;
+    }
+    return { errors, values: raw };
+  }
+
+  const { membership } = await getActionContext();
+
+  if (!["owner", "admin"].includes(membership.role)) {
+    return {
+      errors: { _form: "Only owners and admins can add employees." },
+      values: raw,
+    };
+  }
+
+  const admin = createSupabaseAdminClient();
+  const { data: inserted, error } = (await admin
+    .from("memberships")
+    .insert({
+      organization_id: membership.organization_id,
+      profile_id: null,
+      role: parsed.data.role,
+      status: "active",
+      pay_rate_cents: parsed.data.pay_rate_cents,
+      display_name: parsed.data.display_name,
+      contact_email: parsed.data.contact_email,
+      contact_phone: parsed.data.contact_phone,
+    } as never)
+    .select("id")
+    .single()) as unknown as {
+    data: { id: string } | null;
+    error: { message: string } | null;
+  };
+
+  if (error || !inserted) {
+    return {
+      errors: { _form: error?.message ?? "Could not add employee." },
+      values: raw,
+    };
+  }
+
+  await logAuditEvent({
+    membership,
+    action: "create",
+    entity: "membership",
+    entity_id: inserted.id,
+    after: {
+      display_name: parsed.data.display_name,
+      role: parsed.data.role,
+      pay_rate_cents: parsed.data.pay_rate_cents,
+      manual: true,
+    },
+  });
+
+  revalidatePath("/app/employees");
+  revalidatePath("/app/timesheets");
+  revalidatePath("/app/payroll");
+
+  return { done: true };
+}

@@ -29,7 +29,7 @@ import {
 
 export type MemberRow = {
   id: string;
-  profile_id: string;
+  profile_id: string | null;
   role: "owner" | "admin" | "manager" | "employee";
   status: "active" | "invited" | "disabled";
   pay_rate_cents: number | null;

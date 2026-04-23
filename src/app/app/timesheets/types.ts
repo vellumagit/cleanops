@@ -6,6 +6,10 @@ export type TimesheetEntry = {
   clock_out_at: string | null;
   actual_minutes: number;
   is_open: boolean;
+  /** Free-text notes — captured on manual entries, optional on live clocks. */
+  notes: string | null;
+  /** true when the row came from the Log-hours form (vs live clock-in/out). */
+  is_manual: boolean;
   // Booking details
   booking_id: string | null;
   client_name: string | null;
@@ -27,8 +31,19 @@ export type TimesheetEntry = {
 export type EmployeeMeta = {
   id: string;
   name: string;
+  /** Owner/admin/manager/employee — used by the picker to distinguish
+   *  office staff from regular field crew. */
+  role: string;
   pay_rate_cents: number;
   pay_type: "hourly" | "flat" | "percent";
+};
+
+/** Picker option for the Log-hours form. */
+export type BookingOption = {
+  id: string;
+  scheduled_at: string;
+  service_type: string | null;
+  client_name: string;
 };
 
 export type PtoEntry = {

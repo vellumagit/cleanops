@@ -12,6 +12,9 @@ export type EmployeeRow = {
   created_at: string;
   full_name: string;
   phone: string | null;
+  /** true when the membership has no linked profile — added manually
+   *  by an owner/admin, can't log in. */
+  is_shadow: boolean;
 };
 
 function statusTone(s: EmployeeRow["status"]): StatusTone {
@@ -43,7 +46,19 @@ export function EmployeesTable({ rows }: { rows: EmployeeRow[] }) {
     {
       key: "name",
       header: "Name",
-      render: (r) => <span className="font-medium">{r.full_name}</span>,
+      render: (r) => (
+        <span className="flex items-center gap-1.5 font-medium">
+          {r.full_name}
+          {r.is_shadow && (
+            <span
+              title="Manually added — no app access"
+              className="rounded-full bg-sky-100 px-1.5 py-0.5 text-[9px] font-semibold text-sky-700 dark:bg-sky-950/40 dark:text-sky-300"
+            >
+              Manual
+            </span>
+          )}
+        </span>
+      ),
       searchValue: (r) => r.full_name,
     },
     {

@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  Clock,
   User,
   ChevronDown,
   ChevronRight,
@@ -14,16 +13,26 @@ import {
   CheckCircle2,
   Timer,
   Palmtree,
+  Plus,
+  Pencil,
 } from "lucide-react";
 import {
   formatDateTime,
   formatDurationMinutes,
   formatCurrencyCents,
-  humanizeEnum,
 } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { TimesheetEntry, EmployeeMeta, PtoEntry } from "./types";
+import type {
+  TimesheetEntry,
+  EmployeeMeta,
+  PtoEntry,
+  BookingOption,
+} from "./types";
 import { PtoApprovalPanel } from "./pto-approval-panel";
+import {
+  ManualEntryDialog,
+  type EditingEntry,
+} from "./manual-entry-dialog";
 
 type EmpSummary = {
   id: string;
@@ -183,12 +192,16 @@ export function TimesheetsView({
   entries,
   employees,
   ptoEntries,
+  bookings,
+  orgTz,
   from,
   to,
 }: {
   entries: TimesheetEntry[];
   employees: Record<string, EmployeeMeta>;
   ptoEntries: PtoEntry[];
+  bookings: BookingOption[];
+  orgTz: string;
   from: string;
   to: string;
 }) {
@@ -197,6 +210,33 @@ export function TimesheetsView({
   const [view, setView] = useState<"summary" | "all">("summary");
   const [localFrom, setLocalFrom] = useState(from);
   const [localTo, setLocalTo] = useState(to);
+
+  // Manual-entry dialog state. "create" = fresh entry, "edit" = prefilled
+  // for correcting an existing row.
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [dialogMode, setDialogMode] = useState<"create" | "edit">("create");
+  const [editingEntry, setEditingEntry] = useState<EditingEntry | null>(null);
+
+  const employeeList = Object.values(employees);
+
+  function openCreate() {
+    setDialogMode("create");
+    setEditingEntry(null);
+    setDialogOpen(true);
+  }
+
+  function openEdit(entry: TimesheetEntry) {
+    setDialogMode("edit");
+    setEditingEntry({
+      id: entry.id,
+      employee_id: entry.employee_id,
+      booking_id: entry.booking_id,
+      clock_in_at: entry.clock_in_at,
+      clock_out_at: entry.clock_out_at,
+      notes: entry.notes,
+    });
+    setDialogOpen(true);
+  }
 
   const summaries = buildSummaries(entries, employees, ptoEntries);
 
@@ -285,7 +325,15 @@ export function TimesheetsView({
             </button>
           ))}
         </div>
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            type="button"
+            onClick={openCreate}
+            className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-foreground px-3 text-xs font-medium text-background transition-opacity hover:opacity-90"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Log hours
+          </button>
           <button
             type="button"
             onClick={downloadReport}
@@ -355,7 +403,15 @@ export function TimesheetsView({
 
       {entries.length === 0 ? (
         <div className="rounded-xl border border-dashed border-border bg-card px-5 py-14 text-center text-sm text-muted-foreground">
-          No time entries in this period.
+          <p>No time entries in this period.</p>
+          <button
+            type="button"
+            onClick={openCreate}
+            className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-foreground px-3 py-1.5 text-xs font-medium text-background transition-opacity hover:opacity-90"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Log hours manually
+          </button>
         </div>
       ) : view === "summary" ? (
         <div className="space-y-2">
@@ -475,16 +531,27 @@ export function TimesheetsView({
                             <th className="px-4 py-2 text-right font-medium">
                               Earned
                             </th>
+                            <th className="w-10" />
                           </tr>
                         </thead>
                         <tbody>
                           {empEntries.map((r) => (
                             <tr
                               key={r.id}
-                              className="border-b border-border last:border-0"
+                              className="group border-b border-border last:border-0"
                             >
                               <td className="px-4 py-2.5 tabular-nums">
-                                {formatDateTime(r.clock_in_at)}
+                                <div className="flex items-center gap-1.5">
+                                  {formatDateTime(r.clock_in_at)}
+                                  {r.is_manual && (
+                                    <span
+                                      title="Manually entered"
+                                      className="rounded-full bg-sky-100 px-1.5 py-0.5 text-[9px] font-semibold text-sky-700 dark:bg-sky-950/40 dark:text-sky-300"
+                                    >
+                                      M
+                                    </span>
+                                  )}
+                                </div>
                               </td>
                               <td className="px-4 py-2.5 tabular-nums">
                                 {r.is_open ? (
@@ -523,6 +590,16 @@ export function TimesheetsView({
                               </td>
                               <td className="px-4 py-2.5 text-right font-medium tabular-nums">
                                 {formatCurrencyCents(r.earned_cents)}
+                              </td>
+                              <td className="px-2 py-2.5 text-right">
+                                <button
+                                  type="button"
+                                  onClick={() => openEdit(r)}
+                                  aria-label="Edit entry"
+                                  className="rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground group-hover:opacity-100"
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </button>
                               </td>
                             </tr>
                           ))}
@@ -568,16 +645,27 @@ export function TimesheetsView({
                   <th className="px-4 py-2.5 text-right font-medium">
                     Earned
                   </th>
+                  <th className="w-10" />
                 </tr>
               </thead>
               <tbody>
                 {entries.map((r) => (
                   <tr
                     key={r.id}
-                    className="border-b border-border last:border-0"
+                    className="group border-b border-border last:border-0"
                   >
                     <td className="px-4 py-2.5 font-medium">
-                      {r.employee_name}
+                      <div className="flex items-center gap-1.5">
+                        {r.employee_name}
+                        {r.is_manual && (
+                          <span
+                            title="Manually entered"
+                            className="rounded-full bg-sky-100 px-1.5 py-0.5 text-[9px] font-semibold text-sky-700 dark:bg-sky-950/40 dark:text-sky-300"
+                          >
+                            M
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-4 py-2.5 tabular-nums">
                       {formatDateTime(r.clock_in_at)}
@@ -620,6 +708,16 @@ export function TimesheetsView({
                     <td className="px-4 py-2.5 text-right font-medium tabular-nums">
                       {formatCurrencyCents(r.earned_cents)}
                     </td>
+                    <td className="px-2 py-2.5 text-right">
+                      <button
+                        type="button"
+                        onClick={() => openEdit(r)}
+                        aria-label="Edit entry"
+                        className="rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground group-hover:opacity-100"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -627,6 +725,16 @@ export function TimesheetsView({
           </div>
         </div>
       )}
+
+      <ManualEntryDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        mode={dialogMode}
+        editing={editingEntry}
+        employees={employeeList}
+        bookings={bookings}
+        orgTz={orgTz}
+      />
     </div>
   );
 }

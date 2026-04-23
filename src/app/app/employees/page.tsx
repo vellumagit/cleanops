@@ -1,9 +1,11 @@
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
+import { memberDisplayName } from "@/lib/member-display";
 import { EmployeesTable, type EmployeeRow } from "./employees-table";
 import { PendingInvitations, type InvitationRow } from "./pending-invitations";
 import { InviteDialog } from "./invite-dialog";
+import { AddManualEmployeeDialog } from "./add-manual-dialog";
 
 export const metadata = { title: "Employees" };
 
@@ -23,6 +25,10 @@ export default async function EmployeesPage() {
         status,
         pay_rate_cents,
         created_at,
+        profile_id,
+        display_name,
+        contact_email,
+        contact_phone,
         profile:profiles ( full_name, phone )
       `,
     )
@@ -37,8 +43,10 @@ export default async function EmployeesPage() {
     status: m.status,
     pay_rate_cents: m.pay_rate_cents,
     created_at: m.created_at,
-    full_name: m.profile?.full_name ?? "Unnamed",
-    phone: m.profile?.phone ?? null,
+    full_name: memberDisplayName(m),
+    phone: m.contact_phone ?? m.profile?.phone ?? null,
+    // Shadow memberships have no linked profile, so no login / no app access.
+    is_shadow: m.profile_id === null,
   }));
 
   // Fetch pending invitations (only visible to admins/owners)
@@ -71,7 +79,14 @@ export default async function EmployeesPage() {
     <PageShell
       title="Employees"
       description="Cleaners, team leads, and admins on your team."
-      actions={isAdmin ? <InviteDialog siteUrl={siteUrl} /> : undefined}
+      actions={
+        isAdmin ? (
+          <div className="flex items-center gap-2">
+            <AddManualEmployeeDialog />
+            <InviteDialog siteUrl={siteUrl} />
+          </div>
+        ) : undefined
+      }
     >
       {isAdmin && invitations.length > 0 && (
         <PendingInvitations invitations={invitations} siteUrl={siteUrl} />

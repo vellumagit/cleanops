@@ -45,10 +45,13 @@ export async function createPayrollRunAction(
         .gte("clock_in_at", fromIso)
         .lte("clock_in_at", toIso)
         .not("clock_out_at", "is", null),
+      // Include every active membership — owners who work shifts, and
+      // manually-added shadow members, both belong on payroll.
       supabase
         .from("memberships")
-        .select("id, pay_rate_cents, profile:profiles ( full_name )")
-        .in("role", ["employee", "manager"])
+        .select(
+          "id, pay_rate_cents, display_name, profile:profiles ( full_name )",
+        )
         .eq("status", "active")
         .eq("organization_id", membership.organization_id),
       supabase
@@ -82,7 +85,8 @@ export async function createPayrollRunAction(
   // Seed with every active employee (so zero-hour rows still show up)
   for (const emp of employees ?? []) {
     buckets.set(emp.id, {
-      employeeName: emp.profile?.full_name ?? "Unknown",
+      employeeName:
+        emp.display_name?.trim() || emp.profile?.full_name?.trim() || "Unknown",
       minutes: 0,
       regularCents: 0,
       bonusCents: 0,

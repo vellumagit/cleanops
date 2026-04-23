@@ -36,6 +36,7 @@ export type AuditEntity =
   | "membership"
   | "settings"
   | "api_key"
+  | "time_entry"
   | "webhook_subscription";
 
 export type AuditAction =

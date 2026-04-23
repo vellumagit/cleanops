@@ -2,8 +2,14 @@ import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { PageShell } from "@/components/page-shell";
+import { memberDisplayName } from "@/lib/member-display";
+import { getOrgTimezone } from "@/lib/org-timezone";
 import { TimesheetsView } from "./timesheets-view";
-import type { TimesheetEntry, EmployeeMeta } from "./types";
+import type {
+  TimesheetEntry,
+  EmployeeMeta,
+  BookingOption,
+} from "./types";
 
 export const metadata = { title: "Timesheets" };
 
@@ -34,8 +40,19 @@ export default async function TimesheetsPage({
   const fromIso = `${from}T00:00:00Z`;
   const toIso = `${to}T23:59:59Z`;
 
+  // Capture "now" once for the booking-picker window below. Single
+  // reference point per render keeps the server response deterministic.
+  // eslint-disable-next-line react-hooks/purity
+  const nowMs = Date.now();
+  const bookingsWindowFrom = new Date(
+    nowMs - 90 * 24 * 60 * 60 * 1000,
+  ).toISOString();
+  const bookingsWindowTo = new Date(
+    nowMs + 90 * 24 * 60 * 60 * 1000,
+  ).toISOString();
+
   // Fetch time entries with booking + employee details
-  const [{ data: entries, error }, { data: employees }, { data: ptoRequests }] =
+  const [{ data: entries, error }, { data: employees }, { data: ptoRequests }, { data: recentBookings }] =
     await Promise.all([
       supabase
         .from("time_entries")
@@ -46,9 +63,11 @@ export default async function TimesheetsPage({
           clock_out_at,
           notes,
           employee_id,
+          created_manually,
           employee:memberships (
             id,
             pay_rate_cents,
+            display_name,
             profile:profiles ( full_name )
           ),
           booking:bookings (
@@ -67,6 +86,10 @@ export default async function TimesheetsPage({
         .lte("clock_in_at", toIso)
         .order("clock_in_at", { ascending: false })
         .limit(1000),
+      // Previously filtered to employees/managers only. Owners often work
+      // shifts themselves (and shadow-added members never have a linked
+      // profile), so we pull every active membership and let the UI
+      // decide how to present them.
       supabase
         .from("memberships")
         .select(
@@ -74,12 +97,12 @@ export default async function TimesheetsPage({
           id,
           role,
           pay_rate_cents,
+          display_name,
           profile:profiles ( full_name )
         `,
         )
-        .in("role", ["employee", "manager"])
         .eq("status", "active")
-        .limit(200),
+        .limit(500),
       // Use admin client: role is already gated above (owner/admin/manager),
       // and RLS on pto_requests may not cover admins viewing others' rows.
       createSupabaseAdminClient()
@@ -88,6 +111,18 @@ export default async function TimesheetsPage({
         .eq("organization_id" as never, membership.organization_id as never)
         .or(`and(start_date.gte.${from},start_date.lte.${to}),status.eq.pending` as never)
         .order("created_at" as never, { ascending: false } as never)
+        .limit(500),
+      // Recent bookings — feed the manual time-entry form's booking picker.
+      // 90-day window back/forward covers the common "catch up from last
+      // month" and "pre-fill for something happening tomorrow" cases.
+      supabase
+        .from("bookings")
+        .select(
+          "id, scheduled_at, service_type, client:clients ( name )",
+        )
+        .gte("scheduled_at", bookingsWindowFrom)
+        .lte("scheduled_at", bookingsWindowTo)
+        .order("scheduled_at", { ascending: false })
         .limit(500),
     ]);
 
@@ -99,7 +134,8 @@ export default async function TimesheetsPage({
   for (const emp of employees ?? []) {
     empMeta[emp.id] = {
       id: emp.id,
-      name: emp.profile?.full_name ?? "Unknown",
+      name: memberDisplayName(emp),
+      role: emp.role,
       pay_rate_cents: emp.pay_rate_cents ?? 0,
       pay_type: "hourly" as const,
     };
@@ -172,7 +208,9 @@ export default async function TimesheetsPage({
     return {
       id: e.id,
       employee_id: empId,
-      employee_name: e.employee?.profile?.full_name ?? "Unknown",
+      employee_name: memberDisplayName(e.employee ?? {}),
+      notes: e.notes ?? null,
+      is_manual: Boolean(e.created_manually),
       clock_in_at: e.clock_in_at,
       clock_out_at: e.clock_out_at,
       actual_minutes: actualMinutes,
@@ -195,6 +233,16 @@ export default async function TimesheetsPage({
       earned_cents: earnedCents,
     };
   });
+
+  // Booking options for the manual-entry picker.
+  const bookingOptions: BookingOption[] = (recentBookings ?? []).map((b) => ({
+    id: b.id,
+    scheduled_at: b.scheduled_at,
+    service_type: b.service_type ?? null,
+    client_name: b.client?.name ?? "—",
+  }));
+
+  const orgTz = await getOrgTimezone(membership.organization_id);
 
   // PTO data
   const ptoRows = ((ptoRequests ?? []) as Array<{
@@ -225,6 +273,8 @@ export default async function TimesheetsPage({
         entries={rows}
         employees={empMeta}
         ptoEntries={ptoRows}
+        bookings={bookingOptions}
+        orgTz={orgTz}
         from={from}
         to={to}
       />

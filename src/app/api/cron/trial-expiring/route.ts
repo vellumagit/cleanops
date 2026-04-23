@@ -82,8 +82,11 @@ export async function GET(request: Request) {
       const orgName = org?.name ?? "your organization";
       const brandColor = org?.brand_color ?? undefined;
 
-      // Get each owner's email and name from profiles + auth
+      // Get each owner's email and name from profiles + auth. Shadow
+      // memberships (no profile_id) never have an owner role, but the
+      // type is nullable; skip defensively.
       for (const owner of owners) {
+        if (!owner.profile_id) continue;
         const { data: profile } = await admin
           .from("profiles")
           .select("full_name")

@@ -112,7 +112,10 @@ export async function getCurrentMembership(): Promise<CurrentMembership | null> 
     organization_name: chosen.organizations.name,
     role: chosen.role,
     status: chosen.status,
-    profile_id: chosen.profile_id,
+    // profile_id is nullable post-2026-04-22 (shadow memberships), but the
+    // query above filters .eq("profile_id", userId), so a matching row
+    // always has a real profile_id. Safe to assert non-null here.
+    profile_id: chosen.profile_id!,
   };
 }
 

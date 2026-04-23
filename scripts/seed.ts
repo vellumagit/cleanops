@@ -196,6 +196,9 @@ async function main() {
 
     if (seedMembers) {
       for (const m of seedMembers) {
+        // Shadow memberships have no profile_id — nothing to look up or
+        // delete from auth.users, so skip them here.
+        if (!m.profile_id) continue;
         // Look up auth.users email to check if it's a seeded user
         const { data: userData } = await admin.auth.admin.getUserById(
           m.profile_id,

@@ -1,5 +1,6 @@
 import "server-only";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { memberDisplayName } from "@/lib/member-display";
 
 /** Fetch the option lists every booking form needs (clients/packages/employees). */
 export async function fetchBookingFormOptions() {
@@ -11,9 +12,11 @@ export async function fetchBookingFormOptions() {
       .select("id, name")
       .eq("is_active", true)
       .order("name"),
+    // Every active membership is assignable — owners, admins, and shadow
+    // (manually-added) members included.
     supabase
       .from("memberships")
-      .select("id, profile:profiles ( full_name )")
+      .select("id, display_name, profile:profiles ( full_name )")
       .eq("status", "active"),
   ]);
 
@@ -25,7 +28,7 @@ export async function fetchBookingFormOptions() {
     employees:
       employees.data?.map((m) => ({
         id: m.id,
-        label: m.profile?.full_name ?? "Unnamed",
+        label: memberDisplayName(m),
       })) ?? [],
   };
 }
