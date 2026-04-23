@@ -41,6 +41,19 @@ export type BookingFormDefaults = {
 
 type Option = { id: string; label: string };
 
+/** Client option carries the fields we auto-fill into the form. */
+export type ClientOption = Option & {
+  address: string | null;
+  notes: string | null;
+};
+
+/** Package option carries price + duration so selecting a package can
+ *  pre-fill the total + duration. */
+export type PackageOption = Option & {
+  price_cents: number;
+  duration_minutes: number;
+};
+
 const DAY_LABELS = [
   { value: 0, label: "Sun" },
   { value: 1, label: "Mon" },
@@ -63,8 +76,8 @@ export function BookingForm({
   mode: "create" | "edit";
   id?: string;
   defaults?: BookingFormDefaults;
-  clients: Option[];
-  packages: Option[];
+  clients: ClientOption[];
+  packages: PackageOption[];
   employees: Option[];
   currency?: "CAD" | "USD";
 }) {
@@ -118,6 +131,55 @@ export function BookingForm({
   const formAction = isRecurring ? recurringFormAction : singleFormAction;
   const v = state.values ?? {};
 
+  // Controlled values for the fields that auto-populate from client +
+  // package selection. We only pre-fill when the field is empty so we
+  // never overwrite something the user already typed. Initializers use
+  // `defaults` (not `v`) so that on remount we seed from the edit record;
+  // validation-error re-submits preserve whatever was typed via the
+  // handlers below.
+  const [addressValue, setAddressValue] = useState<string>(
+    defaults?.address ?? "",
+  );
+  const [notesValue, setNotesValue] = useState<string>(
+    defaults?.notes ?? "",
+  );
+  const [totalValue, setTotalValue] = useState<string>(
+    defaults?.total_dollars ?? "",
+  );
+  // DurationInput is uncontrolled internally — to pre-fill after mount
+  // we swap its `key` so it remounts with a new defaultMinutes. Only
+  // kicked when the user picks a package AND duration is still empty.
+  const [durationSeed, setDurationSeed] = useState<number>(defaultMinutes);
+  const [durationKey, setDurationKey] = useState<number>(0);
+
+  /**
+   * Pre-fill rule: only set the target field if it's currently empty.
+   * That way picking a client populates a blank address but never
+   * clobbers something the user typed, and switching clients mid-edit
+   * won't erase their work.
+   */
+  function handleClientChange(clientId: string) {
+    const c = clients.find((x) => x.id === clientId);
+    if (!c) return;
+    if (!addressValue && c.address) setAddressValue(c.address);
+    if (!notesValue && c.notes) setNotesValue(c.notes);
+  }
+
+  function handlePackageChange(packageId: string) {
+    const p = packages.find((x) => x.id === packageId);
+    if (!p) return;
+    // Package price fills Total when blank.
+    if (!totalValue && p.price_cents > 0) {
+      setTotalValue((p.price_cents / 100).toFixed(2));
+    }
+    // Duration only swaps in when DurationInput hasn't been touched
+    // yet (durationSeed still matches its original default).
+    if (durationSeed === 0 && p.duration_minutes > 0) {
+      setDurationSeed(p.duration_minutes);
+      setDurationKey((k) => k + 1);
+    }
+  }
+
   const isEditingSeries = mode === "edit" && !!defaults?.series_id;
 
   function toggleDay(day: number) {
@@ -135,8 +197,9 @@ export function BookingForm({
       error={state.errors?.duration_minutes}
     >
       <DurationInput
+        key={durationKey}
         name="duration_minutes"
-        defaultMinutes={defaultMinutes}
+        defaultMinutes={durationSeed}
         required
       />
     </FormField>
@@ -197,6 +260,7 @@ export function BookingForm({
             name="client_id"
             required
             defaultValue={v.client_id ?? defaults?.client_id ?? ""}
+            onChange={(e) => handleClientChange(e.target.value)}
           >
             <option value="">Select a client…</option>
             {clients.map((c) => (
@@ -216,6 +280,7 @@ export function BookingForm({
             id="package_id"
             name="package_id"
             defaultValue={v.package_id ?? defaults?.package_id ?? ""}
+            onChange={(e) => handlePackageChange(e.target.value)}
           >
             <option value="">No package</option>
             {packages.map((p) => (
@@ -576,7 +641,8 @@ export function BookingForm({
             name="total_cents"
             inputMode="decimal"
             required
-            defaultValue={v.total_cents ?? defaults?.total_dollars ?? ""}
+            value={totalValue}
+            onChange={(e) => setTotalValue(e.target.value)}
           />
         </FormField>
 
@@ -601,7 +667,8 @@ export function BookingForm({
         <Input
           id="address"
           name="address"
-          defaultValue={v.address ?? defaults?.address ?? ""}
+          value={addressValue}
+          onChange={(e) => setAddressValue(e.target.value)}
         />
       </FormField>
 
@@ -610,7 +677,8 @@ export function BookingForm({
           id="notes"
           name="notes"
           rows={4}
-          defaultValue={v.notes ?? defaults?.notes ?? ""}
+          value={notesValue}
+          onChange={(e) => setNotesValue(e.target.value)}
         />
       </FormField>
 

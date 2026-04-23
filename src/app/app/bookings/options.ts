@@ -2,14 +2,22 @@ import "server-only";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { memberDisplayName } from "@/lib/member-display";
 
-/** Fetch the option lists every booking form needs (clients/packages/employees). */
+/**
+ * Fetch the option lists every booking form needs (clients / packages /
+ * employees), plus enough metadata on each client and package to auto-fill
+ * the booking form when one is selected. Pre-fill rules are handled by
+ * the form itself — here we just ship the data.
+ */
 export async function fetchBookingFormOptions() {
   const supabase = await createSupabaseServerClient();
   const [clients, packages, employees] = await Promise.all([
-    supabase.from("clients").select("id, name").order("name"),
+    supabase
+      .from("clients")
+      .select("id, name, address, notes")
+      .order("name"),
     supabase
       .from("packages")
-      .select("id, name")
+      .select("id, name, price_cents, duration_minutes")
       .eq("is_active", true)
       .order("name"),
     // Every active membership is assignable — owners, admins, and shadow
@@ -22,9 +30,19 @@ export async function fetchBookingFormOptions() {
 
   return {
     clients:
-      clients.data?.map((c) => ({ id: c.id, label: c.name })) ?? [],
+      clients.data?.map((c) => ({
+        id: c.id,
+        label: c.name,
+        address: c.address ?? null,
+        notes: c.notes ?? null,
+      })) ?? [],
     packages:
-      packages.data?.map((p) => ({ id: p.id, label: p.name })) ?? [],
+      packages.data?.map((p) => ({
+        id: p.id,
+        label: p.name,
+        price_cents: p.price_cents,
+        duration_minutes: p.duration_minutes,
+      })) ?? [],
     employees:
       employees.data?.map((m) => ({
         id: m.id,
