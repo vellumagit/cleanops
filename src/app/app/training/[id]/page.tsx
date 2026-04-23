@@ -40,7 +40,7 @@ export default async function TrainingModuleDetailPage({
       supabase
         .from("training_assignments")
         .select(
-          "id, employee_id, completed_at, completed_step_ids, assigned_at",
+          "id, employee_id, completed_at, completed_step_ids, created_at",
         )
         .eq("module_id", id) as unknown as Promise<{
         data: Array<{
@@ -48,7 +48,7 @@ export default async function TrainingModuleDetailPage({
           employee_id: string;
           completed_at: string | null;
           completed_step_ids: string[] | null;
-          assigned_at: string | null;
+          created_at: string | null;
         }> | null;
       }>,
       // Every active member — shadow members included — so the owner can
@@ -77,7 +77,7 @@ export default async function TrainingModuleDetailPage({
         role: emp.role,
         assignment_id: a?.id ?? null,
         completed_at: a?.completed_at ?? null,
-        assigned_at: a?.assigned_at ?? null,
+        assigned_at: a?.created_at ?? null,
         progress_steps: a?.completed_step_ids?.length ?? 0,
       };
     })

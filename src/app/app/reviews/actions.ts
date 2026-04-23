@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { ReviewSchema } from "@/lib/validators/reviews";
 import { notifyReviewSubmitted } from "@/lib/automations";
 
@@ -100,12 +101,18 @@ export async function updateReviewAction(
     return { ok: false, error: "Keep the comment under 4,000 characters." };
   }
 
-  const { membership, supabase } = await getActionContext();
+  const { membership } = await getActionContext();
   if (!["owner", "admin", "manager"].includes(membership.role)) {
     return { ok: false, error: "Not authorized." };
   }
 
-  const { error } = await supabase
+  // RLS on `reviews` defines SELECT and DELETE policies but no UPDATE.
+  // An UPDATE through the RLS-bound client silently drops (0 rows, no
+  // error), so the toast fires but the row never changes. Using the
+  // service-role admin client — the action-level role check above is the
+  // authoritative gate — plus an explicit organization_id filter.
+  const admin = createSupabaseAdminClient();
+  const { error } = await admin
     .from("reviews")
     .update({ rating, comment: comment || null })
     .eq("id", id)

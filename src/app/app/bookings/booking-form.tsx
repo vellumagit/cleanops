@@ -487,11 +487,15 @@ export function BookingForm({
           <FormSelect
             id="assigned_to"
             name="assigned_to"
-            value={primaryAssignee}
+            defaultValue={v.assigned_to ?? defaults?.assigned_to ?? ""}
             onChange={(e) => {
+              // Track the selected value in state only so the "additional
+              // crew" pill list can hide whoever's primary. The DOM value
+              // flows to FormData via defaultValue + the native selected
+              // attribute — not via React controlled-component binding,
+              // which had an edge case where quick select-then-submit
+              // could submit with the wrong value.
               setPrimaryAssignee(e.target.value);
-              // If the new primary was previously in the additional list,
-              // drop it from additional to avoid a duplicate.
               if (e.target.value) {
                 setAdditionalAssignees((prev) =>
                   prev.filter((id) => id !== e.target.value),
