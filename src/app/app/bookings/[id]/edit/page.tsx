@@ -25,36 +25,49 @@ export default async function EditBookingPage({
   const currency = await getOrgCurrency(membership.organization_id);
   const orgTz = await getOrgTimezone(membership.organization_id);
 
-  const [{ data: booking, error }, options] = await Promise.all([
-    supabase
-      .from("bookings")
-      .select(
-        "id, client_id, package_id, assigned_to, scheduled_at, duration_minutes, service_type, status, total_cents, hourly_rate_cents, address, notes, series_id",
-      )
-      .eq("id", id)
-      .maybeSingle() as unknown as Promise<{
-      data: {
-        id: string;
-        client_id: string;
-        package_id: string | null;
-        assigned_to: string | null;
-        scheduled_at: string;
-        duration_minutes: number;
-        service_type: string;
-        status: string;
-        total_cents: number;
-        hourly_rate_cents: number | null;
-        address: string | null;
-        notes: string | null;
-        series_id: string | null;
-      } | null;
-      error: { message: string } | null;
-    }>,
-    fetchBookingFormOptions(),
-  ]);
+  const [{ data: booking, error }, options, { data: assignees }] =
+    await Promise.all([
+      supabase
+        .from("bookings")
+        .select(
+          "id, client_id, package_id, assigned_to, scheduled_at, duration_minutes, service_type, status, total_cents, hourly_rate_cents, address, notes, series_id",
+        )
+        .eq("id", id)
+        .maybeSingle() as unknown as Promise<{
+        data: {
+          id: string;
+          client_id: string;
+          package_id: string | null;
+          assigned_to: string | null;
+          scheduled_at: string;
+          duration_minutes: number;
+          service_type: string;
+          status: string;
+          total_cents: number;
+          hourly_rate_cents: number | null;
+          address: string | null;
+          notes: string | null;
+          series_id: string | null;
+        } | null;
+        error: { message: string } | null;
+      }>,
+      fetchBookingFormOptions(),
+      // Additional crew members, excluding the primary. Primary is
+      // already on booking.assigned_to so we don't double-count.
+      supabase
+        .from("booking_assignees" as never)
+        .select("membership_id, is_primary")
+        .eq("booking_id" as never, id as never) as unknown as Promise<{
+        data: Array<{ membership_id: string; is_primary: boolean }> | null;
+      }>,
+    ]);
 
   if (error) throw error;
   if (!booking) notFound();
+
+  const additional_assignees = (assignees ?? [])
+    .filter((a) => !a.is_primary)
+    .map((a) => a.membership_id);
 
   return (
     <PageShell title="Edit booking">
@@ -69,6 +82,7 @@ export default async function EditBookingPage({
               client_id: booking.client_id,
               package_id: booking.package_id,
               assigned_to: booking.assigned_to,
+              additional_assignees,
               scheduled_at_local: toDatetimeLocal(booking.scheduled_at, orgTz),
               duration_minutes: booking.duration_minutes,
               service_type: booking.service_type,

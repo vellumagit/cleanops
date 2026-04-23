@@ -10,6 +10,7 @@ import { FormError, FormField, FormSelect } from "@/components/form-field";
 import { SubmitButton } from "@/components/submit-button";
 import { DurationInput } from "@/components/duration-input";
 import { SetupReturnField } from "@/components/setup-return-field";
+import { cn } from "@/lib/utils";
 import { RECURRENCE_OPTIONS } from "@/lib/recurrence";
 import {
   createBookingAction,
@@ -24,6 +25,9 @@ export type BookingFormDefaults = {
   client_id?: string;
   package_id?: string | null;
   assigned_to?: string | null;
+  /** Additional crew members on this booking (excludes the primary).
+   *  Used to seed the multi-select when editing. */
+  additional_assignees?: string[];
   scheduled_at_local?: string;
   duration_minutes?: number;
   service_type?: string;
@@ -69,6 +73,12 @@ export function BookingForm({
   const [selectedDays, setSelectedDays] = useState<number[]>([]);
   const [monthlyNth, setMonthlyNth] = useState<string>("2");
   const [monthlyDow, setMonthlyDow] = useState<string>("2");
+  // Track the primary assignee in local state so the "additional crew"
+  // checkbox list can hide whoever's already the primary — can't assign
+  // the same person twice.
+  const [primaryAssignee, setPrimaryAssignee] = useState<string>(
+    defaults?.assigned_to ?? "",
+  );
   // Default to indefinite. New series are almost always open-ended —
   // cleaning retainers with explicit end dates are the exception.
   const [endsIndefinite, setEndsIndefinite] = useState(true);
@@ -76,6 +86,18 @@ export function BookingForm({
   // avoids a subtle React bug where toggling the `disabled` prop on a date
   // input can leave the DOM value out of sync with what actually gets submitted.
   const [endsAtValue, setEndsAtValue] = useState("");
+  // Additional crew members on this booking (beyond the primary assignee).
+  // Submitted as repeated "additional_assignees" fields so FormData.getAll()
+  // picks them all up on the server side.
+  const [additionalAssignees, setAdditionalAssignees] = useState<string[]>(
+    defaults?.additional_assignees ?? [],
+  );
+
+  function toggleAdditional(id: string) {
+    setAdditionalAssignees((prev) =>
+      prev.includes(id) ? prev.filter((m) => m !== id) : [...prev, id],
+    );
+  }
 
   const defaultMinutes = defaults?.duration_minutes ?? 0;
 
@@ -458,14 +480,24 @@ export function BookingForm({
         )}
 
         <FormField
-          label="Assigned to"
+          label="Primary assignee"
           htmlFor="assigned_to"
           error={state.errors?.assigned_to}
         >
           <FormSelect
             id="assigned_to"
             name="assigned_to"
-            defaultValue={v.assigned_to ?? defaults?.assigned_to ?? ""}
+            value={primaryAssignee}
+            onChange={(e) => {
+              setPrimaryAssignee(e.target.value);
+              // If the new primary was previously in the additional list,
+              // drop it from additional to avoid a duplicate.
+              if (e.target.value) {
+                setAdditionalAssignees((prev) =>
+                  prev.filter((id) => id !== e.target.value),
+                );
+              }
+            }}
           >
             <option value="">Unassigned</option>
             {employees.map((e) => (
@@ -476,6 +508,56 @@ export function BookingForm({
           </FormSelect>
         </FormField>
       </div>
+
+      {/* Additional crew — checkbox list. Hidden inputs below ensure the
+          server action receives each selected id as a separate value. */}
+      <FormField label="Additional crew" htmlFor="additional_assignees">
+        {employees.filter((e) => e.id !== primaryAssignee).length === 0 ? (
+          <p className="text-xs text-muted-foreground">
+            {employees.length === 0
+              ? "No active employees yet."
+              : "Everyone on the team is already assigned."}
+          </p>
+        ) : (
+          <>
+            <div className="flex flex-wrap gap-2">
+              {employees
+                .filter((e) => e.id !== primaryAssignee)
+                .map((e) => {
+                  const checked = additionalAssignees.includes(e.id);
+                  return (
+                    <button
+                      key={e.id}
+                      type="button"
+                      onClick={() => toggleAdditional(e.id)}
+                      className={cn(
+                        "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                        checked
+                          ? "border-foreground bg-foreground text-background"
+                          : "border-border bg-background text-muted-foreground hover:border-foreground/50 hover:text-foreground",
+                      )}
+                    >
+                      {checked ? "✓ " : ""}
+                      {e.label}
+                    </button>
+                  );
+                })}
+            </div>
+            <p className="mt-1.5 text-[11px] text-muted-foreground">
+              Pick one primary assignee above. Add additional crew here for
+              two-person jobs, deep cleans, or move-outs.
+            </p>
+            {additionalAssignees.map((id) => (
+              <input
+                key={id}
+                type="hidden"
+                name="additional_assignees"
+                value={id}
+              />
+            ))}
+          </>
+        )}
+      </FormField>
 
       <div className="grid gap-5 sm:grid-cols-2">
         <FormField

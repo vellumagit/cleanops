@@ -118,6 +118,29 @@ export default async function BookingDetailPage({
     membership.role,
   );
 
+  // Additional crew (non-primary) on this booking. Only surface when
+  // there's more than one assignee so solo jobs look unchanged.
+  const { data: extraAssignees } = (await supabase
+    .from("booking_assignees" as never)
+    .select("membership:memberships ( id, display_name, profile:profiles ( full_name ) )")
+    .eq("booking_id" as never, booking.id as never)
+    .eq("is_primary" as never, false as never)) as unknown as {
+    data: Array<{
+      membership: {
+        id: string;
+        display_name: string | null;
+        profile: { full_name: string | null } | null;
+      } | null;
+    }> | null;
+  };
+  const additionalCrewNames = (extraAssignees ?? [])
+    .map((r) =>
+      r.membership?.display_name?.trim() ||
+      r.membership?.profile?.full_name?.trim() ||
+      null,
+    )
+    .filter((n): n is string => !!n);
+
   return (
     <PageShell
       title={humanizeEnum(booking.service_type)}
@@ -186,6 +209,12 @@ export default async function BookingDetailPage({
                 <dd className="mt-0.5 font-medium text-foreground">
                   {booking.assigned?.profile?.full_name ?? (
                     <span className="text-muted-foreground">Unassigned</span>
+                  )}
+                  {additionalCrewNames.length > 0 && (
+                    <span className="font-normal text-muted-foreground">
+                      {" + "}
+                      {additionalCrewNames.join(", ")}
+                    </span>
                   )}
                 </dd>
               </div>

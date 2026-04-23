@@ -22,10 +22,14 @@ export default async function FieldJobsPage() {
   since.setDate(since.getDate() - 1);
   since.setHours(0, 0, 0, 0);
 
-  const { data, error } = await supabase
-    .from("bookings")
-    .select(
-      `
+  // A booking can now have multiple assignees via booking_assignees. Pull
+  // every booking where this member is either the primary (assigned_to)
+  // OR in the junction table, then dedupe.
+  const [primaryResp, extraResp] = await Promise.all([
+    supabase
+      .from("bookings")
+      .select(
+        `
         id,
         scheduled_at,
         duration_minutes,
@@ -35,14 +39,58 @@ export default async function FieldJobsPage() {
         notes,
         client:clients ( name )
       `,
-    )
-    .eq("assigned_to", membership.id)
-    .gte("scheduled_at", since.toISOString())
-    .order("scheduled_at", { ascending: true })
-    .limit(50);
+      )
+      .eq("assigned_to", membership.id)
+      .gte("scheduled_at", since.toISOString())
+      .order("scheduled_at", { ascending: true })
+      .limit(50),
+    (supabase
+      .from("booking_assignees" as never)
+      .select(
+        `booking:bookings (
+          id, scheduled_at, duration_minutes, status, service_type,
+          address, notes, client:clients ( name )
+        )`,
+      )
+      .eq("membership_id" as never, membership.id as never)
+      .eq(
+        "is_primary" as never,
+        false as never,
+      ) as unknown as Promise<{
+      data: Array<{
+        booking: {
+          id: string;
+          scheduled_at: string;
+          duration_minutes: number;
+          status: string;
+          service_type: string;
+          address: string | null;
+          notes: string | null;
+          client: { name: string } | null;
+        } | null;
+      }> | null;
+      error: { message: string } | null;
+    }>),
+  ]);
 
-  if (error) throw error;
-  const jobs = data ?? [];
+  if (primaryResp.error) throw primaryResp.error;
+
+  const extras = (extraResp.data ?? [])
+    .map((r) => r.booking)
+    .filter(
+      (b): b is NonNullable<typeof b> =>
+        !!b && new Date(b.scheduled_at).getTime() >= since.getTime(),
+    );
+
+  // Dedupe in case of data-entry overlap, then sort ascending.
+  const byId = new Map<string, (typeof extras)[number]>();
+  for (const job of primaryResp.data ?? []) byId.set(job.id, job);
+  for (const job of extras) if (!byId.has(job.id)) byId.set(job.id, job);
+  const jobs = Array.from(byId.values()).sort(
+    (a, b) =>
+      new Date(a.scheduled_at).getTime() -
+      new Date(b.scheduled_at).getTime(),
+  );
 
   // Group by calendar day for easier scanning.
   const groups = new Map<string, typeof jobs>();
@@ -88,7 +136,17 @@ export default async function FieldJobsPage() {
                           <span className="truncate text-base font-semibold">
                             {job.client?.name ?? "—"}
                           </span>
-                          <StatusBadge tone={bookingStatusTone(job.status)}>
+                          <StatusBadge
+                            tone={bookingStatusTone(
+                              job.status as
+                                | "pending"
+                                | "confirmed"
+                                | "en_route"
+                                | "in_progress"
+                                | "completed"
+                                | "cancelled",
+                            )}
+                          >
                             {humanizeEnum(job.status)}
                           </StatusBadge>
                         </div>

@@ -51,9 +51,22 @@ export default async function FieldJobDetailPage({
   if (error) throw error;
   if (!booking) notFound();
 
+  // Is this member an additional crew assignee (via booking_assignees)?
+  // Combined with the primary assigned_to check below, this lets the
+  // whole crew on a multi-person job see the detail page.
+  const { data: crewRow } = (await supabase
+    .from("booking_assignees" as never)
+    .select("id")
+    .eq("booking_id" as never, id as never)
+    .eq("membership_id" as never, membership.id as never)
+    .maybeSingle()) as unknown as { data: { id: string } | null };
+
+  const isAssignee =
+    booking.assigned_to === membership.id || crewRow !== null;
+
   // Defence in depth: even though the field UI only links to assigned jobs,
   // employees viewing someone else's job by URL should bounce back.
-  if (booking.assigned_to !== membership.id) {
+  if (!isAssignee) {
     return (
       <div className="rounded-xl border border-border bg-card p-6 text-center text-base text-muted-foreground">
         This job isn&apos;t assigned to you.

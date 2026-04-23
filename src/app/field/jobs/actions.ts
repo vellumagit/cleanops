@@ -36,7 +36,16 @@ export async function startJobAction(
   if (fetchError) return { ok: false, error: fetchError.message };
   if (!booking) return { ok: false, error: "Job not found" };
   if (booking.assigned_to !== membership.id) {
-    return { ok: false, error: "This job isn't assigned to you" };
+    // Multi-crew: allow any assignee via booking_assignees junction.
+    const { data: crewRow } = (await supabase
+      .from("booking_assignees" as never)
+      .select("id")
+      .eq("booking_id" as never, bookingId as never)
+      .eq("membership_id" as never, membership.id as never)
+      .maybeSingle()) as unknown as { data: { id: string } | null };
+    if (!crewRow) {
+      return { ok: false, error: "This job isn't assigned to you" };
+    }
   }
 
   // Update status if it's not already started or finished.
@@ -98,7 +107,16 @@ export async function completeJobAction(
   if (fetchError) return { ok: false, error: fetchError.message };
   if (!booking) return { ok: false, error: "Job not found" };
   if (booking.assigned_to !== membership.id) {
-    return { ok: false, error: "This job isn't assigned to you" };
+    // Multi-crew: allow any assignee via booking_assignees junction.
+    const { data: crewRow } = (await supabase
+      .from("booking_assignees" as never)
+      .select("id")
+      .eq("booking_id" as never, bookingId as never)
+      .eq("membership_id" as never, membership.id as never)
+      .maybeSingle()) as unknown as { data: { id: string } | null };
+    if (!crewRow) {
+      return { ok: false, error: "This job isn't assigned to you" };
+    }
   }
 
   const now = new Date().toISOString();

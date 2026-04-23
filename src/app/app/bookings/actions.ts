@@ -65,6 +65,71 @@ function readRecurringFormValues(formData: FormData) {
 }
 
 /**
+ * Parse the array of additional-crew membership ids out of a submitted
+ * form. Uses FormData.getAll so multiple same-named inputs are all
+ * captured.
+ */
+function readAdditionalAssignees(formData: FormData): string[] {
+  return formData
+    .getAll("additional_assignees")
+    .map((v) => String(v))
+    .filter((v) => v.length > 0);
+}
+
+/**
+ * Sync the booking_assignees junction table for a booking after a
+ * create/update. `primary_id` is the single assignee stored in
+ * bookings.assigned_to; `additional_ids` is the extra crew. The table's
+ * existing rows are replaced so re-editing feels intuitive.
+ */
+async function syncBookingAssignees(
+  supabase: Awaited<
+    ReturnType<typeof import("@/lib/supabase/server").createSupabaseServerClient>
+  >,
+  organizationId: string,
+  bookingId: string,
+  primaryId: string | null,
+  additionalIds: string[],
+): Promise<void> {
+  // Drop the existing set. RLS scopes this to the caller's org; the
+  // booking_id filter is the authoritative narrowing.
+  await (supabase
+    .from("booking_assignees" as never)
+    .delete()
+    .eq("booking_id" as never, bookingId as never) as unknown as Promise<unknown>);
+
+  const rows: Array<{
+    organization_id: string;
+    booking_id: string;
+    membership_id: string;
+    is_primary: boolean;
+  }> = [];
+  if (primaryId) {
+    rows.push({
+      organization_id: organizationId,
+      booking_id: bookingId,
+      membership_id: primaryId,
+      is_primary: true,
+    });
+  }
+  for (const id of additionalIds) {
+    if (id === primaryId) continue; // guard against duplicates
+    rows.push({
+      organization_id: organizationId,
+      booking_id: bookingId,
+      membership_id: id,
+      is_primary: false,
+    });
+  }
+
+  if (rows.length === 0) return;
+
+  await (supabase
+    .from("booking_assignees" as never)
+    .insert(rows as never) as unknown as Promise<unknown>);
+}
+
+/**
  * Look up human-readable names for the client and assigned employee so
  * the Google Calendar event has a useful title/description.
  */
@@ -158,6 +223,16 @@ export async function createBookingAction(
     .single();
 
   if (error) return { errors: { _form: error.message }, values: raw };
+
+  // Additional crew (if any) — write to booking_assignees so the primary
+  // + extras are all tracked consistently.
+  await syncBookingAssignees(
+    supabase,
+    membership.organization_id,
+    booking.id,
+    parsed.data.assigned_to ?? null,
+    readAdditionalAssignees(formData),
+  );
 
   // Email booking confirmation to client (fire-and-forget)
   sendBookingConfirmation(booking.id);
@@ -441,6 +516,16 @@ export async function updateBookingAction(
     .eq("id", id);
 
   if (error) return { errors: { _form: error.message }, values: raw };
+
+  // Replace the booking_assignees rows to match the form's new primary +
+  // additional selection.
+  await syncBookingAssignees(
+    supabase,
+    membership.organization_id,
+    id,
+    parsed.data.assigned_to ?? null,
+    readAdditionalAssignees(formData),
+  );
 
   // If the scheduled time changed, email the client + push employee
   // (both handled inside sendBookingRescheduled).
