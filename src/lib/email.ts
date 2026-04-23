@@ -150,6 +150,50 @@ type OrgSenderInfo = {
   replyToName?: string;
 };
 
+/**
+ * Domains that are actually verified in our Resend account. Only these
+ * can be used as the `from` address — Resend will reject anything else
+ * with "from_address_not_allowed". Add a domain here only after DNS
+ * verification is complete on the Resend side.
+ *
+ * Parsed from RESEND_VERIFIED_DOMAINS env var (comma-separated) with
+ * sollos3.com as the hardcoded fallback so the platform always has at
+ * least one working sender even if the env var is unset.
+ */
+function getVerifiedDomains(): string[] {
+  const raw = process.env.RESEND_VERIFIED_DOMAINS ?? "";
+  const envList = raw
+    .split(",")
+    .map((d) => d.trim().toLowerCase())
+    .filter(Boolean);
+  if (envList.length > 0) return envList;
+  return ["sollos3.com"];
+}
+
+function isDomainVerifiedInResend(email: string): boolean {
+  const at = email.lastIndexOf("@");
+  if (at === -1) return false;
+  const domain = email.slice(at + 1).toLowerCase();
+  return getVerifiedDomains().includes(domain);
+}
+
+/**
+ * Resolve the "from" + "reply-to" pair for an org-scoped email.
+ *
+ * Previously we treated `sender_email_verified_at` (a column we stamp
+ * when the user clicks our verify link) as authority to send FROM that
+ * address. That's wrong — clicking our link only proves the user owns
+ * the inbox. It does NOT mean their domain is verified in Resend, and
+ * Resend rejects any `from` on an unverified domain. Net effect: orgs
+ * verified their own email, every invoice/booking/receipt email
+ * silently bounced.
+ *
+ * New rule: only send FROM the org's address when its domain is in
+ * RESEND_VERIFIED_DOMAINS (or the platform default). Otherwise use the
+ * default Sollos `from`, put the org's display name on it ("Velluma
+ * via Sollos <noreply@sollos3.com>"), and drop the org's email into
+ * Reply-To so client responses land in the owner's inbox.
+ */
 export async function getOrgSender(
   organizationId: string,
 ): Promise<OrgSenderInfo> {
@@ -166,24 +210,27 @@ export async function getOrgSender(
     sender_email_verified_at: string | null;
   } | null;
 
-  const isVerified = Boolean(
-    org?.sender_email && org?.sender_email_verified_at,
+  const canSendFromOrgAddress = Boolean(
+    org?.sender_email &&
+      org?.sender_email_verified_at &&
+      isDomainVerifiedInResend(org.sender_email),
   );
 
-  if (isVerified && org?.sender_email) {
-    // Verified custom domain — use as From directly.
-    // Resend must also have this domain verified.
+  if (canSendFromOrgAddress && org?.sender_email) {
+    // Owner verified the inbox AND the domain is in our Resend
+    // allow-list — safe to send as-them.
     return {
       from: org.sender_email,
       fromName: org.name,
     };
   }
 
-  // Not verified — send from Sollos, but put their email in Reply-To
-  // so client replies go to the right place.
+  // Default path: send from Sollos's verified domain, stamp the org's
+  // display name so the client still sees "Velluma", and put the org
+  // sender in Reply-To so replies go to the right place.
   return {
     from: DEFAULT_FROM_EMAIL,
-    fromName: DEFAULT_FROM_NAME,
+    fromName: org?.name ? `${org.name} via Sollos` : DEFAULT_FROM_NAME,
     replyTo: org?.sender_email ?? undefined,
     replyToName: org?.name ?? undefined,
   };
