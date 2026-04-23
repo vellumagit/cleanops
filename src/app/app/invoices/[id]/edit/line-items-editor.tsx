@@ -3,6 +3,7 @@
 import { useActionState, useCallback, useId, useState } from "react";
 import { Plus, Trash2, GripVertical } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/form-field";
 import { SubmitButton } from "@/components/submit-button";
 import { formatCurrencyCents } from "@/lib/format";
@@ -164,15 +165,16 @@ export function LineItemsEditor({
         ))}
       </div>
 
-      <div className="flex items-center justify-between">
-        <button
+      <div className="flex items-center justify-between gap-3">
+        <Button
           type="button"
           onClick={addRow}
-          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-primary hover:bg-primary/10"
+          variant="outline"
+          size="sm"
         >
-          <Plus className="h-3.5 w-3.5" />
-          Add line
-        </button>
+          <Plus className="h-4 w-4" />
+          Add line item
+        </Button>
         <div className="text-right">
           <span className="text-xs text-muted-foreground">Total: </span>
           <span className="font-mono text-sm font-semibold tabular-nums">

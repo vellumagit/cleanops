@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Search } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -66,6 +66,7 @@ export function DataTable<T>({
   onRowClick,
 }: Props<T>) {
   const [query, setQuery] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
 
   const filtered = useMemo(() => {
     if (!query.trim()) return data;
@@ -83,17 +84,60 @@ export function DataTable<T>({
   const showEmptyState = data.length === 0 && emptyState;
   const showNoMatches = data.length > 0 && filtered.length === 0;
 
+  // Press "/" anywhere (outside a text input) to focus the search. Common
+  // convention borrowed from GitHub / Slack — cheap discoverability win
+  // on tables with hundreds of rows.
+  useEffect(() => {
+    if (!searchable) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      // Don't hijack the slash when the user is typing somewhere.
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable)
+      )
+        return;
+      e.preventDefault();
+      searchRef.current?.focus();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [searchable]);
+
   return (
     <div className="flex flex-col gap-3">
       {searchable && data.length > 0 && (
-        <div className="relative">
-          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={searchPlaceholder}
-            className="pl-8"
-          />
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+          <div className="relative flex-1 min-w-[220px]">
+            <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              ref={searchRef}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={searchPlaceholder}
+              className="pl-8 pr-10"
+            />
+            {/* Keyboard hint, hidden on small screens where the physical
+                keyboard is rare. */}
+            <kbd className="pointer-events-none absolute right-2.5 top-1/2 hidden -translate-y-1/2 rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground sm:inline">
+              /
+            </kbd>
+          </div>
+          {/* Result count — makes it obvious the table is searchable and
+              gives instant feedback on filter state. */}
+          <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+            {query ? (
+              <>
+                {filtered.length.toLocaleString()} of{" "}
+                {data.length.toLocaleString()}
+              </>
+            ) : (
+              <>{data.length.toLocaleString()} total</>
+            )}
+          </span>
         </div>
       )}
 
@@ -167,12 +211,6 @@ export function DataTable<T>({
         </div>
       )}
 
-      {data.length > 0 && (
-        <p className="text-xs text-muted-foreground">
-          {filtered.length} of {data.length}
-          {query && ` matching "${query}"`}
-        </p>
-      )}
     </div>
   );
 }
