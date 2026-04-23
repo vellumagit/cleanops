@@ -586,7 +586,12 @@ export type Database = {
           notes: string | null
           organization_id: string
           phone: string | null
+          portal_accepted_at: string | null
+          portal_invite_expires_at: string | null
+          portal_invite_token: string | null
+          portal_invited_at: string | null
           preferred_contact: Database["public"]["Enums"]["preferred_contact"]
+          profile_id: string | null
           quickbooks_customer_id: string | null
           sage_contact_id: string | null
           updated_at: string
@@ -601,7 +606,12 @@ export type Database = {
           notes?: string | null
           organization_id: string
           phone?: string | null
+          portal_accepted_at?: string | null
+          portal_invite_expires_at?: string | null
+          portal_invite_token?: string | null
+          portal_invited_at?: string | null
           preferred_contact?: Database["public"]["Enums"]["preferred_contact"]
+          profile_id?: string | null
           quickbooks_customer_id?: string | null
           sage_contact_id?: string | null
           updated_at?: string
@@ -616,7 +626,12 @@ export type Database = {
           notes?: string | null
           organization_id?: string
           phone?: string | null
+          portal_accepted_at?: string | null
+          portal_invite_expires_at?: string | null
+          portal_invite_token?: string | null
+          portal_invited_at?: string | null
           preferred_contact?: Database["public"]["Enums"]["preferred_contact"]
+          profile_id?: string | null
           quickbooks_customer_id?: string | null
           sage_contact_id?: string | null
           updated_at?: string

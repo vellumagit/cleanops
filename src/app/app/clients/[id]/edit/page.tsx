@@ -4,6 +4,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
 import { ClientForm } from "../../client-form";
 import { DeleteClientForm } from "./delete-form";
+import { PortalInviteCard } from "./portal-invite-card";
 
 export const metadata = { title: "Edit client" };
 
@@ -16,11 +17,28 @@ export default async function EditClientPage({
   const { id } = await params;
   const supabase = await createSupabaseServerClient();
 
-  const { data: client, error } = await supabase
+  const { data: client, error } = (await supabase
     .from("clients")
-    .select("id, name, email, phone, address, notes, preferred_contact")
+    .select(
+      "id, name, email, phone, address, notes, preferred_contact, profile_id, portal_invited_at, portal_accepted_at, portal_invite_expires_at",
+    )
     .eq("id", id)
-    .maybeSingle();
+    .maybeSingle()) as unknown as {
+    data: {
+      id: string;
+      name: string;
+      email: string | null;
+      phone: string | null;
+      address: string | null;
+      notes: string | null;
+      preferred_contact: string;
+      profile_id: string | null;
+      portal_invited_at: string | null;
+      portal_accepted_at: string | null;
+      portal_invite_expires_at: string | null;
+    } | null;
+    error: { message: string } | null;
+  };
 
   if (error) throw error;
   if (!client) notFound();
@@ -42,6 +60,15 @@ export default async function EditClientPage({
             }}
           />
         </div>
+
+        <PortalInviteCard
+          clientId={client.id}
+          clientEmail={client.email}
+          hasPortalAccess={!!client.profile_id}
+          portalInvitedAt={client.portal_invited_at}
+          portalAcceptedAt={client.portal_accepted_at}
+          portalInviteExpiresAt={client.portal_invite_expires_at}
+        />
 
         <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-6">
           <h2 className="text-sm font-semibold text-destructive">
