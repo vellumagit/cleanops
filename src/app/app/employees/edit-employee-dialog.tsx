@@ -59,15 +59,26 @@ export function EditEmployeeDialog({ member, viewerRole, isSelf }: Props) {
     initialState,
   );
 
-  // Close + refresh when the action reports done.
+  // Close + refresh when the action finishes a submit successfully.
+  //
+  // The `pending` dependency is the trick here. useActionState reuses the
+  // same state object across successive submits — if the last result was
+  // {done: true} and the next result is ALSO {done: true}, state.done
+  // doesn't "change" and the effect wouldn't re-fire.
+  //
+  // With `pending` in the deps, the effect fires on every transition
+  // (false → true at submit start, true → false at completion). We then
+  // guard on `state.done && !pending` so we only act once per completed
+  // submit — never on the kickoff, never on pending, only on the
+  // successful finish.
   useEffect(() => {
-    if (state.done) {
+    if (state.done && !pending) {
       toast.success("Saved");
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setOpen(false);
       router.refresh();
     }
-  }, [state.done, router]);
+  }, [state.done, pending, router]);
 
   const canChangeRole = viewerRole === "owner";
   const canDeactivate = !isSelf;

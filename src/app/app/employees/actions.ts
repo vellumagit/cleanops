@@ -174,9 +174,20 @@ export async function revokeInvitationAction(formData: FormData) {
 /*  Update membership (role, status, pay rate)                         */
 /* ------------------------------------------------------------------ */
 
+// Preprocess "" → undefined before piping into the enum. Essential for
+// fields that are conditionally hidden in the form — a hidden field
+// doesn't submit a value (formData.get returns null, which we coerce
+// to "" at read time), and without this preprocessor the enum would
+// reject "" as "not a valid value" and the whole update would silently
+// fail validation.
+const emptyToUndefined = <T extends z.ZodTypeAny>(schema: T) =>
+  z.preprocess((v) => (v === "" ? undefined : v), schema);
+
 const UpdateMemberSchema = z.object({
-  role: z.enum(["owner", "admin", "manager", "employee"]).optional(),
-  status: z.enum(["active", "disabled"]).optional(),
+  role: emptyToUndefined(
+    z.enum(["owner", "admin", "manager", "employee"]).optional(),
+  ),
+  status: emptyToUndefined(z.enum(["active", "disabled"]).optional()),
   pay_rate: z
     .string()
     .transform((s) => {
@@ -322,14 +333,30 @@ export async function updateMemberAction(
   // through admin keeps the write immune to any future policy drift that
   // could silently drop zero-row updates.
   const admin = createSupabaseAdminClient();
-  const { error } = await admin
+  const { data: updated, error } = await admin
     .from("memberships")
     .update(updatePayload)
     .eq("id", memberId)
-    .eq("organization_id", membership.organization_id);
+    .eq("organization_id", membership.organization_id)
+    .select("id, pay_rate_cents, role, status");
 
   if (error) {
     return { errors: { _form: error.message } };
+  }
+
+  // If zero rows were affected, the filter didn't match — surface a clear
+  // error instead of a success toast with no visible change.
+  if (!updated || updated.length === 0) {
+    console.error(
+      "[updateMember] zero rows affected",
+      { memberId, organizationId: membership.organization_id, updatePayload },
+    );
+    return {
+      errors: {
+        _form:
+          "Couldn't find this employee in your organization. Try refreshing the page.",
+      },
+    };
   }
 
   const action = parsed.data.status === "disabled" ? "deactivate" : "update";
