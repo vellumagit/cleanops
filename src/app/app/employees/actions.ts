@@ -187,10 +187,43 @@ const UpdateMemberSchema = z.object({
       return Math.round(n * 100);
     })
     .optional(),
+  // Shadow-employee fields. Only meaningful when profile_id IS NULL —
+  // for invited members the name comes from profiles.full_name and
+  // editing it here would have no effect.
+  display_name: z
+    .string()
+    .trim()
+    .max(120, "Keep the name under 120 characters")
+    .optional(),
+  contact_email: z
+    .string()
+    .trim()
+    .optional()
+    .transform((s) => (s && s.length > 0 ? s.toLowerCase() : null))
+    .refine(
+      (s) => s === null || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s),
+      "Enter a valid email address or leave blank",
+    ),
+  contact_phone: z
+    .string()
+    .trim()
+    .optional()
+    .transform((s) => (s && s.length > 0 ? s : null)),
 });
 
 export type UpdateMemberState = {
-  errors?: Partial<Record<"role" | "status" | "pay_rate" | "_form", string>>;
+  errors?: Partial<
+    Record<
+      | "role"
+      | "status"
+      | "pay_rate"
+      | "display_name"
+      | "contact_email"
+      | "contact_phone"
+      | "_form",
+      string
+    >
+  >;
   done?: boolean;
 };
 
@@ -203,6 +236,9 @@ export async function updateMemberAction(
     role: String(formData.get("role") ?? ""),
     status: String(formData.get("status") ?? ""),
     pay_rate: String(formData.get("pay_rate") ?? ""),
+    display_name: String(formData.get("display_name") ?? ""),
+    contact_email: String(formData.get("contact_email") ?? ""),
+    contact_phone: String(formData.get("contact_phone") ?? ""),
   };
 
   const parsed = UpdateMemberSchema.safeParse(raw);
@@ -244,26 +280,53 @@ export async function updateMemberAction(
     }
   }
 
-  // Get previous state for audit
+  // Get previous state for audit + so we know whether this is a shadow
+  // member (profile_id null) and can route the display_name/contact
+  // fields appropriately.
   const { data: before } = await supabase
     .from("memberships")
-    .select("role, status, pay_rate_cents")
+    .select("role, status, pay_rate_cents, profile_id, display_name, contact_email, contact_phone")
     .eq("id", memberId)
     .single();
 
   const updatePayload: Record<string, unknown> = {};
   if (parsed.data.role) updatePayload.role = parsed.data.role;
   if (parsed.data.status) updatePayload.status = parsed.data.status;
-  if (parsed.data.pay_rate !== undefined) updatePayload.pay_rate_cents = parsed.data.pay_rate;
+  if (parsed.data.pay_rate !== undefined)
+    updatePayload.pay_rate_cents = parsed.data.pay_rate;
+
+  // Shadow-employee fields — only apply when the member has no linked
+  // profile. For invited members the name comes from profiles.full_name,
+  // and overwriting membership.display_name would either be ignored (UI
+  // falls back to profile.full_name via memberDisplayName) or would
+  // shadow a correct name with a stale one. Don't write them.
+  if (!before || before.profile_id === null) {
+    if (parsed.data.display_name && parsed.data.display_name.length > 0) {
+      updatePayload.display_name = parsed.data.display_name;
+    }
+    if (parsed.data.contact_email !== undefined) {
+      updatePayload.contact_email = parsed.data.contact_email;
+    }
+    if (parsed.data.contact_phone !== undefined) {
+      updatePayload.contact_phone = parsed.data.contact_phone;
+    }
+  }
 
   if (Object.keys(updatePayload).length === 0) {
     return { errors: { _form: "Nothing to update." } };
   }
 
-  const { error } = await supabase
+  // Use the service-role admin client for the update. The action-level
+  // role check above (owner/admin only) is the authoritative gate; the
+  // RLS policy on memberships also allows owner/admin UPDATEs, but routing
+  // through admin keeps the write immune to any future policy drift that
+  // could silently drop zero-row updates.
+  const admin = createSupabaseAdminClient();
+  const { error } = await admin
     .from("memberships")
     .update(updatePayload)
-    .eq("id", memberId);
+    .eq("id", memberId)
+    .eq("organization_id", membership.organization_id);
 
   if (error) {
     return { errors: { _form: error.message } };

@@ -45,8 +45,11 @@ export default async function EmployeesPage() {
     created_at: m.created_at,
     full_name: memberDisplayName(m),
     phone: m.contact_phone ?? m.profile?.phone ?? null,
+    contact_email: m.contact_email ?? null,
+    contact_phone: m.contact_phone ?? null,
     // Shadow memberships have no linked profile, so no login / no app access.
     is_shadow: m.profile_id === null,
+    is_self: m.id === membership.id,
   }));
 
   // Fetch pending invitations (only visible to admins/owners)
@@ -91,7 +94,7 @@ export default async function EmployeesPage() {
       {isAdmin && invitations.length > 0 && (
         <PendingInvitations invitations={invitations} siteUrl={siteUrl} />
       )}
-      <EmployeesTable rows={rows} />
+      <EmployeesTable rows={rows} viewerRole={membership.role} />
     </PageShell>
   );
 }

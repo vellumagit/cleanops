@@ -3,6 +3,7 @@
 import { DataTable, type DataTableColumn } from "@/components/data-table";
 import { StatusBadge, type StatusTone } from "@/components/status-badge";
 import { formatCurrencyCents, formatDate, humanizeEnum } from "@/lib/format";
+import { EditEmployeeDialog } from "./edit-employee-dialog";
 
 export type EmployeeRow = {
   id: string;
@@ -12,9 +13,13 @@ export type EmployeeRow = {
   created_at: string;
   full_name: string;
   phone: string | null;
+  contact_email: string | null;
+  contact_phone: string | null;
   /** true when the membership has no linked profile — added manually
    *  by an owner/admin, can't log in. */
   is_shadow: boolean;
+  /** true when this row represents the viewer (hides Disable). */
+  is_self: boolean;
 };
 
 function statusTone(s: EmployeeRow["status"]): StatusTone {
@@ -41,7 +46,14 @@ function roleTone(r: EmployeeRow["role"]): StatusTone {
   }
 }
 
-export function EmployeesTable({ rows }: { rows: EmployeeRow[] }) {
+export function EmployeesTable({
+  rows,
+  viewerRole,
+}: {
+  rows: EmployeeRow[];
+  viewerRole: string;
+}) {
+  const canEdit = viewerRole === "owner" || viewerRole === "admin";
   const columns: DataTableColumn<EmployeeRow>[] = [
     {
       key: "name",
@@ -108,6 +120,31 @@ export function EmployeesTable({ rows }: { rows: EmployeeRow[] }) {
           : `${formatCurrencyCents(r.pay_rate_cents)}/hr`,
     },
   ];
+
+  if (canEdit) {
+    columns.push({
+      key: "actions",
+      header: "",
+      headerClassName: "text-right",
+      className: "text-right",
+      render: (r) => (
+        <EditEmployeeDialog
+          member={{
+            id: r.id,
+            full_name: r.full_name,
+            role: r.role,
+            status: r.status,
+            pay_rate_cents: r.pay_rate_cents,
+            is_shadow: r.is_shadow,
+            contact_email: r.contact_email,
+            contact_phone: r.contact_phone,
+          }}
+          viewerRole={viewerRole}
+          isSelf={r.is_self}
+        />
+      ),
+    });
+  }
 
   return (
     <DataTable
