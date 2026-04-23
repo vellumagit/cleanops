@@ -2,10 +2,13 @@
 
 import { revalidatePath } from "next/cache";
 import { getActionContext } from "@/lib/actions";
+import { logAuditEvent } from "@/lib/audit";
 
 type ComputeResult =
   | { ok: true; created: number; skipped: number }
   | { ok: false; error: string };
+
+type Result = { ok: true } | { ok: false; error: string };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Review-based bonuses
@@ -326,5 +329,191 @@ export async function markBonusPaidAction(
   if (error) return { ok: false, error: error.message };
 
   revalidatePath("/app/bonuses");
+  return { ok: true };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Manual bonus management — ad-hoc create, adjust amount, delete
+//
+// Complement to the compute engines above. Real-world cleaning businesses
+// need room for discretionary bonuses (year-end, referral spiff, milestone
+// reward) and for correcting a bad compute. The compute engines remain the
+// default; this layer is an explicit override.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function parseDollarInputToCents(raw: string): number | null {
+  const cleaned = raw.trim().replace(/[$,\s]/g, "");
+  if (!cleaned) return null;
+  const n = Number(cleaned);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return Math.round(n * 100);
+}
+
+/**
+ * Create an ad-hoc bonus for an employee. No rule involved — owner picks the
+ * amount, reason, and optional period window. Rows are tagged with
+ * bonus_type='manual' so reports can tell them apart from rule-driven ones.
+ */
+export async function createAdHocBonusAction(
+  formData: FormData,
+): Promise<Result> {
+  const { membership, supabase } = await getActionContext();
+  if (membership.role !== "owner" && membership.role !== "admin") {
+    return { ok: false, error: "Only owners and admins can add bonuses." };
+  }
+
+  const employee_id = String(formData.get("employee_id") ?? "").trim();
+  const amount_raw = String(formData.get("amount_dollars") ?? "").trim();
+  const reason = String(formData.get("reason") ?? "").trim();
+  const period_start = String(formData.get("period_start") ?? "").trim();
+  const period_end = String(formData.get("period_end") ?? "").trim();
+
+  if (!employee_id) return { ok: false, error: "Pick an employee." };
+
+  const amount_cents = parseDollarInputToCents(amount_raw);
+  if (amount_cents === null || amount_cents === 0) {
+    return { ok: false, error: "Enter a dollar amount greater than zero." };
+  }
+
+  // Default the period to today if the owner didn't pick one.
+  const today = new Date().toISOString().slice(0, 10);
+  const start = period_start || today;
+  const end = period_end || today;
+  if (new Date(end).getTime() < new Date(start).getTime()) {
+    return { ok: false, error: "End date must be on or after start date." };
+  }
+
+  // Guard against cross-org assignment: confirm the employee is in this org.
+  const { data: emp } = await supabase
+    .from("memberships")
+    .select("id, organization_id")
+    .eq("id", employee_id)
+    .maybeSingle();
+  if (!emp || emp.organization_id !== membership.organization_id) {
+    return { ok: false, error: "Employee not found in this organization." };
+  }
+
+  const { data: inserted, error } = await supabase
+    .from("bonuses")
+    .insert({
+      organization_id: membership.organization_id,
+      employee_id,
+      amount_cents,
+      period_start: start,
+      period_end: end,
+      reason: reason || "Manual bonus",
+      status: "pending",
+      bonus_type: "manual",
+    })
+    .select("id")
+    .single();
+
+  if (error || !inserted) {
+    return { ok: false, error: error?.message ?? "Could not create bonus." };
+  }
+
+  await logAuditEvent({
+    membership,
+    action: "create",
+    entity: "bonus",
+    entity_id: inserted.id,
+    after: { employee_id, amount_cents, reason: reason || null, manual: true },
+  });
+
+  revalidatePath("/app/bonuses");
+  revalidatePath("/app/payroll");
+  return { ok: true };
+}
+
+/**
+ * Update an existing bonus — typically to adjust the amount or correct the
+ * reason. Paid bonuses stay editable so a mis-recorded amount can be fixed,
+ * but the change is audit-logged either way.
+ */
+export async function updateBonusAction(formData: FormData): Promise<Result> {
+  const { membership, supabase } = await getActionContext();
+  if (membership.role !== "owner" && membership.role !== "admin") {
+    return { ok: false, error: "Only owners and admins can edit bonuses." };
+  }
+
+  const id = String(formData.get("id") ?? "");
+  const amount_raw = String(formData.get("amount_dollars") ?? "").trim();
+  const reason = String(formData.get("reason") ?? "").trim();
+
+  if (!id) return { ok: false, error: "Missing bonus id." };
+
+  const amount_cents = parseDollarInputToCents(amount_raw);
+  if (amount_cents === null || amount_cents === 0) {
+    return { ok: false, error: "Enter a dollar amount greater than zero." };
+  }
+
+  const { data: before } = await supabase
+    .from("bonuses")
+    .select("employee_id, amount_cents, reason")
+    .eq("id", id)
+    .eq("organization_id", membership.organization_id)
+    .maybeSingle();
+
+  const { error } = await supabase
+    .from("bonuses")
+    .update({ amount_cents, reason: reason || null })
+    .eq("id", id)
+    .eq("organization_id", membership.organization_id);
+
+  if (error) return { ok: false, error: error.message };
+
+  await logAuditEvent({
+    membership,
+    action: "update",
+    entity: "bonus",
+    entity_id: id,
+    before: before ?? null,
+    after: { amount_cents, reason: reason || null },
+  });
+
+  revalidatePath("/app/bonuses");
+  revalidatePath("/app/payroll");
+  return { ok: true };
+}
+
+/**
+ * Delete a bonus. Used to clean up errant computes or discretionary bonuses
+ * that shouldn't have been issued. Paid bonuses can still be deleted — the
+ * owner is responsible for reconciling external payment if already out.
+ */
+export async function deleteBonusAction(formData: FormData): Promise<Result> {
+  const { membership, supabase } = await getActionContext();
+  if (membership.role !== "owner" && membership.role !== "admin") {
+    return { ok: false, error: "Only owners and admins can delete bonuses." };
+  }
+
+  const id = String(formData.get("id") ?? "");
+  if (!id) return { ok: false, error: "Missing bonus id." };
+
+  const { data: before } = await supabase
+    .from("bonuses")
+    .select("employee_id, amount_cents, status, reason, bonus_type")
+    .eq("id", id)
+    .eq("organization_id", membership.organization_id)
+    .maybeSingle();
+
+  const { error } = await supabase
+    .from("bonuses")
+    .delete()
+    .eq("id", id)
+    .eq("organization_id", membership.organization_id);
+
+  if (error) return { ok: false, error: error.message };
+
+  await logAuditEvent({
+    membership,
+    action: "delete",
+    entity: "bonus",
+    entity_id: id,
+    before: before ?? null,
+  });
+
+  revalidatePath("/app/bonuses");
+  revalidatePath("/app/payroll");
   return { ok: true };
 }

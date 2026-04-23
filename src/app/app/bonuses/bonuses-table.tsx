@@ -1,13 +1,18 @@
 "use client";
 
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import { toast } from "sonner";
-import { Star, Zap } from "lucide-react";
+import { Pencil, Plus, Star, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DataTable, type DataTableColumn } from "@/components/data-table";
 import { StatusBadge, bonusStatusTone } from "@/components/status-badge";
 import { formatCurrencyCents, formatDate } from "@/lib/format";
 import { markBonusPaidAction } from "./actions";
+import {
+  BonusDialog,
+  type BonusEmployeeOption,
+  type EditingBonus,
+} from "./bonus-dialog";
 
 export type BonusRow = {
   id: string;
@@ -63,10 +68,33 @@ function PayCell({ id, status }: { id: string; status: "pending" | "paid" }) {
 export function BonusesTable({
   rows,
   canEdit,
+  employees,
 }: {
   rows: BonusRow[];
   canEdit: boolean;
+  employees: BonusEmployeeOption[];
 }) {
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [dialogMode, setDialogMode] = useState<"create" | "edit">("create");
+  const [editing, setEditing] = useState<EditingBonus | null>(null);
+
+  function openCreate() {
+    setDialogMode("create");
+    setEditing(null);
+    setDialogOpen(true);
+  }
+
+  function openEdit(row: BonusRow) {
+    setDialogMode("edit");
+    setEditing({
+      id: row.id,
+      employee_name: row.employee_name,
+      amount_cents: row.amount_cents,
+      reason: row.reason,
+    });
+    setDialogOpen(true);
+  }
+
   const columns: DataTableColumn<BonusRow>[] = [
     {
       key: "employee",
@@ -124,21 +152,61 @@ export function BonusesTable({
       header: "",
       headerClassName: "text-right",
       className: "text-right",
-      render: (r) => <PayCell id={r.id} status={r.status} />,
+      render: (r) => (
+        <div className="flex items-center justify-end gap-1.5">
+          <PayCell id={r.id} status={r.status} />
+          <button
+            type="button"
+            onClick={() => openEdit(r)}
+            aria-label="Edit bonus"
+            className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      ),
     });
   }
 
   return (
-    <DataTable
-      data={rows}
-      columns={columns}
-      getRowId={(r) => r.id}
-      searchPlaceholder="Search by employee or reason…"
-      emptyState={{
-        title: "No bonuses yet",
-        description:
-          "Run the compute job after configuring a bonus rule to award pending bonuses.",
-      }}
-    />
+    <div className="space-y-3">
+      {canEdit && (
+        <div className="flex justify-end">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={openCreate}
+          >
+            <Plus className="h-4 w-4" />
+            Add bonus
+          </Button>
+        </div>
+      )}
+      <DataTable
+        data={rows}
+        columns={columns}
+        getRowId={(r) => r.id}
+        searchPlaceholder="Search by employee or reason…"
+        emptyState={{
+          title: "No bonuses yet",
+          description:
+            "Run the compute job after configuring a bonus rule, or add one manually.",
+          action: canEdit ? (
+            <Button type="button" size="sm" onClick={openCreate}>
+              <Plus className="h-4 w-4" />
+              Add bonus manually
+            </Button>
+          ) : undefined,
+        }}
+      />
+      <BonusDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        mode={dialogMode}
+        editing={editing}
+        employees={employees}
+      />
+    </div>
   );
 }

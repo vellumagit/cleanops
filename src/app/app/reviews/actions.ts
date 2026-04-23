@@ -76,3 +76,43 @@ export async function deleteReviewAction(formData: FormData) {
   if (error) throw error;
   revalidatePath("/app/reviews");
 }
+
+/**
+ * Owner-side review edit — primarily for typo fixes or adding context the
+ * client wrote awkwardly. Admin-only; does NOT refire the review-submitted
+ * automation (the review's already landed; we don't want to re-email on
+ * every edit).
+ */
+export async function updateReviewAction(
+  formData: FormData,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const id = String(formData.get("id") ?? "");
+  if (!id) return { ok: false, error: "Missing review id." };
+
+  const ratingRaw = String(formData.get("rating") ?? "").trim();
+  const comment = String(formData.get("comment") ?? "").trim();
+
+  const rating = Number(ratingRaw);
+  if (!Number.isFinite(rating) || rating < 1 || rating > 5) {
+    return { ok: false, error: "Rating must be between 1 and 5." };
+  }
+  if (comment.length > 4000) {
+    return { ok: false, error: "Keep the comment under 4,000 characters." };
+  }
+
+  const { membership, supabase } = await getActionContext();
+  if (!["owner", "admin", "manager"].includes(membership.role)) {
+    return { ok: false, error: "Not authorized." };
+  }
+
+  const { error } = await supabase
+    .from("reviews")
+    .update({ rating, comment: comment || null })
+    .eq("id", id)
+    .eq("organization_id", membership.organization_id);
+
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/app/reviews");
+  return { ok: true };
+}

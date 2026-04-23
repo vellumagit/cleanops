@@ -3,6 +3,7 @@ import { Star, Zap } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
+import { memberDisplayName } from "@/lib/member-display";
 import { buttonVariants } from "@/components/ui/button";
 import { BonusesTable, type BonusRow } from "./bonuses-table";
 import { ComputeBonusesButton } from "./compute-button";
@@ -14,7 +15,7 @@ export default async function BonusesPage() {
   const canEdit = membership.role === "owner" || membership.role === "admin";
   const supabase = await createSupabaseServerClient();
 
-  const [bonusesResult, ruleResult] = await Promise.all([
+  const [bonusesResult, ruleResult, employeesResult] = await Promise.all([
     supabase
       .from("bonuses")
       .select(
@@ -66,6 +67,12 @@ export default async function BonusesPage() {
         efficiency_amount_cents: number;
       } | null;
     },
+    // Employees list for the "Add bonus" dialog. Include every active
+    // membership — shadow members can receive bonuses too.
+    supabase
+      .from("memberships")
+      .select("id, display_name, profile:profiles ( full_name )")
+      .eq("status", "active"),
   ]);
 
   if (bonusesResult.error) throw bonusesResult.error;
@@ -83,6 +90,10 @@ export default async function BonusesPage() {
   }));
 
   const rule = ruleResult.data;
+
+  const employees = (employeesResult.data ?? [])
+    .map((m) => ({ id: m.id, name: memberDisplayName(m) }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   return (
     <PageShell
@@ -163,7 +174,7 @@ export default async function BonusesPage() {
           </div>
         )}
 
-        <BonusesTable rows={rows} canEdit={canEdit} />
+        <BonusesTable rows={rows} canEdit={canEdit} employees={employees} />
       </div>
     </PageShell>
   );

@@ -1,10 +1,12 @@
 "use client";
 
-import { Star } from "lucide-react";
+import { useState } from "react";
+import { Pencil, Star } from "lucide-react";
 import { DataTable, type DataTableColumn } from "@/components/data-table";
 import { StatusBadge, type StatusTone } from "@/components/status-badge";
 import { formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { ReviewEditDialog } from "./review-edit-dialog";
 
 export type ReviewRow = {
   id: string;
@@ -40,7 +42,15 @@ function Stars({ rating }: { rating: number }) {
   );
 }
 
-export function ReviewsTable({ rows }: { rows: ReviewRow[] }) {
+export function ReviewsTable({
+  rows,
+  canEdit = false,
+}: {
+  rows: ReviewRow[];
+  canEdit?: boolean;
+}) {
+  const [editing, setEditing] = useState<ReviewRow | null>(null);
+
   const columns: DataTableColumn<ReviewRow>[] = [
     {
       key: "client",
@@ -95,16 +105,50 @@ export function ReviewsTable({ rows }: { rows: ReviewRow[] }) {
     },
   ];
 
+  if (canEdit) {
+    columns.push({
+      key: "actions",
+      header: "",
+      className: "text-right",
+      render: (r) => (
+        <button
+          type="button"
+          onClick={() => setEditing(r)}
+          aria-label="Edit review"
+          className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+        >
+          <Pencil className="h-3.5 w-3.5" />
+        </button>
+      ),
+    });
+  }
+
   return (
-    <DataTable
-      data={rows}
-      columns={columns}
-      getRowId={(r) => r.id}
-      searchPlaceholder="Search by client, employee, or comment…"
-      emptyState={{
-        title: "No reviews yet",
-        description: "Reviews collected after jobs will land here.",
-      }}
-    />
+    <>
+      <DataTable
+        data={rows}
+        columns={columns}
+        getRowId={(r) => r.id}
+        searchPlaceholder="Search by client, employee, or comment…"
+        emptyState={{
+          title: "No reviews yet",
+          description: "Reviews collected after jobs will land here.",
+        }}
+      />
+      <ReviewEditDialog
+        open={!!editing}
+        onOpenChange={(o) => !o && setEditing(null)}
+        review={
+          editing
+            ? {
+                id: editing.id,
+                rating: editing.rating,
+                comment: editing.comment,
+                client_name: editing.client_name,
+              }
+            : null
+        }
+      />
+    </>
   );
 }

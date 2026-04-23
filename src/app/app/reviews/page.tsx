@@ -92,7 +92,7 @@ export default async function ReviewsPage({
           employee={employeeFilter ?? ""}
           minRating={params.min_rating ?? ""}
         />
-        <ReviewsTable rows={rows} />
+        <ReviewsTable rows={rows} canEdit={canEdit} />
       </div>
     </PageShell>
   );

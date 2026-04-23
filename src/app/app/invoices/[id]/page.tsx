@@ -26,7 +26,7 @@ import {
 } from "../actions";
 import { SubmitButton } from "@/components/submit-button";
 import { RecordPaymentForm } from "./record-payment-form";
-import { DeletePaymentForm } from "./delete-payment-form";
+import { PaymentRowActions } from "./payment-row-actions";
 import { humanizePaymentMethod } from "@/lib/validators/invoice-payment";
 
 export const metadata = { title: "Invoice" };
@@ -363,9 +363,16 @@ export default async function InvoiceDetailPage({
                       )}
                     </div>
                     {!p.provider && (
-                      <DeletePaymentForm
-                        paymentId={p.id}
-                        invoiceId={invoice.id}
+                      <PaymentRowActions
+                        payment={{
+                          id: p.id,
+                          invoice_id: invoice.id,
+                          amount_cents: p.amount_cents,
+                          method: p.method,
+                          reference: p.reference,
+                          notes: p.notes,
+                          received_at: p.received_at,
+                        }}
                       />
                     )}
                   </li>

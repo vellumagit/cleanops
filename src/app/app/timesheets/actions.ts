@@ -336,6 +336,79 @@ export async function updateTimeEntryAction(
 }
 
 /**
+ * Delete a PTO request. Useful for cleaning up test / duplicate / mistaken
+ * entries. When deleting an APPROVED request we also decrement the cached
+ * PTO balance; declined/pending requests never moved the balance so no
+ * reversal is needed.
+ */
+export async function deletePtoRequestAction(
+  formData: FormData,
+): Promise<Result> {
+  const { membership, supabase } = await getActionContext();
+  if (!["owner", "admin", "manager"].includes(membership.role)) {
+    return { ok: false, error: "Not authorized." };
+  }
+
+  const id = String(formData.get("id") ?? "");
+  if (!id) return { ok: false, error: "Missing request id." };
+
+  // Use admin client so cross-employee reads work; role is gated above.
+  const { createSupabaseAdminClient } = await import(
+    "@/lib/supabase/admin"
+  );
+  const admin = createSupabaseAdminClient();
+
+  const { data: before } = (await admin
+    .from("pto_requests" as never)
+    .select("id, employee_id, start_date, hours, status")
+    .eq("id" as never, id as never)
+    .eq(
+      "organization_id" as never,
+      membership.organization_id as never,
+    )
+    .maybeSingle()) as unknown as {
+    data: {
+      id: string;
+      employee_id: string;
+      start_date: string;
+      hours: number;
+      status: string;
+    } | null;
+  };
+
+  if (!before) return { ok: false, error: "Request not found." };
+
+  const { error } = (await admin
+    .from("pto_requests" as never)
+    .delete()
+    .eq("id" as never, id as never)
+    .eq(
+      "organization_id" as never,
+      membership.organization_id as never,
+    )) as unknown as { error: { message: string } | null };
+  if (error) return { ok: false, error: error.message };
+
+  // Reverse the PTO balance if the deleted request was approved. RPC may
+  // not exist yet, so swallow errors — the row is gone either way.
+  if (before.status === "approved") {
+    const year = new Date(before.start_date).getFullYear();
+    await (
+      supabase.rpc as unknown as (
+        name: string,
+        args: Record<string, unknown>,
+      ) => Promise<unknown>
+    )("increment_pto_used", {
+      p_employee_id: before.employee_id,
+      p_year: year,
+      p_hours: -Number(before.hours),
+    }).catch(() => {});
+  }
+
+  revalidatePath("/app/timesheets", "page");
+  return { ok: true };
+}
+
+/**
  * Delete a time entry. Owner/admin/manager only.
  */
 export async function deleteTimeEntryAction(

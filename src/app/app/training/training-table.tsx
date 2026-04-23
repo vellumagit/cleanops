@@ -48,7 +48,7 @@ export function TrainingTable({ rows }: { rows: TrainingRow[] }) {
       header: "Module",
       render: (r) => (
         <Link
-          href={`/app/training/${r.id}/edit`}
+          href={`/app/training/${r.id}`}
           className="font-medium hover:underline"
         >
           {r.title}

@@ -1,9 +1,13 @@
 "use client";
 
 import { useTransition } from "react";
-import { Check, X, Palmtree, Loader2 } from "lucide-react";
+import { toast } from "sonner";
+import { Check, X, Palmtree, Loader2, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { updatePtoStatusAction } from "./actions";
+import {
+  updatePtoStatusAction,
+  deletePtoRequestAction,
+} from "./actions";
 import type { PtoEntry } from "./types";
 
 export function PtoApprovalPanel({ requests }: { requests: PtoEntry[] }) {
@@ -41,6 +45,17 @@ function PtoRow({ request }: { request: PtoEntry }) {
     });
   }
 
+  function remove() {
+    if (!confirm("Delete this PTO request? This can't be undone.")) return;
+    const fd = new FormData();
+    fd.set("id", request.id);
+    startTransition(async () => {
+      const res = await deletePtoRequestAction(fd);
+      if (!res.ok) toast.error(res.error);
+      else toast.success("Request deleted");
+    });
+  }
+
   return (
     <li className="flex items-center justify-between gap-3 rounded-md border border-border bg-card p-3">
       <div className="min-w-0 flex-1">
@@ -60,6 +75,17 @@ function PtoRow({ request }: { request: PtoEntry }) {
         )}
       </div>
       <div className="flex items-center gap-2">
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          onClick={remove}
+          disabled={isPending}
+          className="text-muted-foreground hover:bg-muted hover:text-destructive"
+          aria-label="Delete request"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </Button>
         <Button
           type="button"
           size="sm"

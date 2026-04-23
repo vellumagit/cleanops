@@ -6,6 +6,8 @@ import { getActionContext } from "@/lib/actions";
 import { logAuditEvent } from "@/lib/audit";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
+type Result = { ok: true } | { ok: false; error: string };
+
 const MAX_IMAGE_SIZE = 4 * 1024 * 1024; // 4 MB
 const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp"];
 
@@ -270,4 +272,118 @@ export async function deleteTrainingModuleAction(formData: FormData) {
 
   revalidatePath("/app/training");
   redirect("/app/training");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Manual training-completion override
+//
+// The field-app flow is: employee sees a module, taps through each step,
+// the last step marks the assignment complete. Good default, but not
+// every real-world case fits:
+//   - A new hire is already trained from a previous job.
+//   - A shadow employee (no app access) who was trained in person.
+//   - Staff who were onboarded before the business adopted Sollos.
+//
+// Owner/admin/manager can toggle completion directly via this action. If
+// no assignment row exists, we create one. If it exists we just stamp
+// completed_at (or clear it to un-complete).
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function setTrainingCompletionAction(
+  formData: FormData,
+): Promise<Result> {
+  const { membership, supabase } = await getActionContext();
+  if (!["owner", "admin", "manager"].includes(membership.role)) {
+    return { ok: false, error: "Not authorized." };
+  }
+
+  const module_id = String(formData.get("module_id") ?? "").trim();
+  const employee_id = String(formData.get("employee_id") ?? "").trim();
+  const completed = formData.get("completed") === "1";
+  if (!module_id || !employee_id) {
+    return { ok: false, error: "Missing module or employee id." };
+  }
+
+  // Confirm both the module and the employee belong to this org before
+  // writing. RLS would block cross-org but we want a clean error.
+  const [{ data: mod }, { data: emp }] = await Promise.all([
+    supabase
+      .from("training_modules")
+      .select("id, organization_id")
+      .eq("id", module_id)
+      .maybeSingle() as unknown as Promise<{
+      data: { id: string; organization_id: string } | null;
+    }>,
+    supabase
+      .from("memberships")
+      .select("id, organization_id")
+      .eq("id", employee_id)
+      .maybeSingle(),
+  ]);
+  if (!mod || mod.organization_id !== membership.organization_id) {
+    return { ok: false, error: "Module not found." };
+  }
+  if (!emp || emp.organization_id !== membership.organization_id) {
+    return { ok: false, error: "Employee not found." };
+  }
+
+  const { data: existing } = (await supabase
+    .from("training_assignments")
+    .select("id, completed_at")
+    .eq("module_id", module_id)
+    .eq("employee_id", employee_id)
+    .maybeSingle()) as unknown as {
+    data: { id: string; completed_at: string | null } | null;
+  };
+
+  const nowIso = new Date().toISOString();
+
+  if (!existing) {
+    const { data: inserted, error } = (await supabase
+      .from("training_assignments")
+      .insert({
+        organization_id: membership.organization_id,
+        module_id,
+        employee_id,
+        completed_at: completed ? nowIso : null,
+      } as never)
+      .select("id")
+      .single()) as unknown as {
+      data: { id: string } | null;
+      error: { message: string } | null;
+    };
+    if (error || !inserted) {
+      return { ok: false, error: error?.message ?? "Could not assign." };
+    }
+    await logAuditEvent({
+      membership,
+      action: "create",
+      entity: "training_assignment",
+      entity_id: inserted.id,
+      after: { module_id, employee_id, completed, manual: true },
+    });
+  } else {
+    const { error } = await supabase
+      .from("training_assignments")
+      .update({
+        completed_at: completed ? existing.completed_at ?? nowIso : null,
+      } as never)
+      .eq("id", existing.id);
+    if (error) return { ok: false, error: error.message };
+    await logAuditEvent({
+      membership,
+      action: "update",
+      entity: "training_assignment",
+      entity_id: existing.id,
+      before: { completed_at: existing.completed_at },
+      after: {
+        completed_at: completed ? existing.completed_at ?? nowIso : null,
+        manual: true,
+      },
+    });
+  }
+
+  revalidatePath("/app/training");
+  revalidatePath(`/app/training/${module_id}`);
+  return { ok: true };
 }

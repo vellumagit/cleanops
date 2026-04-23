@@ -261,6 +261,91 @@ export async function recordInvoicePaymentAction(
 }
 
 /**
+ * Update a manually-recorded payment. Useful when the owner typed the wrong
+ * amount or recorded it on the wrong date. Processor payments (Stripe,
+ * etc.) can't be edited this way — they have to come back through a
+ * refund/adjustment webhook or they'll desync with the processor.
+ */
+export async function updateInvoicePaymentAction(
+  formData: FormData,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const paymentId = String(formData.get("payment_id") ?? "");
+  const invoiceId = String(formData.get("invoice_id") ?? "");
+  if (!paymentId || !invoiceId)
+    return { ok: false, error: "Missing payment or invoice id." };
+
+  const { membership, supabase } = await getActionContext();
+
+  if (!["owner", "admin"].includes(membership.role)) {
+    return { ok: false, error: "Only owners and admins can edit payments." };
+  }
+
+  const { data: prev } = await supabase
+    .from("invoice_payments")
+    .select(
+      "id, invoice_id, amount_cents, method, reference, notes, received_at, provider",
+    )
+    .eq("id", paymentId)
+    .maybeSingle();
+
+  if (!prev) return { ok: false, error: "Payment not found." };
+  if (prev.provider) {
+    return {
+      ok: false,
+      error:
+        "This payment came from a processor and can't be edited manually. Issue a refund/adjustment via the processor instead.",
+    };
+  }
+
+  const raw = {
+    amount_dollars: String(formData.get("amount_dollars") ?? ""),
+    method: String(formData.get("method") ?? ""),
+    reference: String(formData.get("reference") ?? ""),
+    received_at: String(formData.get("received_at") ?? ""),
+    notes: String(formData.get("notes") ?? ""),
+  };
+  const parsed = parseForm(InvoicePaymentSchema, raw);
+  if (!parsed.ok) {
+    const firstErr =
+      parsed.errors._form ??
+      Object.values(parsed.errors).find((v) => typeof v === "string");
+    return { ok: false, error: firstErr ?? "Invalid input." };
+  }
+
+  const { error } = await supabase
+    .from("invoice_payments")
+    .update({
+      amount_cents: parsed.data.amount_dollars, // schema already converted to cents
+      method: parsed.data.method as (typeof PAYMENT_METHODS)[number],
+      reference: parsed.data.reference ?? null,
+      notes: parsed.data.notes ?? null,
+      received_at: localInputToUtcIso(parsed.data.received_at),
+    })
+    .eq("id", paymentId);
+
+  if (error) return { ok: false, error: error.message };
+
+  await logAuditEvent({
+    membership,
+    action: "update",
+    entity: "invoice",
+    entity_id: invoiceId,
+    before: prev ?? null,
+    after: {
+      payment_id: paymentId,
+      amount_cents: parsed.data.amount_dollars,
+      method: parsed.data.method,
+      reference: parsed.data.reference ?? null,
+    },
+  });
+
+  revalidatePath(`/app/invoices/${invoiceId}`);
+  revalidatePath("/app/invoices");
+  revalidatePath("/app");
+  return { ok: true };
+}
+
+/**
  * Delete a manual payment row. The trigger will recompute invoice totals.
  */
 export async function deleteInvoicePaymentAction(formData: FormData) {
