@@ -144,9 +144,10 @@ export default async function IntegrationsPage() {
 
   function renderCard(card: ProviderCard) {
     const isStripe = card.key === "stripe";
+    const isSquare = card.key === "square";
     const isGcal = card.key === "google_calendar";
     const isSage = card.key === "sage";
-    const hasLiveOAuth = isGcal || isSage || isStripe;
+    const hasLiveOAuth = isGcal || isSage || isStripe || isSquare;
 
     // Stripe state lives on organizations, not integration_connections
     const stripeConnected = Boolean(stripeInfo?.stripe_account_id);
@@ -277,6 +278,19 @@ export default async function IntegrationsPage() {
                     )}
                     <StripeDisconnectButton />
                   </>
+                ) : isSquare ? (
+                  <form
+                    action="/api/integrations/square/disconnect"
+                    method="post"
+                  >
+                    <button
+                      type="submit"
+                      className="mt-3 inline-flex w-full items-center justify-center gap-1 rounded-md border border-border bg-background px-3 py-2 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                    >
+                      <XCircle className="h-3 w-3" />
+                      Disconnect
+                    </button>
+                  </form>
                 ) : hasLiveOAuth ? (
                   <form action={isGcal ? disconnectGoogleCalendarAction : disconnectSageAction}>
                     <button
@@ -302,6 +316,13 @@ export default async function IntegrationsPage() {
               isStripe ? (
                 <Link
                   href="/api/integrations/stripe/connect"
+                  className="inline-flex w-full items-center justify-center rounded-md bg-foreground px-3 py-2 text-xs font-medium text-background hover:bg-foreground/90 transition-colors"
+                >
+                  Connect {card.name}
+                </Link>
+              ) : isSquare ? (
+                <Link
+                  href="/api/integrations/square/connect"
                   className="inline-flex w-full items-center justify-center rounded-md bg-foreground px-3 py-2 text-xs font-medium text-background hover:bg-foreground/90 transition-colors"
                 >
                   Connect {card.name}
