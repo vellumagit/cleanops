@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, Pencil, Send, Ban, ExternalLink, Star } from "lucide-react";
+import { ArrowLeft, Pencil, Ban, ExternalLink, Star } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { StripePaymentLinkButton } from "./stripe-payment-link-button";
+import { SendInvoiceButton } from "./send-invoice-button";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
 import {
@@ -20,7 +21,6 @@ import {
   humanizeEnum,
 } from "@/lib/format";
 import {
-  sendInvoiceAction,
   voidInvoiceAction,
   generateReviewTokenAction,
 } from "../actions";
@@ -191,17 +191,7 @@ export default async function InvoiceDetailPage({
 
             <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-border pt-4">
               {status === "draft" && !isVoid && (
-                <form action={sendInvoiceAction}>
-                  <input type="hidden" name="id" value={invoice.id} />
-                  <SubmitButton
-                    variant="default"
-                    size="sm"
-                    pendingLabel="Sending…"
-                  >
-                    <Send className="h-4 w-4" />
-                    Mark as sent
-                  </SubmitButton>
-                </form>
+                <SendInvoiceButton invoiceId={invoice.id} />
               )}
               {stripeReady && !isVoid && balanceCents > 0 && (
                 <StripePaymentLinkButton invoiceId={invoice.id} />

@@ -11,7 +11,7 @@ import {
 } from "@/lib/validators/invoice-payment";
 import { localInputToUtcIso } from "@/lib/validators/common";
 import { generateClaimToken } from "@/lib/claim-token";
-import { sendOrgEmail } from "@/lib/email";
+import { sendOrgEmail, isEmailConfigured, isClientEmailPaused } from "@/lib/email";
 import { invoiceSentEmail } from "@/lib/email-templates";
 import { formatCurrencyCents } from "@/lib/format";
 import { getOrgCurrency } from "@/lib/org-currency";
@@ -393,18 +393,38 @@ export async function deleteInvoicePaymentAction(formData: FormData) {
 }
 
 /**
+ * State shape for `sendInvoiceAction`. Used by `useActionState` in the
+ * send button component so delivery failures can be shown inline
+ * instead of silently marking the invoice as sent when the email
+ * never actually went out.
+ */
+export type SendInvoiceState = {
+  error?: string;
+  ok?: boolean;
+};
+
+/**
  * Mark an invoice as "sent". Flips status draft → sent, stamps sent_at,
  * and emails the client a link to the public invoice page.
+ *
+ * Ordering matters: we SEND FIRST, then flip status. If delivery fails,
+ * nothing changes in the DB and the user sees a descriptive error —
+ * previously the action silently marked invoices as sent when email
+ * wasn't configured, which is how "I test sent an invoice and nothing
+ * got sent" turns into a 10-minute debug session.
  */
-export async function sendInvoiceAction(formData: FormData) {
+export async function sendInvoiceAction(
+  _prev: SendInvoiceState,
+  formData: FormData,
+): Promise<SendInvoiceState> {
   const id = String(formData.get("id") ?? "");
-  if (!id) return;
+  if (!id) return { error: "Missing invoice id." };
 
   const { membership, supabase } = await getActionContext();
 
   // Sending an invoice is a billing event — owner/admin only.
   if (!["owner", "admin"].includes(membership.role)) {
-    throw new Error("Only owners and admins can send invoices.");
+    return { error: "Only owners and admins can send invoices." };
   }
 
   const { data: prev } = await supabase
@@ -414,29 +434,28 @@ export async function sendInvoiceAction(formData: FormData) {
     )
     .eq("id", id)
     .maybeSingle();
-  if (!prev) return;
+  if (!prev) return { error: "Invoice not found." };
 
-  const { error } = await supabase
-    .from("invoices")
-    .update({
-      status: "sent",
-      sent_at: prev.sent_at ?? new Date().toISOString(),
-    })
-    .eq("id", id);
-  if (error) throw error;
-
-  await logAuditEvent({
-    membership,
-    action: "status_change",
-    entity: "invoice",
-    entity_id: id,
-    before: { status: prev.status },
-    after: { status: "sent" },
-  });
-
-  // Send email to client (fire-and-forget — don't block on delivery)
   const clientEmail = prev.client?.email;
+
+  // If the client has an email on file, try delivery FIRST. When
+  // delivery is impossible (no mailer configured, platform pause,
+  // Resend returns an error) we return an explicit error instead of
+  // flipping status behind a silent failure.
   if (clientEmail && prev.public_token) {
+    if (!isEmailConfigured()) {
+      return {
+        error:
+          "Email delivery isn't configured on this environment yet — the invoice wasn't sent. Contact support to enable sending, or share the public invoice link manually.",
+      };
+    }
+    if (isClientEmailPaused()) {
+      return {
+        error:
+          "Client-facing emails are paused at the platform level. Try again later or share the public invoice link manually.",
+      };
+    }
+
     const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
     const currency = await getOrgCurrency(membership.organization_id);
 
@@ -466,15 +485,41 @@ export async function sendInvoiceAction(formData: FormData) {
       logoUrl: orgData?.logo_url ?? undefined,
     });
 
-    sendOrgEmail(membership.organization_id, {
+    const ok = await sendOrgEmail(membership.organization_id, {
       to: clientEmail,
       toName: prev.client?.name ?? undefined,
       ...template,
     });
+    if (!ok) {
+      return {
+        error: `Couldn't deliver the invoice email to ${clientEmail}. Double-check the address, your sender-email verification in Settings → Email, and your Resend domain status — then try again.`,
+      };
+    }
   }
+
+  // Email either succeeded or wasn't needed (no client email on file).
+  // Safe to flip status and stamp sent_at.
+  const { error } = await supabase
+    .from("invoices")
+    .update({
+      status: "sent",
+      sent_at: prev.sent_at ?? new Date().toISOString(),
+    })
+    .eq("id", id);
+  if (error) return { error: error.message };
+
+  await logAuditEvent({
+    membership,
+    action: "status_change",
+    entity: "invoice",
+    entity_id: id,
+    before: { status: prev.status },
+    after: { status: "sent" },
+  });
 
   revalidatePath(`/app/invoices/${id}`);
   revalidatePath("/app/invoices");
+  return { ok: true };
 }
 
 /**

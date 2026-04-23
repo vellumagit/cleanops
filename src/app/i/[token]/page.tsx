@@ -259,12 +259,16 @@ export default async function PublicInvoicePage({
             </dl>
           </div>
 
-          {/* Payment CTA */}
-          {!isVoid && !isPaid && (
+          {/* Payment CTA — only render the block when there's actually something
+              to show: an enabled pay button, written instructions, or both.
+              If the org hasn't set up card payments AND hasn't entered
+              instructions, the block is suppressed entirely rather than
+              taunting the client with a disabled "not enabled" button. */}
+          {!isVoid && !isPaid && (squareAvailable || paymentInstructions) && (
             <div className="mt-6 rounded-lg border border-border bg-muted/20 p-5">
               <p className="sollos-label">How to pay</p>
 
-              {squareAvailable ? (
+              {squareAvailable && (
                 <form action={startSquareCheckoutAction}>
                   <input type="hidden" name="token" value={token} />
                   <button
@@ -280,22 +284,10 @@ export default async function PublicInvoicePage({
                     You&rsquo;ll be sent to Square&rsquo;s secure checkout.
                   </p>
                 </form>
-              ) : (
-                <button
-                  type="button"
-                  disabled
-                  className="mt-3 inline-flex w-full items-center justify-center rounded-md px-4 py-3 text-sm font-semibold text-white opacity-60"
-                  style={{
-                    backgroundColor: `var(--brand, #6366f1)`,
-                  }}
-                  title="Online payment not set up yet"
-                >
-                  Pay with card — not enabled
-                </button>
               )}
 
-              {paymentInstructions ? (
-                <div className="mt-4">
+              {paymentInstructions && (
+                <div className={squareAvailable ? "mt-4" : "mt-3"}>
                   <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                     Payment instructions
                   </p>
@@ -303,11 +295,6 @@ export default async function PublicInvoicePage({
                     {paymentInstructions}
                   </div>
                 </div>
-              ) : (
-                <p className="mt-3 text-xs text-muted-foreground">
-                  Please contact {invoice.organization?.name ?? "us"} for
-                  payment instructions.
-                </p>
               )}
             </div>
           )}
