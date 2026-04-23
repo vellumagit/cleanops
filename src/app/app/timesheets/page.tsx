@@ -64,7 +64,7 @@ export default async function TimesheetsPage({
           notes,
           employee_id,
           created_manually,
-          employee:memberships (
+          employee:memberships!time_entries_employee_id_fkey (
             id,
             pay_rate_cents,
             display_name,
