@@ -28,7 +28,7 @@ export default async function BonusesPage() {
           status,
           paid_at,
           bonus_type,
-          employee:memberships ( profile:profiles ( full_name ) )
+          employee:memberships ( display_name, profile:profiles ( full_name ) )
         ` as never,
       )
       .order("created_at", { ascending: false })
@@ -43,7 +43,10 @@ export default async function BonusesPage() {
             status: string;
             paid_at: string | null;
             bonus_type: string;
-            employee: { profile: { full_name: string | null } | null } | null;
+            employee: {
+              display_name: string | null;
+              profile: { full_name: string | null } | null;
+            } | null;
           }[]
         | null;
       error: { message: string } | null;
@@ -86,7 +89,7 @@ export default async function BonusesPage() {
     status: b.status as "pending" | "paid",
     paid_at: b.paid_at,
     bonus_type: b.bonus_type ?? "review",
-    employee_name: b.employee?.profile?.full_name ?? null,
+    employee_name: b.employee ? memberDisplayName(b.employee) : null,
   }));
 
   const rule = ruleResult.data;

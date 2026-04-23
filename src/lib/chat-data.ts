@@ -1,6 +1,7 @@
 import "server-only";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { CurrentMembership } from "@/lib/auth";
+import { memberDisplayName } from "@/lib/member-display";
 
 export type ChatThreadSummary = {
   id: string;
@@ -62,6 +63,7 @@ export async function fetchChatThreads(
           membership_id,
           membership:memberships (
             id,
+            display_name,
             profile:profiles ( full_name )
           )
         )
@@ -84,8 +86,9 @@ export async function fetchChatThreads(
       const otherMember = (t.members ?? []).find(
         (m) => m.membership_id !== membership.id,
       );
-      display_name =
-        otherMember?.membership?.profile?.full_name ?? "Direct message";
+      display_name = otherMember?.membership
+        ? memberDisplayName(otherMember.membership)
+        : "Direct message";
       other_member_id = otherMember?.membership_id ?? null;
     } else {
       display_name = t.name ? `#${t.name}` : "#group";
@@ -125,7 +128,7 @@ export async function fetchChatMessages(
         sender_id,
         body,
         created_at,
-        sender:memberships ( profile:profiles ( full_name ) )
+        sender:memberships ( display_name, profile:profiles ( full_name ) )
       `,
     )
     .eq("thread_id", threadId)
@@ -141,7 +144,7 @@ export async function fetchChatMessages(
     id: m.id,
     thread_id: m.thread_id,
     sender_id: m.sender_id,
-    sender_name: m.sender?.profile?.full_name ?? null,
+    sender_name: m.sender ? memberDisplayName(m.sender) : null,
     body: m.body,
     created_at: m.created_at,
   }));
@@ -159,7 +162,7 @@ export async function fetchTeammates(
 
   const { data, error } = await supabase
     .from("memberships")
-    .select("id, profile:profiles ( full_name )")
+    .select("id, display_name, profile:profiles ( full_name )")
     .eq("organization_id", membership.organization_id)
     .eq("status", "active")
     .neq("id", membership.id);
@@ -171,6 +174,6 @@ export async function fetchTeammates(
 
   return (data ?? []).map((m) => ({
     id: m.id,
-    label: m.profile?.full_name ?? "Unnamed",
+    label: memberDisplayName(m),
   }));
 }

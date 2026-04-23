@@ -4,6 +4,7 @@ import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
+import { memberDisplayName } from "@/lib/member-display";
 import { ReviewsFilters } from "./reviews-filters";
 import { ReviewsTable, type ReviewRow } from "./reviews-table";
 
@@ -35,7 +36,7 @@ export default async function ReviewsPage({
         submitted_at,
         employee_id,
         client:clients ( name ),
-        employee:memberships ( profile:profiles ( full_name ) )
+        employee:memberships ( display_name, profile:profiles ( full_name ) )
       `,
     )
     .order("submitted_at", { ascending: false })
@@ -49,7 +50,7 @@ export default async function ReviewsPage({
     query,
     supabase
       .from("memberships")
-      .select("id, profile:profiles ( full_name )")
+      .select("id, display_name, profile:profiles ( full_name )")
       .eq("status", "active"),
   ]);
 
@@ -61,13 +62,13 @@ export default async function ReviewsPage({
     comment: r.comment,
     submitted_at: r.submitted_at,
     client_name: r.client?.name ?? "Anonymous",
-    employee_name: r.employee?.profile?.full_name ?? null,
+    employee_name: r.employee ? memberDisplayName(r.employee) : null,
   }));
 
   const employeeOptions =
     employeesResult.data?.map((m) => ({
       id: m.id,
-      label: m.profile?.full_name ?? "Unnamed",
+      label: memberDisplayName(m),
     })) ?? [];
 
   return (

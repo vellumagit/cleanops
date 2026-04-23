@@ -18,6 +18,7 @@ import {
   humanizeEnum,
 } from "@/lib/format";
 import { fetchJobPhotos } from "@/lib/job-photos";
+import { memberDisplayName } from "@/lib/member-display";
 import { JobPhotos } from "@/app/field/jobs/[id]/job-photos";
 import {
   BookingChecklist,
@@ -70,7 +71,7 @@ export default async function BookingDetailPage({
         client:clients ( id, name, phone, email, address ),
         package:packages ( id, name ),
         assigned:memberships!bookings_assigned_to_fkey (
-          id, profile:profiles ( full_name )
+          id, display_name, profile:profiles ( full_name )
         )
       `,
     )
@@ -90,7 +91,11 @@ export default async function BookingDetailPage({
       estimate_id: string | null;
       client: { id: string; name: string; phone: string | null; email: string | null; address: string | null } | null;
       package: { id: string; name: string } | null;
-      assigned: { id: string; profile: { full_name: string } | null } | null;
+      assigned: {
+        id: string;
+        display_name: string | null;
+        profile: { full_name: string } | null;
+      } | null;
     } | null;
     error: { message: string } | null;
   };
@@ -235,7 +240,9 @@ export default async function BookingDetailPage({
               <div>
                 <dt className="text-xs text-muted-foreground">Assigned</dt>
                 <dd className="mt-0.5 font-medium text-foreground">
-                  {booking.assigned?.profile?.full_name ?? (
+                  {booking.assigned ? (
+                    memberDisplayName(booking.assigned)
+                  ) : (
                     <span className="text-muted-foreground">Unassigned</span>
                   )}
                   {additionalCrewNames.length > 0 && (

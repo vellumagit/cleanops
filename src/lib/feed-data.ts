@@ -1,6 +1,7 @@
 import "server-only";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { CurrentMembership } from "@/lib/auth";
+import { memberDisplayName } from "@/lib/member-display";
 
 export type FeedPost = {
   id: string;
@@ -39,6 +40,7 @@ export async function fetchFeedPosts(
         author:memberships!feed_posts_author_id_fkey (
           id,
           role,
+          display_name,
           profile:profiles ( full_name )
         )
       `,
@@ -57,6 +59,7 @@ export async function fetchFeedPosts(
       author: {
         id: string;
         role: string;
+        display_name: string | null;
         profile: { full_name: string } | null;
       } | null;
     }> | null;
@@ -75,7 +78,7 @@ export async function fetchFeedPosts(
     pinned: p.pinned,
     created_at: p.created_at,
     author_id: p.author_id,
-    author_name: p.author?.profile?.full_name ?? "Team",
+    author_name: p.author ? memberDisplayName(p.author) : "Team",
     author_role: p.author?.role ?? "member",
     is_own: p.author_id === membership.id,
   }));

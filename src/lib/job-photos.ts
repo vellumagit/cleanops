@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { memberDisplayName } from "@/lib/member-display";
 
 export type JobPhoto = {
   id: string;
@@ -36,6 +37,7 @@ export async function fetchJobPhotos(bookingId: string): Promise<JobPhoto[]> {
         uploaded_by,
         created_at,
         uploader:memberships!job_photos_uploaded_by_fkey (
+          display_name,
           profile:profiles ( full_name )
         )
       `,
@@ -51,6 +53,7 @@ export async function fetchJobPhotos(bookingId: string): Promise<JobPhoto[]> {
       uploaded_by: string | null;
       created_at: string;
       uploader: {
+        display_name: string | null;
         profile: { full_name: string } | null;
       } | null;
     }> | null;
@@ -87,7 +90,7 @@ export async function fetchJobPhotos(bookingId: string): Promise<JobPhoto[]> {
     kind: p.kind,
     caption: p.caption,
     uploaded_by: p.uploaded_by,
-    uploaded_by_name: p.uploader?.profile?.full_name ?? null,
+    uploaded_by_name: p.uploader ? memberDisplayName(p.uploader) : null,
     created_at: p.created_at,
   }));
 }

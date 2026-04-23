@@ -1,5 +1,6 @@
 import "server-only";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { memberDisplayName } from "@/lib/member-display";
 
 export type BookingStatus =
   | "pending"
@@ -97,7 +98,14 @@ export async function fetchScheduleWeek(
       .order("scheduled_at", { ascending: true }),
     supabase
       .from("memberships")
-      .select("id, role, status, profile:profiles ( full_name )")
+      // display_name is the shadow-member field (profile_id IS NULL),
+      // populated when the owner adds an employee manually instead of
+      // inviting them by email. Without it here, manually-added
+      // employees showed up as "Unnamed" in scheduling because there
+      // was no linked profiles row.
+      .select(
+        "id, role, status, display_name, profile:profiles ( full_name )",
+      )
       .eq("status", "active")
       .in("role", ["employee", "admin", "owner"]),
   ]);
@@ -119,7 +127,10 @@ export async function fetchScheduleWeek(
   const employees: ScheduleEmployee[] = (membersRes.data ?? [])
     .map((m) => ({
       id: m.id,
-      name: m.profile?.full_name ?? "Unnamed",
+      // Shared fallback chain: display_name → profile.full_name →
+      // "Unknown". Same helper used by booking options, employees
+      // list, etc. so shadow members look identical everywhere.
+      name: memberDisplayName(m),
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
 

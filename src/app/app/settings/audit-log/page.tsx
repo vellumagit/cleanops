@@ -3,6 +3,7 @@ import { ChevronLeft } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
+import { memberDisplayName } from "@/lib/member-display";
 
 export const metadata = { title: "Audit log" };
 
@@ -18,6 +19,7 @@ type AuditRow = {
     | {
         id: string;
         role: string;
+        display_name: string | null;
         profile: { full_name: string | null } | null;
       }
     | null;
@@ -25,7 +27,12 @@ type AuditRow = {
 
 function formatActor(row: AuditRow): string {
   if (!row.actor) return "system";
-  return row.actor.profile?.full_name ?? `member ${row.actor.id.slice(0, 8)}`;
+  const name = memberDisplayName(row.actor);
+  // memberDisplayName returns "Unknown" when there's no name anywhere;
+  // preserve the existing fallback to "member <shortid>" in that case
+  // so ops can still trace a row to a specific membership id.
+  if (name === "Unknown") return `member ${row.actor.id.slice(0, 8)}`;
+  return name;
 }
 
 function formatTimestamp(iso: string) {
@@ -67,6 +74,7 @@ export default async function AuditLogPage() {
         actor:memberships (
           id,
           role,
+          display_name,
           profile:profiles ( full_name )
         )
       `,

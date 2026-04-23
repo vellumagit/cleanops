@@ -5,6 +5,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
 import { ArchivedToggle } from "@/components/archived-toggle";
+import { memberDisplayName } from "@/lib/member-display";
 import { BookingsTable, type BookingRow } from "./bookings-table";
 
 export const metadata = { title: "Bookings" };
@@ -35,6 +36,7 @@ export default async function BookingsPage({
         client:clients ( id, name ),
         assigned:memberships!bookings_assigned_to_fkey (
           id,
+          display_name,
           profile:profiles ( full_name )
         )
       `,
@@ -58,7 +60,11 @@ export default async function BookingsPage({
       series_id: string | null;
       address: string | null;
       client: { id: string; name: string } | null;
-      assigned: { id: string; profile: { full_name: string } | null } | null;
+      assigned: {
+        id: string;
+        display_name: string | null;
+        profile: { full_name: string } | null;
+      } | null;
     }> | null;
     error: { message: string } | null;
   }>);
@@ -73,7 +79,7 @@ export default async function BookingsPage({
     status: b.status as BookingRow["status"],
     total_cents: b.total_cents,
     client_name: b.client?.name ?? "—",
-    assigned_name: b.assigned?.profile?.full_name ?? null,
+    assigned_name: b.assigned ? memberDisplayName(b.assigned) : null,
     series_id: b.series_id ?? null,
     address: b.address ?? null,
   }));

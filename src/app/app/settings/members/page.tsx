@@ -1,6 +1,7 @@
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
+import { memberDisplayName } from "@/lib/member-display";
 import { MembersTable, type MemberRow } from "./members-table";
 
 export const metadata = { title: "Team members" };
@@ -19,6 +20,7 @@ export default async function MembersPage() {
         pay_rate_cents,
         created_at,
         profile_id,
+        display_name,
         profile:profiles ( full_name, phone, avatar_url )
       `,
     )
@@ -34,7 +36,7 @@ export default async function MembersPage() {
     status: m.status,
     pay_rate_cents: m.pay_rate_cents,
     created_at: m.created_at,
-    full_name: m.profile?.full_name ?? "Unnamed",
+    full_name: memberDisplayName(m),
     phone: m.profile?.phone ?? null,
     is_self: m.profile_id === membership.profile_id,
   }));

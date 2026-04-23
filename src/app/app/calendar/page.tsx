@@ -3,6 +3,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
 import { CalendarView } from "./calendar-view";
 import { listCalendarEvents } from "@/lib/google-calendar";
+import { memberDisplayName } from "@/lib/member-display";
 import {
   startOfMonth,
   endOfMonth,
@@ -106,7 +107,7 @@ export default async function CalendarPage() {
       .select(
         `id, scheduled_at, duration_minutes, service_type, status, address,
          client:clients ( name ),
-         assigned:memberships ( profile:profiles ( full_name ) )`,
+         assigned:memberships ( display_name, profile:profiles ( full_name ) )`,
       )
       .gte("scheduled_at", rangeStart.toISOString())
       .lte("scheduled_at", rangeEnd.toISOString())
@@ -137,10 +138,15 @@ export default async function CalendarPage() {
       );
       const clientName =
         (b.client as unknown as { name: string } | null)?.name ?? "No client";
-      const profile = b.assigned as unknown as {
-        profile: { full_name: string } | null;
+      // Use memberDisplayName so shadow-employees (manually added via
+      // Settings → Members) show their display_name instead of blank.
+      const assignedRow = b.assigned as unknown as {
+        display_name: string | null;
+        profile: { full_name: string | null } | null;
       } | null;
-      const employeeName = profile?.profile?.full_name ?? null;
+      const employeeName = assignedRow
+        ? memberDisplayName(assignedRow)
+        : null;
 
       return {
         id: b.id,

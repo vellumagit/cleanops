@@ -4,6 +4,7 @@ import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
+import { memberDisplayName } from "@/lib/member-display";
 import { InventoryTable, type InventoryRow } from "./inventory-table";
 
 export const metadata = { title: "Inventory" };
@@ -23,7 +24,7 @@ export default async function InventoryPage() {
         quantity,
         reorder_threshold,
         notes,
-        assigned:memberships ( profile:profiles ( full_name ) )
+        assigned:memberships ( display_name, profile:profiles ( full_name ) )
       `,
     )
     .order("name", { ascending: true })
@@ -38,7 +39,7 @@ export default async function InventoryPage() {
     quantity: i.quantity,
     reorder_threshold: i.reorder_threshold,
     notes: i.notes,
-    assigned_name: i.assigned?.profile?.full_name ?? null,
+    assigned_name: i.assigned ? memberDisplayName(i.assigned) : null,
   }));
 
   return (

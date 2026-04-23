@@ -1,5 +1,6 @@
 import "server-only";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { memberDisplayName } from "@/lib/member-display";
 
 export async function fetchReviewFormOptions() {
   const supabase = await createSupabaseServerClient();
@@ -7,7 +8,7 @@ export async function fetchReviewFormOptions() {
     supabase.from("clients").select("id, name").order("name"),
     supabase
       .from("memberships")
-      .select("id, profile:profiles ( full_name )")
+      .select("id, display_name, profile:profiles ( full_name )")
       .eq("status", "active"),
     supabase
       .from("bookings")
@@ -22,7 +23,7 @@ export async function fetchReviewFormOptions() {
     employees:
       employees.data?.map((m) => ({
         id: m.id,
-        label: m.profile?.full_name ?? "Unnamed",
+        label: memberDisplayName(m),
       })) ?? [],
     bookings:
       bookings.data?.map((b) => ({

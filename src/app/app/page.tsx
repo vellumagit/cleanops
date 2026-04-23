@@ -26,6 +26,7 @@ import {
   DEFAULT_TZ,
 } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { memberDisplayName } from "@/lib/member-display";
 
 export const metadata = { title: "Dashboard" };
 
@@ -64,6 +65,7 @@ export default async function DashboardPage() {
         `id, scheduled_at, status, total_cents, duration_minutes,
          client:clients ( name ),
          assigned:memberships!bookings_assigned_to_fkey (
+           display_name,
            profile:profiles ( full_name )
          )`,
       )
@@ -93,7 +95,7 @@ export default async function DashboardPage() {
       .select(
         `id, rating, submitted_at, comment,
          client:clients ( name ),
-         employee:memberships ( id, profile:profiles ( full_name ) )`,
+         employee:memberships ( id, display_name, profile:profiles ( full_name ) )`,
       )
       .gte("submitted_at", thirtyDaysAgo.toISOString())
       .order("submitted_at", { ascending: false }),
@@ -165,7 +167,7 @@ export default async function DashboardPage() {
   for (const r of reviews) {
     if (!r.employee?.id) continue;
     const id = r.employee.id;
-    const name = r.employee.profile?.full_name ?? "Unknown";
+    const name = memberDisplayName(r.employee);
     const cur = byEmployee.get(id) ?? { name, total: 0, sum: 0 };
     cur.total += 1;
     cur.sum += r.rating;
@@ -222,7 +224,7 @@ export default async function DashboardPage() {
         kind: "review",
         at: r.submitted_at,
         title: `${r.rating}★ from ${r.client?.name ?? "client"}`,
-        meta: r.employee?.profile?.full_name ?? "—",
+        meta: r.employee ? memberDisplayName(r.employee) : "—",
         rating: r.rating,
         href: "/app/reviews",
       }),
@@ -357,7 +359,7 @@ export default async function DashboardPage() {
                     </span>
                     <span className="truncate text-xs text-muted-foreground">
                       {formatDateTime(b.scheduled_at)} ·{" "}
-                      {b.assigned?.profile?.full_name ?? "Unassigned"}
+                      {b.assigned ? memberDisplayName(b.assigned) : "Unassigned"}
                     </span>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
