@@ -71,11 +71,24 @@ function formatAddress(email: string, name?: string): string {
 // Send — fire-and-forget safe (never throws, logs errors)
 // ---------------------------------------------------------------------------
 
-export async function sendEmail(args: SendEmailArgs): Promise<boolean> {
+/**
+ * Rich result for callers that want to surface the actual Resend error
+ * (domain not verified, sender not allowed, etc.) to the user instead
+ * of showing a generic "delivery failed" message. The legacy
+ * sendEmail() wrapper below keeps the boolean return for fire-and-forget
+ * callers that don't want to branch.
+ */
+export type SendEmailResult =
+  | { ok: true; id: string }
+  | { ok: false; reason: string };
+
+export async function sendEmailDetailed(
+  args: SendEmailArgs,
+): Promise<SendEmailResult> {
   const client = getClient();
   if (!client) {
     console.warn("[email] Resend not configured, skipping:", args.subject);
-    return false;
+    return { ok: false, reason: "Resend not configured (RESEND_API_KEY missing)." };
   }
 
   try {
@@ -97,19 +110,32 @@ export async function sendEmail(args: SendEmailArgs): Promise<boolean> {
 
     if (error) {
       console.error("[email] send failed:", args.subject, error);
-      return false;
+      // Resend errors come back as { name, message, statusCode }
+      const err = error as { message?: string; name?: string };
+      return {
+        ok: false,
+        reason: err.message ?? err.name ?? "Resend returned an error.",
+      };
     }
 
     if (!data?.id) {
       console.warn("[email] send returned no id:", args.subject);
-      return false;
+      return { ok: false, reason: "Resend accepted the request but returned no id." };
     }
 
-    return true;
+    return { ok: true, id: data.id };
   } catch (err) {
     console.error("[email] send threw:", args.subject, err);
-    return false;
+    return {
+      ok: false,
+      reason: err instanceof Error ? err.message : "Unknown send error.",
+    };
   }
+}
+
+export async function sendEmail(args: SendEmailArgs): Promise<boolean> {
+  const r = await sendEmailDetailed(args);
+  return r.ok;
 }
 
 // ---------------------------------------------------------------------------
@@ -190,15 +216,29 @@ export async function sendOrgEmail(
   organizationId: string,
   args: Omit<SendEmailArgs, "from" | "fromName" | "replyTo" | "replyToName">,
 ): Promise<boolean> {
+  const r = await sendOrgEmailDetailed(organizationId, args);
+  return r.ok;
+}
+
+/**
+ * Detailed variant for callers that want to surface the exact reason
+ * a send failed (which domain wasn't verified, which sender was
+ * rejected, etc.). Use this when you're about to show an inline error
+ * to the user — the plain boolean is fine for fire-and-forget paths.
+ */
+export async function sendOrgEmailDetailed(
+  organizationId: string,
+  args: Omit<SendEmailArgs, "from" | "fromName" | "replyTo" | "replyToName">,
+): Promise<SendEmailResult> {
   if (isClientEmailPaused()) {
     console.log(
       `[email] client emails paused at platform level — skipping "${args.subject}" for org ${organizationId}`,
     );
-    return false;
+    return { ok: false, reason: "Client-facing emails are paused at the platform level (CLIENT_EMAILS_PAUSED=true)." };
   }
 
   const sender = await getOrgSender(organizationId);
-  return sendEmail({
+  return sendEmailDetailed({
     ...args,
     from: sender.from,
     fromName: sender.fromName,

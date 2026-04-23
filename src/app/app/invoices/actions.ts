@@ -11,7 +11,11 @@ import {
 } from "@/lib/validators/invoice-payment";
 import { localInputToUtcIso } from "@/lib/validators/common";
 import { generateClaimToken } from "@/lib/claim-token";
-import { sendOrgEmail, isEmailConfigured, isClientEmailPaused } from "@/lib/email";
+import {
+  sendOrgEmailDetailed,
+  isEmailConfigured,
+  isClientEmailPaused,
+} from "@/lib/email";
 import { invoiceSentEmail } from "@/lib/email-templates";
 import { formatCurrencyCents } from "@/lib/format";
 import { getOrgCurrency } from "@/lib/org-currency";
@@ -438,63 +442,78 @@ export async function sendInvoiceAction(
 
   const clientEmail = prev.client?.email;
 
-  // If the client has an email on file, try delivery FIRST. When
-  // delivery is impossible (no mailer configured, platform pause,
-  // Resend returns an error) we return an explicit error instead of
-  // flipping status behind a silent failure.
-  if (clientEmail && prev.public_token) {
-    if (!isEmailConfigured()) {
-      return {
-        error:
-          "Email delivery isn't configured on this environment yet — the invoice wasn't sent. Contact support to enable sending, or share the public invoice link manually.",
-      };
-    }
-    if (isClientEmailPaused()) {
-      return {
-        error:
-          "Client-facing emails are paused at the platform level. Try again later or share the public invoice link manually.",
-      };
-    }
-
-    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
-    const currency = await getOrgCurrency(membership.organization_id);
-
-    // Fetch org branding for the email
-    const { data: orgData } = await supabase
-      .from("organizations")
-      .select("name, brand_color, logo_url")
-      .eq("id", membership.organization_id)
-      .maybeSingle() as unknown as {
-      data: { name: string; brand_color: string | null; logo_url: string | null } | null;
+  // Hard-stop if the client record has no email — previously we
+  // silently marked the invoice as sent, which is exactly the
+  // "clicked Send, no email arrived" footgun this refactor fixes.
+  if (!clientEmail) {
+    return {
+      error:
+        "This client has no email address on file. Add one on the client's record first, then try again — or share the public invoice link manually.",
     };
+  }
+  if (!prev.public_token) {
+    return {
+      error:
+        "This invoice is missing a public token. Refresh the page; if it persists, contact support.",
+    };
+  }
 
-    const template = invoiceSentEmail({
-      clientName: prev.client?.name ?? "there",
-      invoiceNumber: prev.number ?? id.slice(0, 8).toUpperCase(),
-      amountFormatted: formatCurrencyCents(prev.amount_cents, currency),
-      dueDate: prev.due_date
-        ? new Date(prev.due_date).toLocaleDateString("en-US", {
-            month: "short",
-            day: "numeric",
-            year: "numeric",
-          })
-        : "On receipt",
-      publicUrl: `${siteUrl}/i/${prev.public_token}`,
-      orgName: orgData?.name ?? membership.organization_name,
-      brandColor: orgData?.brand_color ?? undefined,
-      logoUrl: orgData?.logo_url ?? undefined,
-    });
+  // Configuration gates — give the owner an explicit reason up front
+  // instead of waiting for Resend to refuse.
+  if (!isEmailConfigured()) {
+    return {
+      error:
+        "Email delivery isn't configured on this environment yet — the invoice wasn't sent. Contact support to enable sending, or share the public invoice link manually.",
+    };
+  }
+  if (isClientEmailPaused()) {
+    return {
+      error:
+        "Client-facing emails are paused at the platform level. Try again later or share the public invoice link manually.",
+    };
+  }
 
-    const ok = await sendOrgEmail(membership.organization_id, {
-      to: clientEmail,
-      toName: prev.client?.name ?? undefined,
-      ...template,
-    });
-    if (!ok) {
-      return {
-        error: `Couldn't deliver the invoice email to ${clientEmail}. Double-check the address, your sender-email verification in Settings → Email, and your Resend domain status — then try again.`,
-      };
-    }
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+  const currency = await getOrgCurrency(membership.organization_id);
+
+  // Fetch org branding for the email
+  const { data: orgData } = await supabase
+    .from("organizations")
+    .select("name, brand_color, logo_url")
+    .eq("id", membership.organization_id)
+    .maybeSingle() as unknown as {
+    data: { name: string; brand_color: string | null; logo_url: string | null } | null;
+  };
+
+  const template = invoiceSentEmail({
+    clientName: prev.client?.name ?? "there",
+    invoiceNumber: prev.number ?? id.slice(0, 8).toUpperCase(),
+    amountFormatted: formatCurrencyCents(prev.amount_cents, currency),
+    dueDate: prev.due_date
+      ? new Date(prev.due_date).toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        })
+      : "On receipt",
+    publicUrl: `${siteUrl}/i/${prev.public_token}`,
+    orgName: orgData?.name ?? membership.organization_name,
+    brandColor: orgData?.brand_color ?? undefined,
+    logoUrl: orgData?.logo_url ?? undefined,
+  });
+
+  // Use the detailed variant so we can surface Resend's actual reason
+  // (domain not verified, wrong from address, rate-limited, etc.)
+  // directly to the user instead of a generic "send failed" message.
+  const result = await sendOrgEmailDetailed(membership.organization_id, {
+    to: clientEmail,
+    toName: prev.client?.name ?? undefined,
+    ...template,
+  });
+  if (!result.ok) {
+    return {
+      error: `Couldn't deliver the invoice email to ${clientEmail}. Resend said: "${result.reason}". Check Settings → Email sender and your Resend domain verification, then try again.`,
+    };
   }
 
   // Email either succeeded or wasn't needed (no client email on file).
