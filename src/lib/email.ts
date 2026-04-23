@@ -200,7 +200,9 @@ export async function getOrgSender(
   const admin = createSupabaseAdminClient();
   const { data } = await admin
     .from("organizations")
-    .select("name, sender_email, sender_email_verified_at")
+    .select(
+      "name, sender_email, sender_email_verified_at, contact_email",
+    )
     .eq("id", organizationId)
     .maybeSingle();
 
@@ -208,6 +210,7 @@ export async function getOrgSender(
     name: string;
     sender_email: string | null;
     sender_email_verified_at: string | null;
+    contact_email: string | null;
   } | null;
 
   const canSendFromOrgAddress = Boolean(
@@ -216,22 +219,34 @@ export async function getOrgSender(
       isDomainVerifiedInResend(org.sender_email),
   );
 
+  // Prefer contact_email as the Reply-To target — it's what the owner
+  // explicitly designated for client replies. Fall back to the
+  // (possibly unverified) sender_email if they only filled that in.
+  const replyTarget = org?.contact_email ?? org?.sender_email ?? undefined;
+
   if (canSendFromOrgAddress && org?.sender_email) {
     // Owner verified the inbox AND the domain is in our Resend
-    // allow-list — safe to send as-them.
+    // allow-list — safe to send as-them. Still route replies via
+    // Reply-To when contact_email differs, so support-style inboxes
+    // get the reply even when the From is a noreply@.
     return {
       from: org.sender_email,
       fromName: org.name,
+      replyTo:
+        org?.contact_email && org.contact_email !== org.sender_email
+          ? org.contact_email
+          : undefined,
+      replyToName: org?.name ?? undefined,
     };
   }
 
   // Default path: send from Sollos's verified domain, stamp the org's
   // display name so the client still sees "Velluma", and put the org
-  // sender in Reply-To so replies go to the right place.
+  // contact in Reply-To so replies go to the right place.
   return {
     from: DEFAULT_FROM_EMAIL,
     fromName: org?.name ? `${org.name} via Sollos` : DEFAULT_FROM_NAME,
-    replyTo: org?.sender_email ?? undefined,
+    replyTo: replyTarget,
     replyToName: org?.name ?? undefined,
   };
 }

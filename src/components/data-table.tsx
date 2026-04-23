@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
-import { Search } from "lucide-react";
+import { Search, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /**
@@ -154,61 +154,85 @@ export function DataTable<T>({
           {emptyState.action && <div className="mt-4">{emptyState.action}</div>}
         </div>
       ) : (
-        <div className="overflow-hidden rounded-lg border border-border bg-card">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border bg-muted/40">
-                {columns.map((col) => (
-                  <th
-                    key={col.key}
-                    className={cn(
-                      "px-3 py-2 text-left text-xs font-medium text-muted-foreground",
-                      col.headerClassName,
-                    )}
-                  >
-                    {col.header}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {showNoMatches ? (
-                <tr>
-                  <td
-                    colSpan={columns.length}
-                    className="px-3 py-12 text-center text-xs text-muted-foreground"
-                  >
-                    No matches for &ldquo;{query}&rdquo;.
-                  </td>
+        <>
+          {/* Affordance hint: tells the user rows are openable before they
+              hover and notice the cursor change. Only shown when rows are
+              actually clickable. */}
+          {onRowClick && !showNoMatches && (
+            <p className="-mb-1 text-[11px] text-muted-foreground">
+              Click a row to open.
+            </p>
+          )}
+          <div className="overflow-hidden rounded-lg border border-border bg-card">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border bg-muted/40">
+                  {columns.map((col) => (
+                    <th
+                      key={col.key}
+                      className={cn(
+                        "px-3 py-2 text-left text-xs font-medium text-muted-foreground",
+                        col.headerClassName,
+                      )}
+                    >
+                      {col.header}
+                    </th>
+                  ))}
+                  {onRowClick && (
+                    <th
+                      aria-label="Open"
+                      className="w-8 px-2 py-2"
+                    />
+                  )}
                 </tr>
-              ) : (
-                filtered.map((row) => (
-                  <tr
-                    key={getRowId(row)}
-                    onClick={onRowClick ? () => onRowClick(row) : undefined}
-                    className={cn(
-                      "border-b border-border last:border-0",
-                      onRowClick &&
-                        "cursor-pointer transition-colors hover:bg-muted/30",
-                    )}
-                  >
-                    {columns.map((col) => (
-                      <td
-                        key={col.key}
-                        className={cn(
-                          "px-3 py-2.5 align-middle",
-                          col.className,
-                        )}
-                      >
-                        {col.render(row)}
-                      </td>
-                    ))}
+              </thead>
+              <tbody>
+                {showNoMatches ? (
+                  <tr>
+                    <td
+                      colSpan={columns.length + (onRowClick ? 1 : 0)}
+                      className="px-3 py-12 text-center text-xs text-muted-foreground"
+                    >
+                      No matches for &ldquo;{query}&rdquo;.
+                    </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+                ) : (
+                  filtered.map((row) => (
+                    <tr
+                      key={getRowId(row)}
+                      onClick={onRowClick ? () => onRowClick(row) : undefined}
+                      className={cn(
+                        "group border-b border-border last:border-0",
+                        onRowClick &&
+                          "cursor-pointer transition-colors hover:bg-muted/40",
+                      )}
+                    >
+                      {columns.map((col) => (
+                        <td
+                          key={col.key}
+                          className={cn(
+                            "px-3 py-2.5 align-middle",
+                            col.className,
+                          )}
+                        >
+                          {col.render(row)}
+                        </td>
+                      ))}
+                      {onRowClick && (
+                        <td className="w-8 px-2 py-2.5 align-middle text-right">
+                          <ChevronRight
+                            aria-hidden
+                            className="ml-auto h-4 w-4 text-muted-foreground/60 transition-all group-hover:translate-x-0.5 group-hover:text-foreground"
+                          />
+                        </td>
+                      )}
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
 
     </div>

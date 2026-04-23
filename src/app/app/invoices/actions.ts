@@ -470,10 +470,16 @@ async function deliverInvoiceEmail(
 
   const { data: orgData } = await supabase
     .from("organizations")
-    .select("name, brand_color, logo_url")
+    .select("name, brand_color, logo_url, contact_email, contact_phone")
     .eq("id", membership.organization_id)
     .maybeSingle() as unknown as {
-    data: { name: string; brand_color: string | null; logo_url: string | null } | null;
+    data: {
+      name: string;
+      brand_color: string | null;
+      logo_url: string | null;
+      contact_email: string | null;
+      contact_phone: string | null;
+    } | null;
   };
 
   const template = invoiceSentEmail({
@@ -491,6 +497,8 @@ async function deliverInvoiceEmail(
     orgName: orgData?.name ?? membership.organization_name,
     brandColor: orgData?.brand_color ?? undefined,
     logoUrl: orgData?.logo_url ?? undefined,
+    contactEmail: orgData?.contact_email,
+    contactPhone: orgData?.contact_phone,
   });
 
   const result = await sendOrgEmailDetailed(membership.organization_id, {

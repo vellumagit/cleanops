@@ -66,21 +66,38 @@ export default async function PublicInvoicePage({
 
   if (!invoice) notFound();
 
-  // Fetch branding (columns not yet in generated types)
+  // Fetch branding + contact info (columns not yet in generated types,
+  // so they're fetched separately with an `as unknown as` cast rather
+  // than embedded in the invoice select above).
   const orgId = invoice.organization?.id;
   let orgBranding: { logo_url: string | null; brand_color: string | null } = {
     logo_url: null,
     brand_color: null,
   };
+  let orgContact: { contact_email: string | null; contact_phone: string | null } = {
+    contact_email: null,
+    contact_phone: null,
+  };
   if (orgId) {
     const { data } = await admin
       .from("organizations")
-      .select("logo_url, brand_color")
+      .select("logo_url, brand_color, contact_email, contact_phone")
       .eq("id", orgId)
       .maybeSingle() as unknown as {
-      data: { logo_url: string | null; brand_color: string | null } | null;
+      data: {
+        logo_url: string | null;
+        brand_color: string | null;
+        contact_email: string | null;
+        contact_phone: string | null;
+      } | null;
     };
-    if (data) orgBranding = data;
+    if (data) {
+      orgBranding = { logo_url: data.logo_url, brand_color: data.brand_color };
+      orgContact = {
+        contact_email: data.contact_email,
+        contact_phone: data.contact_phone,
+      };
+    }
   }
 
   const currency = orgId ? await getOrgCurrency(orgId) : "CAD";
@@ -327,12 +344,60 @@ export default async function PublicInvoicePage({
               </ul>
             </div>
           )}
+
+          {/* Contact block — uses org contact_email / contact_phone when
+              set. Previously the footer told clients to "reply to the
+              email this invoice came from", but that's a noreply@ black
+              hole. Now we print a real email + phone if the owner set
+              them in Settings → Email & contact info. */}
+          {(orgContact.contact_email || orgContact.contact_phone) && (
+            <div className="mt-6 rounded-lg border border-border bg-muted/20 p-5">
+              <p className="sollos-label">Questions?</p>
+              <p className="mt-1.5 text-sm text-muted-foreground">
+                Get in touch with{" "}
+                {invoice.organization?.name ?? "the sender"}:
+              </p>
+              <dl className="mt-3 space-y-1.5 text-sm">
+                {orgContact.contact_email && (
+                  <div className="flex items-baseline gap-3">
+                    <dt className="w-14 shrink-0 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Email
+                    </dt>
+                    <dd>
+                      <a
+                        href={`mailto:${orgContact.contact_email}`}
+                        className="font-medium text-foreground underline-offset-2 hover:underline"
+                      >
+                        {orgContact.contact_email}
+                      </a>
+                    </dd>
+                  </div>
+                )}
+                {orgContact.contact_phone && (
+                  <div className="flex items-baseline gap-3">
+                    <dt className="w-14 shrink-0 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Phone
+                    </dt>
+                    <dd>
+                      <a
+                        href={`tel:${orgContact.contact_phone.replace(/[^\d+]/g, "")}`}
+                        className="font-medium text-foreground underline-offset-2 hover:underline"
+                      >
+                        {orgContact.contact_phone}
+                      </a>
+                    </dd>
+                  </div>
+                )}
+              </dl>
+            </div>
+          )}
           </div>{/* close p-6 sm:p-8 inner wrapper */}
         </div>{/* close sollos-card */}
 
         <p className="mt-6 text-center text-[11px] text-muted-foreground">
-          Questions? Reply to the email this invoice came from and{" "}
-          {invoice.organization?.name ?? "the sender"} will get back to you.
+          {orgContact.contact_email || orgContact.contact_phone
+            ? `Sent on behalf of ${invoice.organization?.name ?? "the sender"} via Sollos.`
+            : `Questions? Reply to the email this invoice came from and ${invoice.organization?.name ?? "the sender"} will get back to you.`}
         </p>
       </div>
     </main>

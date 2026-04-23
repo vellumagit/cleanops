@@ -179,8 +179,44 @@ export function invoiceSentEmail(args: {
   orgName: string;
   brandColor?: string;
   logoUrl?: string;
+  /** Org's contact email — shown in the "Questions?" block. Omit to
+   *  hide. Not the same as the From/Reply-To; this is what we tell the
+   *  client to use when they have questions. */
+  contactEmail?: string | null;
+  /** Org's contact phone — same deal. */
+  contactPhone?: string | null;
 }) {
   const subject = `Invoice ${args.invoiceNumber} from ${args.orgName}`;
+
+  // Build the questions block based on what's actually set. If neither
+  // contact email nor phone is available, we fall back to "Reply to
+  // this email" which works when the org has set a real Reply-To
+  // (via contact_email or verified sender_email) and is at worst a
+  // dead-end suggestion when neither is set.
+  const hasContact = Boolean(args.contactEmail || args.contactPhone);
+  const contactBlock = hasContact
+    ? `
+    <p style="margin:0 0 6px;font-size:12px;font-weight:600;letter-spacing:0.02em;color:#52525b;text-transform:uppercase;">Questions?</p>
+    <p style="margin:0 0 2px;font-size:13px;line-height:1.55;color:#52525b;">
+      Get in touch with <strong style="color:#18181b;">${escapeHtml(args.orgName)}</strong>:
+    </p>
+    ${
+      args.contactEmail
+        ? `<p style="margin:6px 0 0;font-size:13px;line-height:1.5;color:#52525b;"><span style="color:#a1a1aa;">Email:</span> <a href="mailto:${escapeAttr(args.contactEmail)}" style="color:#18181b;text-decoration:none;font-weight:500;">${escapeHtml(args.contactEmail)}</a></p>`
+        : ""
+    }
+    ${
+      args.contactPhone
+        ? `<p style="margin:4px 0 0;font-size:13px;line-height:1.5;color:#52525b;"><span style="color:#a1a1aa;">Phone:</span> <a href="tel:${escapeAttr(args.contactPhone.replace(/[^\d+]/g, ""))}" style="color:#18181b;text-decoration:none;font-weight:500;">${escapeHtml(args.contactPhone)}</a></p>`
+        : ""
+    }
+    `
+    : `
+    <p style="margin:0;font-size:12px;line-height:1.5;color:#a1a1aa;">
+      Questions? Reply to this email.
+    </p>
+    `;
+
   const html = layout(
     `
     <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;letter-spacing:-0.02em;color:#18181b;line-height:1.3;">New invoice</h1>
@@ -202,9 +238,7 @@ export function invoiceSentEmail(args: {
       </tr>
     </table>
     ${button("View & Pay Invoice", args.publicUrl, args.brandColor ? `#${args.brandColor.replace(/^#/, "")}` : DEFAULT_BRAND)}
-    <p style="margin:0;font-size:12px;line-height:1.5;color:#a1a1aa;">
-      Questions? Reply to this email.
-    </p>
+    ${contactBlock}
     `,
     {
       brandColor: args.brandColor,
@@ -213,7 +247,13 @@ export function invoiceSentEmail(args: {
       preheader: `Invoice ${args.invoiceNumber} · ${args.amountFormatted} · due ${args.dueDate}`,
     },
   );
-  const text = `Invoice ${args.invoiceNumber} from ${args.orgName}\n\nAmount: ${args.amountFormatted}\nDue: ${args.dueDate}\n\nView: ${args.publicUrl}`;
+
+  const contactText = hasContact
+    ? `\n\nQuestions? Contact ${args.orgName}:` +
+      (args.contactEmail ? `\n  Email: ${args.contactEmail}` : "") +
+      (args.contactPhone ? `\n  Phone: ${args.contactPhone}` : "")
+    : "";
+  const text = `Invoice ${args.invoiceNumber} from ${args.orgName}\n\nAmount: ${args.amountFormatted}\nDue: ${args.dueDate}\n\nView: ${args.publicUrl}${contactText}`;
   return { subject, html, text };
 }
 
