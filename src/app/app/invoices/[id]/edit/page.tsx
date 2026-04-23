@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getOrgCurrency } from "@/lib/org-currency";
+import { taxRateBpsToPercentString } from "@/lib/org-tax";
 import { PageShell } from "@/components/page-shell";
 import { centsToDollarString } from "@/lib/validators/common";
 import { InvoiceForm } from "../../invoice-form";
@@ -21,14 +22,39 @@ export default async function EditInvoicePage({
   const supabase = await createSupabaseServerClient();
   const currency = await getOrgCurrency(membership.organization_id);
 
-  const { data: invoice, error } = await supabase
+  const { data: invoice, error } = (await supabase
     .from("invoices")
     .select(
       `id, client_id, booking_id, status, amount_cents, due_date,
+       tax_rate_bps, tax_amount_cents, tax_label,
        line_items:invoice_line_items ( id, label, quantity, unit_price_cents, sort_order )`,
     )
     .eq("id", id)
-    .maybeSingle();
+    .maybeSingle()) as unknown as {
+    data:
+      | {
+          id: string;
+          client_id: string;
+          booking_id: string | null;
+          status: string;
+          amount_cents: number;
+          due_date: string | null;
+          tax_rate_bps: number | null;
+          tax_amount_cents: number | null;
+          tax_label: string | null;
+          line_items:
+            | Array<{
+                id: string;
+                label: string;
+                quantity: number;
+                unit_price_cents: number;
+                sort_order: number;
+              }>
+            | null;
+        }
+      | null;
+    error: { message: string } | null;
+  };
 
   if (error) throw error;
   if (!invoice) notFound();
@@ -42,6 +68,11 @@ export default async function EditInvoicePage({
     unit_price_cents: li.unit_price_cents,
     sort_order: li.sort_order,
   }));
+
+  // The form edits the SUBTOTAL; amount_cents in the DB is the total
+  // (subtotal + tax). Derive subtotal for the form by backing tax out.
+  const subtotalCents =
+    invoice.amount_cents - (invoice.tax_amount_cents ?? 0);
 
   return (
     <PageShell title="Edit invoice">
@@ -57,8 +88,10 @@ export default async function EditInvoicePage({
               client_id: invoice.client_id,
               booking_id: invoice.booking_id,
               status: invoice.status,
-              amount_dollars: centsToDollarString(invoice.amount_cents),
+              subtotal_dollars: centsToDollarString(subtotalCents),
               due_date: invoice.due_date,
+              tax_rate_percent: taxRateBpsToPercentString(invoice.tax_rate_bps),
+              tax_label: invoice.tax_label,
             }}
           />
         </div>

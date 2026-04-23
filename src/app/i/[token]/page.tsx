@@ -66,6 +66,23 @@ export default async function PublicInvoicePage({
 
   if (!invoice) notFound();
 
+  // Fetch tax columns on the invoice separately — not yet in the
+  // generated Supabase types.
+  const { data: taxData } = (await admin
+    .from("invoices")
+    .select("tax_rate_bps, tax_amount_cents, tax_label")
+    .eq("id", invoice.id)
+    .maybeSingle()) as unknown as {
+    data: {
+      tax_rate_bps: number | null;
+      tax_amount_cents: number | null;
+      tax_label: string | null;
+    } | null;
+  };
+  const taxRateBps = taxData?.tax_rate_bps ?? null;
+  const taxAmountCents = taxData?.tax_amount_cents ?? null;
+  const taxLabel = taxData?.tax_label ?? null;
+
   // Fetch branding + contact info (columns not yet in generated types,
   // so they're fetched separately with an `as unknown as` cast rather
   // than embedded in the invoice select above).
@@ -257,6 +274,30 @@ export default async function PublicInvoicePage({
             )}
 
             <dl className="mt-4 space-y-2 border-t border-border pt-4 text-sm">
+              {/* When tax is set, show the breakdown Subtotal → Tax →
+                  Total so the client sees exactly what they're paying
+                  tax on. When not set, just Total (and Paid / Balance). */}
+              {taxAmountCents !== null && taxAmountCents > 0 && (
+                <>
+                  <SummaryRow
+                    label="Subtotal"
+                    value={formatCurrencyCents(
+                      invoice.amount_cents - taxAmountCents,
+                      currency,
+                    )}
+                  />
+                  <SummaryRow
+                    label={`${taxLabel || "Tax"}${
+                      taxRateBps
+                        ? ` (${(taxRateBps / 100)
+                            .toFixed(2)
+                            .replace(/\.?0+$/, "")}%)`
+                        : ""
+                    }`}
+                    value={formatCurrencyCents(taxAmountCents, currency)}
+                  />
+                </>
+              )}
               <SummaryRow
                 label="Total"
                 value={formatCurrencyCents(invoice.amount_cents, currency)}

@@ -22,6 +22,7 @@ import { getOrgCurrency } from "@/lib/org-currency";
 import { autoOnInvoicePaid } from "@/lib/automations";
 import { canCreateData } from "@/lib/subscription";
 import { redirectAfterSetup } from "@/lib/setup-return";
+import { computeTax } from "@/lib/invoice-tax";
 
 type Field = keyof typeof InvoiceSchema.shape;
 export type InvoiceFormState = ActionState<Field>;
@@ -31,8 +32,10 @@ function readFormValues(formData: FormData) {
     client_id: String(formData.get("client_id") ?? ""),
     booking_id: String(formData.get("booking_id") ?? ""),
     status: String(formData.get("status") ?? "draft"),
-    amount_cents: String(formData.get("amount_cents") ?? ""),
+    subtotal_cents: String(formData.get("subtotal_cents") ?? ""),
     due_date: String(formData.get("due_date") ?? ""),
+    tax_rate_bps: String(formData.get("tax_rate_bps") ?? ""),
+    tax_label: String(formData.get("tax_label") ?? ""),
   };
 }
 
@@ -65,20 +68,32 @@ export async function createInvoiceAction(
   }
 
   const stamps = maybeStamp(parsed.data.status);
-  const { data: inserted, error } = await supabase
+  // Tax is applied on top of the subtotal; amount_cents (grand total)
+  // is subtotal + tax so every existing query that reads amount_cents
+  // as "what the client owes" keeps its semantics.
+  const tax = computeTax(parsed.data.subtotal_cents, {
+    rateBps: parsed.data.tax_rate_bps,
+  });
+  const { data: inserted, error } = await (supabase
     .from("invoices")
     .insert({
       organization_id: membership.organization_id,
       client_id: parsed.data.client_id,
       booking_id: parsed.data.booking_id,
       status: parsed.data.status,
-      amount_cents: parsed.data.amount_cents,
+      amount_cents: tax.totalCents,
+      tax_rate_bps: tax.rateBps,
+      tax_amount_cents: tax.taxAmountCents,
+      tax_label: tax.rateBps ? parsed.data.tax_label : null,
       due_date: parsed.data.due_date,
       sent_at: stamps.sent_at,
       paid_at: stamps.paid_at,
-    })
+    } as never)
     .select("id")
-    .single();
+    .single() as unknown as Promise<{
+    data: { id: string } | null;
+    error: { message: string } | null;
+  }>);
 
   if (error || !inserted)
     return { errors: { _form: error?.message ?? "Insert failed" }, values: raw };
@@ -90,7 +105,8 @@ export async function createInvoiceAction(
     entity_id: inserted.id,
     after: {
       status: parsed.data.status,
-      amount_cents: parsed.data.amount_cents,
+      amount_cents: tax.totalCents,
+      tax_amount_cents: tax.taxAmountCents,
       client_id: parsed.data.client_id,
     },
   });
@@ -117,18 +133,24 @@ export async function updateInvoiceAction(
     .maybeSingle();
 
   const stamps = maybeStamp(parsed.data.status, prev ?? undefined);
-  const { error } = await supabase
+  const tax = computeTax(parsed.data.subtotal_cents, {
+    rateBps: parsed.data.tax_rate_bps,
+  });
+  const { error } = await (supabase
     .from("invoices")
     .update({
       client_id: parsed.data.client_id,
       booking_id: parsed.data.booking_id,
       status: parsed.data.status,
-      amount_cents: parsed.data.amount_cents,
+      amount_cents: tax.totalCents,
+      tax_rate_bps: tax.rateBps,
+      tax_amount_cents: tax.taxAmountCents,
+      tax_label: tax.rateBps ? parsed.data.tax_label : null,
       due_date: parsed.data.due_date,
       sent_at: stamps.sent_at,
       paid_at: stamps.paid_at,
-    })
-    .eq("id", id);
+    } as never)
+    .eq("id", id) as unknown as Promise<{ error: { message: string } | null }>);
 
   if (error) return { errors: { _form: error.message }, values: raw };
 
@@ -147,7 +169,8 @@ export async function updateInvoiceAction(
     before: prev ?? null,
     after: {
       status: parsed.data.status,
-      amount_cents: parsed.data.amount_cents,
+      amount_cents: tax.totalCents,
+      tax_amount_cents: tax.taxAmountCents,
       paid_at: stamps.paid_at,
     },
   });
@@ -438,6 +461,19 @@ async function deliverInvoiceEmail(
     .maybeSingle();
   if (!prev) return { error: "Invoice not found." };
 
+  // Fetch tax columns separately — not yet in generated types.
+  const { data: taxData } = (await supabase
+    .from("invoices")
+    .select("tax_rate_bps, tax_amount_cents, tax_label")
+    .eq("id", invoiceId)
+    .maybeSingle()) as unknown as {
+    data: {
+      tax_rate_bps: number | null;
+      tax_amount_cents: number | null;
+      tax_label: string | null;
+    } | null;
+  };
+
   const clientEmail = prev.client?.email;
   if (!clientEmail) {
     return {
@@ -482,6 +518,12 @@ async function deliverInvoiceEmail(
     } | null;
   };
 
+  const taxAmountCents = taxData?.tax_amount_cents ?? null;
+  const taxRateBps = taxData?.tax_rate_bps ?? null;
+  const taxLabel = taxData?.tax_label ?? null;
+  const subtotalCents = prev.amount_cents - (taxAmountCents ?? 0);
+  const hasTax = taxAmountCents !== null && taxAmountCents > 0;
+
   const template = invoiceSentEmail({
     clientName: prev.client?.name ?? "there",
     invoiceNumber: prev.number ?? invoiceId.slice(0, 8).toUpperCase(),
@@ -499,6 +541,19 @@ async function deliverInvoiceEmail(
     logoUrl: orgData?.logo_url ?? undefined,
     contactEmail: orgData?.contact_email,
     contactPhone: orgData?.contact_phone,
+    subtotalFormatted: hasTax
+      ? formatCurrencyCents(subtotalCents, currency)
+      : null,
+    taxAmountFormatted: hasTax
+      ? formatCurrencyCents(taxAmountCents!, currency)
+      : null,
+    taxLineLabel: hasTax
+      ? `${taxLabel || "Tax"}${
+          taxRateBps
+            ? ` (${(taxRateBps / 100).toFixed(2).replace(/\.?0+$/, "")}%)`
+            : ""
+        }`
+      : null,
   });
 
   const result = await sendOrgEmailDetailed(membership.organization_id, {

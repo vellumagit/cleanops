@@ -185,6 +185,14 @@ export function invoiceSentEmail(args: {
   contactEmail?: string | null;
   /** Org's contact phone — same deal. */
   contactPhone?: string | null;
+  /** Pre-tax subtotal string (already formatted in the invoice's
+   *  currency, e.g. "$100.00"). Only used when tax is present; omit
+   *  otherwise and the amount row stays a single "Amount" line. */
+  subtotalFormatted?: string | null;
+  /** Formatted tax portion, e.g. "$5.00". */
+  taxAmountFormatted?: string | null;
+  /** Label + rate, e.g. "GST (5%)". Shown on the tax row. */
+  taxLineLabel?: string | null;
 }) {
   const subject = `Invoice ${args.invoiceNumber} from ${args.orgName}`;
 
@@ -228,10 +236,29 @@ export function invoiceSentEmail(args: {
         <td style="font-size:13px;color:#71717a;padding:12px 0;border-bottom:1px solid #f4f4f5;">Invoice</td>
         <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;font-weight:600;border-bottom:1px solid #f4f4f5;">${escapeHtml(args.invoiceNumber)}</td>
       </tr>
+      ${
+        args.subtotalFormatted && args.taxAmountFormatted
+          ? `
+      <tr>
+        <td style="font-size:13px;color:#71717a;padding:12px 0;border-bottom:1px solid #f4f4f5;">Subtotal</td>
+        <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;border-bottom:1px solid #f4f4f5;">${escapeHtml(args.subtotalFormatted)}</td>
+      </tr>
+      <tr>
+        <td style="font-size:13px;color:#71717a;padding:12px 0;border-bottom:1px solid #f4f4f5;">${escapeHtml(args.taxLineLabel ?? "Tax")}</td>
+        <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;border-bottom:1px solid #f4f4f5;">${escapeHtml(args.taxAmountFormatted)}</td>
+      </tr>
+      <tr>
+        <td style="font-size:13px;color:#71717a;padding:12px 0;border-bottom:1px solid #f4f4f5;font-weight:600;">Total</td>
+        <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;font-weight:700;border-bottom:1px solid #f4f4f5;">${escapeHtml(args.amountFormatted)}</td>
+      </tr>
+          `
+          : `
       <tr>
         <td style="font-size:13px;color:#71717a;padding:12px 0;border-bottom:1px solid #f4f4f5;">Amount</td>
         <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;font-weight:600;border-bottom:1px solid #f4f4f5;">${escapeHtml(args.amountFormatted)}</td>
       </tr>
+          `
+      }
       <tr>
         <td style="font-size:13px;color:#71717a;padding:12px 0;">Due</td>
         <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;">${escapeHtml(args.dueDate)}</td>
@@ -253,7 +280,11 @@ export function invoiceSentEmail(args: {
       (args.contactEmail ? `\n  Email: ${args.contactEmail}` : "") +
       (args.contactPhone ? `\n  Phone: ${args.contactPhone}` : "")
     : "";
-  const text = `Invoice ${args.invoiceNumber} from ${args.orgName}\n\nAmount: ${args.amountFormatted}\nDue: ${args.dueDate}\n\nView: ${args.publicUrl}${contactText}`;
+  const amountBlock =
+    args.subtotalFormatted && args.taxAmountFormatted
+      ? `Subtotal: ${args.subtotalFormatted}\n${args.taxLineLabel ?? "Tax"}: ${args.taxAmountFormatted}\nTotal: ${args.amountFormatted}`
+      : `Amount: ${args.amountFormatted}`;
+  const text = `Invoice ${args.invoiceNumber} from ${args.orgName}\n\n${amountBlock}\nDue: ${args.dueDate}\n\nView: ${args.publicUrl}${contactText}`;
   return { subject, html, text };
 }
 

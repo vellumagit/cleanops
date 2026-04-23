@@ -94,6 +94,22 @@ export default async function InvoiceDetailPage({
   if (error) throw error;
   if (!invoice) notFound();
 
+  // Fetch tax columns separately (not yet in generated types).
+  const { data: taxData } = (await supabase
+    .from("invoices")
+    .select("tax_rate_bps, tax_amount_cents, tax_label")
+    .eq("id", id)
+    .maybeSingle()) as unknown as {
+    data: {
+      tax_rate_bps: number | null;
+      tax_amount_cents: number | null;
+      tax_label: string | null;
+    } | null;
+  };
+  const taxRateBps = taxData?.tax_rate_bps ?? null;
+  const taxAmountCents = taxData?.tax_amount_cents ?? null;
+  const taxLabel = taxData?.tax_label ?? null;
+
   // Fetch review_token separately (column not yet in generated types)
   const { data: reviewData } = (await supabase
     .from("invoices")
@@ -293,6 +309,43 @@ export default async function InvoiceDetailPage({
                   );
                 })}
               </ul>
+            )}
+
+            {/* Subtotal / tax / total breakdown. Only shown when tax
+                is set — otherwise the Total metric at the top of the
+                page already covers it and an extra block would feel
+                redundant. */}
+            {taxAmountCents !== null && taxAmountCents > 0 && (
+              <dl className="space-y-1 border-t border-border px-6 py-4 text-sm">
+                <div className="flex items-baseline justify-between gap-3">
+                  <dt className="text-muted-foreground">Subtotal</dt>
+                  <dd className="font-mono tabular-nums">
+                    {formatCurrencyCents(
+                      invoice.amount_cents - taxAmountCents,
+                      currency,
+                    )}
+                  </dd>
+                </div>
+                <div className="flex items-baseline justify-between gap-3">
+                  <dt className="text-muted-foreground">
+                    {taxLabel || "Tax"}
+                    {taxRateBps
+                      ? ` (${(taxRateBps / 100)
+                          .toFixed(2)
+                          .replace(/\.?0+$/, "")}%)`
+                      : ""}
+                  </dt>
+                  <dd className="font-mono tabular-nums">
+                    {formatCurrencyCents(taxAmountCents, currency)}
+                  </dd>
+                </div>
+                <div className="flex items-baseline justify-between gap-3 pt-1">
+                  <dt className="font-semibold">Total</dt>
+                  <dd className="font-mono font-bold tabular-nums">
+                    {formatCurrencyCents(invoice.amount_cents, currency)}
+                  </dd>
+                </div>
+              </dl>
             )}
           </div>
 
