@@ -5,6 +5,10 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
 import { SubmitButton } from "@/components/submit-button";
+import {
+  resolveAutomationEnabled,
+  isDefaultOff,
+} from "@/lib/automation-defaults";
 import { toggleAutomationAction, type AutomationKey } from "./actions";
 
 export const metadata = { title: "Automations" };
@@ -237,8 +241,13 @@ export default async function AutomationsPage() {
   const settings = org?.automation_settings ?? {};
 
   function isEnabled(key: AutomationKey): boolean {
-    // Default to enabled if no preference set
-    return settings[key]?.enabled !== false;
+    // Shared resolver — explicit setting wins, otherwise the per-key
+    // default from lib/automation-defaults.ts (most on, some off).
+    return resolveAutomationEnabled(settings, key);
+  }
+
+  function isExplicitlySet(key: AutomationKey): boolean {
+    return settings[key]?.enabled !== undefined;
   }
 
   return (
@@ -267,6 +276,8 @@ export default async function AutomationsPage() {
       <ul className="space-y-3">
         {AUTOMATIONS.map((a) => {
           const on = isEnabled(a.key);
+          const defaultOff = isDefaultOff(a.key);
+          const showOptInHint = defaultOff && !isExplicitlySet(a.key);
           return (
             <li key={a.key} className="rounded-lg border border-border bg-card p-4">
               <div className="flex items-start justify-between gap-4">
@@ -276,10 +287,21 @@ export default async function AutomationsPage() {
                     <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
                       {a.trigger}
                     </span>
+                    {defaultOff && (
+                      <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400">
+                        Off by default
+                      </span>
+                    )}
                   </div>
                   <p className="mt-1 text-xs text-muted-foreground">
                     {a.description}
                   </p>
+                  {showOptInHint && (
+                    <p className="mt-1.5 text-[11px] italic text-amber-700 dark:text-amber-400">
+                      This touches your clients directly — it stays off
+                      until you explicitly turn it on.
+                    </p>
+                  )}
                 </div>
                 <form action={toggleAutomationAction} className="shrink-0">
                   <input type="hidden" name="key" value={a.key} />

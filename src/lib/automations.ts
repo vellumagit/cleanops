@@ -8,30 +8,48 @@ import "server-only";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { sendPushToMembership, sendPushToOrg } from "@/lib/push";
 import type { CurrencyCode } from "@/lib/format";
+import { resolveAutomationEnabled } from "@/lib/automation-defaults";
 
 const admin = () => createSupabaseAdminClient();
 
 /**
- * Check whether a named automation is enabled for an org. Absent setting =
- * enabled (matches the default semantics of /app/settings/automations).
+ * Check whether a named automation is enabled for an org.
+ *
+ * Precedence follows resolveAutomationEnabled (lib/automation-defaults.ts):
+ *   - explicit setting in organizations.automation_settings wins
+ *   - absent setting → per-key default (most on, a handful off like
+ *     booking_confirmation_email)
+ *
+ * On DB read failure we fall through to the default resolver with a
+ * null settings map, so default-off keys stay off and we never
+ * surprise-enable on a transient DB hiccup.
  */
 async function isAutomationEnabled(
   organizationId: string,
   key: string,
 ): Promise<boolean> {
   try {
-    const { data } = await admin()
+    const { data } = (await admin()
       .from("organizations")
       .select("automation_settings")
       .eq("id", organizationId)
-      .maybeSingle() as unknown as {
-      data: { automation_settings: Record<string, { enabled?: boolean }> | null } | null;
+      .maybeSingle()) as unknown as {
+      data: {
+        automation_settings: Record<
+          string,
+          { enabled?: boolean } | null
+        > | null;
+      } | null;
     };
-    return data?.automation_settings?.[key]?.enabled !== false;
+    return resolveAutomationEnabled(
+      (data?.automation_settings as Record<
+        string,
+        { enabled?: boolean } | undefined
+      > | null) ?? null,
+      key,
+    );
   } catch {
-    // If we can't read the setting, default to enabled — same posture as the
-    // settings page. Never block a primary action on a toggle lookup.
-    return true;
+    return resolveAutomationEnabled(null, key);
   }
 }
 
