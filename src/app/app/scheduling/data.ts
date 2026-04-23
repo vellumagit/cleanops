@@ -58,12 +58,24 @@ export function formatWeekParam(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-export async function fetchScheduleWeek(weekStart: Date): Promise<{
+/**
+ * Fetch bookings + employees for a schedule range.
+ *
+ * @param rangeStart First day to include (00:00 local).
+ * @param rangeEnd   Exclusive end — pass `addDays(rangeStart, 7)` for
+ *                   a week, `addDays(rangeStart, 1)` for a single day.
+ *                   Defaults to 7 days if omitted for backward-compat.
+ */
+export async function fetchScheduleWeek(
+  rangeStart: Date,
+  rangeEnd?: Date,
+): Promise<{
   bookings: ScheduleBooking[];
   employees: ScheduleEmployee[];
 }> {
   const supabase = await createSupabaseServerClient();
-  const weekEnd = addDays(weekStart, 7);
+  const weekStart = rangeStart;
+  const weekEnd = rangeEnd ?? addDays(weekStart, 7);
 
   const [bookingsRes, membersRes] = await Promise.all([
     supabase

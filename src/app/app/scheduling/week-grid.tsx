@@ -12,6 +12,7 @@ import {
   useSensors,
   type DragEndEvent,
   type DragStartEvent,
+  type DraggableSyntheticListeners,
 } from "@dnd-kit/core";
 import { toast } from "sonner";
 import { GripVertical } from "lucide-react";
@@ -20,6 +21,7 @@ import { StatusBadge, bookingStatusTone } from "@/components/status-badge";
 import { humanizeEnum } from "@/lib/format";
 import { rescheduleBookingAction } from "./actions";
 import type { ScheduleBooking, ScheduleEmployee } from "./data";
+import { BookingQuickView } from "./booking-quick-view";
 
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -71,16 +73,25 @@ export function WeekGrid({
   bookings,
   employees,
   canEdit,
+  /** "week" shows all 7 days, "day" collapses to just the first day of
+   *  the range. The parent picks which via a toggle in the page header. */
+  view = "week",
 }: {
-  /** ISO date YYYY-MM-DD for Monday of the displayed week. */
+  /** ISO date YYYY-MM-DD for Monday of the displayed week (or the day
+   *  itself in day view). */
   weekStart: string;
   bookings: ScheduleBooking[];
   employees: ScheduleEmployee[];
   canEdit: boolean;
+  view?: "week" | "day";
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [activeId, setActiveId] = useState<string | null>(null);
+
+  // Quick-view dialog state. Open by clicking a booking card; drag is
+  // on a dedicated grip handle so click-to-open doesn't fight dnd-kit.
+  const [quickViewId, setQuickViewId] = useState<string | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -88,8 +99,9 @@ export function WeekGrid({
 
   const days = useMemo(() => {
     const [y, m, d] = weekStart.split("-").map(Number);
-    return Array.from({ length: 7 }, (_, i) => new Date(y, m - 1, d + i));
-  }, [weekStart]);
+    const count = view === "day" ? 1 : 7;
+    return Array.from({ length: count }, (_, i) => new Date(y, m - 1, d + i));
+  }, [weekStart, view]);
 
   const bookingById = useMemo(
     () => new Map(bookings.map((b) => [b.id, b])),
@@ -186,13 +198,20 @@ export function WeekGrid({
           bookings={unassigned}
           canEdit={canEdit}
           isPending={isPending}
+          onQuickView={setQuickViewId}
         />
 
         <div className="overflow-x-auto rounded-lg border border-border bg-card">
           <div
-            className="grid min-w-[960px]"
+            className={cn(
+              "grid",
+              view === "day" ? "min-w-[360px]" : "min-w-[960px]",
+            )}
             style={{
-              gridTemplateColumns: `180px repeat(7, minmax(140px, 1fr))`,
+              gridTemplateColumns:
+                view === "day"
+                  ? `180px minmax(220px, 1fr)`
+                  : `180px repeat(7, minmax(140px, 1fr))`,
             }}
           >
             <div className="sticky left-0 z-10 border-b border-r border-border bg-card px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -216,7 +235,12 @@ export function WeekGrid({
             ))}
 
             {employees.length === 0 ? (
-              <div className="col-span-8 px-4 py-12 text-center text-sm text-muted-foreground">
+              <div
+                className={cn(
+                  "px-4 py-12 text-center text-sm text-muted-foreground",
+                  view === "day" ? "col-span-2" : "col-span-8",
+                )}
+              >
                 No active employees. Invite team members from Settings → Members.
               </div>
             ) : null}
@@ -229,6 +253,7 @@ export function WeekGrid({
                 days={days}
                 cellMap={cellMap}
                 canEdit={canEdit}
+                onQuickView={setQuickViewId}
               />
             ))}
           </div>
@@ -240,6 +265,17 @@ export function WeekGrid({
           <BookingCard booking={activeBooking} dragging tone="" />
         ) : null}
       </DragOverlay>
+
+      <BookingQuickView
+        booking={
+          quickViewId ? bookingById.get(quickViewId) ?? null : null
+        }
+        employees={employees}
+        open={!!quickViewId}
+        onOpenChange={(o) => {
+          if (!o) setQuickViewId(null);
+        }}
+      />
     </DndContext>
   );
 }
@@ -250,12 +286,14 @@ function EmployeeRow({
   days,
   cellMap,
   canEdit,
+  onQuickView,
 }: {
   employee: ScheduleEmployee;
   tone: string;
   days: Date[];
   cellMap: Map<string, ScheduleBooking[]>;
   canEdit: boolean;
+  onQuickView: (bookingId: string) => void;
 }) {
   return (
     <>
@@ -278,6 +316,7 @@ function EmployeeRow({
             date={dateKey(d)}
             bookings={cellBookings}
             canEdit={canEdit}
+            onQuickView={onQuickView}
           />
         );
       })}
@@ -290,11 +329,13 @@ function DayCell({
   date,
   bookings,
   canEdit,
+  onQuickView,
 }: {
   employeeId: string;
   date: string;
   bookings: ScheduleBooking[];
   canEdit: boolean;
+  onQuickView: (bookingId: string) => void;
 }) {
   const droppableId = `cell:${employeeId}:${date}`;
   const { setNodeRef, isOver } = useDroppable({
@@ -311,18 +352,37 @@ function DayCell({
       )}
     >
       {bookings.map((b) => (
-        <DraggableBooking key={b.id} booking={b} canEdit={canEdit} />
+        <DraggableBooking
+          key={b.id}
+          booking={b}
+          canEdit={canEdit}
+          onQuickView={onQuickView}
+        />
       ))}
     </div>
   );
 }
 
+/**
+ * Booking card with separated drag + click zones.
+ *
+ * The whole card reacts to a left-click by opening the quick-view
+ * dialog. The GripVertical icon is the ONLY drag handle — dnd-kit
+ * pointer listeners are bound only to the grip, not the outer card.
+ * This lets owners click to view/edit without accidentally kicking
+ * off a drag (and vice versa).
+ *
+ * When canEdit is false (e.g. employee role), drag is disabled and
+ * the grip is hidden — clicking still works.
+ */
 function DraggableBooking({
   booking,
   canEdit,
+  onQuickView,
 }: {
   booking: ScheduleBooking;
   canEdit: boolean;
+  onQuickView: (bookingId: string) => void;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: booking.id,
@@ -332,11 +392,16 @@ function DraggableBooking({
   return (
     <div
       ref={setNodeRef}
-      {...listeners}
       {...attributes}
       className={cn(isDragging && "opacity-30")}
     >
-      <BookingCard booking={booking} tone="" canDrag={canEdit} />
+      <BookingCard
+        booking={booking}
+        tone=""
+        canDrag={canEdit}
+        onClick={() => onQuickView(booking.id)}
+        dragListeners={listeners}
+      />
     </div>
   );
 }
@@ -346,25 +411,55 @@ function BookingCard({
   tone,
   dragging = false,
   canDrag = false,
+  onClick,
+  dragListeners,
 }: {
   booking: ScheduleBooking;
   tone: string;
   dragging?: boolean;
   canDrag?: boolean;
+  /** Fires on left-click anywhere on the card except the drag grip.
+   *  Omit in the DragOverlay preview. */
+  onClick?: () => void;
+  /** dnd-kit pointer listeners bound to the grip only, so click vs drag
+   *  don't fight each other. */
+  dragListeners?: DraggableSyntheticListeners;
 }) {
   return (
     <div
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onClick={onClick}
+      onKeyDown={
+        onClick
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onClick();
+              }
+            }
+          : undefined
+      }
       className={cn(
         "rounded-md border border-border bg-background p-2 text-xs shadow-sm",
         dragging && "shadow-lg ring-2 ring-primary",
-        canDrag && "cursor-grab active:cursor-grabbing",
+        onClick &&
+          "cursor-pointer transition-colors hover:border-foreground/30 hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         tone,
       )}
     >
       <div className="flex items-start justify-between gap-1">
         <div className="font-semibold">{booking.client_name}</div>
-        {canDrag ? (
-          <GripVertical className="h-3 w-3 shrink-0 text-muted-foreground" />
+        {canDrag && dragListeners ? (
+          <button
+            type="button"
+            aria-label="Drag to reschedule"
+            onClick={(e) => e.stopPropagation()}
+            {...dragListeners}
+            className="shrink-0 rounded p-0.5 text-muted-foreground cursor-grab active:cursor-grabbing hover:bg-muted hover:text-foreground"
+          >
+            <GripVertical className="h-3 w-3" />
+          </button>
         ) : null}
       </div>
       <div className="tabular-nums text-muted-foreground">
@@ -383,10 +478,12 @@ function UnassignedTray({
   bookings,
   canEdit,
   isPending,
+  onQuickView,
 }: {
   bookings: ScheduleBooking[];
   canEdit: boolean;
   isPending: boolean;
+  onQuickView: (bookingId: string) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({
     id: "unassigned",
@@ -416,7 +513,12 @@ function UnassignedTray({
       ) : (
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {bookings.map((b) => (
-            <DraggableBooking key={b.id} booking={b} canEdit={canEdit} />
+            <DraggableBooking
+              key={b.id}
+              booking={b}
+              canEdit={canEdit}
+              onQuickView={onQuickView}
+            />
           ))}
         </div>
       )}
