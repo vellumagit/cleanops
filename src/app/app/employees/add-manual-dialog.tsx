@@ -99,7 +99,7 @@ export function AddManualEmployeeDialog() {
               required
               autoComplete="name"
               defaultValue={state.values?.display_name}
-              placeholder="e.g. Svitlana Kovalenko"
+              placeholder="e.g. Svitlana P."
               aria-invalid={Boolean(state.errors?.display_name)}
             />
             {state.errors?.display_name && (
