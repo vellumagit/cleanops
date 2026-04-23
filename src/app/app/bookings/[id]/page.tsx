@@ -19,6 +19,11 @@ import {
 } from "@/lib/format";
 import { fetchJobPhotos } from "@/lib/job-photos";
 import { JobPhotos } from "@/app/field/jobs/[id]/job-photos";
+import {
+  BookingChecklist,
+  type BookingChecklistItem,
+} from "@/app/app/checklists/booking-checklist";
+import { AttachTemplateButton } from "@/app/app/checklists/attach-template-button";
 
 export const metadata = { title: "Booking" };
 
@@ -141,6 +146,29 @@ export default async function BookingDetailPage({
     )
     .filter((n): n is string => !!n);
 
+  // Checklist items attached to this booking + available templates for
+  // the attach dropdown.
+  const [{ data: checklistItems }, { data: templates }] = await Promise.all([
+    supabase
+      .from("booking_checklist_items" as never)
+      .select("id, ordinal, title, phase, is_required, checked_at")
+      .eq("booking_id" as never, booking.id as never)
+      .order("ordinal" as never, {
+        ascending: true,
+      } as never) as unknown as Promise<{
+      data: BookingChecklistItem[] | null;
+    }>,
+    supabase
+      .from("checklist_templates" as never)
+      .select("id, name")
+      .eq("is_active" as never, true as never)
+      .order("name" as never, {
+        ascending: true,
+      } as never) as unknown as Promise<{
+      data: Array<{ id: string; name: string }> | null;
+    }>,
+  ]);
+
   return (
     <PageShell
       title={humanizeEnum(booking.service_type)}
@@ -240,6 +268,35 @@ export default async function BookingDetailPage({
             photos={photos}
             canManage={canManagePhotos}
           />
+
+          {/* Checklist */}
+          <div className="rounded-lg border border-border bg-card p-5">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-sm font-semibold">Checklist</h2>
+            </div>
+            {canEdit && (
+              <div className="mb-4">
+                <AttachTemplateButton
+                  bookingId={booking.id}
+                  templates={templates ?? []}
+                />
+              </div>
+            )}
+            {checklistItems && checklistItems.length > 0 ? (
+              <BookingChecklist
+                bookingId={booking.id}
+                items={checklistItems}
+                canRemove={canEdit}
+              />
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                No checklist attached yet.
+                {canEdit
+                  ? " Pick a template above to apply one."
+                  : ""}
+              </p>
+            )}
+          </div>
 
           {/* Offer history */}
           {canEdit && (

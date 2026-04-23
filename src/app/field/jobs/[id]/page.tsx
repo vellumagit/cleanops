@@ -18,6 +18,10 @@ import {
 import { JobActionButtons } from "./job-actions";
 import { JobPhotos } from "./job-photos";
 import { fetchJobPhotos } from "@/lib/job-photos";
+import {
+  BookingChecklist,
+  type BookingChecklistItem,
+} from "@/app/app/checklists/booking-checklist";
 
 export const metadata = { title: "Job detail" };
 
@@ -84,6 +88,17 @@ export default async function FieldJobDetailPage({
 
   // Fetch photos only after the assignment check passes.
   const photos = await fetchJobPhotos(booking.id);
+
+  // Checklist items (if any).
+  const { data: checklistItems } = (await supabase
+    .from("booking_checklist_items" as never)
+    .select("id, ordinal, title, phase, is_required, checked_at")
+    .eq("booking_id" as never, booking.id as never)
+    .order("ordinal" as never, {
+      ascending: true,
+    } as never)) as unknown as {
+    data: BookingChecklistItem[] | null;
+  };
 
   return (
     <div className="space-y-5">
@@ -166,6 +181,17 @@ export default async function FieldJobDetailPage({
         photos={photos}
         canManage={true}
       />
+
+      {checklistItems && checklistItems.length > 0 && (
+        <div className="rounded-xl border border-border bg-card p-5">
+          <h2 className="mb-3 text-base font-semibold">Checklist</h2>
+          <BookingChecklist
+            bookingId={booking.id}
+            items={checklistItems}
+            canRemove={false}
+          />
+        </div>
+      )}
 
       <JobActionButtons bookingId={booking.id} status={booking.status} />
     </div>
