@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Briefcase, Home, Receipt, LogOut } from "lucide-react";
+import { Briefcase, Home, Receipt, LogOut, CalendarPlus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getCurrentClient } from "@/lib/client-auth";
 
@@ -80,5 +80,6 @@ export default async function ClientLayout({
 const NAV = [
   { href: "/client", label: "Home", icon: Home },
   { href: "/client/jobs", label: "Jobs", icon: Briefcase },
+  { href: "/client/request", label: "Request", icon: CalendarPlus },
   { href: "/client/invoices", label: "Invoices", icon: Receipt },
 ];

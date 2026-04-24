@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Plus, Repeat } from "lucide-react";
+import { Plus, Repeat, Inbox } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
@@ -94,6 +94,15 @@ export default async function BookingsPage({
     count: number | null;
   }>);
 
+  // Pending client-submitted booking requests from the portal — surface
+  // the count so the owner notices without having to navigate deeper.
+  const { count: pendingRequestCount } = await (supabase
+    .from("booking_requests" as never)
+    .select("id", { count: "exact", head: true })
+    .eq("status" as never, "pending" as never) as unknown as Promise<{
+    count: number | null;
+  }>);
+
   return (
     <PageShell
       title={showArchived ? "Bookings — archived" : "Bookings"}
@@ -110,6 +119,15 @@ export default async function BookingsPage({
           />
           {canEdit && !showArchived && (
             <>
+              {(pendingRequestCount ?? 0) > 0 && (
+                <Link
+                  href="/app/bookings/requests"
+                  className={buttonVariants({ variant: "outline" })}
+                >
+                  <Inbox className="h-4 w-4" />
+                  Requests ({pendingRequestCount})
+                </Link>
+              )}
               {(seriesCount ?? 0) > 0 && (
                 <Link
                   href="/app/bookings/series"

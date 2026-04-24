@@ -24,6 +24,7 @@ export type AuditEntity =
   | "employee"
   | "package"
   | "booking"
+  | "booking_request"
   | "estimate"
   | "contract"
   | "invoice"
