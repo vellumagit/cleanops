@@ -18,6 +18,7 @@ function readFormValues(formData: FormData) {
     address: String(formData.get("address") ?? ""),
     notes: String(formData.get("notes") ?? ""),
     preferred_contact: String(formData.get("preferred_contact") ?? "email"),
+    preferred_cleaner_id: String(formData.get("preferred_cleaner_id") ?? ""),
   };
 }
 
@@ -31,7 +32,7 @@ export async function createClientAction(
 
   const { membership, supabase } = await getActionContext();
 
-  const { data: inserted, error } = await supabase
+  const { data: inserted, error } = (await supabase
     .from("clients")
     .insert({
       organization_id: membership.organization_id,
@@ -41,9 +42,13 @@ export async function createClientAction(
       address: parsed.data.address ?? null,
       notes: parsed.data.notes ?? null,
       preferred_contact: parsed.data.preferred_contact,
-    })
+      preferred_cleaner_id: parsed.data.preferred_cleaner_id ?? null,
+    } as never)
     .select("id")
-    .single();
+    .single()) as unknown as {
+    data: { id: string } | null;
+    error: { message: string } | null;
+  };
 
   if (error || !inserted) {
     return { errors: { _form: error?.message ?? "Insert failed" }, values: raw };
@@ -73,13 +78,25 @@ export async function updateClientAction(
 
   const { membership, supabase } = await getActionContext();
 
-  const { data: previous } = await supabase
+  const { data: previous } = (await supabase
     .from("clients")
-    .select("name, email, phone, address, notes, preferred_contact")
+    .select(
+      "name, email, phone, address, notes, preferred_contact, preferred_cleaner_id",
+    )
     .eq("id", id)
-    .maybeSingle();
+    .maybeSingle()) as unknown as {
+    data: {
+      name: string;
+      email: string | null;
+      phone: string | null;
+      address: string | null;
+      notes: string | null;
+      preferred_contact: string;
+      preferred_cleaner_id: string | null;
+    } | null;
+  };
 
-  const { error } = await supabase
+  const { error } = await (supabase
     .from("clients")
     .update({
       name: parsed.data.name,
@@ -88,8 +105,9 @@ export async function updateClientAction(
       address: parsed.data.address ?? null,
       notes: parsed.data.notes ?? null,
       preferred_contact: parsed.data.preferred_contact,
-    })
-    .eq("id", id);
+      preferred_cleaner_id: parsed.data.preferred_cleaner_id ?? null,
+    } as never)
+    .eq("id", id) as unknown as Promise<{ error: { message: string } | null }>);
 
   if (error) {
     return { errors: { _form: error.message }, values: raw };

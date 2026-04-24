@@ -23,16 +23,22 @@ type Defaults = {
   address?: string | null;
   notes?: string | null;
   preferred_contact?: string;
+  preferred_cleaner_id?: string | null;
 };
 
 export function ClientForm({
   mode,
   id,
   defaults,
+  cleaners = [],
 }: {
   mode: "create" | "edit";
   id?: string;
   defaults?: Defaults;
+  /** Active memberships for the "Preferred cleaner" dropdown. Passing
+   *  an empty array hides the dropdown — useful for orgs that haven't
+   *  added any employees yet (setup-first-client flow). */
+  cleaners?: Array<{ id: string; label: string }>;
 }) {
   const action =
     mode === "create"
@@ -108,6 +114,28 @@ export function ClientForm({
           <option value="sms">SMS</option>
         </FormSelect>
       </FormField>
+
+      {cleaners.length > 0 && (
+        <FormField
+          label="Preferred cleaner"
+          htmlFor="preferred_cleaner_id"
+          error={state.errors?.preferred_cleaner_id}
+          hint="Auto-fills the assignee on new bookings for this client. Leave blank to pick per-booking."
+        >
+          <FormSelect
+            id="preferred_cleaner_id"
+            name="preferred_cleaner_id"
+            defaultValue={v.preferred_cleaner_id ?? ""}
+          >
+            <option value="">— No preference —</option>
+            {cleaners.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.label}
+              </option>
+            ))}
+          </FormSelect>
+        </FormField>
+      )}
 
       <FormField label="Notes" htmlFor="notes" error={state.errors?.notes}>
         <Textarea

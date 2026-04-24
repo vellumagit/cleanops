@@ -11,10 +11,24 @@ import { memberDisplayName } from "@/lib/member-display";
 export async function fetchBookingFormOptions() {
   const supabase = await createSupabaseServerClient();
   const [clients, packages, employees] = await Promise.all([
+    // preferred_cleaner_id lets the form auto-fill the primary
+    // assignee when a client is picked — one fewer click when the
+    // client always wants the same cleaner. Column isn't in generated
+    // types yet; cast the select result.
     supabase
       .from("clients")
-      .select("id, name, address, notes")
-      .order("name"),
+      .select("id, name, address, notes, preferred_cleaner_id")
+      .order("name") as unknown as Promise<{
+      data:
+        | Array<{
+            id: string;
+            name: string;
+            address: string | null;
+            notes: string | null;
+            preferred_cleaner_id: string | null;
+          }>
+        | null;
+    }>,
     supabase
       .from("packages")
       .select("id, name, price_cents, duration_minutes")
@@ -35,6 +49,7 @@ export async function fetchBookingFormOptions() {
         label: c.name,
         address: c.address ?? null,
         notes: c.notes ?? null,
+        preferred_cleaner_id: c.preferred_cleaner_id ?? null,
       })) ?? [],
     packages:
       packages.data?.map((p) => ({

@@ -3,6 +3,7 @@ import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
 import { ClientForm } from "../../client-form";
+import { fetchClientFormCleaners } from "../../options";
 import { DeleteClientForm } from "./delete-form";
 import { PortalInviteCard } from "./portal-invite-card";
 
@@ -17,28 +18,33 @@ export default async function EditClientPage({
   const { id } = await params;
   const supabase = await createSupabaseServerClient();
 
-  const { data: client, error } = (await supabase
-    .from("clients")
-    .select(
-      "id, name, email, phone, address, notes, preferred_contact, profile_id, portal_invited_at, portal_accepted_at, portal_invite_expires_at",
-    )
-    .eq("id", id)
-    .maybeSingle()) as unknown as {
-    data: {
-      id: string;
-      name: string;
-      email: string | null;
-      phone: string | null;
-      address: string | null;
-      notes: string | null;
-      preferred_contact: string;
-      profile_id: string | null;
-      portal_invited_at: string | null;
-      portal_accepted_at: string | null;
-      portal_invite_expires_at: string | null;
-    } | null;
-    error: { message: string } | null;
-  };
+  const [clientResult, cleaners] = await Promise.all([
+    supabase
+      .from("clients")
+      .select(
+        "id, name, email, phone, address, notes, preferred_contact, preferred_cleaner_id, profile_id, portal_invited_at, portal_accepted_at, portal_invite_expires_at",
+      )
+      .eq("id", id)
+      .maybeSingle() as unknown as Promise<{
+      data: {
+        id: string;
+        name: string;
+        email: string | null;
+        phone: string | null;
+        address: string | null;
+        notes: string | null;
+        preferred_contact: string;
+        preferred_cleaner_id: string | null;
+        profile_id: string | null;
+        portal_invited_at: string | null;
+        portal_accepted_at: string | null;
+        portal_invite_expires_at: string | null;
+      } | null;
+      error: { message: string } | null;
+    }>,
+    fetchClientFormCleaners(),
+  ]);
+  const { data: client, error } = clientResult;
 
   if (error) throw error;
   if (!client) notFound();
@@ -50,6 +56,7 @@ export default async function EditClientPage({
           <ClientForm
             mode="edit"
             id={client.id}
+            cleaners={cleaners}
             defaults={{
               name: client.name,
               email: client.email,
@@ -57,6 +64,7 @@ export default async function EditClientPage({
               address: client.address,
               notes: client.notes,
               preferred_contact: client.preferred_contact,
+              preferred_cleaner_id: client.preferred_cleaner_id,
             }}
           />
         </div>

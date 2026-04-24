@@ -45,6 +45,11 @@ type Option = { id: string; label: string };
 export type ClientOption = Option & {
   address: string | null;
   notes: string | null;
+  /** Pre-assigned cleaner on this client. When set and the primary
+   *  assignee is still empty on this form, picking this client will
+   *  auto-fill the assignee dropdown — saves a click for clients who
+   *  always want the same cleaner. */
+  preferred_cleaner_id: string | null;
 };
 
 /** Package option carries price + duration so selecting a package can
@@ -163,6 +168,17 @@ export function BookingForm({
     if (!c) return;
     if (!addressValue && c.address) setAddressValue(c.address);
     if (!notesValue && c.notes) setNotesValue(c.notes);
+    // Pre-fill the primary assignee from the client's preferred cleaner
+    // when no assignee is chosen yet. Same "only-if-empty" rule as
+    // everything else — switching clients never clobbers a user
+    // deliberate pick.
+    if (!primaryAssignee && c.preferred_cleaner_id) {
+      // Belt-and-braces: only auto-pick if the preferred cleaner is
+      // actually in the employees list (they may have been
+      // deactivated since the client was last edited).
+      const exists = employees.some((e) => e.id === c.preferred_cleaner_id);
+      if (exists) setPrimaryAssignee(c.preferred_cleaner_id);
+    }
   }
 
   function handlePackageChange(packageId: string) {
