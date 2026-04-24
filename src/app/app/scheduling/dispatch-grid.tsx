@@ -101,12 +101,17 @@ export function DispatchGrid({
   employees,
   canEdit,
   tz,
+  offDays = {},
 }: {
   date: string;
   bookings: ScheduleBooking[];
   employees: ScheduleEmployee[];
   canEdit: boolean;
   tz: string;
+  /** Employee → YYYY-MM-DD list they're off. If the current `date` is
+   *  in an employee's list, their whole column is visually shaded +
+   *  flagged in the header so the owner sees at a glance. */
+  offDays?: Record<string, string[]>;
 }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
@@ -123,6 +128,16 @@ export function DispatchGrid({
     () => new Map(bookings.map((b) => [b.id, b])),
     [bookings],
   );
+
+  // Set of employee ids who are off on the currently-viewed date. We
+  // flatten once up front so the per-column render is O(1).
+  const offEmployeeIds = useMemo(() => {
+    const s = new Set<string>();
+    for (const [empId, dates] of Object.entries(offDays)) {
+      if (dates.includes(date)) s.add(empId);
+    }
+    return s;
+  }, [offDays, date]);
 
   // Bucket bookings by employee, filtered to the day we're rendering.
   const bookingsByEmployee = useMemo(() => {
@@ -276,25 +291,38 @@ export function DispatchGrid({
               No active employees.
             </div>
           ) : (
-            employees.map((emp, idx) => (
-              <div
-                key={emp.id}
-                className="border-r border-border px-3 py-2 last:border-r-0"
-              >
-                <div className="flex items-center gap-2">
-                  <span
-                    className="h-2 w-2 shrink-0 rounded-full"
-                    style={{ backgroundColor: toneFor(idx) }}
-                  />
-                  <span className="truncate text-sm font-medium">
-                    {emp.name}
-                  </span>
+            employees.map((emp, idx) => {
+              const isOff = offEmployeeIds.has(emp.id);
+              return (
+                <div
+                  key={emp.id}
+                  className={cn(
+                    "border-r border-border px-3 py-2 last:border-r-0",
+                    isOff && "bg-muted/30",
+                  )}
+                >
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="h-2 w-2 shrink-0 rounded-full"
+                      style={{ backgroundColor: toneFor(idx) }}
+                    />
+                    <span
+                      className={cn(
+                        "truncate text-sm font-medium",
+                        isOff && "text-muted-foreground line-through",
+                      )}
+                    >
+                      {emp.name}
+                    </span>
+                  </div>
+                  <p className="mt-0.5 text-[10px] text-muted-foreground">
+                    {isOff
+                      ? "Off today"
+                      : `${bookingsByEmployee.get(emp.id)?.length ?? 0} jobs`}
+                  </p>
                 </div>
-                <p className="mt-0.5 text-[10px] text-muted-foreground">
-                  {bookingsByEmployee.get(emp.id)?.length ?? 0} jobs
-                </p>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
 
@@ -337,6 +365,7 @@ export function DispatchGrid({
                 canEdit={canEdit}
                 tz={tz}
                 date={date}
+                isOff={offEmployeeIds.has(emp.id)}
                 onQuickView={setQuickViewId}
                 onSlotClick={handleSlotClick}
               />
@@ -395,6 +424,7 @@ function EmployeeColumn({
   canEdit,
   tz,
   date,
+  isOff,
   onQuickView,
   onSlotClick,
 }: {
@@ -405,11 +435,21 @@ function EmployeeColumn({
   canEdit: boolean;
   tz: string;
   date: string;
+  /** Employee is off today — whole column gets a striped background
+   *  + the header says "Off today". Slots are still droppable (server
+   *  is the source of truth on whether the drop is allowed). */
+  isOff: boolean;
   onQuickView: (id: string) => void;
   onSlotClick: (employeeId: string, minutes: number) => void;
 }) {
   return (
-    <div className="relative border-r border-border last:border-r-0">
+    <div
+      className={cn(
+        "relative border-r border-border last:border-r-0",
+        isOff &&
+          "bg-[repeating-linear-gradient(45deg,transparent,transparent_10px,rgba(0,0,0,0.04)_10px,rgba(0,0,0,0.04)_20px)] dark:bg-[repeating-linear-gradient(45deg,transparent,transparent_10px,rgba(255,255,255,0.04)_10px,rgba(255,255,255,0.04)_20px)]",
+      )}
+    >
       {/* Slot grid — lines every 30 min, thicker every hour */}
       {Array.from({ length: SLOTS_PER_DAY }, (_, slotIdx) => {
         const minutes = slotIdx * SLOT_MINUTES;

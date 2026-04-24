@@ -95,6 +95,11 @@ export function WeekGrid({
    *  and to format start times — so an 8am Edmonton booking shows as
    *  "8:00 AM" regardless of the viewer's browser tz. */
   tz,
+  /** Map of employee membership_id → YYYY-MM-DD dates they're off
+   *  (PTO approved + explicit 'off' overrides). Day cells that land
+   *  on one of these dates get a striped grey background so owners
+   *  don't accidentally assign a job onto a known-unavailable day. */
+  offDays = {},
 }: {
   /** ISO date YYYY-MM-DD for Monday of the displayed week (or the day
    *  itself in day view). */
@@ -104,6 +109,7 @@ export function WeekGrid({
   canEdit: boolean;
   view?: "week" | "day";
   tz: string;
+  offDays?: Record<string, string[]>;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -135,6 +141,16 @@ export function WeekGrid({
         .sort((a, b) => a.scheduled_at.localeCompare(b.scheduled_at)),
     [bookings],
   );
+
+  // Convert the JSON-friendly offDays map to a Map<string, Set<string>>
+  // once up front so cell rendering is O(1) per check.
+  const offDaysByEmployee = useMemo(() => {
+    const m = new Map<string, Set<string>>();
+    for (const [id, dates] of Object.entries(offDays)) {
+      m.set(id, new Set(dates));
+    }
+    return m;
+  }, [offDays]);
 
   /** Map of `${employeeId}|${YYYY-MM-DD}` → bookings, for fast cell lookup. */
   const cellMap = useMemo(() => {
@@ -276,6 +292,7 @@ export function WeekGrid({
                 canEdit={canEdit}
                 onQuickView={setQuickViewId}
                 tz={tz}
+                offDates={offDaysByEmployee.get(emp.id) ?? new Set()}
               />
             ))}
           </div>
@@ -311,6 +328,7 @@ function EmployeeRow({
   canEdit,
   onQuickView,
   tz,
+  offDates,
 }: {
   employee: ScheduleEmployee;
   tone: string;
@@ -319,6 +337,8 @@ function EmployeeRow({
   canEdit: boolean;
   onQuickView: (bookingId: string) => void;
   tz: string;
+  /** Days this employee is off (YYYY-MM-DD set). */
+  offDates: Set<string>;
 }) {
   return (
     <>
@@ -332,17 +352,19 @@ function EmployeeRow({
         {employee.name}
       </div>
       {days.map((d) => {
-        const key = `${employee.id}|${dateKey(d)}`;
+        const dateStr = dateKey(d);
+        const key = `${employee.id}|${dateStr}`;
         const cellBookings = cellMap.get(key) ?? [];
         return (
           <DayCell
             key={key}
             employeeId={employee.id}
-            date={dateKey(d)}
+            date={dateStr}
             bookings={cellBookings}
             canEdit={canEdit}
             onQuickView={onQuickView}
             tz={tz}
+            isOff={offDates.has(dateStr)}
           />
         );
       })}
@@ -357,6 +379,7 @@ function DayCell({
   canEdit,
   onQuickView,
   tz,
+  isOff,
 }: {
   employeeId: string;
   date: string;
@@ -364,6 +387,10 @@ function DayCell({
   canEdit: boolean;
   onQuickView: (bookingId: string) => void;
   tz: string;
+  /** Employee is known to be off this date (PTO / explicit override).
+   *  Cell gets a striped grey background so it reads at a glance. Still
+   *  droppable — server will reject or warn based on its own logic. */
+  isOff: boolean;
 }) {
   const droppableId = `cell:${employeeId}:${date}`;
   const { setNodeRef, isOver } = useDroppable({
@@ -377,7 +404,9 @@ function DayCell({
       className={cn(
         "min-h-[110px] space-y-2 border-b border-r border-border p-2 transition-colors",
         isOver && "bg-primary/5 ring-2 ring-inset ring-primary/40",
+        isOff && !isOver && "bg-muted/40 bg-[repeating-linear-gradient(45deg,transparent,transparent_8px,rgba(0,0,0,0.04)_8px,rgba(0,0,0,0.04)_16px)] dark:bg-[repeating-linear-gradient(45deg,transparent,transparent_8px,rgba(255,255,255,0.04)_8px,rgba(255,255,255,0.04)_16px)]",
       )}
+      title={isOff ? "Employee is off this day" : undefined}
     >
       {bookings.map((b) => (
         <DraggableBooking

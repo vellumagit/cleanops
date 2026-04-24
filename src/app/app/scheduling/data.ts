@@ -60,7 +60,15 @@ export function formatWeekParam(d: Date): string {
 }
 
 /**
- * Fetch bookings + employees for a schedule range.
+ * Serialized "employee is off on these YYYY-MM-DD dates" lookup. Keys
+ * are membership ids, values are an array (serialized — JSON-safe) of
+ * date strings. Consumers convert back to a Set for O(1) lookup per
+ * (employee, day) cell.
+ */
+export type OffDaysByEmployee = Record<string, string[]>;
+
+/**
+ * Fetch bookings + employees + off-days for a schedule range.
  *
  * @param rangeStart First day to include (00:00 local).
  * @param rangeEnd   Exclusive end — pass `addDays(rangeStart, 7)` for
@@ -73,12 +81,23 @@ export async function fetchScheduleWeek(
 ): Promise<{
   bookings: ScheduleBooking[];
   employees: ScheduleEmployee[];
+  /** Days each employee is off (PTO approved + explicit availability
+   *  overrides of kind='off'). Week grid + Dispatch view shade the
+   *  cells / columns for these so owners can't accidentally assign a
+   *  job onto a day the cleaner is known to be unavailable. */
+  offDays: OffDaysByEmployee;
 }> {
   const supabase = await createSupabaseServerClient();
   const weekStart = rangeStart;
   const weekEnd = rangeEnd ?? addDays(weekStart, 7);
 
-  const [bookingsRes, membersRes] = await Promise.all([
+  // Range bounds for the off-day queries. PTO uses date columns, so we
+  // pass YYYY-MM-DD; availability_overrides same thing. Using the
+  // range as [weekStart, weekEnd - 1 day] since weekEnd is exclusive.
+  const rangeStartStr = formatWeekParam(weekStart);
+  const rangeEndStr = formatWeekParam(addDays(weekEnd, -1));
+
+  const [bookingsRes, membersRes, overridesRes, ptoRes] = await Promise.all([
     supabase
       .from("bookings")
       .select(
@@ -108,6 +127,30 @@ export async function fetchScheduleWeek(
       )
       .eq("status", "active")
       .in("role", ["employee", "admin", "owner"]),
+    // availability_overrides with kind='off' that land inside the
+    // displayed range. kind='custom' is ignored here (v1 shading is
+    // "fully off" only — partial shading for custom-hours is a
+    // follow-up once the UX is validated).
+    (supabase
+      .from("availability_overrides" as never)
+      .select("membership_id, date, kind")
+      .eq("kind" as never, "off" as never)
+      .gte("date" as never, rangeStartStr as never)
+      .lte("date" as never, rangeEndStr as never)) as unknown as Promise<{
+      data: Array<{
+        membership_id: string;
+        date: string;
+      }> | null;
+      error: { message: string } | null;
+    }>,
+    // Approved PTO overlapping the range. A request from Mon-Fri with
+    // only Wed in view still contributes Wed as off.
+    supabase
+      .from("pto_requests")
+      .select("employee_id, start_date, end_date, status")
+      .eq("status", "approved")
+      .lte("start_date", rangeEndStr)
+      .gte("end_date", rangeStartStr),
   ]);
 
   if (bookingsRes.error) throw bookingsRes.error;
@@ -134,5 +177,52 @@ export async function fetchScheduleWeek(
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
 
-  return { bookings, employees };
+  // Merge overrides + PTO into a single "employee → off dates" map.
+  const offDaysMap = new Map<string, Set<string>>();
+  const addOff = (memberId: string, date: string) => {
+    let s = offDaysMap.get(memberId);
+    if (!s) {
+      s = new Set();
+      offDaysMap.set(memberId, s);
+    }
+    s.add(date);
+  };
+
+  for (const row of overridesRes.data ?? []) {
+    addOff(row.membership_id, row.date);
+  }
+
+  // Expand each PTO range into individual YYYY-MM-DD dates, clamped
+  // to the display range so we don't balloon the set with dates we'll
+  // never render.
+  for (const req of (ptoRes.data ?? []) as Array<{
+    employee_id: string;
+    start_date: string;
+    end_date: string;
+  }>) {
+    const clampStart =
+      req.start_date < rangeStartStr ? rangeStartStr : req.start_date;
+    const clampEnd =
+      req.end_date > rangeEndStr ? rangeEndStr : req.end_date;
+    // Iterate day-by-day via Date math. start_date / end_date are
+    // plain YYYY-MM-DD so this is safe from tz drift.
+    const [sy, sm, sd] = clampStart.split("-").map(Number);
+    const [ey, em, ed] = clampEnd.split("-").map(Number);
+    const cursor = new Date(sy, sm - 1, sd);
+    const endLocal = new Date(ey, em - 1, ed);
+    while (cursor <= endLocal) {
+      const y = cursor.getFullYear();
+      const m = String(cursor.getMonth() + 1).padStart(2, "0");
+      const d = String(cursor.getDate()).padStart(2, "0");
+      addOff(req.employee_id, `${y}-${m}-${d}`);
+      cursor.setDate(cursor.getDate() + 1);
+    }
+  }
+
+  const offDays: OffDaysByEmployee = {};
+  for (const [id, set] of offDaysMap) {
+    offDays[id] = Array.from(set).sort();
+  }
+
+  return { bookings, employees, offDays };
 }

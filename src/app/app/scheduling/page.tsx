@@ -50,7 +50,7 @@ export default async function SchedulingPage({
   const fetchStart = weekStart;
   const fetchEnd =
     view === "day" ? addDays(weekStart, 1) : addDays(weekStart, 7);
-  const { bookings, employees } = await fetchScheduleWeek(
+  const { bookings, employees, offDays } = await fetchScheduleWeek(
     fetchStart,
     fetchEnd,
   );
@@ -153,6 +153,7 @@ export default async function SchedulingPage({
             employees={employees}
             canEdit={canEdit}
             tz={tz}
+            offDays={offDays}
           />
         ) : (
           <WeekGrid
@@ -162,6 +163,7 @@ export default async function SchedulingPage({
             canEdit={canEdit}
             view={view}
             tz={tz}
+            offDays={offDays}
           />
         )}
       </div>
