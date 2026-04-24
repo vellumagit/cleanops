@@ -164,7 +164,23 @@ async function getOrgAdminRecipients(
 // 1. Auto-generate a draft invoice when a job is completed
 // ─────────────────────────────────────────────────────────────────
 
-export async function autoInvoiceOnJobComplete(bookingId: string) {
+/**
+ * Result shape so callers that want to surface errors to the user
+ * (e.g. the "Generate invoice now" button) can see what happened.
+ * The legacy fire-and-forget pattern still works — callers can
+ * ignore the return.
+ */
+export type AutoInvoiceResult =
+  | { ok: true; invoiceId: string; number: string | null }
+  | { ok: false; reason: string };
+
+export async function autoInvoiceOnJobComplete(
+  bookingId: string,
+  /** When true, skip the isAutomationEnabled gate. Used by the
+   *  "Generate invoice now" button so the owner can force an invoice
+   *  even if the automation toggle is off. */
+  options?: { force?: boolean },
+): Promise<AutoInvoiceResult> {
   try {
     const db = admin();
 
@@ -177,73 +193,68 @@ export async function autoInvoiceOnJobComplete(bookingId: string) {
       .eq("id", bookingId)
       .maybeSingle();
 
-    if (!booking || !booking.client_id) {
+    if (!booking) {
+      const reason = `Booking ${bookingId} not found.`;
+      console.log(`[auto] autoInvoiceOnJobComplete: ${reason}`);
+      return { ok: false, reason };
+    }
+    if (!booking.client_id) {
+      const reason =
+        "This booking has no client assigned, so we can't draft an invoice.";
       console.log(
-        `[auto] autoInvoiceOnJobComplete: skipping booking ${bookingId} — no booking or client`,
+        `[auto] autoInvoiceOnJobComplete: booking ${bookingId} has no client_id`,
       );
-      return;
+      return { ok: false, reason };
     }
 
     if (
+      !options?.force &&
       !(await isAutomationEnabled(
         booking.organization_id,
         "auto_invoice_on_job_complete",
       ))
     ) {
+      const reason =
+        "Auto-invoice is disabled for this org in Settings → Automations.";
       console.log(
         `[auto] Auto-invoice paused for org ${booking.organization_id}`,
       );
-      return;
+      return { ok: false, reason };
     }
 
-    // Dedupe: if an invoice already exists for this booking, don't
-    // create a second one. Completing a job twice (e.g. an edit flip
-    // from completed→pending→completed) should not produce duplicates.
-    const { data: existing } = await db
+    // Dedupe: if an invoice already exists for this booking, return
+    // its id rather than creating a second. Completing a job twice
+    // (or force-clicking the manual button after a successful auto
+    // run) should not produce duplicates.
+    const { data: existing } = (await db
       .from("invoices")
-      .select("id")
+      .select("id, number")
       .eq("booking_id", booking.id)
       .limit(1)
-      .maybeSingle();
+      .maybeSingle()) as unknown as {
+      data: { id: string; number: string | null } | null;
+    };
 
     if (existing) {
       console.log(
         `[auto] autoInvoiceOnJobComplete: booking ${bookingId} already invoiced (${existing.id})`,
       );
-      return;
+      return {
+        ok: true,
+        invoiceId: existing.id,
+        number: existing.number,
+      };
     }
 
-    // Apply the org's default tax if configured. This mirrors the
-    // behavior of manually-created invoices from Settings → Currency &
-    // tax — otherwise an auto-invoice for $100 reads differently than
-    // a manual one for $100 in a tax jurisdiction.
-    const { data: orgData } = (await db
-      .from("organizations")
-      .select("default_tax_rate_bps, default_tax_label")
-      .eq("id", booking.organization_id)
-      .maybeSingle()) as unknown as {
-      data: {
-        default_tax_rate_bps: number | null;
-        default_tax_label: string | null;
-      } | null;
-    };
-    const defaultRateBps = orgData?.default_tax_rate_bps ?? null;
-    const defaultLabel = orgData?.default_tax_label ?? null;
-
     const subtotalCents = booking.total_cents ?? 0;
-    const taxAmountCents = defaultRateBps
-      ? Math.round((subtotalCents * defaultRateBps) / 10000)
-      : null;
-    const totalCents = subtotalCents + (taxAmountCents ?? 0);
-
     const scheduledDate = new Date(booking.scheduled_at);
     const dueDate = new Date(scheduledDate);
     dueDate.setDate(dueDate.getDate() + 14); // Net 14
 
-    // Insert the invoice. The `number` and `public_token` columns are
-    // assigned automatically by BEFORE INSERT triggers
-    // (assign_invoice_number / assign_invoice_public_token), so we
-    // don't set them here — doing so would duplicate and mis-sequence.
+    // Core insert uses ONLY the long-standing invoice columns. Tax +
+    // line items are applied as separate steps below so a missing
+    // migration or a new column can't take down the whole path.
+    // `number` and `public_token` are auto-assigned by triggers.
     const { data: invoice, error: invErr } = (await db
       .from("invoices")
       .insert({
@@ -251,10 +262,7 @@ export async function autoInvoiceOnJobComplete(bookingId: string) {
         client_id: booking.client_id,
         booking_id: booking.id,
         status: "draft",
-        amount_cents: totalCents,
-        tax_rate_bps: defaultRateBps,
-        tax_amount_cents: taxAmountCents,
-        tax_label: defaultRateBps ? defaultLabel : null,
+        amount_cents: subtotalCents,
         due_date: dueDate.toISOString().split("T")[0],
       } as never)
       .select("id, number")
@@ -264,16 +272,61 @@ export async function autoInvoiceOnJobComplete(bookingId: string) {
     };
 
     if (invErr || !invoice) {
+      const reason =
+        invErr?.message ??
+        "The invoice insert returned no row — check Vercel logs.";
       console.error(
         "[auto] autoInvoiceOnJobComplete invoice insert failed:",
-        invErr?.message,
+        reason,
       );
-      return;
+      return { ok: false, reason };
     }
 
-    // Line items live on a separate table, not as a column on invoices.
-    // Insert one row describing what was done; the owner can add more
-    // before sending.
+    // Optional: apply the org's default tax if the columns exist on
+    // this deployment AND the org has configured a default. Done as
+    // a separate UPDATE so a missing migration leaves us with an
+    // untaxed invoice instead of no invoice at all.
+    try {
+      const { data: orgData } = (await db
+        .from("organizations")
+        .select("default_tax_rate_bps, default_tax_label")
+        .eq("id", booking.organization_id)
+        .maybeSingle()) as unknown as {
+        data: {
+          default_tax_rate_bps: number | null;
+          default_tax_label: string | null;
+        } | null;
+      };
+      const rateBps = orgData?.default_tax_rate_bps ?? null;
+      if (rateBps && rateBps > 0) {
+        const taxAmountCents = Math.round((subtotalCents * rateBps) / 10000);
+        const totalCents = subtotalCents + taxAmountCents;
+        const { error: taxErr } = await db
+          .from("invoices")
+          .update({
+            amount_cents: totalCents,
+            tax_rate_bps: rateBps,
+            tax_amount_cents: taxAmountCents,
+            tax_label: orgData?.default_tax_label ?? null,
+          } as never)
+          .eq("id", invoice.id);
+        if (taxErr) {
+          console.error(
+            "[auto] autoInvoiceOnJobComplete tax update failed (invoice still created):",
+            taxErr.message,
+          );
+        }
+      }
+    } catch (err) {
+      console.error(
+        "[auto] autoInvoiceOnJobComplete tax step threw (invoice still created):",
+        err,
+      );
+    }
+
+    // Line items live on a separate table, not as a column on
+    // invoices. Insert one starter row describing what was done so
+    // the owner sees something when they open the invoice.
     const { error: liErr } = await db.from("invoice_line_items").insert({
       organization_id: booking.organization_id,
       invoice_id: invoice.id,
@@ -285,18 +338,23 @@ export async function autoInvoiceOnJobComplete(bookingId: string) {
 
     if (liErr) {
       console.error(
-        "[auto] autoInvoiceOnJobComplete line item insert failed:",
+        "[auto] autoInvoiceOnJobComplete line item insert failed (invoice still created):",
         liErr.message,
       );
-      // Don't roll back — the invoice itself is fine, the owner can
-      // add line items by hand. Logging is enough.
     }
 
     console.log(
       `[auto] Draft invoice ${invoice.number ?? invoice.id} created for booking ${bookingId}`,
     );
+    return {
+      ok: true,
+      invoiceId: invoice.id,
+      number: invoice.number,
+    };
   } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
     console.error("[auto] autoInvoiceOnJobComplete failed:", err);
+    return { ok: false, reason };
   }
 }
 

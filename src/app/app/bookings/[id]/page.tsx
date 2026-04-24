@@ -20,6 +20,7 @@ import {
 import { fetchJobPhotos } from "@/lib/job-photos";
 import { memberDisplayName } from "@/lib/member-display";
 import { getOrgTimezone } from "@/lib/org-timezone";
+import { GenerateInvoiceButton } from "./generate-invoice-button";
 import { JobPhotos } from "@/app/field/jobs/[id]/job-photos";
 import {
   BookingChecklist,
@@ -123,6 +124,24 @@ export default async function BookingDetailPage({
 
   const bookingStatus = booking.status as BookingStatus;
 
+  // Does this completed booking already have an invoice? If not AND
+  // the status is completed, surface a "Generate invoice" escape
+  // hatch so the owner doesn't have to pick through Vercel logs when
+  // the auto-run didn't fire (migration not applied, automation
+  // toggle off, etc.).
+  const { data: existingInvoice } = canEdit
+    ? await supabase
+        .from("invoices")
+        .select("id")
+        .eq("booking_id", id)
+        .limit(1)
+        .maybeSingle()
+    : { data: null };
+  const showGenerateInvoice =
+    canEdit &&
+    bookingStatus === "completed" &&
+    !existingInvoice;
+
   // Photos are read-visible to any org member (RLS enforces that). Upload
   // + delete UI only shows for owner/admin/manager on the admin side.
   const photos = await fetchJobPhotos(booking.id);
@@ -183,6 +202,9 @@ export default async function BookingDetailPage({
       actions={
         canEdit ? (
           <div className="flex items-center gap-2">
+            {showGenerateInvoice && (
+              <GenerateInvoiceButton bookingId={booking.id} />
+            )}
             <Link
               href={`/app/bookings/${booking.id}/offer`}
               className={buttonVariants({ variant: "outline" })}

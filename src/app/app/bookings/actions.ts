@@ -784,3 +784,45 @@ export async function cancelSeriesAction(formData: FormData) {
   revalidatePath("/app");
   redirect("/app/bookings");
 }
+
+/**
+ * Force-generate the draft invoice for a booking. Used by the
+ * "Generate invoice now" button on the booking detail page when the
+ * auto-run didn't produce one (migration not applied, automation
+ * toggle off, or any other silent failure).
+ *
+ * Returns a useActionState-style result so the button can render the
+ * success/error message inline. Bypasses the isAutomationEnabled
+ * gate via `force: true` — if the owner clicks the button, they've
+ * explicitly asked for the invoice.
+ */
+export type GenerateInvoiceState = {
+  error?: string;
+  ok?: boolean;
+  invoiceId?: string;
+  invoiceNumber?: string | null;
+};
+
+export async function generateInvoiceFromBookingAction(
+  _prev: GenerateInvoiceState,
+  formData: FormData,
+): Promise<GenerateInvoiceState> {
+  const id = String(formData.get("booking_id") ?? "");
+  if (!id) return { error: "Missing booking id." };
+
+  const { membership } = await getActionContext();
+  if (!["owner", "admin", "manager"].includes(membership.role)) {
+    return { error: "Only owners, admins, or managers can generate invoices." };
+  }
+
+  const result = await autoInvoiceOnJobComplete(id, { force: true });
+  if (!result.ok) return { error: result.reason };
+
+  revalidatePath(`/app/bookings/${id}`);
+  revalidatePath("/app/invoices");
+  return {
+    ok: true,
+    invoiceId: result.invoiceId,
+    invoiceNumber: result.number,
+  };
+}
