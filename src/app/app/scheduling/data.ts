@@ -88,6 +88,29 @@ export function formatWeekParam(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
+/** UTC-flavored YMD for a Date — used for PTO/override range fallback
+ *  when the caller didn't pass explicit org-tz dates. Correct for orgs
+ *  at or behind UTC (America, most of Europe); callers in UTC-forward
+ *  timezones (Asia, Oceania) should pass `rangeDates` explicitly. */
+function formatYmdUtc(d: Date): string {
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/** Shift a YYYY-MM-DD string by N days. Pure string math, no timezone
+ *  conversion — used for the range clamp, where both operands are
+ *  already in the same (org) tz. */
+function shiftYmd(ymd: string, days: number): string {
+  const [y, m, d] = ymd.split("-").map(Number);
+  const t = new Date(Date.UTC(y, m - 1, d + days));
+  const yy = t.getUTCFullYear();
+  const mm = String(t.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(t.getUTCDate()).padStart(2, "0");
+  return `${yy}-${mm}-${dd}`;
+}
+
 /**
  * Serialized "employee is off on these YYYY-MM-DD dates" lookup. Keys
  * are membership ids, values are an array (serialized — JSON-safe) of
@@ -99,14 +122,25 @@ export type OffDaysByEmployee = Record<string, string[]>;
 /**
  * Fetch bookings + employees + off-days for a schedule range.
  *
- * @param rangeStart First day to include (00:00 local).
- * @param rangeEnd   Exclusive end — pass `addDays(rangeStart, 7)` for
- *                   a week, `addDays(rangeStart, 1)` for a single day.
- *                   Defaults to 7 days if omitted for backward-compat.
+ * @param rangeStart UTC instant the schedule range starts at (typically
+ *                   midnight-in-org-tz converted to UTC by the caller —
+ *                   don't pass a naive local-midnight Date or jobs late
+ *                   in the day in non-UTC timezones will be missing).
+ * @param rangeEnd   Exclusive UTC end. Defaults to rangeStart + 7 days
+ *                   for backward-compat.
+ * @param rangeDates Optional pair of YYYY-MM-DD strings representing
+ *                   the date range in the ORG'S tz. Used for the
+ *                   date-column queries (PTO, availability_overrides)
+ *                   where we need the wall-clock dates, not the UTC
+ *                   instants of the bookings. Falls back to deriving
+ *                   from the UTC rangeStart/End if omitted — only safe
+ *                   for timezones <= UTC (everything in North
+ *                   America). Always pass explicitly for full safety.
  */
 export async function fetchScheduleWeek(
   rangeStart: Date,
   rangeEnd?: Date,
+  rangeDates?: { startYmd: string; endYmdExclusive: string },
 ): Promise<{
   bookings: ScheduleBooking[];
   employees: ScheduleEmployee[];
@@ -120,11 +154,19 @@ export async function fetchScheduleWeek(
   const weekStart = rangeStart;
   const weekEnd = rangeEnd ?? addDays(weekStart, 7);
 
-  // Range bounds for the off-day queries. PTO uses date columns, so we
-  // pass YYYY-MM-DD; availability_overrides same thing. Using the
-  // range as [weekStart, weekEnd - 1 day] since weekEnd is exclusive.
-  const rangeStartStr = formatWeekParam(weekStart);
-  const rangeEndStr = formatWeekParam(addDays(weekEnd, -1));
+  // Range bounds for the off-day queries (pto_requests,
+  // availability_overrides). These use date columns, so we want the
+  // wall-clock YYYY-MM-DD in the org's tz. Prefer the explicit pair
+  // from the caller; otherwise derive from the UTC instants (the
+  // derive path uses UTC accessors, which matches caller intent for
+  // orgs in UTC or behind UTC — America, most of Europe).
+  const rangeStartStr =
+    rangeDates?.startYmd ?? formatYmdUtc(weekStart);
+  // endYmdExclusive is exclusive — subtract one day for <= comparisons
+  // against the date column.
+  const rangeEndStr = rangeDates
+    ? shiftYmd(rangeDates.endYmdExclusive, -1)
+    : formatYmdUtc(addDays(weekEnd, -1));
 
   const [bookingsRes, membersRes, overridesRes, ptoRes] = await Promise.all([
     supabase

@@ -23,6 +23,45 @@ function parseView(raw: string | undefined): View {
   return raw === "day" ? "day" : "week";
 }
 
+/**
+ * Convert a YYYY-MM-DD string to the UTC Date that represents midnight
+ * of that local date in the given IANA timezone. The scheduler fetch
+ * range must be tz-aware or late-evening bookings fall into the next
+ * UTC day and get dropped from Day view (where the fetch window is
+ * only 24 hours).
+ *
+ * How it works: interpret the YYYY-MM-DD as if it were UTC (giving
+ * us a "naive" reference instant), format THAT instant in the target
+ * tz, compute the offset between the naive UTC and what the target
+ * tz displayed, then shift the naive UTC back by that offset so the
+ * result lands on the correct wall-clock in the target tz.
+ */
+function midnightInTzUtc(dateYmd: string, tz: string): Date {
+  const naiveUtc = new Date(`${dateYmd}T00:00:00Z`);
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(naiveUtc);
+  const get = (t: string) =>
+    Number(parts.find((p) => p.type === t)?.value ?? 0);
+  const shown = Date.UTC(
+    get("year"),
+    get("month") - 1,
+    get("day"),
+    get("hour"),
+    get("minute"),
+    get("second"),
+  );
+  const offsetMs = shown - naiveUtc.getTime();
+  return new Date(naiveUtc.getTime() - offsetMs);
+}
+
 export default async function SchedulingPage({
   searchParams,
 }: {
@@ -47,14 +86,27 @@ export default async function SchedulingPage({
           : new Date(new Date().setHours(0, 0, 0, 0)))
       : parseWeekParam(week);
 
-  const fetchStart = weekStart;
-  const fetchEnd =
-    view === "day" ? addDays(weekStart, 1) : addDays(weekStart, 7);
+  // TZ-aware fetch range. `weekStart` is a local-midnight Date object
+  // (UTC midnight on Vercel); passing .toISOString() of that to the DB
+  // query means we fetch `UTC-day`, not `org-tz-day`. For an Edmonton
+  // org (UTC-6), a 22:00-Edmonton booking lives at 04:00 UTC the
+  // NEXT day — so Day view's UTC-bounded fetch misses it entirely.
+  // Convert the requested YYYY-MM-DD to the UTC instant that
+  // corresponds to midnight in the org's tz before querying.
+  const weekStartYmd = formatWeekParam(weekStart);
+  const weekEndExclusive = addDays(weekStart, view === "day" ? 1 : 7);
+  const weekEndYmd = formatWeekParam(weekEndExclusive);
+  const fetchStart = midnightInTzUtc(weekStartYmd, tz);
+  const fetchEnd = midnightInTzUtc(weekEndYmd, tz);
+
   const [
     { bookings, employees, offDays },
     savedViews,
   ] = await Promise.all([
-    fetchScheduleWeek(fetchStart, fetchEnd),
+    fetchScheduleWeek(fetchStart, fetchEnd, {
+      startYmd: weekStartYmd,
+      endYmdExclusive: weekEndYmd,
+    }),
     fetchSchedulerViews(membership.organization_id),
   ]);
 
