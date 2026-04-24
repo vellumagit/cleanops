@@ -1,7 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { Pencil, ExternalLink, MapPin, Clock, User } from "lucide-react";
+import {
+  Pencil,
+  ExternalLink,
+  MapPin,
+  Clock,
+  User,
+  Navigation,
+} from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -112,6 +119,17 @@ export function BookingQuickView({
         </dl>
 
         <DialogFooter showCloseButton>
+          {booking.address && (
+            <a
+              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(booking.address)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={buttonVariants({ variant: "outline", size: "sm" })}
+            >
+              <Navigation className="h-4 w-4" />
+              Maps
+            </a>
+          )}
           <Link
             href={`/app/bookings/${booking.id}`}
             className={buttonVariants({ variant: "outline", size: "sm" })}

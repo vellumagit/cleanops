@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useMemo, useEffect, useRef } from "react";
 import {
   format,
@@ -31,6 +32,9 @@ import {
   Receipt,
   Clock,
   ExternalLink,
+  Pencil,
+  Navigation,
+  Eye,
 } from "lucide-react";
 import type { CalendarEvent } from "./page";
 
@@ -747,6 +751,15 @@ function formatHourLabel(hour: number): string {
 // Event Detail Panel
 // ---------------------------------------------------------------------------
 
+/**
+ * Build a Google Maps search URL for an address. Works on desktop +
+ * iOS + Android — on phones, the OS intercepts and opens the native
+ * Maps / Google Maps / Apple Maps app where available.
+ */
+function mapsUrl(address: string): string {
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
+}
+
 function EventDetail({
   event,
   onClose,
@@ -754,6 +767,16 @@ function EventDetail({
   event: CalendarEvent;
   onClose: () => void;
 }) {
+  // Google Calendar events use a prefixed id like "gcal_<id>" — anything
+  // else is a real booking or invoice row in our DB and is linkable
+  // inside the app.
+  const isLinkable = !event.id.startsWith("gcal_");
+  const bookingAddress =
+    event.type === "booking" ? event.meta.address : null;
+  const gcalLocation =
+    event.type === "google_calendar" ? event.meta.location : null;
+  const addressForMaps = bookingAddress ?? gcalLocation ?? null;
+
   return (
     <div className="rounded-lg border border-border bg-card p-5">
       <div className="flex items-start justify-between gap-3">
@@ -794,9 +817,9 @@ function EventDetail({
               </span>
             </div>
             {event.meta.address && (
-              <div className="flex items-center gap-2 text-muted-foreground">
-                <MapPin className="h-3.5 w-3.5 shrink-0" />
-                <span>{event.meta.address}</span>
+              <div className="flex items-start gap-2 text-muted-foreground">
+                <MapPin className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                <span className="break-words">{event.meta.address}</span>
               </div>
             )}
           </>
@@ -818,26 +841,15 @@ function EventDetail({
         {event.type === "google_calendar" && (
           <>
             {event.meta.location && (
-              <div className="flex items-center gap-2 text-muted-foreground">
-                <MapPin className="h-3.5 w-3.5 shrink-0" />
-                <span>{event.meta.location}</span>
+              <div className="flex items-start gap-2 text-muted-foreground">
+                <MapPin className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                <span className="break-words">{event.meta.location}</span>
               </div>
             )}
             {event.meta.description && (
               <p className="text-muted-foreground text-[11px] mt-1 line-clamp-4">
                 {event.meta.description}
               </p>
-            )}
-            {event.meta.htmlLink && (
-              <a
-                href={event.meta.htmlLink}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="mt-2 inline-flex items-center gap-1 text-[11px] text-violet-500 hover:underline"
-              >
-                <ExternalLink className="h-3 w-3" />
-                Open in Google Calendar
-              </a>
             )}
           </>
         )}
@@ -850,6 +862,64 @@ function EventDetail({
             {event.status.replace(/_/g, " ")}
           </span>
         </div>
+      </div>
+
+      {/* Action row — every link goes directly to the relevant page so
+          the dialog stops being a dead-end. Address links open Maps in
+          a new tab (OS intercepts to the native app on mobile). */}
+      <div className="mt-4 flex flex-wrap gap-1.5 border-t border-border pt-4">
+        {addressForMaps && (
+          <a
+            href={mapsUrl(addressForMaps)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
+          >
+            <Navigation className="h-3.5 w-3.5" />
+            Open in Maps
+          </a>
+        )}
+
+        {event.type === "booking" && isLinkable && (
+          <>
+            <Link
+              href={`/app/bookings/${event.id}`}
+              className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
+            >
+              <Eye className="h-3.5 w-3.5" />
+              View booking
+            </Link>
+            <Link
+              href={`/app/bookings/${event.id}/edit`}
+              className="inline-flex items-center gap-1.5 rounded-md bg-foreground px-2.5 py-1.5 text-xs font-medium text-background transition-opacity hover:opacity-90"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+              Edit
+            </Link>
+          </>
+        )}
+
+        {event.type === "invoice" && isLinkable && (
+          <Link
+            href={`/app/invoices/${event.id}`}
+            className="inline-flex items-center gap-1.5 rounded-md bg-foreground px-2.5 py-1.5 text-xs font-medium text-background transition-opacity hover:opacity-90"
+          >
+            <Receipt className="h-3.5 w-3.5" />
+            Open invoice
+          </Link>
+        )}
+
+        {event.type === "google_calendar" && event.meta.htmlLink && (
+          <a
+            href={event.meta.htmlLink}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+            Open in Google Calendar
+          </a>
+        )}
       </div>
     </div>
   );
