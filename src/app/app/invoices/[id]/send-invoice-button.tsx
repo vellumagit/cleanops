@@ -30,7 +30,7 @@ export function SendInvoiceButton({ invoiceId }: { invoiceId: string }) {
         <input type="hidden" name="id" value={invoiceId} />
         <SubmitButton variant="default" size="sm" pendingLabel="Sending…">
           <Send className="h-4 w-4" />
-          Mark as sent
+          Send invoice
         </SubmitButton>
       </form>
       {state.error && <FormError message={state.error} />}
