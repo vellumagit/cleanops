@@ -1,3 +1,5 @@
+import Link from "next/link";
+import { ChevronLeft } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { PageShell } from "@/components/page-shell";
@@ -28,6 +30,15 @@ export default async function ApiKeysPage() {
     <PageShell
       title="API Keys"
       description="Generate API keys to connect Make.com, Zapier, n8n, or any automation tool to your Sollos 3 data."
+      actions={
+        <Link
+          href="/app/settings"
+          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+        >
+          <ChevronLeft className="h-3.5 w-3.5" />
+          Settings
+        </Link>
+      }
     >
       <ApiKeysClient keys={keys} />
     </PageShell>

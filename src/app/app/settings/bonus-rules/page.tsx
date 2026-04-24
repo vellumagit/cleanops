@@ -1,3 +1,5 @@
+import Link from "next/link";
+import { ChevronLeft } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getOrgCurrency } from "@/lib/org-currency";
@@ -61,6 +63,15 @@ export default async function BonusRulesPage() {
     <PageShell
       title="Bonus rules"
       description="Configure how performance bonuses are computed from reviews and job efficiency."
+      actions={
+        <Link
+          href="/app/settings"
+          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+        >
+          <ChevronLeft className="h-3.5 w-3.5" />
+          Settings
+        </Link>
+      }
     >
       <div className="max-w-3xl rounded-lg border border-border bg-card p-6">
         <BonusRuleForm defaults={defaults} currency={currency} />
