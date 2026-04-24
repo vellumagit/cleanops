@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
 import {
   Pencil,
   ExternalLink,
@@ -8,6 +9,8 @@ import {
   Clock,
   User,
   Navigation,
+  Users,
+  Send,
 } from "lucide-react";
 import {
   Dialog,
@@ -16,11 +19,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { buttonVariants } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { StatusBadge, bookingStatusTone } from "@/components/status-badge";
 import { humanizeEnum } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { ScheduleBooking, ScheduleEmployee } from "./data";
+import { AssignCrewDialog } from "@/app/app/bookings/assign-crew-dialog";
 
 function formatDateTime(iso: string, tz?: string) {
   const d = new Date(iso);
@@ -66,11 +70,16 @@ export function BookingQuickView({
   onOpenChange: (open: boolean) => void;
   tz: string;
 }) {
+  const [assignOpen, setAssignOpen] = useState(false);
+
   if (!booking) return null;
 
   const assignee = booking.assigned_to
     ? employees.find((e) => e.id === booking.assigned_to)
     : null;
+  const additionalIds = (booking.all_assignee_ids ?? []).filter(
+    (id) => id !== booking.assigned_to,
+  );
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -118,7 +127,10 @@ export function BookingQuickView({
           )}
         </dl>
 
-        <DialogFooter showCloseButton>
+        <DialogFooter
+          showCloseButton
+          className="flex-wrap gap-2"
+        >
           {booking.address && (
             <a
               href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(booking.address)}`}
@@ -130,6 +142,22 @@ export function BookingQuickView({
               Maps
             </a>
           )}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setAssignOpen(true)}
+          >
+            <Users className="h-4 w-4" />
+            Assign
+          </Button>
+          <Link
+            href={`/app/bookings/${booking.id}/offer`}
+            className={buttonVariants({ variant: "outline", size: "sm" })}
+          >
+            <Send className="h-4 w-4" />
+            Send to bench
+          </Link>
           <Link
             href={`/app/bookings/${booking.id}`}
             className={buttonVariants({ variant: "outline", size: "sm" })}
@@ -146,6 +174,18 @@ export function BookingQuickView({
           </Link>
         </DialogFooter>
       </DialogContent>
+
+      {/* Nested dialog for crew assignment. Kept outside the main
+          DialogContent so closing Assign doesn't close the quick view
+          too. The quick view parent stays open via `open` prop. */}
+      <AssignCrewDialog
+        bookingId={booking.id}
+        employees={employees.map((e) => ({ id: e.id, label: e.name }))}
+        initialPrimaryId={booking.assigned_to}
+        initialAdditionalIds={additionalIds}
+        open={assignOpen}
+        onOpenChange={setAssignOpen}
+      />
     </Dialog>
   );
 }

@@ -826,3 +826,101 @@ export async function generateInvoiceFromBookingAction(
     invoiceNumber: result.number,
   };
 }
+
+/**
+ * Assign one or more cleaners to a booking from a quick-action popup
+ * — primary goes on bookings.assigned_to, additional crew goes into
+ * booking_assignees. Both the scheduling quick-view dialog and the
+ * bookings list row-actions use this so the owner can triage crew
+ * without jumping into the full edit form.
+ *
+ * Notifies the new primary when assigned_to actually changes
+ * (matching the flow in updateBookingAction — same automation key).
+ *
+ * Accepts FormData with:
+ *   - id              — booking id
+ *   - primary_id      — membership id to set as assigned_to ("" = unassigned)
+ *   - additional_ids  — one or more membership ids for the junction
+ */
+export type AssignCrewState = {
+  error?: string;
+  ok?: boolean;
+};
+
+export async function assignBookingCrewAction(
+  _prev: AssignCrewState,
+  formData: FormData,
+): Promise<AssignCrewState> {
+  const id = String(formData.get("id") ?? "");
+  if (!id) return { error: "Missing booking id." };
+
+  const rawPrimary = String(formData.get("primary_id") ?? "").trim();
+  const primaryId = rawPrimary === "" ? null : rawPrimary;
+  const additionalIds = formData
+    .getAll("additional_ids")
+    .map((v) => String(v))
+    .filter((v) => v.length > 0 && v !== primaryId);
+
+  const { membership, supabase } = await getActionContext();
+  if (!["owner", "admin", "manager"].includes(membership.role)) {
+    return { error: "Only owners, admins, or managers can assign crew." };
+  }
+
+  // Read the existing assignee so we can detect a primary change
+  // and fire notifyBookingAssignment if needed.
+  const { data: existing } = (await supabase
+    .from("bookings")
+    .select(
+      "assigned_to, scheduled_at, service_type, address, client:clients ( name )",
+    )
+    .eq("id", id)
+    .maybeSingle()) as unknown as {
+    data: {
+      assigned_to: string | null;
+      scheduled_at: string;
+      service_type: string;
+      address: string | null;
+      client: { name: string | null } | null;
+    } | null;
+  };
+  if (!existing) return { error: "Booking not found." };
+
+  // Flip primary on the booking row first.
+  if (primaryId !== existing.assigned_to) {
+    const { error: updErr } = await supabase
+      .from("bookings")
+      .update({ assigned_to: primaryId })
+      .eq("id", id);
+    if (updErr) return { error: updErr.message };
+  }
+
+  await syncBookingAssignees(
+    supabase,
+    membership.organization_id,
+    id,
+    primaryId,
+    additionalIds,
+  );
+
+  // Fire the assignment notification when the primary actually
+  // changed. Fire-and-forget — never block the dialog on it.
+  if (primaryId && primaryId !== existing.assigned_to) {
+    notifyBookingAssignment(
+      membership.organization_id,
+      id,
+      primaryId,
+      {
+        clientName: existing.client?.name ?? "A client",
+        scheduledAt: existing.scheduled_at,
+        serviceType: existing.service_type,
+        address: existing.address ?? null,
+      },
+    );
+  }
+
+  revalidatePath("/app/bookings");
+  revalidatePath(`/app/bookings/${id}`);
+  revalidatePath("/app/scheduling");
+  revalidatePath("/app");
+  return { ok: true };
+}
