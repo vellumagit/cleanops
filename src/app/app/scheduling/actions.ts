@@ -2,29 +2,44 @@
 
 import { revalidatePath } from "next/cache";
 import { getActionContext } from "@/lib/actions";
-import { DEFAULT_TZ } from "@/lib/format";
+import { getOrgTimezone } from "@/lib/org-timezone";
 
 export type RescheduleResult =
   | { ok: true }
   | { ok: false; error: string };
 
 /**
- * Move a booking to a new (employee, day) slot. The hour-of-day is preserved
- * from the booking's existing scheduled_at; only the calendar date and the
- * assignee change. Pass `assignedTo: null` to drop into the unassigned tray.
+ * Move a booking to a new (employee, day, optional time) slot.
  *
- * Returns a structured result instead of throwing so the client can show a
- * toast on conflicts without nuking the optimistic UI.
+ *   - `assignedTo: null` drops into the unassigned tray.
+ *   - `targetDate` is required (YYYY-MM-DD in org tz).
+ *   - `newTimeLocal` is optional (HH:MM). Omit in Week view — the
+ *     booking's existing hour-of-day is preserved. Provide in Dispatch
+ *     view so a drop onto a specific 30-min slot actually changes the
+ *     start time to whatever the cursor landed on.
+ *
+ * Returns a structured result instead of throwing so the client can show
+ * a toast on conflicts without nuking the optimistic UI.
+ *
+ * Fixes a timezone bug in the prior version: the hour-extraction used
+ * DEFAULT_TZ (app-wide fallback) rather than the ORG's tz. An Edmonton
+ * org with a booking at 08:00 Edmonton got round-tripped through
+ * America/New_York and ended up at 06:00 Edmonton after the drop.
  */
 export async function rescheduleBookingAction(
   id: string,
   assignedTo: string | null,
   /** Target date in YYYY-MM-DD form (local). */
   targetDate: string,
+  /** Optional new start time in HH:MM form (24h) for Dispatch-view drops. */
+  newTimeLocal?: string,
 ): Promise<RescheduleResult> {
   if (!id) return { ok: false, error: "Missing booking id" };
   if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
     return { ok: false, error: "Invalid target date" };
+  }
+  if (newTimeLocal && !/^\d{2}:\d{2}$/.test(newTimeLocal)) {
+    return { ok: false, error: "Invalid target time" };
   }
 
   const { membership, supabase } = await getActionContext();
@@ -32,7 +47,10 @@ export async function rescheduleBookingAction(
     return { ok: false, error: "Only owners and admins can reschedule" };
   }
 
-  // Pull the current booking so we can preserve hour-of-day + duration.
+  const orgTz = await getOrgTimezone(membership.organization_id);
+
+  // Pull the current booking so we can preserve hour-of-day + duration
+  // when no explicit newTimeLocal is provided.
   const { data: current, error: fetchError } = await supabase
     .from("bookings")
     .select("id, scheduled_at, duration_minutes, assigned_to")
@@ -41,26 +59,35 @@ export async function rescheduleBookingAction(
   if (fetchError) return { ok: false, error: fetchError.message };
   if (!current) return { ok: false, error: "Booking not found" };
 
-  const previous = new Date(current.scheduled_at);
-  // Extract the wall-clock hour and minute in the org's timezone
-  const prevParts = new Intl.DateTimeFormat("en-US", {
-    timeZone: DEFAULT_TZ,
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).formatToParts(previous);
-  const prevHour = Number(prevParts.find((p) => p.type === "hour")?.value ?? 0);
-  const prevMin = Number(prevParts.find((p) => p.type === "minute")?.value ?? 0);
+  let targetHour: number;
+  let targetMin: number;
+  if (newTimeLocal) {
+    const [h, m] = newTimeLocal.split(":").map(Number);
+    targetHour = h;
+    targetMin = m;
+  } else {
+    const previous = new Date(current.scheduled_at);
+    const prevParts = new Intl.DateTimeFormat("en-US", {
+      timeZone: orgTz,
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).formatToParts(previous);
+    targetHour = Number(
+      prevParts.find((p) => p.type === "hour")?.value ?? 0,
+    );
+    targetMin = Number(
+      prevParts.find((p) => p.type === "minute")?.value ?? 0,
+    );
+  }
 
-  // Build the new datetime-local string and convert to UTC
-  const [y, m, d] = targetDate.split("-").map(Number);
+  // Build the new datetime and convert to UTC via the org's timezone.
   const pad = (n: number) => String(n).padStart(2, "0");
-  const naiveStr = `${targetDate}T${pad(prevHour)}:${pad(prevMin)}:00Z`;
-  // Compute UTC offset for this date in the org's timezone
+  const naiveStr = `${targetDate}T${pad(targetHour)}:${pad(targetMin)}:00Z`;
   const naiveMs = new Date(naiveStr).getTime();
   const inTz = new Date(
     new Intl.DateTimeFormat("en-CA", {
-      timeZone: DEFAULT_TZ,
+      timeZone: orgTz,
       year: "numeric",
       month: "2-digit",
       day: "2-digit",
@@ -76,9 +103,12 @@ export async function rescheduleBookingAction(
     next.getTime() + current.duration_minutes * 60_000,
   );
 
-  // Conflict check: only when there's an actual assignee — unassigned drops
-  // are always allowed.
+  // Hard-conflict check: same employee can't be in two places. Different
+  // employees overlapping is legit (two-person jobs) and isn't blocked
+  // here. The Dispatch view separately paints informational red borders
+  // so the owner sees overlaps at a glance.
   if (assignedTo) {
+    const [y, m, d] = targetDate.split("-").map(Number);
     const dayStart = new Date(y, m - 1, d, 0, 0, 0, 0);
     const dayEnd = new Date(y, m - 1, d + 1, 0, 0, 0, 0);
     const { data: sameDay, error: conflictError } = await supabase

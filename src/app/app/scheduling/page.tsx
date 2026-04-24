@@ -13,6 +13,7 @@ import {
   startOfWeek,
 } from "./data";
 import { WeekGrid } from "./week-grid";
+import { DispatchGrid } from "./dispatch-grid";
 
 export const metadata = { title: "Scheduling" };
 
@@ -82,7 +83,7 @@ export default async function SchedulingPage({
 
   const descriptions: Record<View, string> = {
     week: "Drag bookings between cleaners and days. Click a card for details.",
-    day: "One-day focus view. Click a card for details, drag to reschedule.",
+    day: "Dispatch view — 30-min slots with an employee column per cleaner. Click an empty slot to create, click a card to edit, drag the grip to move.",
   };
 
   const tabLinkClass = (active: boolean) =>
@@ -145,14 +146,24 @@ export default async function SchedulingPage({
             </Link>
           </div>
         </div>
-        <WeekGrid
-          weekStart={formatWeekParam(weekStart)}
-          bookings={bookings}
-          employees={employees}
-          canEdit={canEdit}
-          view={view}
-          tz={tz}
-        />
+        {view === "day" ? (
+          <DispatchGrid
+            date={formatWeekParam(weekStart)}
+            bookings={bookings}
+            employees={employees}
+            canEdit={canEdit}
+            tz={tz}
+          />
+        ) : (
+          <WeekGrid
+            weekStart={formatWeekParam(weekStart)}
+            bookings={bookings}
+            employees={employees}
+            canEdit={canEdit}
+            view={view}
+            tz={tz}
+          />
+        )}
       </div>
     </PageShell>
   );
