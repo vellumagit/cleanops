@@ -240,12 +240,14 @@ export async function getOrgSender(
     };
   }
 
-  // Default path: send from Sollos's verified domain, stamp the org's
-  // display name so the client still sees "Velluma", and put the org
-  // contact in Reply-To so replies go to the right place.
+  // Default path: send from Sollos's verified domain, but stamp the
+  // org's display name ALONE on the From header so the client sees
+  // "Velluma <noreply@sollos3.com>" — Sollos stays out of the
+  // prominent-display slots in Gmail / Outlook. Reply-To carries the
+  // org's actual contact inbox.
   return {
     from: DEFAULT_FROM_EMAIL,
-    fromName: org?.name ? `${org.name} via Sollos` : DEFAULT_FROM_NAME,
+    fromName: org?.name ?? DEFAULT_FROM_NAME,
     replyTo: replyTarget,
     replyToName: org?.name ?? undefined,
   };
