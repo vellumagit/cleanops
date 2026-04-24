@@ -1,5 +1,6 @@
 import "server-only";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { CurrentMembership } from "@/lib/auth";
 import { memberDisplayName } from "@/lib/member-display";
 
@@ -154,13 +155,24 @@ export async function fetchChatMessages(
   return rows;
 }
 
-/** All other active members of the current org — for the "New DM" picker. */
+/**
+ * All other active members of the current org — for the "New DM" picker.
+ *
+ * Uses the admin client because employees reported an empty picker even
+ * when the org had other members. The SELECT policy on memberships
+ * *should* let any same-org member see the rest of the team, but RLS
+ * edge-cases (profile join visibility, profile_id-null shadow rows
+ * failing transitive checks) were stranding the picker. We already
+ * scope by `membership.organization_id` (authoritative from
+ * requireMembership), so bypassing RLS here is safe and still strictly
+ * org-scoped.
+ */
 export async function fetchTeammates(
   membership: CurrentMembership,
 ): Promise<TeammateOption[]> {
-  const supabase = await createSupabaseServerClient();
+  const admin = createSupabaseAdminClient();
 
-  const { data, error } = await supabase
+  const { data, error } = await admin
     .from("memberships")
     .select("id, display_name, profile:profiles ( full_name )")
     .eq("organization_id", membership.organization_id)

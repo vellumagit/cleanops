@@ -214,17 +214,24 @@ export function ChatView({
               onSubmit={handleCreateDm}
               className="space-y-2 border-b border-border bg-card/60 px-3 py-3"
             >
-              <FormSelect
-                value={otherId}
-                onChange={(e) => setOtherId(e.target.value)}
-              >
-                <option value="">Pick a teammate…</option>
-                {teammates.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.label}
-                  </option>
-                ))}
-              </FormSelect>
+              {teammates.length === 0 ? (
+                <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-200">
+                  No teammates yet. When the owner invites or adds
+                  another member, they&rsquo;ll show up here to DM.
+                </p>
+              ) : (
+                <FormSelect
+                  value={otherId}
+                  onChange={(e) => setOtherId(e.target.value)}
+                >
+                  <option value="">Pick a teammate…</option>
+                  {teammates.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.label}
+                    </option>
+                  ))}
+                </FormSelect>
+              )}
               <div className="flex items-center justify-end gap-2">
                 <Button
                   type="button"
@@ -235,15 +242,17 @@ export function ChatView({
                     setOtherId("");
                   }}
                 >
-                  Cancel
+                  {teammates.length === 0 ? "Close" : "Cancel"}
                 </Button>
-                <Button
-                  type="submit"
-                  size="sm"
-                  disabled={creatingDm || !otherId}
-                >
-                  {creatingDm ? "Opening…" : "Open DM"}
-                </Button>
+                {teammates.length > 0 && (
+                  <Button
+                    type="submit"
+                    size="sm"
+                    disabled={creatingDm || !otherId}
+                  >
+                    {creatingDm ? "Opening…" : "Open DM"}
+                  </Button>
+                )}
               </div>
             </form>
           )}

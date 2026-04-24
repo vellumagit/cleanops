@@ -84,49 +84,72 @@ export async function sendChatMessageAction(
  * Open (or reuse) a 1:1 DM thread between the current user and another
  * membership in the same organization.
  *
- * The chat_thread_members RLS only allows admins to insert rows, so this
- * action uses the admin client AFTER manually verifying that:
- *   - the other membership belongs to the same active org
- *   - the other membership is not the caller themselves
+ * Employees reported "I can't create a new DM" — the action was a mix
+ * of RLS-bound SELECTs (to verify the other member + find existing
+ * threads) and admin-client INSERTs. An employee's RLS-scoped SELECT
+ * on chat_thread_members can mask an existing DM, which then confuses
+ * the create path. It's also easy for the initial teammate lookup to
+ * silently return null on certain membership-RLS edge cases.
  *
- * If a DM thread already exists between these two members, it is reused
- * instead of duplicated.
+ * Rewritten to use the admin client for ALL reads + writes here. The
+ * action is authorized at the role / context layer (getActionContext
+ * already verified the caller is a signed-in member) and we still
+ * strictly validate that:
+ *   - the other membership is in the caller's org
+ *   - they're both active
+ *   - you're not DMing yourself
+ *
+ * All errors are logged — [chat] createDmThreadAction prefix — so the
+ * next silent failure shows up in Vercel logs instead of a generic
+ * error toast.
  */
 export async function createDmThreadAction(
   otherMembershipId: string,
 ): Promise<Result<{ thread_id: string }>> {
   if (!otherMembershipId) return { ok: false, error: "Pick a teammate" };
 
-  const { membership, supabase } = await getActionContext();
+  const { membership } = await getActionContext();
   if (otherMembershipId === membership.id) {
     return { ok: false, error: "You cannot DM yourself" };
   }
 
-  const { data: other, error: otherErr } = await supabase
+  const admin = createSupabaseAdminClient();
+
+  const { data: other, error: otherErr } = await admin
     .from("memberships")
     .select("id, organization_id, status")
     .eq("id", otherMembershipId)
     .maybeSingle();
 
-  if (otherErr || !other) return { ok: false, error: "Teammate not found" };
-  if (other.organization_id !== membership.organization_id)
-    return { ok: false, error: "Teammate is not in your organization" };
-  if (other.status !== "active")
-    return { ok: false, error: "Teammate is not active" };
+  if (otherErr) {
+    console.error(
+      "[chat] createDmThreadAction teammate lookup failed:",
+      otherErr.message,
+    );
+    return { ok: false, error: "Couldn't verify that teammate." };
+  }
+  if (!other) return { ok: false, error: "Teammate not found." };
+  if (other.organization_id !== membership.organization_id) {
+    return { ok: false, error: "Teammate is not in your organization." };
+  }
+  if (other.status !== "active") {
+    return { ok: false, error: "Teammate is not active." };
+  }
 
-  // Look for an existing DM thread that has BOTH members.
-  const { data: myThreads } = await supabase
+  // Existing-DM lookup via admin client — if it returns nothing under
+  // RLS, we'd incorrectly create a duplicate DM thread.
+  const { data: myRows } = await admin
     .from("chat_thread_members")
     .select("thread_id, thread:chat_threads ( id, kind )")
     .eq("membership_id", membership.id)
     .limit(500);
 
-  const myDmThreadIds = (myThreads ?? [])
+  const myDmThreadIds = (myRows ?? [])
     .filter((m) => m.thread?.kind === "dm")
     .map((m) => m.thread_id);
 
   if (myDmThreadIds.length > 0) {
-    const { data: shared } = await supabase
+    const { data: shared } = await admin
       .from("chat_thread_members")
       .select("thread_id")
       .eq("membership_id", otherMembershipId)
@@ -138,11 +161,7 @@ export async function createDmThreadAction(
     }
   }
 
-  // None found — create a new DM thread + both member rows via the admin
-  // client (RLS only allows admins to insert into chat_thread_members, but
-  // any member should be able to start a DM with a teammate).
-  const admin = createSupabaseAdminClient();
-
+  // No existing DM — create the new thread + both member rows.
   const { data: thread, error: threadErr } = await admin
     .from("chat_threads")
     .insert({
@@ -154,9 +173,13 @@ export async function createDmThreadAction(
     .single();
 
   if (threadErr || !thread) {
+    console.error(
+      "[chat] createDmThreadAction thread insert failed:",
+      threadErr?.message,
+    );
     return {
       ok: false,
-      error: threadErr?.message ?? "Could not create thread",
+      error: threadErr?.message ?? "Could not create thread.",
     };
   }
 
@@ -176,6 +199,10 @@ export async function createDmThreadAction(
     ]);
 
   if (membersErr) {
+    console.error(
+      "[chat] createDmThreadAction member insert failed, rolling back:",
+      membersErr.message,
+    );
     await admin.from("chat_threads").delete().eq("id", thread.id);
     return { ok: false, error: membersErr.message };
   }
