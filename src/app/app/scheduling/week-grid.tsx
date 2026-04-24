@@ -152,21 +152,32 @@ export function WeekGrid({
     return m;
   }, [offDays]);
 
-  /** Map of `${employeeId}|${YYYY-MM-DD}` → bookings, for fast cell lookup. */
+  /** Map of `${employeeId}|${YYYY-MM-DD}` → bookings, for fast cell lookup.
+   *  Iterates every assignee (primary + additional crew from
+   *  booking_assignees), so a shared booking renders in each of their
+   *  columns. Previously this only keyed on assigned_to, so secondary
+   *  crew never saw the job in their lane. */
   const cellMap = useMemo(() => {
     const map = new Map<string, ScheduleBooking[]>();
     for (const b of bookings) {
-      if (!b.assigned_to) continue;
-      const k = `${b.assigned_to}|${dateKey(new Date(b.scheduled_at), tz)}`;
-      const arr = map.get(k) ?? [];
-      arr.push(b);
-      map.set(k, arr);
+      const dayKey = dateKey(new Date(b.scheduled_at), tz);
+      const assignees = b.all_assignee_ids?.length
+        ? b.all_assignee_ids
+        : b.assigned_to
+          ? [b.assigned_to]
+          : [];
+      for (const empId of assignees) {
+        const k = `${empId}|${dayKey}`;
+        const arr = map.get(k) ?? [];
+        arr.push(b);
+        map.set(k, arr);
+      }
     }
     for (const arr of map.values()) {
       arr.sort((a, b) => a.scheduled_at.localeCompare(b.scheduled_at));
     }
     return map;
-  }, [bookings]);
+  }, [bookings, tz]);
 
   function handleDragStart(event: DragStartEvent) {
     setActiveId(String(event.active.id));
@@ -531,10 +542,18 @@ function BookingCard({
       <div className="tabular-nums text-muted-foreground">
         {formatHourMinute(booking.scheduled_at, tz)} · {booking.duration_minutes}m
       </div>
-      <div className="mt-1 flex items-center gap-1">
+      <div className="mt-1 flex items-center gap-1 flex-wrap">
         <StatusBadge tone={bookingStatusTone(booking.status)}>
           {humanizeEnum(booking.status)}
         </StatusBadge>
+        {(booking.all_assignee_ids?.length ?? 0) > 1 && (
+          <span
+            className="inline-flex items-center rounded-full bg-muted px-1.5 py-0.5 text-[9px] font-medium text-muted-foreground"
+            title="Multi-crew booking"
+          >
+            👥 {booking.all_assignee_ids!.length}
+          </span>
+        )}
       </div>
     </div>
   );

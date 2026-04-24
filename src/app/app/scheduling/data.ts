@@ -45,7 +45,14 @@ export type ScheduleBooking = {
   duration_minutes: number;
   status: BookingStatus;
   service_type: string;
+  /** Primary assignee — the one the drag-to-reassign action mutates.
+   *  Null for jobs sitting in the unassigned tray. */
   assigned_to: string | null;
+  /** Every membership on this booking: primary + any additional
+   *  crew from booking_assignees. Used to place the card in every
+   *  relevant employee column in the scheduler grids. Always
+   *  includes `assigned_to` when that's set. */
+  all_assignee_ids: string[];
   client_name: string;
   address: string | null;
 };
@@ -168,7 +175,8 @@ export async function fetchScheduleWeek(
     ? shiftYmd(rangeDates.endYmdExclusive, -1)
     : formatYmdUtc(addDays(weekEnd, -1));
 
-  const [bookingsRes, membersRes, overridesRes, ptoRes] = await Promise.all([
+  const [bookingsRes, membersRes, overridesRes, ptoRes, assigneesRes] =
+    await Promise.all([
     supabase
       .from("bookings")
       .select(
@@ -222,21 +230,67 @@ export async function fetchScheduleWeek(
       .eq("status", "approved")
       .lte("start_date", rangeEndStr)
       .gte("end_date", rangeStartStr),
+    // booking_assignees carries additional crew on multi-person jobs.
+    // We pull every junction row in the range and merge into each
+    // booking's all_assignee_ids so the scheduler can render the same
+    // booking in every assignee's column (the primary's column AND
+    // every secondary's).
+    (supabase
+      .from("booking_assignees" as never)
+      .select(
+        `booking_id, membership_id, is_primary,
+         booking:bookings!inner ( scheduled_at )`,
+      )
+      .gte(
+        "booking.scheduled_at" as never,
+        weekStart.toISOString() as never,
+      )
+      .lt(
+        "booking.scheduled_at" as never,
+        weekEnd.toISOString() as never,
+      )) as unknown as Promise<{
+      data: Array<{
+        booking_id: string;
+        membership_id: string;
+        is_primary: boolean;
+      }> | null;
+      error: { message: string } | null;
+    }>,
   ]);
 
   if (bookingsRes.error) throw bookingsRes.error;
   if (membersRes.error) throw membersRes.error;
 
-  const bookings: ScheduleBooking[] = (bookingsRes.data ?? []).map((b) => ({
-    id: b.id,
-    scheduled_at: b.scheduled_at,
-    duration_minutes: b.duration_minutes,
-    status: b.status,
-    service_type: b.service_type,
-    assigned_to: b.assigned_to,
-    client_name: b.client?.name ?? "—",
-    address: b.address,
-  }));
+  // Group booking_assignees rows by booking_id so we can merge them
+  // into each ScheduleBooking's all_assignee_ids in O(N).
+  const extraAssigneesByBooking = new Map<string, string[]>();
+  for (const row of assigneesRes.data ?? []) {
+    if (!row.membership_id) continue;
+    const arr = extraAssigneesByBooking.get(row.booking_id) ?? [];
+    arr.push(row.membership_id);
+    extraAssigneesByBooking.set(row.booking_id, arr);
+  }
+
+  const bookings: ScheduleBooking[] = (bookingsRes.data ?? []).map((b) => {
+    const extras = extraAssigneesByBooking.get(b.id) ?? [];
+    // Union: primary assignee first (when set), then junction rows.
+    // Dedupe via Set — some orgs model the primary in BOTH places
+    // historically and we don't want the card to render twice.
+    const all = new Set<string>();
+    if (b.assigned_to) all.add(b.assigned_to);
+    for (const e of extras) all.add(e);
+    return {
+      id: b.id,
+      scheduled_at: b.scheduled_at,
+      duration_minutes: b.duration_minutes,
+      status: b.status,
+      service_type: b.service_type,
+      assigned_to: b.assigned_to,
+      all_assignee_ids: Array.from(all),
+      client_name: b.client?.name ?? "—",
+      address: b.address,
+    };
+  });
 
   const employees: ScheduleEmployee[] = (membersRes.data ?? [])
     .map((m) => ({

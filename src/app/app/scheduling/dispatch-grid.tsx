@@ -140,14 +140,23 @@ export function DispatchGrid({
   }, [offDays, date]);
 
   // Bucket bookings by employee, filtered to the day we're rendering.
+  // Iterate every assignee (primary + additional crew from
+  // booking_assignees) so shared jobs appear in each of their columns,
+  // not just the primary's.
   const bookingsByEmployee = useMemo(() => {
     const map = new Map<string, ScheduleBooking[]>();
     for (const b of bookings) {
-      if (!b.assigned_to) continue;
       if (dateKey(new Date(b.scheduled_at), tz) !== date) continue;
-      const arr = map.get(b.assigned_to) ?? [];
-      arr.push(b);
-      map.set(b.assigned_to, arr);
+      const assignees = b.all_assignee_ids?.length
+        ? b.all_assignee_ids
+        : b.assigned_to
+          ? [b.assigned_to]
+          : [];
+      for (const empId of assignees) {
+        const arr = map.get(empId) ?? [];
+        arr.push(b);
+        map.set(empId, arr);
+      }
     }
     for (const arr of map.values()) {
       arr.sort((a, b) => a.scheduled_at.localeCompare(b.scheduled_at));
@@ -608,10 +617,18 @@ function PositionedBooking({
             · {booking.duration_minutes}m
           </div>
           {height >= SLOT_PX * 2 && (
-            <div className="mt-1">
+            <div className="mt-1 flex items-center gap-1 flex-wrap">
               <StatusBadge tone={bookingStatusTone(booking.status)}>
                 {humanizeEnum(booking.status)}
               </StatusBadge>
+              {(booking.all_assignee_ids?.length ?? 0) > 1 && (
+                <span
+                  className="inline-flex items-center rounded-full bg-muted px-1.5 py-0.5 text-[9px] font-medium text-muted-foreground"
+                  title="Multi-crew booking"
+                >
+                  👥 {booking.all_assignee_ids!.length}
+                </span>
+              )}
             </div>
           )}
         </div>
