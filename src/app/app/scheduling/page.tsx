@@ -12,8 +12,7 @@ import {
   parseWeekParam,
   startOfWeek,
 } from "./data";
-import { WeekGrid } from "./week-grid";
-import { DispatchGrid } from "./dispatch-grid";
+import { SchedulerShell } from "./scheduler-shell";
 
 export const metadata = { title: "Scheduling" };
 
@@ -146,26 +145,15 @@ export default async function SchedulingPage({
             </Link>
           </div>
         </div>
-        {view === "day" ? (
-          <DispatchGrid
-            date={formatWeekParam(weekStart)}
-            bookings={bookings}
-            employees={employees}
-            canEdit={canEdit}
-            tz={tz}
-            offDays={offDays}
-          />
-        ) : (
-          <WeekGrid
-            weekStart={formatWeekParam(weekStart)}
-            bookings={bookings}
-            employees={employees}
-            canEdit={canEdit}
-            view={view}
-            tz={tz}
-            offDays={offDays}
-          />
-        )}
+        <SchedulerShell
+          view={view}
+          weekStart={formatWeekParam(weekStart)}
+          bookings={bookings}
+          employees={employees}
+          offDays={offDays}
+          canEdit={canEdit}
+          tz={tz}
+        />
       </div>
     </PageShell>
   );
