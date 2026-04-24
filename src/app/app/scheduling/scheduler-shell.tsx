@@ -9,7 +9,12 @@ import {
   DEFAULT_FILTERS,
   type SchedulerFilters as SchedulerFiltersState,
 } from "./scheduler-filters";
-import type { ScheduleBooking, ScheduleEmployee } from "./data";
+import { SavedViews } from "./saved-views";
+import type {
+  ScheduleBooking,
+  ScheduleEmployee,
+  SchedulerView,
+} from "./data";
 
 const STORAGE_KEY = "cleanops.scheduler.filters";
 
@@ -32,6 +37,7 @@ export function SchedulerShell({
   offDays,
   canEdit,
   tz,
+  savedViews,
 }: {
   view: "week" | "day";
   weekStart: string;
@@ -40,6 +46,7 @@ export function SchedulerShell({
   offDays: Record<string, string[]>;
   canEdit: boolean;
   tz: string;
+  savedViews: SchedulerView[];
 }) {
   const [filters, setFilters] =
     useState<SchedulerFiltersState>(DEFAULT_FILTERS);
@@ -186,7 +193,18 @@ export function SchedulerShell({
 
   return (
     <>
-      <div className="flex items-center justify-end">
+      <div className="flex items-center justify-end gap-2">
+        <SavedViews
+          views={savedViews.map((v) => ({
+            id: v.id,
+            name: v.name,
+            filters: v.filters,
+            sort_order: v.sort_order,
+          }))}
+          currentFilters={filters}
+          canEdit={canEdit}
+          onApply={setFilters}
+        />
         <SchedulerFilters
           employees={employees}
           filters={filters}

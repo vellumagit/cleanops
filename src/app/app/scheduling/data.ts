@@ -1,6 +1,35 @@
 import "server-only";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { memberDisplayName } from "@/lib/member-display";
+
+export type SchedulerView = {
+  id: string;
+  name: string;
+  filters: Record<string, unknown>;
+  sort_order: number;
+};
+
+/**
+ * Fetch the org's saved scheduler views, ordered for display.
+ * Uses the admin client because the scheduler_views generated types
+ * don't exist yet (migration applied separately from `npm run
+ * supabase:types` regen). Values are read-only to the caller — writes
+ * go through saveSchedulerViewAction / deleteSchedulerViewAction.
+ */
+export async function fetchSchedulerViews(
+  organizationId: string,
+): Promise<SchedulerView[]> {
+  const admin = createSupabaseAdminClient();
+  const { data } = (await admin
+    .from("scheduler_views" as never)
+    .select("id, name, filters, sort_order")
+    .eq("organization_id" as never, organizationId as never)
+    .order("sort_order" as never, { ascending: true } as never)) as unknown as {
+    data: SchedulerView[] | null;
+  };
+  return data ?? [];
+}
 
 export type BookingStatus =
   | "pending"

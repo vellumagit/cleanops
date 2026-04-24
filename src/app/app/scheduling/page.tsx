@@ -8,6 +8,7 @@ import { getOrgTimezone } from "@/lib/org-timezone";
 import {
   addDays,
   fetchScheduleWeek,
+  fetchSchedulerViews,
   formatWeekParam,
   parseWeekParam,
   startOfWeek,
@@ -49,10 +50,13 @@ export default async function SchedulingPage({
   const fetchStart = weekStart;
   const fetchEnd =
     view === "day" ? addDays(weekStart, 1) : addDays(weekStart, 7);
-  const { bookings, employees, offDays } = await fetchScheduleWeek(
-    fetchStart,
-    fetchEnd,
-  );
+  const [
+    { bookings, employees, offDays },
+    savedViews,
+  ] = await Promise.all([
+    fetchScheduleWeek(fetchStart, fetchEnd),
+    fetchSchedulerViews(membership.organization_id),
+  ]);
 
   const navStep = view === "day" ? 1 : 7;
   const prev = formatWeekParam(addDays(weekStart, -navStep));
@@ -153,6 +157,7 @@ export default async function SchedulingPage({
           offDays={offDays}
           canEdit={canEdit}
           tz={tz}
+          savedViews={savedViews}
         />
       </div>
     </PageShell>
