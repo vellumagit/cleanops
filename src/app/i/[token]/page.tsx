@@ -6,7 +6,10 @@ import { formatCurrencyCents, formatDate } from "@/lib/format";
 import { humanizePaymentMethod } from "@/lib/validators/invoice-payment";
 import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
 import { RateLimitedPage } from "@/components/rate-limited-page";
-import { startSquareCheckoutAction } from "./pay-actions";
+import {
+  startSquareCheckoutAction,
+  startStripeCheckoutAction,
+} from "./pay-actions";
 
 export const metadata: Metadata = {
   title: "Invoice",
@@ -135,18 +138,51 @@ export default async function PublicInvoicePage({
     invoice.organization?.default_payment_instructions ??
     null;
 
-  // Does this org have an active Square connection? If yes the public
-  // page shows a "Pay with Square" button that mints a checkout link.
-  const { data: squareConn } = orgId
-    ? ((await admin
-        .from("integration_connections" as never)
-        .select("id")
-        .eq("organization_id" as never, orgId as never)
-        .eq("provider" as never, "square" as never)
-        .eq("status" as never, "active" as never)
-        .maybeSingle()) as unknown as { data: { id: string } | null })
-    : { data: null };
-  const squareAvailable = Boolean(squareConn);
+  // Which card processors does this org have set up? We check BOTH
+  // Square (integration_connections table) and Stripe (dedicated
+  // columns on organizations) so "Pay with card" lights up if either
+  // is connected — previously only Square was checked, which meant
+  // Stripe-connected orgs saw no pay button on their public invoices.
+  //
+  // If both are connected we prefer Square (it's the older integration
+  // and has been the default for the public page — not changing it
+  // would surprise existing Square users). Orgs that have Stripe only
+  // get the Stripe action. Orgs with neither get no button.
+  const [squareConnResult, stripeOrgResult] = orgId
+    ? await Promise.all([
+        admin
+          .from("integration_connections" as never)
+          .select("id")
+          .eq("organization_id" as never, orgId as never)
+          .eq("provider" as never, "square" as never)
+          .eq("status" as never, "active" as never)
+          .maybeSingle() as unknown as Promise<{
+          data: { id: string } | null;
+        }>,
+        admin
+          .from("organizations")
+          .select("stripe_account_id, stripe_charges_enabled")
+          .eq("id", orgId)
+          .maybeSingle() as unknown as Promise<{
+          data: {
+            stripe_account_id: string | null;
+            stripe_charges_enabled: boolean | null;
+          } | null;
+        }>,
+      ])
+    : [{ data: null }, { data: null }];
+  const squareAvailable = Boolean(squareConnResult.data);
+  const stripeAvailable = Boolean(
+    stripeOrgResult.data?.stripe_account_id &&
+      stripeOrgResult.data?.stripe_charges_enabled,
+  );
+  const cardPayAvailable = squareAvailable || stripeAvailable;
+  // Square wins the tie so existing users don't get a provider swap.
+  const activeProcessor: "square" | "stripe" | null = squareAvailable
+    ? "square"
+    : stripeAvailable
+      ? "stripe"
+      : null;
 
   const brandCss = orgBranding.brand_color
     ? {
@@ -322,12 +358,18 @@ export default async function PublicInvoicePage({
               If the org hasn't set up card payments AND hasn't entered
               instructions, the block is suppressed entirely rather than
               taunting the client with a disabled "not enabled" button. */}
-          {!isVoid && !isPaid && (squareAvailable || paymentInstructions) && (
+          {!isVoid && !isPaid && (cardPayAvailable || paymentInstructions) && (
             <div className="mt-6 rounded-lg border border-border bg-muted/20 p-5">
               <p className="sollos-label">How to pay</p>
 
-              {squareAvailable && (
-                <form action={startSquareCheckoutAction}>
+              {activeProcessor && (
+                <form
+                  action={
+                    activeProcessor === "square"
+                      ? startSquareCheckoutAction
+                      : startStripeCheckoutAction
+                  }
+                >
                   <input type="hidden" name="token" value={token} />
                   <button
                     type="submit"
@@ -339,13 +381,15 @@ export default async function PublicInvoicePage({
                     Pay with card
                   </button>
                   <p className="mt-2 text-center text-[11px] text-muted-foreground">
-                    You&rsquo;ll be sent to Square&rsquo;s secure checkout.
+                    {activeProcessor === "square"
+                      ? "You'll be sent to Square's secure checkout."
+                      : "You'll be sent to Stripe's secure checkout."}
                   </p>
                 </form>
               )}
 
               {paymentInstructions && (
-                <div className={squareAvailable ? "mt-4" : "mt-3"}>
+                <div className={cardPayAvailable ? "mt-4" : "mt-3"}>
                   <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                     Payment instructions
                   </p>

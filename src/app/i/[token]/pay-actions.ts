@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
 import { createInvoiceCheckoutLink } from "@/lib/square";
+import { createInvoiceCheckoutSession } from "@/lib/stripe-connect";
 
 /**
  * Public server action: mint a Square hosted-checkout URL for the invoice
@@ -93,4 +94,78 @@ export async function startSquareCheckoutAction(formData: FormData) {
 
   // Redirect straight to Square's hosted page.
   redirect(link.url);
+}
+
+/**
+ * Public server action: mint a Stripe Checkout Session for the invoice
+ * identified by its public token, then redirect the client to Stripe's
+ * hosted checkout. Mirrors startSquareCheckoutAction — no auth
+ * (token-gated), IP rate-limited, and bails with an error flag on the
+ * invoice page rather than leaking exception text.
+ *
+ * The underlying createInvoiceCheckoutSession() already validates
+ * payment status + Stripe Connect setup on the org, so duplicate
+ * checks here would just be noise.
+ */
+export async function startStripeCheckoutAction(formData: FormData) {
+  const token = String(formData.get("token") ?? "").trim();
+  if (!token || token.length < 8) {
+    redirect("/?pay_error=bad_token");
+  }
+
+  // Same cadence as Square — 10 req/min/IP keeps legit clients on
+  // their feet and blocks an enumeration / cost-drain loop.
+  const rl = await checkIpRateLimit("pay-stripe", 10, 60_000);
+  if (!rl.allowed) {
+    redirect(`/i/${token}?pay_error=rate_limited`);
+  }
+
+  const admin = createSupabaseAdminClient();
+
+  const { data: invoice } = (await admin
+    .from("invoices")
+    .select("id, amount_cents, status, voided_at")
+    .eq("public_token", token)
+    .maybeSingle()) as unknown as {
+    data: {
+      id: string;
+      amount_cents: number;
+      status: string;
+      voided_at: string | null;
+    } | null;
+  };
+
+  if (!invoice) {
+    redirect("/?pay_error=not_found");
+  }
+  if (invoice.voided_at || invoice.status === "paid") {
+    redirect(`/i/${token}?pay_error=already_settled`);
+  }
+  if (!invoice.amount_cents || invoice.amount_cents <= 0) {
+    redirect(`/i/${token}?pay_error=zero_amount`);
+  }
+
+  const siteUrl =
+    process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+
+  let session: { url: string; sessionId: string } | null;
+  try {
+    session = await createInvoiceCheckoutSession({
+      invoiceId: invoice.id,
+      successUrl: `${siteUrl}/pay/${invoice.id}/success?token=${token}&provider=stripe`,
+      cancelUrl: `${siteUrl}/i/${token}?pay_error=cancelled`,
+    });
+  } catch (err) {
+    console.error("[stripe] checkout creation failed:", err);
+    redirect(`/i/${token}?pay_error=checkout_failed`);
+  }
+
+  // Null means the org's Stripe Connect isn't active (no account id
+  // or charges_enabled is false). Same UX as an unverified Square
+  // connection — redirect back with a not_connected flag.
+  if (!session) {
+    redirect(`/i/${token}?pay_error=not_connected`);
+  }
+
+  redirect(session.url);
 }
