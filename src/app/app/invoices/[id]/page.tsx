@@ -8,6 +8,7 @@ import { getOrgCurrency } from "@/lib/org-currency";
 import { StripePaymentLinkButton } from "./stripe-payment-link-button";
 import { SendInvoiceButton } from "./send-invoice-button";
 import { ResendInvoiceButton } from "./resend-invoice-button";
+import { SyncSageButton } from "./sync-sage-button";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
 import {
@@ -93,6 +94,27 @@ export default async function InvoiceDetailPage({
 
   if (error) throw error;
   if (!invoice) notFound();
+
+  // Check Sage Connect status — show the Sync to Sage button only
+  // when the org has an active Sage connection.
+  const { data: sageConn } = (await admin
+    .from("integration_connections" as never)
+    .select("id")
+    .eq("organization_id" as never, membership.organization_id as never)
+    .eq("provider" as never, "sage" as never)
+    .eq("status" as never, "active" as never)
+    .maybeSingle()) as unknown as { data: { id: string } | null };
+  const sageConnected = Boolean(sageConn);
+
+  // Is this invoice already synced? Column isn't in generated types yet.
+  const { data: sageInvRow } = (await admin
+    .from("invoices")
+    .select("sage_invoice_id")
+    .eq("id", id)
+    .maybeSingle()) as unknown as {
+    data: { sage_invoice_id: string | null } | null;
+  };
+  const sageSynced = Boolean(sageInvRow?.sage_invoice_id);
 
   // Fetch tax columns separately (not yet in generated types).
   const { data: taxData } = (await supabase
@@ -215,6 +237,12 @@ export default async function InvoiceDetailPage({
               )}
               {stripeReady && !isVoid && balanceCents > 0 && (
                 <StripePaymentLinkButton invoiceId={invoice.id} />
+              )}
+              {sageConnected && !isVoid && (
+                <SyncSageButton
+                  invoiceId={invoice.id}
+                  alreadySynced={sageSynced}
+                />
               )}
               {invoice.public_token && (
                 <Link

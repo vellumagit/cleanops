@@ -23,6 +23,7 @@ import { autoOnInvoicePaid } from "@/lib/automations";
 import { canCreateData } from "@/lib/subscription";
 import { redirectAfterSetup } from "@/lib/setup-return";
 import { computeTax } from "@/lib/invoice-tax";
+import { pushInvoiceToSage } from "@/lib/sage";
 
 type Field = keyof typeof InvoiceSchema.shape;
 export type InvoiceFormState = ActionState<Field>;
@@ -614,6 +615,14 @@ export async function sendInvoiceAction(
     after: { status: "sent" },
   });
 
+  // Fire-and-forget push to Sage if the org has it connected. We don't
+  // await — owners shouldn't wait on a bookkeeping sync before seeing
+  // their invoice flip to sent. pushInvoiceToSage swallows its own
+  // errors and logs them; idempotent via invoices.sage_invoice_id.
+  pushInvoiceToSage(id).catch((err) =>
+    console.error("[sage] background sync on send failed:", err),
+  );
+
   revalidatePath(`/app/invoices/${id}`);
   revalidatePath("/app/invoices");
   return { ok: true, messageId: delivered.messageId };
@@ -641,6 +650,43 @@ export async function resendInvoiceEmailAction(
   // and sent_at are intentionally untouched.
   revalidatePath(`/app/invoices/${id}`);
   return { ok: true, messageId: delivered.messageId };
+}
+
+/**
+ * Manual Sage sync for an invoice. Used by the "Sync to Sage" button
+ * on the invoice detail page when the background push on send didn't
+ * stick (Sage was briefly unreachable, tokens refreshed oddly, etc.).
+ * Idempotent — checks sage_invoice_id before POST-ing, so re-running
+ * won't create duplicates.
+ */
+export type SyncSageState = {
+  error?: string;
+  ok?: boolean;
+  sageInvoiceId?: string;
+};
+
+export async function syncInvoiceToSageAction(
+  _prev: SyncSageState,
+  formData: FormData,
+): Promise<SyncSageState> {
+  const id = String(formData.get("id") ?? "");
+  if (!id) return { error: "Missing invoice id." };
+
+  const { membership } = await getActionContext();
+  if (!["owner", "admin", "manager"].includes(membership.role)) {
+    return { error: "Only owners, admins, or managers can push to Sage." };
+  }
+
+  const result = await pushInvoiceToSage(id);
+  if (!result) {
+    return {
+      error:
+        "Couldn't push to Sage. Check Vercel logs for the exact error (look for [sage] entries) — most common causes are an expired connection or a missing org/client setup in Sage.",
+    };
+  }
+
+  revalidatePath(`/app/invoices/${id}`);
+  return { ok: true, sageInvoiceId: result };
 }
 
 /**
