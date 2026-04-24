@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import {
   format,
   startOfMonth,
@@ -448,12 +448,33 @@ function WeekView({
 }) {
   const weekStart = startOfWeek(currentDate, { weekStartsOn: 0 });
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
-  const hours = Array.from({ length: 14 }, (_, i) => i + 6); // 6am–7pm
+  // Full 24-hour day. Scroll container below caps the visual height so
+  // owners can scroll to early mornings / late evenings instead of being
+  // clipped to an arbitrary 6am–7pm window.
+  const hours = Array.from({ length: 24 }, (_, i) => i);
+  const ROW_PX = 56; // matches h-14
+
+  // Auto-scroll to the current hour on mount so "now" is visible
+  // without manual scrolling. Uses a one-shot ref guard so re-renders
+  // from event filtering don't keep yanking the scroll back.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const didInitialScroll = useRef(false);
+  useEffect(() => {
+    if (didInitialScroll.current) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    const nowHour = new Date().getHours();
+    // Land two hours before "now" so the current block is near the top
+    // but the morning stuff is still glanceable.
+    const target = Math.max(0, (nowHour - 2) * ROW_PX);
+    el.scrollTop = target;
+    didInitialScroll.current = true;
+  }, []);
 
   return (
     <div className="overflow-x-auto">
-      {/* Header */}
-      <div className="grid grid-cols-[60px_repeat(7,1fr)] border-b border-border sticky top-0 bg-card z-10">
+      {/* Header — outside the scroll container so it stays pinned visually. */}
+      <div className="grid grid-cols-[60px_repeat(7,1fr)] border-b border-border bg-card">
         <div className="border-r border-border" />
         {days.map((d) => (
           <div
@@ -478,90 +499,94 @@ function WeekView({
         ))}
       </div>
 
-      {/* Time grid */}
-      <div className="grid grid-cols-[60px_repeat(7,1fr)]">
-        {hours.map((hour) => (
-          <div key={hour} className="contents">
-            {/* Time label */}
-            <div className="border-r border-b border-border px-2 py-0 h-14 flex items-start justify-end">
-              <span className="text-[10px] text-muted-foreground -mt-1.5">
-                {hour === 0
-                  ? "12 AM"
-                  : hour < 12
-                    ? `${hour} AM`
-                    : hour === 12
-                      ? "12 PM"
-                      : `${hour - 12} PM`}
-              </span>
-            </div>
-            {/* Day columns */}
-            {days.map((d) => {
-              const cellStart = setHours(startOfDay(d), hour);
-              const cellEnd = setHours(startOfDay(d), hour + 1);
-              const cellEvents = events.filter((e) => {
-                const eStart = new Date(e.start);
+      {/* Time grid — scroll container so 24h doesn't explode the layout. */}
+      <div
+        ref={scrollRef}
+        className="max-h-[72vh] overflow-y-auto"
+      >
+        <div className="grid grid-cols-[60px_repeat(7,1fr)]">
+          {hours.map((hour) => (
+            <div key={hour} className="contents">
+              {/* Time gutter — label straddles the TOP border of its own
+                  cell, so visually it labels the hour LINE rather than
+                  floating in the middle of the hour block. First row's
+                  label is hidden (would bleed into the day header). */}
+              <div className="relative border-r border-b border-border h-14">
+                {hour > 0 && (
+                  <span className="absolute right-1.5 top-0 -translate-y-1/2 rounded bg-card px-1 text-[10px] leading-none text-muted-foreground">
+                    {formatHourLabel(hour)}
+                  </span>
+                )}
+              </div>
+              {/* Day columns */}
+              {days.map((d) => {
+                const cellStart = setHours(startOfDay(d), hour);
+                const cellEnd = setHours(startOfDay(d), hour + 1);
+                const cellEvents = events.filter((e) => {
+                  const eStart = new Date(e.start);
+                  return (
+                    isSameDay(eStart, d) &&
+                    eStart >= cellStart &&
+                    eStart < cellEnd
+                  );
+                });
+
                 return (
-                  isSameDay(eStart, d) &&
-                  eStart >= cellStart &&
-                  eStart < cellEnd
+                  <div
+                    key={`${d.toISOString()}-${hour}`}
+                    className={`relative border-r border-b border-border last:border-r-0 h-14 ${
+                      isToday(d) ? "bg-foreground/[0.02]" : ""
+                    }`}
+                  >
+                    {cellEvents.map((ev) => {
+                      const evStart = new Date(ev.start);
+                      const evEnd = new Date(ev.end);
+                      const duration = Math.max(
+                        differenceInMinutes(evEnd, evStart),
+                        30,
+                      );
+                      const topOffset =
+                        (evStart.getMinutes() / 60) * ROW_PX;
+                      const height = Math.max(
+                        (duration / 60) * ROW_PX,
+                        20,
+                      );
+
+                      return (
+                        <button
+                          key={ev.id}
+                          onClick={() => onSelectEvent(ev)}
+                          className={`absolute left-0.5 right-0.5 z-10 overflow-hidden rounded px-1.5 py-0.5 text-left text-[10px] leading-tight text-white transition-opacity hover:opacity-80 ${
+                            ev.type === "google_calendar"
+                              ? "border border-dashed border-white/30 opacity-85"
+                              : ""
+                          }`}
+                          style={{
+                            top: `${topOffset}px`,
+                            height: `${Math.min(height, ROW_PX * 4)}px`,
+                            backgroundColor: ev.color,
+                          }}
+                          title={ev.title}
+                        >
+                          <span className="font-medium block truncate">
+                            {format(new Date(ev.start), "h:mm")}
+                          </span>
+                          <span className="block truncate opacity-90">
+                            {ev.type === "google_calendar"
+                              ? ev.title
+                              : ev.meta && "client" in ev.meta
+                                ? ev.meta.client
+                                : ev.title}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 );
-              });
-
-              return (
-                <div
-                  key={`${d.toISOString()}-${hour}`}
-                  className={`relative border-r border-b border-border last:border-r-0 h-14 ${
-                    isToday(d) ? "bg-foreground/[0.02]" : ""
-                  }`}
-                >
-                  {cellEvents.map((ev) => {
-                    const evStart = new Date(ev.start);
-                    const evEnd = new Date(ev.end);
-                    const duration = Math.max(
-                      differenceInMinutes(evEnd, evStart),
-                      30,
-                    );
-                    const topOffset =
-                      ((evStart.getMinutes()) / 60) * 56; // 56px = h-14
-                    const height = Math.max(
-                      (duration / 60) * 56,
-                      20,
-                    );
-
-                    return (
-                      <button
-                        key={ev.id}
-                        onClick={() => onSelectEvent(ev)}
-                        className={`absolute left-0.5 right-0.5 z-10 overflow-hidden rounded px-1.5 py-0.5 text-left text-[10px] leading-tight text-white transition-opacity hover:opacity-80 ${
-                          ev.type === "google_calendar"
-                            ? "border border-dashed border-white/30 opacity-85"
-                            : ""
-                        }`}
-                        style={{
-                          top: `${topOffset}px`,
-                          height: `${Math.min(height, 112)}px`,
-                          backgroundColor: ev.color,
-                        }}
-                        title={ev.title}
-                      >
-                        <span className="font-medium block truncate">
-                          {format(new Date(ev.start), "h:mm")}
-                        </span>
-                        <span className="block truncate opacity-90">
-                          {ev.type === "google_calendar"
-                            ? ev.title
-                            : ev.meta && "client" in ev.meta
-                              ? ev.meta.client
-                              : ev.title}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              );
-            })}
-          </div>
-        ))}
+              })}
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -587,7 +612,25 @@ function DayView({
     return eStart >= dayStart && eStart <= dayEnd;
   });
 
-  const hours = Array.from({ length: 16 }, (_, i) => i + 5); // 5am–8pm
+  // Full 24-hour day. Clip the visual height with a scroll container
+  // below so it doesn't push the rest of the page off-screen.
+  const hours = Array.from({ length: 24 }, (_, i) => i);
+  const ROW_PX = 64; // matches h-16
+
+  // Auto-scroll to the current hour when viewing today; otherwise
+  // scroll to 6 AM as a sensible default for past/future days.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const didInitialScroll = useRef(false);
+  useEffect(() => {
+    if (didInitialScroll.current) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    const anchorHour = isToday(currentDate)
+      ? Math.max(0, new Date().getHours() - 2)
+      : 6;
+    el.scrollTop = anchorHour * ROW_PX;
+    didInitialScroll.current = true;
+  }, [currentDate]);
 
   return (
     <div>
@@ -617,71 +660,87 @@ function DayView({
         </div>
       </div>
 
-      {/* Time slots */}
-      <div className="grid grid-cols-[60px_1fr]">
-        {hours.map((hour) => {
-          const cellStart = setHours(dayStart, hour);
-          const cellEnd = setHours(dayStart, hour + 1);
-          const cellEvents = dayEvents.filter((e) => {
-            const eStart = new Date(e.start);
-            return eStart >= cellStart && eStart < cellEnd;
-          });
+      {/* Time slots — 24h in a scroll container. */}
+      <div ref={scrollRef} className="max-h-[72vh] overflow-y-auto">
+        <div className="grid grid-cols-[60px_1fr]">
+          {hours.map((hour) => {
+            const cellStart = setHours(dayStart, hour);
+            const cellEnd = setHours(dayStart, hour + 1);
+            const cellEvents = dayEvents.filter((e) => {
+              const eStart = new Date(e.start);
+              return eStart >= cellStart && eStart < cellEnd;
+            });
 
-          return (
-            <div key={hour} className="contents">
-              <div className="border-r border-b border-border px-2 h-16 flex items-start justify-end">
-                <span className="text-[10px] text-muted-foreground -mt-1.5">
-                  {hour === 0
-                    ? "12 AM"
-                    : hour < 12
-                      ? `${hour} AM`
-                      : hour === 12
-                        ? "12 PM"
-                        : `${hour - 12} PM`}
-                </span>
-              </div>
-              <div className="relative border-b border-border h-16">
-                {cellEvents.map((ev) => {
-                  const evStart = new Date(ev.start);
-                  const evEnd = new Date(ev.end);
-                  const duration = Math.max(
-                    differenceInMinutes(evEnd, evStart),
-                    30,
-                  );
-                  const topOffset = (evStart.getMinutes() / 60) * 64;
-                  const height = Math.max((duration / 60) * 64, 24);
+            return (
+              <div key={hour} className="contents">
+                {/* Time gutter — label straddles the top border line so
+                    it labels the hour DIVIDER rather than floating
+                    inside the block. First row skips the label to
+                    avoid bleeding into the day header above. */}
+                <div className="relative border-r border-b border-border h-16">
+                  {hour > 0 && (
+                    <span className="absolute right-1.5 top-0 -translate-y-1/2 rounded bg-card px-1 text-[10px] leading-none text-muted-foreground">
+                      {formatHourLabel(hour)}
+                    </span>
+                  )}
+                </div>
+                <div className="relative border-b border-border h-16">
+                  {cellEvents.map((ev) => {
+                    const evStart = new Date(ev.start);
+                    const evEnd = new Date(ev.end);
+                    const duration = Math.max(
+                      differenceInMinutes(evEnd, evStart),
+                      30,
+                    );
+                    const topOffset =
+                      (evStart.getMinutes() / 60) * ROW_PX;
+                    const height = Math.max((duration / 60) * ROW_PX, 24);
 
-                  return (
-                    <button
-                      key={ev.id}
-                      onClick={() => onSelectEvent(ev)}
-                      className={`absolute left-1 right-4 z-10 overflow-hidden rounded-md px-3 py-1.5 text-left text-xs text-white transition-opacity hover:opacity-80 ${
-                        ev.type === "google_calendar"
-                          ? "border border-dashed border-white/30 opacity-85"
-                          : ""
-                      }`}
-                      style={{
-                        top: `${topOffset}px`,
-                        height: `${Math.min(height, 192)}px`,
-                        backgroundColor: ev.color,
-                      }}
-                    >
-                      <span className="font-semibold">
-                        {format(evStart, "h:mm a")}
-                        {(ev.type === "booking" || ev.type === "google_calendar") &&
-                          ` – ${format(evEnd, "h:mm a")}`}
-                      </span>
-                      <span className="ml-2 opacity-90">{ev.title}</span>
-                    </button>
-                  );
-                })}
+                    return (
+                      <button
+                        key={ev.id}
+                        onClick={() => onSelectEvent(ev)}
+                        className={`absolute left-1 right-4 z-10 overflow-hidden rounded-md px-3 py-1.5 text-left text-xs text-white transition-opacity hover:opacity-80 ${
+                          ev.type === "google_calendar"
+                            ? "border border-dashed border-white/30 opacity-85"
+                            : ""
+                        }`}
+                        style={{
+                          top: `${topOffset}px`,
+                          height: `${Math.min(height, ROW_PX * 3)}px`,
+                          backgroundColor: ev.color,
+                        }}
+                      >
+                        <span className="font-semibold">
+                          {format(evStart, "h:mm a")}
+                          {(ev.type === "booking" ||
+                            ev.type === "google_calendar") &&
+                            ` – ${format(evEnd, "h:mm a")}`}
+                        </span>
+                        <span className="ml-2 opacity-90">{ev.title}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
     </div>
   );
+}
+
+/**
+ * Hour-label formatter shared by Week and Day views.
+ * 0 → "12 AM", 1–11 → "1 AM"…"11 AM", 12 → "12 PM",
+ * 13–23 → "1 PM"…"11 PM".
+ */
+function formatHourLabel(hour: number): string {
+  if (hour === 0) return "12 AM";
+  if (hour < 12) return `${hour} AM`;
+  if (hour === 12) return "12 PM";
+  return `${hour - 12} PM`;
 }
 
 // ---------------------------------------------------------------------------
