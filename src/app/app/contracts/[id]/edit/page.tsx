@@ -9,6 +9,7 @@ import { ContractForm } from "../../contract-form";
 import { fetchContractFormOptions } from "../../options";
 import { DeleteContractForm } from "./delete-form";
 import { ContractDocuments } from "../../contract-documents";
+import { SignaturePanel } from "./signature-panel";
 
 export const metadata = { title: "Edit contract" };
 
@@ -34,6 +35,23 @@ export default async function EditContractPage({
   if (!contract) notFound();
 
   const admin = createSupabaseAdminClient();
+
+  // Pull sign columns separately — not yet in generated types.
+  const { data: signInfo } = (await admin
+    .from("contracts")
+    .select("public_token, sign_status, signed_at, signer_name")
+    .eq("id", id)
+    .maybeSingle()) as unknown as {
+    data: {
+      public_token: string | null;
+      sign_status: "unsent" | "sent" | "signed" | "declined" | null;
+      signed_at: string | null;
+      signer_name: string | null;
+    } | null;
+  };
+
+  const siteUrl =
+    process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
 
   const [{ clients, estimates }, { data: docsRaw }] = await Promise.all([
     fetchContractFormOptions(),
@@ -95,6 +113,17 @@ export default async function EditContractPage({
             }}
           />
         </div>
+        <div className="rounded-lg border border-border bg-card p-6">
+          <SignaturePanel
+            contractId={contract.id}
+            initialToken={signInfo?.public_token ?? null}
+            signStatus={signInfo?.sign_status ?? "unsent"}
+            signedAt={signInfo?.signed_at ?? null}
+            signerName={signInfo?.signer_name ?? null}
+            siteUrl={siteUrl}
+          />
+        </div>
+
         <div className="rounded-lg border border-border bg-card p-6">
           <ContractDocuments
             contractId={contract.id}
