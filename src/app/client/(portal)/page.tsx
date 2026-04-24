@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRight, Calendar, Receipt } from "lucide-react";
+import { ArrowRight, Calendar, Receipt, CreditCard } from "lucide-react";
 import { requireClient } from "@/lib/client-auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import {
@@ -8,6 +8,7 @@ import {
   humanizeEnum,
 } from "@/lib/format";
 import { getOrgCurrency } from "@/lib/org-currency";
+import { getOrgTimezone } from "@/lib/org-timezone";
 
 export const metadata = { title: "Your dashboard" };
 
@@ -15,6 +16,7 @@ export default async function ClientDashboardPage() {
   const client = await requireClient();
   const supabase = await createSupabaseServerClient();
   const currency = await getOrgCurrency(client.organization_id);
+  const tz = await getOrgTimezone(client.organization_id);
 
   const [upcoming, outstanding] = await Promise.all([
     supabase
@@ -25,9 +27,12 @@ export default async function ClientDashboardPage() {
       .in("status", ["pending", "confirmed", "en_route", "in_progress"])
       .order("scheduled_at", { ascending: true })
       .limit(3),
+    // Pull public_token so the outstanding list can deep-link clients
+    // to the pay page directly instead of dumping them on the invoice
+    // list where there's nothing to click.
     supabase
       .from("invoices")
-      .select("id, number, amount_cents, status, due_date")
+      .select("id, number, amount_cents, status, due_date, public_token")
       .eq("client_id", client.id)
       .in("status", ["sent", "overdue", "partially_paid"])
       .order("due_date", { ascending: true })
@@ -74,7 +79,7 @@ export default async function ClientDashboardPage() {
                       {humanizeEnum(b.service_type)}
                     </p>
                     <p className="mt-0.5 text-xs text-muted-foreground">
-                      {formatDateTime(b.scheduled_at)}
+                      {formatDateTime(b.scheduled_at, tz)}
                       {b.address ? ` · ${b.address}` : ""}
                     </p>
                   </div>
@@ -86,7 +91,10 @@ export default async function ClientDashboardPage() {
         )}
       </section>
 
-      {/* Outstanding invoices */}
+      {/* Outstanding invoices — each row is a direct deep link to the
+          pay page (public token → /i/[token] → Stripe or Square hosted
+          checkout). The "Pay now" button is the primary CTA; the row
+          itself is also clickable for people used to tapping cards. */}
       <section>
         <div className="mb-2 flex items-center justify-between">
           <h2 className="flex items-center gap-2 text-sm font-semibold">
@@ -107,23 +115,31 @@ export default async function ClientDashboardPage() {
         ) : (
           <ul className="space-y-2">
             {(outstanding.data ?? []).map((inv) => (
-              <li key={inv.id}>
-                <Link
-                  href={`/client/invoices`}
-                  className="flex items-center gap-3 rounded-lg border border-border bg-card p-4 transition-colors hover:border-foreground/30"
-                >
-                  <div className="min-w-0 flex-1">
-                    <p className="font-medium tabular-nums">
-                      {formatCurrencyCents(inv.amount_cents, currency)}
-                    </p>
-                    <p className="mt-0.5 text-xs text-muted-foreground">
-                      Invoice {inv.number ?? inv.id.slice(0, 8).toUpperCase()}{" "}
-                      · {humanizeEnum(inv.status)}
-                      {inv.due_date ? ` · due ${inv.due_date}` : ""}
-                    </p>
-                  </div>
+              <li
+                key={inv.id}
+                className="flex items-center gap-3 rounded-lg border border-border bg-card p-4 transition-colors hover:border-foreground/30"
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="font-medium tabular-nums">
+                    {formatCurrencyCents(inv.amount_cents, currency)}
+                  </p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Invoice {inv.number ?? inv.id.slice(0, 8).toUpperCase()}{" "}
+                    · {humanizeEnum(inv.status)}
+                    {inv.due_date ? ` · due ${inv.due_date}` : ""}
+                  </p>
+                </div>
+                {inv.public_token ? (
+                  <Link
+                    href={`/i/${inv.public_token}`}
+                    className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-foreground px-3 py-2 text-xs font-semibold text-background transition-opacity hover:opacity-90"
+                  >
+                    <CreditCard className="h-3.5 w-3.5" />
+                    Pay now
+                  </Link>
+                ) : (
                   <ArrowRight className="h-4 w-4 text-muted-foreground" />
-                </Link>
+                )}
               </li>
             ))}
           </ul>
