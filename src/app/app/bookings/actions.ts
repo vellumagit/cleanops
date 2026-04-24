@@ -16,6 +16,7 @@ import {
   sendBookingCancelledToClient,
   sendBookingConfirmation,
   sendBookingRescheduled,
+  autoInvoiceOnJobComplete,
 } from "@/lib/automations";
 import { canCreateData } from "@/lib/subscription";
 import { getOrgTimezone } from "@/lib/org-timezone";
@@ -526,6 +527,20 @@ export async function updateBookingAction(
     sendBookingCancelledToClient(id);
   }
 
+  // If the status flipped TO completed from something else, kick off the
+  // auto-invoice automation. Previously this only ran when an employee
+  // marked a job done from the field app — owners marking a job complete
+  // from the admin dashboard got no invoice at all, which looked like
+  // the auto-invoice feature was broken. Awaited so the draft invoice is
+  // present by the time /app/invoices revalidates below. The automation
+  // catches its own errors internally so this won't throw here.
+  if (
+    existing?.status !== "completed" &&
+    parsed.data.status === "completed"
+  ) {
+    await autoInvoiceOnJobComplete(id);
+  }
+
   // Sync to Google Calendar
   const labels = await getBookingLabels(
     supabase,
@@ -563,6 +578,7 @@ export async function updateBookingAction(
   revalidatePath("/app/bookings");
   revalidatePath(`/app/bookings/${id}/edit`);
   revalidatePath("/app");
+  revalidatePath("/app/invoices");
   redirect("/app/bookings");
 }
 

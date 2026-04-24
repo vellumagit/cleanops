@@ -171,18 +171,34 @@ export async function autoInvoiceOnJobComplete(bookingId: string) {
     // Fetch the completed booking with client info
     const { data: booking } = await db
       .from("bookings")
-      .select("id, organization_id, client_id, total_cents, service_type, address, duration_minutes, scheduled_at")
+      .select(
+        "id, organization_id, client_id, total_cents, service_type, address, duration_minutes, scheduled_at",
+      )
       .eq("id", bookingId)
       .maybeSingle();
 
-    if (!booking || !booking.client_id) return;
-
-    if (!(await isAutomationEnabled(booking.organization_id, "auto_invoice_on_job_complete"))) {
-      console.log(`[auto] Auto-invoice paused for org ${booking.organization_id}`);
+    if (!booking || !booking.client_id) {
+      console.log(
+        `[auto] autoInvoiceOnJobComplete: skipping booking ${bookingId} — no booking or client`,
+      );
       return;
     }
 
-    // Check if an invoice already exists for this booking
+    if (
+      !(await isAutomationEnabled(
+        booking.organization_id,
+        "auto_invoice_on_job_complete",
+      ))
+    ) {
+      console.log(
+        `[auto] Auto-invoice paused for org ${booking.organization_id}`,
+      );
+      return;
+    }
+
+    // Dedupe: if an invoice already exists for this booking, don't
+    // create a second one. Completing a job twice (e.g. an edit flip
+    // from completed→pending→completed) should not produce duplicates.
     const { data: existing } = await db
       .from("invoices")
       .select("id")
@@ -190,38 +206,95 @@ export async function autoInvoiceOnJobComplete(bookingId: string) {
       .limit(1)
       .maybeSingle();
 
-    if (existing) return; // already invoiced
+    if (existing) {
+      console.log(
+        `[auto] autoInvoiceOnJobComplete: booking ${bookingId} already invoiced (${existing.id})`,
+      );
+      return;
+    }
 
-    // Get the next invoice number for this org
-    const { count } = await db
-      .from("invoices")
-      .select("id", { count: "exact", head: true })
-      .eq("organization_id", booking.organization_id);
+    // Apply the org's default tax if configured. This mirrors the
+    // behavior of manually-created invoices from Settings → Currency &
+    // tax — otherwise an auto-invoice for $100 reads differently than
+    // a manual one for $100 in a tax jurisdiction.
+    const { data: orgData } = (await db
+      .from("organizations")
+      .select("default_tax_rate_bps, default_tax_label")
+      .eq("id", booking.organization_id)
+      .maybeSingle()) as unknown as {
+      data: {
+        default_tax_rate_bps: number | null;
+        default_tax_label: string | null;
+      } | null;
+    };
+    const defaultRateBps = orgData?.default_tax_rate_bps ?? null;
+    const defaultLabel = orgData?.default_tax_label ?? null;
 
-    const invoiceNumber = `INV-${String((count ?? 0) + 1).padStart(4, "0")}`;
+    const subtotalCents = booking.total_cents ?? 0;
+    const taxAmountCents = defaultRateBps
+      ? Math.round((subtotalCents * defaultRateBps) / 10000)
+      : null;
+    const totalCents = subtotalCents + (taxAmountCents ?? 0);
 
     const scheduledDate = new Date(booking.scheduled_at);
     const dueDate = new Date(scheduledDate);
     dueDate.setDate(dueDate.getDate() + 14); // Net 14
 
-    await (db.from("invoices").insert({
-      organization_id: booking.organization_id,
-      client_id: booking.client_id,
-      booking_id: booking.id,
-      invoice_number: invoiceNumber,
-      status: "draft",
-      amount_cents: booking.total_cents,
-      due_date: dueDate.toISOString().split("T")[0],
-      line_items: [
-        {
-          description: `${humanize(booking.service_type)} — ${booking.address ?? "on site"}`,
-          quantity: 1,
-          unit_price_cents: booking.total_cents,
-        },
-      ],
-    } as never) as unknown as Promise<unknown>);
+    // Insert the invoice. The `number` and `public_token` columns are
+    // assigned automatically by BEFORE INSERT triggers
+    // (assign_invoice_number / assign_invoice_public_token), so we
+    // don't set them here — doing so would duplicate and mis-sequence.
+    const { data: invoice, error: invErr } = (await db
+      .from("invoices")
+      .insert({
+        organization_id: booking.organization_id,
+        client_id: booking.client_id,
+        booking_id: booking.id,
+        status: "draft",
+        amount_cents: totalCents,
+        tax_rate_bps: defaultRateBps,
+        tax_amount_cents: taxAmountCents,
+        tax_label: defaultRateBps ? defaultLabel : null,
+        due_date: dueDate.toISOString().split("T")[0],
+      } as never)
+      .select("id, number")
+      .single()) as unknown as {
+      data: { id: string; number: string | null } | null;
+      error: { message: string } | null;
+    };
 
-    console.log(`[auto] Draft invoice ${invoiceNumber} created for booking ${bookingId}`);
+    if (invErr || !invoice) {
+      console.error(
+        "[auto] autoInvoiceOnJobComplete invoice insert failed:",
+        invErr?.message,
+      );
+      return;
+    }
+
+    // Line items live on a separate table, not as a column on invoices.
+    // Insert one row describing what was done; the owner can add more
+    // before sending.
+    const { error: liErr } = await db.from("invoice_line_items").insert({
+      organization_id: booking.organization_id,
+      invoice_id: invoice.id,
+      label: `${humanize(booking.service_type)} — ${booking.address ?? "on site"}`,
+      quantity: 1,
+      unit_price_cents: subtotalCents,
+      sort_order: 0,
+    } as never);
+
+    if (liErr) {
+      console.error(
+        "[auto] autoInvoiceOnJobComplete line item insert failed:",
+        liErr.message,
+      );
+      // Don't roll back — the invoice itself is fine, the owner can
+      // add line items by hand. Logging is enough.
+    }
+
+    console.log(
+      `[auto] Draft invoice ${invoice.number ?? invoice.id} created for booking ${bookingId}`,
+    );
   } catch (err) {
     console.error("[auto] autoInvoiceOnJobComplete failed:", err);
   }

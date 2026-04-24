@@ -141,8 +141,13 @@ export async function completeJobAction(
     .is("clock_out_at", null);
   if (closeEntryError) return { ok: false, error: closeEntryError.message };
 
-  // Fire-and-forget: auto-generate a draft invoice for the completed job
-  autoInvoiceOnJobComplete(bookingId).catch(() => {});
+  // Auto-generate a draft invoice for the completed job. Awaited (not
+  // fire-and-forget) so the draft is present by the time /app/invoices
+  // revalidates and the owner reloads — previously users reported "I
+  // finished a job and no invoice appeared" because the response
+  // returned before the insert ran. The automation catches its own
+  // errors internally, so awaiting it won't throw here.
+  await autoInvoiceOnJobComplete(bookingId);
 
   revalidatePath("/field/jobs");
   revalidatePath(`/field/jobs/${bookingId}`);
