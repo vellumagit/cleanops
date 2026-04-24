@@ -6,6 +6,7 @@ import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
 import { ArchivedToggle } from "@/components/archived-toggle";
 import { memberDisplayName } from "@/lib/member-display";
+import { getOrgTimezone } from "@/lib/org-timezone";
 import { BookingsTable, type BookingRow } from "./bookings-table";
 
 export const metadata = { title: "Bookings" };
@@ -18,6 +19,7 @@ export default async function BookingsPage({
   const membership = await requireMembership();
   const canEdit = membership.role === "owner" || membership.role === "admin" || membership.role === "manager";
   const supabase = await createSupabaseServerClient();
+  const tz = await getOrgTimezone(membership.organization_id);
   const { archived } = await searchParams;
   const showArchived = archived === "1";
 
@@ -129,7 +131,11 @@ export default async function BookingsPage({
         </div>
       }
     >
-      <BookingsTable rows={rows} canEdit={canEdit && !showArchived} />
+      <BookingsTable
+        rows={rows}
+        canEdit={canEdit && !showArchived}
+        tz={tz}
+      />
     </PageShell>
   );
 }

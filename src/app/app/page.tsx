@@ -27,11 +27,13 @@ import {
 } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { memberDisplayName } from "@/lib/member-display";
+import { getOrgTimezone } from "@/lib/org-timezone";
 
 export const metadata = { title: "Dashboard" };
 
 export default async function DashboardPage() {
   const membership = await requireMembership();
+  const tz = await getOrgTimezone(membership.organization_id);
   const supabase = await createSupabaseServerClient();
   const currency = await getOrgCurrency(membership.organization_id);
 
@@ -358,7 +360,7 @@ export default async function DashboardPage() {
                       {b.client?.name ?? "—"}
                     </span>
                     <span className="truncate text-xs text-muted-foreground">
-                      {formatDateTime(b.scheduled_at)} ·{" "}
+                      {formatDateTime(b.scheduled_at, tz)} ·{" "}
                       {b.assigned ? memberDisplayName(b.assigned) : "Unassigned"}
                     </span>
                   </div>

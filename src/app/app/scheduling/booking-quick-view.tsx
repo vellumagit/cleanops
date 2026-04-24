@@ -15,7 +15,7 @@ import { humanizeEnum } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { ScheduleBooking, ScheduleEmployee } from "./data";
 
-function formatDateTime(iso: string) {
+function formatDateTime(iso: string, tz?: string) {
   const d = new Date(iso);
   return d.toLocaleString("en-US", {
     weekday: "short",
@@ -23,6 +23,7 @@ function formatDateTime(iso: string) {
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
+    ...(tz ? { timeZone: tz } : {}),
   });
 }
 
@@ -50,11 +51,13 @@ export function BookingQuickView({
   employees,
   open,
   onOpenChange,
+  tz,
 }: {
   booking: ScheduleBooking | null;
   employees: ScheduleEmployee[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  tz: string;
 }) {
   if (!booking) return null;
 
@@ -84,7 +87,7 @@ export function BookingQuickView({
         <dl className="space-y-3 text-sm">
           <Row icon={<Clock className="h-3.5 w-3.5" />} label="When">
             <span className="tabular-nums">
-              {formatDateTime(booking.scheduled_at)}
+              {formatDateTime(booking.scheduled_at, tz)}
             </span>
             <span className="ml-2 text-xs text-muted-foreground">
               · {formatDuration(booking.duration_minutes)}

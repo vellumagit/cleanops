@@ -76,9 +76,15 @@ function matchesTab(row: BookingRow, tab: StatusTab): boolean {
 export function BookingsTable({
   rows,
   canEdit,
+  tz,
 }: {
   rows: BookingRow[];
   canEdit: boolean;
+  /** Org IANA timezone. Passed down from the server page so booking
+   *  times render in the owner's configured zone (e.g. "8:00 AM" for
+   *  an 8am Edmonton booking, not "10:00 AM" because the default fell
+   *  back to New York). */
+  tz: string;
 }) {
   const router = useRouter();
   const [view, setView] = useState<ViewMode>("table");
@@ -350,9 +356,19 @@ export function BookingsTable({
           No bookings match your filters.
         </div>
       ) : view === "table" ? (
-        <TableView rows={filtered} canEdit={canEdit} router={router} />
+        <TableView
+          rows={filtered}
+          canEdit={canEdit}
+          router={router}
+          tz={tz}
+        />
       ) : (
-        <CardsView rows={filtered} canEdit={canEdit} router={router} />
+        <CardsView
+          rows={filtered}
+          canEdit={canEdit}
+          router={router}
+          tz={tz}
+        />
       )}
 
       {rows.length > 0 && (
@@ -373,10 +389,12 @@ function TableView({
   rows,
   canEdit,
   router,
+  tz,
 }: {
   rows: BookingRow[];
   canEdit: boolean;
   router: ReturnType<typeof useRouter>;
+  tz: string;
 }) {
   return (
     <div className="overflow-hidden rounded-lg border border-border bg-card">
@@ -423,7 +441,7 @@ function TableView({
                 )}
               >
                 <td className="px-3 py-2.5 tabular-nums whitespace-nowrap">
-                  {formatDateTime(r.scheduled_at)}
+                  {formatDateTime(r.scheduled_at, tz)}
                 </td>
                 <td className="px-3 py-2.5">
                   <span className="flex items-center gap-1.5">
@@ -478,12 +496,15 @@ function CardsView({
   rows,
   canEdit,
   router,
+  tz,
 }: {
   rows: BookingRow[];
   canEdit: boolean;
   router: ReturnType<typeof useRouter>;
+  tz: string;
 }) {
-  // Group by date
+  // Group by date (in the org's timezone — otherwise an 8pm Edmonton
+  // job could land under "tomorrow" if the browser is in a later tz).
   const grouped = useMemo(() => {
     const map = new Map<string, BookingRow[]>();
     for (const r of rows) {
@@ -492,13 +513,14 @@ function CardsView({
         month: "long",
         day: "numeric",
         year: "numeric",
+        timeZone: tz,
       });
       const existing = map.get(dateKey) ?? [];
       existing.push(r);
       map.set(dateKey, existing);
     }
     return Array.from(map.entries());
-  }, [rows]);
+  }, [rows, tz]);
 
   return (
     <div className="space-y-5">
@@ -550,6 +572,7 @@ function CardsView({
                       {new Date(r.scheduled_at).toLocaleTimeString("en-US", {
                         hour: "numeric",
                         minute: "2-digit",
+                        timeZone: tz,
                       })}
                     </span>
                     <span className="text-muted-foreground/50">·</span>

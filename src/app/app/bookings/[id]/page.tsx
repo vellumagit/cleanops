@@ -19,6 +19,7 @@ import {
 } from "@/lib/format";
 import { fetchJobPhotos } from "@/lib/job-photos";
 import { memberDisplayName } from "@/lib/member-display";
+import { getOrgTimezone } from "@/lib/org-timezone";
 import { JobPhotos } from "@/app/field/jobs/[id]/job-photos";
 import {
   BookingChecklist,
@@ -60,6 +61,7 @@ export default async function BookingDetailPage({
   const canEdit = membership.role === "owner" || membership.role === "admin";
   const { id } = await params;
   const supabase = await createSupabaseServerClient();
+  const tz = await getOrgTimezone(membership.organization_id);
 
   const { data: booking, error } = (await supabase
     .from("bookings")
@@ -177,7 +179,7 @@ export default async function BookingDetailPage({
   return (
     <PageShell
       title={humanizeEnum(booking.service_type)}
-      description={formatDateTime(booking.scheduled_at)}
+      description={formatDateTime(booking.scheduled_at, tz)}
       actions={
         canEdit ? (
           <div className="flex items-center gap-2">
@@ -222,7 +224,7 @@ export default async function BookingDetailPage({
               <div>
                 <dt className="text-xs text-muted-foreground">Scheduled</dt>
                 <dd className="mt-0.5 font-medium text-foreground">
-                  {formatDateTime(booking.scheduled_at)}
+                  {formatDateTime(booking.scheduled_at, tz)}
                 </dd>
               </div>
               <div>
@@ -341,7 +343,7 @@ export default async function BookingDetailPage({
                           {o.dispatches?.length ?? 0} dispatches
                         </Link>
                         <p className="text-xs text-muted-foreground">
-                          {formatDateTime(o.created_at)}
+                          {formatDateTime(o.created_at, tz)}
                         </p>
                       </div>
                       <StatusBadge tone={offerTone(o.status as OfferStatus)}>
@@ -381,7 +383,7 @@ export default async function BookingDetailPage({
               <div className="flex justify-between gap-3">
                 <dt className="text-muted-foreground">Created</dt>
                 <dd className="font-medium text-foreground">
-                  {formatDateTime(booking.created_at)}
+                  {formatDateTime(booking.created_at, tz)}
                 </dd>
               </div>
               <div className="flex justify-between gap-3">

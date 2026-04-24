@@ -41,17 +41,32 @@ function laneTone(idx: number) {
   return LANE_TONES[idx % LANE_TONES.length];
 }
 
-function dateKey(d: Date) {
+function dateKey(d: Date, tz?: string) {
+  if (tz) {
+    // Render the date components in the org's timezone so cellMap
+    // bucketing matches what the user sees (e.g. a 10pm Edmonton job
+    // stays on the same day it was scheduled for, not the next day
+    // when the browser is in a later tz).
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: tz,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(d);
+    const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "00";
+    return `${get("year")}-${get("month")}-${get("day")}`;
+  }
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 }
 
-function formatHourMinute(iso: string) {
+function formatHourMinute(iso: string, tz?: string) {
   return new Date(iso).toLocaleTimeString("en-US", {
     hour: "numeric",
     minute: "2-digit",
+    ...(tz ? { timeZone: tz } : {}),
   });
 }
 
@@ -76,6 +91,10 @@ export function WeekGrid({
   /** "week" shows all 7 days, "day" collapses to just the first day of
    *  the range. The parent picks which via a toggle in the page header. */
   view = "week",
+  /** Org IANA timezone. Used to bucket bookings into the correct cell
+   *  and to format start times — so an 8am Edmonton booking shows as
+   *  "8:00 AM" regardless of the viewer's browser tz. */
+  tz,
 }: {
   /** ISO date YYYY-MM-DD for Monday of the displayed week (or the day
    *  itself in day view). */
@@ -84,6 +103,7 @@ export function WeekGrid({
   employees: ScheduleEmployee[];
   canEdit: boolean;
   view?: "week" | "day";
+  tz: string;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -121,7 +141,7 @@ export function WeekGrid({
     const map = new Map<string, ScheduleBooking[]>();
     for (const b of bookings) {
       if (!b.assigned_to) continue;
-      const k = `${b.assigned_to}|${dateKey(new Date(b.scheduled_at))}`;
+      const k = `${b.assigned_to}|${dateKey(new Date(b.scheduled_at), tz)}`;
       const arr = map.get(k) ?? [];
       arr.push(b);
       map.set(k, arr);
@@ -151,7 +171,7 @@ export function WeekGrid({
     if (target.kind === "unassigned") {
       if (!booking.assigned_to) return;
     } else {
-      const currentDate = dateKey(new Date(booking.scheduled_at));
+      const currentDate = dateKey(new Date(booking.scheduled_at), tz);
       if (
         booking.assigned_to === target.employeeId &&
         currentDate === target.date
@@ -162,7 +182,7 @@ export function WeekGrid({
 
     const targetDate =
       target.kind === "unassigned"
-        ? dateKey(new Date(booking.scheduled_at))
+        ? dateKey(new Date(booking.scheduled_at), tz)
         : target.date;
     const assignedTo = target.kind === "unassigned" ? null : target.employeeId;
 
@@ -199,6 +219,7 @@ export function WeekGrid({
           canEdit={canEdit}
           isPending={isPending}
           onQuickView={setQuickViewId}
+          tz={tz}
         />
 
         <div className="overflow-x-auto rounded-lg border border-border bg-card">
@@ -254,6 +275,7 @@ export function WeekGrid({
                 cellMap={cellMap}
                 canEdit={canEdit}
                 onQuickView={setQuickViewId}
+                tz={tz}
               />
             ))}
           </div>
@@ -275,6 +297,7 @@ export function WeekGrid({
         onOpenChange={(o) => {
           if (!o) setQuickViewId(null);
         }}
+        tz={tz}
       />
     </DndContext>
   );
@@ -287,6 +310,7 @@ function EmployeeRow({
   cellMap,
   canEdit,
   onQuickView,
+  tz,
 }: {
   employee: ScheduleEmployee;
   tone: string;
@@ -294,6 +318,7 @@ function EmployeeRow({
   cellMap: Map<string, ScheduleBooking[]>;
   canEdit: boolean;
   onQuickView: (bookingId: string) => void;
+  tz: string;
 }) {
   return (
     <>
@@ -317,6 +342,7 @@ function EmployeeRow({
             bookings={cellBookings}
             canEdit={canEdit}
             onQuickView={onQuickView}
+            tz={tz}
           />
         );
       })}
@@ -330,12 +356,14 @@ function DayCell({
   bookings,
   canEdit,
   onQuickView,
+  tz,
 }: {
   employeeId: string;
   date: string;
   bookings: ScheduleBooking[];
   canEdit: boolean;
   onQuickView: (bookingId: string) => void;
+  tz: string;
 }) {
   const droppableId = `cell:${employeeId}:${date}`;
   const { setNodeRef, isOver } = useDroppable({
@@ -357,6 +385,7 @@ function DayCell({
           booking={b}
           canEdit={canEdit}
           onQuickView={onQuickView}
+          tz={tz}
         />
       ))}
     </div>
@@ -379,10 +408,12 @@ function DraggableBooking({
   booking,
   canEdit,
   onQuickView,
+  tz,
 }: {
   booking: ScheduleBooking;
   canEdit: boolean;
   onQuickView: (bookingId: string) => void;
+  tz: string;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: booking.id,
@@ -401,6 +432,7 @@ function DraggableBooking({
         canDrag={canEdit}
         onClick={() => onQuickView(booking.id)}
         dragListeners={listeners}
+        tz={tz}
       />
     </div>
   );
@@ -413,6 +445,7 @@ function BookingCard({
   canDrag = false,
   onClick,
   dragListeners,
+  tz,
 }: {
   booking: ScheduleBooking;
   tone: string;
@@ -424,6 +457,10 @@ function BookingCard({
   /** dnd-kit pointer listeners bound to the grip only, so click vs drag
    *  don't fight each other. */
   dragListeners?: DraggableSyntheticListeners;
+  /** Org tz so start times read in the org's wall clock. Optional
+   *  because the DragOverlay preview stamps a plain card at drag
+   *  time and we don't need to thread tz through its context. */
+  tz?: string;
 }) {
   return (
     <div
@@ -463,7 +500,7 @@ function BookingCard({
         ) : null}
       </div>
       <div className="tabular-nums text-muted-foreground">
-        {formatHourMinute(booking.scheduled_at)} · {booking.duration_minutes}m
+        {formatHourMinute(booking.scheduled_at, tz)} · {booking.duration_minutes}m
       </div>
       <div className="mt-1 flex items-center gap-1">
         <StatusBadge tone={bookingStatusTone(booking.status)}>
@@ -479,11 +516,13 @@ function UnassignedTray({
   canEdit,
   isPending,
   onQuickView,
+  tz,
 }: {
   bookings: ScheduleBooking[];
   canEdit: boolean;
   isPending: boolean;
   onQuickView: (bookingId: string) => void;
+  tz: string;
 }) {
   const { setNodeRef, isOver } = useDroppable({
     id: "unassigned",
@@ -518,6 +557,7 @@ function UnassignedTray({
               booking={b}
               canEdit={canEdit}
               onQuickView={onQuickView}
+              tz={tz}
             />
           ))}
         </div>

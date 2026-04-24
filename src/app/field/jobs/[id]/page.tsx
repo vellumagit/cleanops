@@ -18,6 +18,7 @@ import {
 import { JobActionButtons } from "./job-actions";
 import { JobPhotos } from "./job-photos";
 import { fetchJobPhotos } from "@/lib/job-photos";
+import { getOrgTimezone } from "@/lib/org-timezone";
 import {
   BookingChecklist,
   type BookingChecklistItem,
@@ -33,6 +34,7 @@ export default async function FieldJobDetailPage({
   const membership = await requireMembership();
   const { id } = await params;
   const supabase = await createSupabaseServerClient();
+  const tz = await getOrgTimezone(membership.organization_id);
 
   const { data: booking, error } = await supabase
     .from("bookings")
@@ -129,7 +131,7 @@ export default async function FieldJobDetailPage({
             <ClockIcon className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
             <div>
               <div className="font-semibold">
-                {formatDateTime(booking.scheduled_at)}
+                {formatDateTime(booking.scheduled_at, tz)}
               </div>
               <div className="text-sm text-muted-foreground">
                 Estimated {formatDurationMinutes(booking.duration_minutes)}

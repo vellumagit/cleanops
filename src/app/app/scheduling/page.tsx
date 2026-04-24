@@ -4,6 +4,7 @@ import { requireMembership } from "@/lib/auth";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { getOrgTimezone } from "@/lib/org-timezone";
 import {
   addDays,
   fetchScheduleWeek,
@@ -28,6 +29,7 @@ export default async function SchedulingPage({
 }) {
   const membership = await requireMembership();
   const canEdit = membership.role === "owner" || membership.role === "admin";
+  const tz = await getOrgTimezone(membership.organization_id);
   const { week, view: viewRaw } = await searchParams;
   const view = parseView(viewRaw);
 
@@ -149,6 +151,7 @@ export default async function SchedulingPage({
           employees={employees}
           canEdit={canEdit}
           view={view}
+          tz={tz}
         />
       </div>
     </PageShell>

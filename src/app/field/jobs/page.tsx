@@ -9,12 +9,14 @@ import {
   formatDurationMinutes,
   humanizeEnum,
 } from "@/lib/format";
+import { getOrgTimezone } from "@/lib/org-timezone";
 
 export const metadata = { title: "My jobs" };
 
 export default async function FieldJobsPage() {
   const membership = await requireMembership();
   const supabase = await createSupabaseServerClient();
+  const tz = await getOrgTimezone(membership.organization_id);
 
   // Show jobs assigned to this member from yesterday onwards so an in-progress
   // overnight job doesn't disappear.
@@ -151,7 +153,7 @@ export default async function FieldJobsPage() {
                           </StatusBadge>
                         </div>
                         <div className="mt-1.5 text-sm text-muted-foreground">
-                          {formatDateTime(job.scheduled_at)} ·{" "}
+                          {formatDateTime(job.scheduled_at, tz)} ·{" "}
                           {formatDurationMinutes(job.duration_minutes)} ·{" "}
                           {humanizeEnum(job.service_type)}
                         </div>
