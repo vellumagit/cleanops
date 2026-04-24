@@ -1420,7 +1420,7 @@ export async function sendUpcomingBookingReminders(): Promise<{
     .from("bookings")
     .select(`
       id, organization_id, scheduled_at, service_type, address,
-      client:clients ( name, email )
+      client:clients ( name, email, phone )
     `)
     .is("client_reminder_sent_at" as never, null as never)
     .in("status", ["pending", "confirmed"])
@@ -1432,7 +1432,11 @@ export async function sendUpcomingBookingReminders(): Promise<{
       scheduled_at: string;
       service_type: string;
       address: string | null;
-      client: { name: string | null; email: string | null } | null;
+      client: {
+        name: string | null;
+        email: string | null;
+        phone: string | null;
+      } | null;
     }> | null;
   };
 
@@ -1516,6 +1520,41 @@ export async function sendUpcomingBookingReminders(): Promise<{
       console.log(
         `[auto] Booking reminder sent for booking ${booking.id} to ${booking.client.email}`,
       );
+
+      // Fire-and-forget SMS alongside the email when Twilio is on and
+      // the client has a phone. Paired with the email, not replacing
+      // it — email carries the address / details, SMS is the nudge
+      // that actually gets noticed.
+      try {
+        const { isTwilioEnabled, sendSms, composeBookingReminderSms } =
+          await import("@/lib/twilio");
+        if (isTwilioEnabled() && booking.client?.phone) {
+          const { data: orgContact } = (await db
+            .from("organizations")
+            .select("contact_phone")
+            .eq("id", booking.organization_id)
+            .maybeSingle()) as unknown as {
+            data: { contact_phone: string | null } | null;
+          };
+          const smsBody = composeBookingReminderSms({
+            orgName: cached.name,
+            serviceType: booking.service_type,
+            scheduledAt: booking.scheduled_at,
+            contactPhone: orgContact?.contact_phone ?? null,
+          });
+          sendSms(booking.client.phone, smsBody).catch((err) =>
+            console.error(
+              "[auto] sendUpcomingBookingReminders SMS failed:",
+              err,
+            ),
+          );
+        }
+      } catch (smsErr) {
+        console.error(
+          "[auto] sendUpcomingBookingReminders SMS path errored:",
+          smsErr,
+        );
+      }
     } else {
       // sendOrgEmail returned false — either the kill switch is on, email
       // isn't configured, or Resend rejected. Don't stamp — we'll retry
@@ -1701,6 +1740,61 @@ export async function notifyBookingAssignment(
     } as never) as unknown as Promise<unknown>);
 
     sendPushToMembership(assignedTo, { title, body, href: `/field/jobs/${bookingId}` }).catch(() => {});
+
+    // SMS to the employee's phone (when Twilio's on + they have one).
+    // Field crews check SMS way more reliably than push/in-app — a
+    // job they don't show up to is worse than a spammy text.
+    try {
+      const { isTwilioEnabled, sendSms, composeBookingAssignmentSms } =
+        await import("@/lib/twilio");
+      if (isTwilioEnabled()) {
+        const { data: member } = (await db
+          .from("memberships")
+          .select(
+            "id, display_name, profile:profiles ( full_name, phone )",
+          )
+          .eq("id", assignedTo)
+          .maybeSingle()) as unknown as {
+          data: {
+            id: string;
+            display_name: string | null;
+            profile: { full_name: string | null; phone: string | null } | null;
+          } | null;
+        };
+        const phone = member?.profile?.phone;
+        if (phone) {
+          const { data: org } = (await db
+            .from("organizations")
+            .select("name")
+            .eq("id", organizationId)
+            .maybeSingle()) as unknown as {
+            data: { name: string | null } | null;
+          };
+          const smsBody = composeBookingAssignmentSms({
+            orgName: org?.name ?? "Sollos",
+            serviceType: meta.serviceType,
+            clientName: meta.clientName,
+            scheduledAt: meta.scheduledAt,
+            address: meta.address,
+          });
+          // Fire-and-forget — never let SMS delivery block notification
+          // dispatch or crash the automation. sendSms already catches
+          // internal errors and returns a result object.
+          sendSms(phone, smsBody).catch((err) =>
+            console.error(
+              "[auto] notifyBookingAssignment SMS failed:",
+              err,
+            ),
+          );
+        }
+      }
+    } catch (smsErr) {
+      console.error(
+        "[auto] notifyBookingAssignment SMS path errored:",
+        smsErr,
+      );
+    }
+
     console.log(`[auto] Notified ${assignedTo} about booking assignment ${bookingId}`);
   } catch (err) {
     console.error("[auto] notifyBookingAssignment failed:", err);

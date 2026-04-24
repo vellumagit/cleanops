@@ -139,3 +139,57 @@ export function composeOfferSms(args: {
       : "First to claim gets it";
   return `Sollos 3: Coverage needed. ${service} ${when}, ${duration}, ${dollars}. ${args.addressShort}. ${cta}: ${args.claimUrl}`;
 }
+
+/**
+ * SMS to an employee when a booking is assigned to them. Target <160
+ * chars (1 segment). The org name is prepended so the employee knows
+ * which company the job is from when they work for multiple.
+ *
+ * "{Org}: New job. Deep clean for Smith Fri Apr 24 2:00 PM. 1247 Maple St."
+ */
+export function composeBookingAssignmentSms(args: {
+  orgName: string;
+  serviceType: string;
+  clientName: string;
+  scheduledAt: string;
+  address: string | null;
+}): string {
+  const when = new Date(args.scheduledAt).toLocaleString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  const service = args.serviceType.replace(/_/g, " ");
+  const addressPart = args.address ? ` ${args.address}` : "";
+  return `${args.orgName}: New job. ${service} for ${args.clientName} ${when}.${addressPart}`;
+}
+
+/**
+ * 24-hour heads-up SMS to a client before their booking. Keep it
+ * short + warm — unlike a job assignment, the client didn't opt into
+ * noisy texting.
+ *
+ * "Velluma: Reminder — your Deep clean is Fri Apr 24 2:00 PM.
+ * Questions? (555) 123-4567"
+ */
+export function composeBookingReminderSms(args: {
+  orgName: string;
+  serviceType: string;
+  scheduledAt: string;
+  contactPhone?: string | null;
+}): string {
+  const when = new Date(args.scheduledAt).toLocaleString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  const service = args.serviceType.replace(/_/g, " ");
+  const cta = args.contactPhone
+    ? ` Questions? ${args.contactPhone}`
+    : "";
+  return `${args.orgName}: Reminder — your ${service} is ${when}.${cta}`;
+}
