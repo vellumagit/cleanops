@@ -222,6 +222,7 @@ export function SchedulerShell({
           canEdit={canEdit}
           tz={tz}
           offDays={offDays}
+          colorBy={filters.colorBy}
         />
       ) : (
         <WeekGrid
@@ -232,6 +233,7 @@ export function SchedulerShell({
           view={view}
           tz={tz}
           offDays={offDays}
+          colorBy={filters.colorBy}
         />
       )}
     </>

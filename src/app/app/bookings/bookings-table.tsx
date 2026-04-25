@@ -29,6 +29,8 @@ import {
 } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
+import { AssignCrewButton } from "./assign-crew-button";
+import type { AssignableEmployee } from "./assign-crew-dialog";
 
 export type BookingRow = {
   id: string;
@@ -45,6 +47,12 @@ export type BookingRow = {
   total_cents: number;
   client_name: string;
   assigned_name: string | null;
+  /** Primary assignee membership id — feeds the Assign dialog's
+   *  pre-filled radio so opening it shows the current state. */
+  assigned_to: string | null;
+  /** Non-primary crew membership ids on this booking, sourced from
+   *  the booking_assignees junction. Pre-checked in the dialog. */
+  additional_assignee_ids: string[];
   series_id: string | null;
   address: string | null;
 };
@@ -77,6 +85,7 @@ export function BookingsTable({
   rows,
   canEdit,
   tz,
+  employees,
 }: {
   rows: BookingRow[];
   canEdit: boolean;
@@ -85,6 +94,10 @@ export function BookingsTable({
    *  an 8am Edmonton booking, not "10:00 AM" because the default fell
    *  back to New York). */
   tz: string;
+  /** Active employees in the org. Powers the per-row Assign popup so
+   *  owners can change crew without leaving the bookings list. Empty
+   *  list hides the button (nothing useful to pick). */
+  employees: AssignableEmployee[];
 }) {
   const router = useRouter();
   const [view, setView] = useState<ViewMode>("table");
@@ -361,6 +374,7 @@ export function BookingsTable({
           canEdit={canEdit}
           router={router}
           tz={tz}
+          employees={employees}
         />
       ) : (
         <CardsView
@@ -368,6 +382,7 @@ export function BookingsTable({
           canEdit={canEdit}
           router={router}
           tz={tz}
+          employees={employees}
         />
       )}
 
@@ -390,11 +405,13 @@ function TableView({
   canEdit,
   router,
   tz,
+  employees,
 }: {
   rows: BookingRow[];
   canEdit: boolean;
   router: ReturnType<typeof useRouter>;
   tz: string;
+  employees: AssignableEmployee[];
 }) {
   return (
     <div className="overflow-hidden rounded-lg border border-border bg-card">
@@ -463,13 +480,29 @@ function TableView({
                   {formatDurationMinutes(r.duration_minutes)}
                 </td>
                 <td className="px-3 py-2.5 hidden sm:table-cell">
-                  {r.assigned_name ? (
-                    <span className="text-muted-foreground">
-                      {r.assigned_name}
-                    </span>
-                  ) : (
-                    <AssignedCell row={r} canEdit={canEdit} />
-                  )}
+                  <div className="flex items-center gap-2">
+                    {r.assigned_name ? (
+                      <span className="text-muted-foreground">
+                        {r.assigned_name}
+                      </span>
+                    ) : (
+                      <AssignedCell row={r} canEdit={canEdit} />
+                    )}
+                    {canEdit && employees.length > 0 && (
+                      <span onClick={(e) => e.stopPropagation()}>
+                        <AssignCrewButton
+                          bookingId={r.id}
+                          employees={employees}
+                          initialPrimaryId={r.assigned_to}
+                          initialAdditionalIds={r.additional_assignee_ids}
+                          variant="ghost"
+                          size="sm"
+                          label={r.assigned_name ? "Change" : "Assign"}
+                          stopPropagation
+                        />
+                      </span>
+                    )}
+                  </div>
                 </td>
                 <td className="px-3 py-2.5">
                   <StatusBadge tone={bookingStatusTone(r.status)}>
@@ -497,11 +530,13 @@ function CardsView({
   canEdit,
   router,
   tz,
+  employees,
 }: {
   rows: BookingRow[];
   canEdit: boolean;
   router: ReturnType<typeof useRouter>;
   tz: string;
+  employees: AssignableEmployee[];
 }) {
   // Group by date (in the org's timezone — otherwise an 8pm Edmonton
   // job could land under "tomorrow" if the browser is in a later tz).
@@ -531,17 +566,28 @@ function CardsView({
           </h3>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {dayRows.map((r) => (
-              <button
+              <div
                 key={r.id}
-                type="button"
+                role={canEdit ? "button" : undefined}
+                tabIndex={canEdit ? 0 : undefined}
                 onClick={
                   canEdit
                     ? () => router.push(`/app/bookings/${r.id}/edit`)
                     : undefined
                 }
+                onKeyDown={
+                  canEdit
+                    ? (e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          router.push(`/app/bookings/${r.id}/edit`);
+                        }
+                      }
+                    : undefined
+                }
                 className={cn(
                   "flex flex-col gap-2 rounded-xl border border-border bg-card p-4 text-left transition-all",
-                  canEdit && "cursor-pointer hover:border-foreground/20 hover:shadow-sm",
+                  canEdit && "cursor-pointer hover:border-foreground/20 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 )}
               >
                 {/* Top row: client + status */}
@@ -596,13 +642,27 @@ function CardsView({
                   </div>
                 </div>
 
-                {/* Bottom: total */}
-                <div className="mt-auto pt-1 border-t border-border">
+                {/* Bottom: total + Assign chip */}
+                <div className="mt-auto flex items-center justify-between gap-2 pt-1 border-t border-border">
                   <span className="text-sm font-semibold tabular-nums">
                     {formatCurrencyCents(r.total_cents)}
                   </span>
+                  {canEdit && employees.length > 0 && (
+                    <span onClick={(e) => e.stopPropagation()}>
+                      <AssignCrewButton
+                        bookingId={r.id}
+                        employees={employees}
+                        initialPrimaryId={r.assigned_to}
+                        initialAdditionalIds={r.additional_assignee_ids}
+                        variant="ghost"
+                        size="sm"
+                        label={r.assigned_name ? "Change" : "Assign"}
+                        stopPropagation
+                      />
+                    </span>
+                  )}
                 </div>
-              </button>
+              </div>
             ))}
           </div>
         </div>

@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { FormError, FormField } from "@/components/form-field";
 import { SubmitButton } from "@/components/submit-button";
 import { signContractAction, type SignContractState } from "./sign-actions";
+import { SignaturePad } from "./signature-pad";
 
 const EMPTY: SignContractState = {};
 
@@ -26,10 +27,16 @@ export function SignForm({
     EMPTY,
   );
   const [agreed, setAgreed] = useState(false);
+  const [signatureDataUrl, setSignatureDataUrl] = useState("");
 
   return (
     <form action={action} className="space-y-5">
       <input type="hidden" name="token" value={token} />
+      <input
+        type="hidden"
+        name="signature_data_url"
+        value={signatureDataUrl}
+      />
       <FormError message={state.error} />
 
       <FormField
@@ -46,6 +53,20 @@ export function SignForm({
           autoComplete="name"
         />
       </FormField>
+
+      {/* Optional drawn signature. Typed name is the legal record;
+          the drawing is a polish — it gives the client the visceral
+          "I just signed" feeling and adds a second piece of evidence. */}
+      <div className="space-y-1.5">
+        <label className="text-sm font-medium text-foreground">
+          Draw your signature{" "}
+          <span className="font-normal text-muted-foreground">(optional)</span>
+        </label>
+        <SignaturePad
+          onChange={setSignatureDataUrl}
+          ariaLabel="Draw your signature"
+        />
+      </div>
 
       <label className="flex items-start gap-3 rounded-lg border border-border bg-muted/20 p-4 text-sm cursor-pointer hover:bg-muted/40 transition-colors">
         <input

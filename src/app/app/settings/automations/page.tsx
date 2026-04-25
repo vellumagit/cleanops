@@ -3,6 +3,7 @@ import {
   ChevronLeft,
   Zap,
   Mail,
+  MessageSquare,
   Users,
   Bell,
   PlayCircle,
@@ -114,6 +115,36 @@ const CATEGORIES: Category[] = [
         description:
           "Sends the client a polite reminder once every 7 days while an invoice is past due. Stops automatically once the invoice is marked paid.",
         trigger: "Invoice → Overdue (daily cron)",
+      },
+    ],
+  },
+  {
+    id: "client-sms",
+    label: "Client SMS",
+    description:
+      "Outbound texts to clients via Twilio. All default OFF — requires TWILIO_ENABLED=true and A2P 10DLC registration before messages actually send. Enabling the toggles while Twilio is disabled is safe: messages are logged only.",
+    icon: MessageSquare,
+    automations: [
+      {
+        key: "booking_confirmation_sms" as AutomationKey,
+        title: "Booking confirmation text",
+        description:
+          "Texts the client when a new booking is confirmed, with the service type, date, and a contact number. Companion to the booking confirmation email — SMS gets seen first on mobile.",
+        trigger: "Booking → Created",
+      },
+      {
+        key: "booking_reminder_client_sms" as AutomationKey,
+        title: "24-hour booking reminder text",
+        description:
+          "Texts the client roughly 24 hours before their booking. Sent alongside the email reminder — the text gets the nudge noticed; the email carries the address and details.",
+        trigger: "Daily cron, ~18:00 UTC",
+      },
+      {
+        key: "booking_assignment_sms" as AutomationKey,
+        title: "Job assignment text to employee",
+        description:
+          "Texts the assigned employee when a booking is assigned to them. Field crews check SMS more reliably than push — a no-show is worse than a spammy text.",
+        trigger: "Booking → Assigned",
       },
     ],
   },

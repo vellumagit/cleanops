@@ -27,6 +27,7 @@ import {
   type BookingChecklistItem,
 } from "@/app/app/checklists/booking-checklist";
 import { AttachTemplateButton } from "@/app/app/checklists/attach-template-button";
+import { AssignCrewButton } from "@/app/app/bookings/assign-crew-button";
 
 export const metadata = { title: "Booking" };
 
@@ -153,10 +154,11 @@ export default async function BookingDetailPage({
   // there's more than one assignee so solo jobs look unchanged.
   const { data: extraAssignees } = (await supabase
     .from("booking_assignees" as never)
-    .select("membership:memberships ( id, display_name, profile:profiles ( full_name ) )")
+    .select("membership_id, membership:memberships ( id, display_name, profile:profiles ( full_name ) )")
     .eq("booking_id" as never, booking.id as never)
     .eq("is_primary" as never, false as never)) as unknown as {
     data: Array<{
+      membership_id: string;
       membership: {
         id: string;
         display_name: string | null;
@@ -171,6 +173,33 @@ export default async function BookingDetailPage({
       null,
     )
     .filter((n): n is string => !!n);
+  const additionalAssigneeIds = (extraAssignees ?? []).map(
+    (r) => r.membership_id,
+  );
+
+  // Active employees in the org — feeds the Assign-crew popup so the
+  // owner can change the primary or add more crew without leaving this
+  // page. RLS scopes memberships to the current org.
+  const { data: employeesData } = canEdit
+    ? ((await supabase
+        .from("memberships")
+        .select("id, display_name, profile:profiles ( full_name )")
+        .eq("status", "active")
+        .in("role", ["employee", "admin", "owner"])
+        .order("display_name", {
+          ascending: true,
+        })) as unknown as {
+        data: Array<{
+          id: string;
+          display_name: string | null;
+          profile: { full_name: string | null } | null;
+        }> | null;
+      })
+    : { data: null };
+  const assignableEmployees = (employeesData ?? []).map((m) => ({
+    id: m.id,
+    label: memberDisplayName(m) ?? "Unnamed",
+  }));
 
   // Checklist items attached to this booking + available templates for
   // the attach dropdown.
@@ -204,6 +233,16 @@ export default async function BookingDetailPage({
           <div className="flex items-center gap-2">
             {showGenerateInvoice && (
               <GenerateInvoiceButton bookingId={booking.id} />
+            )}
+            {assignableEmployees.length > 0 && (
+              <AssignCrewButton
+                bookingId={booking.id}
+                employees={assignableEmployees}
+                initialPrimaryId={booking.assigned?.id ?? null}
+                initialAdditionalIds={additionalAssigneeIds}
+                variant="outline"
+                label={booking.assigned ? "Change crew" : "Assign crew"}
+              />
             )}
             <Link
               href={`/app/bookings/${booking.id}/offer`}

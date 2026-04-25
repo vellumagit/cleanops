@@ -24,6 +24,15 @@ export const DEFAULT_OFF: ReadonlySet<string> = new Set([
   // draft/test bookings while onboarding before their client list is
   // clean; quiet until explicitly enabled.
   "booking_confirmation_email",
+
+  // SMS automations — all default OFF. SMS is a higher-friction channel
+  // than email: clients may not have opted in to texts, and A2P 10DLC
+  // registration must be complete before the platform-level
+  // TWILIO_ENABLED flag is flipped. Owners explicitly opt these in once
+  // they're registered and have confirmed clients welcome texts.
+  "booking_confirmation_sms",
+  "booking_reminder_client_sms",
+  "booking_assignment_sms",
 ]);
 
 /**

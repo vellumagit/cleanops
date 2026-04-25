@@ -167,6 +167,33 @@ export function composeBookingAssignmentSms(args: {
 }
 
 /**
+ * SMS to a client when their booking is first created / confirmed.
+ * Stays < 160 chars in the common case (1 SMS segment = minimal cost).
+ *
+ * "Velluma: Your Deep clean is confirmed for Fri Apr 24 2:00 PM.
+ * Questions? (555) 123-4567"
+ */
+export function composeBookingConfirmationSms(args: {
+  orgName: string;
+  serviceType: string;
+  scheduledAt: string;
+  contactPhone?: string | null;
+}): string {
+  const when = new Date(args.scheduledAt).toLocaleString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  const service = args.serviceType.replace(/_/g, " ");
+  const cta = args.contactPhone
+    ? ` Questions? ${args.contactPhone}`
+    : "";
+  return `${args.orgName}: Your ${service} is confirmed for ${when}.${cta}`;
+}
+
+/**
  * 24-hour heads-up SMS to a client before their booking. Keep it
  * short + warm — unlike a job assignment, the client didn't opt into
  * noisy texting.

@@ -39,7 +39,9 @@ export default async function EditContractPage({
   // Pull sign columns separately — not yet in generated types.
   const { data: signInfo } = (await admin
     .from("contracts")
-    .select("public_token, sign_status, signed_at, signer_name")
+    .select(
+      "public_token, sign_status, signed_at, signer_name, signer_signature_data_url",
+    )
     .eq("id", id)
     .maybeSingle()) as unknown as {
     data: {
@@ -47,6 +49,7 @@ export default async function EditContractPage({
       sign_status: "unsent" | "sent" | "signed" | "declined" | null;
       signed_at: string | null;
       signer_name: string | null;
+      signer_signature_data_url: string | null;
     } | null;
   };
 
@@ -120,6 +123,9 @@ export default async function EditContractPage({
             signStatus={signInfo?.sign_status ?? "unsent"}
             signedAt={signInfo?.signed_at ?? null}
             signerName={signInfo?.signer_name ?? null}
+            signerSignatureDataUrl={
+              signInfo?.signer_signature_data_url ?? null
+            }
             siteUrl={siteUrl}
           />
         </div>

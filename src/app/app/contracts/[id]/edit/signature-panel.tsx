@@ -7,6 +7,8 @@ import {
   CheckCircle2,
   ExternalLink,
   Clock,
+  Mail,
+  AlertTriangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SubmitButton } from "@/components/submit-button";
@@ -25,6 +27,8 @@ type Props = {
   signStatus: "unsent" | "sent" | "signed" | "declined";
   signedAt: string | null;
   signerName: string | null;
+  /** Optional drawn-signature PNG data URL captured at sign time. */
+  signerSignatureDataUrl: string | null;
   siteUrl: string;
 };
 
@@ -42,6 +46,7 @@ export function SignaturePanel({
   signStatus,
   signedAt,
   signerName,
+  signerSignatureDataUrl,
   siteUrl,
 }: Props) {
   const [state, action] = useActionState<SendContractState, FormData>(
@@ -82,7 +87,7 @@ export function SignaturePanel({
           <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-4">
             <div className="flex items-start gap-2.5">
               <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
-              <div>
+              <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium text-emerald-800 dark:text-emerald-300">
                   Signed by {signerName ?? "the client"}
                 </p>
@@ -93,6 +98,22 @@ export function SignaturePanel({
                       timeStyle: "short",
                     })}
                   </p>
+                )}
+                {signerSignatureDataUrl && (
+                  <div className="mt-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700/80 dark:text-emerald-400/80">
+                      Drawn signature
+                    </p>
+                    {/* Plain <img> — the data URL is inlined, no remote
+                        fetch, so next/image would be overkill and would
+                        also reject data: URLs without explicit config. */}
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={signerSignatureDataUrl}
+                      alt={`Signature drawn by ${signerName ?? "the client"}`}
+                      className="mt-1.5 max-h-24 rounded border border-emerald-500/30 bg-white p-1"
+                    />
+                  </div>
                 )}
               </div>
             </div>
@@ -152,6 +173,29 @@ export function SignaturePanel({
               the link can view + sign, so only share with the intended
               signer.
             </p>
+          </div>
+        )}
+
+        {state.ok && state.emailed && (
+          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3">
+            <div className="flex items-start gap-2">
+              <Mail className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" />
+              <p className="text-xs text-emerald-800 dark:text-emerald-300">
+                Email sent to the client with the signing link. They can
+                also use the link above if you want to share it directly.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {state.ok && !state.emailed && state.emailNote && (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
+              <p className="text-xs text-amber-800 dark:text-amber-300">
+                {state.emailNote}
+              </p>
+            </div>
           </div>
         )}
 

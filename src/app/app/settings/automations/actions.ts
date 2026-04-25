@@ -33,7 +33,15 @@ export type AutomationKey =
   | "auto_recurring_invoices"
   | "booking_cancelled_email"
   | "rebooking_prompt_email"
-  | "estimate_followup_email";
+  | "estimate_followup_email"
+  // SMS automations (Twilio) — all default OFF; requires TWILIO_ENABLED=true
+  // and A2P 10DLC registration before messages actually send. When
+  // TWILIO_ENABLED is false the code path is exercised but messages are
+  // only logged (skipped_disabled), so enabling these toggles is safe to
+  // do before Twilio is live.
+  | "booking_confirmation_sms"
+  | "booking_reminder_client_sms"
+  | "booking_assignment_sms";
 
 export async function toggleAutomationAction(formData: FormData) {
   const { membership } = await getActionContext();

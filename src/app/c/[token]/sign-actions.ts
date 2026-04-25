@@ -32,6 +32,7 @@ export async function signContractAction(
   const token = String(formData.get("token") ?? "").trim();
   const typedName = String(formData.get("signer_name") ?? "").trim();
   const agreed = String(formData.get("agree") ?? "") === "on";
+  const rawSignature = String(formData.get("signature_data_url") ?? "");
 
   if (!token || token.length < 8) {
     return { error: "Invalid signing link." };
@@ -44,6 +45,29 @@ export async function signContractAction(
   }
   if (!agreed) {
     return { error: "Check the agreement box to proceed." };
+  }
+
+  // Validate the optional drawn signature payload. Empty string = the
+  // user didn't draw anything (just typed their name). Anything else
+  // must be a small, well-formed PNG data URL.
+  let signatureDataUrl: string | null = null;
+  if (rawSignature) {
+    if (!rawSignature.startsWith("data:image/png;base64,")) {
+      return {
+        error:
+          "The drawn signature couldn't be read. Clear it and try again, or skip it.",
+      };
+    }
+    if (rawSignature.length > 300_000) {
+      // Matches the DB CHECK constraint added in the migration. ~200 KB
+      // is way more than a real signature trace; this guards against a
+      // malicious / buggy client posting a huge image.
+      return {
+        error:
+          "Drawn signature is too large. Clear and re-draw, or skip the drawing.",
+      };
+    }
+    signatureDataUrl = rawSignature;
   }
 
   // Very aggressive rate limit — real signers click once, maybe twice.
@@ -107,6 +131,7 @@ export async function signContractAction(
       signer_name: typedName,
       signer_ip: signerIp,
       signer_user_agent: userAgent?.slice(0, 500) ?? null,
+      signer_signature_data_url: signatureDataUrl,
     } as never)
     .eq("id", contract.id);
 

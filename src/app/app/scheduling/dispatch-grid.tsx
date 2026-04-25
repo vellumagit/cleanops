@@ -22,6 +22,7 @@ import { humanizeEnum } from "@/lib/format";
 import { rescheduleBookingAction } from "./actions";
 import type { ScheduleBooking, ScheduleEmployee } from "./data";
 import { BookingQuickView } from "./booking-quick-view";
+import { toneForBooking, toneForEmployee, type ColorBy } from "./color";
 
 /**
  * Dispatch view: single-day, time-of-day axis, employee columns.
@@ -45,18 +46,6 @@ const SLOT_MINUTES = 30;
 const SLOT_PX = 40; // 30 min = 40px → hour = 80px
 const SLOTS_PER_DAY = 48; // 24h × 2
 const DAY_HEIGHT_PX = SLOTS_PER_DAY * SLOT_PX;
-
-const LANE_TONES = [
-  "#0ea5e9", // sky
-  "#8b5cf6", // violet
-  "#10b981", // emerald
-  "#f59e0b", // amber
-  "#f43f5e", // rose
-  "#06b6d4", // cyan
-  "#d946ef", // fuchsia
-  "#84cc16", // lime
-];
-const toneFor = (idx: number) => LANE_TONES[idx % LANE_TONES.length];
 
 function pad(n: number) {
   return String(n).padStart(2, "0");
@@ -102,6 +91,7 @@ export function DispatchGrid({
   canEdit,
   tz,
   offDays = {},
+  colorBy = "employee",
 }: {
   date: string;
   bookings: ScheduleBooking[];
@@ -112,6 +102,10 @@ export function DispatchGrid({
    *  in an employee's list, their whole column is visually shaded +
    *  flagged in the header so the owner sees at a glance. */
   offDays?: Record<string, string[]>;
+  /** Card accent color rule. Header dots always reflect employee idx
+   *  regardless — switching by service/client/status only changes the
+   *  card left border. */
+  colorBy?: ColorBy;
 }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
@@ -313,7 +307,7 @@ export function DispatchGrid({
                   <div className="flex items-center gap-2">
                     <span
                       className="h-2 w-2 shrink-0 rounded-full"
-                      style={{ backgroundColor: toneFor(idx) }}
+                      style={{ backgroundColor: toneForEmployee(idx) }}
                     />
                     <span
                       className={cn(
@@ -368,7 +362,7 @@ export function DispatchGrid({
               <EmployeeColumn
                 key={emp.id}
                 employee={emp}
-                tone={toneFor(idx)}
+                laneIdx={idx}
                 bookings={bookingsByEmployee.get(emp.id) ?? []}
                 conflictIds={conflictIds}
                 canEdit={canEdit}
@@ -377,6 +371,7 @@ export function DispatchGrid({
                 isOff={offEmployeeIds.has(emp.id)}
                 onQuickView={setQuickViewId}
                 onSlotClick={handleSlotClick}
+                colorBy={colorBy}
               />
             ))}
           </div>
@@ -427,7 +422,7 @@ function parseDroppableId(id: string): DropTarget | null {
 
 function EmployeeColumn({
   employee,
-  tone,
+  laneIdx,
   bookings,
   conflictIds,
   canEdit,
@@ -436,9 +431,10 @@ function EmployeeColumn({
   isOff,
   onQuickView,
   onSlotClick,
+  colorBy,
 }: {
   employee: ScheduleEmployee;
-  tone: string;
+  laneIdx: number;
   bookings: ScheduleBooking[];
   conflictIds: Set<string>;
   canEdit: boolean;
@@ -450,6 +446,7 @@ function EmployeeColumn({
   isOff: boolean;
   onQuickView: (id: string) => void;
   onSlotClick: (employeeId: string, minutes: number) => void;
+  colorBy: ColorBy;
 }) {
   return (
     <div
@@ -492,7 +489,7 @@ function EmployeeColumn({
             booking={b}
             top={top}
             height={height}
-            tone={tone}
+            tone={toneForBooking(b, colorBy, laneIdx)}
             canEdit={canEdit}
             hasConflict={conflictIds.has(b.id)}
             onQuickView={onQuickView}

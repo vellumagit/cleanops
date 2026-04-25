@@ -22,24 +22,9 @@ import { humanizeEnum } from "@/lib/format";
 import { rescheduleBookingAction } from "./actions";
 import type { ScheduleBooking, ScheduleEmployee } from "./data";
 import { BookingQuickView } from "./booking-quick-view";
+import { toneForBooking, toneForEmployee, type ColorBy } from "./color";
 
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-
-/** Lane background hues, indexed by employee position. */
-const LANE_TONES = [
-  "border-l-sky-500",
-  "border-l-violet-500",
-  "border-l-emerald-500",
-  "border-l-amber-500",
-  "border-l-rose-500",
-  "border-l-cyan-500",
-  "border-l-fuchsia-500",
-  "border-l-lime-500",
-];
-
-function laneTone(idx: number) {
-  return LANE_TONES[idx % LANE_TONES.length];
-}
 
 function dateKey(d: Date, tz?: string) {
   if (tz) {
@@ -100,6 +85,9 @@ export function WeekGrid({
    *  on one of these dates get a striped grey background so owners
    *  don't accidentally assign a job onto a known-unavailable day. */
   offDays = {},
+  /** How card accent color is computed. Lane headers always use the
+   *  per-employee tone regardless. */
+  colorBy = "employee",
 }: {
   /** ISO date YYYY-MM-DD for Monday of the displayed week (or the day
    *  itself in day view). */
@@ -110,6 +98,7 @@ export function WeekGrid({
   view?: "week" | "day";
   tz: string;
   offDays?: Record<string, string[]>;
+  colorBy?: ColorBy;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -247,6 +236,7 @@ export function WeekGrid({
           isPending={isPending}
           onQuickView={setQuickViewId}
           tz={tz}
+          colorBy={colorBy}
         />
 
         <div className="overflow-x-auto rounded-lg border border-border bg-card">
@@ -297,13 +287,15 @@ export function WeekGrid({
               <EmployeeRow
                 key={emp.id}
                 employee={emp}
-                tone={laneTone(idx)}
+                laneTone={toneForEmployee(idx)}
+                laneIdx={idx}
                 days={days}
                 cellMap={cellMap}
                 canEdit={canEdit}
                 onQuickView={setQuickViewId}
                 tz={tz}
                 offDates={offDaysByEmployee.get(emp.id) ?? new Set()}
+                colorBy={colorBy}
               />
             ))}
           </div>
@@ -312,7 +304,7 @@ export function WeekGrid({
 
       <DragOverlay>
         {activeBooking ? (
-          <BookingCard booking={activeBooking} dragging tone="" />
+          <BookingCard booking={activeBooking} dragging accent="" />
         ) : null}
       </DragOverlay>
 
@@ -333,16 +325,23 @@ export function WeekGrid({
 
 function EmployeeRow({
   employee,
-  tone,
+  laneTone,
+  laneIdx,
   days,
   cellMap,
   canEdit,
   onQuickView,
   tz,
   offDates,
+  colorBy,
 }: {
   employee: ScheduleEmployee;
-  tone: string;
+  /** Hex color for the employee's lane header left border. */
+  laneTone: string;
+  /** Position of this employee in the rendered list — used by
+   *  toneForBooking when colorBy="employee" so card color matches the
+   *  lane header. */
+  laneIdx: number;
   days: Date[];
   cellMap: Map<string, ScheduleBooking[]>;
   canEdit: boolean;
@@ -350,15 +349,13 @@ function EmployeeRow({
   tz: string;
   /** Days this employee is off (YYYY-MM-DD set). */
   offDates: Set<string>;
+  colorBy: ColorBy;
 }) {
   return (
     <>
       <div
-        className={cn(
-          "sticky left-0 z-10 flex items-center gap-2 border-b border-r border-border bg-card px-4 py-3 text-sm font-medium",
-          "border-l-4",
-          tone,
-        )}
+        className="sticky left-0 z-10 flex items-center gap-2 border-b border-r border-border bg-card px-4 py-3 text-sm font-medium border-l-4"
+        style={{ borderLeftColor: laneTone }}
       >
         {employee.name}
       </div>
@@ -370,12 +367,14 @@ function EmployeeRow({
           <DayCell
             key={key}
             employeeId={employee.id}
+            laneIdx={laneIdx}
             date={dateStr}
             bookings={cellBookings}
             canEdit={canEdit}
             onQuickView={onQuickView}
             tz={tz}
             isOff={offDates.has(dateStr)}
+            colorBy={colorBy}
           />
         );
       })}
@@ -385,14 +384,17 @@ function EmployeeRow({
 
 function DayCell({
   employeeId,
+  laneIdx,
   date,
   bookings,
   canEdit,
   onQuickView,
   tz,
   isOff,
+  colorBy,
 }: {
   employeeId: string;
+  laneIdx: number;
   date: string;
   bookings: ScheduleBooking[];
   canEdit: boolean;
@@ -402,6 +404,7 @@ function DayCell({
    *  Cell gets a striped grey background so it reads at a glance. Still
    *  droppable — server will reject or warn based on its own logic. */
   isOff: boolean;
+  colorBy: ColorBy;
 }) {
   const droppableId = `cell:${employeeId}:${date}`;
   const { setNodeRef, isOver } = useDroppable({
@@ -426,6 +429,7 @@ function DayCell({
           canEdit={canEdit}
           onQuickView={onQuickView}
           tz={tz}
+          accent={toneForBooking(b, colorBy, laneIdx)}
         />
       ))}
     </div>
@@ -449,11 +453,16 @@ function DraggableBooking({
   canEdit,
   onQuickView,
   tz,
+  accent,
 }: {
   booking: ScheduleBooking;
   canEdit: boolean;
   onQuickView: (bookingId: string) => void;
   tz: string;
+  /** Hex color resolved for this card based on the active colorBy mode.
+   *  Applied as the left-border accent; "" in the unassigned tray since
+   *  there's no employee lane idx to anchor the employee mode against. */
+  accent: string;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: booking.id,
@@ -468,7 +477,7 @@ function DraggableBooking({
     >
       <BookingCard
         booking={booking}
-        tone=""
+        accent={accent}
         canDrag={canEdit}
         onClick={() => onQuickView(booking.id)}
         dragListeners={listeners}
@@ -480,7 +489,7 @@ function DraggableBooking({
 
 function BookingCard({
   booking,
-  tone,
+  accent,
   dragging = false,
   canDrag = false,
   onClick,
@@ -488,7 +497,9 @@ function BookingCard({
   tz,
 }: {
   booking: ScheduleBooking;
-  tone: string;
+  /** Hex color for the card's left-border accent. Empty string skips
+   *  the accent (used by the DragOverlay preview). */
+  accent: string;
   dragging?: boolean;
   canDrag?: boolean;
   /** Fires on left-click anywhere on the card except the drag grip.
@@ -519,11 +530,12 @@ function BookingCard({
       }
       className={cn(
         "rounded-md border border-border bg-background p-2 text-xs shadow-sm",
+        accent && "border-l-4",
         dragging && "shadow-lg ring-2 ring-primary",
         onClick &&
           "cursor-pointer transition-colors hover:border-foreground/30 hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-        tone,
       )}
+      style={accent ? { borderLeftColor: accent } : undefined}
     >
       <div className="flex items-start justify-between gap-1">
         <div className="font-semibold">{booking.client_name}</div>
@@ -565,12 +577,14 @@ function UnassignedTray({
   isPending,
   onQuickView,
   tz,
+  colorBy,
 }: {
   bookings: ScheduleBooking[];
   canEdit: boolean;
   isPending: boolean;
   onQuickView: (bookingId: string) => void;
   tz: string;
+  colorBy: ColorBy;
 }) {
   const { setNodeRef, isOver } = useDroppable({
     id: "unassigned",
@@ -606,6 +620,11 @@ function UnassignedTray({
               canEdit={canEdit}
               onQuickView={onQuickView}
               tz={tz}
+              // Tray cards have no employee lane — only show an accent
+              // when colorBy keys off the booking itself, not the lane.
+              accent={
+                colorBy === "employee" ? "" : toneForBooking(b, colorBy, 0)
+              }
             />
           ))}
         </div>

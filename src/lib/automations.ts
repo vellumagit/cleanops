@@ -686,10 +686,23 @@ export async function sendBookingConfirmation(bookingId: string) {
       .from("bookings")
       .select(`
         id, organization_id, scheduled_at, service_type, address,
-        client:clients ( name, email )
+        client:clients ( name, email, phone )
       `)
       .eq("id", bookingId)
-      .maybeSingle();
+      .maybeSingle() as unknown as {
+      data: {
+        id: string;
+        organization_id: string;
+        scheduled_at: string;
+        service_type: string;
+        address: string | null;
+        client: {
+          name: string | null;
+          email: string | null;
+          phone: string | null;
+        } | null;
+      } | null;
+    };
 
     if (!booking || !booking.client?.email) return;
 
@@ -700,10 +713,15 @@ export async function sendBookingConfirmation(bookingId: string) {
 
     const { data: org } = await db
       .from("organizations")
-      .select("name, brand_color, logo_url")
+      .select("name, brand_color, logo_url, contact_phone")
       .eq("id", booking.organization_id)
       .maybeSingle() as unknown as {
-      data: { name: string; brand_color: string | null; logo_url: string | null } | null;
+      data: {
+        name: string;
+        brand_color: string | null;
+        logo_url: string | null;
+        contact_phone: string | null;
+      } | null;
     };
 
     const dateTime = new Date(booking.scheduled_at).toLocaleString("en-US", {
@@ -731,6 +749,32 @@ export async function sendBookingConfirmation(bookingId: string) {
     });
 
     console.log(`[auto] Booking confirmation sent to ${booking.client.email}`);
+
+    // Fire-and-forget SMS alongside the confirmation email. SMS arrives
+    // on the client's lock screen immediately; email carries full details.
+    // Routed through sendOrgSms so the platform kill switch and the
+    // per-org booking_confirmation_sms toggle gate it properly.
+    try {
+      const { sendOrgSms } = await import("@/lib/sms");
+      const { composeBookingConfirmationSms } = await import("@/lib/twilio");
+      if (booking.client.phone) {
+        const smsBody = composeBookingConfirmationSms({
+          orgName: org?.name ?? "Sollos",
+          serviceType: booking.service_type,
+          scheduledAt: booking.scheduled_at,
+          contactPhone: org?.contact_phone ?? null,
+        });
+        sendOrgSms(booking.organization_id, {
+          to: booking.client.phone,
+          body: smsBody,
+          automationKey: "booking_confirmation_sms",
+        }).catch((err) =>
+          console.error("[auto] sendBookingConfirmation SMS failed:", err),
+        );
+      }
+    } catch (smsErr) {
+      console.error("[auto] sendBookingConfirmation SMS path errored:", smsErr);
+    }
   } catch (err) {
     console.error("[auto] sendBookingConfirmation failed:", err);
   }
@@ -1521,14 +1565,15 @@ export async function sendUpcomingBookingReminders(): Promise<{
         `[auto] Booking reminder sent for booking ${booking.id} to ${booking.client.email}`,
       );
 
-      // Fire-and-forget SMS alongside the email when Twilio is on and
-      // the client has a phone. Paired with the email, not replacing
-      // it — email carries the address / details, SMS is the nudge
-      // that actually gets noticed.
+      // Fire-and-forget SMS alongside the email reminder. The email
+      // carries the address and full details; the text is the nudge
+      // that actually gets noticed on the client's lock screen.
+      // Routed through sendOrgSms — respects CLIENT_SMS_PAUSED,
+      // booking_reminder_client_sms toggle, and TWILIO_ENABLED.
       try {
-        const { isTwilioEnabled, sendSms, composeBookingReminderSms } =
-          await import("@/lib/twilio");
-        if (isTwilioEnabled() && booking.client?.phone) {
+        const { sendOrgSms } = await import("@/lib/sms");
+        const { composeBookingReminderSms } = await import("@/lib/twilio");
+        if (booking.client?.phone) {
           const { data: orgContact } = (await db
             .from("organizations")
             .select("contact_phone")
@@ -1542,7 +1587,11 @@ export async function sendUpcomingBookingReminders(): Promise<{
             scheduledAt: booking.scheduled_at,
             contactPhone: orgContact?.contact_phone ?? null,
           });
-          sendSms(booking.client.phone, smsBody).catch((err) =>
+          sendOrgSms(booking.organization_id, {
+            to: booking.client.phone,
+            body: smsBody,
+            automationKey: "booking_reminder_client_sms",
+          }).catch((err) =>
             console.error(
               "[auto] sendUpcomingBookingReminders SMS failed:",
               err,
@@ -1741,52 +1790,54 @@ export async function notifyBookingAssignment(
 
     sendPushToMembership(assignedTo, { title, body, href: `/field/jobs/${bookingId}` }).catch(() => {});
 
-    // SMS to the employee's phone (when Twilio's on + they have one).
-    // Field crews check SMS way more reliably than push/in-app — a
-    // job they don't show up to is worse than a spammy text.
+    // SMS to the employee's phone (when Twilio is on, they have a phone,
+    // and the org has enabled booking_assignment_sms). Field crews check
+    // SMS more reliably than push/in-app — a job they don't show up to
+    // is worse than a spammy text.
     try {
-      const { isTwilioEnabled, sendSms, composeBookingAssignmentSms } =
-        await import("@/lib/twilio");
-      if (isTwilioEnabled()) {
-        const { data: member } = (await db
-          .from("memberships")
-          .select(
-            "id, display_name, profile:profiles ( full_name, phone )",
-          )
-          .eq("id", assignedTo)
+      const { composeBookingAssignmentSms } = await import("@/lib/twilio");
+      const { sendOrgSms } = await import("@/lib/sms");
+
+      const { data: member } = (await db
+        .from("memberships")
+        .select(
+          "id, display_name, profile:profiles ( full_name, phone )",
+        )
+        .eq("id", assignedTo)
+        .maybeSingle()) as unknown as {
+        data: {
+          id: string;
+          display_name: string | null;
+          profile: { full_name: string | null; phone: string | null } | null;
+        } | null;
+      };
+
+      const phone = member?.profile?.phone;
+      if (phone) {
+        const { data: org } = (await db
+          .from("organizations")
+          .select("name")
+          .eq("id", organizationId)
           .maybeSingle()) as unknown as {
-          data: {
-            id: string;
-            display_name: string | null;
-            profile: { full_name: string | null; phone: string | null } | null;
-          } | null;
+          data: { name: string | null } | null;
         };
-        const phone = member?.profile?.phone;
-        if (phone) {
-          const { data: org } = (await db
-            .from("organizations")
-            .select("name")
-            .eq("id", organizationId)
-            .maybeSingle()) as unknown as {
-            data: { name: string | null } | null;
-          };
-          const smsBody = composeBookingAssignmentSms({
-            orgName: org?.name ?? "Sollos",
-            serviceType: meta.serviceType,
-            clientName: meta.clientName,
-            scheduledAt: meta.scheduledAt,
-            address: meta.address,
-          });
-          // Fire-and-forget — never let SMS delivery block notification
-          // dispatch or crash the automation. sendSms already catches
-          // internal errors and returns a result object.
-          sendSms(phone, smsBody).catch((err) =>
-            console.error(
-              "[auto] notifyBookingAssignment SMS failed:",
-              err,
-            ),
-          );
-        }
+        const smsBody = composeBookingAssignmentSms({
+          orgName: org?.name ?? "Sollos",
+          serviceType: meta.serviceType,
+          clientName: meta.clientName,
+          scheduledAt: meta.scheduledAt,
+          address: meta.address,
+        });
+        // Fire-and-forget — never block push dispatch. sendOrgSms
+        // checks the platform kill switch + booking_assignment_sms
+        // toggle + TWILIO_ENABLED (logs if disabled).
+        sendOrgSms(organizationId, {
+          to: phone,
+          body: smsBody,
+          automationKey: "booking_assignment_sms",
+        }).catch((err) =>
+          console.error("[auto] notifyBookingAssignment SMS failed:", err),
+        );
       }
     } catch (smsErr) {
       console.error(

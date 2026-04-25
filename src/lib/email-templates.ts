@@ -1632,3 +1632,74 @@ export function invoiceOverdueReminderEmail(args: {
   const text = `Invoice ${args.invoiceNumber} from ${args.orgName} is ${args.daysOverdue} ${plural} overdue.\n\nAmount: ${args.amountFormatted}\nWas due: ${args.dueDate}\n\nView & pay: ${args.publicUrl}\n\nAlready paid? Ignore this message.`;
   return { subject, html, text };
 }
+
+// ---------------------------------------------------------------------------
+// Contract — invitation to e-sign
+// ---------------------------------------------------------------------------
+
+/**
+ * "Please sign this contract" email. Sent automatically when an owner
+ * clicks "Send for signature" on a contract that has a client email on
+ * file — replaces the prior copy-paste-the-link workflow.
+ *
+ * Keep the body short: most cleaning contracts are simple service
+ * agreements, so the message just confirms what's being signed and
+ * routes the client to the public sign page. The page itself shows the
+ * full terms before the signature input.
+ */
+export function contractSignInvitationEmail(args: {
+  clientName: string;
+  orgName: string;
+  serviceDescription: string;
+  amountFormatted: string;
+  startDate: string;
+  endDate: string | null;
+  signUrl: string;
+  brandColor?: string;
+  logoUrl?: string;
+}) {
+  const subject = `Please sign your agreement with ${args.orgName}`;
+  const html = layout(
+    `
+    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;letter-spacing:-0.02em;color:#18181b;line-height:1.3;">Your service agreement</h1>
+    <p style="margin:0 0 24px;font-size:14px;line-height:1.55;color:#52525b;">
+      Hi ${escapeHtml(args.clientName)}, <strong style="color:#18181b;">${escapeHtml(args.orgName)}</strong> has prepared a
+      cleaning service agreement for your review. Tap the button below
+      to read the terms and add your signature — it only takes a minute.
+    </p>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin-bottom:4px;border-top:1px solid #e4e4e7;">
+      <tr>
+        <td style="font-size:13px;color:#71717a;padding:12px 0;border-bottom:1px solid #f4f4f5;vertical-align:top;">Service</td>
+        <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;border-bottom:1px solid #f4f4f5;">${escapeHtml(args.serviceDescription || "Cleaning service")}</td>
+      </tr>
+      <tr>
+        <td style="font-size:13px;color:#71717a;padding:12px 0;border-bottom:1px solid #f4f4f5;">Agreed price</td>
+        <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;font-weight:600;border-bottom:1px solid #f4f4f5;">${escapeHtml(args.amountFormatted)}</td>
+      </tr>
+      <tr>
+        <td style="font-size:13px;color:#71717a;padding:12px 0;${args.endDate ? "border-bottom:1px solid #f4f4f5;" : ""}">Starts</td>
+        <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;${args.endDate ? "border-bottom:1px solid #f4f4f5;" : ""}">${escapeHtml(args.startDate)}</td>
+      </tr>
+      ${args.endDate
+        ? `<tr>
+            <td style="font-size:13px;color:#71717a;padding:12px 0;">Ends</td>
+            <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;">${escapeHtml(args.endDate)}</td>
+          </tr>`
+        : ""}
+    </table>
+    ${button("Review & Sign", args.signUrl, args.brandColor ? `#${args.brandColor.replace(/^#/, "")}` : DEFAULT_BRAND)}
+    <p style="margin:0;font-size:12px;line-height:1.5;color:#a1a1aa;">
+      The link is unique to your contract — please don&rsquo;t forward it.
+      Questions? Just reply to this email.
+    </p>
+    `,
+    {
+      brandColor: args.brandColor,
+      orgName: args.orgName,
+      logoUrl: args.logoUrl,
+      preheader: `${args.amountFormatted} · ${args.serviceDescription || "Cleaning service"} · sign online`,
+    },
+  );
+  const text = `Hi ${args.clientName},\n\n${args.orgName} has a service agreement ready for your signature.\n\nService: ${args.serviceDescription || "Cleaning service"}\nAgreed price: ${args.amountFormatted}\nStarts: ${args.startDate}${args.endDate ? `\nEnds: ${args.endDate}` : ""}\n\nReview & sign: ${args.signUrl}\n\nThe link is unique to your contract — please don't forward it. Questions? Reply to this email.`;
+  return { subject, html, text };
+}
