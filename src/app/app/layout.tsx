@@ -43,6 +43,7 @@ export default async function AppLayout({
     { count: pendingEstimates },
     { count: unreadChat },
     { count: newReviews },
+    { count: pendingRequests },
   ] = await (async () => {
     // Capture once — used as the lower bound on two time-windowed counts.
     // eslint-disable-next-line react-hooks/purity
@@ -103,6 +104,12 @@ export default async function AppLayout({
       .from("reviews")
       .select("id", { count: "exact", head: true })
       .gte("submitted_at", reviewsSince),
+    // Pending booking requests from the client portal
+    supabase
+      .from("booking_requests" as never)
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", membership.organization_id)
+      .eq("status", "pending") as unknown as { count: number | null },
   ]);
   })();
 
@@ -122,6 +129,7 @@ export default async function AppLayout({
         unreadNotifications={unreadNotifications ?? 0}
         tabBadges={{
           "/app/bookings": todayBookings ?? 0,
+          "/app/bookings/requests": pendingRequests ?? 0,
           "/app/invoices": overdueInvoices ?? 0,
           "/app/estimates": pendingEstimates ?? 0,
           "/app/chat": unreadChat ?? 0,

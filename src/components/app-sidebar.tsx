@@ -29,6 +29,7 @@ import {
   Bell,
   BarChart3,
   Banknote,
+  Inbox,
   Menu,
   X,
 } from "lucide-react";
@@ -74,6 +75,7 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/app/bookings", label: "Bookings", icon: CalendarCheck },
       { href: "/app/calendar", label: "Calendar", icon: CalendarDays },
       { href: "/app/scheduling", label: "Scheduling", icon: Calendar, roles: ["owner", "admin", "manager"] },
+      { href: "/app/bookings/requests", label: "Requests", icon: Inbox, roles: ["owner", "admin", "manager"] },
       { href: "/app/estimates", label: "Estimates", icon: FileText, roles: ["owner", "admin", "manager"] },
       { href: "/app/contracts", label: "Contracts", icon: ScrollText, roles: ["owner", "admin", "manager"] },
       { href: "/app/packages", label: "Packages", icon: Package, roles: ["owner", "admin", "manager"] },
@@ -124,6 +126,7 @@ const FOOTER_NAV: NavItem[] = [
 /** Badge labels for specific tabs */
 const BADGE_LABELS: Record<string, string> = {
   "/app/bookings": "today",
+  "/app/bookings/requests": "pending",
   "/app/invoices": "overdue",
   "/app/estimates": "pending",
   "/app/chat": "new",
@@ -174,8 +177,18 @@ export function AppSidebar({
     }
   }, [mobileOpen]);
 
-  const isActive = (href: string) =>
-    href === "/app" ? pathname === "/app" : pathname.startsWith(href);
+  // "Longest prefix wins" — prevents /app/bookings from being active
+  // when the user is on /app/bookings/requests (a deeper nav item).
+  const allNavHrefs = [
+    ...NAV_SECTIONS.flatMap((s) => s.items.map((i) => i.href)),
+    ...FOOTER_NAV.map((i) => i.href),
+  ];
+  const bestMatch = allNavHrefs
+    .filter((h) =>
+      h === "/app" ? pathname === "/app" : pathname === h || pathname.startsWith(h + "/"),
+    )
+    .sort((a, b) => b.length - a.length)[0] ?? "";
+  const isActive = (href: string) => href === bestMatch;
 
   const sidebarContent = (
     <>

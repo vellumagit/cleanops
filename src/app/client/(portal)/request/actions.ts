@@ -76,10 +76,8 @@ export async function submitBookingRequestAction(
     };
   }
 
-  // Notify the org that a request came in. Use the org's contact
-  // email if set, otherwise the sender_email, otherwise skip.
-  // Fire-and-forget: never block the client's form submission on
-  // owner-side mail delivery.
+  // Notify the org that a request came in. Fire-and-forget: never
+  // block the client's form submission on owner-side mail delivery.
   if (isEmailConfigured() && !isClientEmailPaused()) {
     const { data: orgRow } = (await admin
       .from("organizations")
@@ -93,7 +91,29 @@ export async function submitBookingRequestAction(
       } | null;
     };
 
-    const notifyTo = orgRow?.contact_email ?? orgRow?.sender_email;
+    // Primary target: the owner's real Supabase Auth account email.
+    // This is the address they signed up with — always current even if
+    // they haven't set contact_email in org settings.
+    // Fall back to org contact_email → sender_email for legacy orgs.
+    let ownerEmail: string | null = null;
+    const { data: ownerMembership } = (await admin
+      .from("memberships")
+      .select("profile_id")
+      .eq("organization_id", client.organization_id)
+      .eq("role", "owner")
+      .limit(1)
+      .maybeSingle()) as unknown as {
+      data: { profile_id: string } | null;
+    };
+    if (ownerMembership?.profile_id) {
+      const { data: ownerUser } = await admin.auth.admin.getUserById(
+        ownerMembership.profile_id,
+      );
+      ownerEmail = ownerUser.user?.email ?? null;
+    }
+
+    const notifyTo =
+      ownerEmail ?? orgRow?.contact_email ?? orgRow?.sender_email;
     if (notifyTo) {
       const siteUrl =
         process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
