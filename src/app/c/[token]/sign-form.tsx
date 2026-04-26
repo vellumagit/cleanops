@@ -1,6 +1,7 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { PenLine } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { FormError, FormField } from "@/components/form-field";
@@ -22,10 +23,20 @@ export function SignForm({
    *  (e.g. signing on behalf of a company). */
   clientName: string;
 }) {
+  const router = useRouter();
   const [state, action] = useActionState<SignContractState, FormData>(
     signContractAction,
     EMPTY,
   );
+
+  // Navigate to ?signed=1 after a successful submission so the URL
+  // updates and a page refresh shows the thank-you card instead of
+  // the sign form. router.replace keeps the browser history clean.
+  useEffect(() => {
+    if (state.ok) {
+      router.replace(`/c/${token}?signed=1`);
+    }
+  }, [state.ok, token, router]);
   const [agreed, setAgreed] = useState(false);
   const [signatureDataUrl, setSignatureDataUrl] = useState("");
 

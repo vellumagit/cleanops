@@ -95,7 +95,11 @@ export async function signupAction(
 
   const { data: org, error: orgError } = await admin
     .from("organizations")
-    .insert({ name: organizationName, slug })
+    .insert({
+      name: organizationName,
+      slug,
+      trial_started_at: new Date().toISOString(),
+    } as never)
     .select("id")
     .single();
 

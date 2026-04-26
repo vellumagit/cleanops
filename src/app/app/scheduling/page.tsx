@@ -5,6 +5,7 @@ import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { getOrgTimezone } from "@/lib/org-timezone";
+import { getOrgCurrency } from "@/lib/org-currency";
 import {
   addDays,
   fetchScheduleWeek,
@@ -102,12 +103,14 @@ export default async function SchedulingPage({
   const [
     { bookings, employees, offDays },
     savedViews,
+    currency,
   ] = await Promise.all([
     fetchScheduleWeek(fetchStart, fetchEnd, {
       startYmd: weekStartYmd,
       endYmdExclusive: weekEndYmd,
     }),
     fetchSchedulerViews(membership.organization_id),
+    getOrgCurrency(membership.organization_id),
   ]);
 
   const navStep = view === "day" ? 1 : 7;
@@ -210,6 +213,7 @@ export default async function SchedulingPage({
           canEdit={canEdit}
           tz={tz}
           savedViews={savedViews}
+          currency={currency}
         />
       </div>
     </PageShell>

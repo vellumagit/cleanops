@@ -55,6 +55,11 @@ export type ScheduleBooking = {
   all_assignee_ids: string[];
   client_name: string;
   address: string | null;
+  /** Invoice/quote total in cents for this booking. Used by the
+   *  scheduler revenue bar to show projected and earned revenue
+   *  for the displayed period. Null when the booking has no
+   *  associated amount set. */
+  total_cents: number | null;
 };
 
 export type ScheduleEmployee = {
@@ -188,6 +193,7 @@ export async function fetchScheduleWeek(
           service_type,
           assigned_to,
           address,
+          total_cents,
           client:clients ( name )
         `,
       )
@@ -289,6 +295,7 @@ export async function fetchScheduleWeek(
       all_assignee_ids: Array.from(all),
       client_name: b.client?.name ?? "—",
       address: b.address,
+      total_cents: (b as { total_cents?: number | null }).total_cents ?? null,
     };
   });
 

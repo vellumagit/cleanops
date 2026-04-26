@@ -15,6 +15,7 @@ import type {
   ScheduleEmployee,
   SchedulerView,
 } from "./data";
+import { formatCurrencyCents, type CurrencyCode } from "@/lib/format";
 
 const STORAGE_KEY = "cleanops.scheduler.filters";
 
@@ -38,6 +39,7 @@ export function SchedulerShell({
   canEdit,
   tz,
   savedViews,
+  currency = "CAD",
 }: {
   view: "week" | "day";
   weekStart: string;
@@ -47,6 +49,7 @@ export function SchedulerShell({
   canEdit: boolean;
   tz: string;
   savedViews: SchedulerView[];
+  currency?: CurrencyCode;
 }) {
   const [filters, setFilters] =
     useState<SchedulerFiltersState>(DEFAULT_FILTERS);
@@ -191,6 +194,23 @@ export function SchedulerShell({
     });
   }, [bookings, filters.hideCancelled, visibleEmployeeSet]);
 
+  // Revenue summary for the current filtered view. Only count
+  // bookings that have a total_cents value set; cancelled bookings
+  // are always excluded from revenue so owners see "real" numbers.
+  const revenue = useMemo(() => {
+    let scheduled = 0;
+    let completed = 0;
+    let jobsWithRevenue = 0;
+    for (const b of filteredBookings) {
+      if (b.status === "cancelled") continue;
+      if (b.total_cents == null) continue;
+      jobsWithRevenue++;
+      scheduled += b.total_cents;
+      if (b.status === "completed") completed += b.total_cents;
+    }
+    return { scheduled, completed, remaining: scheduled - completed, jobsWithRevenue };
+  }, [filteredBookings]);
+
   return (
     <>
       <div className="flex items-center justify-end gap-2">
@@ -213,6 +233,39 @@ export function SchedulerShell({
           onOpenChange={setFilterOpen}
         />
       </div>
+
+      {/* Revenue summary bar — only rendered when at least one booking
+          in the current view has a total_cents value, so orgs that
+          haven't set booking amounts don't see an empty $0 bar. */}
+      {revenue.jobsWithRevenue > 0 && (
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-card px-4 py-2.5 text-sm">
+          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Revenue
+          </span>
+          <div className="flex flex-wrap gap-4 ml-1">
+            <div className="flex items-center gap-1.5">
+              <span className="text-muted-foreground text-xs">Scheduled</span>
+              <span className="font-semibold tabular-nums">
+                {formatCurrencyCents(revenue.scheduled, currency)}
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              <span className="text-muted-foreground text-xs">Earned</span>
+              <span className="font-semibold tabular-nums text-emerald-600">
+                {formatCurrencyCents(revenue.completed, currency)}
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-400" />
+              <span className="text-muted-foreground text-xs">Remaining</span>
+              <span className="font-semibold tabular-nums text-amber-600">
+                {formatCurrencyCents(revenue.remaining, currency)}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {view === "day" ? (
         <DispatchGrid

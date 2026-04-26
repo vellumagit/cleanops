@@ -25,16 +25,21 @@ export const getSubscriptionInfo = cache(
   async (organizationId: string): Promise<SubscriptionInfo> => {
     const admin = createSupabaseAdminClient();
 
+    const TRIAL_DAYS = 14;
+
     // 1. Check billing override first (free_forever / comp)
     const { data: org } = await admin
       .from("organizations")
-      .select("billing_override")
+      .select("billing_override, trial_started_at")
       .eq("id", organizationId)
       .maybeSingle();
 
-    const override = (org as { billing_override: string | null } | null)
-      ?.billing_override;
-    if (override) {
+    const orgRow = org as {
+      billing_override: string | null;
+      trial_started_at: string | null;
+    } | null;
+
+    if (orgRow?.billing_override) {
       return { gate: "overridden", trialDaysLeft: null, trialEndsAt: null, status: null };
     }
 
@@ -48,6 +53,37 @@ export const getSubscriptionInfo = cache(
       .maybeSingle();
 
     if (!sub || !sub.status) {
+      // No Stripe subscription yet. If trial_started_at is set, enforce the
+      // 14-day free trial clock. If not set, this is a legacy org that was
+      // created before the trial system existed — grant permanent access so
+      // existing customers are never unexpectedly locked out.
+      if (orgRow?.trial_started_at) {
+        const trialEnd = new Date(
+          new Date(orgRow.trial_started_at).getTime() +
+            TRIAL_DAYS * 24 * 60 * 60 * 1000,
+        );
+        const msLeft = trialEnd.getTime() - Date.now();
+        if (msLeft > 0) {
+          const daysLeft = Math.max(
+            0,
+            Math.ceil(msLeft / (24 * 60 * 60 * 1000)),
+          );
+          return {
+            gate: "active",
+            trialDaysLeft: daysLeft,
+            trialEndsAt: trialEnd.toISOString(),
+            status: "trialing",
+          };
+        }
+        // Trial window has elapsed — lock the org
+        return {
+          gate: "expired",
+          trialDaysLeft: 0,
+          trialEndsAt: trialEnd.toISOString(),
+          status: null,
+        };
+      }
+      // Legacy org — no trial clock, grandfathered full access
       return { gate: "none", trialDaysLeft: null, trialEndsAt: null, status: null };
     }
 

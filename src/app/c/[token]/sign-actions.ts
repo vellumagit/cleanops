@@ -1,6 +1,5 @@
 "use server";
 
-import { redirect } from "next/navigation";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
 import { headers } from "next/headers";
@@ -143,8 +142,9 @@ export async function signContractAction(
     };
   }
 
-  // Redirect to a success page so the Sign button doesn't stay live
-  // if the user refreshes. The page re-fetches the now-signed state
-  // and renders the thank-you view.
-  redirect(`/c/${token}?signed=1`);
+  // Return ok=true so the client can navigate to ?signed=1 explicitly.
+  // redirect() called from a useActionState-bound action triggers a soft
+  // revalidation rather than a real navigation, so the URL never updates.
+  // Client-side router.replace() is the reliable path.
+  return { ok: true };
 }

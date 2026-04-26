@@ -29,6 +29,7 @@ import {
   formatDurationMinutes,
 } from "@/lib/format";
 import { getOrgCurrency } from "@/lib/org-currency";
+import { PortalInviteButton } from "./portal-invite-button";
 
 export const metadata = { title: "Client" };
 
@@ -51,7 +52,7 @@ export default async function ClientDetailPage({
   ] = await Promise.all([
     supabase
       .from("clients")
-      .select("id, name, email, phone, address, notes, preferred_contact, balance_cents, created_at")
+      .select("id, name, email, phone, address, notes, preferred_contact, balance_cents, created_at, profile_id, portal_invited_at, portal_accepted_at, portal_invite_expires_at")
       .eq("id", id)
       .maybeSingle() as unknown as Promise<{
       data: {
@@ -64,6 +65,10 @@ export default async function ClientDetailPage({
         preferred_contact: string;
         balance_cents: number;
         created_at: string;
+        profile_id: string | null;
+        portal_invited_at: string | null;
+        portal_accepted_at: string | null;
+        portal_invite_expires_at: string | null;
       } | null;
       error: { message: string } | null;
     }>,
@@ -143,6 +148,22 @@ export default async function ClientDetailPage({
             <ChevronLeft className="h-3.5 w-3.5" />
             Clients
           </Link>
+          <Link
+            href={`/app/clients/${id}/statement`}
+            className={buttonVariants({ variant: "outline", size: "sm" })}
+          >
+            <FileText className="h-3.5 w-3.5" />
+            Statement
+          </Link>
+          {(membership.role === "owner" || membership.role === "admin") && (
+            <PortalInviteButton
+              clientId={client.id}
+              clientEmail={client.email}
+              hasPortalAccess={Boolean(client.profile_id)}
+              portalInvitedAt={client.portal_invited_at}
+              portalInviteExpiresAt={client.portal_invite_expires_at}
+            />
+          )}
           {canEdit && (
             <Link
               href={`/app/clients/${id}/edit`}

@@ -46,17 +46,25 @@ export async function POST(req: NextRequest) {
 
   const user = await getCurrentUser();
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
-  const url = await createCheckoutSession({
-    organizationId: membership.organization_id,
-    email: user?.email ?? "",
-    plan,
-    successUrl: `${siteUrl}/app/settings/billing?checkout=success`,
-    cancelUrl: `${siteUrl}/app/settings/billing?checkout=cancelled`,
-  });
+
+  let url: string | null;
+  try {
+    url = await createCheckoutSession({
+      organizationId: membership.organization_id,
+      email: user?.email ?? "",
+      plan,
+      successUrl: `${siteUrl}/app/settings/billing?checkout=success`,
+      cancelUrl: `${siteUrl}/app/settings/billing?checkout=cancelled`,
+    });
+  } catch (err) {
+    const message =
+      err instanceof Error ? err.message : "Stripe error";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 
   if (!url) {
     return NextResponse.json(
-      { error: "Could not create session" },
+      { error: "Checkout plan is not configured. Contact support." },
       { status: 500 },
     );
   }
