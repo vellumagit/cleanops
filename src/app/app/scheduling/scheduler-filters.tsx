@@ -128,7 +128,7 @@ export function SchedulerFilters({
             onClick={() => onOpenChange(false)}
             aria-hidden
           />
-          <div className="absolute right-0 top-full z-50 mt-1 w-72 rounded-lg border border-border bg-popover p-4 shadow-lg">
+          <div className="absolute right-0 top-full z-50 mt-1 w-72 max-w-[calc(100vw-1rem)] rounded-lg border border-border bg-popover p-4 shadow-lg">
             {/* Employee list */}
             <div>
               <div className="mb-2 flex items-center justify-between">

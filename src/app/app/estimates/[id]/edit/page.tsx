@@ -82,6 +82,7 @@ export default async function EditEstimatePage({
 
         <div className="rounded-lg border border-border bg-card p-6">
           <EstimateForm
+            key={estimate.status}
             mode="edit"
             id={estimate.id}
             currency={currency}

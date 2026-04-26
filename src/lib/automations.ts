@@ -1814,7 +1814,7 @@ export async function sendEstimateToClient(estimateId: string): Promise<{
       .from("estimates")
       .select(`
         id, organization_id, service_description, total_cents,
-        public_token, expires_at,
+        status, public_token, expires_at,
         client:clients ( name, email )
       `)
       .eq("id", estimateId)
@@ -1824,6 +1824,7 @@ export async function sendEstimateToClient(estimateId: string): Promise<{
         organization_id: string;
         service_description: string | null;
         total_cents: number;
+        status: string;
         public_token: string | null;
         expires_at: string | null;
         client: { name: string | null; email: string | null } | null;
@@ -1903,11 +1904,10 @@ export async function sendEstimateToClient(estimateId: string): Promise<{
         .from("estimates")
         .update({
           client_email_sent_at: new Date().toISOString(),
-          // Also stamp `sent_at` + bump status so the admin UI reflects send.
           sent_at: new Date().toISOString(),
-          status:
-            // Don't downgrade approved/declined if they re-send.
-            undefined,
+          // Bump to "sent" for draft estimates. Don't downgrade
+          // approved/declined if the admin re-sends.
+          ...(estimate.status === "draft" ? { status: "sent" } : {}),
         } as never)
         .eq("id", estimateId);
     }

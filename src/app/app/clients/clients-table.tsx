@@ -73,9 +73,7 @@ export function ClientsTable({
       columns={columns}
       getRowId={(r) => r.id}
       searchPlaceholder="Search clients by name, email, or phone…"
-      onRowClick={
-        canEdit ? (r) => router.push(`/app/clients/${r.id}/edit`) : undefined
-      }
+      onRowClick={(r) => router.push(`/app/clients/${r.id}`)}
       emptyState={{
         title: "No clients yet",
         description: "Add your first client with the New client button.",
