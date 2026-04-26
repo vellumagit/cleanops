@@ -25,11 +25,13 @@ export function BrandingForm({
   organizationId,
   currentLogoUrl,
   currentBrandColor,
+  currentGoogleReviewUrl,
   orgName,
 }: {
   organizationId: string;
   currentLogoUrl: string | null;
   currentBrandColor: string | null;
+  currentGoogleReviewUrl: string | null;
   orgName: string;
 }) {
   const [state, formAction, pending] = useActionState(
@@ -279,6 +281,31 @@ export function BrandingForm({
         <p className="mt-2 text-[11px] text-muted-foreground">
           This is how your brand will appear on invoices and public links.
         </p>
+      </div>
+
+      {/* Google Review URL */}
+      <div className="rounded-lg border border-border bg-card p-5">
+        <h3 className="text-sm font-semibold">Google Review link</h3>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          Paste your Google Business Profile review link here. After a client
+          leaves a 4 or 5 star review, they&rsquo;ll see a &ldquo;Share on
+          Google&rdquo; button that opens this URL. Find it in Google Business
+          Profile → Ask for reviews → Share review link.
+        </p>
+        <div className="mt-4">
+          <Input
+            name="google_review_url"
+            type="url"
+            defaultValue={currentGoogleReviewUrl ?? ""}
+            placeholder="https://g.page/r/xxxxxxxxxxxxxxxx/review"
+            className="font-mono text-xs"
+          />
+          {state.errors?.google_review_url && (
+            <p className="mt-1 text-xs text-destructive">
+              {state.errors.google_review_url}
+            </p>
+          )}
+        </div>
       </div>
 
       <Button type="submit" disabled={pending} className="w-full">

@@ -13,7 +13,7 @@ export default async function BrandingPage() {
 
   const { data: org } = await supabase
     .from("organizations")
-    .select("id, name, logo_url, brand_color")
+    .select("id, name, logo_url, brand_color, google_review_url")
     .eq("id", membership.organization_id)
     .maybeSingle() as unknown as {
     data: {
@@ -21,6 +21,7 @@ export default async function BrandingPage() {
       name: string;
       logo_url: string | null;
       brand_color: string | null;
+      google_review_url: string | null;
     } | null;
   };
 
@@ -42,6 +43,7 @@ export default async function BrandingPage() {
         organizationId={membership.organization_id}
         currentLogoUrl={org?.logo_url ?? null}
         currentBrandColor={org?.brand_color ?? null}
+        currentGoogleReviewUrl={org?.google_review_url ?? null}
         orgName={org?.name ?? ""}
       />
     </PageShell>

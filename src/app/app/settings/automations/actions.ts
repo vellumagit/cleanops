@@ -34,6 +34,8 @@ export type AutomationKey =
   | "booking_cancelled_email"
   | "rebooking_prompt_email"
   | "estimate_followup_email"
+  // Review requests — default ON (revenue-positive; owners opt out not in)
+  | "review_request_after_completion"
   // SMS automations (Twilio) — all default OFF; requires TWILIO_ENABLED=true
   // and A2P 10DLC registration before messages actually send. When
   // TWILIO_ENABLED is false the code path is exercised but messages are

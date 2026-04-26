@@ -7,7 +7,9 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { maybeRedirectToSetup } from "@/lib/setup-return";
 
 export type BrandingFormState = {
-  errors?: Partial<Record<"logo" | "brand_color" | "_form", string>>;
+  errors?: Partial<
+    Record<"logo" | "brand_color" | "google_review_url" | "_form", string>
+  >;
   success?: boolean;
 };
 
@@ -27,10 +29,21 @@ export async function saveBrandingAction(
   const brandColor = String(formData.get("brand_color") ?? "").trim().replace(/^#/, "");
   const removeLogo = formData.get("remove_logo") === "1";
   const logoFile = formData.get("logo") as File | null;
+  const googleReviewUrl = String(formData.get("google_review_url") ?? "").trim() || null;
 
   // Validate colour
   if (brandColor && !/^[0-9a-fA-F]{6}$/.test(brandColor)) {
     return { errors: { brand_color: "Enter a valid 6-digit hex colour (e.g. 4f46e5)." } };
+  }
+
+  // Validate Google Review URL — must be empty or an https:// URL
+  if (googleReviewUrl && !/^https:\/\//i.test(googleReviewUrl)) {
+    return {
+      errors: {
+        google_review_url:
+          "Must be a full URL starting with https:// (paste it directly from Google Business Profile).",
+      },
+    };
   }
 
   // Admin client used for BOTH storage writes AND the organizations row
@@ -106,6 +119,7 @@ export async function saveBrandingAction(
   const updatePayload: Record<string, unknown> = {
     logo_url: logoUrl,
     brand_color: brandColor || null,
+    google_review_url: googleReviewUrl,
   };
 
   const { error } = await admin

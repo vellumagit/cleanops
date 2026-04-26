@@ -104,6 +104,10 @@
     {
       "path": "/api/cron/estimate-followup",
       "schedule": "30 9 * * *"
+    },
+    {
+      "path": "/api/cron/booking-review-requests",
+      "schedule": "0 10 * * *"
     }
   ]
 }

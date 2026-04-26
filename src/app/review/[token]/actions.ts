@@ -11,84 +11,125 @@ type ReviewState = {
 /**
  * Submit a public review — no login required.
  *
- * Uses the admin client because the reviewer is the cleaning company's
- * end customer, who has no Sollos account. The capability is the
- * review_token on the invoice URL.
+ * Handles two token sources:
+ *   source="booking"  — token is on bookings.review_token (post-completion path)
+ *   source="invoice"  — token is on invoices.review_token (invoice paid path)
+ *
+ * Either way the capability check is: token must match the row identified by
+ * sourceId. Dedup is per-client per-org (a client leaves at most one review
+ * regardless of how many tokens they receive).
  */
 export async function submitReviewAction(
   _prev: ReviewState,
   formData: FormData,
 ): Promise<ReviewState> {
-  const token = formData.get("token") as string;
-  const invoiceId = formData.get("invoiceId") as string;
+  const token = String(formData.get("token") ?? "").trim();
+  const source = String(formData.get("source") ?? "") as "booking" | "invoice";
+  const sourceId = String(formData.get("sourceId") ?? "").trim();
   const rating = Number(formData.get("rating"));
   const comment = (formData.get("comment") as string)?.trim() || null;
 
-  if (!token || !invoiceId) {
+  if (!token || !sourceId || !["booking", "invoice"].includes(source)) {
     return { success: false, error: "Invalid form data." };
   }
-
   if (!rating || rating < 1 || rating > 5) {
     return { success: false, error: "Please select a rating." };
   }
 
   const admin = createSupabaseAdminClient();
 
-  // Verify the token matches the invoice.
-  // review_token is not yet in generated types, so we fetch it separately.
-  const { data: invoiceRow } = await admin
-    .from("invoices")
-    .select("id, organization_id, client_id, booking_id")
-    .eq("id", invoiceId)
-    .maybeSingle();
+  // ── Resolve org / client / booking from the appropriate source ────────────
 
-  if (!invoiceRow) {
-    return { success: false, error: "Invalid or expired review link." };
-  }
-
-  // Verify review_token matches (column not in generated types)
-  const { data: tokenRow } = (await admin
-    .from("invoices")
-    .select("review_token" as never)
-    .eq("id", invoiceId)
-    .maybeSingle()) as unknown as { data: { review_token: string | null } | null };
-
-  if (!tokenRow || tokenRow.review_token !== token) {
-    return { success: false, error: "Invalid or expired review link." };
-  }
-
-  const invoice = invoiceRow;
-
-  // Look up the assigned employee from the booking (if any)
+  let organizationId: string;
+  let clientId: string | null;
+  let bookingId: string | null;
   let employeeId: string | null = null;
-  if (invoice.booking_id) {
-    const { data: booking } = await admin
+
+  if (source === "booking") {
+    // Verify the token against bookings.review_token
+    const { data: booking } = (await admin
       .from("bookings")
-      .select("assigned_to")
-      .eq("id", invoice.booking_id)
+      .select("id, organization_id, client_id, assigned_to, review_token")
+      .eq("id", sourceId)
+      .maybeSingle()) as unknown as {
+      data: {
+        id: string;
+        organization_id: string;
+        client_id: string | null;
+        assigned_to: string | null;
+        review_token: string | null;
+      } | null;
+    };
+
+    if (!booking || booking.review_token !== token) {
+      return { success: false, error: "Invalid or expired review link." };
+    }
+
+    organizationId = booking.organization_id;
+    clientId = booking.client_id;
+    bookingId = booking.id;
+    employeeId = booking.assigned_to;
+  } else {
+    // source === "invoice" — legacy path, keep existing verification logic
+    const { data: invoiceRow } = await admin
+      .from("invoices")
+      .select("id, organization_id, client_id, booking_id")
+      .eq("id", sourceId)
       .maybeSingle();
-    employeeId = booking?.assigned_to ?? null;
+
+    if (!invoiceRow) {
+      return { success: false, error: "Invalid or expired review link." };
+    }
+
+    const { data: tokenRow } = (await admin
+      .from("invoices")
+      .select("review_token" as never)
+      .eq("id", sourceId)
+      .maybeSingle()) as unknown as {
+      data: { review_token: string | null } | null;
+    };
+
+    if (!tokenRow || tokenRow.review_token !== token) {
+      return { success: false, error: "Invalid or expired review link." };
+    }
+
+    organizationId = invoiceRow.organization_id;
+    clientId = invoiceRow.client_id;
+    bookingId = invoiceRow.booking_id;
+
+    // Look up employee from the linked booking
+    if (bookingId) {
+      const { data: b } = await admin
+        .from("bookings")
+        .select("assigned_to")
+        .eq("id", bookingId)
+        .maybeSingle();
+      employeeId = b?.assigned_to ?? null;
+    }
   }
 
-  // Check for duplicate review
+  // ── Dedup: one review per client per org ──────────────────────────────────
   const { data: existing } = await admin
     .from("reviews")
     .select("id")
-    .eq("organization_id", invoice.organization_id)
-    .eq("client_id", invoice.client_id ?? "")
+    .eq("organization_id", organizationId)
+    .eq("client_id", clientId ?? "")
     .maybeSingle();
 
   if (existing) {
-    return { success: false, error: "You've already submitted a review. Thank you!" };
+    return {
+      success: false,
+      error: "You've already submitted a review. Thank you!",
+    };
   }
 
-  // Insert the review
+  // ── Insert ────────────────────────────────────────────────────────────────
   const { data: inserted, error } = await admin
     .from("reviews")
     .insert({
-      organization_id: invoice.organization_id,
-      booking_id: invoice.booking_id,
-      client_id: invoice.client_id,
+      organization_id: organizationId,
+      booking_id: bookingId,
+      client_id: clientId,
       employee_id: employeeId,
       rating,
       comment,
@@ -104,22 +145,31 @@ export async function submitReviewAction(
     return { success: false, error: "Something went wrong. Please try again." };
   }
 
-  // Fetch client + employee names for the in-app notification / low-review alert
+  // ── Fire-and-forget notifications ─────────────────────────────────────────
   const [{ data: client }, { data: emp }] = await Promise.all([
-    invoice.client_id
-      ? admin.from("clients").select("name").eq("id", invoice.client_id).maybeSingle() as unknown as Promise<{
+    clientId
+      ? (admin
+          .from("clients")
+          .select("name")
+          .eq("id", clientId)
+          .maybeSingle() as unknown as Promise<{
           data: { name: string | null } | null;
-        }>
+        }>)
       : Promise.resolve({ data: null as { name: string | null } | null }),
     employeeId
-      ? admin.from("profiles").select("full_name").eq("id", employeeId).maybeSingle() as unknown as Promise<{
+      ? (admin
+          .from("profiles")
+          .select("full_name")
+          .eq("id", employeeId)
+          .maybeSingle() as unknown as Promise<{
           data: { full_name: string | null } | null;
-        }>
-      : Promise.resolve({ data: null as { full_name: string | null } | null }),
+        }>)
+      : Promise.resolve({
+          data: null as { full_name: string | null } | null,
+        }),
   ]);
 
-  // Fire-and-forget: in-app notification + push + low-review email alert
-  notifyReviewSubmitted(invoice.organization_id, {
+  notifyReviewSubmitted(organizationId, {
     rating,
     clientName: client?.name ?? "A client",
     employeeName: emp?.full_name ?? null,

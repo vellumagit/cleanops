@@ -103,6 +103,13 @@ const CATEGORIES: Category[] = [
         trigger: "Daily scan at 09:30 UTC",
       },
       {
+        key: "review_request_after_completion" as AutomationKey,
+        title: "Review request 24h after job completion",
+        description:
+          "Emails the client a review link roughly 24 hours after a booking is marked completed. Sent at most once per booking regardless of invoice state — works even for cash/offline payments. Rating ≥ 4 shows a Google Review CTA if your Google Review URL is configured in Settings → Branding.",
+        trigger: "Daily cron, ~10:00 UTC",
+      },
+      {
         key: "invoice_paid_receipt",
         title: "Receipt + review request on payment",
         description:

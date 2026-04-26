@@ -1433,6 +1433,177 @@ export async function sendOverdueReminders(): Promise<{
 }
 
 // ─────────────────────────────────────────────────────────────────
+// 7c-2. Post-completion review request (daily cron, ~10:00 UTC)
+//
+// 24+ hours after a booking is marked completed, emails the client a
+// review link (/review/<token>). After a ≥4 star submission the review
+// page shows a Google CTA using organizations.google_review_url.
+//
+// Gated:
+//   1. Platform kill switch (CLIENT_EMAILS_PAUSED)
+//   2. Per-org toggle `review_request_after_completion`
+//   3. Dedup by bookings.review_request_sent_at (sent at most once per booking)
+//   4. Client must have an email address
+// ─────────────────────────────────────────────────────────────────
+
+export async function sendBookingReviewRequests(): Promise<{
+  considered: number;
+  sent: number;
+  skipped: number;
+}> {
+  const db = admin();
+  const { sendOrgEmail, isClientEmailPaused } = await import("@/lib/email");
+  const { reviewRequestEmail } = await import("@/lib/email-templates");
+  const { generateClaimToken } = await import("@/lib/claim-token");
+
+  if (isClientEmailPaused()) {
+    console.log("[auto] sendBookingReviewRequests: CLIENT_EMAILS_PAUSED — skipping");
+    return { considered: 0, sent: 0, skipped: 0 };
+  }
+
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+
+  // Target: completed bookings where the job finished at least 20h ago,
+  // no review request sent yet, and the client has an email address.
+  // We use scheduled_at as the proxy for "job ended" — good enough since
+  // auto_complete_past_bookings runs daily and marks them completed shortly
+  // after the scheduled time. The generous window (20h+) means we catch
+  // jobs even when auto-complete ran late.
+  const cutoff = new Date(Date.now() - 20 * 60 * 60 * 1000).toISOString();
+
+  const { data: candidates } = await db
+    .from("bookings")
+    .select(`
+      id, organization_id, scheduled_at, service_type,
+      client:clients ( id, name, email )
+    `)
+    .eq("status", "completed")
+    .is("review_request_sent_at" as never, null as never)
+    .lte("scheduled_at", cutoff)
+    .limit(200) as unknown as {
+    data: Array<{
+      id: string;
+      organization_id: string;
+      scheduled_at: string;
+      service_type: string;
+      client: {
+        id: string;
+        name: string | null;
+        email: string | null;
+      } | null;
+    }> | null;
+  };
+
+  const considered = candidates?.length ?? 0;
+  let sent = 0;
+  let skipped = 0;
+
+  if (!candidates || candidates.length === 0) {
+    return { considered, sent, skipped };
+  }
+
+  // Cache org settings + branding across the batch.
+  const orgCache = new Map<
+    string,
+    {
+      name: string;
+      brand_color: string | null;
+      logo_url: string | null;
+      enabled: boolean;
+    } | null
+  >();
+
+  for (const booking of candidates) {
+    if (!booking.client?.email) {
+      skipped += 1;
+      continue;
+    }
+
+    let cached = orgCache.get(booking.organization_id);
+    if (cached === undefined) {
+      const enabled = await isAutomationEnabled(
+        booking.organization_id,
+        "review_request_after_completion",
+      );
+      const { data: orgData } = await db
+        .from("organizations")
+        .select("name, brand_color, logo_url")
+        .eq("id", booking.organization_id)
+        .maybeSingle() as unknown as {
+        data: {
+          name: string;
+          brand_color: string | null;
+          logo_url: string | null;
+        } | null;
+      };
+      cached = orgData ? { ...orgData, enabled } : null;
+      orgCache.set(booking.organization_id, cached);
+    }
+
+    if (!cached?.enabled) {
+      skipped += 1;
+      continue;
+    }
+
+    try {
+      // Mint the review token and stamp sent timestamp atomically.
+      const reviewToken = await generateClaimToken();
+      const { error: updateErr } = await db
+        .from("bookings")
+        .update({
+          review_token: reviewToken,
+          review_request_sent_at: new Date().toISOString(),
+        } as never)
+        .eq("id", booking.id)
+        .is("review_request_sent_at" as never, null as never); // extra safety
+
+      if (updateErr) {
+        console.error("[auto] review token stamp failed:", booking.id, updateErr.message);
+        skipped += 1;
+        continue;
+      }
+
+      const reviewUrl = `${siteUrl}/review/${reviewToken}`;
+      const template = reviewRequestEmail({
+        clientName: booking.client.name ?? "there",
+        orgName: cached.name,
+        reviewUrl,
+        brandColor: cached.brand_color ?? undefined,
+        logoUrl: cached.logo_url ?? undefined,
+      });
+
+      const ok = await sendOrgEmail(booking.organization_id, {
+        to: booking.client.email,
+        toName: booking.client.name ?? undefined,
+        ...template,
+      });
+
+      if (ok) {
+        sent += 1;
+        console.log(
+          `[auto] Review request sent for booking ${booking.id} to ${booking.client.email}`,
+        );
+      } else {
+        // Email failed — un-stamp so the next cron run retries.
+        await db
+          .from("bookings")
+          .update({
+            review_request_sent_at: null,
+            review_token: null,
+          } as never)
+          .eq("id", booking.id);
+        skipped += 1;
+      }
+    } catch (err) {
+      console.error("[auto] sendBookingReviewRequests booking error:", booking.id, err);
+      skipped += 1;
+    }
+  }
+
+  return { considered, sent, skipped };
+}
+
+// ─────────────────────────────────────────────────────────────────
 // 7d. Client-facing 24-hour booking reminder (daily cron)
 //
 // Runs daily. Finds bookings scheduled between ~18h and ~30h from now
