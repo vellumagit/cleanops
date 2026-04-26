@@ -8,10 +8,9 @@ import { logAuditEvent } from "@/lib/audit";
 export async function completeOnboardingAction() {
   const { membership, supabase } = await getActionContext();
 
-  // Only the owner finalizes onboarding. RLS would block non-owners at
-  // the DB layer, but surface a clean error first.
-  if (membership.role !== "owner") {
-    throw new Error("Only the organization owner can complete onboarding.");
+  // Only owners and admins can finalize onboarding.
+  if (!["owner", "admin"].includes(membership.role)) {
+    throw new Error("You don't have permission to complete onboarding.");
   }
 
   const { error } = await supabase

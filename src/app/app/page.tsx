@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import {
   ArrowDownRight,
   ArrowRight,
@@ -60,6 +61,7 @@ export default async function DashboardPage() {
     recentPaidInvoices,
     orgSettings,
     orgBranding,
+    clientCount,
   ] = await Promise.all([
     supabase
       .from("bookings")
@@ -131,12 +133,25 @@ export default async function DashboardPage() {
       .maybeSingle() as unknown as {
       data: { logo_url: string | null; brand_color: string | null } | null;
     },
+    // Used only to decide whether to auto-redirect fresh orgs to setup.
+    supabase
+      .from("clients")
+      .select("id", { count: "exact", head: true }),
   ]);
 
   // -------- Onboarding state --------
   const showOnboarding =
     !orgSettings.data?.onboarding_completed_at &&
     (membership.role === "owner" || membership.role === "admin");
+
+  // Auto-redirect brand-new orgs that haven't added any clients yet.
+  // Once they add their first client the redirect stops — they can then
+  // move through setup at their own pace via the sidebar link and banner.
+  // Clicking "Skip setup for now" sets onboarding_completed_at so they
+  // will never be redirected again.
+  if (showOnboarding && (clientCount.count ?? 0) === 0) {
+    redirect("/app/setup");
+  }
 
   // -------- Compute derived metrics --------
   const todaysJobsList = todaysJobs.data ?? [];
