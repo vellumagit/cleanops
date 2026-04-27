@@ -686,6 +686,7 @@ export async function sendBookingConfirmation(bookingId: string) {
       .from("bookings")
       .select(`
         id, organization_id, scheduled_at, service_type, address,
+        confirmation_email_sent_at,
         client:clients ( name, email, phone )
       `)
       .eq("id", bookingId)
@@ -696,6 +697,7 @@ export async function sendBookingConfirmation(bookingId: string) {
         scheduled_at: string;
         service_type: string;
         address: string | null;
+        confirmation_email_sent_at: string | null;
         client: {
           name: string | null;
           email: string | null;
@@ -705,6 +707,13 @@ export async function sendBookingConfirmation(bookingId: string) {
     };
 
     if (!booking || !booking.client?.email) return;
+
+    // Dedup: if we already sent this confirmation (e.g. server retry or
+    // double-submit), skip rather than emailing the client twice.
+    if (booking.confirmation_email_sent_at) {
+      console.log(`[auto] Booking confirmation already sent for ${bookingId}, skipping`);
+      return;
+    }
 
     if (!(await isAutomationEnabled(booking.organization_id, "booking_confirmation_email"))) {
       console.log(`[auto] Booking confirmation paused for org ${booking.organization_id}`);
@@ -742,11 +751,19 @@ export async function sendBookingConfirmation(bookingId: string) {
       logoUrl: org?.logo_url ?? undefined,
     });
 
-    await sendOrgEmail(booking.organization_id, {
+    const sent = await sendOrgEmail(booking.organization_id, {
       to: booking.client.email,
       toName: booking.client.name ?? undefined,
       ...template,
     });
+
+    // Stamp only on success so a Resend failure lets the caller retry.
+    if (sent) {
+      await db
+        .from("bookings")
+        .update({ confirmation_email_sent_at: new Date().toISOString() } as never)
+        .eq("id", booking.id);
+    }
 
     console.log(`[auto] Booking confirmation sent to ${booking.client.email}`);
 
@@ -865,11 +882,18 @@ export async function sendBookingRescheduled(
       logoUrl: org?.logo_url ?? undefined,
     });
 
-    await sendOrgEmail(booking.organization_id, {
+    const sent = await sendOrgEmail(booking.organization_id, {
       to: booking.client.email,
       toName: booking.client.name ?? undefined,
       ...template,
     });
+
+    if (sent) {
+      await db
+        .from("bookings")
+        .update({ rescheduled_email_sent_at: new Date().toISOString() } as never)
+        .eq("id", booking.id);
+    }
 
     console.log(`[auto] Booking rescheduled email sent to ${booking.client.email}`);
   } catch (err) {
@@ -952,12 +976,29 @@ export async function sendBookingCancelledToClient(bookingId: string) {
       .from("bookings")
       .select(`
         id, organization_id, scheduled_at, service_type, address,
+        cancelled_email_sent_at,
         client:clients ( name, email )
       `)
       .eq("id", bookingId)
-      .maybeSingle();
+      .maybeSingle() as unknown as {
+      data: {
+        id: string;
+        organization_id: string;
+        scheduled_at: string;
+        service_type: string;
+        address: string | null;
+        cancelled_email_sent_at: string | null;
+        client: { name: string | null; email: string | null } | null;
+      } | null;
+    };
 
     if (!booking || !booking.client?.email) return;
+
+    // Dedup: cancellation email should only go out once.
+    if (booking.cancelled_email_sent_at) {
+      console.log(`[auto] Cancellation email already sent for ${bookingId}, skipping`);
+      return;
+    }
 
     if (!(await isAutomationEnabled(booking.organization_id, "booking_cancelled_email"))) {
       console.log(`[auto] Booking cancelled email paused for org ${booking.organization_id}`);
@@ -990,11 +1031,18 @@ export async function sendBookingCancelledToClient(bookingId: string) {
       logoUrl: org?.logo_url ?? undefined,
     });
 
-    await sendOrgEmail(booking.organization_id, {
+    const sent = await sendOrgEmail(booking.organization_id, {
       to: booking.client.email,
       toName: booking.client.name ?? undefined,
       ...template,
     });
+
+    if (sent) {
+      await db
+        .from("bookings")
+        .update({ cancelled_email_sent_at: new Date().toISOString() } as never)
+        .eq("id", booking.id);
+    }
 
     console.log(`[auto] Booking cancelled email sent to ${booking.client.email}`);
   } catch (err) {

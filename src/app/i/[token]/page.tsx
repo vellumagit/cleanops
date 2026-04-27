@@ -24,11 +24,10 @@ export const metadata: Metadata = {
  * (the cleaning company's customer), who has no Sollos account. The
  * capability is the 16-char `public_token` in the URL.
  *
- * Phase 12 Part 1: payment CTA is a placeholder. Once an org connects a
- * processor (Stripe / Square / QBO) in settings, this page will light up
- * a "Pay now" button that kicks off the Checkout / Payment Link flow.
- * Until then we show the org's manual payment instructions (Zelle,
- * check, wire, etc) so the client can still actually pay.
+ * Payment is live: if the org has Stripe Connect or Square connected,
+ * a "Pay with card" button fires the appropriate checkout flow. Orgs
+ * without a processor see their manual payment instructions (Zelle,
+ * check, wire, etc.) as the fallback.
  */
 export default async function PublicInvoicePage({
   params,
