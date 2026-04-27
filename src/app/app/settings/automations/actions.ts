@@ -45,11 +45,59 @@ export type AutomationKey =
   | "booking_reminder_client_sms"
   | "booking_assignment_sms";
 
+/**
+ * Runtime allowlist derived from the AutomationKey union. Keeps the type
+ * and the validation in lockstep — add a key to the type above and it
+ * automatically becomes valid here. A form submission with an unknown key
+ * is silently dropped rather than writing an orphaned entry into the JSON
+ * blob that would silently shadow any future key with the same name.
+ */
+const VALID_AUTOMATION_KEYS = new Set<AutomationKey>([
+  "auto_invoice_on_job_complete",
+  "booking_confirmation_email",
+  "booking_rescheduled_email",
+  "booking_reminder_client_email",
+  "estimate_sent_email",
+  "invoice_paid_receipt",
+  "invoice_overdue_reminder",
+  "review_submitted_notify",
+  "booking_assignment_notify",
+  "unassigned_booking_alert",
+  "low_review_alert",
+  "stripe_payout_alert",
+  "weekly_ops_digest",
+  "monthly_ops_digest",
+  "employee_daily_schedule",
+  "employee_weekly_schedule",
+  "overtime_warning",
+  "pto_status_notify",
+  "payroll_paid_receipt",
+  "training_assigned_notify",
+  "certification_expiry_reminder",
+  "auto_expire_stale_estimates",
+  "auto_void_overdue_invoices",
+  "auto_complete_past_bookings",
+  "auto_archive_old_records",
+  "auto_recurring_invoices",
+  "booking_cancelled_email",
+  "rebooking_prompt_email",
+  "estimate_followup_email",
+  "review_request_after_completion",
+  "booking_confirmation_sms",
+  "booking_reminder_client_sms",
+  "booking_assignment_sms",
+]);
+
 export async function toggleAutomationAction(formData: FormData) {
   const { membership } = await getActionContext();
   if (!["owner", "admin"].includes(membership.role)) return;
 
-  const key = String(formData.get("key") ?? "") as AutomationKey;
+  const rawKey = String(formData.get("key") ?? "");
+  if (!VALID_AUTOMATION_KEYS.has(rawKey as AutomationKey)) {
+    console.warn(`[automations] unknown key rejected: "${rawKey}"`);
+    return;
+  }
+  const key = rawKey as AutomationKey;
   const enabled = formData.get("enabled") === "true";
 
   const admin = createSupabaseAdminClient();

@@ -1,6 +1,7 @@
 import "server-only";
 import { Resend } from "resend";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { getEnv } from "@/lib/env";
 
 // ---------------------------------------------------------------------------
 // Singleton
@@ -10,24 +11,38 @@ let _client: Resend | null = null;
 
 function getClient(): Resend | null {
   if (_client) return _client;
-  const key = process.env.RESEND_API_KEY;
-  if (!key) return null;
-  _client = new Resend(key);
+  // Read through the central env system so EMAIL_FROM / EMAIL_FROM_NAME /
+  // RESEND_API_KEY are documented and validated in one place (src/lib/env.ts).
+  // Set these in Vercel project env vars — see env.ts for the full list.
+  const { RESEND_API_KEY } = getEnv();
+  if (!RESEND_API_KEY) return null;
+  _client = new Resend(RESEND_API_KEY);
   return _client;
 }
 
 export function isEmailConfigured(): boolean {
-  return Boolean(process.env.RESEND_API_KEY);
+  return Boolean(getEnv().RESEND_API_KEY);
 }
 
 // ---------------------------------------------------------------------------
-// Default sender — used when org has no verified custom email
+// Default sender — used when org has no verified custom email.
+//
+// Override via Vercel env vars:
+//   EMAIL_FROM      — the "from" address   (default: noreply@sollos3.com)
+//   EMAIL_FROM_NAME — the display name     (default: "Sollos")
+//
+// Both are optional. EMAIL_FROM must be on a domain verified in your Resend
+// account or Resend will reject the send with "from_address_not_allowed".
 // ---------------------------------------------------------------------------
 
-const DEFAULT_FROM_EMAIL =
-  process.env.EMAIL_FROM ?? "noreply@sollos3.com";
-const DEFAULT_FROM_NAME =
-  process.env.EMAIL_FROM_NAME ?? "Sollos";
+// Lazy getters so module-level execution doesn't call getEnv() before the
+// test/cold-start environment is fully initialised.
+function getDefaultFromEmail(): string {
+  return getEnv().EMAIL_FROM ?? "noreply@sollos3.com";
+}
+function getDefaultFromName(): string {
+  return getEnv().EMAIL_FROM_NAME ?? "Sollos";
+}
 
 // ---------------------------------------------------------------------------
 // Types — unchanged from the MailerSend implementation so every caller
@@ -92,8 +107,8 @@ export async function sendEmailDetailed(
   }
 
   try {
-    const fromEmail = args.from ?? DEFAULT_FROM_EMAIL;
-    const fromName = args.fromName ?? DEFAULT_FROM_NAME;
+    const fromEmail = args.from ?? getDefaultFromEmail();
+    const fromName = args.fromName ?? getDefaultFromName();
 
     const payload: Parameters<typeof client.emails.send>[0] = {
       from: formatAddress(fromEmail, fromName),
@@ -223,7 +238,7 @@ export async function getOrgSender(
       `[email] getOrgSender: org ${organizationId} not found — sending with no display name`,
     );
     return {
-      from: DEFAULT_FROM_EMAIL,
+      from: getDefaultFromEmail(),
       fromName: "",
     };
   }
@@ -261,7 +276,7 @@ export async function getOrgSender(
   // stays out of the prominent display slot in Gmail / Outlook.
   // Reply-To carries the org's actual contact inbox.
   return {
-    from: DEFAULT_FROM_EMAIL,
+    from: getDefaultFromEmail(),
     fromName: org.name,
     replyTo: replyTarget,
     replyToName: org.name,
