@@ -119,7 +119,7 @@ export async function POST(req: NextRequest) {
             );
             break;
           }
-          await admin
+          const { error: updateErr } = await admin
             .from("invoices")
             .update({
               status: "paid",
@@ -132,6 +132,10 @@ export async function POST(req: NextRequest) {
             } as never)
             .eq("id", invoiceId)
             .eq("organization_id", ownerOrgId);
+          if (updateErr) {
+            console.error("[stripe connect] checkout.session.completed invoice update failed:", updateErr.message);
+            return NextResponse.json({ error: "DB update failed" }, { status: 500 });
+          }
         }
         break;
       }
@@ -150,7 +154,7 @@ export async function POST(req: NextRequest) {
             );
             break;
           }
-          await admin
+          const { error: updateErr } = await admin
             .from("invoices")
             .update({
               status: "paid",
@@ -161,6 +165,10 @@ export async function POST(req: NextRequest) {
             } as never)
             .eq("id", invoiceId)
             .eq("organization_id", ownerOrgId);
+          if (updateErr) {
+            console.error("[stripe connect] payment_intent.succeeded invoice update failed:", updateErr.message);
+            return NextResponse.json({ error: "DB update failed" }, { status: 500 });
+          }
         }
         break;
       }
@@ -199,7 +207,7 @@ export async function POST(req: NextRequest) {
             );
             break;
           }
-          await admin
+          const { error: updateErr } = await admin
             .from("invoices")
             .update({
               status: "draft",
@@ -208,6 +216,10 @@ export async function POST(req: NextRequest) {
             } as never)
             .eq("stripe_payment_intent_id" as never, piId)
             .eq("organization_id", ownerOrgId);
+          if (updateErr) {
+            console.error("[stripe connect] charge.refunded invoice update failed:", updateErr.message);
+            return NextResponse.json({ error: "DB update failed" }, { status: 500 });
+          }
         }
         break;
       }

@@ -742,7 +742,7 @@ export async function sendBookingConfirmation(bookingId: string) {
       logoUrl: org?.logo_url ?? undefined,
     });
 
-    sendOrgEmail(booking.organization_id, {
+    await sendOrgEmail(booking.organization_id, {
       to: booking.client.email,
       toName: booking.client.name ?? undefined,
       ...template,
@@ -865,7 +865,7 @@ export async function sendBookingRescheduled(
       logoUrl: org?.logo_url ?? undefined,
     });
 
-    sendOrgEmail(booking.organization_id, {
+    await sendOrgEmail(booking.organization_id, {
       to: booking.client.email,
       toName: booking.client.name ?? undefined,
       ...template,
@@ -990,7 +990,7 @@ export async function sendBookingCancelledToClient(bookingId: string) {
       logoUrl: org?.logo_url ?? undefined,
     });
 
-    sendOrgEmail(booking.organization_id, {
+    await sendOrgEmail(booking.organization_id, {
       to: booking.client.email,
       toName: booking.client.name ?? undefined,
       ...template,
@@ -2082,7 +2082,7 @@ export async function autoOnInvoicePaid(invoiceId: string) {
       logoUrl,
     });
 
-    sendOrgEmail(invoice.organization_id, {
+    await sendOrgEmail(invoice.organization_id, {
       to: invoice.client.email,
       toName: invoice.client.name ?? undefined,
       ...receiptTemplate,
@@ -2115,15 +2115,16 @@ export async function autoOnInvoicePaid(invoiceId: string) {
       logoUrl,
     });
 
-    // Delay review request by ~2 seconds so it doesn't arrive in the
-    // same instant as the receipt (looks spammy). Fire-and-forget.
-    setTimeout(() => {
-      sendOrgEmail(invoice.organization_id, {
-        to: invoice.client.email!,
-        toName: invoice.client.name ?? undefined,
-        ...reviewTemplate,
-      });
-    }, 2000);
+    // Send review request immediately after the receipt. The "2-second
+    // delay" was a setTimeout — which never fires in Vercel serverless
+    // because the process terminates when the function returns. Back-to-back
+    // Resend calls land in separate email threads in Gmail/Outlook anyway
+    // (different Message-IDs), so there's no deliverability reason to delay.
+    await sendOrgEmail(invoice.organization_id, {
+      to: invoice.client.email!,
+      toName: invoice.client.name ?? undefined,
+      ...reviewTemplate,
+    });
 
     console.log(`[auto] Receipt + review request sent for invoice ${invoiceId}`);
   } catch (err) {
