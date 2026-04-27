@@ -213,18 +213,33 @@ export async function getOrgSender(
     contact_email: string | null;
   } | null;
 
+  // Guard: if the org lookup failed (transient DB error, deleted org),
+  // log a warning and send as a bare address with no display name.
+  // An empty fromName makes formatAddress() return just the raw email
+  // address — the client sees "noreply@sollos3.com" instead of the
+  // platform brand "Sollos", which would be meaningless to them.
+  if (!org) {
+    console.warn(
+      `[email] getOrgSender: org ${organizationId} not found — sending with no display name`,
+    );
+    return {
+      from: DEFAULT_FROM_EMAIL,
+      fromName: "",
+    };
+  }
+
   const canSendFromOrgAddress = Boolean(
-    org?.sender_email &&
-      org?.sender_email_verified_at &&
+    org.sender_email &&
+      org.sender_email_verified_at &&
       isDomainVerifiedInResend(org.sender_email),
   );
 
   // Prefer contact_email as the Reply-To target — it's what the owner
   // explicitly designated for client replies. Fall back to the
   // (possibly unverified) sender_email if they only filled that in.
-  const replyTarget = org?.contact_email ?? org?.sender_email ?? undefined;
+  const replyTarget = org.contact_email ?? org.sender_email ?? undefined;
 
-  if (canSendFromOrgAddress && org?.sender_email) {
+  if (canSendFromOrgAddress && org.sender_email) {
     // Owner verified the inbox AND the domain is in our Resend
     // allow-list — safe to send as-them. Still route replies via
     // Reply-To when contact_email differs, so support-style inboxes
@@ -233,23 +248,23 @@ export async function getOrgSender(
       from: org.sender_email,
       fromName: org.name,
       replyTo:
-        org?.contact_email && org.contact_email !== org.sender_email
+        org.contact_email && org.contact_email !== org.sender_email
           ? org.contact_email
           : undefined,
-      replyToName: org?.name ?? undefined,
+      replyToName: org.name,
     };
   }
 
   // Default path: send from Sollos's verified domain, but stamp the
-  // org's display name ALONE on the From header so the client sees
-  // "Velluma <noreply@sollos3.com>" — Sollos stays out of the
-  // prominent-display slots in Gmail / Outlook. Reply-To carries the
-  // org's actual contact inbox.
+  // org's display name on the From header so the client sees
+  // "Acme Cleaning <noreply@sollos3.com>" — the platform brand
+  // stays out of the prominent display slot in Gmail / Outlook.
+  // Reply-To carries the org's actual contact inbox.
   return {
     from: DEFAULT_FROM_EMAIL,
-    fromName: org?.name ?? DEFAULT_FROM_NAME,
+    fromName: org.name,
     replyTo: replyTarget,
-    replyToName: org?.name ?? undefined,
+    replyToName: org.name,
   };
 }
 
