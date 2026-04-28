@@ -1,5 +1,15 @@
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
+export type BookingOption = {
+  id: string;
+  client_id: string;
+  client_name: string;
+  service_type: string;
+  scheduled_at: string;
+  status: string;
+  total_cents: number;
+};
+
 export async function fetchInvoiceFormOptions() {
   const supabase = await createSupabaseServerClient();
   const [{ data: clients }, { data: bookings }] = await Promise.all([
@@ -7,19 +17,22 @@ export async function fetchInvoiceFormOptions() {
     supabase
       .from("bookings")
       .select(
-        "id, scheduled_at, service_type, client:clients ( name )",
+        "id, scheduled_at, service_type, status, total_cents, client:clients ( id, name )",
       )
       .order("scheduled_at", { ascending: false })
-      .limit(200),
+      .limit(500),
   ]);
 
   return {
     clients: (clients ?? []).map((c) => ({ id: c.id, label: c.name })),
     bookings: (bookings ?? []).map((b) => ({
       id: b.id,
-      label: `${b.client?.name ?? "—"} · ${new Date(
-        b.scheduled_at,
-      ).toLocaleDateString()}`,
-    })),
+      client_id: (b.client as { id: string; name: string } | null)?.id ?? "",
+      client_name: (b.client as { id: string; name: string } | null)?.name ?? "—",
+      service_type: b.service_type ?? "",
+      scheduled_at: b.scheduled_at,
+      status: b.status ?? "",
+      total_cents: b.total_cents ?? 0,
+    })) as BookingOption[],
   };
 }

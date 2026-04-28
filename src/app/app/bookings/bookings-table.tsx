@@ -12,7 +12,6 @@ import {
   Clock,
   MapPin,
   User,
-  Filter,
   X,
   ChevronDown,
 } from "lucide-react";
@@ -69,6 +68,16 @@ const STATUS_TABS = [
 
 type StatusTab = (typeof STATUS_TABS)[number]["key"];
 
+const DATE_FILTERS = [
+  { key: "all", label: "Any date" },
+  { key: "today", label: "Today" },
+  { key: "week", label: "This week" },
+  { key: "month", label: "This month" },
+  { key: "past30", label: "Past 30 days" },
+] as const;
+
+type DateFilter = (typeof DATE_FILTERS)[number]["key"];
+
 function matchesTab(row: BookingRow, tab: StatusTab): boolean {
   if (tab === "all") return true;
   if (tab === "upcoming")
@@ -81,6 +90,39 @@ function matchesTab(row: BookingRow, tab: StatusTab): boolean {
   return row.status === tab;
 }
 
+function matchesDate(row: BookingRow, filter: DateFilter): boolean {
+  if (filter === "all") return true;
+  const d = new Date(row.scheduled_at);
+  const now = new Date();
+  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const endOfDay = new Date(startOfDay);
+  endOfDay.setDate(endOfDay.getDate() + 1);
+
+  if (filter === "today") {
+    return d >= startOfDay && d < endOfDay;
+  }
+  if (filter === "week") {
+    const dayOfWeek = now.getDay(); // 0=Sun
+    const startOfWeek = new Date(startOfDay);
+    startOfWeek.setDate(startOfWeek.getDate() - dayOfWeek);
+    const endOfWeek = new Date(startOfWeek);
+    endOfWeek.setDate(endOfWeek.getDate() + 7);
+    return d >= startOfWeek && d < endOfWeek;
+  }
+  if (filter === "month") {
+    return (
+      d.getFullYear() === now.getFullYear() &&
+      d.getMonth() === now.getMonth()
+    );
+  }
+  if (filter === "past30") {
+    const cutoff = new Date(now);
+    cutoff.setDate(cutoff.getDate() - 30);
+    return d >= cutoff && d <= now;
+  }
+  return true;
+}
+
 export function BookingsTable({
   rows,
   canEdit,
@@ -89,14 +131,7 @@ export function BookingsTable({
 }: {
   rows: BookingRow[];
   canEdit: boolean;
-  /** Org IANA timezone. Passed down from the server page so booking
-   *  times render in the owner's configured zone (e.g. "8:00 AM" for
-   *  an 8am Edmonton booking, not "10:00 AM" because the default fell
-   *  back to New York). */
   tz: string;
-  /** Active employees in the org. Powers the per-row Assign popup so
-   *  owners can change crew without leaving the bookings list. Empty
-   *  list hides the button (nothing useful to pick). */
   employees: AssignableEmployee[];
 }) {
   const router = useRouter();
@@ -106,7 +141,7 @@ export function BookingsTable({
   const [serviceFilter, setServiceFilter] = useState<string>("all");
   const [assigneeFilter, setAssigneeFilter] = useState<string>("all");
   const [clientFilter, setClientFilter] = useState<string>("all");
-  const [showFilters, setShowFilters] = useState(false);
+  const [dateFilter, setDateFilter] = useState<DateFilter>("all");
 
   // Derive unique values for dropdown filters
   const services = useMemo(
@@ -130,11 +165,9 @@ export function BookingsTable({
   // Filter pipeline
   const filtered = useMemo(() => {
     let result = rows;
-
-    // Tab filter
     result = result.filter((r) => matchesTab(r, tab));
+    result = result.filter((r) => matchesDate(r, dateFilter));
 
-    // Search
     if (query.trim()) {
       const needle = query.trim().toLowerCase();
       result = result.filter(
@@ -145,13 +178,9 @@ export function BookingsTable({
           (r.address ?? "").toLowerCase().includes(needle),
       );
     }
-
-    // Service filter
     if (serviceFilter !== "all") {
       result = result.filter((r) => r.service_type === serviceFilter);
     }
-
-    // Assignee filter
     if (assigneeFilter !== "all") {
       if (assigneeFilter === "unassigned") {
         result = result.filter((r) => !r.assigned_name);
@@ -159,16 +188,14 @@ export function BookingsTable({
         result = result.filter((r) => r.assigned_name === assigneeFilter);
       }
     }
-
-    // Client filter
     if (clientFilter !== "all") {
       result = result.filter((r) => r.client_name === clientFilter);
     }
 
     return result;
-  }, [rows, tab, query, serviceFilter, assigneeFilter, clientFilter]);
+  }, [rows, tab, dateFilter, query, serviceFilter, assigneeFilter, clientFilter]);
 
-  // Tab counts
+  // Tab counts (pre-date/filter, just status)
   const tabCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const t of STATUS_TABS) {
@@ -177,12 +204,23 @@ export function BookingsTable({
     return counts;
   }, [rows]);
 
-  const hasActiveFilters =
-    serviceFilter !== "all" || assigneeFilter !== "all" || clientFilter !== "all";
+  const activeFilterCount =
+    (serviceFilter !== "all" ? 1 : 0) +
+    (assigneeFilter !== "all" ? 1 : 0) +
+    (clientFilter !== "all" ? 1 : 0) +
+    (dateFilter !== "all" ? 1 : 0);
+
+  function clearFilters() {
+    setServiceFilter("all");
+    setAssigneeFilter("all");
+    setClientFilter("all");
+    setDateFilter("all");
+    setQuery("");
+  }
 
   return (
     <div className="space-y-3">
-      {/* Status tabs */}
+      {/* ── Status tabs ────────────────────────────────────────────────── */}
       <div className="flex items-center gap-1 overflow-x-auto rounded-lg bg-muted p-1 w-fit">
         {STATUS_TABS.map((t) => (
           <button
@@ -211,152 +249,112 @@ export function BookingsTable({
         ))}
       </div>
 
-      {/* Search + filters + view toggle */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative flex-1 min-w-[200px] max-w-sm">
+      {/* ── Filters row (always visible) ───────────────────────────────── */}
+      <div className="flex flex-wrap items-end gap-2 rounded-lg border border-border bg-card p-3">
+        {/* Search */}
+        <div className="relative min-w-[200px] flex-1">
           <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search client, service, assignee, address…"
+            placeholder="Search client, service, address…"
             className="pl-8 h-8 text-xs"
           />
         </div>
 
-        <button
-          type="button"
-          onClick={() => setShowFilters(!showFilters)}
-          className={cn(
-            "inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium transition-colors",
-            showFilters || hasActiveFilters
-              ? "border-foreground/20 bg-foreground/5 text-foreground"
-              : "border-input text-muted-foreground hover:bg-muted hover:text-foreground",
-          )}
+        {/* Date quick-select */}
+        <FilterSelect
+          label="Date"
+          value={dateFilter}
+          onChange={(v) => setDateFilter(v as DateFilter)}
         >
-          <Filter className="h-3.5 w-3.5" />
-          Filters
-          {hasActiveFilters && (
-            <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-foreground text-[10px] font-bold text-background">
-              {(serviceFilter !== "all" ? 1 : 0) +
-                (assigneeFilter !== "all" ? 1 : 0) +
-                (clientFilter !== "all" ? 1 : 0)}
-            </span>
+          {DATE_FILTERS.map((d) => (
+            <option key={d.key} value={d.key}>{d.label}</option>
+          ))}
+        </FilterSelect>
+
+        {/* Client */}
+        <FilterSelect
+          label="Client"
+          value={clientFilter}
+          onChange={setClientFilter}
+        >
+          <option value="all">All clients</option>
+          {clients.map((c) => (
+            <option key={c} value={c}>{c}</option>
+          ))}
+        </FilterSelect>
+
+        {/* Service */}
+        <FilterSelect
+          label="Service"
+          value={serviceFilter}
+          onChange={setServiceFilter}
+        >
+          <option value="all">All services</option>
+          {services.map((s) => (
+            <option key={s} value={s}>{humanizeEnum(s)}</option>
+          ))}
+        </FilterSelect>
+
+        {/* Assignee */}
+        <FilterSelect
+          label="Assignee"
+          value={assigneeFilter}
+          onChange={setAssigneeFilter}
+        >
+          <option value="all">All assignees</option>
+          <option value="unassigned">Unassigned</option>
+          {assignees.map((a) => (
+            <option key={a} value={a}>{a}</option>
+          ))}
+        </FilterSelect>
+
+        {/* Clear + view toggle */}
+        <div className="flex items-center gap-2 ml-auto">
+          {(activeFilterCount > 0 || query) && (
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="inline-flex h-8 items-center gap-1 rounded-md border border-input px-2.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+            >
+              <X className="h-3 w-3" />
+              Clear {activeFilterCount > 0 ? `(${activeFilterCount})` : ""}
+            </button>
           )}
-        </button>
 
-        {hasActiveFilters && (
-          <button
-            type="button"
-            onClick={() => {
-              setServiceFilter("all");
-              setAssigneeFilter("all");
-              setClientFilter("all");
-            }}
-            className="inline-flex h-8 items-center gap-1 rounded-lg border border-input px-2.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-          >
-            <X className="h-3 w-3" />
-            Clear
-          </button>
-        )}
-
-        <div className="ml-auto flex rounded-md border border-border bg-card">
-          <button
-            type="button"
-            onClick={() => setView("table")}
-            className={cn(
-              "flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors rounded-l-md",
-              view === "table"
-                ? "bg-foreground text-background"
-                : "text-muted-foreground hover:bg-muted hover:text-foreground",
-            )}
-          >
-            <LayoutList className="h-3.5 w-3.5" />
-            Table
-          </button>
-          <button
-            type="button"
-            onClick={() => setView("cards")}
-            className={cn(
-              "flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors rounded-r-md",
-              view === "cards"
-                ? "bg-foreground text-background"
-                : "text-muted-foreground hover:bg-muted hover:text-foreground",
-            )}
-          >
-            <LayoutGrid className="h-3.5 w-3.5" />
-            Cards
-          </button>
+          <div className="flex rounded-md border border-border bg-muted/40">
+            <button
+              type="button"
+              onClick={() => setView("table")}
+              className={cn(
+                "flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors rounded-l-md",
+                view === "table"
+                  ? "bg-foreground text-background"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground",
+              )}
+              title="Table view"
+            >
+              <LayoutList className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setView("cards")}
+              className={cn(
+                "flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors rounded-r-md",
+                view === "cards"
+                  ? "bg-foreground text-background"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground",
+              )}
+              title="Card view"
+            >
+              <LayoutGrid className="h-3.5 w-3.5" />
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Filter dropdowns (collapsible) */}
-      {showFilters && (
-        <div className="flex flex-wrap gap-3 rounded-lg border border-border bg-card p-3">
-          <div>
-            <label className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-              Client
-            </label>
-            <div className="relative mt-1">
-              <select
-                value={clientFilter}
-                onChange={(e) => setClientFilter(e.target.value)}
-                className="h-8 appearance-none rounded-md border border-input bg-transparent pl-2.5 pr-7 text-xs"
-              >
-                <option value="all">All clients</option>
-                {clients.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
-            </div>
-          </div>
-          <div>
-            <label className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-              Service type
-            </label>
-            <div className="relative mt-1">
-              <select
-                value={serviceFilter}
-                onChange={(e) => setServiceFilter(e.target.value)}
-                className="h-8 appearance-none rounded-md border border-input bg-transparent pl-2.5 pr-7 text-xs"
-              >
-                <option value="all">All services</option>
-                {services.map((s) => (
-                  <option key={s} value={s}>
-                    {humanizeEnum(s)}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
-            </div>
-          </div>
-          <div>
-            <label className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-              Assignee
-            </label>
-            <div className="relative mt-1">
-              <select
-                value={assigneeFilter}
-                onChange={(e) => setAssigneeFilter(e.target.value)}
-                className="h-8 appearance-none rounded-md border border-input bg-transparent pl-2.5 pr-7 text-xs"
-              >
-                <option value="all">All assignees</option>
-                <option value="unassigned">Unassigned</option>
-                {assignees.map((a) => (
-                  <option key={a} value={a}>
-                    {a}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Main content */}
+      {/* ── Results ────────────────────────────────────────────────────── */}
       {rows.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-card px-6 py-16 text-center">
           <p className="text-sm font-medium text-foreground">No bookings yet</p>
@@ -365,8 +363,15 @@ export function BookingsTable({
           </p>
         </div>
       ) : filtered.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-border bg-card px-5 py-14 text-center text-sm text-muted-foreground">
-          No bookings match your filters.
+        <div className="rounded-xl border border-dashed border-border bg-card px-5 py-14 text-center">
+          <p className="text-sm text-muted-foreground">No bookings match your filters.</p>
+          <button
+            type="button"
+            onClick={clearFilters}
+            className="mt-2 text-xs text-primary underline-offset-4 hover:underline"
+          >
+            Clear all filters
+          </button>
         </div>
       ) : view === "table" ? (
         <TableView
@@ -388,10 +393,50 @@ export function BookingsTable({
 
       {rows.length > 0 && (
         <p className="text-xs text-muted-foreground">
-          Showing {filtered.length} of {rows.length}
+          Showing {filtered.length} of {rows.length} bookings
           {query && ` matching "${query}"`}
         </p>
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// FilterSelect — compact labeled dropdown, always visible
+// ---------------------------------------------------------------------------
+
+function FilterSelect({
+  label,
+  value,
+  onChange,
+  children,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  children: React.ReactNode;
+}) {
+  const isActive = value !== "all";
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground px-0.5">
+        {label}
+      </span>
+      <div className="relative">
+        <select
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className={cn(
+            "h-8 appearance-none rounded-md border bg-transparent pl-2.5 pr-7 text-xs transition-colors",
+            isActive
+              ? "border-foreground/40 font-medium text-foreground"
+              : "border-input text-muted-foreground",
+          )}
+        >
+          {children}
+        </select>
+        <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
+      </div>
     </div>
   );
 }
@@ -538,8 +583,6 @@ function CardsView({
   tz: string;
   employees: AssignableEmployee[];
 }) {
-  // Group by date (in the org's timezone — otherwise an 8pm Edmonton
-  // job could land under "tomorrow" if the browser is in a later tz).
   const grouped = useMemo(() => {
     const map = new Map<string, BookingRow[]>();
     for (const r of rows) {
@@ -587,10 +630,10 @@ function CardsView({
                 }
                 className={cn(
                   "flex flex-col gap-2 rounded-xl border border-border bg-card p-4 text-left transition-all",
-                  canEdit && "cursor-pointer hover:border-foreground/20 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  canEdit &&
+                    "cursor-pointer hover:border-foreground/20 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 )}
               >
-                {/* Top row: client + status */}
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <div className="flex items-center gap-1.5">
@@ -610,7 +653,6 @@ function CardsView({
                   </StatusBadge>
                 </div>
 
-                {/* Details */}
                 <div className="grid gap-1 text-xs text-muted-foreground">
                   <div className="flex items-center gap-1.5">
                     <Clock className="h-3 w-3 shrink-0" />
@@ -642,7 +684,6 @@ function CardsView({
                   </div>
                 </div>
 
-                {/* Bottom: total + Assign chip */}
                 <div className="mt-auto flex items-center justify-between gap-2 pt-1 border-t border-border">
                   <span className="text-sm font-semibold tabular-nums">
                     {formatCurrencyCents(r.total_cents)}

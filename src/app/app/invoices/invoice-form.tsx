@@ -1,19 +1,25 @@
 "use client";
 
-import { useActionState, useState, useMemo } from "react";
+import { useActionState, useState, useMemo, useRef, useEffect } from "react";
 import Link from "next/link";
+import { Search, X, ChevronDown, Check } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { buttonVariants } from "@/components/ui/button";
 import { FormError, FormField, FormSelect } from "@/components/form-field";
 import { SubmitButton } from "@/components/submit-button";
 import { SetupReturnField } from "@/components/setup-return-field";
-import { formatCurrencyCents, type CurrencyCode } from "@/lib/format";
+import {
+  formatCurrencyCents,
+  humanizeEnum,
+  type CurrencyCode,
+} from "@/lib/format";
 import { computeTax, parseTaxRate } from "@/lib/invoice-tax";
 import {
   createInvoiceAction,
   updateInvoiceAction,
   type InvoiceFormState,
 } from "./actions";
+import type { BookingOption } from "./options";
 
 const empty: InvoiceFormState = {};
 
@@ -28,6 +34,230 @@ type Defaults = {
   tax_rate_percent?: string;
   tax_label?: string | null;
 };
+
+// ---------------------------------------------------------------------------
+// Booking combobox — replaces the flat 200-item select
+// ---------------------------------------------------------------------------
+
+function BookingCombobox({
+  bookings,
+  clientId,
+  value,
+  onChange,
+}: {
+  bookings: BookingOption[];
+  clientId: string;
+  value: string;
+  onChange: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const containerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Close on outside click
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+        setQuery("");
+      }
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  // Filter bookings: if a client is selected, only show their bookings
+  const clientBookings = useMemo(() => {
+    if (!clientId) return bookings;
+    return bookings.filter((b) => b.client_id === clientId);
+  }, [bookings, clientId]);
+
+  // Then apply the search query
+  const filtered = useMemo(() => {
+    if (!query.trim()) return clientBookings;
+    const needle = query.trim().toLowerCase();
+    return clientBookings.filter(
+      (b) =>
+        b.client_name.toLowerCase().includes(needle) ||
+        b.service_type.toLowerCase().includes(needle) ||
+        b.status.toLowerCase().includes(needle) ||
+        new Date(b.scheduled_at)
+          .toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+          .toLowerCase()
+          .includes(needle),
+    );
+  }, [clientBookings, query]);
+
+  const selected = bookings.find((b) => b.id === value);
+
+  function select(id: string) {
+    onChange(id);
+    setOpen(false);
+    setQuery("");
+  }
+
+  function formatBookingLabel(b: BookingOption) {
+    const date = new Date(b.scheduled_at).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+    const svc = humanizeEnum(b.service_type);
+    return `${date} · ${svc}`;
+  }
+
+  const statusColor: Record<string, string> = {
+    completed: "text-emerald-600 dark:text-emerald-400",
+    confirmed: "text-blue-600 dark:text-blue-400",
+    pending: "text-amber-600 dark:text-amber-400",
+    cancelled: "text-muted-foreground",
+    in_progress: "text-blue-600 dark:text-blue-400",
+    en_route: "text-blue-600 dark:text-blue-400",
+  };
+
+  return (
+    <div ref={containerRef} className="relative">
+      {/* Trigger button */}
+      <button
+        type="button"
+        onClick={() => {
+          setOpen((o) => !o);
+          // Focus the search input next tick
+          setTimeout(() => inputRef.current?.focus(), 0);
+        }}
+        className="flex h-9 w-full items-center justify-between rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+      >
+        {selected ? (
+          <span className="flex items-center gap-2 min-w-0">
+            <span className="truncate font-medium">{formatBookingLabel(selected)}</span>
+            <span className={`shrink-0 text-xs ${statusColor[selected.status] ?? "text-muted-foreground"}`}>
+              {humanizeEnum(selected.status)}
+            </span>
+            <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+              {formatCurrencyCents(selected.total_cents)}
+            </span>
+          </span>
+        ) : (
+          <span className="text-muted-foreground">
+            {clientId
+              ? clientBookings.length === 0
+                ? "No bookings for this client"
+                : "Select a booking…"
+              : "Select a client first, or search all bookings…"}
+          </span>
+        )}
+        <div className="flex shrink-0 items-center gap-1 ml-2">
+          {selected && (
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={(e) => {
+                e.stopPropagation();
+                select("");
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.stopPropagation();
+                  select("");
+                }
+              }}
+              className="rounded p-0.5 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+              aria-label="Clear booking"
+            >
+              <X className="h-3 w-3" />
+            </span>
+          )}
+          <ChevronDown className="h-4 w-4 text-muted-foreground" />
+        </div>
+      </button>
+
+      {/* Dropdown */}
+      {open && (
+        <div className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-md border border-border bg-popover shadow-lg">
+          {/* Search input */}
+          <div className="relative border-b border-border">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <input
+              ref={inputRef}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search by date, service, status…"
+              className="h-9 w-full bg-transparent pl-9 pr-3 text-sm outline-none placeholder:text-muted-foreground"
+            />
+          </div>
+
+          {/* Options list */}
+          <ul className="max-h-56 overflow-y-auto py-1">
+            {/* None option */}
+            <li>
+              <button
+                type="button"
+                onClick={() => select("")}
+                className="flex w-full items-center gap-2 px-3 py-2 text-sm text-muted-foreground hover:bg-muted transition-colors"
+              >
+                <span className="w-4 shrink-0">
+                  {!value && <Check className="h-3.5 w-3.5 text-primary" />}
+                </span>
+                — None —
+              </button>
+            </li>
+
+            {filtered.length === 0 ? (
+              <li className="px-3 py-4 text-center text-xs text-muted-foreground">
+                {query ? "No bookings match your search." : "No bookings found."}
+              </li>
+            ) : (
+              filtered.map((b) => (
+                <li key={b.id}>
+                  <button
+                    type="button"
+                    onClick={() => select(b.id)}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-muted transition-colors"
+                  >
+                    <span className="w-4 shrink-0">
+                      {value === b.id && (
+                        <Check className="h-3.5 w-3.5 text-primary" />
+                      )}
+                    </span>
+                    <span className="flex-1 min-w-0 text-left">
+                      <span className="font-medium">{formatBookingLabel(b)}</span>
+                      {!clientId && (
+                        <span className="ml-1.5 text-xs text-muted-foreground">
+                          {b.client_name}
+                        </span>
+                      )}
+                    </span>
+                    <span
+                      className={`shrink-0 text-xs ${statusColor[b.status] ?? "text-muted-foreground"}`}
+                    >
+                      {humanizeEnum(b.status)}
+                    </span>
+                    <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                      {formatCurrencyCents(b.total_cents)}
+                    </span>
+                  </button>
+                </li>
+              ))
+            )}
+          </ul>
+
+          {/* Footer hint */}
+          {clientId && clientBookings.length > 0 && (
+            <div className="border-t border-border px-3 py-1.5 text-[10px] text-muted-foreground">
+              {filtered.length} of {clientBookings.length} booking
+              {clientBookings.length !== 1 ? "s" : ""} for this client
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main invoice form
+// ---------------------------------------------------------------------------
 
 export function InvoiceForm({
   mode,
@@ -45,7 +275,7 @@ export function InvoiceForm({
   id?: string;
   defaults?: Defaults;
   clients: { id: string; label: string }[];
-  bookings: { id: string; label: string }[];
+  bookings: BookingOption[];
   currency?: CurrencyCode;
   orgDefaultTaxRatePercent?: string;
   orgDefaultTaxLabel?: string;
@@ -56,6 +286,13 @@ export function InvoiceForm({
       : updateInvoiceAction.bind(null, id ?? "");
   const [state, formAction] = useActionState(action, empty);
   const v = state.values ?? {};
+
+  const [clientId, setClientId] = useState<string>(
+    v.client_id ?? defaults?.client_id ?? "",
+  );
+  const [bookingId, setBookingId] = useState<string>(
+    v.booking_id ?? defaults?.booking_id ?? "",
+  );
 
   // On create, pre-fill tax from the org default. On edit, use what
   // was saved on THIS invoice — we don't want to retroactively bump a
@@ -97,17 +334,27 @@ export function InvoiceForm({
       <SetupReturnField />
       <FormError message={state.errors?._form} />
 
+      {/* Hidden inputs carry the combobox selections to the server */}
+      <input type="hidden" name="client_id" value={clientId} />
+      <input type="hidden" name="booking_id" value={bookingId} />
+
       <FormField
         label="Client"
-        htmlFor="client_id"
+        htmlFor="client_id_select"
         required
         error={state.errors?.client_id}
       >
         <FormSelect
-          id="client_id"
-          name="client_id"
+          id="client_id_select"
+          name="_client_id_display"
           required
-          defaultValue={v.client_id ?? defaults?.client_id ?? ""}
+          value={clientId}
+          onChange={(e: React.ChangeEvent<HTMLSelectElement>) => {
+            setClientId(e.target.value);
+            // Clear the booking selection when client changes — the old
+            // booking likely belongs to a different client.
+            setBookingId("");
+          }}
         >
           <option value="">Select a client…</option>
           {clients.map((c) => (
@@ -120,22 +367,20 @@ export function InvoiceForm({
 
       <FormField
         label="Linked booking"
-        htmlFor="booking_id"
+        htmlFor="booking_combobox"
         error={state.errors?.booking_id}
-        hint="Optional — link the booking this invoice covers"
+        hint={
+          clientId
+            ? "Showing this client's bookings — search by date or service"
+            : "Select a client above to filter bookings, or search all"
+        }
       >
-        <FormSelect
-          id="booking_id"
-          name="booking_id"
-          defaultValue={v.booking_id ?? defaults?.booking_id ?? ""}
-        >
-          <option value="">— None —</option>
-          {bookings.map((b) => (
-            <option key={b.id} value={b.id}>
-              {b.label}
-            </option>
-          ))}
-        </FormSelect>
+        <BookingCombobox
+          bookings={bookings}
+          clientId={clientId}
+          value={bookingId}
+          onChange={setBookingId}
+        />
       </FormField>
 
       <div className="grid gap-5 sm:grid-cols-2">
