@@ -122,6 +122,14 @@
     {
       "path": "/api/cron/booking-review-requests",
       "schedule": "0 10 * * *"
+    },
+    {
+      "path": "/api/cron/billing-cycle",
+      "schedule": "0 7 1 * *"
+    },
+    {
+      "path": "/api/cron/billing-cycle",
+      "schedule": "0 7 15 * *"
     }
   ]
 }

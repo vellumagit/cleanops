@@ -6,6 +6,7 @@ import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
 import { logAuditEvent } from "@/lib/audit";
 import { ClientSchema } from "@/lib/validators/clients";
 import { redirectAfterSetup } from "@/lib/setup-return";
+import { normalizePhone } from "@/lib/phone";
 
 type Field = keyof typeof ClientSchema.shape;
 export type ClientFormState = ActionState<Field>;
@@ -14,11 +15,23 @@ function readFormValues(formData: FormData) {
   return {
     name: String(formData.get("name") ?? ""),
     email: String(formData.get("email") ?? ""),
-    phone: String(formData.get("phone") ?? ""),
+    // Normalise to E.164 on the way in — Twilio requires this format and
+    // the opt-in gate in sendOrgSms matches by stored phone number.
+    phone: normalizePhone(String(formData.get("phone") ?? "")),
     address: String(formData.get("address") ?? ""),
     notes: String(formData.get("notes") ?? ""),
     preferred_contact: String(formData.get("preferred_contact") ?? "email"),
     preferred_cleaner_id: String(formData.get("preferred_cleaner_id") ?? ""),
+    billing_cadence: String(formData.get("billing_cadence") ?? "on_demand"),
+    billing_type: String(formData.get("billing_type") ?? "itemized"),
+    // Form input is in dollars (user-facing); convert to cents for storage.
+    flat_rate_cents: (() => {
+      const raw = String(formData.get("flat_rate_cents") ?? "").trim();
+      if (!raw) return "";
+      const dollars = parseFloat(raw);
+      if (isNaN(dollars) || dollars < 0) return "";
+      return String(Math.round(dollars * 100));
+    })(),
   };
 }
 
@@ -32,6 +45,9 @@ export async function createClientAction(
 
   const { membership, supabase } = await getActionContext();
 
+  // Checkbox sends "on" when checked, nothing when unchecked.
+  const smsOptedIn = formData.get("sms_opted_in") === "on";
+
   const { data: inserted, error } = (await supabase
     .from("clients")
     .insert({
@@ -43,6 +59,10 @@ export async function createClientAction(
       notes: parsed.data.notes ?? null,
       preferred_contact: parsed.data.preferred_contact,
       preferred_cleaner_id: parsed.data.preferred_cleaner_id ?? null,
+      sms_opted_in: smsOptedIn,
+      billing_cadence: parsed.data.billing_cadence,
+      billing_type: parsed.data.billing_type,
+      flat_rate_cents: parsed.data.flat_rate_cents ?? null,
     } as never)
     .select("id")
     .single()) as unknown as {
@@ -96,6 +116,8 @@ export async function updateClientAction(
     } | null;
   };
 
+  const smsOptedIn = formData.get("sms_opted_in") === "on";
+
   const { error } = await (supabase
     .from("clients")
     .update({
@@ -106,6 +128,10 @@ export async function updateClientAction(
       notes: parsed.data.notes ?? null,
       preferred_contact: parsed.data.preferred_contact,
       preferred_cleaner_id: parsed.data.preferred_cleaner_id ?? null,
+      sms_opted_in: smsOptedIn,
+      billing_cadence: parsed.data.billing_cadence,
+      billing_type: parsed.data.billing_type,
+      flat_rate_cents: parsed.data.flat_rate_cents ?? null,
     } as never)
     .eq("id", id) as unknown as Promise<{ error: { message: string } | null }>);
 
@@ -126,6 +152,7 @@ export async function updateClientAction(
       address: parsed.data.address ?? null,
       notes: parsed.data.notes ?? null,
       preferred_contact: parsed.data.preferred_contact,
+      sms_opted_in: smsOptedIn,
     },
   });
 

@@ -81,7 +81,7 @@ export default async function InvoiceDetailPage({
         id, number, public_token, status, amount_cents, due_date,
         sent_at, paid_at, voided_at, payment_instructions, created_at,
         client:clients ( id, name, email, phone, address ),
-        booking:bookings ( id, scheduled_at, service_type ),
+        booking:bookings!booking_id ( id, scheduled_at, service_type ),
         line_items:invoice_line_items ( id, label, quantity, unit_price_cents, sort_order ),
         payments:invoice_payments (
           id, amount_cents, method, reference, received_at, notes,

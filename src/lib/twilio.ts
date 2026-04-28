@@ -30,6 +30,7 @@
  */
 
 import "server-only";
+import { isE164 } from "@/lib/phone";
 
 export type SmsSendResult =
   | { ok: true; sid: string | null; status: "sent" | "skipped_disabled" }
@@ -56,6 +57,14 @@ export async function sendSms(
       `[twilio:disabled] would send to ${to}: ${body.slice(0, 200)}`,
     );
     return { ok: true, sid: null, status: "skipped_disabled" };
+  }
+
+  // Reject malformed numbers before hitting the Twilio API — a bad "To"
+  // would return a 400 anyway, but this gives us a cleaner log message
+  // and avoids burning an API call on obviously wrong input.
+  if (!isE164(to)) {
+    console.error(`[twilio] sendSms: "${to}" is not a valid E.164 number — skipping`);
+    return { ok: false, error: `Invalid phone number (expected E.164 format): ${to}` };
   }
 
   const accountSid = process.env.TWILIO_ACCOUNT_SID;

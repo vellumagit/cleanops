@@ -15,6 +15,7 @@ import {
   sendOrgEmailDetailed,
   isEmailConfigured,
   isClientEmailPaused,
+  isInvoiceEmailUnpaused,
 } from "@/lib/email";
 import { invoiceSentEmail } from "@/lib/email-templates";
 import { formatCurrencyCents } from "@/lib/format";
@@ -495,7 +496,7 @@ async function deliverInvoiceEmail(
         "Email delivery isn't configured on this environment yet — the invoice wasn't sent. Contact support to enable sending, or share the public invoice link manually.",
     };
   }
-  if (isClientEmailPaused()) {
+  if (isClientEmailPaused() && !isInvoiceEmailUnpaused()) {
     return {
       error:
         "Client-facing emails are paused at the platform level. Try again later or share the public invoice link manually.",
@@ -561,6 +562,7 @@ async function deliverInvoiceEmail(
     to: clientEmail,
     toName: prev.client?.name ?? undefined,
     ...template,
+    pauseExempt: isInvoiceEmailUnpaused(),
   });
   if (!result.ok) {
     return {

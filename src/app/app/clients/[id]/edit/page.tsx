@@ -22,7 +22,7 @@ export default async function EditClientPage({
     supabase
       .from("clients")
       .select(
-        "id, name, email, phone, address, notes, preferred_contact, preferred_cleaner_id, profile_id, portal_invited_at, portal_accepted_at, portal_invite_expires_at",
+        "id, name, email, phone, address, notes, preferred_contact, preferred_cleaner_id, sms_opted_in, profile_id, portal_invited_at, portal_accepted_at, portal_invite_expires_at, billing_cadence, billing_type, flat_rate_cents",
       )
       .eq("id", id)
       .maybeSingle() as unknown as Promise<{
@@ -35,10 +35,14 @@ export default async function EditClientPage({
         notes: string | null;
         preferred_contact: string;
         preferred_cleaner_id: string | null;
+        sms_opted_in: boolean;
         profile_id: string | null;
         portal_invited_at: string | null;
         portal_accepted_at: string | null;
         portal_invite_expires_at: string | null;
+        billing_cadence: string;
+        billing_type: string;
+        flat_rate_cents: number | null;
       } | null;
       error: { message: string } | null;
     }>,
@@ -65,6 +69,10 @@ export default async function EditClientPage({
               notes: client.notes,
               preferred_contact: client.preferred_contact,
               preferred_cleaner_id: client.preferred_cleaner_id,
+              sms_opted_in: client.sms_opted_in,
+              billing_cadence: client.billing_cadence,
+              billing_type: client.billing_type,
+              flat_rate_cents: client.flat_rate_cents,
             }}
           />
         </div>

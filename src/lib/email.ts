@@ -308,7 +308,7 @@ export function isClientEmailPaused(): boolean {
 
 export async function sendOrgEmail(
   organizationId: string,
-  args: Omit<SendEmailArgs, "from" | "fromName" | "replyTo" | "replyToName">,
+  args: Omit<SendEmailArgs, "from" | "fromName" | "replyTo" | "replyToName"> & { pauseExempt?: boolean },
 ): Promise<boolean> {
   const r = await sendOrgEmailDetailed(organizationId, args);
   return r.ok;
@@ -320,11 +320,28 @@ export async function sendOrgEmail(
  * rejected, etc.). Use this when you're about to show an inline error
  * to the user — the plain boolean is fine for fire-and-forget paths.
  */
+/**
+ * When CLIENT_EMAILS_PAUSED=true, certain high-priority email types can
+ * still be sent by setting INVOICE_EMAILS_UNPAUSED=true in Vercel env.
+ * Only the "Send Invoice" and payment receipt paths use this bypass —
+ * booking, review, and reminder emails remain blocked.
+ */
+export function isInvoiceEmailUnpaused(): boolean {
+  return process.env.INVOICE_EMAILS_UNPAUSED === "true";
+}
+
 export async function sendOrgEmailDetailed(
   organizationId: string,
-  args: Omit<SendEmailArgs, "from" | "fromName" | "replyTo" | "replyToName">,
+  args: Omit<SendEmailArgs, "from" | "fromName" | "replyTo" | "replyToName"> & {
+    /**
+     * When true, the CLIENT_EMAILS_PAUSED kill switch is bypassed.
+     * Only use for invoice sends (Send Invoice button + payment receipt)
+     * when INVOICE_EMAILS_UNPAUSED=true in the environment.
+     */
+    pauseExempt?: boolean;
+  },
 ): Promise<SendEmailResult> {
-  if (isClientEmailPaused()) {
+  if (isClientEmailPaused() && !args.pauseExempt) {
     console.log(
       `[email] client emails paused at platform level — skipping "${args.subject}" for org ${organizationId}`,
     );
@@ -332,8 +349,10 @@ export async function sendOrgEmailDetailed(
   }
 
   const sender = await getOrgSender(organizationId);
+  // Strip the internal pauseExempt flag — it's not part of SendEmailArgs.
+  const { pauseExempt: _exempt, ...emailArgs } = args;
   return sendEmailDetailed({
-    ...args,
+    ...emailArgs,
     from: sender.from,
     fromName: sender.fromName,
     replyTo: sender.replyTo,

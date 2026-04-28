@@ -75,9 +75,16 @@ export async function getOrgSmsContext(
     contact_phone: string | null;
   } | null;
 
+  if (!org) {
+    console.warn(`[sms] getOrgSmsContext: org ${orgId} not found — SMS context unavailable`);
+    // Return an empty orgName so callers don't accidentally prepend
+    // the platform brand ("Sollos") to a client-facing message.
+    return { orgName: "", contactPhone: null };
+  }
+
   return {
-    orgName: org?.name ?? "Sollos",
-    contactPhone: org?.contact_phone ?? null,
+    orgName: org.name,
+    contactPhone: org.contact_phone ?? null,
   };
 }
 
@@ -86,12 +93,28 @@ export async function getOrgSmsContext(
 // ---------------------------------------------------------------------------
 
 /**
- * Send an SMS on behalf of an org, passing through three gates:
+ * Automation keys that send SMS to clients (not employees).
+ *
+ * These are gated by `clients.sms_opted_in` (TCPA/CASL compliance).
+ * Employee-facing keys (booking_assignment_sms) skip the opt-in check
+ * because the employee relationship is B2B, not B2C.
+ */
+const CLIENT_FACING_SMS_KEYS = new Set([
+  "booking_confirmation_sms",
+  "booking_reminder_client_sms",
+]);
+
+/**
+ * Send an SMS on behalf of an org, passing through four gates:
  *
  *   1. CLIENT_SMS_PAUSED platform kill switch
  *   2. Per-org automation toggle for `automationKey`
  *      (via organizations.automation_settings + resolveAutomationEnabled)
- *   3. TWILIO_ENABLED feature flag (handled inside sendSms() in twilio.ts)
+ *   3. SMS opt-in check (client-facing automations only — TCPA/CASL).
+ *      Looks up the recipient by phone number within the org's clients
+ *      table. Skips the send if the client hasn't opted in OR if no
+ *      matching client is found (fail-safe for compliance).
+ *   4. TWILIO_ENABLED feature flag (handled inside sendSms() in twilio.ts)
  *
  * Returns { ok: true, status: "skipped_disabled" } when any gate
  * blocks the send — never throws. The result mirrors SmsSendResult so
@@ -149,6 +172,38 @@ export async function sendOrgSms(
     console.error("[sms] settings read failed, proceeding:", settingsErr);
   }
 
-  // Gate 3: TWILIO_ENABLED is checked inside sendSms()
+  // Gate 3: SMS opt-in (TCPA/CASL) — client-facing automations only.
+  // Employee-facing SMS (booking_assignment_sms) bypasses this gate.
+  if (CLIENT_FACING_SMS_KEYS.has(args.automationKey)) {
+    try {
+      const admin = createSupabaseAdminClient();
+      const { data: clientRow } = (await admin
+        .from("clients")
+        .select("sms_opted_in")
+        .eq("organization_id", orgId)
+        .eq("phone", args.to)
+        .limit(1)
+        .maybeSingle()) as unknown as {
+        data: { sms_opted_in: boolean } | null;
+      };
+
+      // Fail-safe: if no matching client found OR opt-in is false, skip.
+      // "Not found" is treated as "not opted in" so we never text
+      // someone whose consent status we can't verify.
+      if (!clientRow || !clientRow.sms_opted_in) {
+        console.log(
+          `[sms] ${args.automationKey}: recipient ${args.to} has not opted in to SMS for org ${orgId} — skipping`,
+        );
+        return { ok: true, sid: null, status: "skipped_disabled" };
+      }
+    } catch (optInErr) {
+      // Transient DB error — fail CLOSED for compliance. Better to
+      // drop a message than to send without verified consent.
+      console.error("[sms] opt-in check failed, skipping send:", optInErr);
+      return { ok: true, sid: null, status: "skipped_disabled" };
+    }
+  }
+
+  // Gate 4: TWILIO_ENABLED is checked inside sendSms()
   return sendSms(args.to, args.body);
 }
