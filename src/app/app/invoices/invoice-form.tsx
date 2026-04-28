@@ -175,16 +175,28 @@ function BookingCombobox({
       {/* Dropdown */}
       {open && (
         <div className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-md border border-border bg-popover shadow-lg">
-          {/* Search input */}
-          <div className="relative border-b border-border">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-            <input
-              ref={inputRef}
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search by date, service, status…"
-              className="h-9 w-full bg-transparent pl-9 pr-3 text-sm outline-none placeholder:text-muted-foreground"
-            />
+          {/* Search bar — deliberately prominent */}
+          <div className="border-b border-border bg-muted/60 px-3 py-2.5">
+            <div className="flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 shadow-sm focus-within:ring-2 focus-within:ring-ring">
+              <Search className="h-4 w-4 shrink-0 text-primary" />
+              <input
+                ref={inputRef}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Type to search by date, service, or client…"
+                className="flex-1 bg-transparent text-sm font-medium outline-none placeholder:font-normal placeholder:text-muted-foreground"
+              />
+              {query && (
+                <button
+                  type="button"
+                  onClick={() => setQuery("")}
+                  className="text-muted-foreground hover:text-foreground transition-colors"
+                  aria-label="Clear search"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Options list */}
@@ -213,7 +225,7 @@ function BookingCombobox({
                   <button
                     type="button"
                     onClick={() => select(b.id)}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-muted transition-colors"
+                    className="flex w-full items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted transition-colors"
                   >
                     <span className="w-4 shrink-0">
                       {value === b.id && (
@@ -221,12 +233,10 @@ function BookingCombobox({
                       )}
                     </span>
                     <span className="flex-1 min-w-0 text-left">
-                      <span className="font-medium">{formatBookingLabel(b)}</span>
-                      {!clientId && (
-                        <span className="ml-1.5 text-xs text-muted-foreground">
-                          {b.client_name}
-                        </span>
-                      )}
+                      <span className="block font-medium leading-tight">{formatBookingLabel(b)}</span>
+                      <span className="block text-xs text-muted-foreground leading-tight mt-0.5">
+                        {b.client_name}
+                      </span>
                     </span>
                     <span
                       className={`shrink-0 text-xs ${statusColor[b.status] ?? "text-muted-foreground"}`}
