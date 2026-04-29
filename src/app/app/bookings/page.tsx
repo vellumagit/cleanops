@@ -52,7 +52,7 @@ export default async function BookingsPage({
 
   const { data, error } = await (query
     .order("scheduled_at", { ascending: false })
-    .limit(200) as unknown as Promise<{
+    .limit(1000) as unknown as Promise<{
     data: Array<{
       id: string;
       scheduled_at: string;

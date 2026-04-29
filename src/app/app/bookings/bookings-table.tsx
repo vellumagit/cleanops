@@ -165,7 +165,11 @@ export function BookingsTable({
   // Filter pipeline
   const filtered = useMemo(() => {
     let result = rows;
-    result = result.filter((r) => matchesTab(r, tab));
+    // When a search query is active, bypass the tab filter so completed /
+    // cancelled bookings are always findable regardless of which tab is open.
+    if (!query.trim()) {
+      result = result.filter((r) => matchesTab(r, tab));
+    }
     result = result.filter((r) => matchesDate(r, dateFilter));
 
     if (query.trim()) {
@@ -372,6 +376,17 @@ export function BookingsTable({
           >
             Clear all filters
           </button>
+          {query.trim() && (
+            <p className="mt-3 text-xs text-muted-foreground">
+              Older completed jobs may have been archived.{" "}
+              <a
+                href="?archived=1"
+                className="text-primary underline-offset-4 hover:underline"
+              >
+                Search archived bookings
+              </a>
+            </p>
+          )}
         </div>
       ) : view === "table" ? (
         <TableView
