@@ -508,6 +508,52 @@ export async function updateBookingAction(
     readAdditionalAssignees(formData),
   );
 
+  // "This and all future" propagation for recurring series.
+  // We use the admin client for the bulk update because RLS on bookings can
+  // silently drop bulk-UPDATE rows when the series_id column isn't in the
+  // policy predicate — org isolation is still enforced via an explicit filter.
+  const updateScope = String(formData.get("update_scope") ?? "this_only");
+  const seriesId = String(formData.get("series_id") ?? "").trim();
+  const seriesScheduledAt = String(formData.get("series_scheduled_at") ?? "").trim();
+
+  if (updateScope === "this_and_future" && seriesId && seriesScheduledAt) {
+    const admin = createSupabaseAdminClient();
+
+    // Propagatable fields — we intentionally do NOT touch scheduled_at or
+    // status on siblings (each occurrence keeps its own date and lifecycle).
+    const propagatableFields = {
+      duration_minutes: parsed.data.duration_minutes,
+      service_type: parsed.data.service_type,
+      total_cents: parsed.data.total_cents,
+      hourly_rate_cents: parsed.data.hourly_rate_cents ?? null,
+      assigned_to: parsed.data.assigned_to ?? null,
+      address: parsed.data.address ?? null,
+      notes: parsed.data.notes ?? null,
+    };
+
+    // Update future siblings: same series, scheduled on or after this
+    // booking's original UTC date, not completed/cancelled, and not this
+    // booking itself (already updated above).
+    await (admin
+      .from("bookings")
+      .update(propagatableFields as never)
+      .eq("series_id" as never, seriesId as never)
+      .eq("organization_id", membership.organization_id)
+      .neq("id", id)
+      .gte("scheduled_at", seriesScheduledAt)
+      .not("status" as never, "in" as never, '("completed","cancelled")' as never) as unknown as Promise<unknown>);
+
+    // Keep the booking_series template row in sync so future generated
+    // occurrences inherit the new values.
+    await (admin
+      .from("booking_series" as never)
+      .update(propagatableFields as never)
+      .eq("id" as never, seriesId as never)
+      .eq("organization_id" as never, membership.organization_id as never) as unknown as Promise<unknown>);
+
+    console.log(`[series-update] propagated changes to future bookings in series ${seriesId}`);
+  }
+
   // If the scheduled time changed, email the client + push employee
   // (both handled inside sendBookingRescheduled).
   if (

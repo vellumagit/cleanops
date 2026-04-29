@@ -93,6 +93,8 @@ export default async function EditBookingPage({
               ),
               address: booking.address,
               notes: booking.notes,
+              series_id: booking.series_id,
+              scheduled_at_utc: booking.scheduled_at,
             }}
           />
         </div>

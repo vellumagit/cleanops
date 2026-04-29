@@ -29,6 +29,8 @@ export type BookingFormDefaults = {
    *  Used to seed the multi-select when editing. */
   additional_assignees?: string[];
   scheduled_at_local?: string;
+  /** Raw UTC ISO string from the DB — used for "this and future" propagation. */
+  scheduled_at_utc?: string;
   duration_minutes?: number;
   service_type?: string;
   status?: string;
@@ -198,6 +200,10 @@ export function BookingForm({
 
   const isEditingSeries = mode === "edit" && !!defaults?.series_id;
 
+  const [updateScope, setUpdateScope] = useState<"this_only" | "this_and_future">(
+    "this_only",
+  );
+
   function toggleDay(day: number) {
     setSelectedDays((prev) =>
       prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day].sort(),
@@ -225,6 +231,26 @@ export function BookingForm({
     <form action={formAction} className="space-y-5">
       <SetupReturnField />
       <FormError message={state.errors?._form} />
+
+      {/* Hidden scope + series fields for recurring edits */}
+      {isEditingSeries && (
+        <>
+          <input type="hidden" name="update_scope" value={updateScope} />
+          <input type="hidden" name="series_id" value={defaults?.series_id ?? ""} />
+          <input type="hidden" name="series_scheduled_at" value={defaults?.scheduled_at_utc ?? ""} />
+        </>
+      )}
+
+      {/* Recurring series edit banner */}
+      {isEditingSeries && (
+        <div className="flex items-start gap-2.5 rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
+          <Repeat className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            This is a <strong>recurring booking</strong>. Changes can apply to
+            just this occurrence or to all future bookings in the series.
+          </span>
+        </div>
+      )}
 
       {/* Recurring toggle — only on create */}
       {mode === "create" && (
@@ -698,6 +724,43 @@ export function BookingForm({
         />
       </FormField>
 
+      {/* Scope selector — only when editing a recurring booking */}
+      {isEditingSeries && (
+        <fieldset className="rounded-lg border border-border bg-muted/30 p-3.5 space-y-2">
+          <legend className="px-1 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+            Apply changes to
+          </legend>
+          <label className="flex items-center gap-2.5 cursor-pointer">
+            <input
+              type="radio"
+              name="_scope_ui"
+              value="this_only"
+              checked={updateScope === "this_only"}
+              onChange={() => setUpdateScope("this_only")}
+              className="accent-primary"
+            />
+            <span className="text-sm">
+              <span className="font-medium">Just this booking</span>
+              <span className="ml-1.5 text-muted-foreground">— only this occurrence is updated</span>
+            </span>
+          </label>
+          <label className="flex items-center gap-2.5 cursor-pointer">
+            <input
+              type="radio"
+              name="_scope_ui"
+              value="this_and_future"
+              checked={updateScope === "this_and_future"}
+              onChange={() => setUpdateScope("this_and_future")}
+              className="accent-primary"
+            />
+            <span className="text-sm">
+              <span className="font-medium">This and all future bookings</span>
+              <span className="ml-1.5 text-muted-foreground">— updates this and every upcoming occurrence</span>
+            </span>
+          </label>
+        </fieldset>
+      )}
+
       <div className="flex items-center justify-end gap-2 pt-2">
         <Link
           href="/app/bookings"
@@ -710,7 +773,9 @@ export function BookingForm({
             ? isRecurring
               ? "Create recurring booking"
               : "Create booking"
-            : "Save changes"}
+            : updateScope === "this_and_future"
+              ? "Save this & future bookings"
+              : "Save changes"}
         </SubmitButton>
       </div>
     </form>
