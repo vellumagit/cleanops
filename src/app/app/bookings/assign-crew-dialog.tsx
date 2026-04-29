@@ -120,63 +120,55 @@ export function AssignCrewDialog({
                 value={id}
               />
             ))}
-          {seriesId && (
-            <>
-              <input type="hidden" name="update_scope" value={updateScope} />
-              <input type="hidden" name="series_id" value={seriesId} />
-              <input
-                type="hidden"
-                name="series_scheduled_at"
-                value={seriesScheduledAt ?? ""}
-              />
-            </>
-          )}
+          <input type="hidden" name="update_scope" value={updateScope} />
+          <input type="hidden" name="series_id" value={seriesId ?? ""} />
+          <input
+            type="hidden"
+            name="series_scheduled_at"
+            value={seriesScheduledAt ?? ""}
+          />
 
           <FormError message={state.error} />
 
-          {/* Scope selector — only shown for bookings in a recurring series */}
-          {seriesId && (
-            <fieldset className="rounded-md border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/30">
-              <legend className="px-1 text-[11px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
-                Recurring booking
-              </legend>
-              <div className="mt-2 space-y-2">
-                <label className="flex cursor-pointer items-start gap-2 text-sm">
-                  <input
-                    type="radio"
-                    name="scope_radio"
-                    checked={updateScope === "this_only"}
-                    onChange={() => setUpdateScope("this_only")}
-                    className="mt-0.5 h-4 w-4 shrink-0"
-                  />
-                  <span>
-                    <span className="font-medium">Just this booking</span>
-                    <span className="block text-xs text-muted-foreground">
-                      Only this occurrence is reassigned.
-                    </span>
+          <fieldset className="rounded-md border border-border p-3">
+            <legend className="px-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Apply to
+            </legend>
+            <div className="mt-2 space-y-2">
+              <label className="flex cursor-pointer items-start gap-2 text-sm">
+                <input
+                  type="radio"
+                  name="scope_radio"
+                  checked={updateScope === "this_only"}
+                  onChange={() => setUpdateScope("this_only")}
+                  className="mt-0.5 h-4 w-4 shrink-0"
+                />
+                <span>
+                  <span className="font-medium">Just this booking</span>
+                  <span className="block text-xs text-muted-foreground">
+                    Only this occurrence is reassigned.
                   </span>
-                </label>
-                <label className="flex cursor-pointer items-start gap-2 text-sm">
-                  <input
-                    type="radio"
-                    name="scope_radio"
-                    checked={updateScope === "this_and_future"}
-                    onChange={() => setUpdateScope("this_and_future")}
-                    className="mt-0.5 h-4 w-4 shrink-0"
-                  />
-                  <span>
-                    <span className="font-medium">
-                      This and all future bookings
-                    </span>
-                    <span className="block text-xs text-muted-foreground">
-                      Updates this occurrence and every upcoming one in
-                      the series.
-                    </span>
+                </span>
+              </label>
+              <label className="flex cursor-pointer items-start gap-2 text-sm">
+                <input
+                  type="radio"
+                  name="scope_radio"
+                  checked={updateScope === "this_and_future"}
+                  onChange={() => setUpdateScope("this_and_future")}
+                  className="mt-0.5 h-4 w-4 shrink-0"
+                />
+                <span>
+                  <span className="font-medium">
+                    This and all future bookings
                   </span>
-                </label>
-              </div>
-            </fieldset>
-          )}
+                  <span className="block text-xs text-muted-foreground">
+                    Updates every upcoming booking in this series.
+                  </span>
+                </span>
+              </label>
+            </div>
+          </fieldset>
 
           <div>
             <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
