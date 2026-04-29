@@ -37,6 +37,8 @@ export function AssignCrewDialog({
   employees,
   initialPrimaryId,
   initialAdditionalIds,
+  seriesId,
+  seriesScheduledAt,
   open,
   onOpenChange,
 }: {
@@ -44,6 +46,12 @@ export function AssignCrewDialog({
   employees: AssignableEmployee[];
   initialPrimaryId: string | null;
   initialAdditionalIds: string[];
+  /** Set when the booking belongs to a recurring series. When present,
+   *  a scope radio (just this / this and all future) is shown. */
+  seriesId?: string | null;
+  /** The booking's own scheduled_at ISO string — used as the "from"
+   *  boundary when propagating to future siblings. */
+  seriesScheduledAt?: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -57,6 +65,9 @@ export function AssignCrewDialog({
   const [additionalIds, setAdditionalIds] = useState<Set<string>>(
     new Set(initialAdditionalIds),
   );
+  const [updateScope, setUpdateScope] = useState<
+    "this_only" | "this_and_future"
+  >("this_only");
 
   // When the dialog is opened for a different booking, sync local
   // state to its initial values — otherwise a stale selection from
@@ -65,6 +76,7 @@ export function AssignCrewDialog({
     if (!open) return;
     setPrimaryId(initialPrimaryId ?? "");
     setAdditionalIds(new Set(initialAdditionalIds));
+    setUpdateScope("this_only");
   }, [open, bookingId, initialPrimaryId, initialAdditionalIds]);
 
   // Close on successful save.
@@ -108,8 +120,63 @@ export function AssignCrewDialog({
                 value={id}
               />
             ))}
+          {seriesId && (
+            <>
+              <input type="hidden" name="update_scope" value={updateScope} />
+              <input type="hidden" name="series_id" value={seriesId} />
+              <input
+                type="hidden"
+                name="series_scheduled_at"
+                value={seriesScheduledAt ?? ""}
+              />
+            </>
+          )}
 
           <FormError message={state.error} />
+
+          {/* Scope selector — only shown for bookings in a recurring series */}
+          {seriesId && (
+            <fieldset className="rounded-md border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/30">
+              <legend className="px-1 text-[11px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
+                Recurring booking
+              </legend>
+              <div className="mt-2 space-y-2">
+                <label className="flex cursor-pointer items-start gap-2 text-sm">
+                  <input
+                    type="radio"
+                    name="scope_radio"
+                    checked={updateScope === "this_only"}
+                    onChange={() => setUpdateScope("this_only")}
+                    className="mt-0.5 h-4 w-4 shrink-0"
+                  />
+                  <span>
+                    <span className="font-medium">Just this booking</span>
+                    <span className="block text-xs text-muted-foreground">
+                      Only this occurrence is reassigned.
+                    </span>
+                  </span>
+                </label>
+                <label className="flex cursor-pointer items-start gap-2 text-sm">
+                  <input
+                    type="radio"
+                    name="scope_radio"
+                    checked={updateScope === "this_and_future"}
+                    onChange={() => setUpdateScope("this_and_future")}
+                    className="mt-0.5 h-4 w-4 shrink-0"
+                  />
+                  <span>
+                    <span className="font-medium">
+                      This and all future bookings
+                    </span>
+                    <span className="block text-xs text-muted-foreground">
+                      Updates this occurrence and every upcoming one in
+                      the series.
+                    </span>
+                  </span>
+                </label>
+              </div>
+            </fieldset>
+          )}
 
           <div>
             <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -212,7 +279,9 @@ export function AssignCrewDialog({
               Cancel
             </Button>
             <SubmitButton size="sm" pendingLabel="Saving…">
-              Save crew
+              {updateScope === "this_and_future"
+                ? "Save this & future"
+                : "Save crew"}
             </SubmitButton>
           </DialogFooter>
         </form>

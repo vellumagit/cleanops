@@ -146,6 +146,27 @@ export async function rescheduleBookingAction(
     .eq("id", id);
   if (updateError) return { ok: false, error: updateError.message };
 
+  // Sync booking_assignees so all_assignee_ids in the scheduler grid
+  // reflects only the new primary. Without this, stale secondary-crew
+  // rows from a previous multi-person assignment stay in the junction
+  // table, causing the card to appear in every old assignee's column as
+  // well as the new one — the "duplicate booking" bug.
+  await (supabase
+    .from("booking_assignees" as never)
+    .delete()
+    .eq("booking_id" as never, id as never)) as unknown as Promise<unknown>;
+
+  if (assignedTo) {
+    await (supabase
+      .from("booking_assignees" as never)
+      .insert({
+        organization_id: membership.organization_id,
+        booking_id: id,
+        membership_id: assignedTo,
+        is_primary: true,
+      } as never)) as unknown as Promise<unknown>;
+  }
+
   revalidatePath("/app/scheduling");
   revalidatePath("/app/bookings");
   revalidatePath("/app");

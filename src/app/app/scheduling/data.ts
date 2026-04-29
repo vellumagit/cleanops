@@ -60,6 +60,10 @@ export type ScheduleBooking = {
    *  for the displayed period. Null when the booking has no
    *  associated amount set. */
   total_cents: number | null;
+  /** Set when this booking belongs to a recurring series. Used by
+   *  the Assign dialog to offer "just this booking" vs "this and
+   *  all future bookings" scope. */
+  series_id: string | null;
 };
 
 export type ScheduleEmployee = {
@@ -194,6 +198,7 @@ export async function fetchScheduleWeek(
           assigned_to,
           address,
           total_cents,
+          series_id,
           client:clients ( name )
         `,
       )
@@ -296,6 +301,7 @@ export async function fetchScheduleWeek(
       client_name: b.client?.name ?? "—",
       address: b.address,
       total_cents: (b as { total_cents?: number | null }).total_cents ?? null,
+      series_id: (b as { series_id?: string | null }).series_id ?? null,
     };
   });
 

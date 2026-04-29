@@ -540,6 +540,8 @@ function TableView({
                           employees={employees}
                           initialPrimaryId={r.assigned_to}
                           initialAdditionalIds={r.additional_assignee_ids}
+                          seriesId={r.series_id}
+                          seriesScheduledAt={r.scheduled_at}
                           variant="ghost"
                           size="sm"
                           label={r.assigned_name ? "Change" : "Assign"}
@@ -695,6 +697,8 @@ function CardsView({
                         employees={employees}
                         initialPrimaryId={r.assigned_to}
                         initialAdditionalIds={r.additional_assignee_ids}
+                        seriesId={r.series_id}
+                        seriesScheduledAt={r.scheduled_at}
                         variant="ghost"
                         size="sm"
                         label={r.assigned_name ? "Change" : "Assign"}

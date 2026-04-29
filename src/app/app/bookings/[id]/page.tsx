@@ -71,7 +71,7 @@ export default async function BookingDetailPage({
       `
         id, scheduled_at, duration_minutes, service_type, status,
         total_cents, hourly_rate_cents, address, notes, created_at,
-        estimate_id,
+        estimate_id, series_id,
         client:clients ( id, name, phone, email, address ),
         package:packages ( id, name ),
         assigned:memberships!bookings_assigned_to_fkey (
@@ -240,6 +240,8 @@ export default async function BookingDetailPage({
                 employees={assignableEmployees}
                 initialPrimaryId={booking.assigned?.id ?? null}
                 initialAdditionalIds={additionalAssigneeIds}
+                seriesId={(booking as { series_id?: string | null }).series_id}
+                seriesScheduledAt={booking.scheduled_at}
                 variant="outline"
                 label={booking.assigned ? "Change crew" : "Assign crew"}
               />

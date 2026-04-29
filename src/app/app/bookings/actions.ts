@@ -964,6 +964,92 @@ export async function assignBookingCrewAction(
     );
   }
 
+  // "This and all future" propagation for recurring series.
+  // Uses the admin client so the bulk update isn't silently dropped by
+  // RLS. Org isolation is enforced via explicit .eq("series_id") +
+  // the bookings table's own organization_id FK chain.
+  const updateScope = String(formData.get("update_scope") ?? "this_only");
+  const seriesId = String(formData.get("series_id") ?? "").trim();
+  const seriesScheduledAt = String(
+    formData.get("series_scheduled_at") ?? "",
+  ).trim();
+
+  if (updateScope === "this_and_future" && seriesId && seriesScheduledAt) {
+    const admin = createSupabaseAdminClient();
+
+    // Collect all future sibling IDs so we can sync their assignees.
+    const { data: siblings } = await (admin
+      .from("bookings")
+      .select("id")
+      .eq("series_id" as never, seriesId as never)
+      .gte("scheduled_at" as never, seriesScheduledAt as never)
+      .neq("id" as never, id as never)
+      .not(
+        "status" as never,
+        "in" as never,
+        '("completed","cancelled")' as never,
+      )) as unknown as { data: Array<{ id: string }> | null };
+
+    const siblingIds = (siblings ?? []).map((s) => s.id);
+
+    if (siblingIds.length > 0) {
+      // Bulk-update assigned_to on all future siblings.
+      await (admin
+        .from("bookings")
+        .update({ assigned_to: primaryId } as never)
+        .in("id" as never, siblingIds as never)) as unknown as Promise<unknown>;
+
+      // Replace booking_assignees for each sibling so additional crew
+      // propagates consistently with the current booking.
+      await (admin
+        .from("booking_assignees" as never)
+        .delete()
+        .in(
+          "booking_id" as never,
+          siblingIds as never,
+        )) as unknown as Promise<unknown>;
+
+      const assigneeRows: Array<{
+        organization_id: string;
+        booking_id: string;
+        membership_id: string;
+        is_primary: boolean;
+      }> = siblingIds.flatMap((bId) => {
+        const rows: typeof assigneeRows = [];
+        if (primaryId) {
+          rows.push({
+            organization_id: membership.organization_id,
+            booking_id: bId,
+            membership_id: primaryId,
+            is_primary: true,
+          });
+        }
+        for (const aId of additionalIds) {
+          rows.push({
+            organization_id: membership.organization_id,
+            booking_id: bId,
+            membership_id: aId,
+            is_primary: false,
+          });
+        }
+        return rows;
+      });
+
+      if (assigneeRows.length > 0) {
+        await (admin
+          .from("booking_assignees" as never)
+          .insert(assigneeRows as never)) as unknown as Promise<unknown>;
+      }
+    }
+
+    // Update the series template row so newly-generated occurrences
+    // inherit the new primary assignee.
+    await (admin
+      .from("booking_series" as never)
+      .update({ assigned_to: primaryId } as never)
+      .eq("id" as never, seriesId as never)) as unknown as Promise<unknown>;
+  }
+
   revalidatePath("/app/bookings");
   revalidatePath(`/app/bookings/${id}`);
   revalidatePath("/app/scheduling");

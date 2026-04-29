@@ -183,6 +183,8 @@ export function BookingQuickView({
         employees={employees.map((e) => ({ id: e.id, label: e.name }))}
         initialPrimaryId={booking.assigned_to}
         initialAdditionalIds={additionalIds}
+        seriesId={booking.series_id}
+        seriesScheduledAt={booking.scheduled_at}
         open={assignOpen}
         onOpenChange={setAssignOpen}
       />
