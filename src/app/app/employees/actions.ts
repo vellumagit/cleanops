@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { z } from "zod";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
 import { logAuditEvent } from "@/lib/audit";
@@ -397,6 +398,84 @@ export async function updateMemberAction(
   revalidatePath("/app/settings/members");
 
   return { done: true };
+}
+
+/* ------------------------------------------------------------------ */
+/*  Permanently delete a disabled employee                             */
+/*                                                                     */
+/*  Guards:                                                            */
+/*   - viewer must be owner (not just admin)                          */
+/*   - target must be disabled (not active / invited)                 */
+/*   - cannot delete yourself                                          */
+/*   - employees with payroll run entries are RESTRICT-blocked by DB; */
+/*     we catch that FK error and surface a friendly message.          */
+/* ------------------------------------------------------------------ */
+
+export async function deleteEmployeeAction(formData: FormData) {
+  const targetId = String(formData.get("id") ?? "").trim();
+  if (!targetId) return;
+
+  const { membership } = await getActionContext();
+
+  if (membership.role !== "owner") {
+    throw new Error("Only owners can permanently delete employees.");
+  }
+
+  if (targetId === membership.id) {
+    throw new Error("You cannot delete your own account.");
+  }
+
+  const admin = createSupabaseAdminClient();
+
+  // Verify the target is disabled and belongs to this org
+  const { data: target } = (await admin
+    .from("memberships")
+    .select("id, status, display_name")
+    .eq("id", targetId)
+    .eq("organization_id", membership.organization_id)
+    .maybeSingle()) as unknown as {
+    data: { id: string; status: string; display_name: string | null } | null;
+  };
+
+  if (!target) throw new Error("Employee not found.");
+  if (target.status !== "disabled") {
+    throw new Error(
+      "Only disabled employees can be deleted. Deactivate them first.",
+    );
+  }
+
+  const { error } = await admin
+    .from("memberships")
+    .delete()
+    .eq("id", targetId)
+    .eq("organization_id", membership.organization_id);
+
+  if (error) {
+    // payroll_run_entries has ON DELETE RESTRICT — surface a helpful message
+    if (
+      error.message.includes("payroll_run_entries") ||
+      error.code === "23503"
+    ) {
+      throw new Error(
+        "This employee has payroll records and cannot be permanently deleted. " +
+          "Keep them deactivated to preserve historical payroll data.",
+      );
+    }
+    throw error;
+  }
+
+  await logAuditEvent({
+    membership,
+    action: "delete",
+    entity: "membership",
+    entity_id: targetId,
+    before: { id: targetId, status: "disabled" },
+    after: null,
+  });
+
+  revalidatePath("/app/employees");
+  revalidatePath("/app/settings/members");
+  redirect("/app/employees");
 }
 
 /* ------------------------------------------------------------------ */

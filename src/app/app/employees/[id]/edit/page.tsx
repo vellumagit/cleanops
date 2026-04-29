@@ -10,6 +10,7 @@ import {
   EmployeeEditForm,
   type EmployeeEditDefaults,
 } from "./employee-edit-form";
+import { DeleteEmployeeForm } from "./delete-employee-form";
 
 export const metadata = { title: "Edit employee" };
 
@@ -89,7 +90,7 @@ export default async function EditEmployeePage({
         </Link>
       }
     >
-      <div className="max-w-2xl">
+      <div className="max-w-2xl space-y-6">
         <div className="rounded-lg border border-border bg-card p-6">
           <EmployeeEditForm
             memberId={member.id}
@@ -98,6 +99,24 @@ export default async function EditEmployeePage({
             isSelf={isSelf}
           />
         </div>
+
+        {/* Danger zone — delete only available to owners on disabled employees */}
+        {viewer.role === "owner" && !isSelf && member.status === "disabled" && (
+          <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-6">
+            <h2 className="text-sm font-semibold text-destructive">
+              Danger zone
+            </h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Permanently removes this employee from your organization.
+              Historical bookings and timesheets that reference them are
+              preserved — their name will show as &ldquo;Unknown&rdquo; on those
+              records. Employees with payroll run history cannot be deleted.
+            </p>
+            <div className="mt-4">
+              <DeleteEmployeeForm memberId={member.id} name={currentDisplayName} />
+            </div>
+          </div>
+        )}
       </div>
     </PageShell>
   );
