@@ -2,6 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
+import { cookies } from "next/headers";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { buildGoogleOAuthUrl } from "@/lib/google-calendar";
@@ -10,9 +11,27 @@ import { buildGoogleOAuthUrl } from "@/lib/google-calendar";
  * Redirect the admin to Google's OAuth consent screen.
  * The membership ID is passed as `state` so the callback can verify
  * who initiated the flow.
+ *
+ * We also set a short-lived same-site cookie (`gcal_oauth_state`) with the
+ * membership ID. This lets the callback verify the flow without needing the
+ * Supabase session cookie — important on Safari/Mac where ITP can strip
+ * session cookies that were set before a cross-site redirect (e.g. to
+ * accounts.google.com).
  */
 export async function connectGoogleCalendarAction() {
   const membership = await requireMembership(["owner", "admin"]);
+
+  // Persist the membership ID in a short-lived same-site cookie so the
+  // callback can verify state even if the Supabase session is unavailable.
+  const cookieStore = await cookies();
+  cookieStore.set("gcal_oauth_state", membership.id, {
+    httpOnly: true,
+    sameSite: "lax",
+    maxAge: 600, // 10 minutes — more than enough for any OAuth flow
+    path: "/api/integrations/google-calendar/callback",
+    secure: process.env.NODE_ENV === "production",
+  });
+
   const url = buildGoogleOAuthUrl(membership.id);
   redirect(url);
 }
