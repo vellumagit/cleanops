@@ -1,9 +1,10 @@
 "use client";
 
+import Link from "next/link";
+import { Pencil } from "lucide-react";
 import { DataTable, type DataTableColumn } from "@/components/data-table";
 import { StatusBadge, type StatusTone } from "@/components/status-badge";
 import { formatCurrencyCents, formatDate, humanizeEnum } from "@/lib/format";
-import { EditEmployeeDialog } from "./edit-employee-dialog";
 
 export type EmployeeRow = {
   id: string;
@@ -128,20 +129,14 @@ export function EmployeesTable({
       headerClassName: "text-right",
       className: "text-right",
       render: (r) => (
-        <EditEmployeeDialog
-          member={{
-            id: r.id,
-            full_name: r.full_name,
-            role: r.role,
-            status: r.status,
-            pay_rate_cents: r.pay_rate_cents,
-            is_shadow: r.is_shadow,
-            contact_email: r.contact_email,
-            contact_phone: r.contact_phone,
-          }}
-          viewerRole={viewerRole}
-          isSelf={r.is_self}
-        />
+        <Link
+          href={`/app/employees/${r.id}/edit`}
+          aria-label={`Edit ${r.full_name}`}
+          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+        >
+          <Pencil className="h-3.5 w-3.5" />
+          Edit
+        </Link>
       ),
     });
   }

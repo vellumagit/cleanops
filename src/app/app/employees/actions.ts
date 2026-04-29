@@ -198,9 +198,11 @@ const UpdateMemberSchema = z.object({
       return Math.round(n * 100);
     })
     .optional(),
-  // Shadow-employee fields. Only meaningful when profile_id IS NULL —
-  // for invited members the name comes from profiles.full_name and
-  // editing it here would have no effect.
+  // display_name applies to ALL employees now.
+  // For shadow members it's their only name source.
+  // For invited members it becomes an admin-controlled override that takes
+  // precedence in memberDisplayName() — the employee's login profile name
+  // is untouched so they don't notice a change from their end.
   display_name: z
     .string()
     .trim()
@@ -220,6 +222,18 @@ const UpdateMemberSchema = z.object({
     .trim()
     .optional()
     .transform((s) => (s && s.length > 0 ? s : null)),
+  address: z
+    .string()
+    .trim()
+    .max(300, "Keep the address under 300 characters")
+    .optional()
+    .transform((s) => (s && s.length > 0 ? s : null)),
+  notes: z
+    .string()
+    .trim()
+    .max(2000, "Keep notes under 2000 characters")
+    .optional()
+    .transform((s) => (s && s.length > 0 ? s : null)),
 });
 
 export type UpdateMemberState = {
@@ -231,6 +245,8 @@ export type UpdateMemberState = {
       | "display_name"
       | "contact_email"
       | "contact_phone"
+      | "address"
+      | "notes"
       | "_form",
       string
     >
@@ -250,6 +266,8 @@ export async function updateMemberAction(
     display_name: String(formData.get("display_name") ?? ""),
     contact_email: String(formData.get("contact_email") ?? ""),
     contact_phone: String(formData.get("contact_phone") ?? ""),
+    address: String(formData.get("address") ?? ""),
+    notes: String(formData.get("notes") ?? ""),
   };
 
   const parsed = UpdateMemberSchema.safeParse(raw);
@@ -306,21 +324,26 @@ export async function updateMemberAction(
   if (parsed.data.pay_rate !== undefined)
     updatePayload.pay_rate_cents = parsed.data.pay_rate;
 
-  // Shadow-employee fields — only apply when the member has no linked
-  // profile. For invited members the name comes from profiles.full_name,
-  // and overwriting membership.display_name would either be ignored (UI
-  // falls back to profile.full_name via memberDisplayName) or would
-  // shadow a correct name with a stale one. Don't write them.
-  if (!before || before.profile_id === null) {
-    if (parsed.data.display_name && parsed.data.display_name.length > 0) {
-      updatePayload.display_name = parsed.data.display_name;
-    }
-    if (parsed.data.contact_email !== undefined) {
-      updatePayload.contact_email = parsed.data.contact_email;
-    }
-    if (parsed.data.contact_phone !== undefined) {
-      updatePayload.contact_phone = parsed.data.contact_phone;
-    }
+  // Name / contact fields for ALL employees.
+  //
+  // For shadow members, display_name is their canonical name.
+  // For invited members, writing display_name here creates an admin override
+  // that takes precedence in memberDisplayName() — the employee's own
+  // profiles.full_name (their login identity) is left untouched.
+  if (parsed.data.display_name && parsed.data.display_name.length > 0) {
+    updatePayload.display_name = parsed.data.display_name;
+  }
+  if (parsed.data.contact_email !== undefined) {
+    updatePayload.contact_email = parsed.data.contact_email;
+  }
+  if (parsed.data.contact_phone !== undefined) {
+    updatePayload.contact_phone = parsed.data.contact_phone;
+  }
+  if (parsed.data.address !== undefined) {
+    updatePayload.address = parsed.data.address;
+  }
+  if (parsed.data.notes !== undefined) {
+    updatePayload.notes = parsed.data.notes;
   }
 
   if (Object.keys(updatePayload).length === 0) {
