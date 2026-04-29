@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
 import { logAuditEvent } from "@/lib/audit";
 import { InvoiceSchema } from "@/lib/validators/invoices";
+import { autoInvoiceOnJobComplete } from "@/lib/automations";
 import {
   InvoicePaymentSchema,
   type PAYMENT_METHODS,
@@ -810,4 +811,76 @@ export async function deleteInvoiceAction(formData: FormData) {
 
   revalidatePath("/app/invoices");
   redirect("/app/invoices");
+}
+
+/**
+ * One-click bulk invoice generation. Finds every completed booking in
+ * this org that has no invoice yet and generates a draft invoice for
+ * each one. Skips bookings that already have an invoice or have no
+ * client / total_cents set.
+ *
+ * Returns a structured result (not a redirect) so the client can show
+ * a toast with the outcome without a full page refresh.
+ */
+export type BulkInvoiceResult = {
+  created: number;
+  skipped: number;
+  errors: string[];
+};
+
+export async function bulkGenerateInvoicesAction(): Promise<BulkInvoiceResult> {
+  const { membership, supabase } = await getActionContext();
+  if (!["owner", "admin"].includes(membership.role)) {
+    return { created: 0, skipped: 0, errors: ["Permission denied."] };
+  }
+
+  // Find completed bookings with a total set that have no invoice yet.
+  const { data: bookings, error } = await supabase
+    .from("bookings")
+    .select("id")
+    .eq("status", "completed")
+    .not("total_cents", "is", null)
+    .is("archived_at" as never, null as never);
+
+  if (error) return { created: 0, skipped: 0, errors: [error.message] };
+  if (!bookings?.length) return { created: 0, skipped: 0, errors: [] };
+
+  // Filter to those without an existing invoice.
+  const { data: existing } = await supabase
+    .from("invoices")
+    .select("booking_id")
+    .eq("organization_id" as never, membership.organization_id as never)
+    .not("booking_id", "is", null)
+    .in(
+      "booking_id",
+      bookings.map((b) => b.id),
+    );
+
+  const alreadyInvoiced = new Set(
+    (existing ?? []).map((r) => r.booking_id as string),
+  );
+  const uninvoiced = bookings.filter((b) => !alreadyInvoiced.has(b.id));
+
+  if (!uninvoiced.length) return { created: 0, skipped: bookings.length, errors: [] };
+
+  let created = 0;
+  const errors: string[] = [];
+
+  // Process in series — autoInvoiceOnJobComplete does its own DB writes;
+  // parallel execution risks duplicate invoice creation on slow DB.
+  for (const b of uninvoiced) {
+    const result = await autoInvoiceOnJobComplete(b.id, { force: true });
+    if (result.ok) {
+      created++;
+    } else {
+      errors.push(result.reason);
+    }
+  }
+
+  revalidatePath("/app/invoices");
+  return {
+    created,
+    skipped: bookings.length - uninvoiced.length,
+    errors,
+  };
 }

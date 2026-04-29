@@ -21,10 +21,10 @@ export async function fetchReviewFormOptions() {
   return {
     clients: clients.data?.map((c) => ({ id: c.id, label: c.name })) ?? [],
     employees:
-      employees.data?.map((m) => ({
+      (employees.data?.map((m) => ({
         id: m.id,
         label: memberDisplayName(m),
-      })) ?? [],
+      })) ?? []).sort((a, b) => a.label.localeCompare(b.label)),
     bookings:
       bookings.data?.map((b) => ({
         id: b.id,

@@ -9,13 +9,11 @@ export async function fetchInventoryFormOptions() {
     // profile) so they show up in the assignee picker with their
     // real name instead of "Unnamed member".
     .select("id, status, display_name, profile:profiles ( full_name )")
-    .eq("status", "active")
-    .order("created_at", { ascending: true });
+    .eq("status", "active");
 
   return {
-    members: (members ?? []).map((m) => ({
-      id: m.id,
-      label: memberDisplayName(m),
-    })),
+    members: (members ?? [])
+      .map((m) => ({ id: m.id, label: memberDisplayName(m) }))
+      .sort((a, b) => a.label.localeCompare(b.label)),
   };
 }

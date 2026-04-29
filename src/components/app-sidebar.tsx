@@ -430,20 +430,24 @@ export function AppSidebar({
           </form>
         </div>
 
-        <p className="mt-2 text-center text-[10px] text-zinc-600">
-          Sollos 3 · v1.0
-        </p>
-        <p className="text-center text-[9px] text-zinc-600">
-          Powered by{" "}
-          <a
-            href="https://velluma.com"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-zinc-500 hover:text-zinc-400"
-          >
-            Velluma
-          </a>
-        </p>
+        {role !== "employee" && (
+          <>
+            <p className="mt-2 text-center text-[10px] text-zinc-600">
+              Sollos 3 · v1.0
+            </p>
+            <p className="text-center text-[9px] text-zinc-600">
+              Powered by{" "}
+              <a
+                href="https://velluma.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-zinc-500 hover:text-zinc-400"
+              >
+                Velluma
+              </a>
+            </p>
+          </>
+        )}
       </div>
     </>
   );

@@ -59,9 +59,9 @@ export async function fetchBookingFormOptions() {
         duration_minutes: p.duration_minutes,
       })) ?? [],
     employees:
-      employees.data?.map((m) => ({
+      (employees.data?.map((m) => ({
         id: m.id,
         label: memberDisplayName(m),
-      })) ?? [],
+      })) ?? []).sort((a, b) => a.label.localeCompare(b.label)),
   };
 }

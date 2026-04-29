@@ -217,7 +217,19 @@ export function TimesheetsView({
   const [dialogMode, setDialogMode] = useState<"create" | "edit">("create");
   const [editingEntry, setEditingEntry] = useState<EditingEntry | null>(null);
 
-  const employeeList = Object.values(employees);
+  const employeeList = Object.values(employees).sort((a, b) =>
+    a.name.localeCompare(b.name),
+  );
+
+  // Row-level filters applied on top of the date-range page filter.
+  const [empFilter, setEmpFilter] = useState<string>("all");
+  const [manualOnly, setManualOnly] = useState(false);
+
+  const filteredEntries = entries.filter((e) => {
+    if (empFilter !== "all" && e.employee_id !== empFilter) return false;
+    if (manualOnly && !e.is_manual) return false;
+    return true;
+  });
 
   function openCreate() {
     setDialogMode("create");
@@ -238,15 +250,16 @@ export function TimesheetsView({
     setDialogOpen(true);
   }
 
-  const summaries = buildSummaries(entries, employees, ptoEntries);
+  const summaries = buildSummaries(filteredEntries, employees, ptoEntries);
 
   const totalHours = Math.round(
-    entries.reduce((sum, e) => sum + e.actual_minutes, 0) / 60,
+    filteredEntries.reduce((sum, e) => sum + e.actual_minutes, 0) / 60,
   );
-  const totalEarned = entries.reduce((sum, e) => sum + e.earned_cents, 0);
-  const totalPtoHours = ptoEntries
-    .filter((p) => p.status === "approved")
-    .reduce((sum, p) => sum + p.hours, 0);
+  const totalEarned = filteredEntries.reduce((sum, e) => sum + e.earned_cents, 0);
+  const filteredPto = empFilter === "all"
+    ? ptoEntries.filter((p) => p.status === "approved")
+    : ptoEntries.filter((p) => p.status === "approved" && p.employee_id === empFilter);
+  const totalPtoHours = filteredPto.reduce((sum, p) => sum + p.hours, 0);
 
   function applyDateRange() {
     router.push(`/app/timesheets?from=${localFrom}&to=${localTo}`);
@@ -264,7 +277,7 @@ export function TimesheetsView({
   }
 
   function downloadReport() {
-    const csv = generateCSV(entries);
+    const csv = generateCSV(filteredEntries);
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -370,6 +383,47 @@ export function TimesheetsView({
         </div>
       </div>
 
+      {/* ─── Row filters ───────────────────────────────────── */}
+      {employeeList.length > 1 && (
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2">
+            <label className="text-xs font-medium text-muted-foreground whitespace-nowrap">
+              Employee
+            </label>
+            <select
+              value={empFilter}
+              onChange={(e) => setEmpFilter(e.target.value)}
+              className="h-8 rounded-lg border border-input bg-transparent px-2.5 text-xs"
+            >
+              <option value="all">All employees</option>
+              {employeeList.map((emp) => (
+                <option key={emp.id} value={emp.id}>
+                  {emp.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <label className="flex items-center gap-2 text-xs font-medium text-muted-foreground cursor-pointer">
+            <input
+              type="checkbox"
+              checked={manualOnly}
+              onChange={(e) => setManualOnly(e.target.checked)}
+              className="h-3.5 w-3.5 rounded"
+            />
+            Manual entries only
+          </label>
+          {(empFilter !== "all" || manualOnly) && (
+            <button
+              type="button"
+              onClick={() => { setEmpFilter("all"); setManualOnly(false); }}
+              className="text-xs text-primary underline-offset-4 hover:underline"
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
+      )}
+
       {/* ─── PTO approval panel (pending requests) ─────────── */}
       <PtoApprovalPanel requests={ptoEntries} />
 
@@ -401,17 +455,23 @@ export function TimesheetsView({
         </button>
       </div>
 
-      {entries.length === 0 ? (
+      {filteredEntries.length === 0 ? (
         <div className="rounded-xl border border-dashed border-border bg-card px-5 py-14 text-center text-sm text-muted-foreground">
-          <p>No time entries in this period.</p>
-          <button
-            type="button"
-            onClick={openCreate}
-            className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-foreground px-3 py-1.5 text-xs font-medium text-background transition-opacity hover:opacity-90"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            Log hours manually
-          </button>
+          <p>
+            {entries.length === 0
+              ? "No time entries in this period."
+              : "No entries match the current filters."}
+          </p>
+          {entries.length === 0 && (
+            <button
+              type="button"
+              onClick={openCreate}
+              className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-foreground px-3 py-1.5 text-xs font-medium text-background transition-opacity hover:opacity-90"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Log hours manually
+            </button>
+          )}
         </div>
       ) : view === "summary" ? (
         <div className="space-y-2">
@@ -649,7 +709,7 @@ export function TimesheetsView({
                 </tr>
               </thead>
               <tbody>
-                {entries.map((r) => (
+                {filteredEntries.map((r) => (
                   <tr
                     key={r.id}
                     className="group border-b border-border last:border-0"

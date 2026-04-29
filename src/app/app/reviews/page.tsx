@@ -65,11 +65,12 @@ export default async function ReviewsPage({
     employee_name: r.employee ? memberDisplayName(r.employee) : null,
   }));
 
-  const employeeOptions =
+  const employeeOptions = (
     employeesResult.data?.map((m) => ({
       id: m.id,
       label: memberDisplayName(m),
-    })) ?? [];
+    })) ?? []
+  ).sort((a, b) => a.label.localeCompare(b.label));
 
   return (
     <PageShell

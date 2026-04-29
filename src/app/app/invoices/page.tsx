@@ -7,6 +7,7 @@ import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
 import { ArchivedToggle } from "@/components/archived-toggle";
 import { InvoicesTable, type InvoiceRow } from "./invoices-table";
+import { BulkInvoiceButton } from "./bulk-invoice-button";
 
 export const metadata = { title: "Invoices" };
 
@@ -73,13 +74,16 @@ export default async function InvoicesPage({
             showingArchived={showArchived}
           />
           {canEdit && !showArchived && (
-            <Link
-              href="/app/invoices/new"
-              className={buttonVariants({ variant: "default" })}
-            >
-              <Plus className="h-4 w-4" />
-              New invoice
-            </Link>
+            <>
+              <BulkInvoiceButton />
+              <Link
+                href="/app/invoices/new"
+                className={buttonVariants({ variant: "default" })}
+              >
+                <Plus className="h-4 w-4" />
+                New invoice
+              </Link>
+            </>
           )}
         </div>
       }
