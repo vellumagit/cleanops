@@ -30,6 +30,9 @@ export const RecurrencePatternEnum = z.enum([
   "monthly",
   "custom_weekly",
   "monthly_nth",
+  "every_2_months",
+  "every_3_months",
+  "every_6_months",
 ]);
 
 export const BookingSchema = z.object({

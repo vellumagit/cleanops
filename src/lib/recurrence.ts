@@ -26,7 +26,10 @@ export type RecurrencePattern =
   | "quad_weekly"
   | "monthly"
   | "custom_weekly"
-  | "monthly_nth";
+  | "monthly_nth"
+  | "every_2_months"
+  | "every_3_months"
+  | "every_6_months";
 
 /**
  * Ordered options list used by the booking form. Kept here so every UI
@@ -76,6 +79,24 @@ export const RECURRENCE_OPTIONS: Array<{
     label: "Custom weekly",
     description:
       "Multiple specific weekdays. Useful for offices cleaned Monday + Thursday, or 3x-per-week schedules.",
+  },
+  {
+    value: "every_2_months",
+    label: "Every 2 months",
+    description:
+      "Same day of the month, every other month. 6 visits per year.",
+  },
+  {
+    value: "every_3_months",
+    label: "Every 3 months (quarterly)",
+    description:
+      "Same day of the month, once per quarter. 4 visits per year.",
+  },
+  {
+    value: "every_6_months",
+    label: "Every 6 months",
+    description:
+      "Same day of the month, twice a year.",
   },
 ];
 
@@ -247,6 +268,12 @@ function advanceToNext(
       return addWeeks(current, 4);
     case "monthly":
       return addMonths(current, 1);
+    case "every_2_months":
+      return addMonths(current, 2);
+    case "every_3_months":
+      return addMonths(current, 3);
+    case "every_6_months":
+      return addMonths(current, 6);
     default:
       return addWeeks(current, 1);
   }
@@ -384,6 +411,12 @@ export function describeRecurrence(
       return `Every 4 weeks at ${time12}`;
     case "monthly":
       return `Monthly at ${time12}`;
+    case "every_2_months":
+      return `Every 2 months at ${time12}`;
+    case "every_3_months":
+      return `Every 3 months at ${time12}`;
+    case "every_6_months":
+      return `Every 6 months at ${time12}`;
     case "custom_weekly": {
       const names = (customDays ?? [])
         .sort((a, b) => a - b)
