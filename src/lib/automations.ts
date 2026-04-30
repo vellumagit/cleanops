@@ -3099,9 +3099,9 @@ export async function sendDailyEmployeeSchedules(): Promise<{
 
   const { data: orgs } = await db
     .from("organizations")
-    .select("id, name")
+    .select("id, name, timezone")
     .is("deleted_at", null) as unknown as {
-    data: Array<{ id: string; name: string }> | null;
+    data: Array<{ id: string; name: string; timezone: string | null }> | null;
   };
 
   if (!orgs) return { emailsSent: 0 };
@@ -3110,6 +3110,7 @@ export async function sendDailyEmployeeSchedules(): Promise<{
 
   for (const org of orgs) {
     if (!(await isAutomationEnabled(org.id, "employee_daily_schedule"))) continue;
+    const orgTz = org.timezone ?? "America/Edmonton";
 
     const { data: bookings } = await db
       .from("bookings")
@@ -3157,12 +3158,13 @@ export async function sendDailyEmployeeSchedules(): Promise<{
           weekday: "long",
           month: "short",
           day: "numeric",
-          timeZone: "UTC",
+          timeZone: orgTz,
         }),
         jobs: jobs.map((j) => ({
           time: new Date(j.scheduled_at).toLocaleTimeString("en-US", {
             hour: "numeric",
             minute: "2-digit",
+            timeZone: orgTz,
           }),
           serviceName: humanize(j.service_type),
           clientName: j.client?.name ?? "A client",
