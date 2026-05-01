@@ -811,11 +811,13 @@ export async function cancelSeriesAction(formData: FormData) {
 
   const { membership, supabase } = await getActionContext();
 
-  // Deactivate the series
+  // Deactivate the series — explicit org filter guards against series_id
+  // spoofing even though the supabase client applies RLS.
   await (supabase
     .from("booking_series" as never)
     .update({ active: false } as never)
-    .eq("id" as never, seriesId as never) as unknown as Promise<unknown>);
+    .eq("id" as never, seriesId as never)
+    .eq("organization_id" as never, membership.organization_id as never) as unknown as Promise<unknown>);
 
   // Cancel all future pending/confirmed bookings in this series
   const now = new Date().toISOString();
@@ -823,6 +825,7 @@ export async function cancelSeriesAction(formData: FormData) {
     .from("bookings")
     .update({ status: "cancelled" } as never)
     .eq("series_id" as never, seriesId as never)
+    .eq("organization_id" as never, membership.organization_id as never)
     .in("status" as never, ["pending", "confirmed"] as never)
     .gte("scheduled_at" as never, now as never) as unknown as Promise<unknown>);
 

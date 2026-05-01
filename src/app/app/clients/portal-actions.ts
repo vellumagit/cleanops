@@ -169,19 +169,30 @@ export async function acceptPortalInviteAction(
   // Look for an existing auth user with this email. If they exist (e.g.
   // the client is already a member of a different Sollos org), we link
   // their existing user to this client row. Otherwise create a new one.
+  // Paginate through all users — perPage:1000 only fetches the first page,
+  // so on larger deployments the user could be missed and a duplicate
+  // account created (which Supabase then rejects, giving the client an
+  // error instead of a working login).
   let userId: string | null = null;
   {
-    const { data: existing } = await admin.auth.admin.listUsers({
-      perPage: 1000,
-    });
-    const found = existing?.users.find(
-      (u) => u.email?.toLowerCase() === client.email!.toLowerCase(),
-    );
-    if (found) {
-      userId = found.id;
-      // Reset their password to the one they just typed. Gives a single
-      // canonical "you own this inbox" moment.
-      await admin.auth.admin.updateUserById(found.id, { password });
+    const targetEmail = client.email!.toLowerCase();
+    let page = 1;
+    outer: while (true) {
+      const { data: batch } = await admin.auth.admin.listUsers({
+        page,
+        perPage: 1000,
+      });
+      if (!batch?.users?.length) break;
+      for (const u of batch.users) {
+        if (u.email?.toLowerCase() === targetEmail) {
+          userId = u.id;
+          // Reset their password to the one they just typed.
+          await admin.auth.admin.updateUserById(u.id, { password });
+          break outer;
+        }
+      }
+      if (batch.users.length < 1000) break; // Last page reached
+      page++;
     }
   }
 

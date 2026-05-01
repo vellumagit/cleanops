@@ -301,6 +301,7 @@ export async function updateTimeEntryAction(
     .from("time_entries")
     .select("clock_in_at, clock_out_at, employee_id, booking_id")
     .eq("id", id)
+    .eq("organization_id" as never, membership.organization_id as never)
     .maybeSingle();
 
   const { error } = await supabase
@@ -312,7 +313,8 @@ export async function updateTimeEntryAction(
       clock_out_at: parsed.end_at,
       notes: parsed.notes,
     } as never)
-    .eq("id", id);
+    .eq("id", id)
+    .eq("organization_id" as never, membership.organization_id as never);
 
   if (error) return { ok: false, error: error.message };
 
@@ -426,9 +428,14 @@ export async function deleteTimeEntryAction(
     .from("time_entries")
     .select("employee_id, booking_id, clock_in_at, clock_out_at")
     .eq("id", id)
+    .eq("organization_id" as never, membership.organization_id as never)
     .maybeSingle();
 
-  const { error } = await supabase.from("time_entries").delete().eq("id", id);
+  const { error } = await supabase
+    .from("time_entries")
+    .delete()
+    .eq("id", id)
+    .eq("organization_id" as never, membership.organization_id as never);
   if (error) return { ok: false, error: error.message };
 
   await logAuditEvent({

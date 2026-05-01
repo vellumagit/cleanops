@@ -2031,13 +2031,14 @@ export async function notifyBookingAssignment(
 
     const db = admin();
 
-    // Fetch org timezone so the time shows in local time, not UTC.
+    // Fetch org name + timezone in one query (name used for SMS body, timezone
+    // for local-time formatting in the notification body).
     const { data: orgData } = (await db
       .from("organizations")
-      .select("timezone")
+      .select("name, timezone")
       .eq("id", organizationId)
       .maybeSingle()) as unknown as {
-      data: { timezone: string | null } | null;
+      data: { name: string | null; timezone: string | null } | null;
     };
     const orgTz = orgData?.timezone ?? "America/Edmonton";
 
@@ -2087,15 +2088,9 @@ export async function notifyBookingAssignment(
 
       const phone = member?.profile?.phone;
       if (phone) {
-        const { data: org } = (await db
-          .from("organizations")
-          .select("name")
-          .eq("id", organizationId)
-          .maybeSingle()) as unknown as {
-          data: { name: string | null } | null;
-        };
+        // Reuse orgData already fetched above — no second round-trip needed.
         const smsBody = composeBookingAssignmentSms({
-          orgName: org?.name ?? "Sollos",
+          orgName: orgData?.name ?? "Sollos",
           serviceType: meta.serviceType,
           clientName: meta.clientName,
           scheduledAt: meta.scheduledAt,

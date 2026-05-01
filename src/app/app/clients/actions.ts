@@ -100,6 +100,12 @@ export async function updateClientAction(
 
   const { membership, supabase } = await getActionContext();
 
+  // A client cannot refer themselves — catch both crafted form POSTs and
+  // UI bugs before they create a circular self-referral in the DB.
+  if (parsed.data.referred_by_client_id && parsed.data.referred_by_client_id === id) {
+    return { errors: { _form: "A client cannot be their own referrer." }, values: raw };
+  }
+
   const { data: previous } = (await supabase
     .from("clients")
     .select(
