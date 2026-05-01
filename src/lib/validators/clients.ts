@@ -19,6 +19,19 @@ const optionalMembershipId = z
     "Invalid cleaner id",
   );
 
+// Empty string → null; otherwise must look like a uuid. Used for the
+// referred_by_client_id dropdown.
+const optionalClientId = z
+  .string()
+  .transform((s) => s.trim())
+  .transform((s) => (s.length === 0 ? null : s))
+  .refine(
+    (s) =>
+      s === null ||
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s),
+    "Invalid client id",
+  );
+
 // "" → null; positive integer string → number
 const optionalCents = z
   .string()
@@ -50,6 +63,8 @@ export const ClientSchema = z.object({
   /** Fixed amount (in cents) per billing period. Only used when
    *  billing_type = 'flat_rate'. Leave blank for itemized clients. */
   flat_rate_cents: optionalCents,
+  /** Client id of the person who referred this client. Blank → null. */
+  referred_by_client_id: optionalClientId,
 });
 
 export type ClientInput = z.infer<typeof ClientSchema>;

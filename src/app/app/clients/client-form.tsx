@@ -28,6 +28,7 @@ type Defaults = {
   billing_cadence?: string | null;
   billing_type?: string | null;
   flat_rate_cents?: number | null;
+  referred_by_client_id?: string | null;
 };
 
 export function ClientForm({
@@ -35,6 +36,7 @@ export function ClientForm({
   id,
   defaults,
   cleaners = [],
+  referralClients = [],
 }: {
   mode: "create" | "edit";
   id?: string;
@@ -43,6 +45,8 @@ export function ClientForm({
    *  an empty array hides the dropdown — useful for orgs that haven't
    *  added any employees yet (setup-first-client flow). */
   cleaners?: Array<{ id: string; label: string }>;
+  /** Existing clients for the "Referred by" dropdown. */
+  referralClients?: Array<{ id: string; name: string }>;
 }) {
   const action =
     mode === "create"
@@ -176,6 +180,28 @@ export function ClientForm({
           rows={4}
         />
       </FormField>
+
+      {referralClients.length > 0 && (
+        <FormField
+          label="Referred by"
+          htmlFor="referred_by_client_id"
+          error={state.errors?.referred_by_client_id}
+          hint="Which existing client sent this person your way? Optional."
+        >
+          <FormSelect
+            id="referred_by_client_id"
+            name="referred_by_client_id"
+            defaultValue={v.referred_by_client_id ?? ""}
+          >
+            <option value="">— No referral —</option>
+            {referralClients.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </FormSelect>
+        </FormField>
+      )}
 
       {/* ── Billing cadence ───────────────────────────────────────────────── */}
       <div className="rounded-md border border-border bg-muted/20 px-4 py-4 space-y-4">

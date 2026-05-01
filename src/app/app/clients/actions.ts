@@ -24,6 +24,7 @@ function readFormValues(formData: FormData) {
     preferred_cleaner_id: String(formData.get("preferred_cleaner_id") ?? ""),
     billing_cadence: String(formData.get("billing_cadence") ?? "on_demand"),
     billing_type: String(formData.get("billing_type") ?? "itemized"),
+    referred_by_client_id: String(formData.get("referred_by_client_id") ?? ""),
     // Form input is in dollars (user-facing); convert to cents for storage.
     flat_rate_cents: (() => {
       const raw = String(formData.get("flat_rate_cents") ?? "").trim();
@@ -63,6 +64,7 @@ export async function createClientAction(
       billing_cadence: parsed.data.billing_cadence,
       billing_type: parsed.data.billing_type,
       flat_rate_cents: parsed.data.flat_rate_cents ?? null,
+      referred_by_client_id: parsed.data.referred_by_client_id ?? null,
     } as never)
     .select("id")
     .single()) as unknown as {
@@ -132,6 +134,7 @@ export async function updateClientAction(
       billing_cadence: parsed.data.billing_cadence,
       billing_type: parsed.data.billing_type,
       flat_rate_cents: parsed.data.flat_rate_cents ?? null,
+      referred_by_client_id: parsed.data.referred_by_client_id ?? null,
     } as never)
     .eq("id", id) as unknown as Promise<{ error: { message: string } | null }>);
 

@@ -11,6 +11,7 @@ import {
   Pencil,
   Receipt,
   ClipboardList,
+  UserCheck,
 } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -52,7 +53,7 @@ export default async function ClientDetailPage({
   ] = await Promise.all([
     supabase
       .from("clients")
-      .select("id, name, email, phone, address, notes, preferred_contact, balance_cents, created_at, profile_id, portal_invited_at, portal_accepted_at, portal_invite_expires_at")
+      .select("id, name, email, phone, address, notes, preferred_contact, balance_cents, created_at, profile_id, portal_invited_at, portal_accepted_at, portal_invite_expires_at, referred_by_client_id")
       .eq("id", id)
       .maybeSingle() as unknown as Promise<{
       data: {
@@ -69,6 +70,7 @@ export default async function ClientDetailPage({
         portal_invited_at: string | null;
         portal_accepted_at: string | null;
         portal_invite_expires_at: string | null;
+        referred_by_client_id: string | null;
       } | null;
       error: { message: string } | null;
     }>,
@@ -124,6 +126,23 @@ export default async function ClientDetailPage({
   const { data: client, error } = clientResult;
   if (error) throw error;
   if (!client) notFound();
+
+  // Fetch referrer name if this client was referred by someone
+  let referrerName: string | null = null;
+  let referrerId: string | null = null;
+  if (client.referred_by_client_id) {
+    const { data: referrer } = await supabase
+      .from("clients")
+      .select("id, name")
+      .eq("id", client.referred_by_client_id)
+      .maybeSingle() as unknown as Promise<{
+      data: { id: string; name: string } | null;
+    }>;
+    if (referrer) {
+      referrerName = referrer.name;
+      referrerId = referrer.id;
+    }
+  }
 
   const bookings = bookingsResult.data ?? [];
   const invoices = invoicesResult.data ?? [];
@@ -234,6 +253,19 @@ export default async function ClientDetailPage({
               <p className="text-xs font-semibold text-muted-foreground">Notes</p>
               <p className="mt-0.5 text-sm">{client.notes}</p>
             </div>
+          )}
+
+          {referrerName && (
+            <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
+              <UserCheck className="h-3.5 w-3.5 shrink-0" />
+              Referred by{" "}
+              <Link
+                href={`/app/clients/${referrerId}`}
+                className="font-medium text-foreground hover:underline underline-offset-2"
+              >
+                {referrerName}
+              </Link>
+            </p>
           )}
 
           <p className="mt-3 text-[11px] text-muted-foreground">

@@ -3,7 +3,7 @@ import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
 import { ClientForm } from "../../client-form";
-import { fetchClientFormCleaners } from "../../options";
+import { fetchClientFormCleaners, fetchReferralClients } from "../../options";
 import { DeleteClientForm } from "./delete-form";
 import { PortalInviteCard } from "./portal-invite-card";
 
@@ -18,11 +18,11 @@ export default async function EditClientPage({
   const { id } = await params;
   const supabase = await createSupabaseServerClient();
 
-  const [clientResult, cleaners] = await Promise.all([
+  const [clientResult, cleaners, referralClients] = await Promise.all([
     supabase
       .from("clients")
       .select(
-        "id, name, email, phone, address, notes, preferred_contact, preferred_cleaner_id, sms_opted_in, profile_id, portal_invited_at, portal_accepted_at, portal_invite_expires_at, billing_cadence, billing_type, flat_rate_cents",
+        "id, name, email, phone, address, notes, preferred_contact, preferred_cleaner_id, sms_opted_in, profile_id, portal_invited_at, portal_accepted_at, portal_invite_expires_at, billing_cadence, billing_type, flat_rate_cents, referred_by_client_id",
       )
       .eq("id", id)
       .maybeSingle() as unknown as Promise<{
@@ -43,10 +43,12 @@ export default async function EditClientPage({
         billing_cadence: string;
         billing_type: string;
         flat_rate_cents: number | null;
+        referred_by_client_id: string | null;
       } | null;
       error: { message: string } | null;
     }>,
     fetchClientFormCleaners(),
+    fetchReferralClients(id),
   ]);
   const { data: client, error } = clientResult;
 
@@ -61,6 +63,7 @@ export default async function EditClientPage({
             mode="edit"
             id={client.id}
             cleaners={cleaners}
+            referralClients={referralClients}
             defaults={{
               name: client.name,
               email: client.email,
@@ -73,6 +76,7 @@ export default async function EditClientPage({
               billing_cadence: client.billing_cadence,
               billing_type: client.billing_type,
               flat_rate_cents: client.flat_rate_cents,
+              referred_by_client_id: client.referred_by_client_id,
             }}
           />
         </div>
