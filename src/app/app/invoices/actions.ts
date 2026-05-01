@@ -838,6 +838,7 @@ export async function bulkGenerateInvoicesAction(): Promise<BulkInvoiceResult> {
   const { data: bookings, error } = await supabase
     .from("bookings")
     .select("id")
+    .eq("organization_id" as never, membership.organization_id as never)
     .eq("status", "completed")
     .not("total_cents", "is", null)
     .is("archived_at" as never, null as never);

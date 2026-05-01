@@ -978,10 +978,12 @@ export async function assignBookingCrewAction(
     const admin = createSupabaseAdminClient();
 
     // Collect all future sibling IDs so we can sync their assignees.
+    // organization_id filter is explicit because the admin client bypasses RLS.
     const { data: siblings } = await (admin
       .from("bookings")
       .select("id")
       .eq("series_id" as never, seriesId as never)
+      .eq("organization_id" as never, membership.organization_id as never)
       .gte("scheduled_at" as never, seriesScheduledAt as never)
       .neq("id" as never, id as never)
       .not(
@@ -1043,11 +1045,13 @@ export async function assignBookingCrewAction(
     }
 
     // Update the series template row so newly-generated occurrences
-    // inherit the new primary assignee.
+    // inherit the new primary assignee. Admin client bypasses RLS so we
+    // must filter by organization_id explicitly.
     await (admin
       .from("booking_series" as never)
       .update({ assigned_to: primaryId } as never)
-      .eq("id" as never, seriesId as never)) as unknown as Promise<unknown>;
+      .eq("id" as never, seriesId as never)
+      .eq("organization_id" as never, membership.organization_id as never)) as unknown as Promise<unknown>;
   }
 
   revalidatePath("/app/bookings");

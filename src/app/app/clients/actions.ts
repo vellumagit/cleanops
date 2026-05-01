@@ -106,6 +106,7 @@ export async function updateClientAction(
       "name, email, phone, address, notes, preferred_contact, preferred_cleaner_id",
     )
     .eq("id", id)
+    .eq("organization_id" as never, membership.organization_id as never)
     .maybeSingle()) as unknown as {
     data: {
       name: string;
@@ -136,7 +137,8 @@ export async function updateClientAction(
       flat_rate_cents: parsed.data.flat_rate_cents ?? null,
       referred_by_client_id: parsed.data.referred_by_client_id ?? null,
     } as never)
-    .eq("id", id) as unknown as Promise<{ error: { message: string } | null }>);
+    .eq("id", id)
+    .eq("organization_id" as never, membership.organization_id as never) as unknown as Promise<{ error: { message: string } | null }>);
 
   if (error) {
     return { errors: { _form: error.message }, values: raw };
@@ -174,6 +176,7 @@ export async function deleteClientAction(formData: FormData) {
     .from("clients")
     .select("name, email")
     .eq("id", id)
+    .eq("organization_id" as never, membership.organization_id as never)
     .maybeSingle();
 
   const { error } = await supabase.from("clients").delete().eq("id", id).eq("organization_id", membership.organization_id);

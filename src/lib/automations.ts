@@ -410,6 +410,18 @@ export async function notifyUpcomingJobs() {
 
     if (!jobs || jobs.length === 0) return 0;
 
+    // Pre-fetch org timezones so notification times display in local time.
+    const orgIds = [...new Set(jobs.map((j) => j.organization_id as string))];
+    const { data: orgRows } = (await db
+      .from("organizations")
+      .select("id, timezone")
+      .in("id", orgIds)) as unknown as {
+      data: Array<{ id: string; timezone: string | null }> | null;
+    };
+    const orgTimezones = new Map<string, string>(
+      (orgRows ?? []).map((o) => [o.id, o.timezone ?? "America/Edmonton"]),
+    );
+
     // Dedupe — check what's already been notified
     const cutoff = new Date(now.getTime() - 2 * 60 * 60 * 1000).toISOString();
     const { data: existingNotifs } = (await db
@@ -429,9 +441,11 @@ export async function notifyUpcomingJobs() {
       .filter((j) => !alreadyNotified.has(j.id))
       .map((j) => {
         const clientName = (j.client as unknown as { name: string } | null)?.name ?? "a client";
+        const orgTz = orgTimezones.get(j.organization_id as string) ?? "America/Edmonton";
         const when = new Date(j.scheduled_at).toLocaleTimeString("en-US", {
           hour: "numeric",
           minute: "2-digit",
+          timeZone: orgTz,
         });
         return {
           organization_id: j.organization_id,
@@ -2016,12 +2030,24 @@ export async function notifyBookingAssignment(
     }
 
     const db = admin();
+
+    // Fetch org timezone so the time shows in local time, not UTC.
+    const { data: orgData } = (await db
+      .from("organizations")
+      .select("timezone")
+      .eq("id", organizationId)
+      .maybeSingle()) as unknown as {
+      data: { timezone: string | null } | null;
+    };
+    const orgTz = orgData?.timezone ?? "America/Edmonton";
+
     const when = new Date(meta.scheduledAt).toLocaleDateString("en-US", {
       weekday: "short",
       month: "short",
       day: "numeric",
       hour: "numeric",
       minute: "2-digit",
+      timeZone: orgTz,
     });
     const title = "You've been assigned a job";
     const body = `${humanize(meta.serviceType)} for ${meta.clientName} on ${when}${meta.address ? ` — ${meta.address}` : ""}`;
@@ -2130,15 +2156,16 @@ export async function autoOnInvoicePaid(invoiceId: string) {
 
     const { data: orgData } = await db
       .from("organizations")
-      .select("name, brand_color, logo_url")
+      .select("name, brand_color, logo_url, timezone")
       .eq("id", invoice.organization_id)
       .maybeSingle() as unknown as {
-      data: { name: string; brand_color: string | null; logo_url: string | null } | null;
+      data: { name: string; brand_color: string | null; logo_url: string | null; timezone: string | null } | null;
     };
 
     const orgName = orgData?.name ?? "Your service provider";
     const brandColor = orgData?.brand_color ?? undefined;
     const logoUrl = orgData?.logo_url ?? undefined;
+    const orgTz = orgData?.timezone ?? "America/Edmonton";
     const currency = await getOrgCurrency(invoice.organization_id);
     const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
 
@@ -2152,6 +2179,7 @@ export async function autoOnInvoicePaid(invoiceId: string) {
         month: "short",
         day: "numeric",
         year: "numeric",
+        timeZone: orgTz,
       }),
       publicUrl: invoice.public_token ? `${siteUrl}/i/${invoice.public_token}` : siteUrl,
       brandColor,
@@ -3211,9 +3239,9 @@ export async function sendWeeklyEmployeeSchedules(): Promise<{
 
   const { data: orgs } = await db
     .from("organizations")
-    .select("id, name")
+    .select("id, name, timezone")
     .is("deleted_at", null) as unknown as {
-    data: Array<{ id: string; name: string }> | null;
+    data: Array<{ id: string; name: string; timezone: string | null }> | null;
   };
 
   if (!orgs) return { emailsSent: 0 };
@@ -3222,6 +3250,7 @@ export async function sendWeeklyEmployeeSchedules(): Promise<{
 
   for (const org of orgs) {
     if (!(await isAutomationEnabled(org.id, "employee_weekly_schedule"))) continue;
+    const orgTz = org.timezone ?? "America/Edmonton";
 
     const { data: bookings } = await db
       .from("bookings")
@@ -3258,17 +3287,20 @@ export async function sendWeeklyEmployeeSchedules(): Promise<{
       const recipient = await getMembershipRecipient(membershipId);
       if (!recipient) continue;
 
-      // Bucket into 7 day bins
+      // Bucket into 7 day bins using the org's local date, not UTC date.
+      // Without this, a job at 10 PM local time (= next UTC day) ends up in
+      // the wrong bucket when the server runs in UTC.
       const dayMap = new Map<string, typeof jobs>();
       for (let i = 0; i < 7; i += 1) {
         const d = new Date(startOfTomorrow.getTime() + i * 24 * 60 * 60 * 1000);
-        dayMap.set(d.toISOString().slice(0, 10), []);
+        const localKey = d.toLocaleDateString("en-CA", { timeZone: orgTz }); // YYYY-MM-DD
+        dayMap.set(localKey, []);
       }
       for (const j of jobs) {
-        const key = j.scheduled_at.slice(0, 10);
-        const bucket = dayMap.get(key) ?? [];
+        const localKey = new Date(j.scheduled_at).toLocaleDateString("en-CA", { timeZone: orgTz });
+        const bucket = dayMap.get(localKey) ?? [];
         bucket.push(j);
-        dayMap.set(key, bucket);
+        dayMap.set(localKey, bucket);
       }
 
       const days = [...dayMap.entries()].map(([key, jobsOfDay]) => ({
@@ -3282,6 +3314,7 @@ export async function sendWeeklyEmployeeSchedules(): Promise<{
           time: new Date(j.scheduled_at).toLocaleTimeString("en-US", {
             hour: "numeric",
             minute: "2-digit",
+            timeZone: orgTz,
           }),
           serviceName: humanize(j.service_type),
           clientName: j.client?.name ?? "A client",
