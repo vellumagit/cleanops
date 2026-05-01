@@ -7,6 +7,7 @@ import { logAuditEvent } from "@/lib/audit";
 import { ClientSchema } from "@/lib/validators/clients";
 import { redirectAfterSetup } from "@/lib/setup-return";
 import { normalizePhone } from "@/lib/phone";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 type Field = keyof typeof ClientSchema.shape;
 export type ClientFormState = ActionState<Field>;
@@ -34,6 +35,44 @@ function readFormValues(formData: FormData) {
       return String(Math.round(dollars * 100));
     })(),
   };
+}
+
+/**
+ * Insert a persistent "say thank you" notification when a referral is recorded.
+ * Runs fire-and-forget — a delivery failure must never block the client save.
+ * Uses the admin client because notifications INSERT is service-role-only.
+ */
+async function notifyReferralThankYou(
+  organizationId: string,
+  referrerId: string,
+  newClientName: string,
+) {
+  try {
+    const admin = createSupabaseAdminClient();
+
+    // Resolve the referrer's display name.
+    const { data: referrer } = (await admin
+      .from("clients")
+      .select("name")
+      .eq("id", referrerId)
+      .eq("organization_id" as never, organizationId as never)
+      .maybeSingle()) as unknown as { data: { name: string } | null };
+
+    const referrerName = referrer?.name ?? "the referring client";
+
+    await admin.from("notifications" as never).insert({
+      organization_id: organizationId,
+      // null recipient = visible to every admin/manager in the org
+      recipient_membership_id: null,
+      type: "general",
+      title: `Say thank you to ${referrerName}!`,
+      body: `${newClientName} was referred by ${referrerName}. A quick thank-you message goes a long way.`,
+      href: `/app/clients/${referrerId}`,
+    } as never);
+  } catch {
+    // Non-critical — log silently and let the client save succeed.
+    console.error("[referral] Failed to insert thank-you notification");
+  }
 }
 
 export async function createClientAction(
@@ -84,6 +123,15 @@ export async function createClientAction(
     after: { name: parsed.data.name, email: parsed.data.email ?? null },
   });
 
+  // Fire-and-forget: remind the org to thank the referring client.
+  if (parsed.data.referred_by_client_id) {
+    notifyReferralThankYou(
+      membership.organization_id,
+      parsed.data.referred_by_client_id,
+      parsed.data.name,
+    );
+  }
+
   revalidatePath("/app/clients");
   revalidatePath("/app");
   redirectAfterSetup(formData, "/app/clients");
@@ -109,7 +157,7 @@ export async function updateClientAction(
   const { data: previous } = (await supabase
     .from("clients")
     .select(
-      "name, email, phone, address, notes, preferred_contact, preferred_cleaner_id",
+      "name, email, phone, address, notes, preferred_contact, preferred_cleaner_id, referred_by_client_id",
     )
     .eq("id", id)
     .eq("organization_id" as never, membership.organization_id as never)
@@ -122,6 +170,7 @@ export async function updateClientAction(
       notes: string | null;
       preferred_contact: string;
       preferred_cleaner_id: string | null;
+      referred_by_client_id: string | null;
     } | null;
   };
 
@@ -166,6 +215,17 @@ export async function updateClientAction(
       sms_opted_in: smsOptedIn,
     },
   });
+
+  // Fire-and-forget: notify only when a referrer is newly added or swapped.
+  const newReferrerId = parsed.data.referred_by_client_id ?? null;
+  const oldReferrerId = previous?.referred_by_client_id ?? null;
+  if (newReferrerId && newReferrerId !== oldReferrerId) {
+    notifyReferralThankYou(
+      membership.organization_id,
+      newReferrerId,
+      parsed.data.name,
+    );
+  }
 
   revalidatePath("/app/clients");
   revalidatePath(`/app/clients/${id}/edit`);
