@@ -289,6 +289,7 @@ export async function deletePayrollRunAction(formData: FormData) {
     .from("payroll_runs" as never)
     .select("status")
     .eq("id" as never, id as never)
+    .eq("organization_id" as never, membership.organization_id as never)
     .maybeSingle() as unknown as Promise<{
     data: { status: string } | null;
   }>);

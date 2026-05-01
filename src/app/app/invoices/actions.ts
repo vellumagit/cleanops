@@ -319,6 +319,12 @@ export async function updateInvoicePaymentAction(
     .maybeSingle();
 
   if (!prev) return { ok: false, error: "Payment not found." };
+  // Reject if the caller-supplied invoiceId doesn't match the payment's actual
+  // invoice — prevents a crafted POST from polluting the audit log with a
+  // foreign invoice ID while mutating their own payment row.
+  if (prev.invoice_id !== invoiceId) {
+    return { ok: false, error: "Payment/invoice mismatch." };
+  }
   if (prev.provider) {
     return {
       ok: false,
@@ -396,9 +402,15 @@ export async function deleteInvoicePaymentAction(formData: FormData) {
     .eq("id", paymentId)
     .maybeSingle();
 
+  if (!prev) return;
+  // Guard against a crafted POST supplying a foreign invoiceId to poison the
+  // audit log while deleting their own payment row.
+  if (prev.invoice_id !== invoiceId) {
+    throw new Error("Payment/invoice mismatch.");
+  }
   // Never let a user delete a processor-originated payment manually —
   // that has to come back through a refund webhook or it'll desync.
-  if (prev?.provider) {
+  if (prev.provider) {
     throw new Error(
       "Processor payments can't be removed manually. Issue a refund through the processor instead.",
     );
