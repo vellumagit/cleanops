@@ -131,13 +131,13 @@ export default async function ClientDetailPage({
   let referrerName: string | null = null;
   let referrerId: string | null = null;
   if (client.referred_by_client_id) {
-    const { data: referrer } = await supabase
+    const { data: referrer } = await (supabase
       .from("clients")
       .select("id, name")
       .eq("id", client.referred_by_client_id)
       .maybeSingle() as unknown as Promise<{
       data: { id: string; name: string } | null;
-    }>;
+    }>);
     if (referrer) {
       referrerName = referrer.name;
       referrerId = referrer.id;
