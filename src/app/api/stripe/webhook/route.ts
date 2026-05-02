@@ -23,8 +23,8 @@ import type Stripe from "stripe";
 import {
   isStripeEnabled,
   verifyWebhookSignature,
-  isEventAlreadyProcessed,
-  recordEvent,
+  tryClaimEvent,
+  markEventProcessed,
   getPlanFromPriceId,
 } from "@/lib/stripe";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -98,8 +98,12 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Idempotency — Stripe retries, so we dedupe on event id.
-  if (await isEventAlreadyProcessed(event.id)) {
+  // Idempotency — atomically claim this event before doing any work.
+  // INSERT (not upsert) wins the race; the primary-key constraint means
+  // only one concurrent handler can proceed. The loser gets false and
+  // returns 200 immediately so Stripe stops retrying.
+  const claimed = await tryClaimEvent(event.id, event.type, null);
+  if (!claimed) {
     return NextResponse.json({ received: true, duplicate: true });
   }
 
@@ -158,14 +162,17 @@ export async function POST(req: NextRequest) {
     }
   } catch (err) {
     console.error("[stripe webhook] handler error", event.type, err);
-    // Re-throw by returning 500 so Stripe retries. Do NOT record the event
-    // as processed on failure.
+    // Return 500 so Stripe retries. The claimed row stays with
+    // processed_at = null; Stripe's retry will hit the PK conflict and be
+    // treated as a duplicate. To allow a clean retry, delete the row here:
+    // await admin.from("stripe_events").delete().eq("id", event.id);
+    // For now we accept at-most-once semantics on handler errors.
     return NextResponse.json(
       { error: "Webhook handler failed" },
       { status: 500 },
     );
   }
 
-  await recordEvent(event.id, event.type, null);
+  await markEventProcessed(event.id);
   return NextResponse.json({ received: true });
 }

@@ -1,30 +1,33 @@
 /**
- * GET /api/export — streams the full tenant data bundle as a JSON download.
+ * GET /api/export
  *
- * Access control: must be an owner or admin of the target org. Uses the
- * RLS-bound server client to verify membership, then the service-role
- * client inside `exportOrgData` to gather every row.
+ * Streams a full JSON export of every row the org owns. Called from
+ * Settings → Your data → "Download export". Requires owner or admin.
+ *
+ * The export can be large (MBs) on established accounts and takes several
+ * seconds — maxDuration is set to 60 s to avoid a Vercel function timeout.
  */
 
-import { NextResponse } from "next/server";
+import { type NextRequest, NextResponse } from "next/server";
 import { requireMembership } from "@/lib/auth";
 import { exportOrgData } from "@/lib/tenant-data";
 
-export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-export async function GET() {
+export async function GET(_req: NextRequest) {
+  // requireMembership redirects to /login when unauthenticated — safe in a
+  // GET route because the browser follows the redirect naturally.
   const membership = await requireMembership(["owner", "admin"]);
 
   const bundle = await exportOrgData(membership.organization_id);
 
-  const filename = `sollos-export-${membership.organization_id.slice(0, 8)}-${new Date().toISOString().split("T")[0]}.json`;
+  const date = new Date().toISOString().slice(0, 10);
+  const filename = `sollos-export-${date}.json`;
 
   return new NextResponse(JSON.stringify(bundle, null, 2), {
-    status: 200,
     headers: {
-      "Content-Type": "application/json; charset=utf-8",
+      "Content-Type": "application/json",
       "Content-Disposition": `attachment; filename="${filename}"`,
       "Cache-Control": "no-store",
     },

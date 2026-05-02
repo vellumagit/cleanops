@@ -53,6 +53,7 @@ export default async function PublicInvoicePage({
       `
         id, number, status, amount_cents, due_date, sent_at, paid_at,
         voided_at, payment_instructions, created_at,
+        public_token_expires_at,
         organization:organizations ( id, name, default_payment_instructions ),
         client:clients ( name, email ),
         line_items:invoice_line_items (
@@ -67,6 +68,23 @@ export default async function PublicInvoicePage({
     .maybeSingle();
 
   if (!invoice) notFound();
+
+  // If the org set an expiry on this token and it has elapsed, show a clear
+  // message rather than notFound() so the client knows to request a new link.
+  const expiresAt = (invoice as unknown as { public_token_expires_at?: string | null })
+    .public_token_expires_at;
+  if (expiresAt && new Date(expiresAt) < new Date()) {
+    return (
+      <div className="flex min-h-screen items-center justify-center p-6">
+        <div className="max-w-md rounded-xl border border-border bg-card p-8 text-center">
+          <p className="text-lg font-semibold">This invoice link has expired</p>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Please contact the business to request an updated link.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   // Fetch tax columns on the invoice separately — not yet in the
   // generated Supabase types.

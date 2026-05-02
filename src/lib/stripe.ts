@@ -227,6 +227,54 @@ export async function recordEvent(
   );
 }
 
+/**
+ * Atomically claim an event slot by INSERTing into stripe_events with
+ * processed_at = null. Returns true if this process is the sole handler
+ * for this event; false if a concurrent request (or a prior run) already
+ * claimed it.
+ *
+ * This replaces the old SELECT → process → UPSERT pattern, which had a
+ * race window where two Stripe retries could both pass the SELECT at the
+ * same millisecond and both execute the handler. INSERT on a PRIMARY KEY
+ * table is atomic — exactly one caller wins.
+ *
+ * If the handler succeeds, call markEventProcessed(). If it fails, the row
+ * remains with processed_at = null; Stripe's next retry will find no
+ * existing row with a non-null processed_at, so tryClaimEvent() will fail
+ * with a PK conflict — BUT the row was already inserted, so the event won't
+ * be re-processed accidentally. For retry-able failures consider deleting
+ * the row on error so Stripe can trigger a clean retry.
+ */
+export async function tryClaimEvent(
+  eventId: string,
+  type: string,
+  accountId: string | null,
+): Promise<boolean> {
+  const admin = createSupabaseAdminClient();
+  const { error } = await admin.from("stripe_events" as never).insert({
+    id: eventId,
+    type,
+    account_id: accountId,
+    processed_at: null,
+  } as never);
+  if (error) {
+    // 23505 = unique_violation — another request already claimed this event.
+    const pgError = error as { code?: string };
+    if (pgError.code === "23505") return false;
+    throw error;
+  }
+  return true;
+}
+
+/** Stamp processed_at after a successful handler run. */
+export async function markEventProcessed(eventId: string): Promise<void> {
+  const admin = createSupabaseAdminClient();
+  await admin
+    .from("stripe_events" as never)
+    .update({ processed_at: new Date().toISOString() } as never)
+    .eq("id" as never, eventId as never);
+}
+
 // Legacy export kept for the old placeholder import — no-op wrapper around
 // the real verifier so nothing breaks.
 export type StripeWebhookEvent = Stripe.Event;

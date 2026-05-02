@@ -155,3 +155,18 @@ export async function completeJobAction(
   revalidatePath("/app/invoices");
   return { ok: true };
 }
+
+/**
+ * Record that the employee has acknowledged the GPS location-tracking notice.
+ * Sets memberships.gps_consent_accepted_at to now, dismissing the sticky
+ * banner shown by GpsConsentBanner for the rest of the session and all future
+ * sessions on any device.
+ */
+export async function acceptGpsConsentAction(): Promise<void> {
+  const { membership, supabase } = await getActionContext();
+  await supabase
+    .from("memberships")
+    .update({ gps_consent_accepted_at: new Date().toISOString() } as never)
+    .eq("id", membership.id);
+  revalidatePath("/field", "layout");
+}
