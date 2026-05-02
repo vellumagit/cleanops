@@ -27,11 +27,24 @@ export async function POST(request: NextRequest) {
 
     const supabase = await createSupabaseServerClient();
 
-    // Verify the user owns this membership
+    // Require an authenticated session — prevents unauthenticated callers
+    // from registering push subscriptions against arbitrary memberships.
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Verify the membership exists AND belongs to the authenticated user.
+    // The original check only confirmed the membership row existed, which
+    // allowed any authenticated user to register a subscription for any
+    // other user's membership by supplying their membershipId in the body.
     const { data: membership } = await supabase
       .from("memberships")
       .select("id")
       .eq("id", membershipId)
+      .eq("profile_id", user.id)
       .maybeSingle();
 
     if (!membership) {
