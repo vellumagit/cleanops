@@ -53,7 +53,6 @@ export default async function PublicInvoicePage({
       `
         id, number, status, amount_cents, due_date, sent_at, paid_at,
         voided_at, payment_instructions, created_at,
-        public_token_expires_at,
         organization:organizations ( id, name, default_payment_instructions ),
         client:clients ( name, email ),
         line_items:invoice_line_items (
@@ -69,10 +68,24 @@ export default async function PublicInvoicePage({
 
   if (!invoice) notFound();
 
+  // Fetch columns not yet in the generated Supabase types separately.
+  const { data: taxData } = (await admin
+    .from("invoices")
+    .select("tax_rate_bps, tax_amount_cents, tax_label, public_token_expires_at")
+    .eq("id", invoice.id)
+    .maybeSingle()) as unknown as {
+    data: {
+      tax_rate_bps: number | null;
+      tax_amount_cents: number | null;
+      tax_label: string | null;
+      public_token_expires_at: string | null;
+    } | null;
+  };
+  const taxRateBps = taxData?.tax_rate_bps ?? null;
+
   // If the org set an expiry on this token and it has elapsed, show a clear
   // message rather than notFound() so the client knows to request a new link.
-  const expiresAt = (invoice as unknown as { public_token_expires_at?: string | null })
-    .public_token_expires_at;
+  const expiresAt = taxData?.public_token_expires_at ?? null;
   if (expiresAt && new Date(expiresAt) < new Date()) {
     return (
       <div className="flex min-h-screen items-center justify-center p-6">
@@ -85,21 +98,6 @@ export default async function PublicInvoicePage({
       </div>
     );
   }
-
-  // Fetch tax columns on the invoice separately — not yet in the
-  // generated Supabase types.
-  const { data: taxData } = (await admin
-    .from("invoices")
-    .select("tax_rate_bps, tax_amount_cents, tax_label")
-    .eq("id", invoice.id)
-    .maybeSingle()) as unknown as {
-    data: {
-      tax_rate_bps: number | null;
-      tax_amount_cents: number | null;
-      tax_label: string | null;
-    } | null;
-  };
-  const taxRateBps = taxData?.tax_rate_bps ?? null;
   const taxAmountCents = taxData?.tax_amount_cents ?? null;
   const taxLabel = taxData?.tax_label ?? null;
 
