@@ -13,6 +13,9 @@ export default async function NotificationsPage() {
     .from("notifications" as never)
     .select("id, type, title, body, href, read_at, created_at")
     .eq("organization_id", membership.organization_id)
+    .or(
+      `recipient_membership_id.is.null,recipient_membership_id.eq.${membership.id}`,
+    )
     .order("created_at", { ascending: false })
     .limit(100)) as unknown as {
     data: Array<{

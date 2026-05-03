@@ -19,17 +19,21 @@ export async function markNotificationReadAction(notificationId: string) {
 }
 
 /**
- * Mark all unread notifications as read for the current user's org.
+ * Mark all unread notifications as read for the current user.
+ * Scoped to notifications the user can actually see: org-wide (null recipient)
+ * and personally-targeted ones. Prevents stomping other members' unread state.
  */
 export async function markAllNotificationsReadAction() {
   const { membership, supabase } = await getActionContext();
 
-  // Mark org-wide (null recipient) and personally-targeted notifications
-  await supabase
+  await (supabase
     .from("notifications" as never)
     .update({ read_at: new Date().toISOString() } as never)
     .eq("organization_id", membership.organization_id)
-    .is("read_at", null);
+    .or(
+      `recipient_membership_id.is.null,recipient_membership_id.eq.${membership.id}`,
+    )
+    .is("read_at", null) as unknown as Promise<unknown>);
 
   revalidatePath("/app");
 }

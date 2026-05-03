@@ -68,11 +68,14 @@ export default async function AppLayout({
         name: string | null;
       } | null;
     },
-    supabase
+    (supabase
       .from("notifications" as never)
       .select("id", { count: "exact", head: true })
       .eq("organization_id", membership.organization_id)
-      .is("read_at", null) as unknown as { count: number | null },
+      .or(
+        `recipient_membership_id.is.null,recipient_membership_id.eq.${membership.id}`,
+      )
+      .is("read_at", null)) as unknown as { count: number | null },
     // Today's bookings
     supabase
       .from("bookings")
