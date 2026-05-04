@@ -11,7 +11,8 @@ import { ComputeBonusesButton } from "./compute-button";
 export const metadata = { title: "Bonuses" };
 
 export default async function BonusesPage() {
-  const membership = await requireMembership();
+  // Bonuses contain compensation data for all employees — owner/admin only.
+  const membership = await requireMembership(["owner", "admin"]);
   const canEdit = membership.role === "owner" || membership.role === "admin";
   const supabase = await createSupabaseServerClient();
 

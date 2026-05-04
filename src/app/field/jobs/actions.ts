@@ -57,17 +57,46 @@ export async function startJobAction(
     if (updateError) return { ok: false, error: updateError.message };
   }
 
-  // Only open a new time entry if there isn't already an open one for this job.
-  const { data: openEntry } = await supabase
+  // Check for ANY open time entry for this employee, not just for this booking.
+  // Without this, starting a new job while already clocked in elsewhere creates
+  // two simultaneous open entries, which breaks payroll calculations.
+  const { data: anyOpenEntry } = await supabase
     .from("time_entries")
-    .select("id")
+    .select("id, booking_id")
     .eq("employee_id", membership.id)
-    .eq("booking_id", bookingId)
     .is("clock_out_at", null)
     .limit(1)
     .maybeSingle();
 
-  if (!openEntry) {
+  if (anyOpenEntry) {
+    if ((anyOpenEntry as { booking_id: string | null }).booking_id === bookingId) {
+      // Already clocked in on this exact job — idempotent, nothing to do.
+    } else {
+      // Clocked in on a different job or a standalone clock-in — close it first
+      // so the employee is never double-counted on payroll.
+      const { error: closeError } = await supabase
+        .from("time_entries")
+        .update({
+          clock_out_at: new Date().toISOString(),
+          clock_out_lat: lat,
+          clock_out_lng: lng,
+        })
+        .eq("id", anyOpenEntry.id)
+        .eq("employee_id", membership.id);
+      if (closeError) return { ok: false, error: closeError.message };
+
+      const { error: insertError } = await supabase.from("time_entries").insert({
+        organization_id: membership.organization_id,
+        employee_id: membership.id,
+        booking_id: bookingId,
+        clock_in_at: new Date().toISOString(),
+        clock_in_lat: lat,
+        clock_in_lng: lng,
+      });
+      if (insertError) return { ok: false, error: insertError.message };
+    }
+  } else {
+    // No open entry anywhere — create one for this job.
     const { error: insertError } = await supabase.from("time_entries").insert({
       organization_id: membership.organization_id,
       employee_id: membership.id,

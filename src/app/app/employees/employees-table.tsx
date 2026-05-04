@@ -55,6 +55,8 @@ export function EmployeesTable({
   viewerRole: string;
 }) {
   const canEdit = viewerRole === "owner" || viewerRole === "admin";
+  // Pay rates are confidential — managers can see the team list but not compensation.
+  const canSeePay = viewerRole === "owner" || viewerRole === "admin";
   const columns: DataTableColumn<EmployeeRow>[] = [
     {
       key: "name",
@@ -110,16 +112,20 @@ export function EmployeesTable({
         </span>
       ),
     },
-    {
-      key: "pay",
-      header: "Pay rate",
-      headerClassName: "text-right",
-      className: "text-right tabular-nums font-medium",
-      render: (r) =>
-        r.pay_rate_cents == null
-          ? "—"
-          : `${formatCurrencyCents(r.pay_rate_cents)}/hr`,
-    },
+    ...(canSeePay
+      ? [
+          {
+            key: "pay",
+            header: "Pay rate",
+            headerClassName: "text-right",
+            className: "text-right tabular-nums font-medium",
+            render: (r: EmployeeRow) =>
+              r.pay_rate_cents == null
+                ? "—"
+                : `${formatCurrencyCents(r.pay_rate_cents)}/hr`,
+          } satisfies DataTableColumn<EmployeeRow>,
+        ]
+      : []),
   ];
 
   if (canEdit) {
