@@ -310,27 +310,34 @@ export async function updateMemberAction(
     }
   }
 
-  // Get previous state for audit + so we know whether this is a shadow
-  // member (profile_id null) and can route the display_name/contact
-  // fields appropriately.
+  // Get previous state for audit. Using the user-scoped client (RLS active)
+  // also doubles as a cross-org ownership check: if memberId belongs to a
+  // different org, RLS prevents the read and before will be null.
   const { data: before } = await supabase
     .from("memberships")
     .select("role, status, pay_rate_cents, profile_id, display_name, contact_email, contact_phone")
     .eq("id", memberId)
     .single();
 
-  const updatePayload: Record<string, unknown> = {};
-  if (parsed.data.role) updatePayload.role = parsed.data.role;
-  if (parsed.data.status) updatePayload.status = parsed.data.status;
-  if (parsed.data.pay_rate !== undefined)
-    updatePayload.pay_rate_cents = parsed.data.pay_rate;
+  if (!before) {
+    return {
+      errors: {
+        _form: "Couldn't find this employee in your organization. Try refreshing the page.",
+      },
+    };
+  }
 
-  // Name / contact fields for ALL employees.
+  // Build the memberships update payload (public-ish fields only).
   //
   // For shadow members, display_name is their canonical name.
   // For invited members, writing display_name here creates an admin override
   // that takes precedence in memberDisplayName() — the employee's own
   // profiles.full_name (their login identity) is left untouched.
+  const updatePayload: Record<string, unknown> = {};
+  if (parsed.data.role) updatePayload.role = parsed.data.role;
+  if (parsed.data.status) updatePayload.status = parsed.data.status;
+  if (parsed.data.pay_rate !== undefined)
+    updatePayload.pay_rate_cents = parsed.data.pay_rate;
   if (parsed.data.display_name && parsed.data.display_name.length > 0) {
     updatePayload.display_name = parsed.data.display_name;
   }
@@ -340,47 +347,66 @@ export async function updateMemberAction(
   if (parsed.data.contact_phone !== undefined) {
     updatePayload.contact_phone = parsed.data.contact_phone;
   }
-  if (parsed.data.address !== undefined) {
-    updatePayload.address = parsed.data.address;
-  }
-  if (parsed.data.notes !== undefined) {
-    updatePayload.notes = parsed.data.notes;
-  }
 
-  if (Object.keys(updatePayload).length === 0) {
+  // Notes and address are stored in membership_admin_data (owner/admin-only
+  // RLS) so the blanket memberships SELECT policy can't expose them to
+  // employees querying the Supabase REST API directly.
+  const adminDataPayload: Record<string, unknown> = {};
+  if (parsed.data.address !== undefined) adminDataPayload.address = parsed.data.address;
+  if (parsed.data.notes !== undefined) adminDataPayload.notes = parsed.data.notes;
+
+  if (
+    Object.keys(updatePayload).length === 0 &&
+    Object.keys(adminDataPayload).length === 0
+  ) {
     return { errors: { _form: "Nothing to update." } };
   }
 
-  // Use the service-role admin client for the update. The action-level
-  // role check above (owner/admin only) is the authoritative gate; the
-  // RLS policy on memberships also allows owner/admin UPDATEs, but routing
-  // through admin keeps the write immune to any future policy drift that
-  // could silently drop zero-row updates.
+  // Use the service-role admin client. The role check above (owner/admin) is
+  // the authoritative gate; routing through admin keeps writes immune to any
+  // future policy drift that could silently drop zero-row updates.
   const admin = createSupabaseAdminClient();
-  const { data: updated, error } = await admin
-    .from("memberships")
-    .update(updatePayload)
-    .eq("id", memberId)
-    .eq("organization_id", membership.organization_id)
-    .select("id, pay_rate_cents, role, status");
 
-  if (error) {
-    return { errors: { _form: error.message } };
+  if (Object.keys(updatePayload).length > 0) {
+    const { data: updated, error } = await admin
+      .from("memberships")
+      .update(updatePayload)
+      .eq("id", memberId)
+      .eq("organization_id", membership.organization_id)
+      .select("id, pay_rate_cents, role, status");
+
+    if (error) {
+      return { errors: { _form: error.message } };
+    }
+
+    // If zero rows were affected, the filter didn't match — surface a clear
+    // error instead of a success toast with no visible change.
+    if (!updated || updated.length === 0) {
+      console.error(
+        "[updateMember] zero rows affected",
+        { memberId, organizationId: membership.organization_id, updatePayload },
+      );
+      return {
+        errors: {
+          _form:
+            "Couldn't find this employee in your organization. Try refreshing the page.",
+        },
+      };
+    }
   }
 
-  // If zero rows were affected, the filter didn't match — surface a clear
-  // error instead of a success toast with no visible change.
-  if (!updated || updated.length === 0) {
-    console.error(
-      "[updateMember] zero rows affected",
-      { memberId, organizationId: membership.organization_id, updatePayload },
-    );
-    return {
-      errors: {
-        _form:
-          "Couldn't find this employee in your organization. Try refreshing the page.",
-      },
-    };
+  if (Object.keys(adminDataPayload).length > 0) {
+    await (admin
+      .from("membership_admin_data" as never)
+      .upsert(
+        {
+          membership_id: memberId,
+          organization_id: membership.organization_id,
+          ...adminDataPayload,
+          updated_at: new Date().toISOString(),
+        } as never,
+        { onConflict: "membership_id" },
+      ) as unknown as Promise<unknown>);
   }
 
   const action = parsed.data.status === "disabled" ? "deactivate" : "update";
@@ -391,7 +417,7 @@ export async function updateMemberAction(
     entity: "membership",
     entity_id: memberId,
     before: before ?? null,
-    after: updatePayload,
+    after: { ...updatePayload, ...adminDataPayload },
   });
 
   revalidatePath("/app/employees");

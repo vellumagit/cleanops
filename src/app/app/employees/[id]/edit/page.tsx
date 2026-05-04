@@ -29,7 +29,7 @@ export default async function EditEmployeePage({
   const { data: member, error } = (await admin
     .from("memberships")
     .select(
-      "id, organization_id, profile_id, role, status, pay_rate_cents, display_name, contact_email, contact_phone, address, notes, profile:profiles(full_name, phone)",
+      "id, organization_id, profile_id, role, status, pay_rate_cents, display_name, contact_email, contact_phone, profile:profiles(full_name, phone)",
     )
     .eq("id", id)
     .eq("organization_id", viewer.organization_id)
@@ -44,11 +44,20 @@ export default async function EditEmployeePage({
       display_name: string | null;
       contact_email: string | null;
       contact_phone: string | null;
-      address: string | null;
-      notes: string | null;
       profile: { full_name: string | null; phone: string | null } | null;
     } | null;
     error: { message: string } | null;
+  };
+
+  // Notes and address live in the admin-only membership_admin_data table.
+  // Fetched separately so the blanket memberships SELECT policy can't expose
+  // these fields to employees querying the Supabase REST API directly.
+  const { data: adminData } = (await admin
+    .from("membership_admin_data" as never)
+    .select("notes, address")
+    .eq("membership_id" as never, id as never)
+    .maybeSingle()) as unknown as {
+    data: { notes: string | null; address: string | null } | null;
   };
 
   if (error) throw error;
@@ -68,8 +77,8 @@ export default async function EditEmployeePage({
     display_name: currentDisplayName,
     contact_email: member.contact_email,
     contact_phone: member.contact_phone ?? member.profile?.phone ?? null,
-    address: member.address,
-    notes: member.notes,
+    address: adminData?.address ?? null,
+    notes: adminData?.notes ?? null,
     role: member.role,
     pay_rate_cents: member.pay_rate_cents,
     status: member.status,
