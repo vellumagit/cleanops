@@ -13,7 +13,9 @@ export default async function AppLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const membership = await requireMembership();
+  // Employees belong in /field. Owners, admins, and managers get /app.
+  // requireMembership with an allow-list redirects employees → /field automatically.
+  const membership = await requireMembership(["owner", "admin", "manager"]);
 
   const supabase = await createSupabaseServerClient();
   const subscriptionInfo = await getSubscriptionInfo(membership.organization_id);
