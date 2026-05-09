@@ -87,10 +87,31 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       {
-        // Apply to every route except Next's internal asset paths, which
-        // browsers fetch with their own CORS rules.
+        // Apply to every route — full lockdown by default.
         source: "/:path*",
         headers: securityHeaders,
+      },
+      {
+        // Marketing front page only: allow velluma.co to embed it in an
+        // iframe. This overrides the two blocking headers set above.
+        //
+        // CSP frame-ancestors is the modern mechanism; X-Frame-Options is
+        // the legacy fallback. Modern browsers use CSP and ignore
+        // X-Frame-Options when CSP is present, so setting SAMEORIGIN here
+        // is safe — it only affects browsers too old to understand CSP
+        // (essentially none in 2026). The app routes (/app/*, /field/*)
+        // keep their DENY setting from the catch-all above.
+        source: "/",
+        headers: [
+          {
+            key: "Content-Security-Policy",
+            value: csp.replace(
+              "frame-ancestors 'none'",
+              "frame-ancestors 'self' https://velluma.co",
+            ),
+          },
+          { key: "X-Frame-Options", value: "SAMEORIGIN" },
+        ],
       },
     ];
   },
