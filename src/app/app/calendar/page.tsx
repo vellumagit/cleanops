@@ -4,6 +4,9 @@ import { PageShell } from "@/components/page-shell";
 import { CalendarView } from "./calendar-view";
 import { listCalendarEvents } from "@/lib/google-calendar";
 import { memberDisplayName } from "@/lib/member-display";
+import { fetchBookingFormOptions } from "@/app/app/bookings/options";
+import { getOrgCurrency } from "@/lib/org-currency";
+import { getOrgTimezone } from "@/lib/org-timezone";
 import {
   startOfMonth,
   endOfMonth,
@@ -101,7 +104,7 @@ export default async function CalendarPage() {
   const rangeStart = startOfMonth(subMonths(now, 1));
   const rangeEnd = endOfMonth(addMonths(now, 1));
 
-  const [bookingsResult, invoicesResult, gcalEvents] = await Promise.all([
+  const [bookingsResult, invoicesResult, gcalEvents, formOptions, currency, tz] = await Promise.all([
     supabase
       .from("bookings")
       .select(
@@ -128,6 +131,9 @@ export default async function CalendarPage() {
       rangeStart.toISOString(),
       rangeEnd.toISOString(),
     ),
+    fetchBookingFormOptions(),
+    getOrgCurrency(membership.organization_id),
+    getOrgTimezone(membership.organization_id),
   ]);
 
   const bookingEvents: CalendarEvent[] = (bookingsResult.data ?? []).map(
@@ -214,7 +220,13 @@ export default async function CalendarPage() {
       title="Calendar"
       description="View bookings, invoices, and events across your organization."
     >
-      <CalendarView events={events} hasGoogleCalendar={hasGoogleCalendar} />
+      <CalendarView
+        events={events}
+        hasGoogleCalendar={hasGoogleCalendar}
+        formOptions={formOptions}
+        currency={currency}
+        tz={tz}
+      />
     </PageShell>
   );
 }

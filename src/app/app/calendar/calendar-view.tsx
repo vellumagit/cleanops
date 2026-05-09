@@ -35,26 +35,86 @@ import {
   Pencil,
   Navigation,
   Eye,
+  Plus,
 } from "lucide-react";
 import type { CalendarEvent } from "./page";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import {
+  BookingForm,
+  type BookingFormDefaults,
+  type ClientOption,
+  type PackageOption,
+} from "@/app/app/bookings/booking-form";
 
 type ViewMode = "month" | "week" | "day";
 
 type EventSource = "booking" | "invoice" | "google_calendar";
 
+type EmployeeOption = { id: string; label: string };
+
 type Props = {
   events: CalendarEvent[];
   hasGoogleCalendar?: boolean;
+  formOptions: {
+    clients: ClientOption[];
+    packages: PackageOption[];
+    employees: EmployeeOption[];
+  };
+  currency: "CAD" | "USD";
+  tz: string;
 };
+
+/**
+ * Convert a UTC ISO string to a datetime-local value (YYYY-MM-DDTHH:mm)
+ * expressed in the given IANA timezone — mirrors the helper in new/page.tsx.
+ */
+function isoToDatetimeLocal(iso: string, tz: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(d);
+  const get = (type: string) =>
+    parts.find((p) => p.type === type)?.value ?? "00";
+  return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}`;
+}
 
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 
-export function CalendarView({ events, hasGoogleCalendar }: Props) {
+export function CalendarView({ events, hasGoogleCalendar, formOptions, currency, tz }: Props) {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [view, setView] = useState<ViewMode>("month");
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [bookingDefaults, setBookingDefaults] = useState<BookingFormDefaults | undefined>(
+    undefined,
+  );
+  // Increment every open so BookingForm remounts fresh (clears half-filled state).
+  const [formKey, setFormKey] = useState(0);
+
+  /** Open the new-booking Sheet, optionally pre-filling date/time. */
+  function openBookingSheet(slotIso?: string) {
+    setBookingDefaults(
+      slotIso
+        ? { scheduled_at_local: isoToDatetimeLocal(slotIso, tz) }
+        : undefined,
+    );
+    setFormKey((k) => k + 1);
+    setSheetOpen(true);
+  }
   // Restore Google Calendar toggle from localStorage at mount time so
   // we don't cascade-render from a setState-in-effect.
   const [enabledSources, setEnabledSources] = useState<Set<EventSource>>(
@@ -125,6 +185,7 @@ export function CalendarView({ events, hasGoogleCalendar }: Props) {
   }
 
   return (
+    <>
     <div className="space-y-4">
       {/* Toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -182,6 +243,15 @@ export function CalendarView({ events, hasGoogleCalendar }: Props) {
             )}
           </div>
 
+          {/* New booking */}
+          <button
+            onClick={() => openBookingSheet()}
+            className="flex items-center gap-1.5 rounded-md bg-foreground px-3 py-1.5 text-xs font-medium text-background transition-opacity hover:opacity-90"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            New booking
+          </button>
+
           <div className="h-4 w-px bg-border" />
 
           {/* View mode */}
@@ -220,6 +290,7 @@ export function CalendarView({ events, hasGoogleCalendar }: Props) {
                 setCurrentDate(d);
                 setView("day");
               }}
+              onNewBooking={openBookingSheet}
             />
           )}
           {view === "week" && (
@@ -227,6 +298,7 @@ export function CalendarView({ events, hasGoogleCalendar }: Props) {
               currentDate={currentDate}
               events={filteredEvents}
               onSelectEvent={setSelectedEvent}
+              onNewBooking={openBookingSheet}
             />
           )}
           {view === "day" && (
@@ -234,6 +306,7 @@ export function CalendarView({ events, hasGoogleCalendar }: Props) {
               currentDate={currentDate}
               events={filteredEvents}
               onSelectEvent={setSelectedEvent}
+              onNewBooking={openBookingSheet}
             />
           )}
         </div>
@@ -249,6 +322,28 @@ export function CalendarView({ events, hasGoogleCalendar }: Props) {
         )}
       </div>
     </div>
+
+    {/* New booking Sheet — opened from toolbar button or day-cell "+" */}
+    <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
+      <SheetContent side="right" className="w-full sm:max-w-xl overflow-y-auto">
+        <SheetHeader className="pb-2">
+          <SheetTitle>New booking</SheetTitle>
+        </SheetHeader>
+        <div className="px-4 pb-6">
+          <BookingForm
+            key={formKey}
+            mode="create"
+            currency={currency}
+            defaults={bookingDefaults}
+            clients={formOptions.clients}
+            packages={formOptions.packages}
+            employees={formOptions.employees}
+            onSuccess={() => setSheetOpen(false)}
+          />
+        </div>
+      </SheetContent>
+    </Sheet>
+    </>
   );
 }
 
@@ -323,11 +418,13 @@ function MonthView({
   events,
   onSelectEvent,
   onDayClick,
+  onNewBooking,
 }: {
   currentDate: Date;
   events: CalendarEvent[];
   onSelectEvent: (e: CalendarEvent) => void;
   onDayClick: (d: Date) => void;
+  onNewBooking: (slotIso?: string) => void;
 }) {
   const monthStart = startOfMonth(currentDate);
   const monthEnd = endOfMonth(currentDate);
@@ -377,7 +474,7 @@ function MonthView({
             return (
               <div
                 key={d.toISOString()}
-                className={`min-h-[100px] border-r border-border last:border-r-0 p-1.5 cursor-pointer transition-colors hover:bg-muted/30 ${
+                className={`group min-h-[100px] border-r border-border last:border-r-0 p-1.5 cursor-pointer transition-colors hover:bg-muted/30 ${
                   !inMonth ? "bg-muted/10" : ""
                 }`}
                 onClick={() => onDayClick(d)}
@@ -394,6 +491,22 @@ function MonthView({
                   >
                     {format(d, "d")}
                   </span>
+                  {/* "+" appears on hover — stopPropagation so the day-click
+                      handler (navigates to day view) doesn't also fire. */}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      // Pre-fill 9 AM on the clicked day
+                      const slot = new Date(d);
+                      slot.setHours(9, 0, 0, 0);
+                      onNewBooking(slot.toISOString());
+                    }}
+                    className="opacity-0 group-hover:opacity-100 focus:opacity-100 flex h-4 w-4 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-all"
+                    title={`New booking on ${format(d, "MMM d")}`}
+                  >
+                    <Plus className="h-3 w-3" />
+                  </button>
                 </div>
                 <div className="space-y-0.5">
                   {dayEvents.slice(0, 3).map((ev) => (
@@ -445,10 +558,12 @@ function WeekView({
   currentDate,
   events,
   onSelectEvent,
+  onNewBooking,
 }: {
   currentDate: Date;
   events: CalendarEvent[];
   onSelectEvent: (e: CalendarEvent) => void;
+  onNewBooking: (slotIso?: string) => void;
 }) {
   const weekStart = startOfWeek(currentDate, { weekStartsOn: 0 });
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
@@ -538,10 +653,19 @@ function WeekView({
                 return (
                   <div
                     key={`${d.toISOString()}-${hour}`}
-                    className={`relative border-r border-b border-border last:border-r-0 h-14 ${
+                    className={`group relative border-r border-b border-border last:border-r-0 h-14 cursor-pointer hover:bg-muted/20 ${
                       isToday(d) ? "bg-foreground/[0.02]" : ""
                     }`}
+                    onClick={() => {
+                      // Build a slot ISO at the clicked hour on this day
+                      const slot = setHours(startOfDay(d), hour);
+                      onNewBooking(slot.toISOString());
+                    }}
                   >
+                    {/* Hover hint */}
+                    <span className="pointer-events-none absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Plus className="h-3.5 w-3.5 text-muted-foreground/50" />
+                    </span>
                     {cellEvents.map((ev) => {
                       const evStart = new Date(ev.start);
                       const evEnd = new Date(ev.end);
@@ -559,7 +683,7 @@ function WeekView({
                       return (
                         <button
                           key={ev.id}
-                          onClick={() => onSelectEvent(ev)}
+                          onClick={(e) => { e.stopPropagation(); onSelectEvent(ev); }}
                           className={`absolute left-0.5 right-0.5 z-10 overflow-hidden rounded px-1.5 py-0.5 text-left text-[10px] leading-tight text-white transition-opacity hover:opacity-80 ${
                             ev.type === "google_calendar"
                               ? "border border-dashed border-white/30 opacity-85"
@@ -604,10 +728,12 @@ function DayView({
   currentDate,
   events,
   onSelectEvent,
+  onNewBooking,
 }: {
   currentDate: Date;
   events: CalendarEvent[];
   onSelectEvent: (e: CalendarEvent) => void;
+  onNewBooking: (slotIso?: string) => void;
 }) {
   const dayStart = startOfDay(currentDate);
   const dayEnd = endOfDay(currentDate);
@@ -688,7 +814,17 @@ function DayView({
                     </span>
                   )}
                 </div>
-                <div className="relative border-b border-border h-16">
+                <div
+                  className="group relative border-b border-border h-16 cursor-pointer hover:bg-muted/20"
+                  onClick={() => {
+                    const slot = setHours(dayStart, hour);
+                    onNewBooking(slot.toISOString());
+                  }}
+                >
+                  {/* Hover hint */}
+                  <span className="pointer-events-none absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                    <Plus className="h-3.5 w-3.5 text-muted-foreground/50" />
+                  </span>
                   {cellEvents.map((ev) => {
                     const evStart = new Date(ev.start);
                     const evEnd = new Date(ev.end);
@@ -703,7 +839,7 @@ function DayView({
                     return (
                       <button
                         key={ev.id}
-                        onClick={() => onSelectEvent(ev)}
+                        onClick={(e) => { e.stopPropagation(); onSelectEvent(ev); }}
                         className={`absolute left-1 right-4 z-10 overflow-hidden rounded-md px-3 py-1.5 text-left text-xs text-white transition-opacity hover:opacity-80 ${
                           ev.type === "google_calendar"
                             ? "border border-dashed border-white/30 opacity-85"

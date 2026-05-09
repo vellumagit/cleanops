@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useActionState } from "react";
+import { useState, useActionState, useEffect } from "react";
 import Link from "next/link";
 import { Repeat, CalendarPlus } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -39,6 +39,17 @@ export type BookingFormDefaults = {
   address?: string | null;
   notes?: string | null;
   series_id?: string | null;
+  /** Series schedule fields — passed when editing a recurring booking so the
+   *  "Edit recurring schedule" section can be pre-filled. */
+  series_pattern?: string;
+  /** HH:MM 24-hour time */
+  series_start_time?: string;
+  /** YYYY-MM-DD anchor date for the new schedule (defaults to current booking's date) */
+  series_starts_at?: string;
+  series_ends_at?: string | null;
+  series_custom_days?: number[];
+  series_monthly_nth?: number | null;
+  series_monthly_dow?: number | null;
 };
 
 type Option = { id: string; label: string };
@@ -79,6 +90,7 @@ export function BookingForm({
   packages,
   employees,
   currency = "CAD",
+  onSuccess,
 }: {
   mode: "create" | "edit";
   id?: string;
@@ -87,6 +99,10 @@ export function BookingForm({
   packages: PackageOption[];
   employees: Option[];
   currency?: "CAD" | "USD";
+  /** When provided, the form runs in "embedded" mode: submitting signals
+   *  done via state instead of a page redirect, then calls onSuccess so
+   *  the parent can close the Sheet. */
+  onSuccess?: () => void;
 }) {
   const [isRecurring, setIsRecurring] = useState(false);
   const [recurrencePattern, setRecurrencePattern] = useState("weekly");
@@ -119,6 +135,40 @@ export function BookingForm({
     );
   }
 
+  // ── Series schedule state (edit mode only) ──────────────────────────────
+  // These are shown when editing a recurring booking with "this_and_future"
+  // scope so the owner can change the recurrence rule, not just field values.
+  const [seriesPattern, setSeriesPattern] = useState(
+    defaults?.series_pattern ?? "weekly",
+  );
+  const [seriesStartTime, setSeriesStartTime] = useState(
+    defaults?.series_start_time ?? "09:00",
+  );
+  const [seriesStartsAt, setSeriesStartsAt] = useState(
+    defaults?.series_starts_at ?? "",
+  );
+  const [seriesEndsIndefinite, setSeriesEndsIndefinite] = useState(
+    !defaults?.series_ends_at,
+  );
+  const [seriesEndsAtValue, setSeriesEndsAtValue] = useState(
+    defaults?.series_ends_at ?? "",
+  );
+  const [seriesCustomDays, setSeriesCustomDays] = useState<number[]>(
+    defaults?.series_custom_days ?? [],
+  );
+  const [seriesMonthlyNth, setSeriesMonthlyNth] = useState(
+    String(defaults?.series_monthly_nth ?? "2"),
+  );
+  const [seriesMonthlyDow, setSeriesMonthlyDow] = useState(
+    String(defaults?.series_monthly_dow ?? "2"),
+  );
+
+  function toggleSeriesDay(day: number) {
+    setSeriesCustomDays((prev) =>
+      prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day].sort(),
+    );
+  }
+
   const defaultMinutes = defaults?.duration_minutes ?? 0;
 
   // Single-booking action
@@ -137,6 +187,14 @@ export function BookingForm({
   const state = isRecurring ? recurringState : singleState;
   const formAction = isRecurring ? recurringFormAction : singleFormAction;
   const v = state.values ?? {};
+
+  // When embedded (onSuccess is set), watch for the server action returning
+  // _done=1 (meaning it skipped redirect) and call onSuccess to close the Sheet.
+  useEffect(() => {
+    if (onSuccess && (state.values as Record<string, unknown>)?._done === "1") {
+      onSuccess();
+    }
+  }, [state.values, onSuccess]);
 
   // Controlled values for the fields that auto-populate from client +
   // package selection. We only pre-fill when the field is empty so we
@@ -230,6 +288,9 @@ export function BookingForm({
   return (
     <form action={formAction} className="space-y-5">
       <SetupReturnField />
+      {/* Signal the server action to return a done-state instead of
+          redirecting when we're embedded inside a Sheet / drawer. */}
+      {onSuccess && <input type="hidden" name="_source" value="calendar" />}
       <FormError message={state.errors?._form} />
 
       {/* Hidden scope + series fields for recurring edits */}
@@ -761,13 +822,184 @@ export function BookingForm({
         </fieldset>
       )}
 
+      {/* ── Edit recurring schedule ─────────────────────────────────────────
+          Shown only when editing a recurring booking AND the user chose
+          "this and all future bookings". Lets the owner change the frequency,
+          time-of-day, days, or end-date without creating a brand-new series.
+          The server action detects `series_update_schedule=1`, deletes future
+          pending/confirmed occurrences, and regenerates from the new rule.   */}
+      {isEditingSeries && updateScope === "this_and_future" && (
+        <div className="space-y-4 rounded-lg border border-blue-200 bg-blue-50/40 dark:border-blue-900 dark:bg-blue-950/20 p-4">
+          <div className="flex items-center gap-1.5">
+            <Repeat className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+            <h3 className="text-sm font-semibold text-foreground">
+              Edit recurring schedule
+            </h3>
+          </div>
+          <p className="text-xs text-muted-foreground -mt-2">
+            Changing the schedule will cancel future occurrences and
+            regenerate them from the new rule.
+          </p>
+
+          {/* Signal the server to apply schedule changes */}
+          <input type="hidden" name="series_update_schedule" value="1" />
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <FormField label="Frequency" htmlFor="series_pattern" required>
+              <FormSelect
+                id="series_pattern"
+                name="series_pattern"
+                value={seriesPattern}
+                onChange={(e) => setSeriesPattern(e.target.value)}
+              >
+                {RECURRENCE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </FormSelect>
+              <p className="mt-1 text-[11px] text-muted-foreground leading-snug">
+                {RECURRENCE_OPTIONS.find((o) => o.value === seriesPattern)?.description}
+              </p>
+            </FormField>
+
+            <FormField label="Time" htmlFor="series_start_time" required>
+              <Input
+                id="series_start_time"
+                name="series_start_time"
+                type="time"
+                required
+                value={seriesStartTime}
+                onChange={(e) => setSeriesStartTime(e.target.value)}
+              />
+            </FormField>
+          </div>
+
+          {/* Monthly-Nth picker */}
+          {seriesPattern === "monthly_nth" && (
+            <div className="grid gap-4 sm:grid-cols-2">
+              <FormField label="Which occurrence" htmlFor="series_monthly_nth" required>
+                <FormSelect
+                  id="series_monthly_nth"
+                  name="series_monthly_nth"
+                  value={seriesMonthlyNth}
+                  onChange={(e) => setSeriesMonthlyNth(e.target.value)}
+                >
+                  <option value="1">1st</option>
+                  <option value="2">2nd</option>
+                  <option value="3">3rd</option>
+                  <option value="4">4th</option>
+                  <option value="5">Last</option>
+                </FormSelect>
+              </FormField>
+              <FormField label="Weekday" htmlFor="series_monthly_dow" required>
+                <FormSelect
+                  id="series_monthly_dow"
+                  name="series_monthly_dow"
+                  value={seriesMonthlyDow}
+                  onChange={(e) => setSeriesMonthlyDow(e.target.value)}
+                >
+                  {DAY_LABELS.map((d) => (
+                    <option key={d.value} value={d.value}>
+                      {d.label === "Sun" ? "Sunday"
+                        : d.label === "Mon" ? "Monday"
+                        : d.label === "Tue" ? "Tuesday"
+                        : d.label === "Wed" ? "Wednesday"
+                        : d.label === "Thu" ? "Thursday"
+                        : d.label === "Fri" ? "Friday"
+                        : "Saturday"}
+                    </option>
+                  ))}
+                </FormSelect>
+              </FormField>
+            </div>
+          )}
+
+          {/* Custom days picker */}
+          {seriesPattern === "custom_weekly" && (
+            <div>
+              <label className="mb-1.5 block text-sm font-medium">
+                Days of the week <span className="text-red-500">*</span>
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {DAY_LABELS.map((day) => (
+                  <button
+                    key={day.value}
+                    type="button"
+                    onClick={() => toggleSeriesDay(day.value)}
+                    className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors border ${
+                      seriesCustomDays.includes(day.value)
+                        ? "bg-foreground text-background border-foreground"
+                        : "bg-background text-muted-foreground border-border hover:border-foreground/50"
+                    }`}
+                  >
+                    {day.label}
+                  </button>
+                ))}
+              </div>
+              <input
+                type="hidden"
+                name="series_custom_days"
+                value={seriesCustomDays.join(",")}
+              />
+            </div>
+          )}
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <FormField
+              label="Regenerate from"
+              htmlFor="series_starts_at"
+              required
+              hint="New occurrences are generated from this date forward"
+            >
+              <Input
+                id="series_starts_at"
+                name="series_starts_at"
+                type="date"
+                required
+                value={seriesStartsAt}
+                onChange={(e) => setSeriesStartsAt(e.target.value)}
+              />
+            </FormField>
+
+            <FormField label="Series ends" htmlFor="series_ends_at">
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={seriesEndsIndefinite}
+                    onChange={(e) => setSeriesEndsIndefinite(e.target.checked)}
+                    className="h-4 w-4 rounded border-input"
+                  />
+                  <span>Continue indefinitely</span>
+                </label>
+                <Input
+                  id="series_ends_at"
+                  name="series_ends_at"
+                  type="date"
+                  value={seriesEndsIndefinite ? "" : seriesEndsAtValue}
+                  onChange={(e) => setSeriesEndsAtValue(e.target.value)}
+                  disabled={seriesEndsIndefinite}
+                  required={!seriesEndsIndefinite}
+                  className={seriesEndsIndefinite ? "opacity-50" : ""}
+                />
+              </div>
+            </FormField>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-end gap-2 pt-2">
-        <Link
-          href="/app/bookings"
-          className={buttonVariants({ variant: "ghost" })}
-        >
-          Cancel
-        </Link>
+        {/* In embedded mode (calendar sheet) there's no page to navigate
+            back to — the sheet's own close button serves as Cancel. */}
+        {!onSuccess && (
+          <Link
+            href="/app/bookings"
+            className={buttonVariants({ variant: "ghost" })}
+          >
+            Cancel
+          </Link>
+        )}
         <SubmitButton pendingLabel={isRecurring ? "Creating…" : "Saving…"}>
           {mode === "create"
             ? isRecurring

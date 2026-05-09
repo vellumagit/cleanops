@@ -262,7 +262,16 @@ export async function createBookingAction(
   }).catch((err) => console.error("[gcal] sync error on create:", err));
 
   revalidatePath("/app/bookings");
+  revalidatePath("/app/calendar");
   revalidatePath("/app");
+
+  // When the form is embedded in the calendar Sheet, return a done
+  // signal instead of redirecting so the sheet can close without
+  // navigating away from the calendar page.
+  if (String(formData.get("_source") ?? "") === "calendar") {
+    return { values: { ...raw, _done: "1" } };
+  }
+
   redirectAfterSetup(formData, "/app/bookings");
 }
 
@@ -428,6 +437,14 @@ export async function createRecurringBookingAction(
   revalidatePath("/app/bookings");
   revalidatePath("/app/calendar");
   revalidatePath("/app");
+
+  // When the form is embedded in the calendar Sheet, return a done
+  // signal instead of redirecting so the sheet can close without
+  // navigating away from the calendar page.
+  if (String(formData.get("_source") ?? "") === "calendar") {
+    return { values: { ...raw, _done: "1" } };
+  }
+
   redirectAfterSetup(formData, "/app/bookings");
 }
 
@@ -519,8 +536,9 @@ export async function updateBookingAction(
   if (updateScope === "this_and_future" && seriesId && seriesScheduledAt) {
     const admin = createSupabaseAdminClient();
 
-    // Propagatable fields — we intentionally do NOT touch scheduled_at or
-    // status on siblings (each occurrence keeps its own date and lifecycle).
+    // Fields that propagate to future bookings regardless of schedule change.
+    // We intentionally do NOT touch scheduled_at or status on siblings —
+    // each occurrence keeps its own date and lifecycle.
     const propagatableFields = {
       duration_minutes: parsed.data.duration_minutes,
       service_type: parsed.data.service_type,
@@ -531,27 +549,151 @@ export async function updateBookingAction(
       notes: parsed.data.notes ?? null,
     };
 
-    // Update future siblings: same series, scheduled on or after this
-    // booking's original UTC date, not completed/cancelled, and not this
-    // booking itself (already updated above).
-    await (admin
-      .from("bookings")
-      .update(propagatableFields as never)
-      .eq("series_id" as never, seriesId as never)
-      .eq("organization_id", membership.organization_id)
-      .neq("id", id)
-      .gte("scheduled_at", seriesScheduledAt)
-      .not("status" as never, "in" as never, '("completed","cancelled")' as never) as unknown as Promise<unknown>);
+    // Check whether the owner is also changing the recurrence schedule.
+    // The form signals this by including a hidden `series_update_schedule=1`
+    // field, which is only injected when the schedule-edit section is visible.
+    const updateSchedule =
+      String(formData.get("series_update_schedule") ?? "") === "1";
+    let scheduleFields: Record<string, unknown> = {};
 
-    // Keep the booking_series template row in sync so future generated
-    // occurrences inherit the new values.
+    if (updateSchedule) {
+      const newPattern = String(formData.get("series_pattern") ?? "").trim();
+      const newStartTime = String(formData.get("series_start_time") ?? "").trim();
+      const newStartsAt = String(formData.get("series_starts_at") ?? "").trim();
+      const newEndsAt =
+        String(formData.get("series_ends_at") ?? "").trim() || null;
+      const newCustomDaysRaw = String(
+        formData.get("series_custom_days") ?? "",
+      ).trim();
+      const newMonthlyNthRaw = String(
+        formData.get("series_monthly_nth") ?? "",
+      ).trim();
+      const newMonthlyDowRaw = String(
+        formData.get("series_monthly_dow") ?? "",
+      ).trim();
+
+      const validPatterns = [
+        "weekly", "bi_weekly", "tri_weekly", "quad_weekly", "monthly",
+        "custom_weekly", "monthly_nth", "every_2_months", "every_3_months",
+        "every_6_months",
+      ];
+
+      if (validPatterns.includes(newPattern) && newStartTime && newStartsAt) {
+        const parsedCustomDays =
+          newPattern === "custom_weekly" && newCustomDaysRaw
+            ? newCustomDaysRaw
+                .split(",")
+                .map(Number)
+                .filter((n) => Number.isFinite(n) && n >= 0 && n <= 6)
+            : null;
+        const parsedMonthlyNth =
+          newPattern === "monthly_nth" && newMonthlyNthRaw
+            ? Number(newMonthlyNthRaw)
+            : null;
+        const parsedMonthlyDow =
+          newPattern === "monthly_nth" && newMonthlyDowRaw
+            ? Number(newMonthlyDowRaw)
+            : null;
+
+        scheduleFields = {
+          pattern: newPattern,
+          start_time: newStartTime,
+          starts_at: newStartsAt,
+          ends_at: newEndsAt,
+          custom_days: parsedCustomDays,
+          monthly_nth: parsedMonthlyNth,
+          monthly_dow: parsedMonthlyDow,
+        };
+
+        // Delete all future pending/confirmed occurrences in the series
+        // (excluding the currently-edited booking — it's already updated).
+        // The admin client bypasses RLS; org isolation enforced explicitly.
+        await (admin
+          .from("bookings")
+          .delete()
+          .eq("series_id" as never, seriesId as never)
+          .eq("organization_id", membership.organization_id)
+          .neq("id", id)
+          .gte("scheduled_at", seriesScheduledAt)
+          .not(
+            "status" as never,
+            "in" as never,
+            '("completed","cancelled")' as never,
+          ) as unknown as Promise<unknown>);
+
+        // Generate new occurrences strictly after the current booking's
+        // datetime so we don't create a duplicate for today's slot.
+        const rule: SeriesRule = {
+          pattern: newPattern as SeriesRule["pattern"],
+          custom_days: parsedCustomDays,
+          start_time: newStartTime,
+          starts_at: newStartsAt,
+          ends_at: newEndsAt,
+          generate_ahead: 8,
+          monthly_nth: parsedMonthlyNth,
+          monthly_dow: parsedMonthlyDow,
+          tz: orgTz,
+        };
+
+        const occurrences = generateOccurrences(
+          rule,
+          8,
+          new Date(seriesScheduledAt), // `after` — exclusive, so starts after current booking
+        );
+
+        if (occurrences.length > 0) {
+          const bookingRows = occurrences.map((scheduled_at) => ({
+            organization_id: membership.organization_id,
+            client_id: parsed.data.client_id,
+            package_id: parsed.data.package_id ?? null,
+            assigned_to: parsed.data.assigned_to ?? null,
+            scheduled_at,
+            duration_minutes: parsed.data.duration_minutes,
+            service_type: parsed.data.service_type,
+            status: "confirmed" as const,
+            total_cents: parsed.data.total_cents,
+            hourly_rate_cents: parsed.data.hourly_rate_cents ?? null,
+            address: parsed.data.address ?? null,
+            notes: parsed.data.notes ?? null,
+            series_id: seriesId,
+          }));
+
+          await (admin
+            .from("bookings")
+            .insert(bookingRows as never) as unknown as Promise<unknown>);
+
+          console.log(
+            `[series-reschedule] regenerated ${occurrences.length} bookings in series ${seriesId}`,
+          );
+        }
+      }
+    } else {
+      // No schedule change — propagate the field updates to existing future
+      // siblings so they stay consistent with the edited booking.
+      await (admin
+        .from("bookings")
+        .update(propagatableFields as never)
+        .eq("series_id" as never, seriesId as never)
+        .eq("organization_id", membership.organization_id)
+        .neq("id", id)
+        .gte("scheduled_at", seriesScheduledAt)
+        .not(
+          "status" as never,
+          "in" as never,
+          '("completed","cancelled")' as never,
+        ) as unknown as Promise<unknown>);
+    }
+
+    // Always keep the series template in sync — both field values and
+    // (when changed) the new schedule so the nightly extend cron picks up
+    // the right rule for future generations.
     await (admin
       .from("booking_series" as never)
-      .update(propagatableFields as never)
+      .update({ ...propagatableFields, ...scheduleFields } as never)
       .eq("id" as never, seriesId as never)
       .eq("organization_id" as never, membership.organization_id as never) as unknown as Promise<unknown>);
 
-    console.log(`[series-update] propagated changes to future bookings in series ${seriesId}`);
+    console.log(`[series-update] saved changes to series ${seriesId}`);
   }
 
   // If the scheduled time changed, email the client + push employee

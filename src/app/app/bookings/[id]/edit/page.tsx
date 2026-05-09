@@ -69,6 +69,37 @@ export default async function EditBookingPage({
     .filter((a) => !a.is_primary)
     .map((a) => a.membership_id);
 
+  // Fetch the series row so the "Edit recurring schedule" section can be
+  // pre-filled with the current rule. Only needed when this booking belongs
+  // to a series.
+  const seriesData = booking.series_id
+    ? await (supabase
+        .from("booking_series" as never)
+        .select(
+          "pattern, start_time, starts_at, ends_at, custom_days, monthly_nth, monthly_dow",
+        )
+        .eq("id" as never, booking.series_id as never)
+        .maybeSingle() as unknown as Promise<{
+        data: {
+          pattern: string;
+          /** PostgreSQL time: "HH:MM:SS" */
+          start_time: string;
+          starts_at: string;
+          ends_at: string | null;
+          custom_days: number[] | null;
+          monthly_nth: number | null;
+          monthly_dow: number | null;
+        } | null;
+      }>)
+    : { data: null };
+
+  const series = seriesData.data;
+
+  // The "regenerate from" date defaults to this booking's date in org tz
+  // (YYYY-MM-DD). The owner can push it forward if they want to leave
+  // earlier occurrences untouched.
+  const seriesStartsAtDefault = toDatetimeLocal(booking.scheduled_at, orgTz).slice(0, 10);
+
   return (
     <PageShell title="Edit booking">
       <div className="max-w-3xl space-y-6">
@@ -95,6 +126,19 @@ export default async function EditBookingPage({
               notes: booking.notes,
               series_id: booking.series_id,
               scheduled_at_utc: booking.scheduled_at,
+              // Series schedule — only present when booking is part of a series.
+              ...(series
+                ? {
+                    series_pattern: series.pattern,
+                    // PostgreSQL time columns come back as "HH:MM:SS" — slice to HH:MM.
+                    series_start_time: series.start_time.slice(0, 5),
+                    series_starts_at: seriesStartsAtDefault,
+                    series_ends_at: series.ends_at ?? null,
+                    series_custom_days: series.custom_days ?? [],
+                    series_monthly_nth: series.monthly_nth,
+                    series_monthly_dow: series.monthly_dow,
+                  }
+                : {}),
             }}
           />
         </div>
