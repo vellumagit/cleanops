@@ -35,11 +35,19 @@ export async function fetchBookingFormOptions() {
       .eq("is_active", true)
       .order("name"),
     // Every active membership is assignable — owners, admins, and shadow
-    // (manually-added) members included.
+    // (manually-added) members included. pay_rate_cents is used to
+    // pre-fill split-shift hourly rates.
     supabase
       .from("memberships")
-      .select("id, display_name, profile:profiles ( full_name )")
-      .eq("status", "active"),
+      .select("id, display_name, profile:profiles ( full_name ), pay_rate_cents")
+      .eq("status", "active") as unknown as Promise<{
+      data: Array<{
+        id: string;
+        display_name: string | null;
+        profile: { full_name: string | null } | null;
+        pay_rate_cents: number | null;
+      }> | null;
+    }>,
   ]);
 
   return {
@@ -62,6 +70,7 @@ export async function fetchBookingFormOptions() {
       (employees.data?.map((m) => ({
         id: m.id,
         label: memberDisplayName(m),
+        pay_rate_cents: m.pay_rate_cents ?? null,
       })) ?? []).sort((a, b) => a.label.localeCompare(b.label)),
   };
 }

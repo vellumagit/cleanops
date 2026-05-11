@@ -7,7 +7,14 @@ export const metadata: Metadata = {
   description: "Create your Sollos 3 workspace.",
 };
 
-export default function SignupPage() {
+export default async function SignupPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ invite?: string }>;
+}) {
+  const { invite } = await searchParams;
+  const isInvite = Boolean(invite);
+
   return (
     <main className="sollos-wash relative flex flex-1 items-center justify-center px-6 py-16">
       <div className="sollos-dots absolute inset-0" aria-hidden />
@@ -30,21 +37,35 @@ export default function SignupPage() {
 
         <div className="sollos-card p-6">
           <div className="mb-6">
-            <h1 className="text-lg font-semibold tracking-tight">
-              Create your workspace
-            </h1>
-            <p className="mt-0.5 text-sm text-muted-foreground">
-              Get started in 30 seconds.
-            </p>
+            {isInvite ? (
+              <>
+                <h1 className="text-lg font-semibold tracking-tight">
+                  Create your account
+                </h1>
+                <p className="mt-0.5 text-sm text-muted-foreground">
+                  You&apos;ve been invited to join a team. Set up your account
+                  to accept.
+                </p>
+              </>
+            ) : (
+              <>
+                <h1 className="text-lg font-semibold tracking-tight">
+                  Create your workspace
+                </h1>
+                <p className="mt-0.5 text-sm text-muted-foreground">
+                  Get started in 30 seconds.
+                </p>
+              </>
+            )}
           </div>
 
-          <SignupForm />
+          <SignupForm inviteToken={invite} />
         </div>
 
         <p className="mt-6 text-center text-sm text-muted-foreground">
           Already have an account?{" "}
           <Link
-            href="/login"
+            href={invite ? `/login?invite=${invite}` : "/login"}
             className="font-medium text-foreground underline-offset-4 hover:underline"
           >
             Sign in

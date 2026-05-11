@@ -6,6 +6,7 @@ import { BrandProvider } from "@/components/brand-provider";
 import { PushPrompt } from "@/components/push-prompt";
 import { TrialBanner } from "@/components/trial-banner";
 import { SetupReturnBanner } from "@/components/setup-return-banner";
+import { QuickActions } from "@/components/quick-actions";
 import { DEFAULT_TZ } from "@/lib/format";
 
 export default async function AppLayout({
@@ -150,6 +151,7 @@ export default async function AppLayout({
           organizationId={membership.organization_id}
         />
         {children}
+        <QuickActions role={membership.role} />
       </div>
     </BrandProvider>
   );

@@ -1,5 +1,7 @@
+import { redirect } from "next/navigation";
 import Link from "next/link";
 import { buttonVariants } from "@/components/ui/button";
+import { getCurrentMembership } from "@/lib/auth";
 import {
   ArrowRight,
   CalendarCheck,
@@ -21,7 +23,15 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-export default function Home() {
+export default async function Home() {
+  // Authenticated employees belong in /field — they should never see the
+  // marketing page. Owners/admins/managers who visit / intentionally (e.g.
+  // sharing the link) still see it; they navigate to /app from their session.
+  const membership = await getCurrentMembership();
+  if (membership?.role === "employee") {
+    redirect("/field/jobs");
+  }
+
   return (
     <main className="sollos-wash relative flex flex-1 flex-col">
       <div className="sollos-dots absolute inset-0" aria-hidden />

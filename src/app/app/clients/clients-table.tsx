@@ -1,6 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { CalendarPlus } from "lucide-react";
 import { DataTable, type DataTableColumn } from "@/components/data-table";
 import { StatusBadge } from "@/components/status-badge";
 import { formatCurrencyCents, humanizeEnum } from "@/lib/format";
@@ -64,6 +66,23 @@ export function ClientsTable({
       headerClassName: "text-right",
       className: "text-right tabular-nums font-medium",
       render: (r) => formatCurrencyCents(r.balance_cents),
+    },
+    {
+      key: "actions",
+      header: "",
+      headerClassName: "w-10",
+      className: "w-10 text-right",
+      render: (r) => (
+        <Link
+          href={`/app/bookings/new?client_id=${r.id}`}
+          onClick={(e) => e.stopPropagation()}
+          title="New booking for this client"
+          className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+        >
+          <CalendarPlus className="h-3.5 w-3.5" />
+          Book
+        </Link>
+      ),
     },
   ];
 

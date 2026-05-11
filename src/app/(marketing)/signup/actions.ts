@@ -15,9 +15,15 @@ export async function signupAction(
   _prevState: SignupActionState,
   formData: FormData,
 ): Promise<SignupActionState> {
+  const inviteToken = String(formData.get("inviteToken") ?? "").trim() || null;
+  const isInvite = Boolean(inviteToken);
+
   const raw = {
     fullName: String(formData.get("fullName") ?? "").trim(),
-    organizationName: String(formData.get("organizationName") ?? "").trim(),
+    // Organization name not required when joining via invite
+    organizationName: isInvite
+      ? "invite"
+      : String(formData.get("organizationName") ?? "").trim(),
     email: String(formData.get("email") ?? "").trim(),
     password: String(formData.get("password") ?? ""),
   };
@@ -33,13 +39,14 @@ export async function signupAction(
       errors: fieldErrors,
       values: {
         fullName: raw.fullName,
-        organizationName: raw.organizationName,
+        organizationName: isInvite ? "" : raw.organizationName,
         email: raw.email,
       },
     };
   }
 
-  const { fullName, organizationName, email, password } = parsed.data;
+  const { fullName, email, password } = parsed.data;
+  const organizationName = isInvite ? "" : parsed.data.organizationName;
 
   // 5/min/IP — creating orgs is expensive and signup abuse = fake-tenant spam.
   const rl = await checkIpRateLimit("auth-signup", 5, 60_000);
@@ -50,6 +57,36 @@ export async function signupAction(
       },
       values: { fullName, organizationName, email },
     };
+  }
+
+  const admin = createSupabaseAdminClient();
+
+  // ── Invite path: validate the token before creating any accounts ──────
+  type InviteRow = {
+    id: string;
+    organization_id: string;
+    role: string;
+    expires_at: string;
+    accepted_at: string | null;
+  };
+  let inviteRow: InviteRow | null = null;
+
+  if (isInvite) {
+    const { data } = (await admin
+      .from("invitations")
+      .select("id, organization_id, role, expires_at, accepted_at")
+      .eq("token", inviteToken as string)
+      .maybeSingle()) as unknown as {
+      data: InviteRow | null;
+    };
+
+    if (!data || data.accepted_at || new Date(data.expires_at) < new Date()) {
+      return {
+        errors: { _form: "This invite link is invalid or has expired. Ask your admin to send a new one." },
+        values: { fullName, organizationName, email },
+      };
+    }
+    inviteRow = data;
   }
 
   const supabase = await createSupabaseServerClient();
@@ -74,10 +111,39 @@ export async function signupAction(
 
   const userId = signUpData.user.id;
 
+  if (isInvite && inviteRow) {
+    // ── Invite path: join the existing org ──────────────────────────────
+    const { error: membershipError } = await admin.from("memberships").insert({
+      organization_id: inviteRow.organization_id,
+      profile_id: userId,
+      role: inviteRow.role as "owner" | "admin" | "manager" | "employee",
+      status: "active",
+    });
+
+    if (membershipError) {
+      await admin.auth.admin.deleteUser(userId);
+      return {
+        errors: { _form: membershipError.message },
+        values: { fullName, organizationName, email },
+      };
+    }
+
+    // Mark invitation as accepted
+    await admin
+      .from("invitations")
+      .update({ accepted_at: new Date().toISOString() } as never)
+      .eq("id", inviteRow.id);
+
+    if (!signUpData.session) {
+      redirect(`/login?confirm=1&email=${encodeURIComponent(email)}`);
+    }
+    redirect(inviteRow.role === "employee" ? "/field/jobs" : "/app");
+  }
+
+  // ── Normal path: create a new organization ───────────────────────────
   // Step 2: create the organization and the owner membership atomically,
   // using the service-role client because the user can't insert into
   // organizations directly (RLS allows reads/updates only for members).
-  const admin = createSupabaseAdminClient();
 
   // Build a unique slug — append a short suffix on collision.
   let slug = slugify(organizationName);

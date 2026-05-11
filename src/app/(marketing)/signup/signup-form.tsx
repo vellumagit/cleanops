@@ -9,11 +9,17 @@ import { signupAction, type SignupActionState } from "./actions";
 
 const initialState: SignupActionState = {};
 
-export function SignupForm() {
+export function SignupForm({ inviteToken }: { inviteToken?: string }) {
   const [state, formAction, pending] = useActionState(signupAction, initialState);
+  const isInvite = Boolean(inviteToken);
 
   return (
     <form action={formAction} className="space-y-4">
+      {/* Pass the invite token so the server action can join instead of create */}
+      {inviteToken && (
+        <input type="hidden" name="inviteToken" value={inviteToken} />
+      )}
+
       {state.errors?._form && (
         <div
           role="alert"
@@ -38,25 +44,28 @@ export function SignupForm() {
         )}
       </div>
 
-      <div className="space-y-1.5">
-        <Label htmlFor="organizationName">Company name</Label>
-        <Input
-          id="organizationName"
-          name="organizationName"
-          autoComplete="organization"
-          required
-          defaultValue={state.values?.organizationName}
-          aria-invalid={Boolean(state.errors?.organizationName)}
-        />
-        {state.errors?.organizationName && (
-          <p className="text-xs text-destructive">
-            {state.errors.organizationName}
-          </p>
-        )}
-      </div>
+      {/* Company name is only needed for new workspaces, not for invite joins */}
+      {!isInvite && (
+        <div className="space-y-1.5">
+          <Label htmlFor="organizationName">Company name</Label>
+          <Input
+            id="organizationName"
+            name="organizationName"
+            autoComplete="organization"
+            required
+            defaultValue={state.values?.organizationName}
+            aria-invalid={Boolean(state.errors?.organizationName)}
+          />
+          {state.errors?.organizationName && (
+            <p className="text-xs text-destructive">
+              {state.errors.organizationName}
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="space-y-1.5">
-        <Label htmlFor="email">Work email</Label>
+        <Label htmlFor="email">Email</Label>
         <Input
           id="email"
           name="email"
@@ -88,7 +97,9 @@ export function SignupForm() {
       </div>
 
       <Button type="submit" size="lg" disabled={pending} className="w-full">
-        {pending ? "Creating workspace…" : "Create workspace"}
+        {pending
+          ? isInvite ? "Joining…" : "Creating workspace…"
+          : isInvite ? "Create account & join" : "Create workspace"}
       </Button>
     </form>
   );

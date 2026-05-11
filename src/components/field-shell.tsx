@@ -8,6 +8,7 @@ import {
   MessageSquare,
   Rss,
   UserRound,
+  LayoutDashboard,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -40,12 +41,15 @@ export function FieldShell({
   userName,
   logoUrl,
   brandColor,
+  role,
   children,
 }: {
   organizationName: string;
   userName: string | null;
   logoUrl?: string | null;
   brandColor?: string | null;
+  /** Membership role — owners/admins/managers get a "Back to Dashboard" link */
+  role?: string;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
@@ -78,14 +82,26 @@ export function FieldShell({
             </span>
           </div>
         </div>
-        <form action="/auth/logout" method="post">
-          <button
-            type="submit"
-            className="rounded-md px-3 py-1.5 text-sm text-muted-foreground hover:bg-muted hover:text-foreground active:bg-muted/80"
-          >
-            Sign out
-          </button>
-        </form>
+        <div className="flex items-center gap-2">
+          {/* Back to Dashboard — only for owners / admins / managers */}
+          {role && role !== "employee" && (
+            <Link
+              href="/app"
+              className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <LayoutDashboard className="h-3.5 w-3.5" />
+              Dashboard
+            </Link>
+          )}
+          <form action="/auth/logout" method="post">
+            <button
+              type="submit"
+              className="rounded-md px-3 py-1.5 text-sm text-muted-foreground hover:bg-muted hover:text-foreground active:bg-muted/80"
+            >
+              Sign out
+            </button>
+          </form>
+        </div>
       </header>
 
       <PwaInstallBanner />

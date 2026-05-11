@@ -194,6 +194,12 @@ export async function createBookingAction(
     return { errors: { _form: "Your subscription has expired. Subscribe to create new bookings." }, values: raw };
   }
 
+  // Parse split segments (if split-shift is enabled)
+  const splitsJson = String(formData.get("splits") ?? "[]");
+  let splits: unknown[] = [];
+  try { splits = JSON.parse(splitsJson); } catch { splits = []; }
+  if (!Array.isArray(splits)) splits = [];
+
   const { data: booking, error } = await supabase
     .from("bookings")
     .insert({
@@ -203,12 +209,13 @@ export async function createBookingAction(
       assigned_to: parsed.data.assigned_to ?? null,
       scheduled_at: parsed.data.scheduled_at,
       duration_minutes: parsed.data.duration_minutes,
-      service_type: parsed.data.service_type,
+      service_type: parsed.data.service_type as never,
       status: parsed.data.status,
       total_cents: parsed.data.total_cents,
       hourly_rate_cents: parsed.data.hourly_rate_cents ?? null,
       address: parsed.data.address ?? null,
       notes: parsed.data.notes ?? null,
+      splits: splits as never,
     })
     .select("id")
     .single();
@@ -496,6 +503,12 @@ export async function updateBookingAction(
     );
   }
 
+  // Parse split segments for update
+  const updateSplitsJson = String(formData.get("splits") ?? "[]");
+  let updateSplits: unknown[] = [];
+  try { updateSplits = JSON.parse(updateSplitsJson); } catch { updateSplits = []; }
+  if (!Array.isArray(updateSplits)) updateSplits = [];
+
   const { error } = await supabase
     .from("bookings")
     .update({
@@ -504,12 +517,13 @@ export async function updateBookingAction(
       assigned_to: parsed.data.assigned_to ?? null,
       scheduled_at: parsed.data.scheduled_at,
       duration_minutes: parsed.data.duration_minutes,
-      service_type: parsed.data.service_type,
+      service_type: parsed.data.service_type as never,
       status: parsed.data.status,
       total_cents: parsed.data.total_cents,
       hourly_rate_cents: parsed.data.hourly_rate_cents ?? null,
       address: parsed.data.address ?? null,
       notes: parsed.data.notes ?? null,
+      splits: updateSplits as never,
     })
     .eq("id", id);
 

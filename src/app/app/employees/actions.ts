@@ -116,10 +116,17 @@ export async function sendInvitationAction(
       data: { name: string; brand_color: string | null } | null;
     };
 
+    // If the person already has a Sollos account, send them to /login
+    // so they sign in with their existing credentials and then accept.
+    // New users go to /signup to create their account first.
+    const acceptPath = existingUser
+      ? `/login?invite=${invitation.token}`
+      : `/signup?invite=${invitation.token}`;
+
     const template = teamInviteEmail({
       orgName: orgData?.name ?? membership.organization_name,
       role: parsed.data.role,
-      signupUrl: `${siteUrl}/signup?invite=${invitation.token}`,
+      signupUrl: `${siteUrl}${acceptPath}`,
       brandColor: orgData?.brand_color ?? undefined,
     });
 

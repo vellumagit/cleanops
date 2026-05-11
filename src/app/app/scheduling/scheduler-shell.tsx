@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { WeekGrid } from "./week-grid";
 import { DispatchGrid } from "./dispatch-grid";
+import { MonthGrid } from "./month-grid";
 import {
   SchedulerFilters,
   DEFAULT_FILTERS,
@@ -41,7 +42,7 @@ export function SchedulerShell({
   savedViews,
   currency = "CAD",
 }: {
-  view: "week" | "day";
+  view: "week" | "day" | "month";
   weekStart: string;
   bookings: ScheduleBooking[];
   employees: ScheduleEmployee[];
@@ -95,7 +96,9 @@ export function SchedulerShell({
       if (isEditing) return;
       if ((e.target as HTMLElement | null)?.isContentEditable) return;
 
-      const step = view === "day" ? 1 : 7;
+      // Month view nav is handled server-side; for keyboard shortcuts
+      // we treat month as a large jump (28 days) so arrow keys skip a month.
+      const step = view === "day" ? 1 : view === "month" ? 28 : 7;
       const nav = (target: string) => {
         router.push(
           `/app/scheduling?view=${view}&week=${target}`,
@@ -136,6 +139,11 @@ export function SchedulerShell({
           );
           e.preventDefault();
           break;
+        case "m":
+        case "M":
+          router.push(`/app/scheduling?view=month&week=${weekStart}`);
+          e.preventDefault();
+          break;
         case "n":
         case "N":
           router.push("/app/bookings/new");
@@ -157,6 +165,7 @@ export function SchedulerShell({
                 "t    today\n" +
                 "d    day view\n" +
                 "w    week view\n" +
+                "m    month view\n" +
                 "n    new booking\n" +
                 "/    open filters\n" +
                 "?    this help",
@@ -267,7 +276,15 @@ export function SchedulerShell({
         </div>
       )}
 
-      {view === "day" ? (
+      {view === "month" ? (
+        <MonthGrid
+          monthYmd={weekStart}
+          bookings={filteredBookings}
+          employees={filteredEmployees}
+          offDays={offDays}
+          tz={tz}
+        />
+      ) : view === "day" ? (
         <DispatchGrid
           date={weekStart}
           bookings={filteredBookings}

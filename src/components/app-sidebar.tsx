@@ -32,6 +32,7 @@ import {
   Inbox,
   Menu,
   X,
+  Smartphone,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { NotificationBell } from "@/components/notification-bell";
@@ -391,6 +392,15 @@ export function AppSidebar({
             );
           })}
         </ul>
+
+        {/* Switch to Field View — owners/admins/managers who also clean */}
+        <Link
+          href="/field/jobs"
+          className="mb-2 flex items-center gap-2 rounded-md px-2.5 py-2 text-[13px] text-zinc-400 transition-colors hover:bg-zinc-800/60 hover:text-zinc-200 lg:py-1.5"
+        >
+          <Smartphone className="h-3.5 w-3.5 shrink-0" />
+          <span className="flex-1 truncate">Switch to Field View</span>
+        </Link>
 
         {/* User card */}
         <div className="flex items-center gap-2 rounded-md bg-zinc-800/50 px-2.5 py-2">

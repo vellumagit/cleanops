@@ -18,10 +18,12 @@ import { SchedulerShell } from "./scheduler-shell";
 
 export const metadata = { title: "Scheduling" };
 
-type View = "week" | "day";
+type View = "week" | "day" | "month";
 
 function parseView(raw: string | undefined): View {
-  return raw === "day" ? "day" : "week";
+  if (raw === "day") return "day";
+  if (raw === "month") return "month";
+  return "week";
 }
 
 /**
@@ -76,6 +78,7 @@ export default async function SchedulingPage({
 
   // Day view treats ?week as the target DAY (not a Monday), and shows
   // just that one date. Week view expands to the containing Mon-Sun.
+  // Month view: any date in the target month; we anchor to the 1st.
   // Using the same param keeps the nav URLs simple.
   const weekStart =
     view === "day"
@@ -85,7 +88,22 @@ export default async function SchedulingPage({
               return new Date(y, m - 1, d);
             })()
           : new Date(new Date().setHours(0, 0, 0, 0)))
-      : parseWeekParam(week);
+      : view === "month"
+        ? (() => {
+            // Anchor to the 1st of the month (any date within the month works).
+            const anchor =
+              week && /^\d{4}-\d{2}-\d{2}$/.test(week)
+                ? (() => {
+                    const [y, m] = week.split("-").map(Number);
+                    return new Date(y, m - 1, 1);
+                  })()
+                : (() => {
+                    const now = new Date();
+                    return new Date(now.getFullYear(), now.getMonth(), 1);
+                  })();
+            return anchor;
+          })()
+        : parseWeekParam(week);
 
   // TZ-aware fetch range. `weekStart` is a local-midnight Date object
   // (UTC midnight on Vercel); passing .toISOString() of that to the DB
@@ -94,8 +112,34 @@ export default async function SchedulingPage({
   // NEXT day — so Day view's UTC-bounded fetch misses it entirely.
   // Convert the requested YYYY-MM-DD to the UTC instant that
   // corresponds to midnight in the org's tz before querying.
-  const weekStartYmd = formatWeekParam(weekStart);
-  const weekEndExclusive = addDays(weekStart, view === "day" ? 1 : 7);
+  // For month view, compute the full calendar grid span:
+  // from Monday of the week containing the 1st, through Sunday of
+  // the week containing the last day. This is up to 42 days.
+  const calendarGridStart = (() => {
+    if (view !== "month") return weekStart;
+    const dow = weekStart.getDay(); // 0=Sun…6=Sat (weekStart is 1st of month)
+    const offset = dow === 0 ? -6 : 1 - dow; // shift to Monday
+    return addDays(weekStart, offset);
+  })();
+  const calendarGridEnd = (() => {
+    if (view !== "month") return weekStart; // unused
+    const lastOfMonth = new Date(
+      weekStart.getFullYear(),
+      weekStart.getMonth() + 1,
+      0,
+    );
+    const dow = lastOfMonth.getDay();
+    const daysToSunday = dow === 0 ? 0 : 7 - dow;
+    return addDays(lastOfMonth, daysToSunday + 1); // +1 for exclusive end
+  })();
+
+  const weekStartYmd = formatWeekParam(
+    view === "month" ? calendarGridStart : weekStart,
+  );
+  const weekEndExclusive =
+    view === "month"
+      ? calendarGridEnd
+      : addDays(weekStart, view === "day" ? 1 : 7);
   const weekEndYmd = formatWeekParam(weekEndExclusive);
   const fetchStart = midnightInTzUtc(weekStartYmd, tz);
   const fetchEnd = midnightInTzUtc(weekEndYmd, tz);
@@ -113,35 +157,55 @@ export default async function SchedulingPage({
     getOrgCurrency(membership.organization_id),
   ]);
 
-  const navStep = view === "day" ? 1 : 7;
-  const prev = formatWeekParam(addDays(weekStart, -navStep));
-  const next = formatWeekParam(addDays(weekStart, navStep));
+  // For month nav, prev/next = first of prev/next month.
+  const prev =
+    view === "month"
+      ? formatWeekParam(
+          new Date(weekStart.getFullYear(), weekStart.getMonth() - 1, 1),
+        )
+      : formatWeekParam(addDays(weekStart, view === "day" ? -1 : -7));
+  const next =
+    view === "month"
+      ? formatWeekParam(
+          new Date(weekStart.getFullYear(), weekStart.getMonth() + 1, 1),
+        )
+      : formatWeekParam(addDays(weekStart, view === "day" ? 1 : 7));
   const today =
     view === "day"
       ? formatWeekParam(new Date(new Date().setHours(0, 0, 0, 0)))
-      : formatWeekParam(startOfWeek(new Date()));
+      : view === "month"
+        ? formatWeekParam(
+            new Date(new Date().getFullYear(), new Date().getMonth(), 1),
+          )
+        : formatWeekParam(startOfWeek(new Date()));
 
   const weekEnd = addDays(weekStart, view === "day" ? 0 : 6);
   const range =
-    view === "day"
+    view === "month"
       ? weekStart.toLocaleDateString("en-US", {
-          weekday: "long",
-          month: "short",
-          day: "numeric",
+          month: "long",
           year: "numeric",
         })
-      : `${weekStart.toLocaleDateString("en-US", {
-          month: "short",
-          day: "numeric",
-        })} – ${weekEnd.toLocaleDateString("en-US", {
-          month: "short",
-          day: "numeric",
-          year: "numeric",
-        })}`;
+      : view === "day"
+        ? weekStart.toLocaleDateString("en-US", {
+            weekday: "long",
+            month: "short",
+            day: "numeric",
+            year: "numeric",
+          })
+        : `${weekStart.toLocaleDateString("en-US", {
+            month: "short",
+            day: "numeric",
+          })} – ${weekEnd.toLocaleDateString("en-US", {
+            month: "short",
+            day: "numeric",
+            year: "numeric",
+          })}`;
 
   const descriptions: Record<View, string> = {
     week: "Drag bookings between cleaners and days. Click a card for details.",
     day: "Dispatch view — 30-min slots with an employee column per cleaner. Click an empty slot to create, click a card to edit, drag the grip to move.",
+    month: "Overview of the full month. Click a day number to switch to Day view. Click a booking chip to edit it.",
   };
 
   const tabLinkClass = (active: boolean) =>
@@ -161,7 +225,13 @@ export default async function SchedulingPage({
           <Link
             href={`/app/scheduling?view=${view}&week=${prev}`}
             className={buttonVariants({ variant: "ghost", size: "icon" })}
-            aria-label={view === "day" ? "Previous day" : "Previous week"}
+            aria-label={
+              view === "day"
+                ? "Previous day"
+                : view === "month"
+                  ? "Previous month"
+                  : "Previous week"
+            }
           >
             <ChevronLeft className="h-4 w-4" />
           </Link>
@@ -169,12 +239,22 @@ export default async function SchedulingPage({
             href={`/app/scheduling?view=${view}&week=${today}`}
             className={buttonVariants({ variant: "outline", size: "sm" })}
           >
-            {view === "day" ? "Today" : "This week"}
+            {view === "day"
+              ? "Today"
+              : view === "month"
+                ? "This month"
+                : "This week"}
           </Link>
           <Link
             href={`/app/scheduling?view=${view}&week=${next}`}
             className={buttonVariants({ variant: "ghost", size: "icon" })}
-            aria-label={view === "day" ? "Next day" : "Next week"}
+            aria-label={
+              view === "day"
+                ? "Next day"
+                : view === "month"
+                  ? "Next month"
+                  : "Next week"
+            }
           >
             <ChevronRight className="h-4 w-4" />
           </Link>
@@ -190,6 +270,14 @@ export default async function SchedulingPage({
               Week stays the default (broad planning); Day zooms in on
               a single date for morning stand-ups or tight mornings. */}
           <div className="inline-flex items-center gap-1 rounded-lg border border-border bg-muted/30 p-1">
+            <Link
+              href={`/app/scheduling?view=month&week=${formatWeekParam(
+                new Date(weekStart.getFullYear(), weekStart.getMonth(), 1),
+              )}`}
+              className={tabLinkClass(view === "month")}
+            >
+              Month
+            </Link>
             <Link
               href={`/app/scheduling?view=week&week=${formatWeekParam(startOfWeek(weekStart))}`}
               className={tabLinkClass(view === "week")}

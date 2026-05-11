@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import Link from "next/link";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -8,6 +8,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { FormError, FormField, FormSelect } from "@/components/form-field";
 import { SubmitButton } from "@/components/submit-button";
 import { SetupReturnField } from "@/components/setup-return-field";
+import { AddressAutocomplete } from "@/components/address-autocomplete";
 import {
   createClientAction,
   updateClientAction,
@@ -55,6 +56,7 @@ export function ClientForm({
 
   const [state, formAction] = useActionState(action, empty);
   const v = { ...defaults, ...state.values } as Defaults;
+  const [addressValue, setAddressValue] = useState(v.address ?? "");
 
   return (
     <form action={formAction} className="space-y-5">
@@ -126,11 +128,11 @@ export function ClientForm({
       </div>
 
       <FormField label="Address" htmlFor="address" error={state.errors?.address}>
-        <Input
+        <AddressAutocomplete
           id="address"
           name="address"
-          defaultValue={v.address ?? ""}
-          autoComplete="off"
+          value={addressValue}
+          onChange={setAddressValue}
         />
       </FormField>
 

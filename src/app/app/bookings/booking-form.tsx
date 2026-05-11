@@ -2,7 +2,7 @@
 
 import { useState, useActionState, useEffect } from "react";
 import Link from "next/link";
-import { Repeat, CalendarPlus } from "lucide-react";
+import { Repeat, CalendarPlus, SplitSquareVertical, Plus, Trash2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { buttonVariants } from "@/components/ui/button";
@@ -10,6 +10,7 @@ import { FormError, FormField, FormSelect } from "@/components/form-field";
 import { SubmitButton } from "@/components/submit-button";
 import { DurationInput } from "@/components/duration-input";
 import { SetupReturnField } from "@/components/setup-return-field";
+import { AddressAutocomplete } from "@/components/address-autocomplete";
 import { cn } from "@/lib/utils";
 import { RECURRENCE_OPTIONS } from "@/lib/recurrence";
 import {
@@ -50,9 +51,18 @@ export type BookingFormDefaults = {
   series_custom_days?: number[];
   series_monthly_nth?: number | null;
   series_monthly_dow?: number | null;
+  /** Pre-existing split segments when editing a booking that has splits. */
+  splits?: SplitSegment[];
 };
 
-type Option = { id: string; label: string };
+type Option = { id: string; label: string; pay_rate_cents?: number | null };
+
+type SplitSegment = {
+  id: string;
+  assigned_to: string;
+  duration_minutes: number;
+  hourly_rate_cents: number;
+};
 
 /** Client option carries the fields we auto-fill into the form. */
 export type ClientOption = Option & {
@@ -166,6 +176,36 @@ export function BookingForm({
   function toggleSeriesDay(day: number) {
     setSeriesCustomDays((prev) =>
       prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day].sort(),
+    );
+  }
+
+  // ── Split shifts ──────────────────────────────────────────────────────────
+  const [splitEnabled, setSplitEnabled] = useState(
+    Boolean(defaults?.splits?.length),
+  );
+  const [splits, setSplits] = useState<SplitSegment[]>(
+    defaults?.splits ?? [],
+  );
+
+  function addSplit() {
+    setSplits((prev) => [
+      ...prev,
+      {
+        id: crypto.randomUUID(),
+        assigned_to: "",
+        duration_minutes: 120,
+        hourly_rate_cents: 0,
+      },
+    ]);
+  }
+
+  function removeSplit(id: string) {
+    setSplits((prev) => prev.filter((s) => s.id !== id));
+  }
+
+  function updateSplit(id: string, patch: Partial<SplitSegment>) {
+    setSplits((prev) =>
+      prev.map((s) => (s.id === id ? { ...s, ...patch } : s)),
     );
   }
 
@@ -548,6 +588,29 @@ export function BookingForm({
                   />
                   <span>Continue indefinitely</span>
                 </label>
+                {/* Quick preset buttons */}
+                {!endsIndefinite && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {[
+                      { label: "1 year", months: 12 },
+                      { label: "2 years", months: 24 },
+                      { label: "5 years", months: 60 },
+                    ].map(({ label, months }) => (
+                      <button
+                        key={label}
+                        type="button"
+                        onClick={() => {
+                          const d = new Date();
+                          d.setMonth(d.getMonth() + months);
+                          setEndsAtValue(d.toISOString().slice(0, 10));
+                        }}
+                        className="rounded-full border border-input bg-muted px-2.5 py-0.5 text-xs hover:bg-accent"
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <Input
                   id="ends_at"
                   name="ends_at"
@@ -618,10 +681,20 @@ export function BookingForm({
               (isRecurring ? "recurring" : "standard")
             }
           >
-            <option value="standard">Standard</option>
-            <option value="deep">Deep clean</option>
-            <option value="move_out">Move-out</option>
-            <option value="recurring">Recurring</option>
+            <optgroup label="Cleaning">
+              <option value="standard">Standard clean</option>
+              <option value="deep">Deep clean</option>
+              <option value="move_out">Move-out clean</option>
+              <option value="recurring">Recurring clean</option>
+            </optgroup>
+            <optgroup label="Appointments">
+              <option value="meeting">Meeting</option>
+              <option value="consultation">Initial consultation</option>
+              <option value="walkthrough">Walkthrough / quote visit</option>
+            </optgroup>
+            <optgroup label="Other">
+              <option value="other">Other</option>
+            </optgroup>
           </FormSelect>
         </FormField>
 
@@ -731,6 +804,149 @@ export function BookingForm({
         )}
       </FormField>
 
+      {/* ── Split shift ────────────────────────────────────────────────────
+          When enabled, the booking is divided into time segments, each
+          assigned to a different employee with their own rate.
+          Segments are serialised as a JSON hidden field and saved to
+          bookings.splits in the server action.
+      ────────────────────────────────────────────────────────────────── */}
+      {!isRecurring && (
+        <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-3">
+          <label className="flex cursor-pointer items-center gap-2.5">
+            <input
+              type="checkbox"
+              checked={splitEnabled}
+              onChange={(e) => {
+                setSplitEnabled(e.target.checked);
+                if (e.target.checked && splits.length === 0) {
+                  setSplits([
+                    { id: crypto.randomUUID(), assigned_to: "", duration_minutes: Math.round(defaultMinutes / 2) || 120, hourly_rate_cents: 0 },
+                    { id: crypto.randomUUID(), assigned_to: "", duration_minutes: Math.round(defaultMinutes / 2) || 120, hourly_rate_cents: 0 },
+                  ]);
+                }
+              }}
+              className="h-4 w-4 rounded border-input"
+            />
+            <SplitSquareVertical className="h-4 w-4 text-muted-foreground" />
+            <span className="text-sm font-medium">Split shift</span>
+            <span className="text-xs text-muted-foreground">— divide this booking between multiple employees</span>
+          </label>
+
+          {splitEnabled && (
+            <div className="space-y-3 pt-1">
+              {/* Hidden field: serialised splits JSON */}
+              <input type="hidden" name="splits" value={JSON.stringify(splits)} />
+
+              {splits.map((seg, idx) => {
+                // Compute start time for display
+                const startOffset = splits
+                  .slice(0, idx)
+                  .reduce((sum, s) => sum + s.duration_minutes, 0);
+                return (
+                  <div key={seg.id} className="rounded-md border border-border bg-card p-3 space-y-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                        Segment {idx + 1}
+                        {startOffset > 0 && (
+                          <span className="ml-1.5 font-normal normal-case">
+                            (starts at +{Math.floor(startOffset / 60)}h{startOffset % 60 > 0 ? `${startOffset % 60}m` : ""})
+                          </span>
+                        )}
+                      </span>
+                      {splits.length > 2 && (
+                        <button
+                          type="button"
+                          onClick={() => removeSplit(seg.id)}
+                          className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-destructive"
+                          aria-label="Remove segment"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="grid gap-2 sm:grid-cols-3">
+                      <div className="sm:col-span-1">
+                        <label className="mb-1 block text-xs text-muted-foreground">Assigned to</label>
+                        <select
+                          value={seg.assigned_to}
+                          onChange={(e) => {
+                            const emp = employees.find((em) => em.id === e.target.value);
+                            updateSplit(seg.id, {
+                              assigned_to: e.target.value,
+                              // Pre-fill rate from employee profile if not set
+                              hourly_rate_cents: seg.hourly_rate_cents || (emp?.pay_rate_cents ?? 0),
+                            });
+                          }}
+                          className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm"
+                        >
+                          <option value="">Select employee…</option>
+                          {employees.map((emp) => (
+                            <option key={emp.id} value={emp.id}>{emp.label}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-xs text-muted-foreground">Duration (min)</label>
+                        <input
+                          type="number"
+                          min={15}
+                          step={15}
+                          value={seg.duration_minutes}
+                          onChange={(e) => updateSplit(seg.id, { duration_minutes: Number(e.target.value) || 0 })}
+                          className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-xs text-muted-foreground">Rate ($/hr)</label>
+                        <input
+                          type="number"
+                          min={0}
+                          step={0.5}
+                          value={(seg.hourly_rate_cents / 100).toFixed(2)}
+                          onChange={(e) =>
+                            updateSplit(seg.id, {
+                              hourly_rate_cents: Math.round(Number(e.target.value) * 100),
+                            })
+                          }
+                          className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+
+              <button
+                type="button"
+                onClick={addSplit}
+                className="flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-input py-2 text-xs text-muted-foreground hover:border-foreground/30 hover:text-foreground"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Add segment
+              </button>
+
+              {/* Summary row */}
+              {splits.length > 0 && (() => {
+                const totalSplitMins = splits.reduce((s, seg) => s + seg.duration_minutes, 0);
+                const totalSplitCost = splits.reduce(
+                  (s, seg) => s + (seg.hourly_rate_cents / 100) * (seg.duration_minutes / 60),
+                  0,
+                );
+                return (
+                  <p className="text-xs text-muted-foreground">
+                    Total: <strong>{totalSplitMins} min</strong> across {splits.length} employees ·{" "}
+                    <strong>${totalSplitCost.toFixed(2)}</strong> estimated cost
+                  </p>
+                );
+              })()}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="grid gap-5 sm:grid-cols-2">
         <FormField
           label={`Total (${currency})`}
@@ -767,11 +983,11 @@ export function BookingForm({
       </div>
 
       <FormField label="Address" htmlFor="address" error={state.errors?.address}>
-        <Input
+        <AddressAutocomplete
           id="address"
           name="address"
           value={addressValue}
-          onChange={(e) => setAddressValue(e.target.value)}
+          onChange={setAddressValue}
         />
       </FormField>
 
@@ -973,6 +1189,29 @@ export function BookingForm({
                   />
                   <span>Continue indefinitely</span>
                 </label>
+                {/* Quick preset buttons */}
+                {!seriesEndsIndefinite && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {[
+                      { label: "1 year", months: 12 },
+                      { label: "2 years", months: 24 },
+                      { label: "5 years", months: 60 },
+                    ].map(({ label, months }) => (
+                      <button
+                        key={label}
+                        type="button"
+                        onClick={() => {
+                          const d = new Date();
+                          d.setMonth(d.getMonth() + months);
+                          setSeriesEndsAtValue(d.toISOString().slice(0, 10));
+                        }}
+                        className="rounded-full border border-input bg-muted px-2.5 py-0.5 text-xs hover:bg-accent"
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <Input
                   id="series_ends_at"
                   name="series_ends_at"

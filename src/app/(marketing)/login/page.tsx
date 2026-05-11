@@ -13,6 +13,7 @@ type SearchParams = Promise<{
   joined?: string;
   email?: string;
   auth_error?: string;
+  invite?: string;
 }>;
 
 export default async function LoginPage({
@@ -21,7 +22,12 @@ export default async function LoginPage({
   searchParams: SearchParams;
 }) {
   const params = await searchParams;
-  const next = params.next ?? "";
+  // If arriving via a team invite for an existing account, redirect to the
+  // invite-accept page after login rather than the default dashboard.
+  const inviteToken = params.invite;
+  const next = inviteToken
+    ? `/join?token=${inviteToken}`
+    : (params.next ?? "");
   const confirmEmail = params.confirm ? params.email : undefined;
   const joinedEmail = params.joined ? params.email : undefined;
   const authError = params.auth_error;
@@ -55,6 +61,16 @@ export default async function LoginPage({
               Sign in to your workspace.
             </p>
           </div>
+
+          {inviteToken && (
+            <div
+              role="status"
+              className="mb-4 rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-700"
+            >
+              You&apos;ve been invited to join a team on Sollos. Sign in with
+              your existing account to accept.
+            </div>
+          )}
 
           {authError && (
             <div

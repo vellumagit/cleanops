@@ -48,6 +48,7 @@ export default async function FieldLayout({
         userName={profile?.full_name ?? null}
         logoUrl={org?.logo_url ?? null}
         brandColor={org?.brand_color ?? null}
+        role={membership.role}
       >
         <PushPrompt
           membershipId={membership.id}

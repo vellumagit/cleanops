@@ -185,6 +185,15 @@ export default async function ClientDetailPage({
           )}
           {canEdit && (
             <Link
+              href={`/app/bookings/new?client_id=${id}`}
+              className={buttonVariants({ variant: "default", size: "sm" })}
+            >
+              <Calendar className="h-3.5 w-3.5" />
+              New booking
+            </Link>
+          )}
+          {canEdit && (
+            <Link
               href={`/app/clients/${id}/edit`}
               className={buttonVariants({ variant: "outline", size: "sm" })}
             >

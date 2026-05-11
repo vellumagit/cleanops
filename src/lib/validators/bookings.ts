@@ -11,6 +11,10 @@ export const ServiceTypeEnum = z.enum([
   "deep",
   "move_out",
   "recurring",
+  "meeting",
+  "consultation",
+  "walkthrough",
+  "other",
 ]);
 
 export const BookingStatusEnum = z.enum([

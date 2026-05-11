@@ -95,7 +95,7 @@ export function AssignCrewDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base">
             <Users className="h-4 w-4" />
@@ -174,7 +174,7 @@ export function AssignCrewDialog({
             <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
               Primary cleaner
             </p>
-            <div className="space-y-1">
+            <div className="max-h-52 space-y-1 overflow-y-auto">
               <label
                 className={cn(
                   "flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-muted",
