@@ -64,7 +64,11 @@ export function buildGoogleOAuthUrl(state: string): string {
       "https://www.googleapis.com/auth/userinfo.email",
     ].join(" "),
     access_type: "offline",
-    prompt: "consent",
+    // "select_account" forces Google to show the account picker every time
+    // so users can't accidentally re-connect the wrong account silently.
+    // "consent" ensures we always get a refresh token (required for long-lived
+    // access — without it Google only issues one on the very first grant).
+    prompt: "select_account consent",
     state,
   });
   return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;

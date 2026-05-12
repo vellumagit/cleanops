@@ -236,12 +236,10 @@ export default async function IntegrationsPage() {
                   ) : (
                     <>
                       {conn?.external_account_id && (
-                        <div className="flex justify-between gap-2">
-                          <dt className="text-muted-foreground">Account</dt>
-                          <dd className="font-mono text-foreground">
-                            {conn.external_account_id.length > 24
-                              ? conn.external_account_id.slice(0, 24) + "…"
-                              : conn.external_account_id}
+                        <div className="flex justify-between gap-2 min-w-0">
+                          <dt className="text-muted-foreground shrink-0">Account</dt>
+                          <dd className="font-mono text-foreground truncate text-right" title={conn.external_account_id}>
+                            {conn.external_account_id}
                           </dd>
                         </div>
                       )}
@@ -292,15 +290,27 @@ export default async function IntegrationsPage() {
                     </button>
                   </form>
                 ) : hasLiveOAuth ? (
-                  <form action={isGcal ? disconnectGoogleCalendarAction : disconnectSageAction}>
-                    <button
-                      type="submit"
-                      className="mt-3 inline-flex w-full items-center justify-center gap-1 rounded-md border border-border bg-background px-3 py-2 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-                    >
-                      <XCircle className="h-3 w-3" />
-                      Disconnect
-                    </button>
-                  </form>
+                  <div className="mt-3 flex flex-col gap-2">
+                    {isGcal && (
+                      <form action={connectGoogleCalendarAction}>
+                        <button
+                          type="submit"
+                          className="inline-flex w-full items-center justify-center gap-1 rounded-md bg-foreground px-3 py-2 text-xs font-medium text-background hover:bg-foreground/90 transition-colors"
+                        >
+                          Switch account
+                        </button>
+                      </form>
+                    )}
+                    <form action={isGcal ? disconnectGoogleCalendarAction : disconnectSageAction}>
+                      <button
+                        type="submit"
+                        className="inline-flex w-full items-center justify-center gap-1 rounded-md border border-border bg-background px-3 py-2 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                      >
+                        <XCircle className="h-3 w-3" />
+                        Disconnect
+                      </button>
+                    </form>
+                  </div>
                 ) : (
                   <button
                     type="button"
