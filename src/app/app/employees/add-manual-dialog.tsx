@@ -60,14 +60,10 @@ export function AddManualEmployeeDialog() {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger
-        render={
-          <Button size="sm" variant="outline">
-            <UserPlus className="mr-2 h-4 w-4" />
-            Add manually
-          </Button>
-        }
-      />
+      <DialogTrigger render={<Button size="sm" variant="outline" />}>
+        <UserPlus className="mr-2 h-4 w-4" />
+        Add manually
+      </DialogTrigger>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Add an employee manually</DialogTitle>

@@ -63,14 +63,10 @@ export function InviteDialog({ siteUrl }: { siteUrl: string }) {
   if (inviteLink && !state.errors) {
     return (
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogTrigger
-          render={
-            <Button size="sm">
-              <UserPlus className="mr-2 h-4 w-4" />
-              Invite
-            </Button>
-          }
-        />
+        <DialogTrigger render={<Button size="sm" />}>
+          <UserPlus className="mr-2 h-4 w-4" />
+          Invite
+        </DialogTrigger>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Invitation sent</DialogTitle>
@@ -122,14 +118,10 @@ export function InviteDialog({ siteUrl }: { siteUrl: string }) {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger
-        render={
-          <Button size="sm">
-            <UserPlus className="mr-2 h-4 w-4" />
-            Invite
-          </Button>
-        }
-      />
+      <DialogTrigger render={<Button size="sm" />}>
+        <UserPlus className="mr-2 h-4 w-4" />
+        Invite
+      </DialogTrigger>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Invite a team member</DialogTitle>

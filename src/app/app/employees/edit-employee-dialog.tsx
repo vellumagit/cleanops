@@ -91,11 +91,11 @@ export function EditEmployeeDialog({ member, viewerRole, isSelf }: Props) {
             type="button"
             aria-label={`Edit ${member.full_name}`}
             className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-          >
-            <Pencil className="h-3.5 w-3.5" />
-          </button>
+          />
         }
-      />
+      >
+        <Pencil className="h-3.5 w-3.5" />
+      </DialogTrigger>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Edit {member.full_name}</DialogTitle>
