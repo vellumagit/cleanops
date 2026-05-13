@@ -6,6 +6,7 @@ import { encryptSecret } from "@/lib/crypto";
 import {
   exchangeCodeForTokens,
   cleanupOrgCalendarEvents,
+  bulkSyncUpcomingBookings,
 } from "@/lib/google-calendar";
 import { getEnv } from "@/lib/env";
 
@@ -161,6 +162,10 @@ export async function GET(request: NextRequest) {
       status: "active",
       metadata: { calendar_id: "primary" },
     } as never);
+
+    // Push all upcoming bookings to the newly-connected calendar so the
+    // user doesn't have to edit each one manually to trigger a sync.
+    await bulkSyncUpcomingBookings(organizationId).catch(() => {});
 
     return NextResponse.redirect(`${redirectBase}?gcal_connected=true`);
   } catch (err) {

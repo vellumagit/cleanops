@@ -531,6 +531,84 @@ export async function cleanupOrgCalendarEvents(
 }
 
 /**
+ * Push all upcoming bookings for an org to the newly-connected calendar.
+ *
+ * Called immediately after a new connection is saved so the calendar
+ * is fully populated without the user having to touch every booking.
+ * Only syncs bookings that don't already have a google_calendar_event_id
+ * (i.e. new connections and post-switch cleanups).
+ *
+ * Runs in parallel batches of 10 to stay well within Google's per-second
+ * quota while not taking forever for orgs with many upcoming bookings.
+ */
+export async function bulkSyncUpcomingBookings(
+  organizationId: string,
+): Promise<void> {
+  const conn = await getConnection(organizationId);
+  if (!conn) return;
+
+  const admin = createSupabaseAdminClient();
+  const now = new Date().toISOString();
+
+  // Fetch upcoming bookings that haven't been synced yet, joined to client
+  // for the client name. Limit to 500 to guard against pathological cases.
+  const { data: bookings } = (await admin
+    .from("bookings")
+    .select(
+      `id, scheduled_at, duration_minutes, service_type, address, notes,
+       assigned_to,
+       client:clients!inner ( name ),
+       assignee:memberships ( display_name, profile:profiles ( full_name ) )`,
+    )
+    .eq("organization_id" as never, organizationId as never)
+    .gte("scheduled_at" as never, now as never)
+    .is("google_calendar_event_id" as never, null as never)
+    .neq("status" as never, "cancelled" as never)
+    .order("scheduled_at" as never, { ascending: true } as never)
+    .limit(500)) as unknown as {
+    data: Array<{
+      id: string;
+      scheduled_at: string;
+      duration_minutes: number;
+      service_type: string;
+      address: string | null;
+      notes: string | null;
+      assigned_to: string | null;
+      client: { name: string } | null;
+      assignee: {
+        display_name: string | null;
+        profile: { full_name: string | null } | null;
+      } | null;
+    }> | null;
+  };
+
+  if (!bookings || bookings.length === 0) return;
+
+  // Process in batches of 10 (parallel within batch, sequential between).
+  const BATCH = 10;
+  for (let i = 0; i < bookings.length; i += BATCH) {
+    await Promise.allSettled(
+      bookings.slice(i, i + BATCH).map((b) => {
+        const employeeName =
+          b.assignee?.display_name ??
+          b.assignee?.profile?.full_name ??
+          undefined;
+        return createCalendarEvent(organizationId, {
+          id: b.id,
+          scheduled_at: b.scheduled_at,
+          duration_minutes: b.duration_minutes,
+          service_type: b.service_type,
+          address: b.address,
+          notes: b.notes,
+          client_name: b.client?.name,
+          employee_name: employeeName,
+        }).catch(() => {});
+      }),
+    );
+  }
+}
+
+/**
  * Check if an org has an active Google Calendar connection.
  * Lightweight check — no token decryption.
  */
