@@ -257,7 +257,7 @@ export async function createBookingAction(
     parsed.data.client_id,
     parsed.data.assigned_to ?? null,
   );
-  createCalendarEvent(membership.organization_id, {
+  await createCalendarEvent(membership.organization_id, {
     id: booking.id,
     scheduled_at: parsed.data.scheduled_at,
     duration_minutes: parsed.data.duration_minutes,
@@ -752,7 +752,7 @@ export async function updateBookingAction(
 
   if (existing?.google_calendar_event_id) {
     // Update existing event
-    updateCalendarEvent(membership.organization_id, {
+    await updateCalendarEvent(membership.organization_id, {
       id,
       google_calendar_event_id: existing.google_calendar_event_id,
       scheduled_at: parsed.data.scheduled_at,
@@ -765,7 +765,7 @@ export async function updateBookingAction(
     }).catch((err) => console.error("[gcal] sync error on update:", err));
   } else {
     // No event yet — create one
-    createCalendarEvent(membership.organization_id, {
+    await createCalendarEvent(membership.organization_id, {
       id,
       scheduled_at: parsed.data.scheduled_at,
       duration_minutes: parsed.data.duration_minutes,
@@ -855,17 +855,19 @@ export async function deleteBookingAction(formData: FormData) {
       );
     }
 
-    // Fire-and-forget Google Calendar cleanup for every event we had.
-    for (const sib of siblings ?? []) {
-      if (sib.google_calendar_event_id) {
-        deleteCalendarEvent(
-          membership.organization_id,
-          sib.google_calendar_event_id,
-        ).catch((err) =>
-          console.error("[gcal] sync error on cascade delete:", err),
-        );
-      }
-    }
+    // Delete all Google Calendar events for the series in parallel.
+    await Promise.all(
+      (siblings ?? [])
+        .filter((sib) => sib.google_calendar_event_id)
+        .map((sib) =>
+          deleteCalendarEvent(
+            membership.organization_id,
+            sib.google_calendar_event_id!,
+          ).catch((err) =>
+            console.error("[gcal] sync error on cascade delete:", err),
+          ),
+        ),
+    );
   } else {
     // Single-booking delete (existing behavior).
     const { error } = await supabase
@@ -876,7 +878,7 @@ export async function deleteBookingAction(formData: FormData) {
     if (error) throw error;
 
     if (existing?.google_calendar_event_id) {
-      deleteCalendarEvent(
+      await deleteCalendarEvent(
         membership.organization_id,
         existing.google_calendar_event_id,
       ).catch((err) => console.error("[gcal] sync error on delete:", err));
