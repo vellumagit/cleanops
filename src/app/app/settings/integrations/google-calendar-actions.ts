@@ -5,7 +5,10 @@ import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { buildGoogleOAuthUrl } from "@/lib/google-calendar";
+import {
+  buildGoogleOAuthUrl,
+  cleanupOrgCalendarEvents,
+} from "@/lib/google-calendar";
 
 /**
  * Redirect the admin to Google's OAuth consent screen.
@@ -43,6 +46,13 @@ export async function connectGoogleCalendarAction() {
 export async function disconnectGoogleCalendarAction() {
   const membership = await requireMembership(["owner", "admin"]);
   const admin = createSupabaseAdminClient();
+
+  // Delete upcoming events from the old calendar and reset event IDs on
+  // bookings before marking the connection inactive. This ensures the old
+  // calendar is left clean and no stale IDs cause silent failures later.
+  // Errors are swallowed inside cleanupOrgCalendarEvents — the disconnect
+  // always completes even if GCal is temporarily unreachable.
+  await cleanupOrgCalendarEvents(membership.organization_id).catch(() => {});
 
   await admin
     .from("integration_connections" as never)

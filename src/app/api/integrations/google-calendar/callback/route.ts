@@ -3,7 +3,10 @@ import { cookies } from "next/headers";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { encryptSecret } from "@/lib/crypto";
-import { exchangeCodeForTokens } from "@/lib/google-calendar";
+import {
+  exchangeCodeForTokens,
+  cleanupOrgCalendarEvents,
+} from "@/lib/google-calendar";
 import { getEnv } from "@/lib/env";
 
 /**
@@ -128,6 +131,12 @@ export async function GET(request: NextRequest) {
     ).toISOString();
 
     const admin = createSupabaseAdminClient();
+
+    // Clean up events from the OLD calendar before switching — deletes
+    // upcoming events and resets google_calendar_event_id to null so they
+    // get re-created on the new calendar. Must run while the old connection
+    // is still active (getConnection looks for status='active').
+    await cleanupOrgCalendarEvents(organizationId).catch(() => {});
 
     // Disconnect any existing Google Calendar connection for this org
     await admin

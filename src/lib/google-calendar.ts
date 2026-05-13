@@ -470,6 +470,67 @@ export async function listCalendarEvents(
 }
 
 /**
+ * Delete all upcoming Google Calendar events for an org from the currently
+ * connected calendar, then null out google_calendar_event_id on those
+ * bookings so the next create/update pushes fresh events to whatever
+ * calendar is connected afterward.
+ *
+ * Called before disconnecting and before switching accounts so:
+ *   - the old calendar is left clean (no orphaned Sollos events)
+ *   - stale event IDs don't cause silent failures on future updates
+ *
+ * Fire-and-forget safe: every individual failure is swallowed so a partial
+ * GCal outage never blocks the disconnect flow.
+ */
+export async function cleanupOrgCalendarEvents(
+  organizationId: string,
+): Promise<void> {
+  const conn = await getConnection(organizationId);
+  if (!conn) return;
+
+  const calendarId = (conn.metadata?.calendar_id as string) || "primary";
+  const admin = createSupabaseAdminClient();
+
+  // Find all upcoming bookings that have a linked calendar event.
+  // Bookings have organization_id directly, so no join needed.
+  const now = new Date().toISOString();
+  const { data: bookings } = (await admin
+    .from("bookings")
+    .select("id, google_calendar_event_id")
+    .eq("organization_id" as never, organizationId as never)
+    .gte("scheduled_at" as never, now as never)
+    .not(
+      "google_calendar_event_id" as never,
+      "is" as never,
+      null as never,
+    )) as unknown as {
+    data: Array<{ id: string; google_calendar_event_id: string }> | null;
+  };
+
+  if (!bookings || bookings.length === 0) return;
+
+  // Delete from Google Calendar in parallel — best effort.
+  await Promise.allSettled(
+    bookings.map((b) =>
+      gcalFetch(
+        conn.access_token,
+        `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(b.google_calendar_event_id)}`,
+        { method: "DELETE" },
+      ).catch(() => {}),
+    ),
+  );
+
+  // Reset IDs so future creates go to the new calendar, not the old one.
+  await admin
+    .from("bookings")
+    .update({ google_calendar_event_id: null } as never)
+    .in(
+      "id" as never,
+      bookings.map((b) => b.id) as never,
+    );
+}
+
+/**
  * Check if an org has an active Google Calendar connection.
  * Lightweight check — no token decryption.
  */
