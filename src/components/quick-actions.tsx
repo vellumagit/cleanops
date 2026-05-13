@@ -11,6 +11,7 @@ import {
   Users,
   CalendarDays,
   ClipboardList,
+  CheckSquare,
   Plus,
   X,
 } from "lucide-react";
@@ -80,6 +81,14 @@ const ACTIONS: Action[] = [
     href: "/app/scheduling",
     keywords: "dispatch assign crew",
   },
+  {
+    id: "new-task",
+    label: "New task",
+    description: "Add a to-do or reminder",
+    icon: CheckSquare,
+    href: "/app/tasks/new",
+    keywords: "todo reminder due date",
+  },
 ];
 
 export function QuickActions({ role }: { role: string }) {
@@ -89,7 +98,7 @@ export function QuickActions({ role }: { role: string }) {
 
   const actions = ACTIONS.filter(
     (a) =>
-      !["new-estimate", "new-invoice", "go-scheduling"].includes(a.id) ||
+      !["new-estimate", "new-invoice", "go-scheduling", "new-task"].includes(a.id) ||
       ["owner", "admin", "manager"].includes(role),
   );
 

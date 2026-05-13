@@ -36,6 +36,8 @@ import {
   Navigation,
   Eye,
   Plus,
+  CheckSquare,
+  RefreshCw,
 } from "lucide-react";
 import type { CalendarEvent } from "./page";
 import {
@@ -53,7 +55,7 @@ import {
 
 type ViewMode = "month" | "week" | "day";
 
-type EventSource = "booking" | "invoice" | "google_calendar";
+type EventSource = "booking" | "invoice" | "google_calendar" | "task";
 
 type EmployeeOption = { id: string; label: string };
 
@@ -119,7 +121,7 @@ export function CalendarView({ events, hasGoogleCalendar, formOptions, currency,
   // we don't cascade-render from a setState-in-effect.
   const [enabledSources, setEnabledSources] = useState<Set<EventSource>>(
     () => {
-      const defaults: EventSource[] = ["booking", "invoice", "google_calendar"];
+      const defaults: EventSource[] = ["booking", "invoice", "google_calendar", "task"];
       if (typeof window === "undefined") return new Set(defaults);
       try {
         const stored = localStorage.getItem("cleanops_gcal_overlay");
@@ -241,6 +243,13 @@ export function CalendarView({ events, hasGoogleCalendar, formOptions, currency,
                 onToggle={() => toggleSource("google_calendar")}
               />
             )}
+            <SourceToggle
+              label="Tasks"
+              icon={<CheckSquare className="h-3 w-3" />}
+              color="#7c3aed"
+              enabled={enabledSources.has("task")}
+              onToggle={() => toggleSource("task")}
+            />
           </div>
 
           {/* New booking */}
@@ -526,12 +535,16 @@ function MonthView({
                       <span className="truncate text-foreground">
                         {ev.type === "booking" || ev.type === "google_calendar"
                           ? format(new Date(ev.start), "h:mma")
-                          : "Due"}{" "}
+                          : ev.type === "task"
+                            ? format(new Date(ev.start), "h:mma")
+                            : "Due"}{" "}
                         {ev.type === "google_calendar"
                           ? ev.title
-                          : ev.meta && "client" in ev.meta
-                            ? ev.meta.client
-                            : ""}
+                          : ev.type === "task"
+                            ? ev.title
+                            : ev.meta && "client" in ev.meta
+                              ? ev.meta.client
+                              : ""}
                       </span>
                     </button>
                   ))}
@@ -990,6 +1003,28 @@ function EventDetail({
           </>
         )}
 
+        {event.type === "task" && (
+          <>
+            {event.meta.notes && (
+              <p className="text-muted-foreground text-[11px] mt-1 line-clamp-4">
+                {event.meta.notes}
+              </p>
+            )}
+            {event.meta.assignee && (
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <User className="h-3.5 w-3.5 shrink-0" />
+                <span>{event.meta.assignee}</span>
+              </div>
+            )}
+            {event.meta.recurrence && (
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <RefreshCw className="h-3.5 w-3.5 shrink-0" />
+                <span className="capitalize">{event.meta.recurrence}</span>
+              </div>
+            )}
+          </>
+        )}
+
         <div className="mt-1">
           <span
             className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium text-white"
@@ -1055,6 +1090,16 @@ function EventDetail({
             <ExternalLink className="h-3.5 w-3.5" />
             Open in Google Calendar
           </a>
+        )}
+
+        {event.type === "task" && (
+          <Link
+            href={`/app/tasks/${event.id.replace("task_", "")}/edit`}
+            className="inline-flex items-center gap-1.5 rounded-md bg-foreground px-2.5 py-1.5 text-xs font-medium text-background transition-opacity hover:opacity-90"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+            Edit task
+          </Link>
         )}
       </div>
     </div>

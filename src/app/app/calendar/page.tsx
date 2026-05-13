@@ -63,7 +63,23 @@ type GoogleCalEvent = {
   };
 };
 
-export type CalendarEvent = BookingEvent | InvoiceEvent | GoogleCalEvent;
+type TaskEvent = {
+  id: string;
+  type: "task";
+  title: string;
+  start: string;
+  end: string;
+  status: string;
+  color: string;
+  meta: {
+    notes: string | null;
+    assignee: string | null;
+    recurrence: string | null;
+    completed: boolean;
+  };
+};
+
+export type CalendarEvent = BookingEvent | InvoiceEvent | GoogleCalEvent | TaskEvent;
 
 function getStatusColor(status: string): string {
   switch (status) {
@@ -104,7 +120,7 @@ export default async function CalendarPage() {
   const rangeStart = startOfMonth(subMonths(now, 1));
   const rangeEnd = endOfMonth(addMonths(now, 1));
 
-  const [bookingsResult, invoicesResult, gcalEvents, formOptions, currency, tz] = await Promise.all([
+  const [bookingsResult, invoicesResult, gcalEvents, tasksResult, formOptions, currency, tz] = await Promise.all([
     supabase
       .from("bookings")
       .select(
@@ -131,6 +147,28 @@ export default async function CalendarPage() {
       rangeStart.toISOString(),
       rangeEnd.toISOString(),
     ),
+    supabase
+      .from("tasks" as never)
+      .select(
+        `id, title, notes, due_at, recurrence, completed_at,
+         assigned:memberships ( display_name, profile:profiles ( full_name ) )`,
+      )
+      .gte("due_at" as never, rangeStart.toISOString())
+      .lte("due_at" as never, rangeEnd.toISOString())
+      .order("due_at") as unknown as Promise<{
+      data: Array<{
+        id: string;
+        title: string;
+        notes: string | null;
+        due_at: string;
+        recurrence: string | null;
+        completed_at: string | null;
+        assigned: {
+          display_name: string | null;
+          profile: { full_name: string | null } | null;
+        } | null;
+      }> | null;
+    }>,
     fetchBookingFormOptions(),
     getOrgCurrency(membership.organization_id),
     getOrgTimezone(membership.organization_id),
@@ -212,7 +250,27 @@ export default async function CalendarPage() {
     },
   }));
 
-  const events = [...bookingEvents, ...invoiceEvents, ...googleEvents];
+  const taskEvents: CalendarEvent[] = (tasksResult.data ?? []).map((t) => {
+    const start = new Date(t.due_at);
+    const assigneeName = t.assigned ? memberDisplayName(t.assigned) : null;
+    return {
+      id: `task_${t.id}`,
+      type: "task" as const,
+      title: `☐ ${t.title}`,
+      start: start.toISOString(),
+      end: start.toISOString(),
+      status: t.completed_at ? "completed" : "pending",
+      color: t.completed_at ? "#22c55e" : "#8b5cf6", // violet for pending, green for done
+      meta: {
+        notes: t.notes,
+        assignee: assigneeName,
+        recurrence: t.recurrence,
+        completed: !!t.completed_at,
+      },
+    };
+  });
+
+  const events = [...bookingEvents, ...invoiceEvents, ...googleEvents, ...taskEvents];
   const hasGoogleCalendar = gcalEvents.length > 0;
 
   return (

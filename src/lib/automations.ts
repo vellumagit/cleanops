@@ -4098,6 +4098,80 @@ export async function autoGenerateRecurringInvoices(): Promise<{
 }
 
 // ─────────────────────────────────────────────────────────────────
+// Task reminder push notification
+//
+// Called by the remind_at cron — fires a push to the assignee (or all
+// managers if unassigned) and stamps reminded_at so it never re-fires.
+// ─────────────────────────────────────────────────────────────────
+
+export async function sendTaskReminder(taskId: string): Promise<void> {
+  try {
+    const db = admin();
+    const { data: task } = await db
+      .from("tasks" as never)
+      .select(
+        "id, organization_id, title, notes, assigned_to, reminded_at, completed_at",
+      )
+      .eq("id" as never, taskId)
+      .maybeSingle() as unknown as {
+      data: {
+        id: string;
+        organization_id: string;
+        title: string;
+        notes: string | null;
+        assigned_to: string | null;
+        reminded_at: string | null;
+        completed_at: string | null;
+      } | null;
+    };
+
+    if (!task) return;
+    // Skip if already reminded or already completed
+    if (task.reminded_at || task.completed_at) return;
+
+    const body = task.notes
+      ? task.notes.slice(0, 120)
+      : "Tap to view details.";
+
+    if (task.assigned_to) {
+      await sendPushToMembership(task.assigned_to, {
+        title: `📋 Task reminder: ${task.title}`,
+        body,
+        href: "/app/tasks",
+      });
+    } else {
+      // Unassigned — notify all active managers+ in the org
+      const { data: managers } = await db
+        .from("memberships")
+        .select("id")
+        .eq("organization_id", task.organization_id)
+        .in("role", ["owner", "admin", "manager"])
+        .eq("status", "active") as unknown as {
+        data: Array<{ id: string }> | null;
+      };
+
+      await Promise.allSettled(
+        (managers ?? []).map((m) =>
+          sendPushToMembership(m.id, {
+            title: `📋 Task reminder: ${task.title}`,
+            body,
+            href: "/app/tasks",
+          }),
+        ),
+      );
+    }
+
+    // Stamp reminded_at so the cron doesn't re-fire
+    await db
+      .from("tasks" as never)
+      .update({ reminded_at: new Date().toISOString() } as never)
+      .eq("id" as never, taskId);
+  } catch (err) {
+    console.error("[auto] sendTaskReminder failed:", err);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────
 

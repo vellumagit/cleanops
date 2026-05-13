@@ -130,6 +130,10 @@
     {
       "path": "/api/cron/billing-cycle",
       "schedule": "0 7 15 * *"
+    },
+    {
+      "path": "/api/cron/task-reminders",
+      "schedule": "*/15 * * * *"
     }
   ]
 }
