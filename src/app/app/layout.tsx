@@ -7,7 +7,13 @@ import { PushPrompt } from "@/components/push-prompt";
 import { TrialBanner } from "@/components/trial-banner";
 import { SetupReturnBanner } from "@/components/setup-return-banner";
 import { QuickActions } from "@/components/quick-actions";
+import { AIWidget } from "@/components/ai-assistant/ai-widget";
 import { DEFAULT_TZ } from "@/lib/format";
+
+// Orgs with the AI assistant enabled — must match the allow-list in /api/ai-chat
+const AI_ENABLED_ORGS = new Set([
+  "4cf4c402-5889-43c9-91f3-7186f66ee08b", // Svit Company Inc
+]);
 
 export default async function AppLayout({
   children,
@@ -160,6 +166,7 @@ export default async function AppLayout({
         />
         {children}
         <QuickActions role={membership.role} />
+        {AI_ENABLED_ORGS.has(membership.organization_id) && <AIWidget />}
       </div>
     </BrandProvider>
   );
