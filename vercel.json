@@ -133,7 +133,7 @@
     },
     {
       "path": "/api/cron/task-reminders",
-      "schedule": "*/15 * * * *"
+      "schedule": "0 8 * * *"
     }
   ]
 }
