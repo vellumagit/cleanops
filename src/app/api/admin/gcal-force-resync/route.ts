@@ -149,26 +149,37 @@ export async function GET(request: NextRequest) {
     (e.description ?? "").includes("Managed by Sollos"),
   );
 
-  // ── Delete each Sollos event from GCal ────────────────────────────────────
+  // ── Delete each Sollos event from GCal ───────────────────────────────────
+  // Process in small sequential batches to stay well under Google's
+  // 600 writes/min/user quota. Firing all at once causes 403 rate limits
+  // after the first ~12 succeed.
   let deleted_from_gcal = 0;
   const errors: string[] = [];
 
-  await Promise.allSettled(
-    sollosEvents.map(async (e) => {
-      const delRes = await fetch(
-        `${CALENDAR_API}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(e.id)}`,
-        {
-          method: "DELETE",
-          headers: { Authorization: `Bearer ${accessToken}` },
-        },
-      );
-      if (delRes.ok || delRes.status === 404 || delRes.status === 410) {
-        deleted_from_gcal++;
-      } else {
-        errors.push(`Failed to delete GCal event ${e.id}: ${delRes.status}`);
-      }
-    }),
-  );
+  const BATCH = 5;
+  for (let i = 0; i < sollosEvents.length; i += BATCH) {
+    const batch = sollosEvents.slice(i, i + BATCH);
+    await Promise.allSettled(
+      batch.map(async (e) => {
+        const delRes = await fetch(
+          `${CALENDAR_API}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(e.id)}`,
+          {
+            method: "DELETE",
+            headers: { Authorization: `Bearer ${accessToken}` },
+          },
+        );
+        if (delRes.ok || delRes.status === 404 || delRes.status === 410) {
+          deleted_from_gcal++;
+        } else {
+          errors.push(`Failed to delete GCal event ${e.id}: ${delRes.status}`);
+        }
+      }),
+    );
+    // 300ms between batches → ~17 req/s, well under the 600/min limit
+    if (i + BATCH < sollosEvents.length) {
+      await new Promise((r) => setTimeout(r, 300));
+    }
+  }
 
   // ── Null all google_calendar_event_id on upcoming bookings ────────────────
   const now = new Date().toISOString();
@@ -179,16 +190,27 @@ export async function GET(request: NextRequest) {
     .gte("scheduled_at" as never, now)
     .not("google_calendar_event_id" as never, "is" as never, null as never);
 
-  // ── Re-sync all upcoming bookings to the (now clean) calendar ────────────
-  await bulkSyncUpcomingBookings(orgId).catch((err) => {
-    errors.push(`bulkSync error: ${String(err)}`);
-  });
+  // ── Re-sync only if the wipe was clean ───────────────────────────────────
+  // If any deletes failed, don't re-sync — that would create new events on
+  // top of the ones we couldn't remove, making duplicates worse.
+  // Fix the errors (usually by waiting a minute and re-running) then re-run.
+  let synced = false;
+  if (errors.length === 0) {
+    await bulkSyncUpcomingBookings(orgId).catch((err) => {
+      errors.push(`bulkSync error: ${String(err)}`);
+    });
+    synced = true;
+  }
 
   return NextResponse.json({
-    ok: true,
+    ok: errors.length === 0,
     sollos_events_found: sollosEvents.length,
     deleted_from_gcal,
     nulled_booking_ids: nulled_booking_ids ?? 0,
+    synced,
     errors,
+    hint: errors.length > 0
+      ? "Some deletes failed — wait 60s and run again. bulkSync was skipped to avoid new duplicates."
+      : undefined,
   });
 }
