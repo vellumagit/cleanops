@@ -149,36 +149,30 @@ export async function GET(request: NextRequest) {
     (e.description ?? "").includes("Managed by Sollos"),
   );
 
-  // ── Delete each Sollos event from GCal ───────────────────────────────────
-  // Process in small sequential batches to stay well under Google's
-  // 600 writes/min/user quota. Firing all at once causes 403 rate limits
-  // after the first ~12 succeed.
+  // ── Delete Sollos events from GCal ───────────────────────────────────────
+  // Sequential one-at-a-time with 150ms gaps = ~6 req/s = 400/min, safely
+  // under Google's 600/min rolling quota.
+  // Cap at 40 per call so we stay inside Vercel's 10s function timeout.
+  // Run the URL multiple times until sollos_events_found reaches 0.
   let deleted_from_gcal = 0;
   const errors: string[] = [];
+  const toDelete = sollosEvents.slice(0, 40);
 
-  const BATCH = 5;
-  for (let i = 0; i < sollosEvents.length; i += BATCH) {
-    const batch = sollosEvents.slice(i, i + BATCH);
-    await Promise.allSettled(
-      batch.map(async (e) => {
-        const delRes = await fetch(
-          `${CALENDAR_API}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(e.id)}`,
-          {
-            method: "DELETE",
-            headers: { Authorization: `Bearer ${accessToken}` },
-          },
-        );
-        if (delRes.ok || delRes.status === 404 || delRes.status === 410) {
-          deleted_from_gcal++;
-        } else {
-          errors.push(`Failed to delete GCal event ${e.id}: ${delRes.status}`);
-        }
-      }),
+  for (const e of toDelete) {
+    const delRes = await fetch(
+      `${CALENDAR_API}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(e.id)}`,
+      {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${accessToken}` },
+      },
     );
-    // 300ms between batches → ~17 req/s, well under the 600/min limit
-    if (i + BATCH < sollosEvents.length) {
-      await new Promise((r) => setTimeout(r, 300));
+    if (delRes.ok || delRes.status === 404 || delRes.status === 410) {
+      deleted_from_gcal++;
+    } else {
+      errors.push(`Failed to delete GCal event ${e.id}: ${delRes.status}`);
     }
+    // 150ms gap between requests → ~6.7 req/s = 400/min
+    await new Promise((r) => setTimeout(r, 150));
   }
 
   // ── Null all google_calendar_event_id on upcoming bookings ────────────────
@@ -209,8 +203,11 @@ export async function GET(request: NextRequest) {
     nulled_booking_ids: nulled_booking_ids ?? 0,
     synced,
     errors,
+    remaining: sollosEvents.length - deleted_from_gcal,
     hint: errors.length > 0
       ? "Some deletes failed — wait 60s and run again. bulkSync was skipped to avoid new duplicates."
+      : sollosEvents.length > 40
+      ? `Processed first 40 of ${sollosEvents.length} — run again immediately to continue.`
       : undefined,
   });
 }
