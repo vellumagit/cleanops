@@ -151,14 +151,16 @@ export async function POST(request: NextRequest) {
           ...messages,
           { role: "assistant", content: fullResponse },
         ];
-        admin
-          .from("ai_conversations" as never)
-          .insert({
-            organization_id: orgId,
-            membership_id: membership.id,
-            messages: allMessages,
-            page_context: currentPage,
-          } as never)
+        Promise.resolve(
+          admin
+            .from("ai_conversations" as never)
+            .insert({
+              organization_id: orgId,
+              membership_id: membership.id,
+              messages: allMessages,
+              page_context: currentPage,
+            } as never),
+        )
           .then(() => {})
           .catch(() => {});
       } catch (err) {
