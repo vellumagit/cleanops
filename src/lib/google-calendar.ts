@@ -509,24 +509,43 @@ export async function cleanupOrgCalendarEvents(
 
   if (!bookings || bookings.length === 0) return;
 
-  // Delete from Google Calendar in parallel — best effort.
-  await Promise.allSettled(
+  // Delete from Google Calendar — track per-booking outcome so we only null
+  // IDs for events we KNOW are gone. If a delete fails (e.g. expired token,
+  // network blip) we keep the ID in the DB. This prevents a later
+  // bulkSyncUpcomingBookings from creating a second event for the same
+  // booking while the original still exists on the calendar (doubling bug).
+  const results = await Promise.allSettled(
     bookings.map((b) =>
       gcalFetch(
         conn.access_token,
         `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(b.google_calendar_event_id)}`,
         { method: "DELETE" },
-      ).catch(() => {}),
+      ),
     ),
   );
 
-  // Reset IDs so future creates go to the new calendar, not the old one.
+  // An event is "confirmed gone" if the delete returned 2xx, 404 (not found
+  // — already deleted), or 410 (gone). Any other status or a network error
+  // means we can't be sure, so we leave the ID intact.
+  const clearedIds = bookings
+    .filter((_, i) => {
+      const r = results[i];
+      if (r.status === "rejected") return false;
+      const { status } = r.value;
+      return status === 204 || status === 200 || status === 404 || status === 410;
+    })
+    .map((b) => b.id);
+
+  if (clearedIds.length === 0) return;
+
+  // Reset IDs only for confirmed-gone events so future creates/updates go to
+  // the correct calendar without risk of duplication.
   await admin
     .from("bookings")
     .update({ google_calendar_event_id: null } as never)
     .in(
       "id" as never,
-      bookings.map((b) => b.id) as never,
+      clearedIds as never,
     );
 }
 

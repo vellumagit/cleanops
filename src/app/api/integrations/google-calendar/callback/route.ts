@@ -133,13 +133,52 @@ export async function GET(request: NextRequest) {
 
     const admin = createSupabaseAdminClient();
 
-    // Clean up events from the OLD calendar before switching — deletes
-    // upcoming events and resets google_calendar_event_id to null so they
-    // get re-created on the new calendar. Must run while the old connection
-    // is still active (getConnection looks for status='active').
+    // Check whether an active connection already exists and if it belongs to
+    // the same Google account. If it's the same account (e.g. re-auth after
+    // expiry or after a UI disconnect+reconnect of the same email) we just
+    // refresh the tokens — no event cleanup or bulk re-sync needed. This
+    // prevents the "doubling" bug where cleanup silently fails to delete some
+    // GCal events but nulls their IDs, causing bulkSync to create duplicates.
+    const { data: existingActive } = await admin
+      .from("integration_connections" as never)
+      .select("id, external_account_id")
+      .eq("organization_id" as never, organizationId)
+      .eq("provider" as never, "google_calendar")
+      .eq("status" as never, "active")
+      .maybeSingle() as unknown as {
+      data: { id: string; external_account_id: string | null } | null;
+    };
+
+    const isSameAccount =
+      existingActive &&
+      tokens.email &&
+      existingActive.external_account_id === tokens.email;
+
+    if (isSameAccount) {
+      // Just rotate the tokens on the existing connection — events are already
+      // on the right calendar so there's nothing to clean up or re-sync.
+      await admin
+        .from("integration_connections" as never)
+        .update({
+          access_token_ciphertext: encryptSecret(tokens.access_token),
+          refresh_token_ciphertext: encryptSecret(tokens.refresh_token),
+          token_expires_at: expiresAt,
+          external_account_label: tokens.email
+            ? `${tokens.email} (Google Calendar)`
+            : "Google Calendar",
+        } as never)
+        .eq("id" as never, existingActive.id);
+
+      return NextResponse.redirect(`${redirectBase}?gcal_connected=true`);
+    }
+
+    // Different account (or no existing connection) — full switch:
+    // 1. Delete events from the OLD calendar and null the IDs so bulkSync
+    //    can push them to the new calendar. Must run while the old connection
+    //    is still active (getConnection looks for status='active').
     await cleanupOrgCalendarEvents(organizationId).catch(() => {});
 
-    // Disconnect any existing Google Calendar connection for this org
+    // 2. Disconnect any existing Google Calendar connection for this org.
     await admin
       .from("integration_connections" as never)
       .update({ status: "disconnected" } as never)
@@ -147,7 +186,7 @@ export async function GET(request: NextRequest) {
       .eq("provider" as never, "google_calendar")
       .eq("status" as never, "active");
 
-    // Insert new connection
+    // 3. Insert new connection.
     await admin.from("integration_connections" as never).insert({
       organization_id: organizationId,
       provider: "google_calendar",
@@ -163,8 +202,7 @@ export async function GET(request: NextRequest) {
       metadata: { calendar_id: "primary" },
     } as never);
 
-    // Push all upcoming bookings to the newly-connected calendar so the
-    // user doesn't have to edit each one manually to trigger a sync.
+    // 4. Push all upcoming bookings whose IDs were cleared to the new calendar.
     await bulkSyncUpcomingBookings(organizationId).catch(() => {});
 
     return NextResponse.redirect(`${redirectBase}?gcal_connected=true`);
