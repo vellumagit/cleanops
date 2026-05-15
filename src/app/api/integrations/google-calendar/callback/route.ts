@@ -149,23 +149,45 @@ export async function GET(request: NextRequest) {
       data: { id: string; external_account_id: string | null } | null;
     };
 
+    // We only want to do a full wipe-and-resync when we're CERTAIN the user
+    // switched to a DIFFERENT Google account.  Default to "same account" in
+    // every ambiguous case:
+    //   • tokens.email absent     — userinfo fetch failed; can't verify, assume same
+    //   • external_account_id null — email was never stored on the first connect;
+    //                                can't verify, assume same (backfill it below)
+    //   • both known and equal    — confirmed same account
+    //
+    // Only when BOTH are known and they DIFFER do we treat it as an account
+    // switch and run the expensive cleanup + resync cycle.
     const isSameAccount =
       existingActive &&
-      tokens.email &&
-      existingActive.external_account_id === tokens.email;
+      (
+        !tokens.email ||                                    // Can't verify → assume same
+        !existingActive.external_account_id ||              // No stored email → assume same
+        existingActive.external_account_id === tokens.email // Confirmed match
+      );
 
     if (isSameAccount) {
       // Just rotate the tokens on the existing connection — events are already
       // on the right calendar so there's nothing to clean up or re-sync.
+      // Also backfill external_account_id if it was null so future reconnects
+      // can properly detect a real account change.
       await admin
         .from("integration_connections" as never)
         .update({
           access_token_ciphertext: encryptSecret(tokens.access_token),
           refresh_token_ciphertext: encryptSecret(tokens.refresh_token),
           token_expires_at: expiresAt,
-          external_account_label: tokens.email
-            ? `${tokens.email} (Google Calendar)`
-            : "Google Calendar",
+          status: "active",
+          last_error: null,
+          // Backfill email whenever we have it — ensures future isSameAccount
+          // checks work even if the first connect didn't capture the email.
+          ...(tokens.email
+            ? {
+                external_account_id: tokens.email,
+                external_account_label: `${tokens.email} (Google Calendar)`,
+              }
+            : {}),
         } as never)
         .eq("id" as never, existingActive.id);
 

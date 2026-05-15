@@ -302,12 +302,16 @@ export async function createCalendarEvent(
   const created = await res.json();
   const eventId: string = created.id;
 
-  // Store the event ID on the booking
+  // Store the event ID on the booking — but only if it's still null.
+  // A concurrent createCalendarEvent call (e.g. two overlapping bulkSync
+  // runs) may have already written an ID.  The conditional prevents us from
+  // overwriting it, which would leave a GCal orphan with no tracked ID.
   const admin = createSupabaseAdminClient();
   await admin
     .from("bookings")
     .update({ google_calendar_event_id: eventId } as never)
-    .eq("id", booking.id);
+    .eq("id", booking.id)
+    .is("google_calendar_event_id" as never, null as never);
 
   return eventId;
 }
