@@ -364,6 +364,22 @@ export async function updateCalendarEvent(
   );
 
   if (!res.ok) {
+    // 404/410 means the event was deleted or is on a different calendar
+    // (e.g. after an account switch). Fall through to create a fresh event
+    // so the booking self-heals rather than silently failing forever.
+    if (res.status === 404 || res.status === 410) {
+      const newEventId = await createCalendarEvent(organizationId, {
+        id: booking.id,
+        scheduled_at: booking.scheduled_at,
+        duration_minutes: booking.duration_minutes,
+        service_type: booking.service_type,
+        address: booking.address,
+        notes: booking.notes,
+        client_name: booking.client_name,
+        employee_name: booking.employee_name,
+      });
+      return newEventId !== null;
+    }
     console.error(
       "[gcal] Failed to update event:",
       res.status,

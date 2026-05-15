@@ -51,10 +51,14 @@ export default async function IntegrationsPage() {
   const membership = await requireMembership(["owner", "admin"]);
   const supabase = await createSupabaseServerClient();
 
+  // Only fetch active connections — disconnected rows are kept for audit but
+  // should not affect the displayed state. Filtering here prevents a stale
+  // disconnected row from overwriting the active one in byProvider.
   const { data: rows } = await supabase
     .from("integration_connections")
     .select("provider, status, external_account_id, connected_at, updated_at")
-    .eq("organization_id", membership.organization_id);
+    .eq("organization_id", membership.organization_id)
+    .eq("status", "active");
 
   // Stripe Connect status lives on the organizations row (not
   // integration_connections) because we only store the account id + cached
@@ -237,7 +241,12 @@ export default async function IntegrationsPage() {
                     <>
                       {conn?.external_account_id && (
                         <div className="flex justify-between gap-2 min-w-0">
-                          <dt className="text-muted-foreground shrink-0">Account</dt>
+                          <dt
+                            className="text-muted-foreground shrink-0 cursor-help border-b border-dashed border-muted-foreground/40"
+                            title="The Google account used for calendar sync. This is the Gmail/Workspace account you authorised — it's separate from your Sollos login."
+                          >
+                            Google account
+                          </dt>
                           <dd className="font-mono text-foreground truncate text-right" title={conn.external_account_id}>
                             {conn.external_account_id}
                           </dd>
