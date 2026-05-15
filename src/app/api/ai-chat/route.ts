@@ -97,12 +97,13 @@ export async function POST(request: NextRequest) {
         .select("id", { count: "exact", head: true })
         .eq("organization_id" as never, orgId)
         .in("status" as never, ["sent", "overdue"]),
-      admin
-        .from("tasks" as never)
-        .select("id", { count: "exact", head: true })
-        .eq("organization_id" as never, orgId)
-        .is("completed_at" as never, null)
-        .catch(() => ({ count: null })), // tasks table may not exist yet
+      Promise.resolve(
+        admin
+          .from("tasks" as never)
+          .select("id", { count: "exact", head: true })
+          .eq("organization_id" as never, orgId)
+          .is("completed_at" as never, null),
+      ).catch(() => ({ count: null })), // tasks table may not exist yet
     ]);
 
   const userName =
