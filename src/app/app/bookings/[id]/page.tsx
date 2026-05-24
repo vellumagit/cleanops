@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Pencil, Send } from "lucide-react";
+import { CheckCircle2, Copy, Pencil, Send } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
@@ -28,6 +28,10 @@ import {
 } from "@/app/app/checklists/booking-checklist";
 import { AttachTemplateButton } from "@/app/app/checklists/attach-template-button";
 import { AssignCrewButton } from "@/app/app/bookings/assign-crew-button";
+import {
+  duplicateBookingAction,
+  markBookingCompleteAction,
+} from "@/app/app/bookings/actions";
 
 export const metadata = { title: "Booking" };
 
@@ -230,10 +234,30 @@ export default async function BookingDetailPage({
       description={formatDateTime(booking.scheduled_at, tz)}
       actions={
         canEdit ? (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {showGenerateInvoice && (
               <GenerateInvoiceButton bookingId={booking.id} />
             )}
+            {bookingStatus !== "completed" && bookingStatus !== "cancelled" && (
+              <form action={markBookingCompleteAction.bind(null, booking.id)}>
+                <button
+                  type="submit"
+                  className={buttonVariants({ variant: "outline" })}
+                >
+                  <CheckCircle2 className="h-4 w-4" />
+                  Mark complete
+                </button>
+              </form>
+            )}
+            <form action={duplicateBookingAction.bind(null, booking.id)}>
+              <button
+                type="submit"
+                className={buttonVariants({ variant: "outline" })}
+              >
+                <Copy className="h-4 w-4" />
+                Duplicate
+              </button>
+            </form>
             {assignableEmployees.length > 0 && (
               <AssignCrewButton
                 bookingId={booking.id}

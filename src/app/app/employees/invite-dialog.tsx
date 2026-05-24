@@ -142,6 +142,23 @@ export function InviteDialog({ siteUrl }: { siteUrl: string }) {
           )}
 
           <div className="space-y-1.5">
+            <Label htmlFor="invite-name">Full name</Label>
+            <Input
+              id="invite-name"
+              name="name"
+              type="text"
+              placeholder="Jane Smith"
+              autoComplete="name"
+              required
+              defaultValue={state.values?.name}
+              aria-invalid={Boolean(state.errors?.name)}
+            />
+            {state.errors?.name && (
+              <p className="text-xs text-destructive">{state.errors.name}</p>
+            )}
+          </div>
+
+          <div className="space-y-1.5">
             <Label htmlFor="invite-email">Email address</Label>
             <Input
               id="invite-email"

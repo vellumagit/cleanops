@@ -4,6 +4,7 @@ import { z } from "zod";
  * Validation schema for the invite-employee form.
  */
 export const InvitationSchema = z.object({
+  name: z.string().min(1, "Enter the person's name").max(100),
   email: z.string().email("Enter a valid email address"),
   role: z.enum(["admin", "manager", "employee"], {
     message: "Choose a role",

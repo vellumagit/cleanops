@@ -8,7 +8,7 @@ import { logAuditEvent } from "@/lib/audit";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { InvitationSchema } from "@/lib/validators/invitations";
 
-type Field = "email" | "role" | "pay_rate";
+type Field = "name" | "email" | "role" | "pay_rate";
 export type InviteFormState = ActionState<Field>;
 
 /* ------------------------------------------------------------------ */
@@ -20,6 +20,7 @@ export async function sendInvitationAction(
   formData: FormData,
 ): Promise<InviteFormState> {
   const raw = {
+    name: String(formData.get("name") ?? "").trim(),
     email: String(formData.get("email") ?? "").trim().toLowerCase(),
     role: String(formData.get("role") ?? "employee"),
     pay_rate: String(formData.get("pay_rate") ?? ""),
@@ -125,6 +126,7 @@ export async function sendInvitationAction(
 
     const template = teamInviteEmail({
       orgName: orgData?.name ?? membership.organization_name,
+      inviteeName: parsed.data.name,
       role: parsed.data.role,
       signupUrl: `${siteUrl}${acceptPath}`,
       brandColor: orgData?.brand_color ?? undefined,

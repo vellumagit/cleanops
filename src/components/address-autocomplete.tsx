@@ -5,52 +5,24 @@ import { MapPin, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /**
- * Address autocomplete input backed by OpenStreetMap Nominatim.
- * Free, no API key required. Drop-in replacement for a plain <Input>
- * when you want real-address suggestions.
- *
- * Usage:
- *   <AddressAutocomplete
- *     id="address"
- *     name="address"
- *     value={addressValue}
- *     onChange={setAddressValue}
- *   />
- *
- * Note: Nominatim terms require a descriptive User-Agent and max 1 req/s.
- * We debounce at 400ms which comfortably satisfies the rate limit.
- *
- * Upgrade path: swap `searchNominatim` for a Google Places call when a
- * Places API key is available — the component interface stays identical.
+ * Address autocomplete backed by Google Places (New API).
+ * Requests are proxied through /api/places-autocomplete so the API
+ * key never reaches the browser.
  */
 
 type Suggestion = {
-  place_id: number;
-  display_name: string;
-  lat: string;
-  lon: string;
+  placeId: string;
+  text: string;
 };
 
-async function searchNominatim(query: string): Promise<Suggestion[]> {
-  if (query.trim().length < 5) return [];
-  const params = new URLSearchParams({
-    q: query,
-    format: "json",
-    addressdetails: "0",
-    limit: "5",
-    countrycodes: "ca,us",
-  });
+async function searchPlaces(query: string): Promise<Suggestion[]> {
+  if (query.trim().length < 3) return [];
   const res = await fetch(
-    `https://nominatim.openstreetmap.org/search?${params}`,
-    {
-      headers: {
-        "Accept-Language": "en",
-        "User-Agent": "Sollos/3 (sollos.app)",
-      },
-    },
+    `/api/places-autocomplete?q=${encodeURIComponent(query)}`,
   );
   if (!res.ok) return [];
-  return res.json() as Promise<Suggestion[]>;
+  const data = await res.json();
+  return data.suggestions ?? [];
 }
 
 export function AddressAutocomplete({
@@ -84,7 +56,7 @@ export function AddressAutocomplete({
     debounceRef.current = setTimeout(async () => {
       setLoading(true);
       try {
-        const results = await searchNominatim(q);
+        const results = await searchPlaces(q);
         setSuggestions(results);
         setOpen(results.length > 0);
       } catch {
@@ -92,7 +64,7 @@ export function AddressAutocomplete({
       } finally {
         setLoading(false);
       }
-    }, 400);
+    }, 300);
   }, []);
 
   useEffect(() => {
@@ -104,7 +76,10 @@ export function AddressAutocomplete({
   // Close on outside click
   useEffect(() => {
     function handleClick(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(e.target as Node)
+      ) {
         setOpen(false);
       }
     }
@@ -116,7 +91,7 @@ export function AddressAutocomplete({
     const v = e.target.value;
     onChange(v);
     setHighlightedIdx(-1);
-    if (v.length >= 5) {
+    if (v.length >= 3) {
       search(v);
     } else {
       setSuggestions([]);
@@ -125,16 +100,7 @@ export function AddressAutocomplete({
   }
 
   function selectSuggestion(suggestion: Suggestion) {
-    // Nominatim returns the full display_name — truncate the trailing
-    // country for a cleaner result (everything before the last ", Canada"
-    // or ", United States").
-    const parts = suggestion.display_name.split(", ");
-    const last = parts[parts.length - 1];
-    const trimmed =
-      last === "Canada" || last === "United States"
-        ? parts.slice(0, -1).join(", ")
-        : suggestion.display_name;
-    onChange(trimmed);
+    onChange(suggestion.text);
     setSuggestions([]);
     setOpen(false);
   }
@@ -187,7 +153,7 @@ export function AddressAutocomplete({
       {open && suggestions.length > 0 && (
         <ul className="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-md border border-border bg-popover py-1 shadow-lg text-sm">
           {suggestions.map((s, idx) => (
-            <li key={s.place_id}>
+            <li key={s.placeId}>
               <button
                 type="button"
                 onMouseDown={(e) => {
@@ -202,7 +168,7 @@ export function AddressAutocomplete({
                 )}
               >
                 <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                <span className="leading-snug">{s.display_name}</span>
+                <span className="leading-snug">{s.text}</span>
               </button>
             </li>
           ))}

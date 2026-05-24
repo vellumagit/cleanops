@@ -68,15 +68,19 @@ function initialDismissed(): boolean {
 export function PwaInstallBanner() {
   const [deferredPrompt, setDeferredPrompt] =
     useState<BeforeInstallPromptEvent | null>(null);
-  // UA detection is stable for the component's lifetime — compute once
-  // at mount instead of via setState inside an effect.
-  const [showIOS] = useState(
-    () => typeof window !== "undefined" && isIOS(),
-  );
-  const [inSafari] = useState(
-    () => typeof window !== "undefined" && isSafari(),
-  );
-  const [dismissed, setDismissed] = useState(initialDismissed);
+  // Always start hidden so SSR and first client render match — avoids the
+  // hydration mismatch that was swallowing nav-tab clicks on first login.
+  // The effect below immediately updates these to their real values.
+  const [showIOS, setShowIOS] = useState(false);
+  const [inSafari, setInSafari] = useState(false);
+  const [dismissed, setDismissed] = useState(true);
+
+  // Resolve client-only state after mount (safe: no SSR mismatch).
+  useEffect(() => {
+    setDismissed(initialDismissed());
+    setShowIOS(isIOS());
+    setInSafari(isSafari());
+  }, []);
 
   useEffect(() => {
     if (dismissed) return;

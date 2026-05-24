@@ -8,6 +8,7 @@ import {
   createCalendarEvent,
   updateCalendarEvent,
   deleteCalendarEvent,
+  syncMemberCalendarEvents,
 } from "@/lib/google-calendar";
 import { generateOccurrences, type SeriesRule } from "@/lib/recurrence";
 import {
@@ -55,7 +56,7 @@ function readRecurringFormValues(formData: FormData) {
     start_time: String(formData.get("start_time") ?? ""),
     starts_at: String(formData.get("starts_at") ?? ""),
     ends_at: String(formData.get("ends_at") ?? ""),
-    generate_ahead: String(formData.get("generate_ahead") ?? "8"),
+    generate_ahead: String(formData.get("generate_ahead") ?? "52"),
     duration_minutes: String(formData.get("duration_minutes") ?? ""),
     service_type: String(formData.get("service_type") ?? "recurring"),
     total_cents: String(formData.get("total_cents") ?? ""),
@@ -200,6 +201,16 @@ export async function createBookingAction(
   try { splits = JSON.parse(splitsJson); } catch { splits = []; }
   if (!Array.isArray(splits)) splits = [];
 
+  // When split segments exist, use their total duration for GCal (not the
+  // booking's overall duration_minutes, which is the full slot length).
+  const effectiveDuration =
+    splits.length > 0
+      ? (splits as { duration_minutes: number }[]).reduce(
+          (sum, s) => sum + (Number(s.duration_minutes) || 0),
+          0,
+        )
+      : parsed.data.duration_minutes;
+
   const { data: booking, error } = await supabase
     .from("bookings")
     .insert({
@@ -260,13 +271,30 @@ export async function createBookingAction(
   await createCalendarEvent(membership.organization_id, {
     id: booking.id,
     scheduled_at: parsed.data.scheduled_at,
-    duration_minutes: parsed.data.duration_minutes,
+    duration_minutes: effectiveDuration,
     service_type: parsed.data.service_type,
     address: parsed.data.address ?? null,
     notes: parsed.data.notes ?? null,
     client_name: labels.clientName,
     employee_name: labels.employeeName,
   }).catch((err) => console.error("[gcal] sync error on create:", err));
+
+  // Sync to each assigned employee's personal calendar (fire-and-forget).
+  {
+    const allAssignees = [
+      parsed.data.assigned_to,
+      ...readAdditionalAssignees(formData),
+    ].filter(Boolean) as string[];
+    syncMemberCalendarEvents(booking.id, allAssignees, {
+      id: booking.id,
+      scheduled_at: parsed.data.scheduled_at,
+      duration_minutes: effectiveDuration,
+      service_type: parsed.data.service_type,
+      address: parsed.data.address ?? null,
+      notes: parsed.data.notes ?? null,
+      client_name: labels.clientName,
+    }).catch(() => {});
+  }
 
   revalidatePath("/app/bookings");
   revalidatePath("/app/calendar");
@@ -427,6 +455,11 @@ export async function createRecurringBookingAction(
       parsed.data.assigned_to ?? null,
     );
 
+    const recurringAssignees = [
+      parsed.data.assigned_to,
+      ...readAdditionalAssignees(formData),
+    ].filter(Boolean) as string[];
+
     for (const b of insertedBookings) {
       createCalendarEvent(membership.organization_id, {
         id: b.id,
@@ -438,6 +471,17 @@ export async function createRecurringBookingAction(
         client_name: labels.clientName,
         employee_name: labels.employeeName,
       }).catch((err) => console.error("[gcal] sync error on recurring create:", err));
+
+      // Personal calendar sync per employee per occurrence.
+      syncMemberCalendarEvents(b.id, recurringAssignees, {
+        id: b.id,
+        scheduled_at: b.scheduled_at,
+        duration_minutes: parsed.data.duration_minutes,
+        service_type: parsed.data.service_type,
+        address: parsed.data.address ?? null,
+        notes: parsed.data.notes ?? null,
+        client_name: labels.clientName,
+      }).catch(() => {});
     }
   }
 
@@ -508,6 +552,14 @@ export async function updateBookingAction(
   let updateSplits: unknown[] = [];
   try { updateSplits = JSON.parse(updateSplitsJson); } catch { updateSplits = []; }
   if (!Array.isArray(updateSplits)) updateSplits = [];
+
+  const updateEffectiveDuration =
+    updateSplits.length > 0
+      ? (updateSplits as { duration_minutes: number }[]).reduce(
+          (sum, s) => sum + (Number(s.duration_minutes) || 0),
+          0,
+        )
+      : parsed.data.duration_minutes;
 
   const { error } = await supabase
     .from("bookings")
@@ -643,7 +695,7 @@ export async function updateBookingAction(
           start_time: newStartTime,
           starts_at: newStartsAt,
           ends_at: newEndsAt,
-          generate_ahead: 8,
+          generate_ahead: 52,
           monthly_nth: parsedMonthlyNth,
           monthly_dow: parsedMonthlyDow,
           tz: orgTz,
@@ -756,7 +808,7 @@ export async function updateBookingAction(
       id,
       google_calendar_event_id: existing.google_calendar_event_id,
       scheduled_at: parsed.data.scheduled_at,
-      duration_minutes: parsed.data.duration_minutes,
+      duration_minutes: updateEffectiveDuration,
       service_type: parsed.data.service_type,
       address: parsed.data.address ?? null,
       notes: parsed.data.notes ?? null,
@@ -768,7 +820,7 @@ export async function updateBookingAction(
     await createCalendarEvent(membership.organization_id, {
       id,
       scheduled_at: parsed.data.scheduled_at,
-      duration_minutes: parsed.data.duration_minutes,
+      duration_minutes: updateEffectiveDuration,
       service_type: parsed.data.service_type,
       address: parsed.data.address ?? null,
       notes: parsed.data.notes ?? null,
@@ -777,11 +829,131 @@ export async function updateBookingAction(
     }).catch((err) => console.error("[gcal] sync error on create:", err));
   }
 
+  // Sync to each assigned employee's personal calendar (fire-and-forget).
+  {
+    const allAssignees = [
+      parsed.data.assigned_to,
+      ...readAdditionalAssignees(formData),
+    ].filter(Boolean) as string[];
+    syncMemberCalendarEvents(id, allAssignees, {
+      id,
+      scheduled_at: parsed.data.scheduled_at,
+      duration_minutes: updateEffectiveDuration,
+      service_type: parsed.data.service_type,
+      address: parsed.data.address ?? null,
+      notes: parsed.data.notes ?? null,
+      client_name: labels.clientName,
+    }).catch(() => {});
+  }
+
   revalidatePath("/app/bookings");
   revalidatePath(`/app/bookings/${id}/edit`);
   revalidatePath("/app");
   revalidatePath("/app/invoices");
   redirect("/app/bookings");
+}
+
+// ─── Duplicate booking ────────────────────────────────────────────────────────
+
+/**
+ * Create a copy of an existing booking (same client, service, crew, price)
+ * with status reset to "pending". Redirects to the new booking's edit page
+ * so the owner can adjust the date before confirming.
+ */
+export async function duplicateBookingAction(id: string) {
+  const { membership, supabase } = await getActionContext();
+
+  const { data: source } = (await supabase
+    .from("bookings")
+    .select(
+      "client_id, package_id, assigned_to, scheduled_at, duration_minutes, service_type, total_cents, hourly_rate_cents, address, notes, splits",
+    )
+    .eq("id", id)
+    .maybeSingle()) as unknown as {
+    data: {
+      client_id: string;
+      package_id: string | null;
+      assigned_to: string | null;
+      scheduled_at: string;
+      duration_minutes: number;
+      service_type: string;
+      total_cents: number;
+      hourly_rate_cents: number | null;
+      address: string | null;
+      notes: string | null;
+      splits: unknown;
+    } | null;
+  };
+
+  if (!source) return;
+
+  const { data: copy, error } = await supabase
+    .from("bookings")
+    .insert({
+      organization_id: membership.organization_id,
+      client_id: source.client_id,
+      package_id: source.package_id ?? null,
+      assigned_to: source.assigned_to ?? null,
+      scheduled_at: source.scheduled_at,
+      duration_minutes: source.duration_minutes,
+      service_type: source.service_type as never,
+      status: "pending",
+      total_cents: source.total_cents,
+      hourly_rate_cents: source.hourly_rate_cents ?? null,
+      address: source.address ?? null,
+      notes: source.notes ?? null,
+      splits: (source.splits ?? []) as never,
+    })
+    .select("id")
+    .single();
+
+  if (error || !copy) return;
+
+  // Mirror the crew assignees
+  const { data: assignees } = (await supabase
+    .from("booking_assignees" as never)
+    .select("membership_id, is_primary")
+    .eq("booking_id" as never, id)) as unknown as {
+    data: Array<{ membership_id: string; is_primary: boolean }> | null;
+  };
+
+  if (assignees && assignees.length > 0) {
+    await supabase.from("booking_assignees" as never).insert(
+      assignees.map((a) => ({
+        booking_id: copy.id,
+        membership_id: a.membership_id,
+        organization_id: membership.organization_id,
+        is_primary: a.is_primary,
+      })) as never,
+    );
+  }
+
+  revalidatePath("/app/bookings");
+  redirect(`/app/bookings/${copy.id}/edit`);
+}
+
+// ─── Mark booking complete ────────────────────────────────────────────────────
+
+/**
+ * Quick-complete a booking without opening the full edit form.
+ * Triggers the same auto-invoice logic as saving via the edit form.
+ */
+export async function markBookingCompleteAction(id: string) {
+  const { membership, supabase } = await getActionContext();
+
+  const { error } = await supabase
+    .from("bookings")
+    .update({ status: "completed" } as never)
+    .eq("id", id)
+    .eq("organization_id" as never, membership.organization_id as never);
+
+  if (error) return;
+
+  await autoInvoiceOnJobComplete(id);
+
+  revalidatePath("/app/bookings");
+  revalidatePath(`/app/bookings/${id}`);
+  redirect(`/app/bookings/${id}`);
 }
 
 export async function deleteBookingAction(formData: FormData) {
@@ -855,9 +1027,10 @@ export async function deleteBookingAction(formData: FormData) {
       );
     }
 
-    // Delete all Google Calendar events for the series in parallel.
-    await Promise.all(
-      (siblings ?? [])
+    // Delete all Google Calendar events for the series in parallel
+    // (org-level + per-member personal calendars).
+    await Promise.all([
+      ...(siblings ?? [])
         .filter((sib) => sib.google_calendar_event_id)
         .map((sib) =>
           deleteCalendarEvent(
@@ -867,9 +1040,30 @@ export async function deleteBookingAction(formData: FormData) {
             console.error("[gcal] sync error on cascade delete:", err),
           ),
         ),
-    );
+      // Clear all member calendar events for every sibling.
+      ...(siblings ?? []).map((sib) =>
+        syncMemberCalendarEvents(sib.id, [], {
+          id: sib.id,
+          scheduled_at: "",
+          duration_minutes: 0,
+          service_type: "",
+          address: null,
+          notes: null,
+        }).catch(() => {}),
+      ),
+    ]);
   } else {
     // Single-booking delete (existing behavior).
+    // Clean up personal calendar events before deleting the booking row.
+    syncMemberCalendarEvents(id, [], {
+      id,
+      scheduled_at: "",
+      duration_minutes: 0,
+      service_type: "",
+      address: null,
+      notes: null,
+    }).catch(() => {});
+
     const { error } = await supabase
       .from("bookings")
       .delete()
@@ -954,6 +1148,16 @@ export async function skipBookingOccurrenceAction(formData: FormData) {
       console.error("[gcal] sync error on skip-occurrence:", err),
     );
   }
+
+  // Also remove from any assigned employees' personal calendars.
+  syncMemberCalendarEvents(id, [], {
+    id,
+    scheduled_at: "",
+    duration_minutes: 0,
+    service_type: "",
+    address: null,
+    notes: null,
+  }).catch(() => {});
 
   revalidatePath("/app/bookings");
   revalidatePath("/app");
@@ -1078,15 +1282,17 @@ export async function assignBookingCrewAction(
   const { data: existing } = (await supabase
     .from("bookings")
     .select(
-      "assigned_to, scheduled_at, service_type, address, client:clients ( name )",
+      "assigned_to, scheduled_at, duration_minutes, service_type, address, notes, client:clients ( name )",
     )
     .eq("id", id)
     .maybeSingle()) as unknown as {
     data: {
       assigned_to: string | null;
       scheduled_at: string;
+      duration_minutes: number;
       service_type: string;
       address: string | null;
+      notes: string | null;
       client: { name: string | null } | null;
     } | null;
   };
@@ -1108,6 +1314,21 @@ export async function assignBookingCrewAction(
     primaryId,
     additionalIds,
   );
+
+  // Update personal calendars for all newly assigned members (and remove
+  // events for unassigned ones). Fire-and-forget.
+  if (existing) {
+    const allAssignees = [primaryId, ...additionalIds].filter(Boolean) as string[];
+    syncMemberCalendarEvents(id, allAssignees, {
+      id,
+      scheduled_at: existing.scheduled_at,
+      duration_minutes: existing.duration_minutes,
+      service_type: existing.service_type,
+      address: existing.address,
+      notes: existing.notes,
+      client_name: existing.client?.name ?? undefined,
+    }).catch(() => {});
+  }
 
   // Fire the assignment notification when the primary actually
   // changed. Fire-and-forget — never block the dialog on it.

@@ -3,7 +3,6 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { FieldShell } from "@/components/field-shell";
 import { BrandProvider } from "@/components/brand-provider";
 import { PushPrompt } from "@/components/push-prompt";
-import { GpsConsentBanner } from "@/components/gps-consent-banner";
 
 export default async function FieldLayout({
   children,
@@ -15,31 +14,20 @@ export default async function FieldLayout({
   const membership = await requireMembership();
   const supabase = await createSupabaseServerClient();
 
-  const [{ data: profile }, { data: org }, { data: consentRow }] =
-    await Promise.all([
-      supabase
-        .from("profiles")
-        .select("full_name")
-        .eq("id", membership.profile_id)
-        .maybeSingle(),
-      supabase
-        .from("organizations")
-        .select("logo_url, brand_color")
-        .eq("id", membership.organization_id)
-        .maybeSingle() as unknown as {
-        data: { logo_url: string | null; brand_color: string | null } | null;
-      },
-      // Check whether this member has acknowledged the GPS consent notice.
-      (supabase
-        .from("memberships")
-        .select("gps_consent_accepted_at")
-        .eq("id", membership.id)
-        .maybeSingle()) as unknown as {
-        data: { gps_consent_accepted_at: string | null } | null;
-      },
-    ]);
-
-  const needsGpsConsent = !consentRow?.gps_consent_accepted_at;
+  const [{ data: profile }, { data: org }] = await Promise.all([
+    supabase
+      .from("profiles")
+      .select("full_name")
+      .eq("id", membership.profile_id)
+      .maybeSingle(),
+    supabase
+      .from("organizations")
+      .select("logo_url, brand_color")
+      .eq("id", membership.organization_id)
+      .maybeSingle() as unknown as {
+      data: { logo_url: string | null; brand_color: string | null } | null;
+    },
+  ]);
 
   return (
     <BrandProvider brandColor={org?.brand_color ?? null}>
@@ -54,7 +42,6 @@ export default async function FieldLayout({
           membershipId={membership.id}
           organizationId={membership.organization_id}
         />
-        <GpsConsentBanner needsConsent={needsGpsConsent} />
         {children}
       </FieldShell>
     </BrandProvider>

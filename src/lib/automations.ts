@@ -2380,11 +2380,11 @@ export async function autoExtendRecurringSeries(): Promise<number> {
       if (!latest) continue;
 
       const latestDate = new Date(latest.scheduled_at);
-      const twoWeeksOut = new Date();
-      twoWeeksOut.setDate(twoWeeksOut.getDate() + 14);
+      const replenishThreshold = new Date();
+      replenishThreshold.setDate(replenishThreshold.getDate() + 30);
 
-      // If the latest booking is more than 2 weeks out, no need to generate
-      if (latestDate > twoWeeksOut) continue;
+      // If the latest booking is more than 30 days out, no need to generate
+      if (latestDate > replenishThreshold) continue;
 
       // Generate next batch (honoring skip_dates and the org's timezone
       // so DST shifts + holidays don't silently drift the schedule).

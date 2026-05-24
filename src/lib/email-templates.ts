@@ -294,14 +294,17 @@ export function invoiceSentEmail(args: {
 
 export function teamInviteEmail(args: {
   orgName: string;
+  inviteeName?: string;
   role: string;
   signupUrl: string;
   brandColor?: string;
 }) {
+  const greeting = args.inviteeName ? `Hi ${escapeHtml(args.inviteeName)},` : "Hi there,";
   const subject = `You're invited to join ${args.orgName} on Sollos`;
   const html = layout(
     `
     <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;letter-spacing:-0.02em;color:#18181b;line-height:1.3;">You've been invited</h1>
+    <p style="margin:0 0 16px;font-size:14px;line-height:1.55;color:#52525b;">${greeting}</p>
     <p style="margin:0 0 24px;font-size:14px;line-height:1.55;color:#52525b;">
       <strong style="color:#18181b;">${escapeHtml(args.orgName)}</strong> invited you to join their team as
       <strong style="color:#18181b;">${escapeHtml(args.role)}</strong>.
@@ -317,7 +320,7 @@ export function teamInviteEmail(args: {
       preheader: `${args.orgName} invited you to join as ${args.role}`,
     },
   );
-  const text = `${args.orgName} invited you to join as ${args.role}.\n\nAccept: ${args.signupUrl}\n\nLink expires in 7 days.`;
+  const text = `${greeting}\n\n${args.orgName} invited you to join as ${args.role}.\n\nAccept: ${args.signupUrl}\n\nLink expires in 7 days.`;
   return { subject, html, text };
 }
 

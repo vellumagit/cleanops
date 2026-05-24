@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ChevronRight, GraduationCap, Calendar, CalendarClock } from "lucide-react";
+import { ChevronRight, GraduationCap, Calendar, CalendarClock, MapPin, CalendarDays, CheckCircle2, XCircle } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -7,6 +7,11 @@ import { FieldHeader } from "@/components/field-shell";
 import { ProfileForm } from "./profile-form";
 import { PtoRequestForm } from "./pto-request-form";
 import { PushToggle } from "@/components/push-prompt";
+import { formatDateTime } from "@/lib/format";
+import {
+  connectMyGoogleCalendarAction,
+  disconnectMyGoogleCalendarAction,
+} from "./actions";
 
 export const metadata = { title: "Profile" };
 
@@ -21,22 +26,35 @@ export default async function FieldProfilePage() {
 
   // PTO history (most recent 5)
   const admin = createSupabaseAdminClient();
-  const { data: ptoHistory } = (await admin
-    .from("pto_requests" as never)
-    .select("id, start_date, end_date, hours, status, reason, reviewed_at")
-    .eq("employee_id" as never, membership.id as never)
-    .order("start_date" as never, { ascending: false } as never)
-    .limit(5) as unknown as {
-    data: Array<{
-      id: string;
-      start_date: string;
-      end_date: string;
-      hours: number;
-      status: "pending" | "approved" | "declined" | "cancelled";
-      reason: string | null;
-      reviewed_at: string | null;
-    }> | null;
-  });
+  const [{ data: ptoHistory }, { data: gcalConn }] = await Promise.all([
+    admin
+      .from("pto_requests" as never)
+      .select("id, start_date, end_date, hours, status, reason, reviewed_at")
+      .eq("employee_id" as never, membership.id as never)
+      .order("start_date" as never, { ascending: false } as never)
+      .limit(5) as unknown as {
+      data: Array<{
+        id: string;
+        start_date: string;
+        end_date: string;
+        hours: number;
+        status: "pending" | "approved" | "declined" | "cancelled";
+        reason: string | null;
+        reviewed_at: string | null;
+      }> | null;
+    },
+
+    // Check if this member has a personal GCal connection.
+    admin
+      .from("integration_connections" as never)
+      .select("external_account_id, connected_at")
+      .eq("membership_id" as never, membership.id)
+      .eq("provider" as never, "google_calendar")
+      .eq("status" as never, "active")
+      .maybeSingle() as unknown as {
+      data: { external_account_id: string | null; connected_at: string } | null;
+    },
+  ]);
 
   return (
     <>
@@ -68,7 +86,7 @@ export default async function FieldProfilePage() {
         />
       </div>
 
-      {/* Notifications */}
+      {/* Push notifications */}
       <div className="mt-5 rounded-xl border border-border bg-card p-5">
         <h2 className="mb-3 text-sm font-semibold">Push notifications</h2>
         <p className="mb-3 text-xs text-muted-foreground">
@@ -78,6 +96,79 @@ export default async function FieldProfilePage() {
           membershipId={membership.id}
           organizationId={membership.organization_id}
         />
+      </div>
+
+      {/* Google Calendar */}
+      <div className="mt-5 rounded-xl border border-border bg-card p-5">
+          <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold">
+            <CalendarDays className="h-4 w-4 text-blue-500" />
+            Google Calendar
+          </h2>
+          <p className="mb-4 text-xs text-muted-foreground leading-relaxed">
+            Connect your personal Google Calendar to automatically see your
+            assigned jobs. Events are created, updated, and removed as your
+            schedule changes.
+          </p>
+
+          {gcalConn ? (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2.5 text-xs">
+                <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+                <div className="min-w-0 flex-1">
+                  {gcalConn.external_account_id && (
+                    <div className="truncate font-medium">
+                      {gcalConn.external_account_id}
+                    </div>
+                  )}
+                  <div className="text-muted-foreground">
+                    Connected {formatDateTime(gcalConn.connected_at)}
+                  </div>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <form action={connectMyGoogleCalendarAction} className="flex-1">
+                  <button
+                    type="submit"
+                    className="inline-flex w-full items-center justify-center rounded-md bg-foreground px-3 py-2 text-xs font-medium text-background transition-colors hover:bg-foreground/90 active:scale-95"
+                  >
+                    Switch account
+                  </button>
+                </form>
+                <form action={disconnectMyGoogleCalendarAction} className="flex-1">
+                  <button
+                    type="submit"
+                    className="inline-flex w-full items-center justify-center gap-1 rounded-md border border-border bg-background px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground active:scale-95"
+                  >
+                    <XCircle className="h-3.5 w-3.5" />
+                    Disconnect
+                  </button>
+                </form>
+              </div>
+            </div>
+          ) : (
+            <form action={connectMyGoogleCalendarAction}>
+              <button
+                type="submit"
+                className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-foreground px-3 py-2.5 text-sm font-medium text-background transition-colors hover:bg-foreground/90 active:scale-95"
+              >
+                <CalendarDays className="h-4 w-4" />
+                Connect Google Calendar
+              </button>
+            </form>
+          )}
+        </div>
+
+      {/* Location & privacy */}
+      <div className="mt-5 rounded-xl border border-border bg-card p-5">
+        <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold">
+          <MapPin className="h-4 w-4 text-muted-foreground" />
+          Location &amp; privacy
+        </h2>
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          When you clock in or out of a job your GPS coordinates are recorded to
+          confirm on-site presence. This data is visible only to your employer
+          and is never shared with third parties.
+        </p>
       </div>
 
       {/* Time off request */}

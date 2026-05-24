@@ -179,12 +179,15 @@ async function refreshAccessToken(
 }
 
 // ---------------------------------------------------------------------------
-// Core: get a valid access token for an org
+// Core: get a valid access token for an org or member
 // ---------------------------------------------------------------------------
 
 /**
- * Get an active Google Calendar connection for an org. Returns null if
+ * Get an active org-level Google Calendar connection. Returns null if
  * there isn't one.
+ *
+ * IMPORTANT: filters membership_id IS NULL so it never accidentally
+ * matches a member-level connection that shares the same org+provider.
  */
 async function getConnection(
   organizationId: string,
@@ -196,6 +199,7 @@ async function getConnection(
     .eq("organization_id" as never, organizationId)
     .eq("provider" as never, "google_calendar")
     .eq("status" as never, "active")
+    .is("membership_id" as never, null as never)
     .maybeSingle()) as unknown as { data: ConnectionRow | null };
 
   if (!data || !data.access_token_ciphertext) return null;
@@ -648,7 +652,7 @@ export async function bulkSyncUpcomingBookings(
 }
 
 /**
- * Check if an org has an active Google Calendar connection.
+ * Check if an org has an active org-level Google Calendar connection.
  * Lightweight check — no token decryption.
  */
 export async function hasGoogleCalendarConnection(
@@ -660,6 +664,424 @@ export async function hasGoogleCalendarConnection(
     .select("id", { count: "exact", head: true })
     .eq("organization_id" as never, organizationId)
     .eq("provider" as never, "google_calendar")
+    .eq("status" as never, "active")
+    .is("membership_id" as never, null as never);
+  return (count ?? 0) > 0;
+}
+
+// ===========================================================================
+// PER-MEMBER GOOGLE CALENDAR
+// ===========================================================================
+// Each member can optionally connect their own personal Google Calendar.
+// Events for their assigned bookings are pushed to their personal calendar
+// independently of the org-level connection.
+// All tokens are encrypted with the same INTEGRATION_ENCRYPTION_KEY and
+// stored in integration_connections with membership_id set.
+// Event IDs are tracked in booking_member_calendar_events (not bookings).
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// Member connection helpers
+// ---------------------------------------------------------------------------
+
+type MemberConnectionRow = ConnectionRow; // same shape, different lookup
+
+/**
+ * Get an active member-level Google Calendar connection.
+ * Handles token refresh just like getConnection does for org-level.
+ */
+async function getMemberConnection(
+  membershipId: string,
+): Promise<(MemberConnectionRow & { access_token: string }) | null> {
+  const admin = createSupabaseAdminClient();
+  const { data } = (await admin
+    .from("integration_connections" as never)
+    .select("id, access_token_ciphertext, refresh_token_ciphertext, token_expires_at, metadata")
+    .eq("membership_id" as never, membershipId)
+    .eq("provider" as never, "google_calendar")
+    .eq("status" as never, "active")
+    .maybeSingle()) as unknown as { data: MemberConnectionRow | null };
+
+  if (!data || !data.access_token_ciphertext) return null;
+
+  const isExpired =
+    data.token_expires_at &&
+    new Date(data.token_expires_at).getTime() < Date.now() + 60_000;
+
+  let accessToken: string;
+  if (isExpired && data.refresh_token_ciphertext) {
+    accessToken = await refreshAccessToken(data.id, data.refresh_token_ciphertext);
+  } else {
+    accessToken = decryptSecret(data.access_token_ciphertext)!;
+  }
+
+  return { ...data, access_token: accessToken };
+}
+
+/**
+ * Check if a member has an active personal Google Calendar connection.
+ * Lightweight — no token decryption.
+ */
+export async function hasMemberCalendarConnection(
+  membershipId: string,
+): Promise<boolean> {
+  const admin = createSupabaseAdminClient();
+  const { count } = await admin
+    .from("integration_connections" as never)
+    .select("id", { count: "exact", head: true })
+    .eq("membership_id" as never, membershipId)
+    .eq("provider" as never, "google_calendar")
     .eq("status" as never, "active");
   return (count ?? 0) > 0;
+}
+
+// ---------------------------------------------------------------------------
+// Member-level CRUD
+// ---------------------------------------------------------------------------
+
+type BookingForMemberEvent = {
+  id: string;
+  scheduled_at: string;
+  duration_minutes: number;
+  service_type: string;
+  address: string | null;
+  notes: string | null;
+  client_name?: string;
+};
+
+function buildMemberEventPayload(
+  booking: BookingForMemberEvent,
+): CalendarEvent {
+  const start = new Date(booking.scheduled_at);
+  const end = new Date(start.getTime() + booking.duration_minutes * 60_000);
+  const summary = [
+    booking.service_type ? `${booking.service_type} clean` : "Cleaning",
+    booking.client_name ? `— ${booking.client_name}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const descParts: string[] = [];
+  if (booking.notes) descParts.push(`Notes: ${booking.notes}`);
+  descParts.push(`\nManaged by Sollos — /app/bookings/${booking.id}`);
+  return {
+    summary,
+    description: descParts.join("\n"),
+    location: booking.address ?? undefined,
+    start: { dateTime: start.toISOString() },
+    end: { dateTime: end.toISOString() },
+  };
+}
+
+/**
+ * Create a Google Calendar event on a member's personal calendar for an
+ * assigned booking. Upserts the mapping in booking_member_calendar_events.
+ * Returns the event ID or null on failure / no connection.
+ */
+export async function createMemberCalendarEvent(
+  membershipId: string,
+  booking: BookingForMemberEvent,
+): Promise<string | null> {
+  const conn = await getMemberConnection(membershipId);
+  if (!conn) return null;
+
+  const calendarId = (conn.metadata?.calendar_id as string) || "primary";
+  const event = buildMemberEventPayload(booking);
+
+  const res = await gcalFetch(
+    conn.access_token,
+    `/calendars/${encodeURIComponent(calendarId)}/events`,
+    { method: "POST", body: JSON.stringify(event) },
+  );
+
+  if (!res.ok) {
+    console.error("[gcal/member] Failed to create event:", res.status, await res.text());
+    return null;
+  }
+
+  const created = await res.json();
+  const eventId: string = created.id;
+
+  // Upsert the mapping — concurrent calls are fine; ON CONFLICT DO UPDATE
+  // just refreshes the ID.
+  const admin = createSupabaseAdminClient();
+  await admin
+    .from("booking_member_calendar_events" as never)
+    .upsert(
+      {
+        booking_id: booking.id,
+        membership_id: membershipId,
+        google_calendar_event_id: eventId,
+      } as never,
+      { onConflict: "booking_id,membership_id" } as never,
+    );
+
+  return eventId;
+}
+
+/**
+ * Update an existing event on a member's personal calendar.
+ * Falls back to create if the event is gone (404/410).
+ */
+export async function updateMemberCalendarEvent(
+  membershipId: string,
+  booking: BookingForMemberEvent,
+): Promise<boolean> {
+  const conn = await getMemberConnection(membershipId);
+  if (!conn) return false;
+
+  // Look up the existing event ID for this (booking, member) pair.
+  const admin = createSupabaseAdminClient();
+  const { data: mapping } = (await admin
+    .from("booking_member_calendar_events" as never)
+    .select("google_calendar_event_id")
+    .eq("booking_id" as never, booking.id)
+    .eq("membership_id" as never, membershipId)
+    .maybeSingle()) as unknown as {
+    data: { google_calendar_event_id: string } | null;
+  };
+
+  if (!mapping) {
+    // No existing event — create one instead.
+    const newId = await createMemberCalendarEvent(membershipId, booking);
+    return newId !== null;
+  }
+
+  const calendarId = (conn.metadata?.calendar_id as string) || "primary";
+  const event = buildMemberEventPayload(booking);
+
+  const res = await gcalFetch(
+    conn.access_token,
+    `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(mapping.google_calendar_event_id)}`,
+    { method: "PATCH", body: JSON.stringify(event) },
+  );
+
+  if (!res.ok) {
+    if (res.status === 404 || res.status === 410) {
+      // Event missing on Google's side — create a fresh one.
+      // Remove the stale row first so createMemberCalendarEvent upserts cleanly.
+      await admin
+        .from("booking_member_calendar_events" as never)
+        .delete()
+        .eq("booking_id" as never, booking.id)
+        .eq("membership_id" as never, membershipId);
+      const newId = await createMemberCalendarEvent(membershipId, booking);
+      return newId !== null;
+    }
+    console.error("[gcal/member] Failed to update event:", res.status, await res.text());
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Delete a member's personal calendar event for a booking and remove
+ * the mapping row.
+ */
+export async function deleteMemberCalendarEvent(
+  membershipId: string,
+  bookingId: string,
+): Promise<boolean> {
+  const conn = await getMemberConnection(membershipId);
+  const admin = createSupabaseAdminClient();
+
+  if (conn) {
+    const { data: mapping } = (await admin
+      .from("booking_member_calendar_events" as never)
+      .select("google_calendar_event_id")
+      .eq("booking_id" as never, bookingId)
+      .eq("membership_id" as never, membershipId)
+      .maybeSingle()) as unknown as {
+      data: { google_calendar_event_id: string } | null;
+    };
+
+    if (mapping) {
+      const calendarId = (conn.metadata?.calendar_id as string) || "primary";
+      const res = await gcalFetch(
+        conn.access_token,
+        `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(mapping.google_calendar_event_id)}`,
+        { method: "DELETE" },
+      );
+      if (!res.ok && res.status !== 404 && res.status !== 410) {
+        console.error("[gcal/member] Failed to delete event:", res.status, await res.text());
+      }
+    }
+  }
+
+  // Always clean up the mapping row regardless of API outcome.
+  await admin
+    .from("booking_member_calendar_events" as never)
+    .delete()
+    .eq("booking_id" as never, bookingId)
+    .eq("membership_id" as never, membershipId);
+
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Sync: called after every booking assignee change
+// ---------------------------------------------------------------------------
+
+/**
+ * Sync personal-calendar events for all currently-assigned members.
+ *
+ * Idempotent — safe to call on every booking create/update:
+ *  • Assignees WITH a connection:  create or update their event
+ *  • Previous assignees no longer in the list:  delete their event
+ *
+ * Fire-and-forget: individual failures are swallowed so booking saves
+ * complete even when GCal is unreachable.
+ */
+export async function syncMemberCalendarEvents(
+  bookingId: string,
+  assigneeIds: string[], // membership IDs currently assigned
+  booking: BookingForMemberEvent,
+): Promise<void> {
+  const admin = createSupabaseAdminClient();
+
+  // 1. All existing member event rows for this booking.
+  const { data: existingRows } = (await admin
+    .from("booking_member_calendar_events" as never)
+    .select("membership_id, google_calendar_event_id")
+    .eq("booking_id" as never, bookingId)) as unknown as {
+    data: Array<{ membership_id: string; google_calendar_event_id: string }> | null;
+  };
+
+  const existingSet = new Set((existingRows ?? []).map((r) => r.membership_id));
+  const assigneeSet = new Set(assigneeIds);
+
+  // 2. Upsert events for all current assignees who have a personal connection.
+  const upsertTasks = assigneeIds.map(async (mid) => {
+    if (existingSet.has(mid)) {
+      await updateMemberCalendarEvent(mid, booking).catch(() => {});
+    } else {
+      await createMemberCalendarEvent(mid, booking).catch(() => {});
+    }
+  });
+
+  // 3. Delete events for members who were removed from the booking.
+  const deleteTasks = (existingRows ?? [])
+    .filter((r) => !assigneeSet.has(r.membership_id))
+    .map((r) => deleteMemberCalendarEvent(r.membership_id, bookingId).catch(() => {}));
+
+  await Promise.allSettled([...upsertTasks, ...deleteTasks]);
+}
+
+/**
+ * Delete all personal-calendar events for a member and clean up the
+ * mapping table. Called when a member disconnects their calendar.
+ */
+export async function cleanupMemberCalendarEvents(
+  membershipId: string,
+): Promise<void> {
+  const conn = await getMemberConnection(membershipId);
+  const admin = createSupabaseAdminClient();
+
+  const now = new Date().toISOString();
+  const { data: rows } = (await admin
+    .from("booking_member_calendar_events" as never)
+    .select("booking_id, google_calendar_event_id, bookings!inner(scheduled_at)")
+    .eq("membership_id" as never, membershipId)
+    .gte("bookings.scheduled_at" as never, now as never)) as unknown as {
+    data: Array<{
+      booking_id: string;
+      google_calendar_event_id: string;
+    }> | null;
+  };
+
+  if (conn && rows && rows.length > 0) {
+    const calendarId = (conn.metadata?.calendar_id as string) || "primary";
+    await Promise.allSettled(
+      rows.map((r) =>
+        gcalFetch(
+          conn.access_token,
+          `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(r.google_calendar_event_id)}`,
+          { method: "DELETE" },
+        ).catch(() => {}),
+      ),
+    );
+  }
+
+  // Remove all mapping rows for this member (past and upcoming).
+  await admin
+    .from("booking_member_calendar_events" as never)
+    .delete()
+    .eq("membership_id" as never, membershipId);
+}
+
+/**
+ * On connect: push all upcoming bookings assigned to this member to their
+ * newly-connected personal calendar.
+ * Only syncs bookings that don't already have a mapping row.
+ */
+export async function bulkSyncMemberBookings(
+  membershipId: string,
+): Promise<void> {
+  const conn = await getMemberConnection(membershipId);
+  if (!conn) return;
+
+  const admin = createSupabaseAdminClient();
+  const now = new Date().toISOString();
+
+  // Fetch upcoming assigned bookings without an existing member event.
+  const { data: bookings } = (await admin
+    .from("booking_assignees" as never)
+    .select(
+      `membership_id,
+       booking:bookings!inner(
+         id, scheduled_at, duration_minutes, service_type, address, notes, status,
+         client:clients!inner(name)
+       )`,
+    )
+    .eq("membership_id" as never, membershipId)
+    .neq("booking.status" as never, "cancelled" as never)
+    .gte("booking.scheduled_at" as never, now as never)
+    .limit(500)) as unknown as {
+    data: Array<{
+      membership_id: string;
+      booking: {
+        id: string;
+        scheduled_at: string;
+        duration_minutes: number;
+        service_type: string;
+        address: string | null;
+        notes: string | null;
+        status: string;
+        client: { name: string } | null;
+      };
+    }> | null;
+  };
+
+  if (!bookings || bookings.length === 0) return;
+
+  // Find which booking IDs already have a member event (don't double-create).
+  const bookingIds = bookings.map((b) => b.booking.id);
+  const { data: existingMappings } = (await admin
+    .from("booking_member_calendar_events" as never)
+    .select("booking_id")
+    .eq("membership_id" as never, membershipId)
+    .in("booking_id" as never, bookingIds as never)) as unknown as {
+    data: Array<{ booking_id: string }> | null;
+  };
+  const alreadySynced = new Set((existingMappings ?? []).map((r) => r.booking_id));
+
+  const toSync = bookings.filter((b) => !alreadySynced.has(b.booking.id));
+  if (toSync.length === 0) return;
+
+  const BATCH = 10;
+  for (let i = 0; i < toSync.length; i += BATCH) {
+    await Promise.allSettled(
+      toSync.slice(i, i + BATCH).map((b) =>
+        createMemberCalendarEvent(membershipId, {
+          id: b.booking.id,
+          scheduled_at: b.booking.scheduled_at,
+          duration_minutes: b.booking.duration_minutes,
+          service_type: b.booking.service_type,
+          address: b.booking.address,
+          notes: b.booking.notes,
+          client_name: b.booking.client?.name,
+        }).catch(() => {}),
+      ),
+    );
+  }
 }

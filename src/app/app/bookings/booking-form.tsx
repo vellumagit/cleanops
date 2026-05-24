@@ -631,10 +631,9 @@ export function BookingForm({
             keeps going forever unless you set an end date or pause it.
           </p>
 
-          {/* Hidden: generate_ahead is kept as the cron's batch size,
-              but owners don't need to think about it. 8 is the sweet
-              spot for ~2 months of weekly. */}
-          <input type="hidden" name="generate_ahead" value="8" />
+          {/* Hidden: generate_ahead is the cron's batch size.
+              52 = 1 year of weekly, 2 years of biweekly, 4+ years monthly. */}
+          <input type="hidden" name="generate_ahead" value="52" />
         </div>
       )}
 
@@ -888,15 +887,34 @@ export function BookingForm({
                       </div>
 
                       <div>
-                        <label className="mb-1 block text-xs text-muted-foreground">Duration (min)</label>
-                        <input
-                          type="number"
-                          min={15}
-                          step={15}
-                          value={seg.duration_minutes}
-                          onChange={(e) => updateSplit(seg.id, { duration_minutes: Number(e.target.value) || 0 })}
-                          className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm"
-                        />
+                        <label className="mb-1 block text-xs text-muted-foreground">Duration</label>
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="number"
+                            min={0}
+                            step={1}
+                            value={Math.floor(seg.duration_minutes / 60)}
+                            onChange={(e) => {
+                              const hrs = Math.max(0, Number(e.target.value) || 0);
+                              updateSplit(seg.id, { duration_minutes: hrs * 60 + (seg.duration_minutes % 60) });
+                            }}
+                            className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm"
+                          />
+                          <span className="shrink-0 text-xs text-muted-foreground">hr</span>
+                          <input
+                            type="number"
+                            min={0}
+                            max={55}
+                            step={5}
+                            value={seg.duration_minutes % 60}
+                            onChange={(e) => {
+                              const mins = Math.min(55, Math.max(0, Number(e.target.value) || 0));
+                              updateSplit(seg.id, { duration_minutes: Math.floor(seg.duration_minutes / 60) * 60 + mins });
+                            }}
+                            className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm"
+                          />
+                          <span className="shrink-0 text-xs text-muted-foreground">min</span>
+                        </div>
                       </div>
 
                       <div>
@@ -937,7 +955,11 @@ export function BookingForm({
                 );
                 return (
                   <p className="text-xs text-muted-foreground">
-                    Total: <strong>{totalSplitMins} min</strong> across {splits.length} employees ·{" "}
+                    Total:{" "}
+                    <strong>
+                      {Math.floor(totalSplitMins / 60)}h{totalSplitMins % 60 > 0 ? ` ${totalSplitMins % 60}m` : ""}
+                    </strong>{" "}
+                    across {splits.length} employees ·{" "}
                     <strong>${totalSplitCost.toFixed(2)}</strong> estimated cost
                   </p>
                 );
