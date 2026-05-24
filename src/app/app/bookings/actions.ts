@@ -987,13 +987,13 @@ export async function deleteBookingAction(formData: FormData) {
     // unsync them after the row delete.
     const { data: siblings } = (await admin
       .from("bookings")
-      .select("google_calendar_event_id")
+      .select("id, google_calendar_event_id")
       .eq("series_id" as never, existing.series_id as never)
       .eq(
         "organization_id",
         membership.organization_id,
       )) as unknown as {
-      data: Array<{ google_calendar_event_id: string | null }> | null;
+      data: Array<{ id: string; google_calendar_event_id: string | null }> | null;
     };
 
     const { error: delBookingsErr, count: delBookingsCount } = await admin
