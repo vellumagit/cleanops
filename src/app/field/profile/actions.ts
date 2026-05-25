@@ -13,6 +13,7 @@ import { requireMembership } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
   buildGoogleOAuthUrl,
+  bulkSyncMemberBookings,
   cleanupMemberCalendarEvents,
 } from "@/lib/google-calendar";
 
@@ -81,6 +82,22 @@ export async function connectMyGoogleCalendarAction(): Promise<never> {
   // Prefix state with "mbr:" so the callback routes to the member handler.
   const url = buildGoogleOAuthUrl(`mbr:${membership.id}`);
   redirect(url);
+}
+
+/**
+ * Re-sync the current member's personal Google Calendar.
+ * Useful when the initial bulk sync silently failed, or when bookings
+ * were assigned/changed before the connection existed and the member
+ * wants to backfill them now without disconnecting + reconnecting.
+ */
+export async function resyncMyGoogleCalendarAction(): Promise<void> {
+  const membership = await requireMembership();
+  try {
+    await bulkSyncMemberBookings(membership.id);
+  } catch (err) {
+    console.error("[gcal/member] resync action failed:", err);
+  }
+  revalidatePath("/field/profile");
 }
 
 /**

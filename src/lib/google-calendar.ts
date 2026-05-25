@@ -1059,10 +1059,12 @@ export async function bulkSyncMemberBookings(
   const now = new Date().toISOString();
 
   // Fetch upcoming assigned bookings without an existing member event.
+  // Pull split metadata too so split-segment employees get an event for
+  // their segment window only — not the full booking duration.
   const { data: bookings } = (await admin
     .from("booking_assignees" as never)
     .select(
-      `membership_id,
+      `membership_id, split_start_offset_minutes, split_duration_minutes,
        booking:bookings!inner(
          id, scheduled_at, duration_minutes, service_type, address, notes, status,
          client:clients!inner(name)
@@ -1074,6 +1076,8 @@ export async function bulkSyncMemberBookings(
     .limit(500)) as unknown as {
     data: Array<{
       membership_id: string;
+      split_start_offset_minutes: number | null;
+      split_duration_minutes: number | null;
       booking: {
         id: string;
         scheduled_at: string;
@@ -1106,17 +1110,30 @@ export async function bulkSyncMemberBookings(
   const BATCH = 10;
   for (let i = 0; i < toSync.length; i += BATCH) {
     await Promise.allSettled(
-      toSync.slice(i, i + BATCH).map((b) =>
-        createMemberCalendarEvent(membershipId, {
+      toSync.slice(i, i + BATCH).map((b) => {
+        // For split-segment employees, adjust start time and duration to
+        // their segment window. Non-split rows have null offset/duration
+        // and fall through to the full booking values.
+        const segOffset = b.split_start_offset_minutes;
+        const segDuration = b.split_duration_minutes;
+        const scheduled_at =
+          segOffset != null
+            ? new Date(
+                new Date(b.booking.scheduled_at).getTime() +
+                  segOffset * 60_000,
+              ).toISOString()
+            : b.booking.scheduled_at;
+        const duration_minutes = segDuration ?? b.booking.duration_minutes;
+        return createMemberCalendarEvent(membershipId, {
           id: b.booking.id,
-          scheduled_at: b.booking.scheduled_at,
-          duration_minutes: b.booking.duration_minutes,
+          scheduled_at,
+          duration_minutes,
           service_type: b.booking.service_type,
           address: b.booking.address,
           notes: b.booking.notes,
           client_name: b.booking.client?.name,
-        }).catch(() => {}),
-      ),
+        }).catch(() => {});
+      }),
     );
   }
 }

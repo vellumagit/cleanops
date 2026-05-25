@@ -349,7 +349,13 @@ async function handleMemberCallback(
     }
 
     // Push all upcoming assigned bookings to this member's calendar.
-    await bulkSyncMemberBookings(membershipId).catch(() => {});
+    // Log failures so we can debug "I connected but nothing showed up"
+    // reports — historically these were swallowed and impossible to trace.
+    try {
+      await bulkSyncMemberBookings(membershipId);
+    } catch (err) {
+      console.error("[gcal/member] bulkSyncMemberBookings failed:", err);
+    }
 
     return NextResponse.redirect(successRedirect);
   } catch (err) {

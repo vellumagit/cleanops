@@ -11,7 +11,9 @@ import { formatDateTime } from "@/lib/format";
 import {
   connectMyGoogleCalendarAction,
   disconnectMyGoogleCalendarAction,
+  resyncMyGoogleCalendarAction,
 } from "./actions";
+import { RefreshCw } from "lucide-react";
 
 export const metadata = { title: "Profile" };
 
@@ -125,6 +127,15 @@ export default async function FieldProfilePage() {
                   </div>
                 </div>
               </div>
+              <form action={resyncMyGoogleCalendarAction}>
+                <button
+                  type="submit"
+                  className="inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-border bg-background px-3 py-2 text-xs font-medium text-foreground transition-colors hover:bg-muted active:scale-95"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  Re-sync upcoming jobs
+                </button>
+              </form>
               <div className="flex gap-2">
                 <form action={connectMyGoogleCalendarAction} className="flex-1">
                   <button
