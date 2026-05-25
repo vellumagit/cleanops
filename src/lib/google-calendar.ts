@@ -762,7 +762,7 @@ function buildMemberEventPayload(
     .join(" ");
   const descParts: string[] = [];
   if (booking.notes) descParts.push(`Notes: ${booking.notes}`);
-  descParts.push(`\nManaged by Sollos — /app/bookings/${booking.id}`);
+  descParts.push(`\nManaged by Sollos — /field/jobs/${booking.id}`);
   return {
     summary,
     description: descParts.join("\n"),
