@@ -24,57 +24,69 @@ export default async function FieldJobsPage() {
   since.setDate(since.getDate() - 1);
   since.setHours(0, 0, 0, 0);
 
-  // Single query: all bookings where this member is an assignee (any role).
-  // booking_assignees is now the source of truth for both regular and split
-  // shift assignments. The split columns give each employee their own
-  // segment start time and duration.
-  const assigneeResp = await (supabase
+  // Step 1: get this member's assignee rows (with split metadata).
+  // We avoid filtering on the embedded booking here — PostgREST embedded
+  // filters were causing intermittent failures on this route.
+  const assigneeResp = (await supabase
     .from("booking_assignees" as never)
-    .select(`
-      split_start_offset_minutes,
-      split_duration_minutes,
-      booking:bookings!inner(
-        id, scheduled_at, duration_minutes, status, service_type,
-        address, notes, client:clients ( name )
-      )
-    `)
-    .eq("membership_id" as never, membership.id as never)
-    .gte("booking.scheduled_at" as never, since.toISOString() as never)
-    .neq("booking.status" as never, "cancelled" as never)
-    .order("booking.scheduled_at" as never, { ascending: true } as never)
-    .limit(50) as unknown as Promise<{
+    .select(
+      "booking_id, split_start_offset_minutes, split_duration_minutes",
+    )
+    .eq("membership_id" as never, membership.id as never)) as unknown as {
     data: Array<{
+      booking_id: string;
       split_start_offset_minutes: number | null;
       split_duration_minutes: number | null;
-      booking: {
-        id: string;
-        scheduled_at: string;
-        duration_minutes: number;
-        status: string;
-        service_type: string;
-        address: string | null;
-        notes: string | null;
-        client: { name: string } | null;
-      } | null;
     }> | null;
     error: { message: string } | null;
-  }>);
+  };
 
   if (assigneeResp.error) throw assigneeResp.error;
 
-  const jobs = (assigneeResp.data ?? [])
-    .filter((r): r is typeof r & { booking: NonNullable<typeof r.booking> } => !!r.booking)
-    .map((r) => ({
-      ...r.booking,
-      // Use segment-specific start time and duration for split employees
-      effective_scheduled_at: r.split_start_offset_minutes != null
-        ? new Date(new Date(r.booking!.scheduled_at).getTime() + r.split_start_offset_minutes * 60_000).toISOString()
-        : r.booking!.scheduled_at,
-      effective_duration_minutes: r.split_duration_minutes ?? r.booking!.duration_minutes,
-    }))
-    .sort((a, b) =>
-      new Date(a.effective_scheduled_at).getTime() - new Date(b.effective_scheduled_at).getTime()
-    );
+  const assigneeByBooking = new Map(
+    (assigneeResp.data ?? []).map((r) => [r.booking_id, r]),
+  );
+  const bookingIds = Array.from(assigneeByBooking.keys());
+
+  // Step 2: fetch the actual booking rows in a single query. No more
+  // embedded filters — straight SQL on the bookings table.
+  const bookingsResp =
+    bookingIds.length === 0
+      ? { data: [], error: null }
+      : await supabase
+          .from("bookings")
+          .select(
+            `id, scheduled_at, duration_minutes, status, service_type,
+             address, notes, client:clients ( name )`,
+          )
+          .in("id", bookingIds)
+          .gte("scheduled_at", since.toISOString())
+          .neq("status", "cancelled")
+          .order("scheduled_at", { ascending: true })
+          .limit(50);
+
+  if (bookingsResp.error) throw bookingsResp.error;
+
+  const jobs = (bookingsResp.data ?? []).map((b) => {
+    const seg = assigneeByBooking.get(b.id);
+    const offset = seg?.split_start_offset_minutes ?? null;
+    const segDur = seg?.split_duration_minutes ?? null;
+    return {
+      ...b,
+      effective_scheduled_at:
+        offset != null
+          ? new Date(
+              new Date(b.scheduled_at).getTime() + offset * 60_000,
+            ).toISOString()
+          : b.scheduled_at,
+      effective_duration_minutes: segDur ?? b.duration_minutes,
+    };
+  });
+  jobs.sort(
+    (a, b) =>
+      new Date(a.effective_scheduled_at).getTime() -
+      new Date(b.effective_scheduled_at).getTime(),
+  );
 
   // Group by calendar day for easier scanning.
   const groups = new Map<string, typeof jobs>();
