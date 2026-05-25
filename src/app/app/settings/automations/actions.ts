@@ -43,7 +43,9 @@ export type AutomationKey =
   // do before Twilio is live.
   | "booking_confirmation_sms"
   | "booking_reminder_client_sms"
-  | "booking_assignment_sms";
+  | "booking_assignment_sms"
+  // Feed
+  | "system_feed_events";
 
 /**
  * Runtime allowlist derived from the AutomationKey union. Keeps the type
@@ -86,6 +88,7 @@ const VALID_AUTOMATION_KEYS = new Set<AutomationKey>([
   "booking_confirmation_sms",
   "booking_reminder_client_sms",
   "booking_assignment_sms",
+  "system_feed_events",
 ]);
 
 export async function toggleAutomationAction(formData: FormData) {

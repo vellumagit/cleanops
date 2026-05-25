@@ -25,6 +25,10 @@ export const DEFAULT_OFF: ReadonlySet<string> = new Set([
   // clean; quiet until explicitly enabled.
   "booking_confirmation_email",
 
+  // System feed events — auto-posts from booking/job activity default OFF.
+  // Owners see only real human posts unless they explicitly opt in.
+  "system_feed_events",
+
   // SMS automations — all default OFF. SMS is a higher-friction channel
   // than email: clients may not have opted in to texts, and A2P 10DLC
   // registration must be complete before the platform-level

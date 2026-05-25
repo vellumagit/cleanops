@@ -704,6 +704,12 @@ export async function postSystemFeedEvent(
 ) {
   try {
     const db = admin();
+
+    // Respect the org's "system_feed_events" automation toggle.
+    // Default is OFF — auto-posts only appear if the org explicitly enables it.
+    const enabled = await isAutomationEnabled(organizationId, "system_feed_events");
+    if (!enabled) return;
+
     await (db.from("feed_posts" as never).insert({
       organization_id: organizationId,
       author_id: authorMembershipId,

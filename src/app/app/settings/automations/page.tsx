@@ -8,6 +8,7 @@ import {
   Bell,
   PlayCircle,
   Archive,
+  Rss,
 } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -328,6 +329,22 @@ const CATEGORIES: Category[] = [
         description:
           "Archives bookings, invoices, and estimates older than 2 years so the default list views stay fast. Archived rows are hidden but not deleted. Threshold configurable per-org.",
         trigger: "Daily at 04:30 UTC",
+      },
+    ],
+  },
+  {
+    id: "feed",
+    label: "Feed",
+    description:
+      "Controls what gets posted automatically to the team feed.",
+    icon: Rss,
+    automations: [
+      {
+        key: "system_feed_events" as AutomationKey,
+        title: "Auto-post system events to feed",
+        description:
+          "Automatically posts activity to the team feed when bookings are created, updated, or completed. Off by default — with this off, only posts made manually by managers appear in the feed.",
+        trigger: "Booking events",
       },
     ],
   },
