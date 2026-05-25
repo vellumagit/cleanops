@@ -78,11 +78,18 @@ function readAdditionalAssignees(formData: FormData): string[] {
     .filter((v) => v.length > 0);
 }
 
+type SplitSegmentInput = { assigned_to: string; duration_minutes: number };
+
 /**
  * Sync the booking_assignees junction table for a booking after a
  * create/update. `primary_id` is the single assignee stored in
  * bookings.assigned_to; `additional_ids` is the extra crew. The table's
  * existing rows are replaced so re-editing feels intuitive.
+ *
+ * When `splits` is non-empty, booking_assignees is built from the
+ * segments array instead — each segment employee gets a row with their
+ * start offset and duration. This makes booking_assignees the single
+ * source of truth for split shifts.
  */
 async function syncBookingAssignees(
   supabase: Awaited<
@@ -92,6 +99,7 @@ async function syncBookingAssignees(
   bookingId: string,
   primaryId: string | null,
   additionalIds: string[],
+  splits: SplitSegmentInput[] = [],
 ): Promise<void> {
   // Drop the existing set. RLS scopes this to the caller's org; the
   // booking_id filter is the authoritative narrowing.
@@ -105,23 +113,58 @@ async function syncBookingAssignees(
     booking_id: string;
     membership_id: string;
     is_primary: boolean;
+    split_index: number | null;
+    split_start_offset_minutes: number | null;
+    split_duration_minutes: number | null;
   }> = [];
-  if (primaryId) {
-    rows.push({
-      organization_id: organizationId,
-      booking_id: bookingId,
-      membership_id: primaryId,
-      is_primary: true,
+
+  if (splits.length > 0) {
+    // Split mode: derive booking_assignees from the segments array.
+    // Offsets are computed cumulatively from segment durations.
+    let offset = 0;
+    const seen = new Set<string>();
+    splits.forEach((seg, idx) => {
+      if (!seg.assigned_to || seen.has(seg.assigned_to)) {
+        offset += Number(seg.duration_minutes) || 0;
+        return;
+      }
+      seen.add(seg.assigned_to);
+      rows.push({
+        organization_id: organizationId,
+        booking_id: bookingId,
+        membership_id: seg.assigned_to,
+        is_primary: idx === 0,
+        split_index: idx,
+        split_start_offset_minutes: offset,
+        split_duration_minutes: Number(seg.duration_minutes) || 0,
+      });
+      offset += Number(seg.duration_minutes) || 0;
     });
-  }
-  for (const id of additionalIds) {
-    if (id === primaryId) continue; // guard against duplicates
-    rows.push({
-      organization_id: organizationId,
-      booking_id: bookingId,
-      membership_id: id,
-      is_primary: false,
-    });
+  } else {
+    // Normal mode: primary + additional crew, no split metadata.
+    if (primaryId) {
+      rows.push({
+        organization_id: organizationId,
+        booking_id: bookingId,
+        membership_id: primaryId,
+        is_primary: true,
+        split_index: null,
+        split_start_offset_minutes: null,
+        split_duration_minutes: null,
+      });
+    }
+    for (const id of additionalIds) {
+      if (id === primaryId) continue; // guard against duplicates
+      rows.push({
+        organization_id: organizationId,
+        booking_id: bookingId,
+        membership_id: id,
+        is_primary: false,
+        split_index: null,
+        split_start_offset_minutes: null,
+        split_duration_minutes: null,
+      });
+    }
   }
 
   if (rows.length === 0) return;
@@ -234,13 +277,15 @@ export async function createBookingAction(
   if (error) return { errors: { _form: error.message }, values: raw };
 
   // Additional crew (if any) — write to booking_assignees so the primary
-  // + extras are all tracked consistently.
+  // + extras are all tracked consistently. For split shifts, pass the
+  // segments array so each employee gets a row with offset/duration.
   await syncBookingAssignees(
     supabase,
     membership.organization_id,
     booking.id,
     parsed.data.assigned_to ?? null,
     readAdditionalAssignees(formData),
+    splits as SplitSegmentInput[],
   );
 
   // Email booking confirmation to client (fire-and-forget)
@@ -281,10 +326,14 @@ export async function createBookingAction(
 
   // Sync to each assigned employee's personal calendar (fire-and-forget).
   {
-    const allAssignees = [
-      parsed.data.assigned_to,
+    const splitAssignees = (splits as SplitSegmentInput[])
+      .map((s) => s.assigned_to)
+      .filter(Boolean);
+    const allAssignees = Array.from(new Set([
+      ...(parsed.data.assigned_to ? [parsed.data.assigned_to] : []),
       ...readAdditionalAssignees(formData),
-    ].filter(Boolean) as string[];
+      ...splitAssignees,
+    ]));
     syncMemberCalendarEvents(booking.id, allAssignees, {
       id: booking.id,
       scheduled_at: parsed.data.scheduled_at,
@@ -582,13 +631,15 @@ export async function updateBookingAction(
   if (error) return { errors: { _form: error.message }, values: raw };
 
   // Replace the booking_assignees rows to match the form's new primary +
-  // additional selection.
+  // additional selection. For split shifts, pass the segments array so
+  // each employee gets a row with offset/duration.
   await syncBookingAssignees(
     supabase,
     membership.organization_id,
     id,
     parsed.data.assigned_to ?? null,
     readAdditionalAssignees(formData),
+    updateSplits as SplitSegmentInput[],
   );
 
   // "This and all future" propagation for recurring series.
@@ -831,10 +882,14 @@ export async function updateBookingAction(
 
   // Sync to each assigned employee's personal calendar (fire-and-forget).
   {
-    const allAssignees = [
-      parsed.data.assigned_to,
+    const splitAssignees = (updateSplits as SplitSegmentInput[])
+      .map((s) => s.assigned_to)
+      .filter(Boolean);
+    const allAssignees = Array.from(new Set([
+      ...(parsed.data.assigned_to ? [parsed.data.assigned_to] : []),
       ...readAdditionalAssignees(formData),
-    ].filter(Boolean) as string[];
+      ...splitAssignees,
+    ]));
     syncMemberCalendarEvents(id, allAssignees, {
       id,
       scheduled_at: parsed.data.scheduled_at,
@@ -1313,6 +1368,7 @@ export async function assignBookingCrewAction(
     id,
     primaryId,
     additionalIds,
+    [], // no splits from the quick-assign crew dialog
   );
 
   // Update personal calendars for all newly assigned members (and remove

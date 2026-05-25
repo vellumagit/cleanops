@@ -24,80 +24,62 @@ export default async function FieldJobsPage() {
   since.setDate(since.getDate() - 1);
   since.setHours(0, 0, 0, 0);
 
-  // A booking can now have multiple assignees via booking_assignees. Pull
-  // every booking where this member is either the primary (assigned_to)
-  // OR in the junction table, then dedupe.
-  const [primaryResp, extraResp] = await Promise.all([
-    supabase
-      .from("bookings")
-      .select(
-        `
-        id,
-        scheduled_at,
-        duration_minutes,
-        status,
-        service_type,
-        address,
-        notes,
-        client:clients ( name )
-      `,
+  // Single query: all bookings where this member is an assignee (any role).
+  // booking_assignees is now the source of truth for both regular and split
+  // shift assignments. The split columns give each employee their own
+  // segment start time and duration.
+  const assigneeResp = await (supabase
+    .from("booking_assignees" as never)
+    .select(`
+      split_start_offset_minutes,
+      split_duration_minutes,
+      booking:bookings!inner(
+        id, scheduled_at, duration_minutes, status, service_type,
+        address, notes, client:clients ( name )
       )
-      .eq("assigned_to", membership.id)
-      .gte("scheduled_at", since.toISOString())
-      .order("scheduled_at", { ascending: true })
-      .limit(50),
-    (supabase
-      .from("booking_assignees" as never)
-      .select(
-        `booking:bookings (
-          id, scheduled_at, duration_minutes, status, service_type,
-          address, notes, client:clients ( name )
-        )`,
-      )
-      .eq("membership_id" as never, membership.id as never)
-      .eq(
-        "is_primary" as never,
-        false as never,
-      ) as unknown as Promise<{
-      data: Array<{
-        booking: {
-          id: string;
-          scheduled_at: string;
-          duration_minutes: number;
-          status: string;
-          service_type: string;
-          address: string | null;
-          notes: string | null;
-          client: { name: string } | null;
-        } | null;
-      }> | null;
-      error: { message: string } | null;
-    }>),
-  ]);
+    `)
+    .eq("membership_id" as never, membership.id as never)
+    .gte("booking.scheduled_at" as never, since.toISOString() as never)
+    .neq("booking.status" as never, "cancelled" as never)
+    .order("booking.scheduled_at" as never, { ascending: true } as never)
+    .limit(50) as unknown as Promise<{
+    data: Array<{
+      split_start_offset_minutes: number | null;
+      split_duration_minutes: number | null;
+      booking: {
+        id: string;
+        scheduled_at: string;
+        duration_minutes: number;
+        status: string;
+        service_type: string;
+        address: string | null;
+        notes: string | null;
+        client: { name: string } | null;
+      } | null;
+    }> | null;
+    error: { message: string } | null;
+  }>);
 
-  if (primaryResp.error) throw primaryResp.error;
+  if (assigneeResp.error) throw assigneeResp.error;
 
-  const extras = (extraResp.data ?? [])
-    .map((r) => r.booking)
-    .filter(
-      (b): b is NonNullable<typeof b> =>
-        !!b && new Date(b.scheduled_at).getTime() >= since.getTime(),
+  const jobs = (assigneeResp.data ?? [])
+    .filter((r): r is typeof r & { booking: NonNullable<typeof r.booking> } => !!r.booking)
+    .map((r) => ({
+      ...r.booking,
+      // Use segment-specific start time and duration for split employees
+      effective_scheduled_at: r.split_start_offset_minutes != null
+        ? new Date(new Date(r.booking!.scheduled_at).getTime() + r.split_start_offset_minutes * 60_000).toISOString()
+        : r.booking!.scheduled_at,
+      effective_duration_minutes: r.split_duration_minutes ?? r.booking!.duration_minutes,
+    }))
+    .sort((a, b) =>
+      new Date(a.effective_scheduled_at).getTime() - new Date(b.effective_scheduled_at).getTime()
     );
-
-  // Dedupe in case of data-entry overlap, then sort ascending.
-  const byId = new Map<string, (typeof extras)[number]>();
-  for (const job of primaryResp.data ?? []) byId.set(job.id, job);
-  for (const job of extras) if (!byId.has(job.id)) byId.set(job.id, job);
-  const jobs = Array.from(byId.values()).sort(
-    (a, b) =>
-      new Date(a.scheduled_at).getTime() -
-      new Date(b.scheduled_at).getTime(),
-  );
 
   // Group by calendar day for easier scanning.
   const groups = new Map<string, typeof jobs>();
   for (const job of jobs) {
-    const key = new Date(job.scheduled_at).toLocaleDateString("en-US", {
+    const key = new Date(job.effective_scheduled_at).toLocaleDateString("en-US", {
       weekday: "long",
       month: "short",
       day: "numeric",
@@ -153,8 +135,8 @@ export default async function FieldJobsPage() {
                           </StatusBadge>
                         </div>
                         <div className="mt-1.5 text-sm text-muted-foreground">
-                          {formatDateTime(job.scheduled_at, tz)} ·{" "}
-                          {formatDurationMinutes(job.duration_minutes)} ·{" "}
+                          {formatDateTime(job.effective_scheduled_at, tz)} ·{" "}
+                          {formatDurationMinutes(job.effective_duration_minutes)} ·{" "}
                           {humanizeEnum(job.service_type)}
                         </div>
                         {job.address ? (

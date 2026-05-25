@@ -477,10 +477,16 @@ function EmployeeColumn({
           they sit on top in the DOM and catch clicks before the slot
           beneath them. */}
       {bookings.map((b) => {
-        const startMin = minutesOfDay(b.scheduled_at, tz);
+        // For split-shift bookings, use this employee's segment times
+        const seg = b.assigneeSegments?.[employee.id];
+        const effectiveStart = seg
+          ? new Date(new Date(b.scheduled_at).getTime() + seg.start_offset_minutes * 60_000).toISOString()
+          : b.scheduled_at;
+        const effectiveDuration = seg?.duration_minutes ?? b.duration_minutes;
+        const startMin = minutesOfDay(effectiveStart, tz);
         const top = (startMin / SLOT_MINUTES) * SLOT_PX;
         const height = Math.max(
-          (b.duration_minutes / SLOT_MINUTES) * SLOT_PX,
+          (effectiveDuration / SLOT_MINUTES) * SLOT_PX,
           SLOT_PX, // at least 1 slot so short jobs are clickable
         );
         return (
@@ -489,6 +495,8 @@ function EmployeeColumn({
             booking={b}
             top={top}
             height={height}
+            effectiveScheduledAt={effectiveStart}
+            effectiveDurationMinutes={effectiveDuration}
             tone={toneForBooking(b, colorBy, laneIdx)}
             canEdit={canEdit}
             hasConflict={conflictIds.has(b.id)}
@@ -550,6 +558,8 @@ function PositionedBooking({
   booking,
   top,
   height,
+  effectiveScheduledAt,
+  effectiveDurationMinutes,
   tone,
   canEdit,
   hasConflict,
@@ -558,6 +568,10 @@ function PositionedBooking({
   booking: ScheduleBooking;
   top: number;
   height: number;
+  /** Segment-adjusted start time for split shifts; falls back to booking.scheduled_at. */
+  effectiveScheduledAt?: string;
+  /** Segment-adjusted duration for split shifts; falls back to booking.duration_minutes. */
+  effectiveDurationMinutes?: number;
   tone: string;
   canEdit: boolean;
   hasConflict: boolean;
@@ -606,12 +620,12 @@ function PositionedBooking({
             {booking.client_name}
           </div>
           <div className="truncate text-[10px] leading-tight text-muted-foreground">
-            {new Date(booking.scheduled_at).toLocaleTimeString("en-US", {
+            {new Date(effectiveScheduledAt ?? booking.scheduled_at).toLocaleTimeString("en-US", {
               hour: "numeric",
               minute: "2-digit",
               // we don't know tz here; the title shows full info anyway.
             })}{" "}
-            · {booking.duration_minutes}m
+            · {effectiveDurationMinutes ?? booking.duration_minutes}m
           </div>
           {height >= SLOT_PX * 2 && (
             <div className="mt-1 flex items-center gap-1 flex-wrap">

@@ -64,6 +64,14 @@ export type ScheduleBooking = {
    *  the Assign dialog to offer "just this booking" vs "this and
    *  all future bookings" scope. */
   series_id: string | null;
+  /** Per-assignee segment data for split-shift bookings.
+   *  Key = membership_id. Only populated for employees with a split segment.
+   *  effectiveScheduledAt = booking.scheduled_at + start_offset_minutes.
+   *  Non-split employees have no entry here. */
+  assigneeSegments: Record<string, {
+    start_offset_minutes: number;
+    duration_minutes: number;
+  }>;
 };
 
 export type ScheduleEmployee = {
@@ -245,11 +253,13 @@ export async function fetchScheduleWeek(
     // We pull every junction row in the range and merge into each
     // booking's all_assignee_ids so the scheduler can render the same
     // booking in every assignee's column (the primary's column AND
-    // every secondary's).
+    // every secondary's). Split columns are included so the calendar
+    // can position each employee's block at their segment start time.
     (supabase
       .from("booking_assignees" as never)
       .select(
         `booking_id, membership_id, is_primary,
+         split_start_offset_minutes, split_duration_minutes,
          booking:bookings!inner ( scheduled_at )`,
       )
       .gte(
@@ -264,6 +274,8 @@ export async function fetchScheduleWeek(
         booking_id: string;
         membership_id: string;
         is_primary: boolean;
+        split_start_offset_minutes: number | null;
+        split_duration_minutes: number | null;
       }> | null;
       error: { message: string } | null;
     }>,
@@ -280,6 +292,19 @@ export async function fetchScheduleWeek(
     const arr = extraAssigneesByBooking.get(row.booking_id) ?? [];
     arr.push(row.membership_id);
     extraAssigneesByBooking.set(row.booking_id, arr);
+  }
+
+  // Build per-booking, per-employee segment map for split-shift bookings.
+  const segmentsByBooking = new Map<string, Record<string, { start_offset_minutes: number; duration_minutes: number }>>();
+  for (const row of assigneesRes.data ?? []) {
+    if (row.split_start_offset_minutes != null && row.split_duration_minutes != null) {
+      const map = segmentsByBooking.get(row.booking_id) ?? {};
+      map[row.membership_id] = {
+        start_offset_minutes: row.split_start_offset_minutes,
+        duration_minutes: row.split_duration_minutes,
+      };
+      segmentsByBooking.set(row.booking_id, map);
+    }
   }
 
   const bookings: ScheduleBooking[] = (bookingsRes.data ?? []).map((b) => {
@@ -302,6 +327,7 @@ export async function fetchScheduleWeek(
       address: b.address,
       total_cents: (b as { total_cents?: number | null }).total_cents ?? null,
       series_id: (b as { series_id?: string | null }).series_id ?? null,
+      assigneeSegments: segmentsByBooking.get(b.id) ?? {},
     };
   });
 

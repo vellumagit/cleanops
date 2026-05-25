@@ -60,15 +60,31 @@ export default async function FieldJobDetailPage({
   // Is this member an additional crew assignee (via booking_assignees)?
   // Combined with the primary assigned_to check below, this lets the
   // whole crew on a multi-person job see the detail page.
+  // Also fetch split segment metadata so we can show the employee their
+  // own segment start time and duration instead of the full booking.
   const { data: crewRow } = (await supabase
     .from("booking_assignees" as never)
-    .select("id")
+    .select("id, split_start_offset_minutes, split_duration_minutes")
     .eq("booking_id" as never, id as never)
     .eq("membership_id" as never, membership.id as never)
-    .maybeSingle()) as unknown as { data: { id: string } | null };
+    .maybeSingle()) as unknown as {
+    data: { id: string; split_start_offset_minutes: number | null; split_duration_minutes: number | null } | null;
+  };
 
   const isAssignee =
     booking.assigned_to === membership.id || crewRow !== null;
+
+  // Compute segment-adjusted start time and duration for split employees.
+  const effectiveScheduledAt =
+    crewRow?.split_start_offset_minutes != null
+      ? new Date(
+          new Date(booking.scheduled_at).getTime() +
+            crewRow.split_start_offset_minutes * 60_000,
+        ).toISOString()
+      : booking.scheduled_at;
+
+  const effectiveDurationMinutes =
+    crewRow?.split_duration_minutes ?? booking.duration_minutes;
 
   // Defence in depth: even though the field UI only links to assigned jobs,
   // employees viewing someone else's job by URL should bounce back.
@@ -131,10 +147,10 @@ export default async function FieldJobDetailPage({
             <ClockIcon className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
             <div>
               <div className="font-semibold">
-                {formatDateTime(booking.scheduled_at, tz)}
+                {formatDateTime(effectiveScheduledAt, tz)}
               </div>
               <div className="text-sm text-muted-foreground">
-                Estimated {formatDurationMinutes(booking.duration_minutes)}
+                Estimated {formatDurationMinutes(effectiveDurationMinutes)}
               </div>
             </div>
           </div>

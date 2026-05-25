@@ -950,12 +950,47 @@ export async function syncMemberCalendarEvents(
   const existingSet = new Set((existingRows ?? []).map((r) => r.membership_id));
   const assigneeSet = new Set(assigneeIds);
 
+  // Fetch segment metadata for all assignees on this booking so split
+  // employees get a calendar event for their own segment, not the full job.
+  const { data: segmentRows } = (await admin
+    .from("booking_assignees" as never)
+    .select("membership_id, split_start_offset_minutes, split_duration_minutes")
+    .eq("booking_id" as never, bookingId as never)
+    .in("membership_id" as never, assigneeIds as never)) as unknown as {
+    data: Array<{
+      membership_id: string;
+      split_start_offset_minutes: number | null;
+      split_duration_minutes: number | null;
+    }> | null;
+  };
+
+  const segmentByMember = new Map(
+    (segmentRows ?? []).map((r) => [r.membership_id, r]),
+  );
+
+  // Build a per-member adjusted booking payload (segment-specific for
+  // split employees, full booking for regular employees).
+  function adjustedBooking(mid: string): BookingForMemberEvent {
+    const seg = segmentByMember.get(mid);
+    if (seg?.split_start_offset_minutes != null && seg.split_duration_minutes != null) {
+      return {
+        ...booking,
+        scheduled_at: new Date(
+          new Date(booking.scheduled_at).getTime() + seg.split_start_offset_minutes * 60_000,
+        ).toISOString(),
+        duration_minutes: seg.split_duration_minutes,
+      };
+    }
+    return booking;
+  }
+
   // 2. Upsert events for all current assignees who have a personal connection.
   const upsertTasks = assigneeIds.map(async (mid) => {
+    const payload = adjustedBooking(mid);
     if (existingSet.has(mid)) {
-      await updateMemberCalendarEvent(mid, booking).catch(() => {});
+      await updateMemberCalendarEvent(mid, payload).catch(() => {});
     } else {
-      await createMemberCalendarEvent(mid, booking).catch(() => {});
+      await createMemberCalendarEvent(mid, payload).catch(() => {});
     }
   });
 

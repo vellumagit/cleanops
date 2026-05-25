@@ -422,16 +422,26 @@ function DayCell({
       )}
       title={isOff ? "Employee is off this day" : undefined}
     >
-      {bookings.map((b) => (
-        <DraggableBooking
-          key={b.id}
-          booking={b}
-          canEdit={canEdit}
-          onQuickView={onQuickView}
-          tz={tz}
-          accent={toneForBooking(b, colorBy, laneIdx)}
-        />
-      ))}
+      {bookings.map((b) => {
+        // For split-shift bookings, use this employee's segment times
+        const seg = b.assigneeSegments?.[employeeId];
+        const effectiveScheduledAt = seg
+          ? new Date(new Date(b.scheduled_at).getTime() + seg.start_offset_minutes * 60_000).toISOString()
+          : b.scheduled_at;
+        const effectiveDurationMinutes = seg?.duration_minutes ?? b.duration_minutes;
+        return (
+          <DraggableBooking
+            key={b.id}
+            booking={b}
+            effectiveScheduledAt={effectiveScheduledAt}
+            effectiveDurationMinutes={effectiveDurationMinutes}
+            canEdit={canEdit}
+            onQuickView={onQuickView}
+            tz={tz}
+            accent={toneForBooking(b, colorBy, laneIdx)}
+          />
+        );
+      })}
     </div>
   );
 }
@@ -450,12 +460,18 @@ function DayCell({
  */
 function DraggableBooking({
   booking,
+  effectiveScheduledAt,
+  effectiveDurationMinutes,
   canEdit,
   onQuickView,
   tz,
   accent,
 }: {
   booking: ScheduleBooking;
+  /** Segment-adjusted start time for split shifts; falls back to booking.scheduled_at. */
+  effectiveScheduledAt?: string;
+  /** Segment-adjusted duration for split shifts; falls back to booking.duration_minutes. */
+  effectiveDurationMinutes?: number;
   canEdit: boolean;
   onQuickView: (bookingId: string) => void;
   tz: string;
@@ -477,6 +493,8 @@ function DraggableBooking({
     >
       <BookingCard
         booking={booking}
+        effectiveScheduledAt={effectiveScheduledAt}
+        effectiveDurationMinutes={effectiveDurationMinutes}
         accent={accent}
         canDrag={canEdit}
         onClick={() => onQuickView(booking.id)}
@@ -489,6 +507,8 @@ function DraggableBooking({
 
 function BookingCard({
   booking,
+  effectiveScheduledAt,
+  effectiveDurationMinutes,
   accent,
   dragging = false,
   canDrag = false,
@@ -497,6 +517,10 @@ function BookingCard({
   tz,
 }: {
   booking: ScheduleBooking;
+  /** Segment-adjusted start time for split shifts; falls back to booking.scheduled_at. */
+  effectiveScheduledAt?: string;
+  /** Segment-adjusted duration for split shifts; falls back to booking.duration_minutes. */
+  effectiveDurationMinutes?: number;
   /** Hex color for the card's left-border accent. Empty string skips
    *  the accent (used by the DragOverlay preview). */
   accent: string;
@@ -552,7 +576,7 @@ function BookingCard({
         ) : null}
       </div>
       <div className="tabular-nums text-muted-foreground">
-        {formatHourMinute(booking.scheduled_at, tz)} · {booking.duration_minutes}m
+        {formatHourMinute(effectiveScheduledAt ?? booking.scheduled_at, tz)} · {effectiveDurationMinutes ?? booking.duration_minutes}m
       </div>
       <div className="mt-1 flex items-center gap-1 flex-wrap">
         <StatusBadge tone={bookingStatusTone(booking.status)}>
