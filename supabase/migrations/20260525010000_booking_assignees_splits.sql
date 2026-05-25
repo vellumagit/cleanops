@@ -45,11 +45,11 @@ BEGIN
           idx = 0,
           idx, off, dur
         )
-        ON CONFLICT (booking_id, membership_id) DO UPDATE SET
-          is_primary                  = EXCLUDED.is_primary,
-          split_index                 = EXCLUDED.split_index,
-          split_start_offset_minutes  = EXCLUDED.split_start_offset_minutes,
-          split_duration_minutes      = EXCLUDED.split_duration_minutes;
+        -- If the same employee appears in multiple segments, keep the
+        -- FIRST occurrence (matches the app-level dedupe in
+        -- syncBookingAssignees). The UNIQUE (booking_id, membership_id)
+        -- constraint can't represent the same person in two segments.
+        ON CONFLICT (booking_id, membership_id) DO NOTHING;
 
         -- Keep bookings.assigned_to pointing at segment-0 employee
         IF idx = 0 THEN

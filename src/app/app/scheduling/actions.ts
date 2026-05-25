@@ -50,14 +50,29 @@ export async function rescheduleBookingAction(
   const orgTz = await getOrgTimezone(membership.organization_id);
 
   // Pull the current booking so we can preserve hour-of-day + duration
-  // when no explicit newTimeLocal is provided.
-  const { data: current, error: fetchError } = await supabase
+  // when no explicit newTimeLocal is provided. Also fetch splits so we
+  // can detect split-shift bookings and avoid wiping their assignees.
+  const { data: current, error: fetchError } = (await supabase
     .from("bookings")
-    .select("id, scheduled_at, duration_minutes, assigned_to")
+    .select("id, scheduled_at, duration_minutes, assigned_to, splits")
     .eq("id", id)
-    .maybeSingle();
+    .maybeSingle()) as unknown as {
+    data:
+      | {
+          id: string;
+          scheduled_at: string;
+          duration_minutes: number;
+          assigned_to: string | null;
+          splits: Array<{ assigned_to?: string; duration_minutes?: number }> | null;
+        }
+      | null;
+    error: { message: string } | null;
+  };
   if (fetchError) return { ok: false, error: fetchError.message };
   if (!current) return { ok: false, error: "Booking not found" };
+
+  const hasSplits =
+    Array.isArray(current.splits) && current.splits.length > 0;
 
   let targetHour: number;
   let targetMin: number;
@@ -137,12 +152,20 @@ export async function rescheduleBookingAction(
     }
   }
 
+  // For split-shift bookings, only move the start time — never touch
+  // assigned_to or booking_assignees. The segments stay with the same
+  // crew, just shifted to the new slot (segment offsets are relative).
+  // For non-split bookings, allow reassignment as before.
+  const bookingUpdate: Record<string, unknown> = {
+    scheduled_at: next.toISOString(),
+  };
+  if (!hasSplits) {
+    bookingUpdate.assigned_to = assignedTo;
+  }
+
   const { error: updateError } = await supabase
     .from("bookings")
-    .update({
-      scheduled_at: next.toISOString(),
-      assigned_to: assignedTo,
-    })
+    .update(bookingUpdate)
     .eq("id", id);
   if (updateError) return { ok: false, error: updateError.message };
 
@@ -151,20 +174,26 @@ export async function rescheduleBookingAction(
   // rows from a previous multi-person assignment stay in the junction
   // table, causing the card to appear in every old assignee's column as
   // well as the new one — the "duplicate booking" bug.
-  await (supabase
-    .from("booking_assignees" as never)
-    .delete()
-    .eq("booking_id" as never, id as never)) as unknown as Promise<unknown>;
-
-  if (assignedTo) {
+  //
+  // SPLIT BOOKINGS: preserve booking_assignees entirely. The crew + their
+  // segment offsets/durations belong with the booking; rescheduling
+  // (which only changes scheduled_at above) doesn't affect them.
+  if (!hasSplits) {
     await (supabase
       .from("booking_assignees" as never)
-      .insert({
-        organization_id: membership.organization_id,
-        booking_id: id,
-        membership_id: assignedTo,
-        is_primary: true,
-      } as never)) as unknown as Promise<unknown>;
+      .delete()
+      .eq("booking_id" as never, id as never)) as unknown as Promise<unknown>;
+
+    if (assignedTo) {
+      await (supabase
+        .from("booking_assignees" as never)
+        .insert({
+          organization_id: membership.organization_id,
+          booking_id: id,
+          membership_id: assignedTo,
+          is_primary: true,
+        } as never)) as unknown as Promise<unknown>;
+    }
   }
 
   revalidatePath("/app/scheduling");

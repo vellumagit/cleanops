@@ -254,13 +254,28 @@ export async function createBookingAction(
         )
       : parsed.data.duration_minutes;
 
+  // When splits are active, ALWAYS make assigned_to track segment 0.
+  // Otherwise the form's "Primary assignee" dropdown can point at a
+  // different person than the first segment, leaving the booking with
+  // a primary not present in any segment — notifications go to the
+  // wrong person, GCal labels say the wrong name, etc.
+  const segmentZeroAssignee = (() => {
+    if (splits.length === 0) return null;
+    const first = splits[0] as { assigned_to?: string };
+    return first?.assigned_to || null;
+  })();
+  const effectiveAssignedTo =
+    splits.length > 0
+      ? segmentZeroAssignee
+      : (parsed.data.assigned_to ?? null);
+
   const { data: booking, error } = await supabase
     .from("bookings")
     .insert({
       organization_id: membership.organization_id,
       client_id: parsed.data.client_id,
       package_id: parsed.data.package_id ?? null,
-      assigned_to: parsed.data.assigned_to ?? null,
+      assigned_to: effectiveAssignedTo,
       scheduled_at: parsed.data.scheduled_at,
       duration_minutes: parsed.data.duration_minutes,
       service_type: parsed.data.service_type as never,
@@ -283,7 +298,7 @@ export async function createBookingAction(
     supabase,
     membership.organization_id,
     booking.id,
-    parsed.data.assigned_to ?? null,
+    effectiveAssignedTo,
     readAdditionalAssignees(formData),
     splits as SplitSegmentInput[],
   );
@@ -291,13 +306,14 @@ export async function createBookingAction(
   // Email booking confirmation to client (fire-and-forget)
   sendBookingConfirmation(booking.id);
 
-  // Notify assigned employee (fire-and-forget)
-  if (parsed.data.assigned_to) {
-    const labels = await getBookingLabels(supabase, parsed.data.client_id, parsed.data.assigned_to);
+  // Notify assigned employee (fire-and-forget). For split shifts this is
+  // the segment-0 employee; for non-split bookings, the form's primary.
+  if (effectiveAssignedTo) {
+    const labels = await getBookingLabels(supabase, parsed.data.client_id, effectiveAssignedTo);
     notifyBookingAssignment(
       membership.organization_id,
       booking.id,
-      parsed.data.assigned_to,
+      effectiveAssignedTo,
       {
         clientName: labels.clientName ?? "A client",
         scheduledAt: parsed.data.scheduled_at,
@@ -311,7 +327,7 @@ export async function createBookingAction(
   const labels = await getBookingLabels(
     supabase,
     parsed.data.client_id,
-    parsed.data.assigned_to ?? null,
+    effectiveAssignedTo,
   );
   await createCalendarEvent(membership.organization_id, {
     id: booking.id,
@@ -610,12 +626,24 @@ export async function updateBookingAction(
         )
       : parsed.data.duration_minutes;
 
+  // When splits are active, align assigned_to to segment 0 (see
+  // createBookingAction for the rationale).
+  const updateSegmentZeroAssignee = (() => {
+    if (updateSplits.length === 0) return null;
+    const first = updateSplits[0] as { assigned_to?: string };
+    return first?.assigned_to || null;
+  })();
+  const updateEffectiveAssignedTo =
+    updateSplits.length > 0
+      ? updateSegmentZeroAssignee
+      : (parsed.data.assigned_to ?? null);
+
   const { error } = await supabase
     .from("bookings")
     .update({
       client_id: parsed.data.client_id,
       package_id: parsed.data.package_id ?? null,
-      assigned_to: parsed.data.assigned_to ?? null,
+      assigned_to: updateEffectiveAssignedTo,
       scheduled_at: parsed.data.scheduled_at,
       duration_minutes: parsed.data.duration_minutes,
       service_type: parsed.data.service_type as never,
@@ -637,7 +665,7 @@ export async function updateBookingAction(
     supabase,
     membership.organization_id,
     id,
-    parsed.data.assigned_to ?? null,
+    updateEffectiveAssignedTo,
     readAdditionalAssignees(formData),
     updateSplits as SplitSegmentInput[],
   );
@@ -964,12 +992,22 @@ export async function duplicateBookingAction(id: string) {
 
   if (error || !copy) return;
 
-  // Mirror the crew assignees
+  // Mirror the crew assignees — including split-shift segment metadata
+  // so a duplicated split booking lands in the same per-segment state
+  // as the source, not a degraded multi-crew-no-segments state.
   const { data: assignees } = (await supabase
     .from("booking_assignees" as never)
-    .select("membership_id, is_primary")
+    .select(
+      "membership_id, is_primary, split_index, split_start_offset_minutes, split_duration_minutes",
+    )
     .eq("booking_id" as never, id)) as unknown as {
-    data: Array<{ membership_id: string; is_primary: boolean }> | null;
+    data: Array<{
+      membership_id: string;
+      is_primary: boolean;
+      split_index: number | null;
+      split_start_offset_minutes: number | null;
+      split_duration_minutes: number | null;
+    }> | null;
   };
 
   if (assignees && assignees.length > 0) {
@@ -979,6 +1017,9 @@ export async function duplicateBookingAction(id: string) {
         membership_id: a.membership_id,
         organization_id: membership.organization_id,
         is_primary: a.is_primary,
+        split_index: a.split_index,
+        split_start_offset_minutes: a.split_start_offset_minutes,
+        split_duration_minutes: a.split_duration_minutes,
       })) as never,
     );
   }
@@ -1333,11 +1374,12 @@ export async function assignBookingCrewAction(
   }
 
   // Read the existing assignee so we can detect a primary change
-  // and fire notifyBookingAssignment if needed.
+  // and fire notifyBookingAssignment if needed. Also fetch `splits` so we
+  // can detect split-shift bookings and refuse to wipe their segment data.
   const { data: existing } = (await supabase
     .from("bookings")
     .select(
-      "assigned_to, scheduled_at, duration_minutes, service_type, address, notes, client:clients ( name )",
+      "assigned_to, scheduled_at, duration_minutes, service_type, address, notes, splits, client:clients ( name )",
     )
     .eq("id", id)
     .maybeSingle()) as unknown as {
@@ -1348,10 +1390,22 @@ export async function assignBookingCrewAction(
       service_type: string;
       address: string | null;
       notes: string | null;
+      splits: Array<{ assigned_to?: string; duration_minutes?: number }> | null;
       client: { name: string | null } | null;
     } | null;
   };
   if (!existing) return { error: "Booking not found." };
+
+  // SPLIT-SHIFT GUARD: the quick-assign popup has no way to express
+  // segment-aware assignments. Refuse to mutate so we don't destroy
+  // existing split data. The owner must use the full edit form to
+  // change a split booking's crew.
+  if (Array.isArray(existing.splits) && existing.splits.length > 0) {
+    return {
+      error:
+        "This is a split-shift booking. Open it in the full editor to change crew assignments.",
+    };
+  }
 
   // Flip primary on the booking row first.
   if (primaryId !== existing.assigned_to) {
@@ -1368,7 +1422,7 @@ export async function assignBookingCrewAction(
     id,
     primaryId,
     additionalIds,
-    [], // no splits from the quick-assign crew dialog
+    [], // no splits from the quick-assign crew dialog (guarded above)
   );
 
   // Update personal calendars for all newly assigned members (and remove
