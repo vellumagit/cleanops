@@ -81,6 +81,17 @@ export function BookingQuickView({
     (id) => id !== booking.assigned_to,
   );
 
+  // Visible diagnostic: when a booking has multiple assignees but no
+  // segment metadata (split_start_offset_minutes / split_duration_minutes
+  // are NULL on the booking_assignees rows), we can't render a split
+  // breakdown. Surface this to the owner instead of silently falling
+  // back to the segment-0 view — that's the failure mode Svitlana
+  // hit and it was confusing because the grid placement DOES use the
+  // (non-existent) segment data, so she sees mismatched times.
+  const allAssigneeCount = (booking.all_assignee_ids ?? []).length;
+  const looksMultiCrewButNoSegments =
+    allAssigneeCount > 1 && Object.keys(segmentsMap).length === 0;
+
   // SPLIT SHIFT DETECTION
   // booking.assigneeSegments is { [membershipId]: { start_offset_minutes,
   // duration_minutes } } and is only populated for split-shift bookings.
@@ -91,17 +102,18 @@ export function BookingQuickView({
   const segmentCount = Object.keys(segmentsMap).length;
 
   // Diagnostic log — visible in mobile DevTools or `vercel logs`.
-  // Lets us confirm whether the new build is actually loaded on the
-  // user's device and whether assigneeSegments is reaching this
-  // component. Will get removed in the next pass once split shifts
-  // are confirmed working end-to-end.
+  // JSON.stringify so the segments are preserved if you read the log
+  // from the console history (the previous version logged a live Object
+  // ref that couldn't be expanded post-hoc).
   if (typeof window !== "undefined") {
     console.log(
       "[BookingQuickView v2]",
       booking.id,
       "segments:",
       segmentCount,
-      segmentsMap,
+      JSON.stringify(segmentsMap),
+      "all_assignee_ids:",
+      JSON.stringify(booking.all_assignee_ids ?? []),
     );
   }
 
@@ -196,6 +208,14 @@ export function BookingQuickView({
                 </span>
               )}
             </Row>
+          )}
+
+          {looksMultiCrewButNoSegments && (
+            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/40 dark:text-amber-200">
+              ⚠️ This booking has {allAssigneeCount} crew but no split
+              segment data was found. Open in editor → toggle splits off
+              and back on, then save to rebuild.
+            </div>
           )}
 
           {booking.address && (
