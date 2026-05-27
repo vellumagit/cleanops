@@ -18,6 +18,11 @@ export async function fetchBookingFormOptions() {
     supabase
       .from("clients")
       .select("id, name, address, notes, preferred_cleaner_id")
+      // Archived clients shouldn't appear in the booking form dropdown —
+      // owners archive a client to stop scheduling new work for them
+      // while keeping the historical record. Same filter applied to the
+      // billing-cycle cron and the clients list page.
+      .is("archived_at" as never, null as never)
       .order("name") as unknown as Promise<{
       data:
         | Array<{

@@ -13,7 +13,14 @@ export type BookingOption = {
 export async function fetchInvoiceFormOptions() {
   const supabase = await createSupabaseServerClient();
   const [{ data: clients }, { data: bookings }] = await Promise.all([
-    supabase.from("clients").select("id, name").order("name"),
+    // Archived clients are excluded — owners shouldn't be able to
+     // create new invoices for clients they've archived. (Existing
+     // invoices for archived clients are still visible / payable.)
+     supabase
+      .from("clients")
+      .select("id, name")
+      .is("archived_at" as never, null as never)
+      .order("name"),
     supabase
       .from("bookings")
       .select(

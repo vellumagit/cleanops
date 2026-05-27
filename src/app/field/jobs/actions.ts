@@ -93,7 +93,13 @@ export async function startJobAction(
         clock_in_lat: lat,
         clock_in_lng: lng,
       });
-      if (insertError) return { ok: false, error: insertError.message };
+      if (insertError) {
+        const code = (insertError as { code?: string }).code;
+        if (code === "23505") {
+          return { ok: false, error: "You're already clocked in." };
+        }
+        return { ok: false, error: insertError.message };
+      }
     }
   } else {
     // No open entry anywhere — create one for this job.
@@ -105,7 +111,13 @@ export async function startJobAction(
       clock_in_lat: lat,
       clock_in_lng: lng,
     });
-    if (insertError) return { ok: false, error: insertError.message };
+    if (insertError) {
+      const code = (insertError as { code?: string }).code;
+      if (code === "23505") {
+        return { ok: false, error: "You're already clocked in." };
+      }
+      return { ok: false, error: insertError.message };
+    }
   }
 
   revalidatePath("/field/jobs");

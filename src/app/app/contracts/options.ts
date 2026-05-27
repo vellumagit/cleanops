@@ -3,7 +3,11 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 export async function fetchContractFormOptions() {
   const supabase = await createSupabaseServerClient();
   const [{ data: clients }, { data: estimates }] = await Promise.all([
-    supabase.from("clients").select("id, name").order("name"),
+    supabase
+      .from("clients")
+      .select("id, name")
+      .is("archived_at" as never, null as never)
+      .order("name"),
     supabase
       .from("estimates")
       .select("id, total_cents, service_description, client:clients ( name )")

@@ -25,7 +25,10 @@ export async function clockInAction(
 
   const { membership, supabase } = await getActionContext();
 
-  // Don't double-clock — if there's an open generic entry, treat as success.
+  // Best-effort precheck — gives a clean error message in the common case
+  // where the user is already clocked in. The DB unique index is the
+  // authoritative guard against concurrent double-clock-in (see migration
+  // 20260527010000_time_entries_one_open.sql).
   const { data: existing } = await supabase
     .from("time_entries")
     .select("id")
@@ -46,7 +49,16 @@ export async function clockInAction(
     clock_in_lat: lat,
     clock_in_lng: lng,
   });
-  if (error) return { ok: false, error: error.message };
+  if (error) {
+    // Postgres unique_violation — partial index rejected a concurrent
+    // double clock-in. Treat as "you're already clocked in" instead of
+    // a raw error string.
+    const code = (error as { code?: string }).code;
+    if (code === "23505") {
+      return { ok: false, error: "You're already clocked in." };
+    }
+    return { ok: false, error: error.message };
+  }
 
   revalidatePath("/field/clock");
   return { ok: true };

@@ -60,7 +60,9 @@ export async function submitReviewAction(
     // Verify the token against bookings.review_token
     const { data: booking } = (await admin
       .from("bookings")
-      .select("id, organization_id, client_id, assigned_to, review_token, scheduled_at")
+      .select(
+        "id, organization_id, client_id, assigned_to, review_token, scheduled_at, status",
+      )
       .eq("id", sourceId)
       .maybeSingle()) as unknown as {
       data: {
@@ -70,11 +72,22 @@ export async function submitReviewAction(
         assigned_to: string | null;
         review_token: string | null;
         scheduled_at: string | null;
+        status: string | null;
       } | null;
     };
 
     if (!booking || booking.review_token !== token) {
       return { success: false, error: "Invalid or expired review link." };
+    }
+    // Reviews can only be submitted AFTER the job is completed. Without
+    // this guard a leaked token could be used to forge a review for a
+    // future booking — and because reviews feed bonus calculation an
+    // employee could review their own future job and earn a bonus.
+    if (booking.status !== "completed") {
+      return {
+        success: false,
+        error: "Reviews can only be submitted after the job is completed.",
+      };
     }
     if (tooOld(booking.scheduled_at)) {
       return { success: false, error: "This review link has expired." };
@@ -109,13 +122,15 @@ export async function submitReviewAction(
     }
     // Prefer paid_at as the anchor (invoice review tokens are minted
     // on payment). Fall back to created_at if paid_at is null.
+    // If BOTH are null we reject — `tooOld(null)` would otherwise be
+    // false and let an ancient leaked token submit.
     const invoiceWithDates = invoiceRow as unknown as {
       paid_at: string | null;
       created_at: string | null;
     };
     const anchor =
       invoiceWithDates.paid_at ?? invoiceWithDates.created_at;
-    if (tooOld(anchor)) {
+    if (!anchor || tooOld(anchor)) {
       return { success: false, error: "This review link has expired." };
     }
 

@@ -3,7 +3,11 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
-import { BookingSchema, RecurringBookingSchema } from "@/lib/validators/bookings";
+import {
+  BookingSchema,
+  RecurringBookingSchema,
+  SplitsArraySchema,
+} from "@/lib/validators/bookings";
 import {
   createCalendarEvent,
   updateCalendarEvent,
@@ -424,17 +428,33 @@ export async function createBookingAction(
     return { errors: { _form: "Your subscription has expired. Subscribe to create new bookings." }, values: raw };
   }
 
-  // Parse split segments (if split-shift is enabled)
+  // Parse + validate split segments. Empty array = no split shift.
+  // Invalid input (missing assigned_to, zero/negative duration, segments
+  // without a UUID) is rejected with a form error rather than silently
+  // accepted — previously the action would save a booking with
+  // assigned_to="" and no crew notifications.
   const splitsJson = String(formData.get("splits") ?? "[]");
-  let splits: unknown[] = [];
-  try { splits = JSON.parse(splitsJson); } catch { splits = []; }
-  if (!Array.isArray(splits)) splits = [];
+  let splitsRaw: unknown[] = [];
+  try { splitsRaw = JSON.parse(splitsJson); } catch { splitsRaw = []; }
+  if (!Array.isArray(splitsRaw)) splitsRaw = [];
+
+  const splitsParsed = SplitsArraySchema.safeParse(splitsRaw);
+  if (!splitsParsed.success) {
+    return {
+      errors: {
+        _form:
+          "Split-shift segments are incomplete. Make sure every segment has a cleaner and a duration greater than zero.",
+      },
+      values: raw,
+    };
+  }
+  const splits = splitsParsed.data;
 
   // When split segments exist, use their total duration for GCal (not the
   // booking's overall duration_minutes, which is the full slot length).
   const effectiveDuration =
     splits.length > 0
-      ? (splits as { duration_minutes: number }[]).reduce(
+      ? splits.reduce(
           (sum, s) => sum + (Number(s.duration_minutes) || 0),
           0,
         )
@@ -827,15 +847,27 @@ export async function updateBookingAction(
     (previousAssigneesRows ?? []).map((r) => r.membership_id),
   );
 
-  // Parse split segments for update
+  // Parse + validate split segments. Same rules as createBookingAction.
   const updateSplitsJson = String(formData.get("splits") ?? "[]");
-  let updateSplits: unknown[] = [];
-  try { updateSplits = JSON.parse(updateSplitsJson); } catch { updateSplits = []; }
-  if (!Array.isArray(updateSplits)) updateSplits = [];
+  let updateSplitsRaw: unknown[] = [];
+  try { updateSplitsRaw = JSON.parse(updateSplitsJson); } catch { updateSplitsRaw = []; }
+  if (!Array.isArray(updateSplitsRaw)) updateSplitsRaw = [];
+
+  const updateSplitsParsed = SplitsArraySchema.safeParse(updateSplitsRaw);
+  if (!updateSplitsParsed.success) {
+    return {
+      errors: {
+        _form:
+          "Split-shift segments are incomplete. Make sure every segment has a cleaner and a duration greater than zero.",
+      },
+      values: raw,
+    };
+  }
+  const updateSplits = updateSplitsParsed.data;
 
   const updateEffectiveDuration =
     updateSplits.length > 0
-      ? (updateSplits as { duration_minutes: number }[]).reduce(
+      ? updateSplits.reduce(
           (sum, s) => sum + (Number(s.duration_minutes) || 0),
           0,
         )

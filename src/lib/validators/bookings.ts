@@ -26,6 +26,41 @@ export const BookingStatusEnum = z.enum([
   "cancelled",
 ]);
 
+/**
+ * Validates a single split-shift segment from the booking form.
+ *
+ * Required invariants:
+ *   - assigned_to is a non-empty UUID (no blank segments)
+ *   - duration_minutes is a positive integer ≤ 24h
+ *
+ * Optional fields (id, hourly_rate_cents) are preserved as-is into the
+ * bookings.splits JSONB but not strictly enforced here.
+ */
+export const SplitSegmentSchema = z.object({
+  id: z.string().optional(),
+  assigned_to: z
+    .string()
+    .uuid("Each segment must have a cleaner assigned"),
+  duration_minutes: z
+    .number()
+    .int()
+    .positive("Segment duration must be greater than zero")
+    .max(24 * 60, "Segment duration cannot exceed 24 hours"),
+  hourly_rate_cents: z.number().int().nonnegative().optional(),
+});
+
+/**
+ * Validates the full splits array as submitted from the booking form.
+ * Empty array = no split shift (single-assignee booking). Non-empty
+ * means split mode is enabled and every entry must be valid.
+ */
+export const SplitsArraySchema = z
+  .array(SplitSegmentSchema)
+  .refine(
+    (arr) => arr.length === 0 || arr.length >= 2,
+    "A split shift needs at least 2 segments",
+  );
+
 export const RecurrencePatternEnum = z.enum([
   "weekly",
   "bi_weekly",
