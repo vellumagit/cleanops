@@ -101,6 +101,36 @@ async function syncBookingAssignees(
   additionalIds: string[],
   splits: SplitSegmentInput[] = [],
 ): Promise<void> {
+  // CROSS-ORG GUARD: every submitted membership_id must belong to the
+  // caller's org and be active. Otherwise a malicious owner with multiple
+  // org memberships could plant a foreign membership in booking_assignees
+  // by spoofing the form payload — RLS won't catch it because the row
+  // itself is in the caller's org. Filter unknown IDs out silently.
+  const submitted = new Set<string>();
+  if (primaryId) submitted.add(primaryId);
+  for (const id of additionalIds) if (id) submitted.add(id);
+  for (const s of splits) if (s.assigned_to) submitted.add(s.assigned_to);
+
+  let validIds: Set<string> = new Set();
+  if (submitted.size > 0) {
+    const { data: validMembers } = (await supabase
+      .from("memberships")
+      .select("id")
+      .eq("organization_id", organizationId)
+      .eq("status", "active")
+      .in("id", Array.from(submitted))) as unknown as {
+      data: Array<{ id: string }> | null;
+    };
+    validIds = new Set((validMembers ?? []).map((m) => m.id));
+  }
+  const isValid = (id: string | null | undefined): id is string =>
+    !!id && validIds.has(id);
+
+  // Filter the inputs to only the validated IDs.
+  const safePrimaryId = isValid(primaryId) ? primaryId : null;
+  const safeAdditionalIds = additionalIds.filter(isValid);
+  const safeSplits = splits.filter((s) => isValid(s.assigned_to));
+
   // Drop the existing set. RLS scopes this to the caller's org; the
   // booking_id filter is the authoritative narrowing.
   await (supabase
@@ -118,12 +148,12 @@ async function syncBookingAssignees(
     split_duration_minutes: number | null;
   }> = [];
 
-  if (splits.length > 0) {
+  if (safeSplits.length > 0) {
     // Split mode: derive booking_assignees from the segments array.
     // Offsets are computed cumulatively from segment durations.
     let offset = 0;
     const seen = new Set<string>();
-    splits.forEach((seg, idx) => {
+    safeSplits.forEach((seg, idx) => {
       if (!seg.assigned_to || seen.has(seg.assigned_to)) {
         offset += Number(seg.duration_minutes) || 0;
         return;
@@ -140,21 +170,38 @@ async function syncBookingAssignees(
       });
       offset += Number(seg.duration_minutes) || 0;
     });
-  } else {
-    // Normal mode: primary + additional crew, no split metadata.
-    if (primaryId) {
+    // Also persist any "additional crew" who aren't part of any segment.
+    // Without this, owners who add helpers via the additional_assignees
+    // checkboxes alongside splits would silently lose those helpers —
+    // they wouldn't see the job, wouldn't get notifications, no GCal sync.
+    for (const id of safeAdditionalIds) {
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
       rows.push({
         organization_id: organizationId,
         booking_id: bookingId,
-        membership_id: primaryId,
+        membership_id: id,
+        is_primary: false,
+        split_index: null,
+        split_start_offset_minutes: null,
+        split_duration_minutes: null,
+      });
+    }
+  } else {
+    // Normal mode: primary + additional crew, no split metadata.
+    if (safePrimaryId) {
+      rows.push({
+        organization_id: organizationId,
+        booking_id: bookingId,
+        membership_id: safePrimaryId,
         is_primary: true,
         split_index: null,
         split_start_offset_minutes: null,
         split_duration_minutes: null,
       });
     }
-    for (const id of additionalIds) {
-      if (id === primaryId) continue; // guard against duplicates
+    for (const id of safeAdditionalIds) {
+      if (id === safePrimaryId) continue; // guard against duplicates
       rows.push({
         organization_id: organizationId,
         booking_id: bookingId,
@@ -881,52 +928,85 @@ export async function updateBookingAction(
     parsed.data.assigned_to ?? null,
   );
 
-  if (existing?.google_calendar_event_id) {
-    // Update existing event
-    await updateCalendarEvent(membership.organization_id, {
+  // CANCELLATION HYGIENE: if the booking is now cancelled, remove it
+  // from every calendar instead of updating. Cleaners would otherwise
+  // see the event survive on their personal Google Calendar and drive
+  // to a job that no longer exists.
+  if (parsed.data.status === "cancelled") {
+    if (existing?.google_calendar_event_id) {
+      await deleteCalendarEvent(
+        membership.organization_id,
+        existing.google_calendar_event_id,
+      ).catch((err) =>
+        console.error("[gcal] cancel cleanup failed:", err),
+      );
+      // Clear the stored event ID so a later un-cancel re-creates clean.
+      await supabase
+        .from("bookings")
+        .update({ google_calendar_event_id: null } as never)
+        .eq("id", id);
+    }
+    // Clear member calendar events with awaited cleanup so the mapping
+    // rows still exist when the function runs its initial SELECT.
+    await syncMemberCalendarEvents(id, [], {
       id,
-      google_calendar_event_id: existing.google_calendar_event_id,
       scheduled_at: parsed.data.scheduled_at,
       duration_minutes: updateEffectiveDuration,
       service_type: parsed.data.service_type,
       address: parsed.data.address ?? null,
       notes: parsed.data.notes ?? null,
       client_name: labels.clientName,
-      employee_name: labels.employeeName,
-    }).catch((err) => console.error("[gcal] sync error on update:", err));
+    }).catch((err) =>
+      console.error("[gcal/member] cancel cleanup failed:", err),
+    );
   } else {
-    // No event yet — create one
-    await createCalendarEvent(membership.organization_id, {
-      id,
-      scheduled_at: parsed.data.scheduled_at,
-      duration_minutes: updateEffectiveDuration,
-      service_type: parsed.data.service_type,
-      address: parsed.data.address ?? null,
-      notes: parsed.data.notes ?? null,
-      client_name: labels.clientName,
-      employee_name: labels.employeeName,
-    }).catch((err) => console.error("[gcal] sync error on create:", err));
-  }
+    if (existing?.google_calendar_event_id) {
+      // Update existing event
+      await updateCalendarEvent(membership.organization_id, {
+        id,
+        google_calendar_event_id: existing.google_calendar_event_id,
+        scheduled_at: parsed.data.scheduled_at,
+        duration_minutes: updateEffectiveDuration,
+        service_type: parsed.data.service_type,
+        address: parsed.data.address ?? null,
+        notes: parsed.data.notes ?? null,
+        client_name: labels.clientName,
+        employee_name: labels.employeeName,
+      }).catch((err) => console.error("[gcal] sync error on update:", err));
+    } else {
+      // No event yet — create one
+      await createCalendarEvent(membership.organization_id, {
+        id,
+        scheduled_at: parsed.data.scheduled_at,
+        duration_minutes: updateEffectiveDuration,
+        service_type: parsed.data.service_type,
+        address: parsed.data.address ?? null,
+        notes: parsed.data.notes ?? null,
+        client_name: labels.clientName,
+        employee_name: labels.employeeName,
+      }).catch((err) => console.error("[gcal] sync error on create:", err));
+    }
 
-  // Sync to each assigned employee's personal calendar (fire-and-forget).
-  {
-    const splitAssignees = (updateSplits as SplitSegmentInput[])
-      .map((s) => s.assigned_to)
-      .filter(Boolean);
-    const allAssignees = Array.from(new Set([
-      ...(parsed.data.assigned_to ? [parsed.data.assigned_to] : []),
-      ...readAdditionalAssignees(formData),
-      ...splitAssignees,
-    ]));
-    syncMemberCalendarEvents(id, allAssignees, {
-      id,
-      scheduled_at: parsed.data.scheduled_at,
-      duration_minutes: updateEffectiveDuration,
-      service_type: parsed.data.service_type,
-      address: parsed.data.address ?? null,
-      notes: parsed.data.notes ?? null,
-      client_name: labels.clientName,
-    }).catch(() => {});
+    // Sync to each assigned employee's personal calendar (fire-and-forget).
+    {
+      const splitAssignees = (updateSplits as SplitSegmentInput[])
+        .map((s) => s.assigned_to)
+        .filter(Boolean);
+      const allAssignees = Array.from(new Set([
+        ...(parsed.data.assigned_to ? [parsed.data.assigned_to] : []),
+        ...readAdditionalAssignees(formData),
+        ...splitAssignees,
+      ]));
+      syncMemberCalendarEvents(id, allAssignees, {
+        id,
+        scheduled_at: parsed.data.scheduled_at,
+        duration_minutes: updateEffectiveDuration,
+        service_type: parsed.data.service_type,
+        address: parsed.data.address ?? null,
+        notes: parsed.data.notes ?? null,
+        client_name: labels.clientName,
+      }).catch(() => {});
+    }
   }
 
   revalidatePath("/app/bookings");
@@ -1124,7 +1204,10 @@ export async function deleteBookingAction(formData: FormData) {
     }
 
     // Delete all Google Calendar events for the series in parallel
-    // (org-level + per-member personal calendars).
+    // (org-level + per-member personal calendars). MUST complete before
+    // the booking rows are deleted, otherwise the cascade nukes
+    // booking_member_calendar_events rows that hold the event IDs we
+    // need to call DELETE on Google with.
     await Promise.all([
       ...(siblings ?? [])
         .filter((sib) => sib.google_calendar_event_id)
@@ -1136,7 +1219,7 @@ export async function deleteBookingAction(formData: FormData) {
             console.error("[gcal] sync error on cascade delete:", err),
           ),
         ),
-      // Clear all member calendar events for every sibling.
+      // Clear all member calendar events for every sibling (awaited).
       ...(siblings ?? []).map((sib) =>
         syncMemberCalendarEvents(sib.id, [], {
           id: sib.id,
@@ -1149,16 +1232,21 @@ export async function deleteBookingAction(formData: FormData) {
       ),
     ]);
   } else {
-    // Single-booking delete (existing behavior).
-    // Clean up personal calendar events before deleting the booking row.
-    syncMemberCalendarEvents(id, [], {
+    // Single-booking delete. CRITICAL: clean up personal calendar events
+    // BEFORE deleting the booking row. booking_member_calendar_events has
+    // ON DELETE CASCADE on booking_id — if the booking row goes first,
+    // the mapping rows holding the GCal event IDs vanish and the events
+    // are orphaned on each cleaner's personal calendar forever.
+    await syncMemberCalendarEvents(id, [], {
       id,
       scheduled_at: "",
       duration_minutes: 0,
       service_type: "",
       address: null,
       notes: null,
-    }).catch(() => {});
+    }).catch((err) =>
+      console.error("[gcal/member] cleanup failed on delete:", err),
+    );
 
     const { error } = await supabase
       .from("bookings")
@@ -1262,12 +1350,16 @@ export async function skipBookingOccurrenceAction(formData: FormData) {
 
 /**
  * Cancel all future bookings in a series and deactivate the series.
+ *
+ * Cleans up Google Calendar events (org + per-member) for every
+ * cancelled occurrence so cleaners don't see ghost jobs on their phones.
  */
 export async function cancelSeriesAction(formData: FormData) {
   const seriesId = String(formData.get("series_id") ?? "");
   if (!seriesId) return;
 
   const { membership, supabase } = await getActionContext();
+  const now = new Date().toISOString();
 
   // Deactivate the series — explicit org filter guards against series_id
   // spoofing even though the supabase client applies RLS.
@@ -1277,8 +1369,21 @@ export async function cancelSeriesAction(formData: FormData) {
     .eq("id" as never, seriesId as never)
     .eq("organization_id" as never, membership.organization_id as never) as unknown as Promise<unknown>);
 
-  // Cancel all future pending/confirmed bookings in this series
-  const now = new Date().toISOString();
+  // Pull the affected occurrences FIRST so we have their event IDs.
+  // After the status flip the booking rows still exist but their GCal
+  // events need explicit DELETE calls — calendar API knows nothing about
+  // booking.status.
+  const { data: affected } = (await supabase
+    .from("bookings")
+    .select("id, google_calendar_event_id")
+    .eq("series_id" as never, seriesId as never)
+    .eq("organization_id" as never, membership.organization_id as never)
+    .in("status" as never, ["pending", "confirmed"] as never)
+    .gte("scheduled_at" as never, now as never)) as unknown as {
+    data: Array<{ id: string; google_calendar_event_id: string | null }> | null;
+  };
+
+  // Flip status to cancelled.
   await (supabase
     .from("bookings")
     .update({ status: "cancelled" } as never)
@@ -1286,6 +1391,47 @@ export async function cancelSeriesAction(formData: FormData) {
     .eq("organization_id" as never, membership.organization_id as never)
     .in("status" as never, ["pending", "confirmed"] as never)
     .gte("scheduled_at" as never, now as never) as unknown as Promise<unknown>);
+
+  // Delete the corresponding calendar events. Order matters: the booking
+  // rows still exist (cancelled, not deleted), so booking_member_calendar_events
+  // mapping rows survive — syncMemberCalendarEvents(_, [], _) walks them
+  // and issues DELETEs to each member's personal calendar.
+  if (affected && affected.length > 0) {
+    await Promise.all([
+      ...affected
+        .filter((r) => r.google_calendar_event_id)
+        .map((r) =>
+          deleteCalendarEvent(
+            membership.organization_id,
+            r.google_calendar_event_id!,
+          ).catch((err) =>
+            console.error("[gcal] cancel-series cleanup failed:", err),
+          ),
+        ),
+      ...affected.map((r) =>
+        syncMemberCalendarEvents(r.id, [], {
+          id: r.id,
+          scheduled_at: "",
+          duration_minutes: 0,
+          service_type: "",
+          address: null,
+          notes: null,
+        }).catch((err) =>
+          console.error("[gcal/member] cancel-series cleanup failed:", err),
+        ),
+      ),
+    ]);
+
+    // Clear stored event IDs so a later un-cancel re-creates cleanly.
+    await supabase
+      .from("bookings")
+      .update({ google_calendar_event_id: null } as never)
+      .in(
+        "id",
+        affected.map((r) => r.id),
+      )
+      .eq("organization_id", membership.organization_id);
+  }
 
   revalidatePath("/app/bookings");
   revalidatePath("/app");

@@ -212,6 +212,10 @@ export async function fetchScheduleWeek(
       )
       .gte("scheduled_at", weekStart.toISOString())
       .lt("scheduled_at", weekEnd.toISOString())
+      // Cancelled bookings would otherwise render as draggable ghost
+      // cards on every scheduler view — owners could "reschedule" a
+      // dead row and nothing would happen.
+      .neq("status", "cancelled")
       .order("scheduled_at", { ascending: true }),
     supabase
       .from("memberships")
