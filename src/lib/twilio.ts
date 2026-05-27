@@ -151,7 +151,12 @@ export function composeOfferSms(args: {
     positions > 1
       ? `${positions} spots available — claim yours`
       : "First to claim gets it";
-  return `Sollos 3: Coverage needed. ${service} ${when}, ${duration}, ${dollars}. ${args.addressShort}. ${cta}: ${args.claimUrl}`;
+  // Bench/freelancer recipients aren't employees of the org sending the
+  // SMS — they're independent contractors getting a transactional offer.
+  // A2P 10DLC carriers can throttle or suspend the campaign without the
+  // opt-out disclosure on initial-contact messages. Acceptable cost: this
+  // may push the body into a 2nd segment for some templates.
+  return `Sollos 3: Coverage needed. ${service} ${when}, ${duration}, ${dollars}. ${args.addressShort}. ${cta}: ${args.claimUrl} Reply STOP to opt out.`;
 }
 
 /**

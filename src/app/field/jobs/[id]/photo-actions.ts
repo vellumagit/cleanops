@@ -62,12 +62,32 @@ async function validateMagicBytes(
       return isRiff && isWebp;
     }
     case "image/heic": {
-      // "ftyp" at offset 4..7, brand at 8..11 is one of heic, heix, hevc, mif1, msf1.
+      // "ftyp" at offset 4..7, brand at 8..11 is one of the HEIF family.
+      // Apple variants seen in the wild: heic, heix, hevc, hevx, mif1, msf1,
+      // heim, heis, hevm, hevs. Some iPhone 15 Pro outputs use heif/mif2/
+      // msf2; AVIF (HEIF cousin) uses avif/avis. Browsers consistently
+      // report Content-Type: image/heic for all of these.
       const ftyp = u32(4) === 0x66747970;
       if (!ftyp) return false;
       const brand =
         String.fromCharCode(head[8], head[9], head[10], head[11]);
-      return ["heic", "heix", "hevc", "mif1", "msf1"].includes(brand);
+      return [
+        "heic",
+        "heix",
+        "hevc",
+        "hevx",
+        "mif1",
+        "msf1",
+        "heim",
+        "heis",
+        "hevm",
+        "hevs",
+        "heif",
+        "mif2",
+        "msf2",
+        "avif",
+        "avis",
+      ].includes(brand);
     }
     default:
       return false;

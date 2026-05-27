@@ -64,6 +64,23 @@ type SplitSegment = {
   hourly_rate_cents: number;
 };
 
+/**
+ * Render a cumulative-offset duration as a clean "Xh", "Ym", or "Xh Ym"
+ * label. Used in the "(starts at +...)" label under each split segment.
+ *
+ * Previously this was inlined as `${Math.floor(n/60)}h${n%60}m` which
+ * produced ugly outputs like "0h30m" (when sub-hour) or "1h30m" (no
+ * space). Centralized here so the format is consistent everywhere.
+ */
+function formatOffsetLabel(totalMinutes: number): string {
+  if (totalMinutes <= 0) return "0m";
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  if (h > 0 && m > 0) return `${h}h ${m}m`;
+  if (h > 0) return `${h}h`;
+  return `${m}m`;
+}
+
 /** Client option carries the fields we auto-fill into the form. */
 export type ClientOption = Option & {
   address: string | null;
@@ -848,7 +865,7 @@ export function BookingForm({
                         Segment {idx + 1}
                         {startOffset > 0 && (
                           <span className="ml-1.5 font-normal normal-case">
-                            (starts at +{Math.floor(startOffset / 60)}h{startOffset % 60 > 0 ? `${startOffset % 60}m` : ""})
+                            (starts at +{formatOffsetLabel(startOffset)})
                           </span>
                         )}
                       </span>

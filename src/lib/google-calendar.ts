@@ -1043,6 +1043,9 @@ export async function cleanupMemberCalendarEvents(
 
   // Paginate so long-history members (years of weekly recurring) don't
   // silently lose events past the default ~1000-row response cap.
+  // .order("booking_id") gives a stable cursor across pages — without
+  // an explicit order, Postgres makes no consistency guarantee between
+  // .range() calls and rows could repeat or skip.
   const PAGE = 500;
   const rows: Array<{ booking_id: string; google_calendar_event_id: string }> = [];
   for (let offset = 0; ; offset += PAGE) {
@@ -1050,6 +1053,7 @@ export async function cleanupMemberCalendarEvents(
       .from("booking_member_calendar_events" as never)
       .select("booking_id, google_calendar_event_id")
       .eq("membership_id" as never, membershipId)
+      .order("booking_id" as never, { ascending: true } as never)
       .range(offset, offset + PAGE - 1)) as unknown as {
       data: Array<{
         booking_id: string;
@@ -1059,7 +1063,14 @@ export async function cleanupMemberCalendarEvents(
     const got = page ?? [];
     rows.push(...got);
     if (got.length < PAGE) break;
-    if (rows.length >= 10000) break; // hard safety cap
+    if (rows.length >= 10000) {
+      console.warn(
+        "[gcal/member] cleanupMemberCalendarEvents hit 10k row cap for",
+        membershipId,
+        "— excess events will not be cleaned from Google Calendar.",
+      );
+      break;
+    }
   }
 
   if (conn && rows && rows.length > 0) {
@@ -1135,6 +1146,9 @@ export async function bulkSyncMemberBookings(
       .eq("membership_id" as never, membershipId)
       .neq("booking.status" as never, "cancelled" as never)
       .gte("booking.scheduled_at" as never, now as never)
+      // Stable cursor across pages. Without .order(), Postgres can
+      // repeat or skip rows between .range() calls.
+      .order("booking_id" as never, { ascending: true } as never)
       .range(offset, offset + PAGE - 1)) as unknown as {
       data: Array<(typeof bookings)[number]> | null;
     };
@@ -1142,7 +1156,14 @@ export async function bulkSyncMemberBookings(
     bookings.push(...got);
     if (got.length < PAGE) break;
     // Safety: never sync more than 5000 in one go.
-    if (bookings.length >= 5000) break;
+    if (bookings.length >= 5000) {
+      console.warn(
+        "[gcal/member] bulkSyncMemberBookings hit 5k row cap for",
+        membershipId,
+        "— excess bookings will not be synced. Consider keyset pagination if this is a real workload.",
+      );
+      break;
+    }
   }
 
   if (bookings.length === 0) return;

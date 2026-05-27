@@ -346,34 +346,54 @@ export async function purgeOrgData(
   ): Promise<number> {
     let removed = 0;
     try {
-      const { data: listed } = await db.storage
-        .from(bucket)
-        .list(prefix, { limit: 1000 });
-      if (!listed || listed.length === 0) return 0;
+      // Paginate through ALL entries under this prefix. Supabase Storage's
+      // .list() caps at 1000 per call; without an offset loop, orgs with
+      // more than 1000 photos in a single folder leaked files into the
+      // bucket after the purge — GDPR exposure.
+      const PAGE = 1000;
+      let offset = 0;
+      while (true) {
+        const { data: listed } = await db.storage
+          .from(bucket)
+          .list(prefix, { limit: PAGE, offset });
+        if (!listed || listed.length === 0) break;
 
-      const files: string[] = [];
-      for (const entry of listed) {
-        // Folder-like entries have id === null in Supabase Storage's
-        // listing. Recurse one level into them so nested per-booking
-        // photo dirs get cleaned out instead of left orphaned.
-        const isFolder = (entry as { id: string | null }).id === null;
-        const path = `${prefix}/${entry.name}`;
-        if (isFolder) {
-          removed += await purgeBucketPrefix(bucket, path);
-        } else {
-          files.push(path);
+        const files: string[] = [];
+        for (const entry of listed) {
+          // Folder-like entries have id === null in Supabase Storage's
+          // listing. Recurse one level into them so nested per-booking
+          // photo dirs get cleaned out instead of left orphaned.
+          const isFolder = (entry as { id: string | null }).id === null;
+          const path = `${prefix}/${entry.name}`;
+          if (isFolder) {
+            removed += await purgeBucketPrefix(bucket, path);
+          } else {
+            files.push(path);
+          }
         }
-      }
 
-      if (files.length > 0) {
-        const { error: rmErr } = await db.storage.from(bucket).remove(files);
-        if (rmErr) {
-          console.error(
-            `[tenant-purge] storage ${bucket} remove failed:`,
-            rmErr.message,
+        if (files.length > 0) {
+          const { error: rmErr } = await db.storage.from(bucket).remove(files);
+          if (rmErr) {
+            console.error(
+              `[tenant-purge] storage ${bucket} remove failed:`,
+              rmErr.message,
+            );
+          } else {
+            removed += files.length;
+          }
+        }
+
+        if (listed.length < PAGE) break;
+        offset += PAGE;
+        // Hard safety cap — log loudly so we notice when an org has
+        // genuinely huge bucket contents that should be batched
+        // differently.
+        if (offset >= 100_000) {
+          console.warn(
+            `[tenant-purge] hit 100k offset cap on ${bucket}/${prefix} — remaining files NOT purged.`,
           );
-        } else {
-          removed += files.length;
+          break;
         }
       }
     } catch (err) {
