@@ -30,14 +30,23 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
  */
 const TENANT_TABLES = [
   "audit_log",
+  "availability_overrides",
+  "availability_slots",
   "bonus_rules",
   "bonuses",
+  "booking_assignees",
+  "booking_checklist_items",
+  "booking_member_calendar_events",
+  "booking_requests",
   "booking_series",
   "bookings",
   "chat_messages",
   "chat_thread_members",
   "chat_threads",
+  "checklist_template_items",
+  "checklist_templates",
   "clients",
+  "contract_documents",
   "contracts",
   "estimate_line_items",
   "estimates",
@@ -50,22 +59,33 @@ const TENANT_TABLES = [
   "invitations",
   "invoice_line_items",
   "invoice_payments",
+  "invoice_series",
   "invoices",
+  "job_offer_claims",
   "job_offer_dispatches",
   "job_offers",
+  "job_photos",
+  "membership_admin_data",
   "memberships",
   "notifications",
   "packages",
+  "payroll_items",
+  "payroll_runs",
+  "promo_codes",
+  "promo_redemptions",
   "pto_balances",
   "pto_requests",
   "push_subscriptions",
   "reviews",
+  "scheduler_views",
   "subscriptions",
+  "tasks",
   "time_entries",
   "training_assignments",
   "training_modules",
   "training_steps",
   "webhook_deliveries",
+  "webhook_subscriptions",
   "webhooks",
 ] as const;
 
@@ -217,42 +237,74 @@ export async function purgeOrgData(
   // but we still delete children before parents to avoid any accidental
   // constraint surprises on future migrations.
   const DELETE_ORDER: readonly string[] = [
+    // Booking-scoped children first (cascade on booking_id)
+    "booking_checklist_items",
+    "booking_member_calendar_events",
+    "booking_assignees",
+    "job_photos",
+    // Conversation / messaging
     "chat_messages",
     "chat_thread_members",
     "chat_threads",
+    // Money + invoicing
     "invoice_payments",
     "invoice_line_items",
     "invoices",
+    "invoice_series",
+    "promo_redemptions",
+    "promo_codes",
     "estimate_line_items",
     "estimates",
     "bonuses",
     "bonus_rules",
     "reviews",
     "time_entries",
+    // Payroll (items reference runs)
+    "payroll_items",
+    "payroll_runs",
     "pto_requests",
     "pto_balances",
+    // Inventory + training
     "inventory_log",
     "inventory_items",
     "training_assignments",
     "training_steps",
     "training_modules",
+    // Checklists templates
+    "checklist_template_items",
+    "checklist_templates",
+    // Availability
+    "availability_overrides",
+    "availability_slots",
+    // Tasks + feed + contracts
+    "tasks",
     "feed_posts",
+    "contract_documents",
     "contracts",
+    // Booking requests + bookings + series
+    "booking_requests",
     "bookings",
     "booking_series",
     "packages",
+    // Job offers
+    "job_offer_claims",
     "job_offer_dispatches",
     "job_offers",
     "freelancer_contacts",
     "clients",
+    // Misc per-org
+    "scheduler_views",
     "notifications",
     "push_subscriptions",
     "webhook_deliveries",
+    "webhook_subscriptions",
     "webhooks",
     "integration_events",
     "integration_connections",
     "invitations",
     "audit_log",
+    // Memberships last (other tables reference it)
+    "membership_admin_data",
     "memberships",
     "subscriptions",
   ];
@@ -273,28 +325,65 @@ export async function purgeOrgData(
 
   // Wipe storage files. Buckets that hold org-scoped files put the org id
   // as the first path segment (e.g. `org-assets/<orgId>/logo.png`,
-  // `contract-docs/<orgId>/...`). This matches every upload path in the
-  // app today. Any file not under an `<orgId>/` prefix is left alone.
+  // `contract-docs/<orgId>/...`, `job-photos/<orgId>/<bookingId>/...`).
+  // This matches every upload path in the app today. Any file not under
+  // an `<orgId>/` prefix is left alone.
+  //
+  // job-photos is recursive (org/booking/photo.ext) so we walk one level
+  // deeper. Other buckets currently store files directly under <orgId>/
+  // but we also recurse for safety in case a future upload nests them.
   let storageFilesRemoved = 0;
-  const buckets = ["org-assets", "contract-docs", "estimate-pdfs"];
+  const buckets = [
+    "org-assets",
+    "contract-docs",
+    "estimate-pdfs",
+    "job-photos",
+  ];
 
-  for (const bucket of buckets) {
+  async function purgeBucketPrefix(
+    bucket: string,
+    prefix: string,
+  ): Promise<number> {
+    let removed = 0;
     try {
       const { data: listed } = await db.storage
         .from(bucket)
-        .list(orgId, { limit: 1000 });
-      if (!listed || listed.length === 0) continue;
+        .list(prefix, { limit: 1000 });
+      if (!listed || listed.length === 0) return 0;
 
-      const paths = listed.map((f) => `${orgId}/${f.name}`);
-      const { error: rmErr } = await db.storage.from(bucket).remove(paths);
-      if (rmErr) {
-        console.error(`[tenant-purge] storage ${bucket} failed:`, rmErr.message);
-        continue;
+      const files: string[] = [];
+      for (const entry of listed) {
+        // Folder-like entries have id === null in Supabase Storage's
+        // listing. Recurse one level into them so nested per-booking
+        // photo dirs get cleaned out instead of left orphaned.
+        const isFolder = (entry as { id: string | null }).id === null;
+        const path = `${prefix}/${entry.name}`;
+        if (isFolder) {
+          removed += await purgeBucketPrefix(bucket, path);
+        } else {
+          files.push(path);
+        }
       }
-      storageFilesRemoved += paths.length;
+
+      if (files.length > 0) {
+        const { error: rmErr } = await db.storage.from(bucket).remove(files);
+        if (rmErr) {
+          console.error(
+            `[tenant-purge] storage ${bucket} remove failed:`,
+            rmErr.message,
+          );
+        } else {
+          removed += files.length;
+        }
+      }
     } catch (err) {
       console.error(`[tenant-purge] storage ${bucket} exception:`, err);
     }
+    return removed;
+  }
+
+  for (const bucket of buckets) {
+    storageFilesRemoved += await purgeBucketPrefix(bucket, orgId);
   }
 
   // Tombstone the org row itself. Keep the id to prevent reuse; blank the

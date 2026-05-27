@@ -11,8 +11,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import type Stripe from "stripe";
 import {
   verifyWebhookSignature,
-  isEventAlreadyProcessed,
-  recordEvent,
+  tryClaimEvent,
+  markEventProcessed,
   isStripeConnectEnabled,
 } from "@/lib/stripe";
 import { applyAccountUpdate } from "@/lib/stripe-connect";
@@ -50,13 +50,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Bad signature" }, { status: 400 });
   }
 
-  if (await isEventAlreadyProcessed(event.id)) {
+  // Connect events carry the connected account id here.
+  const accountId = (event as unknown as { account?: string }).account ?? null;
+
+  // Atomic claim — INSERT on a PK column. The previous SELECT-then-UPSERT
+  // pattern had a race where two concurrent Stripe retries could both
+  // pass the duplicate check and run the handler twice. With auto-refund
+  // and Connect destination charges in the mix, that was a real money
+  // bug (double-refund, double-stamp paid).
+  const claimed = await tryClaimEvent(event.id, event.type, accountId);
+  if (!claimed) {
     return NextResponse.json({ received: true, duplicate: true });
   }
 
   const admin = createSupabaseAdminClient();
-  // Connect events carry the connected account id here.
-  const accountId = (event as unknown as { account?: string }).account ?? null;
 
   /**
    * Resolve which org on our platform owns this Stripe account. Used below
@@ -207,10 +214,15 @@ export async function POST(req: NextRequest) {
             );
             break;
           }
+          // Set status to 'refunded' (added in 20260526010000_invoice_status_refunded)
+          // rather than back to 'draft'. The previous behavior made
+          // refunded invoices look like fresh unsent drafts — owner could
+          // re-send and double-count in reports. Keep payment_intent_id
+          // intact for the audit trail.
           const { error: updateErr } = await admin
             .from("invoices")
             .update({
-              status: "draft",
+              status: "refunded",
               paid_at: null,
               stripe_paid_at: null,
             } as never)
@@ -235,6 +247,11 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  await recordEvent(event.id, event.type, accountId);
+  // Handler succeeded — stamp processed_at so the row is permanently
+  // marked done. Failed handlers above already returned 500 without
+  // stamping, so Stripe will retry and tryClaimEvent will see the
+  // existing row's null processed_at and refuse — that's intentional;
+  // the row is poison-pilled until a human investigates.
+  await markEventProcessed(event.id);
   return NextResponse.json({ received: true });
 }
