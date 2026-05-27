@@ -1767,6 +1767,44 @@ export async function assignBookingCrewAction(
     }).catch(() => {});
   }
 
+  // Refresh the ORG-level Google Calendar event description so the
+  // "Assigned to: <name>" line names the NEW cleaner, not the old one.
+  // Quick-assign previously left this stale.
+  if (primaryId !== existing.assigned_to) {
+    const { data: gcal } = (await supabase
+      .from("bookings")
+      .select("google_calendar_event_id")
+      .eq("id", id)
+      .maybeSingle()) as unknown as {
+      data: { google_calendar_event_id: string | null } | null;
+    };
+    if (gcal?.google_calendar_event_id) {
+      const labels = await getBookingLabels(
+        supabase,
+        // Quick-assign doesn't change the client; look it up from existing
+        (await supabase
+          .from("bookings")
+          .select("client_id")
+          .eq("id", id)
+          .maybeSingle()).data?.client_id ?? "",
+        primaryId,
+      );
+      updateCalendarEvent(membership.organization_id, {
+        id,
+        google_calendar_event_id: gcal.google_calendar_event_id,
+        scheduled_at: existing.scheduled_at,
+        duration_minutes: existing.duration_minutes,
+        service_type: existing.service_type,
+        address: existing.address,
+        notes: existing.notes,
+        client_name: labels.clientName,
+        employee_name: labels.employeeName,
+      }).catch((err) =>
+        console.error("[gcal] quick-assign event refresh failed:", err),
+      );
+    }
+  }
+
   // Fire the assignment notification when the primary actually
   // changed. Fire-and-forget — never block the dialog on it.
   if (primaryId && primaryId !== existing.assigned_to) {

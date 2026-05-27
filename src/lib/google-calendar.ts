@@ -1003,8 +1003,20 @@ export async function syncMemberCalendarEvents(
 }
 
 /**
- * Delete all personal-calendar events for a member and clean up the
- * mapping table. Called when a member disconnects their calendar.
+ * Delete personal-calendar events for a member and clean up the mapping
+ * table. Called when a member disconnects their calendar.
+ *
+ * Scope: we attempt to delete every event we have a mapping row for,
+ * not just upcoming. Previously the query was scoped to upcoming
+ * (`bookings.scheduled_at >= now`) but then the mapping rows for ALL
+ * events were deleted at the end — past events were never DELETE'd
+ * from Google and their event IDs vanished from our tracker, leaving
+ * months of orphaned "cleaning" events on the cleaner's calendar with
+ * no way for us to clean them up later.
+ *
+ * Now we walk every mapping row and attempt a DELETE on each. Google
+ * 404s for events the user already removed manually — those are
+ * swallowed. Then the mapping rows are dropped.
  */
 export async function cleanupMemberCalendarEvents(
   membershipId: string,
@@ -1012,12 +1024,10 @@ export async function cleanupMemberCalendarEvents(
   const conn = await getMemberConnection(membershipId);
   const admin = createSupabaseAdminClient();
 
-  const now = new Date().toISOString();
   const { data: rows } = (await admin
     .from("booking_member_calendar_events" as never)
-    .select("booking_id, google_calendar_event_id, bookings!inner(scheduled_at)")
-    .eq("membership_id" as never, membershipId)
-    .gte("bookings.scheduled_at" as never, now as never)) as unknown as {
+    .select("booking_id, google_calendar_event_id")
+    .eq("membership_id" as never, membershipId)) as unknown as {
     data: Array<{
       booking_id: string;
       google_calendar_event_id: string;
@@ -1026,15 +1036,20 @@ export async function cleanupMemberCalendarEvents(
 
   if (conn && rows && rows.length > 0) {
     const calendarId = (conn.metadata?.calendar_id as string) || "primary";
-    await Promise.allSettled(
-      rows.map((r) =>
-        gcalFetch(
-          conn.access_token,
-          `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(r.google_calendar_event_id)}`,
-          { method: "DELETE" },
-        ).catch(() => {}),
-      ),
-    );
+    // Batch the DELETEs to avoid hammering the Google Calendar API for
+    // members with many historical events (a year of weekly jobs ≈ 52).
+    const BATCH = 10;
+    for (let i = 0; i < rows.length; i += BATCH) {
+      await Promise.allSettled(
+        rows.slice(i, i + BATCH).map((r) =>
+          gcalFetch(
+            conn.access_token,
+            `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(r.google_calendar_event_id)}`,
+            { method: "DELETE" },
+          ).catch(() => {}),
+        ),
+      );
+    }
   }
 
   // Remove all mapping rows for this member (past and upcoming).

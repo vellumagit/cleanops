@@ -57,6 +57,25 @@ export default async function FieldJobDetailPage({
   if (error) throw error;
   if (!booking) notFound();
 
+  // Cancelled bookings shouldn't be openable via a bookmarked URL —
+  // otherwise a cleaner could still tap "I'm done" / "On my way" on
+  // a job that's been called off.
+  if (booking.status === "cancelled") {
+    return (
+      <div className="rounded-xl border border-border bg-card p-6 text-center text-base text-muted-foreground">
+        This job was cancelled.
+        <div className="mt-4">
+          <Link
+            href="/field/jobs"
+            className="text-primary underline underline-offset-2"
+          >
+            Back to my jobs
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   // Is this member an additional crew assignee (via booking_assignees)?
   // Combined with the primary assigned_to check below, this lets the
   // whole crew on a multi-person job see the detail page.

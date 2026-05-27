@@ -495,6 +495,7 @@ function EmployeeColumn({
             booking={b}
             top={top}
             height={height}
+            tz={tz}
             effectiveScheduledAt={effectiveStart}
             effectiveDurationMinutes={effectiveDuration}
             tone={toneForBooking(b, colorBy, laneIdx)}
@@ -558,6 +559,7 @@ function PositionedBooking({
   booking,
   top,
   height,
+  tz,
   effectiveScheduledAt,
   effectiveDurationMinutes,
   tone,
@@ -568,6 +570,11 @@ function PositionedBooking({
   booking: ScheduleBooking;
   top: number;
   height: number;
+  /** Org IANA timezone — used to format the start-time label so a
+   *  dispatcher in a different tz sees the time the org sees, not their
+   *  local clock. The slot-position math above already uses tz; without
+   *  passing it here the card text disagreed with the slot it sat on. */
+  tz: string;
   /** Segment-adjusted start time for split shifts; falls back to booking.scheduled_at. */
   effectiveScheduledAt?: string;
   /** Segment-adjusted duration for split shifts; falls back to booking.duration_minutes. */
@@ -623,7 +630,7 @@ function PositionedBooking({
             {new Date(effectiveScheduledAt ?? booking.scheduled_at).toLocaleTimeString("en-US", {
               hour: "numeric",
               minute: "2-digit",
-              // we don't know tz here; the title shows full info anyway.
+              timeZone: tz,
             })}{" "}
             · {effectiveDurationMinutes ?? booking.duration_minutes}m
           </div>
