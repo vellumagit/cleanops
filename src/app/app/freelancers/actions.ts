@@ -304,6 +304,8 @@ export async function createJobOfferAction(
   // 3. For each dispatch, compose and send the SMS, then update the row.
   const base = claimBaseUrl();
   const addressShort = shortAddress(booking.address);
+  const { getOrgTimezone } = await import("@/lib/org-timezone");
+  const orgTz = await getOrgTimezone(membership.organization_id);
 
   for (const d of dispatches) {
     const contact = activeContacts.find((c) => c.id === d.contact_id);
@@ -317,6 +319,7 @@ export async function createJobOfferAction(
       addressShort,
       claimUrl: `${base}/claim/${d.claim_token}`,
       positionsNeeded: parsed.data.positions_needed,
+      tz: orgTz,
     });
 
     const result = await sendSms(contact.phone, body);

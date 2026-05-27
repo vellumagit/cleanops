@@ -127,6 +127,10 @@ export function composeOfferSms(args: {
   addressShort: string;
   claimUrl: string;
   positionsNeeded?: number;
+  /** IANA org timezone — required for correct display time. On Vercel the
+   *  server clock is UTC, so without this a 2 PM ET booking renders as
+   *  6 PM in the SMS. Falls back to UTC if missing. */
+  tz?: string;
 }): string {
   const when = new Date(args.scheduledAt).toLocaleString("en-US", {
     weekday: "short",
@@ -134,6 +138,7 @@ export function composeOfferSms(args: {
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
+    timeZone: args.tz,
   });
   const duration =
     args.durationMinutes >= 60
@@ -162,6 +167,8 @@ export function composeBookingAssignmentSms(args: {
   clientName: string;
   scheduledAt: string;
   address: string | null;
+  /** IANA org timezone. Without it the server (UTC) tz leaks in. */
+  tz?: string;
 }): string {
   const when = new Date(args.scheduledAt).toLocaleString("en-US", {
     weekday: "short",
@@ -169,9 +176,12 @@ export function composeBookingAssignmentSms(args: {
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
+    timeZone: args.tz,
   });
   const service = args.serviceType.replace(/_/g, " ");
   const addressPart = args.address ? ` ${args.address}` : "";
+  // Employee SMS is B2B (operational dispatch to your own crew) and
+  // exempt from the TCPA opt-out disclosure that consumer SMS requires.
   return `${args.orgName}: New job. ${service} for ${args.clientName} ${when}.${addressPart}`;
 }
 
@@ -187,6 +197,9 @@ export function composeBookingConfirmationSms(args: {
   serviceType: string;
   scheduledAt: string;
   contactPhone?: string | null;
+  /** IANA org timezone. Without it the server (UTC) tz leaks in and
+   *  clients see times offset by their org's UTC offset. */
+  tz?: string;
 }): string {
   const when = new Date(args.scheduledAt).toLocaleString("en-US", {
     weekday: "short",
@@ -194,12 +207,17 @@ export function composeBookingConfirmationSms(args: {
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
+    timeZone: args.tz,
   });
   const service = args.serviceType.replace(/_/g, " ");
   const cta = args.contactPhone
     ? ` Questions? ${args.contactPhone}`
     : "";
-  return `${args.orgName}: Your ${service} is confirmed for ${when}.${cta}`;
+  // TCPA / A2P 10DLC: client-facing marketing & transactional SMS
+  // requires opt-out disclosure on initial-contact messages. Twilio's
+  // Advanced Opt-Out auto-handles STOP keywords; the text reminder
+  // here is still required for carrier review.
+  return `${args.orgName}: Your ${service} is confirmed for ${when}.${cta} Reply STOP to opt out.`;
 }
 
 /**
@@ -215,6 +233,8 @@ export function composeBookingReminderSms(args: {
   serviceType: string;
   scheduledAt: string;
   contactPhone?: string | null;
+  /** IANA org timezone. Without it the server (UTC) tz leaks in. */
+  tz?: string;
 }): string {
   const when = new Date(args.scheduledAt).toLocaleString("en-US", {
     weekday: "short",
@@ -222,10 +242,12 @@ export function composeBookingReminderSms(args: {
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
+    timeZone: args.tz,
   });
   const service = args.serviceType.replace(/_/g, " ");
   const cta = args.contactPhone
     ? ` Questions? ${args.contactPhone}`
     : "";
-  return `${args.orgName}: Reminder — your ${service} is ${when}.${cta}`;
+  // TCPA / A2P 10DLC opt-out disclosure (see composeBookingConfirmationSms).
+  return `${args.orgName}: Reminder — your ${service} is ${when}.${cta} Reply STOP to opt out.`;
 }

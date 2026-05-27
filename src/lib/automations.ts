@@ -822,12 +822,15 @@ export async function sendBookingConfirmation(bookingId: string) {
     try {
       const { sendOrgSms } = await import("@/lib/sms");
       const { composeBookingConfirmationSms } = await import("@/lib/twilio");
+      const { getOrgTimezone } = await import("@/lib/org-timezone");
       if (booking.client.phone) {
+        const orgTz = await getOrgTimezone(booking.organization_id);
         const smsBody = composeBookingConfirmationSms({
           orgName: org?.name ?? "Sollos",
           serviceType: booking.service_type,
           scheduledAt: booking.scheduled_at,
           contactPhone: org?.contact_phone ?? null,
+          tz: orgTz,
         });
         sendOrgSms(booking.organization_id, {
           to: booking.client.phone,
@@ -1840,6 +1843,7 @@ export async function sendUpcomingBookingReminders(): Promise<{
       try {
         const { sendOrgSms } = await import("@/lib/sms");
         const { composeBookingReminderSms } = await import("@/lib/twilio");
+        const { getOrgTimezone } = await import("@/lib/org-timezone");
         if (booking.client?.phone) {
           const { data: orgContact } = (await db
             .from("organizations")
@@ -1848,11 +1852,13 @@ export async function sendUpcomingBookingReminders(): Promise<{
             .maybeSingle()) as unknown as {
             data: { contact_phone: string | null } | null;
           };
+          const orgTz = await getOrgTimezone(booking.organization_id);
           const smsBody = composeBookingReminderSms({
             orgName: cached.name,
             serviceType: booking.service_type,
             scheduledAt: booking.scheduled_at,
             contactPhone: orgContact?.contact_phone ?? null,
+            tz: orgTz,
           });
           sendOrgSms(booking.organization_id, {
             to: booking.client.phone,
@@ -2077,6 +2083,7 @@ export async function notifyBookingAssignment(
     try {
       const { composeBookingAssignmentSms } = await import("@/lib/twilio");
       const { sendOrgSms } = await import("@/lib/sms");
+      const { getOrgTimezone } = await import("@/lib/org-timezone");
 
       const { data: member } = (await db
         .from("memberships")
@@ -2095,12 +2102,14 @@ export async function notifyBookingAssignment(
       const phone = member?.profile?.phone;
       if (phone) {
         // Reuse orgData already fetched above — no second round-trip needed.
+        const orgTz = await getOrgTimezone(organizationId);
         const smsBody = composeBookingAssignmentSms({
           orgName: orgData?.name ?? "Sollos",
           serviceType: meta.serviceType,
           clientName: meta.clientName,
           scheduledAt: meta.scheduledAt,
           address: meta.address,
+          tz: orgTz,
         });
         // Fire-and-forget — never block push dispatch. sendOrgSms
         // checks the platform kill switch + booking_assignment_sms
@@ -4049,25 +4058,23 @@ export async function autoGenerateRecurringInvoices(): Promise<{
       continue;
     }
 
-    // Generate next invoice number.
-    const { count } = await db
-      .from("invoices")
-      .select("id", { count: "exact", head: true })
-      .eq("organization_id", series.organization_id);
-    const invoiceNumber = `INV-${String((count ?? 0) + 1).padStart(4, "0")}`;
-
     const issuedAt = new Date();
     const dueDate = new Date(
       issuedAt.getTime() + series.due_days * 24 * 60 * 60 * 1000,
     );
 
-    // Insert the invoice.
+    // Let the DB trigger assign the invoice number — it uses the
+    // INV-YYYY-XXXX format consistently across all invoice creation
+    // paths. The previous code computed a count-based "INV-0001"
+    // (no year, racy) which then collided with the trigger's format
+    // for every other invoice in the org, producing inconsistent UX
+    // in exports + the bookings list.
     const { data: inserted, error } = await db
       .from("invoices")
       .insert({
         organization_id: series.organization_id,
         client_id: series.client_id,
-        number: invoiceNumber,
+        // number: omitted → trigger fills it
         status: "draft",
         amount_cents: series.amount_cents,
         due_date: dueDate.toISOString().slice(0, 10),
@@ -4117,7 +4124,7 @@ export async function autoGenerateRecurringInvoices(): Promise<{
 
     generated += 1;
     console.log(
-      `[auto] Generated recurring invoice ${invoiceNumber} for series ${series.id} (org ${series.organization_id})`,
+      `[auto] Generated recurring invoice ${inserted.id} for series ${series.id} (org ${series.organization_id})`,
     );
   }
 
