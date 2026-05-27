@@ -222,6 +222,145 @@ async function syncBookingAssignees(
 }
 
 /**
+ * Bulk variant of syncBookingAssignees for `this_and_future` series
+ * updates. Validates memberships ONCE, deletes all targets in ONE
+ * statement, builds N×rows arrays then inserts in ONE statement.
+ *
+ * The per-booking version did 3 sequential round-trips per sibling
+ * (validate, delete, insert). For a year-long weekly series that's
+ * 156 round-trips and could time out Vercel's 15s action limit. This
+ * version does 3 statements total regardless of how many bookings.
+ *
+ * Behavior contract matches syncBookingAssignees: when splits is
+ * non-empty, the segments array drives the rows (with additionalIds
+ * appended as non-split crew); otherwise primary + additional.
+ */
+async function syncBookingAssigneesBulk(
+  supabase: Awaited<
+    ReturnType<typeof import("@/lib/supabase/server").createSupabaseServerClient>
+  >,
+  organizationId: string,
+  bookingIds: string[],
+  primaryId: string | null,
+  additionalIds: string[],
+  splits: SplitSegmentInput[] = [],
+): Promise<void> {
+  if (bookingIds.length === 0) return;
+
+  // Single membership validation pass (was repeated per booking).
+  const submitted = new Set<string>();
+  if (primaryId) submitted.add(primaryId);
+  for (const id of additionalIds) if (id) submitted.add(id);
+  for (const s of splits) if (s.assigned_to) submitted.add(s.assigned_to);
+
+  let validIds: Set<string> = new Set();
+  if (submitted.size > 0) {
+    const { data: validMembers } = (await supabase
+      .from("memberships")
+      .select("id")
+      .eq("organization_id", organizationId)
+      .eq("status", "active")
+      .in("id", Array.from(submitted))) as unknown as {
+      data: Array<{ id: string }> | null;
+    };
+    validIds = new Set((validMembers ?? []).map((m) => m.id));
+  }
+  const isValid = (id: string | null | undefined): id is string =>
+    !!id && validIds.has(id);
+
+  const safePrimaryId = isValid(primaryId) ? primaryId : null;
+  const safeAdditionalIds = additionalIds.filter(isValid);
+  const safeSplits = splits.filter((s) => isValid(s.assigned_to));
+
+  // One DELETE for every target booking.
+  await (supabase
+    .from("booking_assignees" as never)
+    .delete()
+    .in("booking_id" as never, bookingIds as never) as unknown as Promise<unknown>);
+
+  // Pre-compute the canonical row template once, then stamp each booking_id.
+  type Row = {
+    organization_id: string;
+    booking_id: string;
+    membership_id: string;
+    is_primary: boolean;
+    split_index: number | null;
+    split_start_offset_minutes: number | null;
+    split_duration_minutes: number | null;
+  };
+
+  const buildRowsForBooking = (bookingId: string): Row[] => {
+    const out: Row[] = [];
+    if (safeSplits.length > 0) {
+      let offset = 0;
+      const seen = new Set<string>();
+      safeSplits.forEach((seg, idx) => {
+        if (!seg.assigned_to || seen.has(seg.assigned_to)) {
+          offset += Number(seg.duration_minutes) || 0;
+          return;
+        }
+        seen.add(seg.assigned_to);
+        out.push({
+          organization_id: organizationId,
+          booking_id: bookingId,
+          membership_id: seg.assigned_to,
+          is_primary: idx === 0,
+          split_index: idx,
+          split_start_offset_minutes: offset,
+          split_duration_minutes: Number(seg.duration_minutes) || 0,
+        });
+        offset += Number(seg.duration_minutes) || 0;
+      });
+      for (const id of safeAdditionalIds) {
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        out.push({
+          organization_id: organizationId,
+          booking_id: bookingId,
+          membership_id: id,
+          is_primary: false,
+          split_index: null,
+          split_start_offset_minutes: null,
+          split_duration_minutes: null,
+        });
+      }
+    } else {
+      if (safePrimaryId) {
+        out.push({
+          organization_id: organizationId,
+          booking_id: bookingId,
+          membership_id: safePrimaryId,
+          is_primary: true,
+          split_index: null,
+          split_start_offset_minutes: null,
+          split_duration_minutes: null,
+        });
+      }
+      for (const id of safeAdditionalIds) {
+        if (id === safePrimaryId) continue;
+        out.push({
+          organization_id: organizationId,
+          booking_id: bookingId,
+          membership_id: id,
+          is_primary: false,
+          split_index: null,
+          split_start_offset_minutes: null,
+          split_duration_minutes: null,
+        });
+      }
+    }
+    return out;
+  };
+
+  const allRows: Row[] = bookingIds.flatMap(buildRowsForBooking);
+  if (allRows.length === 0) return;
+
+  await (supabase
+    .from("booking_assignees" as never)
+    .insert(allRows as never) as unknown as Promise<unknown>);
+}
+
+/**
  * Look up human-readable names for the client and assigned employee so
  * the Google Calendar event has a useful title/description.
  */
@@ -937,15 +1076,15 @@ export async function updateBookingAction(
             data: Array<{ id: string }> | null;
           });
 
-          // Build booking_assignees for each regenerated occurrence so the
-          // scheduler shows them, the field app surfaces them to crew, and
-          // splits actually take effect (rather than living only in the
-          // bookings.splits JSONB).
-          for (const r of regenerated ?? []) {
-            await syncBookingAssignees(
+          // Build booking_assignees for ALL regenerated occurrences in a
+          // single bulk pass. Doing this per-row would do ~3 sequential
+          // round-trips per occurrence and time out on long series.
+          const regenIds = (regenerated ?? []).map((r) => r.id);
+          if (regenIds.length > 0) {
+            await syncBookingAssigneesBulk(
               supabase,
               membership.organization_id,
-              r.id,
+              regenIds,
               updateEffectiveAssignedTo,
               readAdditionalAssignees(formData),
               updateSplits as SplitSegmentInput[],
@@ -986,14 +1125,15 @@ export async function updateBookingAction(
           '("completed","cancelled")' as never,
         ) as unknown as Promise<unknown>);
 
-      // Rebuild booking_assignees for each sibling to match the new crew
-      // shape (primary, additional, or split segments). Without this,
-      // siblings keep stale rows from when they were originally created.
-      for (const r of siblingIds ?? []) {
-        await syncBookingAssignees(
+      // Rebuild booking_assignees for ALL siblings in a single bulk
+      // pass. Per-row sync would do ~3 sequential DB round-trips per
+      // sibling and exceed Vercel's action timeout for long series.
+      const siblingIdList = (siblingIds ?? []).map((r) => r.id);
+      if (siblingIdList.length > 0) {
+        await syncBookingAssigneesBulk(
           supabase,
           membership.organization_id,
-          r.id,
+          siblingIdList,
           updateEffectiveAssignedTo,
           readAdditionalAssignees(formData),
           updateSplits as SplitSegmentInput[],

@@ -2588,7 +2588,7 @@ export async function sendUnassignedBookingAlerts(): Promise<{
   const now = Date.now();
   const windowEnd = new Date(now + 24 * 60 * 60 * 1000).toISOString();
 
-  const { data: candidates } = await db
+  const { data: rawCandidates } = await db
     .from("bookings")
     .select("id, organization_id, scheduled_at, service_type, address, client:clients ( name )")
     .is("assigned_to", null)
@@ -2606,7 +2606,28 @@ export async function sendUnassignedBookingAlerts(): Promise<{
     }> | null;
   };
 
-  if (!candidates || candidates.length === 0) {
+  if (!rawCandidates || rawCandidates.length === 0) {
+    return { orgsAlerted: 0, bookingsFlagged: 0 };
+  }
+
+  // CRITICAL FILTER: a booking can have assigned_to=NULL but still have a
+  // full crew via booking_assignees (this is now the source of truth for
+  // split-shift segment employees and additional crew). Without this
+  // filter the cron sends false-positive "unassigned!" emails every day
+  // for every split-shift booking in the org. Filter them out.
+  const candidateIds = rawCandidates.map((b) => b.id);
+  const { data: assigneeRows } = await db
+    .from("booking_assignees" as never)
+    .select("booking_id")
+    .in("booking_id" as never, candidateIds as never) as unknown as {
+    data: Array<{ booking_id: string }> | null;
+  };
+  const hasCrew = new Set(
+    (assigneeRows ?? []).map((r) => r.booking_id),
+  );
+  const candidates = rawCandidates.filter((b) => !hasCrew.has(b.id));
+
+  if (candidates.length === 0) {
     return { orgsAlerted: 0, bookingsFlagged: 0 };
   }
 

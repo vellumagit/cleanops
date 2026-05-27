@@ -156,23 +156,36 @@ export async function submitReviewAction(
           data: { name: string | null } | null;
         }>)
       : Promise.resolve({ data: null as { name: string | null } | null }),
+    // employeeId is a memberships.id, NOT a profiles.id. Previously this
+    // queried profiles directly, which always returned null because the
+    // two id spaces don't overlap. Notification emails consequently said
+    // "A review for null" for the credited employee. Join through
+    // memberships → profiles to get the actual name. Falls back to
+    // display_name for shadow members (no linked profile).
     employeeId
       ? (admin
-          .from("profiles")
-          .select("full_name")
+          .from("memberships")
+          .select("display_name, profile:profiles ( full_name )")
           .eq("id", employeeId)
           .maybeSingle() as unknown as Promise<{
-          data: { full_name: string | null } | null;
+          data: {
+            display_name: string | null;
+            profile: { full_name: string | null } | null;
+          } | null;
         }>)
       : Promise.resolve({
-          data: null as { full_name: string | null } | null,
+          data: null as {
+            display_name: string | null;
+            profile: { full_name: string | null } | null;
+          } | null,
         }),
   ]);
 
   notifyReviewSubmitted(organizationId, {
     rating,
     clientName: client?.name ?? "A client",
-    employeeName: emp?.full_name ?? null,
+    employeeName:
+      emp?.profile?.full_name ?? emp?.display_name ?? null,
     reviewId: inserted.id,
     reviewText: comment,
   });
