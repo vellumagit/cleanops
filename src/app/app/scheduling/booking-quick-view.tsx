@@ -94,28 +94,12 @@ export function BookingQuickView({
   // segment metadata (split_start_offset_minutes / split_duration_minutes
   // are NULL on the booking_assignees rows), we can't render a split
   // breakdown. Surface this to the owner instead of silently falling
-  // back to the segment-0 view — that's the failure mode Svitlana
-  // hit and it was confusing because the grid placement DOES use the
-  // (non-existent) segment data, so she sees mismatched times.
+  // back to the segment-0 view — kept permanently because legacy
+  // bookings created before the split-shift migration could still hit
+  // this state.
   const allAssigneeCount = (booking.all_assignee_ids ?? []).length;
   const looksMultiCrewButNoSegments =
     allAssigneeCount > 1 && segmentCount === 0;
-
-  // Diagnostic log — visible in mobile DevTools or `vercel logs`.
-  // JSON.stringify so the segments are preserved if you read the log
-  // from the console history (the previous version logged a live Object
-  // ref that couldn't be expanded post-hoc).
-  if (typeof window !== "undefined") {
-    console.log(
-      "[BookingQuickView v2]",
-      booking.id,
-      "segments:",
-      segmentCount,
-      JSON.stringify(segmentsMap),
-      "all_assignee_ids:",
-      JSON.stringify(booking.all_assignee_ids ?? []),
-    );
-  }
 
   // Build an ordered list of segments by start_offset for display.
   const sortedSegments = hasSplits
@@ -157,11 +141,6 @@ export function BookingQuickView({
           {booking.service_type && (
             <p className="text-xs text-muted-foreground">
               {humanizeEnum(booking.service_type)}
-              {/* Temporary build marker so we can confirm the latest
-                  deploy is loaded on each device. Remove once verified. */}
-              <span className="ml-2 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200">
-                build 27 may
-              </span>
             </p>
           )}
         </DialogHeader>

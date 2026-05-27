@@ -2808,6 +2808,83 @@ export async function sendPayoutNotification(args: {
   }
 }
 
+/**
+ * Notify the org owner(s) that their PLATFORM-level Sollos subscription
+ * had a failed payment. Stripe will keep retrying for several days
+ * before suspending the subscription — we send an immediate email so
+ * the owner can update their card before they lose access.
+ *
+ * Called from the billing webhook on invoice.payment_failed.
+ */
+export async function notifyPlatformPaymentFailed(
+  stripeSubscriptionId: string,
+): Promise<void> {
+  try {
+    const db = admin();
+
+    // Resolve the subscription row → org.
+    const { data: sub } = (await db
+      .from("subscriptions")
+      .select("organization_id")
+      .eq("stripe_subscription_id" as never, stripeSubscriptionId as never)
+      .maybeSingle()) as unknown as {
+      data: { organization_id: string } | null;
+    };
+    if (!sub) {
+      console.warn(
+        `[auto] payment_failed for unknown stripe sub ${stripeSubscriptionId}`,
+      );
+      return;
+    }
+
+    const { data: org } = (await db
+      .from("organizations")
+      .select("name")
+      .eq("id", sub.organization_id)
+      .maybeSingle()) as unknown as {
+      data: { name: string } | null;
+    };
+
+    const recipients = await getOrgAdminRecipients(sub.organization_id);
+    if (recipients.length === 0) return;
+
+    const { sendEmail } = await import("@/lib/email");
+    const siteUrl =
+      process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+    const billingUrl = `${siteUrl}/app/settings/billing`;
+    const orgName = org?.name ?? "your team";
+
+    // Lightweight inline template — no need to round-trip a new
+    // email-template export for a one-paragraph notice.
+    for (const r of recipients) {
+      await sendEmail({
+        to: r.email,
+        toName: r.fullName ?? undefined,
+        subject: `Action needed: your Sollos payment didn't go through`,
+        html:
+          `<p>Hi ${r.fullName ?? "there"},</p>` +
+          `<p>We just received a notice from Stripe that your most recent ` +
+          `payment for <strong>${orgName}</strong> failed.</p>` +
+          `<p>Stripe will automatically retry over the next few days. ` +
+          `To avoid interruption, please update your payment method:</p>` +
+          `<p><a href="${billingUrl}">Update billing</a></p>` +
+          `<p>If you've already updated it, you can ignore this email — ` +
+          `the next retry will pick up the new card.</p>`,
+        text:
+          `Hi ${r.fullName ?? "there"},\n\n` +
+          `Your most recent Sollos payment for ${orgName} failed. ` +
+          `Stripe will retry over the next few days. To avoid interruption, ` +
+          `update your card at ${billingUrl}.`,
+      });
+    }
+    console.log(
+      `[auto] payment_failed notification sent for org ${sub.organization_id}`,
+    );
+  } catch (err) {
+    console.error("[auto] notifyPlatformPaymentFailed error:", err);
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────
 // 13. Weekly ops digest — Monday 8:00 UTC
 // ─────────────────────────────────────────────────────────────────

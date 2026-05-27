@@ -238,9 +238,13 @@ export async function deleteClientAction(formData: FormData) {
   if (!id) return;
   const { membership, supabase } = await getActionContext();
 
+  // Capture the FULL row before delete so the audit log can reconstruct
+  // the client if it's deleted by accident. Previously only name+email
+  // were stored, leaving phone, address, balance, billing config,
+  // preferred_cleaner_id, notes, and contact preferences unrecoverable.
   const { data: previous } = await supabase
     .from("clients")
-    .select("name, email")
+    .select("*")
     .eq("id", id)
     .eq("organization_id" as never, membership.organization_id as never)
     .maybeSingle();

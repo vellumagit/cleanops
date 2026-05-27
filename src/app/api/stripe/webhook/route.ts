@@ -154,6 +154,23 @@ export async function POST(req: NextRequest) {
           const sub = await stripe.subscriptions.retrieve(subId);
           await upsertSubscriptionFromStripe(sub);
         }
+
+        // Heads-up email to org owners on FAILED payments. Stripe's
+        // smart-retry will keep trying for days before giving up — owners
+        // didn't see anything in-app until the very end. Now they get
+        // a notification immediately and can update their card before
+        // the subscription is suspended.
+        if (event.type === "invoice.payment_failed" && subRef) {
+          const subId = typeof subRef === "string" ? subRef : subRef.id;
+          try {
+            const { notifyPlatformPaymentFailed } = await import(
+              "@/lib/automations"
+            );
+            await notifyPlatformPaymentFailed(subId);
+          } catch (err) {
+            console.error("[stripe webhook] payment_failed notify error:", err);
+          }
+        }
         break;
       }
 
