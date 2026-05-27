@@ -81,6 +81,15 @@ export function BookingQuickView({
     (id) => id !== booking.assigned_to,
   );
 
+  // SPLIT SHIFT DETECTION
+  // booking.assigneeSegments is { [membershipId]: { start_offset_minutes,
+  // duration_minutes } } and is only populated for split-shift bookings.
+  // When present we render a per-segment breakdown so the owner sees
+  // who's working which window — not just the segment-0 employee.
+  const segmentsMap = booking.assigneeSegments ?? {};
+  const hasSplits = Object.keys(segmentsMap).length > 0;
+  const segmentCount = Object.keys(segmentsMap).length;
+
   // Visible diagnostic: when a booking has multiple assignees but no
   // segment metadata (split_start_offset_minutes / split_duration_minutes
   // are NULL on the booking_assignees rows), we can't render a split
@@ -90,16 +99,7 @@ export function BookingQuickView({
   // (non-existent) segment data, so she sees mismatched times.
   const allAssigneeCount = (booking.all_assignee_ids ?? []).length;
   const looksMultiCrewButNoSegments =
-    allAssigneeCount > 1 && Object.keys(segmentsMap).length === 0;
-
-  // SPLIT SHIFT DETECTION
-  // booking.assigneeSegments is { [membershipId]: { start_offset_minutes,
-  // duration_minutes } } and is only populated for split-shift bookings.
-  // When present we render a per-segment breakdown so the owner sees
-  // who's working which window — not just the segment-0 employee.
-  const segmentsMap = booking.assigneeSegments ?? {};
-  const hasSplits = Object.keys(segmentsMap).length > 0;
-  const segmentCount = Object.keys(segmentsMap).length;
+    allAssigneeCount > 1 && segmentCount === 0;
 
   // Diagnostic log — visible in mobile DevTools or `vercel logs`.
   // JSON.stringify so the segments are preserved if you read the log
