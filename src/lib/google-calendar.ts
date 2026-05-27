@@ -1041,15 +1041,26 @@ export async function cleanupMemberCalendarEvents(
   const conn = await getMemberConnection(membershipId);
   const admin = createSupabaseAdminClient();
 
-  const { data: rows } = (await admin
-    .from("booking_member_calendar_events" as never)
-    .select("booking_id, google_calendar_event_id")
-    .eq("membership_id" as never, membershipId)) as unknown as {
-    data: Array<{
-      booking_id: string;
-      google_calendar_event_id: string;
-    }> | null;
-  };
+  // Paginate so long-history members (years of weekly recurring) don't
+  // silently lose events past the default ~1000-row response cap.
+  const PAGE = 500;
+  const rows: Array<{ booking_id: string; google_calendar_event_id: string }> = [];
+  for (let offset = 0; ; offset += PAGE) {
+    const { data: page } = (await admin
+      .from("booking_member_calendar_events" as never)
+      .select("booking_id, google_calendar_event_id")
+      .eq("membership_id" as never, membershipId)
+      .range(offset, offset + PAGE - 1)) as unknown as {
+      data: Array<{
+        booking_id: string;
+        google_calendar_event_id: string;
+      }> | null;
+    };
+    const got = page ?? [];
+    rows.push(...got);
+    if (got.length < PAGE) break;
+    if (rows.length >= 10000) break; // hard safety cap
+  }
 
   if (conn && rows && rows.length > 0) {
     const calendarId = (conn.metadata?.calendar_id as string) || "primary";
@@ -1093,37 +1104,48 @@ export async function bulkSyncMemberBookings(
   // Fetch upcoming assigned bookings without an existing member event.
   // Pull split metadata too so split-segment employees get an event for
   // their segment window only — not the full booking duration.
-  const { data: bookings } = (await admin
-    .from("booking_assignees" as never)
-    .select(
-      `membership_id, split_start_offset_minutes, split_duration_minutes,
-       booking:bookings!inner(
-         id, scheduled_at, duration_minutes, service_type, address, notes, status,
-         client:clients!inner(name)
-       )`,
-    )
-    .eq("membership_id" as never, membershipId)
-    .neq("booking.status" as never, "cancelled" as never)
-    .gte("booking.scheduled_at" as never, now as never)
-    .limit(500)) as unknown as {
-    data: Array<{
-      membership_id: string;
-      split_start_offset_minutes: number | null;
-      split_duration_minutes: number | null;
-      booking: {
-        id: string;
-        scheduled_at: string;
-        duration_minutes: number;
-        service_type: string;
-        address: string | null;
-        notes: string | null;
-        status: string;
-        client: { name: string } | null;
-      };
-    }> | null;
-  };
+  // Paginated: long-time employees with weekly recurring + ad-hoc jobs
+  // can easily exceed 500 upcoming rows; we walk all of them.
+  const PAGE = 500;
+  const bookings: Array<{
+    membership_id: string;
+    split_start_offset_minutes: number | null;
+    split_duration_minutes: number | null;
+    booking: {
+      id: string;
+      scheduled_at: string;
+      duration_minutes: number;
+      service_type: string;
+      address: string | null;
+      notes: string | null;
+      status: string;
+      client: { name: string } | null;
+    };
+  }> = [];
+  for (let offset = 0; ; offset += PAGE) {
+    const { data: page } = (await admin
+      .from("booking_assignees" as never)
+      .select(
+        `membership_id, split_start_offset_minutes, split_duration_minutes,
+         booking:bookings!inner(
+           id, scheduled_at, duration_minutes, service_type, address, notes, status,
+           client:clients!inner(name)
+         )`,
+      )
+      .eq("membership_id" as never, membershipId)
+      .neq("booking.status" as never, "cancelled" as never)
+      .gte("booking.scheduled_at" as never, now as never)
+      .range(offset, offset + PAGE - 1)) as unknown as {
+      data: Array<(typeof bookings)[number]> | null;
+    };
+    const got = page ?? [];
+    bookings.push(...got);
+    if (got.length < PAGE) break;
+    // Safety: never sync more than 5000 in one go.
+    if (bookings.length >= 5000) break;
+  }
 
-  if (!bookings || bookings.length === 0) return;
+  if (bookings.length === 0) return;
 
   // Find which booking IDs already have a member event (don't double-create).
   const bookingIds = bookings.map((b) => b.booking.id);

@@ -2383,11 +2383,16 @@ export async function autoExtendRecurringSeries(): Promise<number> {
     let totalGenerated = 0;
 
     for (const s of series) {
-      // Find the latest booking in this series
+      // Find the latest LIVE booking in this series. Excluding archived
+      // rows is critical: if the last sibling was just auto-archived (by
+      // the housekeeping cron), this query would otherwise return that
+      // stale row, see its date as "the latest", and either skip
+      // generation (false sense of being caught-up) or duplicate.
       const { data: latest } = await db
         .from("bookings")
         .select("scheduled_at")
         .eq("series_id" as never, s.id as never)
+        .is("archived_at" as never, null as never)
         .order("scheduled_at", { ascending: false })
         .limit(1)
         .maybeSingle();

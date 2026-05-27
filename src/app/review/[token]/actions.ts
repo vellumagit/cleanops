@@ -45,11 +45,22 @@ export async function submitReviewAction(
   let bookingId: string | null;
   let employeeId: string | null = null;
 
+  // Tokens expire after this window has elapsed since the underlying
+  // event (booking date for booking-source; invoice paid_at for
+  // invoice-source). Without expiry, leaked/screenshotted review links
+  // could be used years later — and reviews feed bonus calculation, so
+  // a vindictive ex-employee with old emails can manipulate payroll.
+  const TOKEN_TTL_MS = 60 * 24 * 60 * 60 * 1000; // 60 days
+  const tooOld = (refIso: string | null): boolean => {
+    if (!refIso) return false;
+    return Date.now() - new Date(refIso).getTime() > TOKEN_TTL_MS;
+  };
+
   if (source === "booking") {
     // Verify the token against bookings.review_token
     const { data: booking } = (await admin
       .from("bookings")
-      .select("id, organization_id, client_id, assigned_to, review_token")
+      .select("id, organization_id, client_id, assigned_to, review_token, scheduled_at")
       .eq("id", sourceId)
       .maybeSingle()) as unknown as {
       data: {
@@ -58,11 +69,15 @@ export async function submitReviewAction(
         client_id: string | null;
         assigned_to: string | null;
         review_token: string | null;
+        scheduled_at: string | null;
       } | null;
     };
 
     if (!booking || booking.review_token !== token) {
       return { success: false, error: "Invalid or expired review link." };
+    }
+    if (tooOld(booking.scheduled_at)) {
+      return { success: false, error: "This review link has expired." };
     }
 
     organizationId = booking.organization_id;
@@ -73,7 +88,7 @@ export async function submitReviewAction(
     // source === "invoice" — legacy path, keep existing verification logic
     const { data: invoiceRow } = await admin
       .from("invoices")
-      .select("id, organization_id, client_id, booking_id")
+      .select("id, organization_id, client_id, booking_id, paid_at, created_at")
       .eq("id", sourceId)
       .maybeSingle();
 
@@ -92,6 +107,17 @@ export async function submitReviewAction(
     if (!tokenRow || tokenRow.review_token !== token) {
       return { success: false, error: "Invalid or expired review link." };
     }
+    // Prefer paid_at as the anchor (invoice review tokens are minted
+    // on payment). Fall back to created_at if paid_at is null.
+    const invoiceWithDates = invoiceRow as unknown as {
+      paid_at: string | null;
+      created_at: string | null;
+    };
+    const anchor =
+      invoiceWithDates.paid_at ?? invoiceWithDates.created_at;
+    if (tooOld(anchor)) {
+      return { success: false, error: "This review link has expired." };
+    }
 
     organizationId = invoiceRow.organization_id;
     clientId = invoiceRow.client_id;
@@ -109,12 +135,21 @@ export async function submitReviewAction(
   }
 
   // ── Dedup: one review per client per org ──────────────────────────────────
-  const { data: existing } = await admin
-    .from("reviews")
-    .select("id")
-    .eq("organization_id", organizationId)
-    .eq("client_id", clientId ?? "")
-    .maybeSingle();
+  // Skip dedup when clientId is null — the previous `.eq("client_id", "")`
+  // searched for the empty-string literal which returns no rows and could
+  // hit a unique-constraint violation on insert if multiple null-client
+  // reviews exist for the same org. Better to allow the insert and let
+  // the (rare) tokens-with-no-client through.
+  let existing: { id: string } | null = null;
+  if (clientId) {
+    const { data } = await admin
+      .from("reviews")
+      .select("id")
+      .eq("organization_id", organizationId)
+      .eq("client_id", clientId)
+      .maybeSingle();
+    existing = (data as { id: string } | null) ?? null;
+  }
 
   if (existing) {
     return {

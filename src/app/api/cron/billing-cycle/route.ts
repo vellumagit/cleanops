@@ -344,11 +344,15 @@ export async function GET(request: Request) {
     }
 
     // ── Fetch all orgs (we need their tax config) ──────────────────────────
+    // Skip orgs that have been deleted OR are pending deletion — they're
+    // not paying customers anymore and shouldn't be generating invoices.
     const { data: orgsRaw } = (await db
       .from("organizations")
       .select(
         "id, name, default_tax_rate_bps, default_tax_label",
-      )) as unknown as {
+      )
+      .is("deleted_at", null)
+      .is("deletion_scheduled_at", null)) as unknown as {
       data: OrgMeta[] | null;
     };
 
@@ -356,12 +360,15 @@ export async function GET(request: Request) {
     const orgMap = new Map<string, OrgMeta>(orgs.map((o) => [o.id, o]));
 
     // ── Fetch all eligible clients ─────────────────────────────────────────
+    // Filter archived clients — they remain in the DB for history but
+    // shouldn't generate new invoices.
     const { data: clientsRaw } = (await db
       .from("clients")
       .select(
         "id, name, email, billing_cadence, billing_type, flat_rate_cents, organization_id",
       )
-      .in("billing_cadence", activeCadences)) as unknown as {
+      .in("billing_cadence", activeCadences)
+      .is("archived_at" as never, null as never)) as unknown as {
       data: ClientRow[] | null;
     };
 
