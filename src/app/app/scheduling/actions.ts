@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { getActionContext } from "@/lib/actions";
 import { getOrgTimezone } from "@/lib/org-timezone";
+import { notifyBookingAssignment } from "@/lib/automations";
 
 export type RescheduleResult =
   | { ok: true }
@@ -122,7 +123,14 @@ export async function rescheduleBookingAction(
   // employees overlapping is legit (two-person jobs) and isn't blocked
   // here. The Dispatch view separately paints informational red borders
   // so the owner sees overlaps at a glance.
-  if (assignedTo) {
+  //
+  // SPLIT BOOKINGS: skip the drop-target conflict check entirely. The
+  // booking's crew + offsets are preserved on reschedule (see below),
+  // so the drop target's `assignedTo` is irrelevant — the booking will
+  // never touch that lane. A proper per-segment conflict check is a
+  // follow-up; for now the dispatch grid's visual conflict ring covers
+  // most cases.
+  if (assignedTo && !hasSplits) {
     const [y, m, d] = targetDate.split("-").map(Number);
     const dayStart = new Date(y, m - 1, d, 0, 0, 0, 0);
     const dayEnd = new Date(y, m - 1, d + 1, 0, 0, 0, 0);
@@ -193,6 +201,43 @@ export async function rescheduleBookingAction(
           membership_id: assignedTo,
           is_primary: true,
         } as never)) as unknown as Promise<unknown>;
+    }
+  }
+
+  // Notify the newly-assigned cleaner when reassignment actually happens
+  // (non-split bookings only — split crew doesn't change on reschedule).
+  // Previously drag-drop silently moved jobs to a new cleaner without
+  // any push, so the new owner had no idea they were on the hook.
+  if (
+    !hasSplits &&
+    assignedTo &&
+    assignedTo !== current.assigned_to
+  ) {
+    const { data: bookingForNotify } = (await supabase
+      .from("bookings")
+      .select(
+        "service_type, address, client:clients ( name )",
+      )
+      .eq("id", id)
+      .maybeSingle()) as unknown as {
+      data: {
+        service_type: string;
+        address: string | null;
+        client: { name: string | null } | null;
+      } | null;
+    };
+    if (bookingForNotify) {
+      notifyBookingAssignment(
+        membership.organization_id,
+        id,
+        assignedTo,
+        {
+          clientName: bookingForNotify.client?.name ?? "A client",
+          scheduledAt: next.toISOString(),
+          serviceType: bookingForNotify.service_type,
+          address: bookingForNotify.address,
+        },
+      );
     }
   }
 

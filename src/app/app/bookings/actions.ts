@@ -353,21 +353,41 @@ export async function createBookingAction(
   // Email booking confirmation to client (fire-and-forget)
   sendBookingConfirmation(booking.id);
 
-  // Notify assigned employee (fire-and-forget). For split shifts this is
-  // the segment-0 employee; for non-split bookings, the form's primary.
-  if (effectiveAssignedTo) {
-    const labels = await getBookingLabels(supabase, parsed.data.client_id, effectiveAssignedTo);
-    notifyBookingAssignment(
-      membership.organization_id,
-      booking.id,
-      effectiveAssignedTo,
-      {
-        clientName: labels.clientName ?? "A client",
-        scheduledAt: parsed.data.scheduled_at,
-        serviceType: parsed.data.service_type,
-        address: parsed.data.address ?? null,
-      },
+  // Notify EVERY assigned crew member (primary + additional + every
+  // split segment employee). Previously only segment-0 got a push, so
+  // additional crew and non-primary segment employees were silently
+  // added to jobs they didn't know about.
+  {
+    const splitAssigneesForNotify = (splits as SplitSegmentInput[])
+      .map((s) => s.assigned_to)
+      .filter(Boolean);
+    const everyAssignee = Array.from(
+      new Set(
+        [
+          effectiveAssignedTo,
+          ...readAdditionalAssignees(formData),
+          ...splitAssigneesForNotify,
+        ].filter(Boolean) as string[],
+      ),
     );
+    for (const mid of everyAssignee) {
+      const labels = await getBookingLabels(
+        supabase,
+        parsed.data.client_id,
+        mid,
+      );
+      notifyBookingAssignment(
+        membership.organization_id,
+        booking.id,
+        mid,
+        {
+          clientName: labels.clientName ?? "A client",
+          scheduledAt: parsed.data.scheduled_at,
+          serviceType: parsed.data.service_type,
+          address: parsed.data.address ?? null,
+        },
+      );
+    }
   }
 
   // Sync to Google Calendar (fire-and-forget — don't block the action)
@@ -559,7 +579,7 @@ export async function createRecurringBookingAction(
     };
   }
 
-  // 4. Sync each to Google Calendar (fire-and-forget)
+  // 4. Sync booking_assignees + Google Calendar for each occurrence
   if (insertedBookings && insertedBookings.length > 0) {
     const labels = await getBookingLabels(
       supabase,
@@ -567,12 +587,26 @@ export async function createRecurringBookingAction(
       parsed.data.assigned_to ?? null,
     );
 
+    const additionalIds = readAdditionalAssignees(formData);
     const recurringAssignees = [
       parsed.data.assigned_to,
-      ...readAdditionalAssignees(formData),
+      ...additionalIds,
     ].filter(Boolean) as string[];
 
     for (const b of insertedBookings) {
+      // Write booking_assignees rows so the scheduler shows the booking
+      // in every assignee's lane, the field app surfaces it to additional
+      // crew, and quick-assign edits later work cleanly. Splits aren't
+      // supported on recurring bookings (UI hides them), so pass [].
+      await syncBookingAssignees(
+        supabase,
+        membership.organization_id,
+        b.id,
+        parsed.data.assigned_to ?? null,
+        additionalIds,
+        [],
+      );
+
       createCalendarEvent(membership.organization_id, {
         id: b.id,
         scheduled_at: b.scheduled_at,
@@ -640,24 +674,19 @@ export async function updateBookingAction(
     } | null;
   };
 
-  // If the assignee changed, notify the new employee
-  const assigneeChanged =
-    parsed.data.assigned_to &&
-    parsed.data.assigned_to !== existing?.assigned_to;
-  if (assigneeChanged) {
-    const labels = await getBookingLabels(supabase, parsed.data.client_id, parsed.data.assigned_to!);
-    notifyBookingAssignment(
-      membership.organization_id,
-      id,
-      parsed.data.assigned_to!,
-      {
-        clientName: labels.clientName ?? "A client",
-        scheduledAt: parsed.data.scheduled_at,
-        serviceType: parsed.data.service_type,
-        address: parsed.data.address ?? null,
-      },
-    );
-  }
+  // Fetch the booking's PREVIOUS assignees so we can later diff against
+  // the new set and notify only NEW additions (not existing ones).
+  // Includes split-segment employees because booking_assignees is now
+  // the source of truth for them too.
+  const { data: previousAssigneesRows } = (await supabase
+    .from("booking_assignees" as never)
+    .select("membership_id")
+    .eq("booking_id" as never, id as never)) as unknown as {
+    data: Array<{ membership_id: string }> | null;
+  };
+  const previousAssigneeIds = new Set(
+    (previousAssigneesRows ?? []).map((r) => r.membership_id),
+  );
 
   // Parse split segments for update
   const updateSplitsJson = String(formData.get("splits") ?? "[]");
@@ -717,6 +746,46 @@ export async function updateBookingAction(
     updateSplits as SplitSegmentInput[],
   );
 
+  // Notify NEW assignees (anyone who wasn't on the booking before).
+  // Covers: new primary on a non-split edit, new additional crew added,
+  // and any new segment employee on a split edit. Existing crew already
+  // know about the job so we don't re-spam them.
+  {
+    const splitAssigneesForNotify = (updateSplits as SplitSegmentInput[])
+      .map((s) => s.assigned_to)
+      .filter(Boolean);
+    const everyAssignee = Array.from(
+      new Set(
+        [
+          updateEffectiveAssignedTo,
+          ...readAdditionalAssignees(formData),
+          ...splitAssigneesForNotify,
+        ].filter(Boolean) as string[],
+      ),
+    );
+    const newAssignees = everyAssignee.filter(
+      (id) => !previousAssigneeIds.has(id),
+    );
+    for (const mid of newAssignees) {
+      const labels = await getBookingLabels(
+        supabase,
+        parsed.data.client_id,
+        mid,
+      );
+      notifyBookingAssignment(
+        membership.organization_id,
+        id,
+        mid,
+        {
+          clientName: labels.clientName ?? "A client",
+          scheduledAt: parsed.data.scheduled_at,
+          serviceType: parsed.data.service_type,
+          address: parsed.data.address ?? null,
+        },
+      );
+    }
+  }
+
   // "This and all future" propagation for recurring series.
   // We use the admin client for the bulk update because RLS on bookings can
   // silently drop bulk-UPDATE rows when the series_id column isn't in the
@@ -731,14 +800,23 @@ export async function updateBookingAction(
     // Fields that propagate to future bookings regardless of schedule change.
     // We intentionally do NOT touch scheduled_at or status on siblings —
     // each occurrence keeps its own date and lifecycle.
+    //
+    // SPLIT-SHIFT NOTES:
+    //   - assigned_to uses updateEffectiveAssignedTo so siblings get the
+    //     segment-0 employee, matching the edited booking exactly.
+    //   - splits is propagated so siblings adopt the same segment
+    //     structure. The booking_assignees rows for each sibling are
+    //     rebuilt below via syncBookingAssignees so the calendar +
+    //     field app actually see the new split shape.
     const propagatableFields = {
       duration_minutes: parsed.data.duration_minutes,
       service_type: parsed.data.service_type,
       total_cents: parsed.data.total_cents,
       hourly_rate_cents: parsed.data.hourly_rate_cents ?? null,
-      assigned_to: parsed.data.assigned_to ?? null,
+      assigned_to: updateEffectiveAssignedTo,
       address: parsed.data.address ?? null,
       notes: parsed.data.notes ?? null,
+      splits: updateSplits as never,
     };
 
     // Check whether the owner is also changing the recurrence schedule.
@@ -838,7 +916,8 @@ export async function updateBookingAction(
             organization_id: membership.organization_id,
             client_id: parsed.data.client_id,
             package_id: parsed.data.package_id ?? null,
-            assigned_to: parsed.data.assigned_to ?? null,
+            // Segment-0 employee for splits; form primary otherwise.
+            assigned_to: updateEffectiveAssignedTo,
             scheduled_at,
             duration_minutes: parsed.data.duration_minutes,
             service_type: parsed.data.service_type,
@@ -847,12 +926,31 @@ export async function updateBookingAction(
             hourly_rate_cents: parsed.data.hourly_rate_cents ?? null,
             address: parsed.data.address ?? null,
             notes: parsed.data.notes ?? null,
+            splits: updateSplits as never,
             series_id: seriesId,
           }));
 
-          await (admin
+          const { data: regenerated } = (await admin
             .from("bookings")
-            .insert(bookingRows as never) as unknown as Promise<unknown>);
+            .insert(bookingRows as never)
+            .select("id") as unknown as {
+            data: Array<{ id: string }> | null;
+          });
+
+          // Build booking_assignees for each regenerated occurrence so the
+          // scheduler shows them, the field app surfaces them to crew, and
+          // splits actually take effect (rather than living only in the
+          // bookings.splits JSONB).
+          for (const r of regenerated ?? []) {
+            await syncBookingAssignees(
+              supabase,
+              membership.organization_id,
+              r.id,
+              updateEffectiveAssignedTo,
+              readAdditionalAssignees(formData),
+              updateSplits as SplitSegmentInput[],
+            );
+          }
 
           console.log(
             `[series-reschedule] regenerated ${occurrences.length} bookings in series ${seriesId}`,
@@ -862,6 +960,19 @@ export async function updateBookingAction(
     } else {
       // No schedule change — propagate the field updates to existing future
       // siblings so they stay consistent with the edited booking.
+      const { data: siblingIds } = (await admin
+        .from("bookings")
+        .select("id")
+        .eq("series_id" as never, seriesId as never)
+        .eq("organization_id", membership.organization_id)
+        .neq("id", id)
+        .gte("scheduled_at", seriesScheduledAt)
+        .not(
+          "status" as never,
+          "in" as never,
+          '("completed","cancelled")' as never,
+        )) as unknown as { data: Array<{ id: string }> | null };
+
       await (admin
         .from("bookings")
         .update(propagatableFields as never)
@@ -874,6 +985,20 @@ export async function updateBookingAction(
           "in" as never,
           '("completed","cancelled")' as never,
         ) as unknown as Promise<unknown>);
+
+      // Rebuild booking_assignees for each sibling to match the new crew
+      // shape (primary, additional, or split segments). Without this,
+      // siblings keep stale rows from when they were originally created.
+      for (const r of siblingIds ?? []) {
+        await syncBookingAssignees(
+          supabase,
+          membership.organization_id,
+          r.id,
+          updateEffectiveAssignedTo,
+          readAdditionalAssignees(formData),
+          updateSplits as SplitSegmentInput[],
+        );
+      }
     }
 
     // Always keep the series template in sync — both field values and
@@ -1102,6 +1227,62 @@ export async function duplicateBookingAction(id: string) {
         split_duration_minutes: a.split_duration_minutes,
       })) as never,
     );
+  }
+
+  // Push to Google Calendar (org + per-member) so the duplicate is
+  // visible even if the owner never opens the edit page after the
+  // redirect. Use the same effective-duration logic as create: sum of
+  // segments if splits exist, otherwise the booking's duration.
+  {
+    const sourceSplits = (Array.isArray(source.splits)
+      ? source.splits
+      : []) as Array<{ assigned_to?: string; duration_minutes?: number }>;
+    const dupEffectiveDuration =
+      sourceSplits.length > 0
+        ? sourceSplits.reduce(
+            (sum, s) => sum + (Number(s.duration_minutes) || 0),
+            0,
+          )
+        : source.duration_minutes;
+
+    const labels = await getBookingLabels(
+      supabase,
+      source.client_id,
+      source.assigned_to ?? null,
+    );
+
+    createCalendarEvent(membership.organization_id, {
+      id: copy.id,
+      scheduled_at: source.scheduled_at,
+      duration_minutes: dupEffectiveDuration,
+      service_type: source.service_type,
+      address: source.address,
+      notes: source.notes,
+      client_name: labels.clientName,
+      employee_name: labels.employeeName,
+    }).catch((err) =>
+      console.error("[gcal] sync error on duplicate:", err),
+    );
+
+    // Personal calendars for every assignee (segment crew + primary).
+    const everyAssignee = Array.from(
+      new Set(
+        [
+          source.assigned_to,
+          ...(assignees ?? []).map((a) => a.membership_id),
+          ...sourceSplits.map((s) => s.assigned_to ?? null),
+        ].filter(Boolean) as string[],
+      ),
+    );
+    syncMemberCalendarEvents(copy.id, everyAssignee, {
+      id: copy.id,
+      scheduled_at: source.scheduled_at,
+      duration_minutes: dupEffectiveDuration,
+      service_type: source.service_type,
+      address: source.address,
+      notes: source.notes,
+      client_name: labels.clientName,
+    }).catch(() => {});
   }
 
   revalidatePath("/app/bookings");
