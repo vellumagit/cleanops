@@ -81,6 +81,39 @@ export function BookingQuickView({
     (id) => id !== booking.assigned_to,
   );
 
+  // SPLIT SHIFT DETECTION
+  // booking.assigneeSegments is { [membershipId]: { start_offset_minutes,
+  // duration_minutes } } and is only populated for split-shift bookings.
+  // When present we render a per-segment breakdown so the owner sees
+  // who's working which window — not just the segment-0 employee.
+  const segmentsMap = booking.assigneeSegments ?? {};
+  const hasSplits = Object.keys(segmentsMap).length > 0;
+
+  // Build an ordered list of segments by start_offset for display.
+  const sortedSegments = hasSplits
+    ? Object.entries(segmentsMap)
+        .map(([membershipId, seg]) => ({
+          membershipId,
+          start_offset_minutes: seg.start_offset_minutes,
+          duration_minutes: seg.duration_minutes,
+          employeeName:
+            employees.find((e) => e.id === membershipId)?.name ?? "Unknown",
+        }))
+        .sort((a, b) => a.start_offset_minutes - b.start_offset_minutes)
+    : [];
+
+  // Compute each segment's absolute start time for display.
+  const bookingStartMs = new Date(booking.scheduled_at).getTime();
+  const segmentTimeLabel = (offsetMinutes: number) =>
+    new Date(bookingStartMs + offsetMinutes * 60_000).toLocaleTimeString(
+      "en-US",
+      {
+        hour: "numeric",
+        minute: "2-digit",
+        timeZone: tz,
+      },
+    );
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
@@ -107,18 +140,42 @@ export function BookingQuickView({
             </span>
             <span className="ml-2 text-xs text-muted-foreground">
               · {formatDuration(booking.duration_minutes)}
+              {hasSplits && (
+                <span className="ml-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">
+                  Split shift
+                </span>
+              )}
             </span>
           </Row>
 
-          <Row icon={<User className="h-3.5 w-3.5" />} label="Assigned">
-            {assignee ? (
-              <span>{assignee.name}</span>
-            ) : (
-              <span className="text-amber-700 dark:text-amber-400">
-                Unassigned
-              </span>
-            )}
-          </Row>
+          {hasSplits ? (
+            <Row icon={<Users className="h-3.5 w-3.5" />} label="Crew">
+              <ul className="space-y-1.5">
+                {sortedSegments.map((seg) => (
+                  <li
+                    key={seg.membershipId}
+                    className="flex items-baseline gap-2"
+                  >
+                    <span className="font-medium">{seg.employeeName}</span>
+                    <span className="tabular-nums text-xs text-muted-foreground">
+                      {segmentTimeLabel(seg.start_offset_minutes)} ·{" "}
+                      {formatDuration(seg.duration_minutes)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </Row>
+          ) : (
+            <Row icon={<User className="h-3.5 w-3.5" />} label="Assigned">
+              {assignee ? (
+                <span>{assignee.name}</span>
+              ) : (
+                <span className="text-amber-700 dark:text-amber-400">
+                  Unassigned
+                </span>
+              )}
+            </Row>
+          )}
 
           {booking.address && (
             <Row icon={<MapPin className="h-3.5 w-3.5" />} label="Address">
