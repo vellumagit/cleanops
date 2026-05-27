@@ -88,6 +88,22 @@ export function BookingQuickView({
   // who's working which window — not just the segment-0 employee.
   const segmentsMap = booking.assigneeSegments ?? {};
   const hasSplits = Object.keys(segmentsMap).length > 0;
+  const segmentCount = Object.keys(segmentsMap).length;
+
+  // Diagnostic log — visible in mobile DevTools or `vercel logs`.
+  // Lets us confirm whether the new build is actually loaded on the
+  // user's device and whether assigneeSegments is reaching this
+  // component. Will get removed in the next pass once split shifts
+  // are confirmed working end-to-end.
+  if (typeof window !== "undefined") {
+    console.log(
+      "[BookingQuickView v2]",
+      booking.id,
+      "segments:",
+      segmentCount,
+      segmentsMap,
+    );
+  }
 
   // Build an ordered list of segments by start_offset for display.
   const sortedSegments = hasSplits
@@ -129,6 +145,11 @@ export function BookingQuickView({
           {booking.service_type && (
             <p className="text-xs text-muted-foreground">
               {humanizeEnum(booking.service_type)}
+              {/* Temporary build marker so we can confirm the latest
+                  deploy is loaded on each device. Remove once verified. */}
+              <span className="ml-2 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200">
+                build 27 may
+              </span>
             </p>
           )}
         </DialogHeader>
