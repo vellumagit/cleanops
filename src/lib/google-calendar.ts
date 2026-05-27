@@ -595,11 +595,15 @@ export async function bulkSyncUpcomingBookings(
 
   // Fetch upcoming bookings that haven't been synced yet, joined to client
   // for the client name. Limit to 500 to guard against pathological cases.
+  // splits is included so split-shift bookings get an event spanning the
+  // sum of segment durations (matching createBookingAction's behavior)
+  // rather than the booking's overall duration_minutes which is a slot
+  // length and can be longer than the actual work.
   const { data: bookings } = (await admin
     .from("bookings")
     .select(
       `id, scheduled_at, duration_minutes, service_type, address, notes,
-       assigned_to,
+       assigned_to, splits,
        client:clients!inner ( name ),
        assignee:memberships ( display_name, profile:profiles ( full_name ) )`,
     )
@@ -617,6 +621,7 @@ export async function bulkSyncUpcomingBookings(
       address: string | null;
       notes: string | null;
       assigned_to: string | null;
+      splits: Array<{ duration_minutes?: number }> | null;
       client: { name: string } | null;
       assignee: {
         display_name: string | null;
@@ -636,10 +641,22 @@ export async function bulkSyncUpcomingBookings(
           b.assignee?.display_name ??
           b.assignee?.profile?.full_name ??
           undefined;
+        // For split bookings, use the sum of segment durations so the
+        // org GCal event matches what createBookingAction originally
+        // wrote. duration_minutes on the bookings row may be the slot
+        // length, not the actual work span.
+        const splitsArr = Array.isArray(b.splits) ? b.splits : [];
+        const effectiveDuration =
+          splitsArr.length > 0
+            ? splitsArr.reduce(
+                (sum, s) => sum + (Number(s.duration_minutes) || 0),
+                0,
+              )
+            : b.duration_minutes;
         return createCalendarEvent(organizationId, {
           id: b.id,
           scheduled_at: b.scheduled_at,
-          duration_minutes: b.duration_minutes,
+          duration_minutes: effectiveDuration,
           service_type: b.service_type,
           address: b.address,
           notes: b.notes,
