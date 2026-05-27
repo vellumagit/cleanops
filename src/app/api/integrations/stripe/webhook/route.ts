@@ -13,6 +13,7 @@ import {
   verifyWebhookSignature,
   tryClaimEvent,
   markEventProcessed,
+  releaseClaim,
   isStripeConnectEnabled,
 } from "@/lib/stripe";
 import { applyAccountUpdate } from "@/lib/stripe-connect";
@@ -241,17 +242,27 @@ export async function POST(req: NextRequest) {
     }
   } catch (err) {
     console.error("[stripe connect webhook] handler error", event.type, err);
+    // Release the claim row so Stripe's next retry can re-process. The
+    // previous "poison-pilled until human investigates" approach silently
+    // lost charge.refunded events on transient DB blips — money goes back
+    // to the customer but our DB never marks the invoice refunded.
+    await releaseClaim(event.id);
     return NextResponse.json(
       { error: "Handler failed" },
       { status: 500 },
     );
   }
 
-  // Handler succeeded — stamp processed_at so the row is permanently
-  // marked done. Failed handlers above already returned 500 without
-  // stamping, so Stripe will retry and tryClaimEvent will see the
-  // existing row's null processed_at and refuse — that's intentional;
-  // the row is poison-pilled until a human investigates.
-  await markEventProcessed(event.id);
+  // Stamp processed_at. If THIS fails, release so retry can run cleanly.
+  try {
+    await markEventProcessed(event.id);
+  } catch (err) {
+    console.error("[stripe connect webhook] markEventProcessed failed:", err);
+    await releaseClaim(event.id);
+    return NextResponse.json(
+      { error: "Failed to stamp processed_at" },
+      { status: 500 },
+    );
+  }
   return NextResponse.json({ received: true });
 }

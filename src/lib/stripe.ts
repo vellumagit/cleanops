@@ -238,12 +238,11 @@ export async function recordEvent(
  * same millisecond and both execute the handler. INSERT on a PRIMARY KEY
  * table is atomic — exactly one caller wins.
  *
- * If the handler succeeds, call markEventProcessed(). If it fails, the row
- * remains with processed_at = null; Stripe's next retry will find no
- * existing row with a non-null processed_at, so tryClaimEvent() will fail
- * with a PK conflict — BUT the row was already inserted, so the event won't
- * be re-processed accidentally. For retry-able failures consider deleting
- * the row on error so Stripe can trigger a clean retry.
+ * If the handler succeeds, call markEventProcessed(). If it FAILS, call
+ * releaseClaim(eventId) to delete the row so Stripe's next retry can
+ * cleanly re-attempt — without this, a transient handler error
+ * permanently poisons the event (Stripe retries → tryClaimEvent returns
+ * false → handler never runs → state in our DB is permanently stale).
  */
 export async function tryClaimEvent(
   eventId: string,
@@ -266,13 +265,49 @@ export async function tryClaimEvent(
   return true;
 }
 
-/** Stamp processed_at after a successful handler run. */
+/**
+ * Release a previously-claimed event so Stripe's next retry can re-process
+ * it from scratch. Use this in the catch path of webhook handlers — if we
+ * don't release, the half-processed row blocks future retries forever.
+ */
+export async function releaseClaim(eventId: string): Promise<void> {
+  const admin = createSupabaseAdminClient();
+  const { error } = await admin
+    .from("stripe_events" as never)
+    .delete()
+    .eq("id" as never, eventId as never)
+    .is("processed_at" as never, null as never); // safety: only release UN-stamped rows
+  if (error) {
+    // If we can't release, log loudly — manual cleanup may be needed.
+    console.error(
+      "[stripe] releaseClaim failed; event may be permanently stuck:",
+      eventId,
+      error,
+    );
+  }
+}
+
+/**
+ * Stamp processed_at after a successful handler run.
+ * Errors are surfaced — a silent failure here means Stripe will retry
+ * and tryClaimEvent will refuse, leaving the event in a successful-but-
+ * not-stamped state. Caller should catch and decide whether to retry
+ * the stamp or alert.
+ */
 export async function markEventProcessed(eventId: string): Promise<void> {
   const admin = createSupabaseAdminClient();
-  await admin
+  const { error } = await admin
     .from("stripe_events" as never)
     .update({ processed_at: new Date().toISOString() } as never)
     .eq("id" as never, eventId as never);
+  if (error) {
+    console.error(
+      "[stripe] markEventProcessed failed for event:",
+      eventId,
+      error,
+    );
+    throw error;
+  }
 }
 
 // Legacy export kept for the old placeholder import — no-op wrapper around

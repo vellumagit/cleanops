@@ -25,6 +25,7 @@ import {
   verifyWebhookSignature,
   tryClaimEvent,
   markEventProcessed,
+  releaseClaim,
   getPlanFromPriceId,
 } from "@/lib/stripe";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -162,17 +163,28 @@ export async function POST(req: NextRequest) {
     }
   } catch (err) {
     console.error("[stripe webhook] handler error", event.type, err);
-    // Return 500 so Stripe retries. The claimed row stays with
-    // processed_at = null; Stripe's retry will hit the PK conflict and be
-    // treated as a duplicate. To allow a clean retry, delete the row here:
-    // await admin.from("stripe_events").delete().eq("id", event.id);
-    // For now we accept at-most-once semantics on handler errors.
+    // CRITICAL: release the claim so Stripe's next retry can actually
+    // process this event. Without this, the half-inserted row blocks
+    // every future retry attempt and the event is permanently lost.
+    await releaseClaim(event.id);
     return NextResponse.json(
       { error: "Webhook handler failed" },
       { status: 500 },
     );
   }
 
-  await markEventProcessed(event.id);
+  // Stamp processed_at. If this fails (transient DB blip), release the
+  // claim so Stripe's retry can re-run cleanly — better to double-process
+  // than to silently drop a subscription state change.
+  try {
+    await markEventProcessed(event.id);
+  } catch (err) {
+    console.error("[stripe webhook] markEventProcessed failed:", err);
+    await releaseClaim(event.id);
+    return NextResponse.json(
+      { error: "Failed to stamp processed_at" },
+      { status: 500 },
+    );
+  }
   return NextResponse.json({ received: true });
 }

@@ -12,7 +12,14 @@ import {
 
 export type InvoiceRow = {
   id: string;
-  status: "draft" | "sent" | "partially_paid" | "paid" | "overdue" | "void";
+  status:
+    | "draft"
+    | "sent"
+    | "partially_paid"
+    | "paid"
+    | "overdue"
+    | "void"
+    | "refunded";
   amount_cents: number;
   due_date: string | null;
   sent_at: string | null;

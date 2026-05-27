@@ -80,7 +80,14 @@ export function bookingStatusTone(
 }
 
 export function invoiceStatusTone(
-  status: "draft" | "sent" | "partially_paid" | "paid" | "overdue" | "void",
+  status:
+    | "draft"
+    | "sent"
+    | "partially_paid"
+    | "paid"
+    | "overdue"
+    | "void"
+    | "refunded",
 ): StatusTone {
   switch (status) {
     case "paid":
@@ -95,6 +102,10 @@ export function invoiceStatusTone(
       return "red";
     case "void":
       return "neutral";
+    case "refunded":
+      // Distinct from "void" so owners can see at a glance that money
+      // moved (refunded) vs. simply nullified (void).
+      return "red";
   }
 }
 

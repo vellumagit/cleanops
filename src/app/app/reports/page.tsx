@@ -112,10 +112,21 @@ export default async function ReportsPage({
   }
 
   // Aggregates
-  const totalRevenue =
+  // Net revenue = paid minus refunded. The 'refunded' status is set by
+  // the Connect webhook on charge.refunded; previously these still
+  // counted as revenue because the filter only added 'paid' rows.
+  // Cast through string because the generated invoice_status enum
+  // doesn't yet include "refunded" (added in migration
+  // 20260526010000_invoice_status_refunded, types not regenerated).
+  const totalPaid =
     (invoices ?? [])
       .filter((i) => i.status === "paid")
       .reduce((s, i) => s + (i.amount_cents ?? 0), 0);
+  const totalRefunded =
+    (invoices ?? [])
+      .filter((i) => (i.status as string) === "refunded")
+      .reduce((s, i) => s + (i.amount_cents ?? 0), 0);
+  const totalRevenue = totalPaid - totalRefunded;
 
   const outstandingRevenue =
     (invoices ?? [])
