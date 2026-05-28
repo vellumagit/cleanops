@@ -92,11 +92,17 @@ export default async function TasksPage() {
   const canManage = ["owner", "admin", "manager"].includes(membership.role);
   const supabase = await createSupabaseServerClient();
 
+  // tasks has TWO FKs to memberships (created_by + assigned_to) so we
+  // MUST name the constraint explicitly — otherwise PostgREST refuses
+  // with "more than one relationship was found." We want the
+  // assigned_to side here.
   const { data, error } = await supabase
     .from("tasks" as never)
     .select(
       `id, title, notes, due_at, remind_at, recurrence, completed_at,
-       assigned:memberships ( display_name, profile:profiles ( full_name ) )`,
+       assigned:memberships!tasks_assigned_to_fkey (
+         display_name, profile:profiles ( full_name )
+       )`,
     )
     .order("due_at", { ascending: true, nullsFirst: false })
     .order("created_at", { ascending: false })

@@ -149,9 +149,13 @@ export default async function CalendarPage() {
     ),
     supabase
       .from("tasks" as never)
+      // Explicit FK name — tasks has both created_by and assigned_to
+      // pointing at memberships, so PostgREST refuses the bare embed.
       .select(
         `id, title, notes, due_at, recurrence, completed_at,
-         assigned:memberships ( display_name, profile:profiles ( full_name ) )`,
+         assigned:memberships!tasks_assigned_to_fkey (
+           display_name, profile:profiles ( full_name )
+         )`,
       )
       .gte("due_at" as never, rangeStart.toISOString())
       .lte("due_at" as never, rangeEnd.toISOString())
