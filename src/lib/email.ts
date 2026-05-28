@@ -298,6 +298,23 @@ export async function getOrgSender(
 // redeploy. Pause is ~3 min of latency end-to-end.
 // ---------------------------------------------------------------------------
 
+/**
+ * Platform kill switch for AUTOMATED CLIENT-FACING emails (booking
+ * confirmations, reminders, review requests, follow-ups, etc.).
+ *
+ * DOES NOT apply to:
+ *   - Owner-initiated client emails (manual "Send Invoice", "Send
+ *     Estimate", "Send contract", portal invite) — those pass
+ *     `pauseExempt: true` and always go through.
+ *   - Team invitations (operational, internal).
+ *   - Owner-facing internal alerts (low review, payout, payment
+ *     failed, ops digests) — those use sendEmail() directly, never
+ *     sendOrgEmail, so the kill switch doesn't see them.
+ *
+ * Flip this to "true" in Vercel env only when you want to silence the
+ * platform's CRON-driven client emails during an incident. Owners can
+ * still hand-send invoices and onboard new team members.
+ */
 export function isClientEmailPaused(): boolean {
   return process.env.CLIENT_EMAILS_PAUSED === "true";
 }

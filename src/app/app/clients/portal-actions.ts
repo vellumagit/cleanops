@@ -78,9 +78,12 @@ export async function invitePortalAction(formData: FormData): Promise<Result> {
     process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
   const claimUrl = `${siteUrl}/client/claim/${plainToken}`;
 
+  // Owner-initiated portal invite — bypass the platform kill switch
+  // (it's not an automated client email, it's a deliberate admin action).
   sendOrgEmail(membership.organization_id, {
     to: client.email,
     toName: client.name,
+    pauseExempt: true,
     subject: `Access your ${membership.organization_name} account`,
     html: `
       <p>Hi ${escapeHtml(client.name)},</p>

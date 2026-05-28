@@ -223,8 +223,10 @@ export type SendEstimateState = { ok?: boolean; error?: string };
  * Send the estimate to the client as an email with a public-token link.
  * Generates the token on first send; subsequent sends reuse it.
  *
- * Gated by the platform CLIENT_EMAILS_PAUSED kill switch (via sendOrgEmail
- * inside the automation) and by the per-org `estimate_sent_email` toggle.
+ * Owner-initiated → passes `manualSend: true` so the underlying
+ * sendEstimateToClient bypasses the platform CLIENT_EMAILS_PAUSED kill
+ * switch. The kill switch only applies to the cron-driven follow-up
+ * (sendStaleEstimateFollowups).
  */
 export async function sendEstimateAction(
   _prev: SendEstimateState,
@@ -236,7 +238,10 @@ export async function sendEstimateAction(
   // Membership check — anyone who can view/edit estimates can send them.
   await getActionContext();
 
-  const result = await sendEstimateToClient(id);
+  // manualSend:true tells the automation to bypass the platform
+  // CLIENT_EMAILS_PAUSED kill switch — an owner clicking "Send" is
+  // operational, not automated, and shouldn't be silently dropped.
+  const result = await sendEstimateToClient(id, { manualSend: true });
   if (!result.ok) {
     return { error: result.error ?? "Could not send estimate" };
   }

@@ -1899,14 +1899,17 @@ export async function sendUpcomingBookingReminders(): Promise<{
 // `estimate_sent_email` toggle.
 // ─────────────────────────────────────────────────────────────────
 
-export async function sendEstimateToClient(estimateId: string): Promise<{
+export async function sendEstimateToClient(
+  estimateId: string,
+  opts: { manualSend?: boolean } = {},
+): Promise<{
   ok: boolean;
   publicToken: string | null;
   error?: string;
 }> {
   try {
     const db = admin();
-    const { sendOrgEmail } = await import("@/lib/email");
+    const { sendOrgEmailDetailed } = await import("@/lib/email");
     const { estimateSentEmail } = await import("@/lib/email-templates");
     const { formatCurrencyCents } = await import("@/lib/format");
     const { getOrgCurrency } = await import("@/lib/org-currency");
@@ -1995,11 +1998,17 @@ export async function sendEstimateToClient(estimateId: string): Promise<{
       logoUrl: orgData?.logo_url ?? undefined,
     });
 
-    const sendOk = await sendOrgEmail(estimate.organization_id, {
+    // Owner clicking "Send" should always go through, even when the
+    // automated-client-email kill switch is on. The cron-driven follow-up
+    // path (sendStaleEstimateFollowups) leaves manualSend false so it
+    // still respects the kill switch.
+    const sendResult = await sendOrgEmailDetailed(estimate.organization_id, {
       to: estimate.client.email,
       toName: estimate.client.name ?? undefined,
+      pauseExempt: !!opts.manualSend,
       ...template,
     });
+    const sendOk = sendResult.ok;
 
     if (sendOk) {
       await db

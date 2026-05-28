@@ -15,8 +15,6 @@ import { generateClaimToken } from "@/lib/claim-token";
 import {
   sendOrgEmailDetailed,
   isEmailConfigured,
-  isClientEmailPaused,
-  isInvoiceEmailUnpaused,
 } from "@/lib/email";
 import { invoiceSentEmail } from "@/lib/email-templates";
 import { formatCurrencyCents } from "@/lib/format";
@@ -509,12 +507,11 @@ async function deliverInvoiceEmail(
         "Email delivery isn't configured on this environment yet — the invoice wasn't sent. Contact support to enable sending, or share the public invoice link manually.",
     };
   }
-  if (isClientEmailPaused() && !isInvoiceEmailUnpaused()) {
-    return {
-      error:
-        "Client-facing emails are paused at the platform level. Try again later or share the public invoice link manually.",
-    };
-  }
+  // No CLIENT_EMAILS_PAUSED precheck here — owner clicking "Send Invoice"
+  // is operational and bypasses the kill switch via pauseExempt:true on
+  // the actual send below. Previously this precheck required a separate
+  // INVOICE_EMAILS_UNPAUSED env var, which meant owners couldn't even
+  // hand-send an invoice when the kill switch was on.
 
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
   const currency = await getOrgCurrency(membership.organization_id);
@@ -575,7 +572,10 @@ async function deliverInvoiceEmail(
     to: clientEmail,
     toName: prev.client?.name ?? undefined,
     ...template,
-    pauseExempt: isInvoiceEmailUnpaused(),
+    // Owner clicking "Send" is operational — always bypasses the
+    // CLIENT_EMAILS_PAUSED kill switch. Automated invoice emails
+    // (paid receipts, overdue reminders) continue to respect it.
+    pauseExempt: true,
   });
   if (!result.ok) {
     return {

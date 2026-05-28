@@ -250,6 +250,8 @@ export async function sendContractForSignatureAction(
       const result = await sendOrgEmailDetailed(membership.organization_id, {
         to: clientEmail,
         toName: existing.client?.name ?? undefined,
+        // Owner-initiated send — always bypass the platform kill switch.
+        pauseExempt: true,
         ...template,
       });
 
