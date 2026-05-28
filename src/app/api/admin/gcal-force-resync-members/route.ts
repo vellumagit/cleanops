@@ -61,45 +61,38 @@ export async function GET(request: NextRequest) {
   const admin = createSupabaseAdminClient();
 
   // ── Find every member-level connection in the org ──────────────────────────
-  // Joins through memberships → profiles so we can return a friendly
-  // member name in the response.
-  const { data: rows, error: listErr } = (await admin
+  // Two-step lookup because integration_connections has multiple FK paths
+  // to memberships (membership_id, organization_id → memberships), which
+  // PostgREST's embed syntax can't disambiguate without naming the
+  // constraint. Doing two flat queries is simpler than wrestling
+  // constraint names through `as never` casts.
+  //
+  // Step A: every active member-level GCal connection.
+  const { data: connRows, error: connErr } = (await admin
     .from("integration_connections" as never)
     .select(
-      `membership_id, external_account_id,
-       membership:memberships!inner(
-         id, display_name, organization_id,
-         profile:profiles ( full_name, email )
-       )`,
+      "membership_id, external_account_id, organization_id",
     )
     .eq("provider" as never, "google_calendar")
     .eq("status" as never, "active")
-    .not("membership_id" as never, "is" as never, null as never)
-    .eq("membership.organization_id" as never, orgId as never)) as unknown as {
+    .eq("organization_id" as never, orgId as never)
+    .not("membership_id" as never, "is" as never, null as never)) as unknown as {
     data: Array<{
       membership_id: string;
       external_account_id: string | null;
-      membership: {
-        id: string;
-        display_name: string | null;
-        organization_id: string;
-        profile: {
-          full_name: string | null;
-          email: string | null;
-        } | null;
-      };
+      organization_id: string;
     }> | null;
     error: { message: string } | null;
   };
 
-  if (listErr) {
+  if (connErr) {
     return NextResponse.json(
-      { error: `Failed to list member connections: ${listErr.message}` },
+      { error: `Failed to list member connections: ${connErr.message}` },
       { status: 500 },
     );
   }
 
-  if (!rows || rows.length === 0) {
+  if (!connRows || connRows.length === 0) {
     return NextResponse.json({
       ok: true,
       member_count: 0,
@@ -109,6 +102,40 @@ export async function GET(request: NextRequest) {
       hint: "No active member-level Google Calendar connections in this org.",
     });
   }
+
+  // Step B: friendly name + email per membership_id, in one batched fetch.
+  const memberIds = connRows.map((r) => r.membership_id);
+  const { data: memberRows } = (await admin
+    .from("memberships")
+    .select(
+      "id, display_name, profile:profiles ( full_name, email )",
+    )
+    .in("id", memberIds)) as unknown as {
+    data: Array<{
+      id: string;
+      display_name: string | null;
+      profile: {
+        full_name: string | null;
+        email: string | null;
+      } | null;
+    }> | null;
+  };
+  const memberMap = new Map(
+    (memberRows ?? []).map((m) => [m.id, m]),
+  );
+
+  const rows = connRows.map((r) => ({
+    membership_id: r.membership_id,
+    external_account_id: r.external_account_id,
+    member_name:
+      memberMap.get(r.membership_id)?.profile?.full_name ??
+      memberMap.get(r.membership_id)?.display_name ??
+      "Unknown",
+    email:
+      memberMap.get(r.membership_id)?.profile?.email ??
+      r.external_account_id ??
+      null,
+  }));
 
   // Cap at 40 to stay inside Vercel's function timeout for organizations
   // with many connected employees. Run again to continue.
@@ -130,20 +157,13 @@ export async function GET(request: NextRequest) {
   let failed = 0;
 
   for (const r of toProcess) {
-    const name =
-      r.membership.profile?.full_name ??
-      r.membership.display_name ??
-      "Unknown";
-    const email =
-      r.membership.profile?.email ?? r.external_account_id ?? null;
-
     try {
       await bulkSyncMemberBookings(r.membership_id);
       synced++;
       details.push({
         membership_id: r.membership_id,
-        member_name: name,
-        email,
+        member_name: r.member_name,
+        email: r.email,
         ok: true,
       });
     } catch (err) {
@@ -152,8 +172,8 @@ export async function GET(request: NextRequest) {
         err instanceof Error ? err.message : "Unknown sync error";
       details.push({
         membership_id: r.membership_id,
-        member_name: name,
-        email,
+        member_name: r.member_name,
+        email: r.email,
         ok: false,
         error: reason,
       });
