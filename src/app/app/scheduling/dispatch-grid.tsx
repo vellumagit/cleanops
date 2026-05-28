@@ -477,16 +477,17 @@ function EmployeeColumn({
           they sit on top in the DOM and catch clicks before the slot
           beneath them. */}
       {bookings.map((b) => {
-        // For split-shift bookings, use this employee's segment times
-        const seg = b.assigneeSegments?.[employee.id];
-        const effectiveStart = seg
-          ? new Date(new Date(b.scheduled_at).getTime() + seg.start_offset_minutes * 60_000).toISOString()
-          : b.scheduled_at;
-        const effectiveDuration = seg?.duration_minutes ?? b.duration_minutes;
-        const startMin = minutesOfDay(effectiveStart, tz);
+        // SCHEDULER GRID = OWNER VIEW. Always show the BOOKING's overall
+        // time + duration in every assigned employee's lane. The
+        // segment-specific times (this employee starts at X, that one
+        // takes over at Y) live in the popup's CREW section — that's
+        // where granularity belongs. Earlier the grid placed each card
+        // at the employee's segment start, which surprised owners who
+        // expected "this is a 9am job" to always show as 9am.
+        const startMin = minutesOfDay(b.scheduled_at, tz);
         const top = (startMin / SLOT_MINUTES) * SLOT_PX;
         const height = Math.max(
-          (effectiveDuration / SLOT_MINUTES) * SLOT_PX,
+          (b.duration_minutes / SLOT_MINUTES) * SLOT_PX,
           SLOT_PX, // at least 1 slot so short jobs are clickable
         );
         return (
@@ -496,8 +497,6 @@ function EmployeeColumn({
             top={top}
             height={height}
             tz={tz}
-            effectiveScheduledAt={effectiveStart}
-            effectiveDurationMinutes={effectiveDuration}
             tone={toneForBooking(b, colorBy, laneIdx)}
             canEdit={canEdit}
             hasConflict={conflictIds.has(b.id)}
@@ -560,8 +559,6 @@ function PositionedBooking({
   top,
   height,
   tz,
-  effectiveScheduledAt,
-  effectiveDurationMinutes,
   tone,
   canEdit,
   hasConflict,
@@ -572,13 +569,8 @@ function PositionedBooking({
   height: number;
   /** Org IANA timezone — used to format the start-time label so a
    *  dispatcher in a different tz sees the time the org sees, not their
-   *  local clock. The slot-position math above already uses tz; without
-   *  passing it here the card text disagreed with the slot it sat on. */
+   *  local clock. */
   tz: string;
-  /** Segment-adjusted start time for split shifts; falls back to booking.scheduled_at. */
-  effectiveScheduledAt?: string;
-  /** Segment-adjusted duration for split shifts; falls back to booking.duration_minutes. */
-  effectiveDurationMinutes?: number;
   tone: string;
   canEdit: boolean;
   hasConflict: boolean;
@@ -627,12 +619,12 @@ function PositionedBooking({
             {booking.client_name}
           </div>
           <div className="truncate text-[10px] leading-tight text-muted-foreground">
-            {new Date(effectiveScheduledAt ?? booking.scheduled_at).toLocaleTimeString("en-US", {
+            {new Date(booking.scheduled_at).toLocaleTimeString("en-US", {
               hour: "numeric",
               minute: "2-digit",
               timeZone: tz,
             })}{" "}
-            · {effectiveDurationMinutes ?? booking.duration_minutes}m
+            · {booking.duration_minutes}m
           </div>
           {height >= SLOT_PX * 2 && (
             <div className="mt-1 flex items-center gap-1 flex-wrap">
