@@ -51,6 +51,8 @@ export function InviteDialog({ siteUrl }: { siteUrl: string }) {
 
   const token = state.values?._token;
   const inviteLink = token ? `${siteUrl}/join/${token}` : null;
+  const emailSent = state.values?._emailSent === "1";
+  const emailError = state.values?._emailError || null;
 
   function handleCopy() {
     if (!inviteLink) return;
@@ -69,17 +71,38 @@ export function InviteDialog({ siteUrl }: { siteUrl: string }) {
         </DialogTrigger>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Invitation sent</DialogTitle>
+            <DialogTitle>
+              {emailSent ? "Invitation sent" : "Invitation created"}
+            </DialogTitle>
             <DialogDescription>
-              Share this link with{" "}
-              <span className="font-medium text-foreground">
-                {state.values?.email}
-              </span>
-              . They&apos;ll create an account and join your team.
+              {emailSent ? (
+                <>
+                  We emailed the invite to{" "}
+                  <span className="font-medium text-foreground">
+                    {state.values?.email}
+                  </span>
+                  . You can also share the link below if it doesn&apos;t arrive.
+                </>
+              ) : (
+                <>
+                  Email delivery to{" "}
+                  <span className="font-medium text-foreground">
+                    {state.values?.email}
+                  </span>{" "}
+                  failed. Share the link below directly — they&apos;ll create
+                  an account and join your team.
+                </>
+              )}
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">
+            {!emailSent && emailError && (
+              <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/40 dark:text-amber-200">
+                <strong>Why:</strong> {emailError}
+              </div>
+            )}
+
             <div className="flex items-center gap-2">
               <Input
                 readOnly

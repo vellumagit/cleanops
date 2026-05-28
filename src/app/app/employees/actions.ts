@@ -102,10 +102,17 @@ export async function sendInvitationAction(
     },
   });
 
-  // Send the invite email (fire-and-forget)
-  {
+  // Send the invite email — AWAITED so we can surface delivery failures
+  // to the UI instead of silently leaving the owner thinking the email
+  // went out. pauseExempt:true bypasses the CLIENT_EMAILS_PAUSED platform
+  // kill switch — invitations are operational, not marketing, and getting
+  // caught by that switch was the root cause of "she invited an employee
+  // and they never got the email".
+  let emailDelivered = false;
+  let emailError: string | null = null;
+  try {
     const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
-    const { sendOrgEmail } = await import("@/lib/email");
+    const { sendOrgEmailDetailed } = await import("@/lib/email");
     const { teamInviteEmail } = await import("@/lib/email-templates");
 
     // Fetch branding
@@ -132,18 +139,38 @@ export async function sendInvitationAction(
       brandColor: orgData?.brand_color ?? undefined,
     });
 
-    sendOrgEmail(membership.organization_id, {
+    const result = await sendOrgEmailDetailed(membership.organization_id, {
       to: parsed.data.email,
+      pauseExempt: true,
       ...template,
     });
+    emailDelivered = result.ok;
+    if (!result.ok) {
+      emailError = result.reason;
+      console.error(
+        "[invite] email delivery failed:",
+        parsed.data.email,
+        result.reason,
+      );
+    }
+  } catch (err) {
+    emailError = err instanceof Error ? err.message : "Unknown email error.";
+    console.error("[invite] email send threw:", err);
   }
 
   revalidatePath("/app/employees");
   revalidatePath("/app/settings/members");
 
-  // Return the token so the UI can show the invite link
+  // Return the token + email delivery status so the UI can show the
+  // owner whether the email went out or whether they need to copy the
+  // link manually.
   return {
-    values: { ...raw, _token: invitation.token },
+    values: {
+      ...raw,
+      _token: invitation.token,
+      _emailSent: emailDelivered ? "1" : "",
+      _emailError: emailError ?? "",
+    },
   };
 }
 
