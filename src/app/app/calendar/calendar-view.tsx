@@ -92,6 +92,56 @@ function isoToDatetimeLocal(iso: string, tz: string): string {
   return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}`;
 }
 
+/**
+ * Format a UTC ISO timestamp as a clock label in the ORG's timezone.
+ *
+ * date-fns's bare `format()` reads the user's BROWSER timezone, which
+ * caused the calendar to show e.g. 12:00 PM for a 9:00 AM Calgary
+ * booking when viewed from a server-tz'd browser. This helper uses
+ * Intl.DateTimeFormat which honours an explicit `timeZone` option.
+ *
+ * `style` mirrors the three date-fns format strings the calendar uses:
+ *   "h:mm a" — "9:00 AM" (compact, with am/pm + space)
+ *   "h:mma"  — "9:00AM" (compact, no space)
+ *   "h:mm"   — "9:00" (no am/pm — used in week-view chips that already
+ *              have an obvious AM/PM context via day position)
+ *   "weekday-long" — "Wednesday, May 27 · 9:00 AM"
+ */
+function fmtTimeInTz(
+  iso: string,
+  tz: string,
+  style: "h:mm a" | "h:mma" | "h:mm" | "weekday-long",
+): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+
+  if (style === "weekday-long") {
+    const datePart = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      weekday: "long",
+      month: "long",
+      day: "numeric",
+    }).format(d);
+    const timePart = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    }).format(d);
+    return `${datePart} · ${timePart}`;
+  }
+
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: style !== "h:mm",
+  });
+  const raw = fmt.format(d);
+  // Intl returns "9:00 AM" with a space; date-fns "h:mma" wanted no space.
+  return style === "h:mma" ? raw.replace(/\s+/g, "") : raw;
+}
+
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
@@ -300,6 +350,7 @@ export function CalendarView({ events, hasGoogleCalendar, formOptions, currency,
                 setView("day");
               }}
               onNewBooking={openBookingSheet}
+              tz={tz}
             />
           )}
           {view === "week" && (
@@ -308,6 +359,7 @@ export function CalendarView({ events, hasGoogleCalendar, formOptions, currency,
               events={filteredEvents}
               onSelectEvent={setSelectedEvent}
               onNewBooking={openBookingSheet}
+              tz={tz}
             />
           )}
           {view === "day" && (
@@ -316,6 +368,7 @@ export function CalendarView({ events, hasGoogleCalendar, formOptions, currency,
               events={filteredEvents}
               onSelectEvent={setSelectedEvent}
               onNewBooking={openBookingSheet}
+              tz={tz}
             />
           )}
         </div>
@@ -326,6 +379,7 @@ export function CalendarView({ events, hasGoogleCalendar, formOptions, currency,
             <EventDetail
               event={selectedEvent}
               onClose={() => setSelectedEvent(null)}
+              tz={tz}
             />
           </div>
         )}
@@ -428,12 +482,14 @@ function MonthView({
   onSelectEvent,
   onDayClick,
   onNewBooking,
+  tz,
 }: {
   currentDate: Date;
   events: CalendarEvent[];
   onSelectEvent: (e: CalendarEvent) => void;
   onDayClick: (d: Date) => void;
   onNewBooking: (slotIso?: string) => void;
+  tz: string;
 }) {
   const monthStart = startOfMonth(currentDate);
   const monthEnd = endOfMonth(currentDate);
@@ -534,9 +590,9 @@ function MonthView({
                       />
                       <span className="truncate text-foreground">
                         {ev.type === "booking" || ev.type === "google_calendar"
-                          ? format(new Date(ev.start), "h:mma")
+                          ? fmtTimeInTz(ev.start, tz, "h:mma")
                           : ev.type === "task"
-                            ? format(new Date(ev.start), "h:mma")
+                            ? fmtTimeInTz(ev.start, tz, "h:mma")
                             : "Due"}{" "}
                         {ev.type === "google_calendar"
                           ? ev.title
@@ -572,11 +628,13 @@ function WeekView({
   events,
   onSelectEvent,
   onNewBooking,
+  tz,
 }: {
   currentDate: Date;
   events: CalendarEvent[];
   onSelectEvent: (e: CalendarEvent) => void;
   onNewBooking: (slotIso?: string) => void;
+  tz: string;
 }) {
   const weekStart = startOfWeek(currentDate, { weekStartsOn: 0 });
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
@@ -710,7 +768,7 @@ function WeekView({
                           title={ev.title}
                         >
                           <span className="font-medium block truncate">
-                            {format(new Date(ev.start), "h:mm")}
+                            {fmtTimeInTz(ev.start, tz, "h:mm")}
                           </span>
                           <span className="block truncate opacity-90">
                             {ev.type === "google_calendar"
@@ -742,11 +800,13 @@ function DayView({
   events,
   onSelectEvent,
   onNewBooking,
+  tz,
 }: {
   currentDate: Date;
   events: CalendarEvent[];
   onSelectEvent: (e: CalendarEvent) => void;
   onNewBooking: (slotIso?: string) => void;
+  tz: string;
 }) {
   const dayStart = startOfDay(currentDate);
   const dayEnd = endOfDay(currentDate);
@@ -865,10 +925,10 @@ function DayView({
                         }}
                       >
                         <span className="font-semibold">
-                          {format(evStart, "h:mm a")}
+                          {fmtTimeInTz(ev.start, tz, "h:mm a")}
                           {(ev.type === "booking" ||
                             ev.type === "google_calendar") &&
-                            ` – ${format(evEnd, "h:mm a")}`}
+                            ` – ${fmtTimeInTz(ev.end, tz, "h:mm a")}`}
                         </span>
                         <span className="ml-2 opacity-90">{ev.title}</span>
                       </button>
@@ -912,9 +972,11 @@ function mapsUrl(address: string): string {
 function EventDetail({
   event,
   onClose,
+  tz,
 }: {
   event: CalendarEvent;
   onClose: () => void;
+  tz: string;
 }) {
   // Google Calendar events use a prefixed id like "gcal_<id>" — anything
   // else is a real booking or invoice row in our DB and is linkable
@@ -950,10 +1012,10 @@ function EventDetail({
         <div className="flex items-center gap-2 text-muted-foreground">
           <Clock className="h-3.5 w-3.5 shrink-0" />
           <span>
-            {format(new Date(event.start), "EEEE, MMMM d · h:mm a")}
+            {fmtTimeInTz(event.start, tz, "weekday-long")}
             {event.type === "booking" &&
               event.start !== event.end &&
-              ` – ${format(new Date(event.end), "h:mm a")}`}
+              ` – ${fmtTimeInTz(event.end, tz, "h:mm a")}`}
           </span>
         </div>
 

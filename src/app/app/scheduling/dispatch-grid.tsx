@@ -639,6 +639,15 @@ function PositionedBooking({
               <StatusBadge tone={bookingStatusTone(booking.status)}>
                 {humanizeEnum(booking.status)}
               </StatusBadge>
+              {/* See week-grid.tsx for the rationale on this pill. */}
+              {Object.keys(booking.assigneeSegments ?? {}).length > 0 && (
+                <span
+                  className="inline-flex items-center rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
+                  title="Split shift — this card shows this cleaner's segment, not the booking start"
+                >
+                  Split
+                </span>
+              )}
               {(booking.all_assignee_ids?.length ?? 0) > 1 && (
                 <span
                   className="inline-flex items-center rounded-full bg-muted px-1.5 py-0.5 text-[9px] font-medium text-muted-foreground"
