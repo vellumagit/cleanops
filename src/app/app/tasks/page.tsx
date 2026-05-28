@@ -93,22 +93,80 @@ export default async function TasksPage() {
   const supabase = await createSupabaseServerClient();
 
   // tasks has TWO FKs to memberships (created_by + assigned_to) so we
-  // MUST name the constraint explicitly — otherwise PostgREST refuses
-  // with "more than one relationship was found." We want the
-  // assigned_to side here.
-  const { data, error } = await supabase
+  // MUST disambiguate the embed. The previous attempt used the
+  // auto-generated FK constraint name (tasks_assigned_to_fkey) which
+  // varies between PG schemas — Svit hit a runtime PostgREST error
+  // even after the fix. Refactored to a two-step lookup which has zero
+  // PostgREST naming dependencies: fetch tasks, then fetch the
+  // assigned membership names by id in a single batch query.
+  const { data: rawTasks, error } = await supabase
     .from("tasks" as never)
     .select(
       `id, title, notes, due_at, remind_at, recurrence, completed_at,
-       assigned:memberships!tasks_assigned_to_fkey (
-         display_name, profile:profiles ( full_name )
-       )`,
+       assigned_to`,
     )
     .order("due_at", { ascending: true, nullsFirst: false })
     .order("created_at", { ascending: false })
-    .limit(500) as unknown as { data: RawTask[] | null; error: Error | null };
+    .limit(500) as unknown as {
+    data: Array<{
+      id: string;
+      title: string;
+      notes: string | null;
+      due_at: string | null;
+      remind_at: string | null;
+      recurrence: string | null;
+      completed_at: string | null;
+      assigned_to: string | null;
+    }> | null;
+    error: Error | null;
+  };
 
   if (error) throw error;
+
+  // Batch-lookup the assigned-membership display names for whichever
+  // tasks have an assigned_to set.
+  const assigneeIds = Array.from(
+    new Set(
+      (rawTasks ?? [])
+        .map((t) => t.assigned_to)
+        .filter((id): id is string => !!id),
+    ),
+  );
+
+  let memberMap = new Map<
+    string,
+    { display_name: string | null; profile: { full_name: string | null } | null }
+  >();
+  if (assigneeIds.length > 0) {
+    const { data: members } = (await supabase
+      .from("memberships")
+      .select("id, display_name, profile:profiles ( full_name )")
+      .in("id", assigneeIds)) as unknown as {
+      data: Array<{
+        id: string;
+        display_name: string | null;
+        profile: { full_name: string | null } | null;
+      }> | null;
+    };
+    memberMap = new Map(
+      (members ?? []).map((m) => [
+        m.id,
+        { display_name: m.display_name, profile: m.profile },
+      ]),
+    );
+  }
+
+  // Reassemble into the RawTask shape the downstream rendering expects.
+  const data: RawTask[] = (rawTasks ?? []).map((t) => ({
+    id: t.id,
+    title: t.title,
+    notes: t.notes,
+    due_at: t.due_at,
+    remind_at: t.remind_at,
+    recurrence: t.recurrence,
+    completed_at: t.completed_at,
+    assigned: t.assigned_to ? memberMap.get(t.assigned_to) ?? null : null,
+  }));
 
   const rows: TaskRowData[] = (data ?? []).map((t) => ({
     id: t.id,

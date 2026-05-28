@@ -147,15 +147,15 @@ export default async function CalendarPage() {
       rangeStart.toISOString(),
       rangeEnd.toISOString(),
     ),
+    // tasks has TWO FKs to memberships (created_by + assigned_to).
+    // Using the constraint-name hint (tasks_assigned_to_fkey) failed
+    // at runtime for some PG schemas where the auto-generated name
+    // differs. Switched to a flat select; we'll resolve display names
+    // for assigned_to in a separate batch query below.
     supabase
       .from("tasks" as never)
-      // Explicit FK name — tasks has both created_by and assigned_to
-      // pointing at memberships, so PostgREST refuses the bare embed.
       .select(
-        `id, title, notes, due_at, recurrence, completed_at,
-         assigned:memberships!tasks_assigned_to_fkey (
-           display_name, profile:profiles ( full_name )
-         )`,
+        `id, title, notes, due_at, recurrence, completed_at, assigned_to`,
       )
       .gte("due_at" as never, rangeStart.toISOString())
       .lte("due_at" as never, rangeEnd.toISOString())
@@ -167,10 +167,7 @@ export default async function CalendarPage() {
         due_at: string;
         recurrence: string | null;
         completed_at: string | null;
-        assigned: {
-          display_name: string | null;
-          profile: { full_name: string | null } | null;
-        } | null;
+        assigned_to: string | null;
       }> | null;
     }>,
     fetchBookingFormOptions(),
@@ -254,9 +251,43 @@ export default async function CalendarPage() {
     },
   }));
 
+  // Batch-resolve task assignee names. Done separately because the
+  // tasks query above can't safely embed memberships (multi-FK
+  // ambiguity).
+  const taskAssigneeIds = Array.from(
+    new Set(
+      (tasksResult.data ?? [])
+        .map((t) => t.assigned_to)
+        .filter((id): id is string => !!id),
+    ),
+  );
+  const taskAssigneeMap = new Map<
+    string,
+    { display_name: string | null; profile: { full_name: string | null } | null }
+  >();
+  if (taskAssigneeIds.length > 0) {
+    const { data: members } = (await supabase
+      .from("memberships")
+      .select("id, display_name, profile:profiles ( full_name )")
+      .in("id", taskAssigneeIds)) as unknown as {
+      data: Array<{
+        id: string;
+        display_name: string | null;
+        profile: { full_name: string | null } | null;
+      }> | null;
+    };
+    for (const m of members ?? []) {
+      taskAssigneeMap.set(m.id, {
+        display_name: m.display_name,
+        profile: m.profile,
+      });
+    }
+  }
+
   const taskEvents: CalendarEvent[] = (tasksResult.data ?? []).map((t) => {
     const start = new Date(t.due_at);
-    const assigneeName = t.assigned ? memberDisplayName(t.assigned) : null;
+    const member = t.assigned_to ? taskAssigneeMap.get(t.assigned_to) : null;
+    const assigneeName = member ? memberDisplayName(member) : null;
     return {
       id: `task_${t.id}`,
       type: "task" as const,
