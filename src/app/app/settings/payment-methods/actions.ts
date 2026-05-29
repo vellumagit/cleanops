@@ -7,6 +7,7 @@ import { logAuditEvent } from "@/lib/audit";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { maybeRedirectToSetup } from "@/lib/setup-return";
 import { noCardNumber, CARD_DETECTED_MESSAGE } from "@/lib/card-detection";
+import { encryptField } from "@/lib/field-encryption";
 
 // Hard cap so we don't let someone paste War and Peace into a public page.
 //
@@ -58,9 +59,14 @@ export async function savePaymentInstructionsAction(
   // silently land on zero rows with no error. Since this action already
   // gates on owner+admin above, it's safe to bypass RLS here.
   const admin = createSupabaseAdminClient();
+  // Encrypt at rest. Read sites (the edit form here and the public
+  // invoice page at /i/[token]) call maybeDecryptField() to render
+  // plaintext. Legacy rows written before this change are still
+  // readable — maybeDecryptField passes non-v1: values through unchanged.
+  const encryptedInstructions = encryptField(parsed.data.instructions);
   const { error } = await admin
     .from("organizations")
-    .update({ default_payment_instructions: parsed.data.instructions })
+    .update({ default_payment_instructions: encryptedInstructions })
     .eq("id", membership.organization_id);
 
   if (error) return { errors: { _form: error.message }, values: raw };

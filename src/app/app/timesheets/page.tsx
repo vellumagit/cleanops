@@ -141,6 +141,10 @@ export default async function TimesheetsPage({
     };
   }
 
+  // Decryption helper — time_entries.notes is encrypted at write; legacy
+  // plaintext rows pass through unchanged via maybeDecryptField.
+  const { maybeDecryptField } = await import("@/lib/field-encryption");
+
   // Build entries
   const rows: TimesheetEntry[] = (entries ?? []).map((e) => {
     const isOpen = !e.clock_out_at;
@@ -209,7 +213,7 @@ export default async function TimesheetsPage({
       id: e.id,
       employee_id: empId,
       employee_name: memberDisplayName(e.employee ?? {}),
-      notes: e.notes ?? null,
+      notes: maybeDecryptField(e.notes ?? null),
       is_manual: Boolean(e.created_manually),
       clock_in_at: e.clock_in_at,
       clock_out_at: e.clock_out_at,

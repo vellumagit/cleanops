@@ -27,6 +27,13 @@ export default async function PaymentMethodsPage() {
     .eq("id", membership.organization_id)
     .maybeSingle();
 
+  // Decrypt for the edit form so the owner sees their existing text
+  // (legacy plaintext rows pass through unchanged).
+  const { maybeDecryptField } = await import("@/lib/field-encryption");
+  const plainInstructions = maybeDecryptField(
+    org?.default_payment_instructions ?? null,
+  );
+
   return (
     <PageShell
       title="Payment instructions"
@@ -55,7 +62,7 @@ export default async function PaymentMethodsPage() {
 
         <div className="rounded-lg border border-border bg-card p-6">
           <PaymentMethodsForm
-            defaultInstructions={org?.default_payment_instructions ?? ""}
+            defaultInstructions={plainInstructions ?? ""}
           />
         </div>
       </div>

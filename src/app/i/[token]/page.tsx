@@ -148,9 +148,15 @@ export default async function PublicInvoicePage({
   const balanceCents = Math.max(0, invoice.amount_cents - paidCents);
   const isVoid = !!invoice.voided_at;
   const isPaid = invoice.status === "paid" || balanceCents === 0;
+  // Transparently decrypt the org's default payment_instructions before
+  // rendering. Legacy plaintext rows pass through unchanged via the
+  // maybeDecryptField helper.
+  const { maybeDecryptField } = await import("@/lib/field-encryption");
   const paymentInstructions =
     invoice.payment_instructions ??
-    invoice.organization?.default_payment_instructions ??
+    maybeDecryptField(
+      invoice.organization?.default_payment_instructions ?? null,
+    ) ??
     null;
 
   // Which card processors does this org have set up? We check BOTH

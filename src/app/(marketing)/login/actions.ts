@@ -83,6 +83,26 @@ export async function loginAction(
     };
   }
 
+  // MFA gate — if this account has a verified TOTP factor, password
+  // alone leaves the session at aal1. Bounce to /mfa-verify so the user
+  // can clear the second factor before reaching any authed page. Users
+  // without a verified factor (MFA never enabled) skip this entirely.
+  const { data: factors } = await supabase.auth.mfa.listFactors();
+  const hasVerifiedFactor = (factors?.totp ?? []).some(
+    (f) => f.status === "verified",
+  );
+  if (hasVerifiedFactor) {
+    const { data: aalData } =
+      await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+    if (aalData?.currentLevel !== "aal2") {
+      const verifyUrl =
+        next && isSafeNextPath(next)
+          ? `/mfa-verify?next=${encodeURIComponent(next)}`
+          : "/mfa-verify";
+      redirect(verifyUrl);
+    }
+  }
+
   // If the caller specified an explicit redirect (e.g. ?next=/field), use it.
   //
   // Allowlist-only to prevent open-redirect phishing. The previous check

@@ -6,6 +6,7 @@ import { logAuditEvent } from "@/lib/audit";
 import { notifyPtoStatus } from "@/lib/automations";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { localInputToUtcIso } from "@/lib/validators/common";
+import { encryptField } from "@/lib/field-encryption";
 
 type Result = { ok: true } | { ok: false; error: string };
 
@@ -360,7 +361,9 @@ export async function createManualTimeEntryAction(
       booking_id: parsed.booking_id,
       clock_in_at: parsed.start_at,
       clock_out_at: parsed.end_at,
-      notes: parsed.notes,
+      // Encrypt before write. Read sites use maybeDecryptField; legacy
+      // plaintext rows still display correctly until they're next saved.
+      notes: encryptField(parsed.notes),
       created_manually: true,
       created_by: membership.id,
     } as never)
@@ -455,7 +458,9 @@ export async function updateTimeEntryAction(
       booking_id: parsed.booking_id,
       clock_in_at: parsed.start_at,
       clock_out_at: parsed.end_at,
-      notes: parsed.notes,
+      // Encrypt before write. Read sites use maybeDecryptField; legacy
+      // plaintext rows still display correctly until they're next saved.
+      notes: encryptField(parsed.notes),
     } as never)
     .eq("id", id)
     .eq("organization_id" as never, membership.organization_id as never);

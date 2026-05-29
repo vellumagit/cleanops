@@ -13,6 +13,7 @@ import {
   Plug,
   Repeat,
   ScrollText,
+  Shield,
   Sliders,
   Users,
   Webhook,
@@ -181,6 +182,13 @@ const SECTIONS: Section[] = [
         title: "Your data",
         description:
           "Export everything your org owns. Schedule permanent deletion with a 30-day grace window.",
+      },
+      {
+        href: "/app/profile/security",
+        icon: Shield,
+        title: "Security (your account)",
+        description:
+          "Enable multi-factor authentication on your own login. Optional but recommended for owners and admins.",
       },
     ],
   },
