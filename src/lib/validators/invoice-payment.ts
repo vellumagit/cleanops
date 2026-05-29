@@ -3,6 +3,7 @@ import {
   dollarStringToCents,
   optionalText,
 } from "./common";
+import { noCardNumber, CARD_DETECTED_MESSAGE } from "@/lib/card-detection";
 
 /**
  * Zod schema for the manual "record payment" form on the invoice detail
@@ -33,14 +34,21 @@ export const InvoicePaymentSchema = z.object({
   method: z.enum(PAYMENT_METHODS, {
     message: "Pick a payment method",
   }),
-  reference: optionalText,
+  // PCI guard: reject any text containing a Luhn-validated card number
+  // before we persist it to invoice_payments.reference / .notes. Last-four
+  // style references ("Visa ending in 4242") pass — they're <13 digits.
+  reference: optionalText.refine(noCardNumber, {
+    message: CARD_DETECTED_MESSAGE,
+  }),
   // <input type="date">  → ISO date string. Stored as timestamptz so we
   // append midnight UTC during the action.
   received_at: z
     .string()
     .min(1, "Pick a date")
     .refine((s) => !Number.isNaN(new Date(s).getTime()), "Invalid date"),
-  notes: optionalText,
+  notes: optionalText.refine(noCardNumber, {
+    message: CARD_DETECTED_MESSAGE,
+  }),
 });
 
 export type InvoicePaymentInput = z.infer<typeof InvoicePaymentSchema>;

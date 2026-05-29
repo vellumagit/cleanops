@@ -6,13 +6,20 @@ import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
 import { logAuditEvent } from "@/lib/audit";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { maybeRedirectToSetup } from "@/lib/setup-return";
+import { noCardNumber, CARD_DETECTED_MESSAGE } from "@/lib/card-detection";
 
 // Hard cap so we don't let someone paste War and Peace into a public page.
+//
+// PCI guard: this field is rendered on the PUBLIC client-facing invoice
+// page. If a card number landed here it would be exposed to anyone with
+// the invoice link. Reject any Luhn-validated PAN before persisting.
+// "Visa ending in 4242" and similar last-four strings pass through.
 const PaymentInstructionsSchema = z.object({
   instructions: z
     .string()
     .trim()
     .max(4000, "Keep it under 4000 characters")
+    .refine(noCardNumber, { message: CARD_DETECTED_MESSAGE })
     .optional()
     .transform((v) => (v && v.length > 0 ? v : null)),
 });

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { optionalText, requiredText } from "./common";
+import { noCardNumber, CARD_DETECTED_MESSAGE } from "@/lib/card-detection";
 
 export const PreferredContactEnum = z.enum(["phone", "email", "sms"]);
 
@@ -51,7 +52,11 @@ export const ClientSchema = z.object({
   ),
   phone: optionalText,
   address: optionalText,
-  notes: optionalText,
+  // PCI guard: free-text notes can't carry a card number. Last-four
+  // references pass through; full PANs get rejected pre-save.
+  notes: optionalText.refine(noCardNumber, {
+    message: CARD_DETECTED_MESSAGE,
+  }),
   preferred_contact: PreferredContactEnum,
   /** Membership id of the cleaner to auto-assign on new bookings for
    *  this client. Blank / omitted → no preference. */

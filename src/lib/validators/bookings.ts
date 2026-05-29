@@ -5,6 +5,16 @@ import {
   optionalDollarStringToCents,
   optionalText,
 } from "./common";
+import { noCardNumber, CARD_DETECTED_MESSAGE } from "@/lib/card-detection";
+
+/**
+ * Card-data-aware version of optionalText used on every free-text booking
+ * field. Last-four references ("paid via Visa **** 1234") pass through;
+ * full PANs get rejected before they hit the database.
+ */
+const cardSafeOptionalText = optionalText.refine(noCardNumber, {
+  message: CARD_DETECTED_MESSAGE,
+});
 
 export const ServiceTypeEnum = z.enum([
   "standard",
@@ -101,7 +111,7 @@ export const BookingSchema = z.object({
   total_cents: dollarStringToCents,
   hourly_rate_cents: optionalDollarStringToCents,
   address: optionalText,
-  notes: optionalText,
+  notes: cardSafeOptionalText,
 });
 
 export type BookingInput = z.infer<typeof BookingSchema>;
@@ -182,7 +192,7 @@ export const RecurringBookingSchema = z.object({
   total_cents: dollarStringToCents,
   hourly_rate_cents: optionalDollarStringToCents,
   address: optionalText,
-  notes: optionalText,
+  notes: cardSafeOptionalText,
 });
 
 export type RecurringBookingInput = z.infer<typeof RecurringBookingSchema>;

@@ -16,6 +16,15 @@ export async function createFeedPostAction(
     return { ok: false, error: "Post body is required (max 5,000 characters)." };
   }
 
+  // PCI guard: feed posts persist long-term and can be read by every
+  // employee in the org. Reject any Luhn-validated card number.
+  const { noCardNumber, CARD_DETECTED_MESSAGE } = await import(
+    "@/lib/card-detection"
+  );
+  if (!noCardNumber(body)) {
+    return { ok: false, error: CARD_DETECTED_MESSAGE };
+  }
+
   const { membership, supabase } = await getActionContext();
 
   if (!["owner", "admin", "manager"].includes(membership.role)) {

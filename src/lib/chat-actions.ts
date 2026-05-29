@@ -28,6 +28,16 @@ export async function sendChatMessageAction(
   if (trimmed.length > 10000)
     return { ok: false, error: "Message is too long" };
 
+  // PCI guard: chat messages are stored long-term in chat_messages.body
+  // and readable by every member of the thread. Reject Luhn-validated
+  // PANs before persisting.
+  const { noCardNumber, CARD_DETECTED_MESSAGE } = await import(
+    "@/lib/card-detection"
+  );
+  if (!noCardNumber(trimmed)) {
+    return { ok: false, error: CARD_DETECTED_MESSAGE };
+  }
+
   const { membership, supabase } = await getActionContext();
 
   const { data, error } = await supabase
