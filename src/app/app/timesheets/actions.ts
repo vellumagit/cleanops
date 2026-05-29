@@ -9,6 +9,87 @@ import { localInputToUtcIso } from "@/lib/validators/common";
 
 type Result = { ok: true } | { ok: false; error: string };
 
+/**
+ * Fetch the edit history of a single time entry from audit_log.
+ * Surfaces "who changed what, when" inside the entry edit dialog so the
+ * owner doesn't have to dig through /app/settings/audit-log to see if
+ * an entry was tampered with.
+ */
+export type TimeEntryHistoryRow = {
+  id: string;
+  created_at: string;
+  action: string;
+  actor_name: string;
+  before: unknown;
+  after: unknown;
+};
+
+export async function fetchTimeEntryHistoryAction(
+  entryId: string,
+): Promise<TimeEntryHistoryRow[]> {
+  if (!entryId) return [];
+  const { membership, supabase } = await getActionContext();
+  if (!["owner", "admin", "manager"].includes(membership.role)) return [];
+
+  const { data } = (await supabase
+    .from("audit_log")
+    .select(
+      `id, created_at, action, before, after, actor_membership_id`,
+    )
+    .eq("entity", "time_entry")
+    .eq("entity_id", entryId)
+    .eq("organization_id" as never, membership.organization_id as never)
+    .order("created_at", { ascending: false })
+    .limit(50)) as unknown as {
+    data: Array<{
+      id: string;
+      created_at: string;
+      action: string;
+      before: unknown;
+      after: unknown;
+      actor_membership_id: string | null;
+    }> | null;
+  };
+  if (!data || data.length === 0) return [];
+
+  // Resolve actor names in one batch query
+  const actorIds = Array.from(
+    new Set(
+      data.map((r) => r.actor_membership_id).filter((v): v is string => !!v),
+    ),
+  );
+  const actorNameMap = new Map<string, string>();
+  if (actorIds.length > 0) {
+    const { data: actors } = (await supabase
+      .from("memberships")
+      .select("id, display_name, profile:profiles ( full_name )")
+      .in("id", actorIds)) as unknown as {
+      data: Array<{
+        id: string;
+        display_name: string | null;
+        profile: { full_name: string | null } | null;
+      }> | null;
+    };
+    for (const a of actors ?? []) {
+      actorNameMap.set(
+        a.id,
+        a.profile?.full_name ?? a.display_name ?? "Unknown",
+      );
+    }
+  }
+
+  return data.map((r) => ({
+    id: r.id,
+    created_at: r.created_at,
+    action: r.action,
+    actor_name: r.actor_membership_id
+      ? actorNameMap.get(r.actor_membership_id) ?? "Unknown"
+      : "System",
+    before: r.before,
+    after: r.after,
+  }));
+}
+
 // ── PTO request management ────────────────────────────────────
 
 export async function createPtoRequestAction(
@@ -239,6 +320,38 @@ export async function createManualTimeEntryAction(
     return { ok: false, error: "Can't log hours for an inactive employee." };
   }
 
+  // Overlap check: refuse to create an entry that would collide with
+  // another live shift for the same employee. Prevents payroll double-
+  // counting from misclicks or paper-log backfills.
+  const overlap = await findOverlap(
+    supabase,
+    membership.organization_id,
+    parsed.employee_id,
+    parsed.start_at,
+    parsed.end_at,
+    null,
+  );
+  if (overlap) {
+    const otherStart = new Date(overlap.clock_in_at).toLocaleString("en-US", {
+      timeZone: orgTz,
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+    const otherEnd = overlap.clock_out_at
+      ? new Date(overlap.clock_out_at).toLocaleString("en-US", {
+          timeZone: orgTz,
+          hour: "numeric",
+          minute: "2-digit",
+        })
+      : "still clocked in";
+    return {
+      ok: false,
+      error: `This overlaps with an existing entry (${otherStart} – ${otherEnd}). Adjust or delete that one first.`,
+    };
+  }
+
   const { data: inserted, error } = await supabase
     .from("time_entries")
     .insert({
@@ -303,6 +416,37 @@ export async function updateTimeEntryAction(
     .eq("id", id)
     .eq("organization_id" as never, membership.organization_id as never)
     .maybeSingle();
+
+  // Overlap check — excludes the entry being edited so the entry doesn't
+  // flag against itself.
+  const overlap = await findOverlap(
+    supabase,
+    membership.organization_id,
+    parsed.employee_id,
+    parsed.start_at,
+    parsed.end_at,
+    id,
+  );
+  if (overlap) {
+    const otherStart = new Date(overlap.clock_in_at).toLocaleString("en-US", {
+      timeZone: orgTz,
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+    const otherEnd = overlap.clock_out_at
+      ? new Date(overlap.clock_out_at).toLocaleString("en-US", {
+          timeZone: orgTz,
+          hour: "numeric",
+          minute: "2-digit",
+        })
+      : "still clocked in";
+    return {
+      ok: false,
+      error: `These times overlap with another entry (${otherStart} – ${otherEnd}). Adjust or delete that one first.`,
+    };
+  }
 
   const { error } = await supabase
     .from("time_entries")
@@ -407,6 +551,194 @@ export async function deletePtoRequestAction(
   }
 
   revalidatePath("/app/timesheets", "page");
+  return { ok: true };
+}
+
+/**
+ * Check for an OVERLAP with another time entry for the same employee.
+ *
+ * Two entries overlap when they share any minute on the clock — A.start <
+ * B.end AND A.end > B.start. Open entries (clock_out_at IS NULL) are
+ * treated as extending to the current moment for the purposes of this
+ * check, so creating an entry that runs into an unclosed shift is
+ * detected.
+ *
+ * Returns the overlapping entry's id and times if found; null if clean.
+ * Caller passes excludeId to skip a specific entry (used by update so we
+ * don't flag the entry against itself).
+ */
+async function findOverlap(
+  supabase: Awaited<
+    ReturnType<typeof import("@/lib/supabase/server").createSupabaseServerClient>
+  >,
+  organizationId: string,
+  employeeId: string,
+  startIso: string,
+  endIso: string | null,
+  excludeId: string | null,
+): Promise<{
+  id: string;
+  clock_in_at: string;
+  clock_out_at: string | null;
+} | null> {
+  const effectiveEnd = endIso ?? new Date().toISOString();
+
+  // Pull every entry for this employee whose start is before our end and
+  // whose stop (clock_out_at or now() for open shifts) is after our
+  // start. Coalesce open entries by treating their end as the far
+  // future — they overlap anything that's in progress or later.
+  const FUTURE = "9999-12-31T00:00:00Z";
+
+  let query = supabase
+    .from("time_entries")
+    .select("id, clock_in_at, clock_out_at")
+    .eq("organization_id" as never, organizationId as never)
+    .eq("employee_id" as never, employeeId as never)
+    .lt("clock_in_at" as never, effectiveEnd as never);
+
+  if (excludeId) {
+    query = query.neq("id" as never, excludeId as never);
+  }
+
+  const { data } = (await query) as unknown as {
+    data: Array<{
+      id: string;
+      clock_in_at: string;
+      clock_out_at: string | null;
+    }> | null;
+  };
+
+  for (const row of data ?? []) {
+    const otherEnd = row.clock_out_at ?? FUTURE;
+    // Overlap iff otherEnd > our start
+    if (otherEnd > startIso) {
+      return row;
+    }
+  }
+  return null;
+}
+
+/**
+ * Bulk delete time entries. Used by the timesheet UI's row selection
+ * affordance — owners cleaning up test data, duplicates, or end-of-pay-
+ * period housekeeping. Owner/admin/manager only.
+ *
+ * Limits to 100 ids per call so a runaway client can't wipe a whole
+ * org's history in one shot.
+ */
+export async function bulkDeleteTimeEntriesAction(
+  formData: FormData,
+): Promise<Result & { deleted?: number }> {
+  const { membership, supabase } = await getActionContext();
+  if (!["owner", "admin", "manager"].includes(membership.role)) {
+    return { ok: false, error: "Not authorized." };
+  }
+
+  const rawIds = formData.getAll("ids").map((v) => String(v)).filter(Boolean);
+  if (rawIds.length === 0) {
+    return { ok: false, error: "No entries selected." };
+  }
+  if (rawIds.length > 100) {
+    return { ok: false, error: "Select at most 100 entries at a time." };
+  }
+
+  // Pull the rows we're about to remove so we can stamp full snapshots
+  // into the audit log.
+  const { data: before } = (await supabase
+    .from("time_entries")
+    .select("id, employee_id, booking_id, clock_in_at, clock_out_at")
+    .in("id" as never, rawIds as never)
+    .eq("organization_id" as never, membership.organization_id as never)) as unknown as {
+    data: Array<{
+      id: string;
+      employee_id: string;
+      booking_id: string | null;
+      clock_in_at: string;
+      clock_out_at: string | null;
+    }> | null;
+  };
+
+  const { error } = await supabase
+    .from("time_entries")
+    .delete()
+    .in("id" as never, rawIds as never)
+    .eq("organization_id" as never, membership.organization_id as never);
+  if (error) return { ok: false, error: error.message };
+
+  for (const row of before ?? []) {
+    await logAuditEvent({
+      membership,
+      action: "delete",
+      entity: "time_entry",
+      entity_id: row.id,
+      before: row,
+    });
+  }
+
+  revalidatePath("/app/timesheets", "page");
+  revalidatePath("/app/payroll", "page");
+  return { ok: true, deleted: before?.length ?? 0 };
+}
+
+/**
+ * Close an open shift — set clock_out_at on an entry that has none.
+ * Used by the "missing punches" banner on the timesheets page. The
+ * supplied end time must be after the entry's clock_in_at.
+ */
+export async function closeOpenShiftAction(
+  formData: FormData,
+): Promise<Result> {
+  const { membership, supabase } = await getActionContext();
+  if (!["owner", "admin", "manager"].includes(membership.role)) {
+    return { ok: false, error: "Not authorized." };
+  }
+
+  const id = String(formData.get("id") ?? "");
+  const endLocal = String(formData.get("end_at") ?? "");
+  if (!id || !endLocal) {
+    return { ok: false, error: "Missing entry id or end time." };
+  }
+
+  const orgTz = await getOrgTimezone(membership.organization_id);
+  let endUtc: string;
+  try {
+    endUtc = localInputToUtcIso(endLocal, orgTz);
+  } catch {
+    return { ok: false, error: "Invalid end time." };
+  }
+
+  const { data: before } = await supabase
+    .from("time_entries")
+    .select("clock_in_at, clock_out_at, employee_id")
+    .eq("id", id)
+    .eq("organization_id" as never, membership.organization_id as never)
+    .maybeSingle();
+  if (!before) return { ok: false, error: "Entry not found." };
+  if (before.clock_out_at) {
+    return { ok: false, error: "This shift was already closed." };
+  }
+  if (new Date(endUtc).getTime() <= new Date(before.clock_in_at).getTime()) {
+    return { ok: false, error: "End time must be after the clock-in time." };
+  }
+
+  const { error } = await supabase
+    .from("time_entries")
+    .update({ clock_out_at: endUtc } as never)
+    .eq("id", id)
+    .eq("organization_id" as never, membership.organization_id as never);
+  if (error) return { ok: false, error: error.message };
+
+  await logAuditEvent({
+    membership,
+    action: "update",
+    entity: "time_entry",
+    entity_id: id,
+    before: { clock_out_at: null },
+    after: { clock_out_at: endUtc },
+  });
+
+  revalidatePath("/app/timesheets", "page");
+  revalidatePath("/app/payroll", "page");
   return { ok: true };
 }
 

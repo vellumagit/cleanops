@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import {
   User,
   ChevronDown,
@@ -15,6 +16,8 @@ import {
   Palmtree,
   Plus,
   Pencil,
+  Trash2,
+  Clock,
 } from "lucide-react";
 import {
   formatDateTime,
@@ -27,6 +30,7 @@ import type {
   EmployeeMeta,
   PtoEntry,
   BookingOption,
+  OpenShift,
 } from "./types";
 import { PtoApprovalPanel } from "./pto-approval-panel";
 import {
@@ -193,6 +197,7 @@ export function TimesheetsView({
   employees,
   ptoEntries,
   bookings,
+  openShifts,
   orgTz,
   from,
   to,
@@ -201,6 +206,7 @@ export function TimesheetsView({
   employees: Record<string, EmployeeMeta>;
   ptoEntries: PtoEntry[];
   bookings: BookingOption[];
+  openShifts: OpenShift[];
   orgTz: string;
   from: string;
   to: string;
@@ -216,6 +222,71 @@ export function TimesheetsView({
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogMode, setDialogMode] = useState<"create" | "edit">("create");
   const [editingEntry, setEditingEntry] = useState<EditingEntry | null>(null);
+
+  // Bulk-select state — entry IDs currently checked for bulk deletion.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkPending, setBulkPending] = useState(false);
+
+  function toggleSelected(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function handleBulkDelete() {
+    if (selectedIds.size === 0) return;
+    if (
+      !confirm(
+        `Delete ${selectedIds.size} time ${
+          selectedIds.size === 1 ? "entry" : "entries"
+        }? This can't be undone.`,
+      )
+    ) {
+      return;
+    }
+    const fd = new FormData();
+    selectedIds.forEach((id) => fd.append("ids", id));
+    setBulkPending(true);
+    try {
+      const { bulkDeleteTimeEntriesAction } = await import("./actions");
+      const result = await bulkDeleteTimeEntriesAction(fd);
+      if (!result.ok) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success(`Deleted ${result.deleted ?? selectedIds.size} entries.`);
+      setSelectedIds(new Set());
+      router.refresh();
+    } finally {
+      setBulkPending(false);
+    }
+  }
+
+  async function handleCloseOpenShift(shiftId: string) {
+    const endLocal = prompt(
+      "End time for this shift (YYYY-MM-DD HH:MM, org timezone):",
+      new Date()
+        .toISOString()
+        .slice(0, 16)
+        .replace("T", " "),
+    );
+    if (!endLocal) return;
+    // Accept both space and T separator; the action's parser handles ISO format.
+    const fd = new FormData();
+    fd.set("id", shiftId);
+    fd.set("end_at", endLocal.replace(" ", "T"));
+    const { closeOpenShiftAction } = await import("./actions");
+    const result = await closeOpenShiftAction(fd);
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
+    }
+    toast.success("Shift closed.");
+    router.refresh();
+  }
 
   const employeeList = Object.values(employees).sort((a, b) =>
     a.name.localeCompare(b.name),
@@ -289,6 +360,80 @@ export function TimesheetsView({
 
   return (
     <div className="space-y-5">
+      {/* ─── Open shifts (forgotten clock-outs) ──────────────── */}
+      {openShifts.length > 0 && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 dark:border-amber-900/40 dark:bg-amber-950/30">
+          <div className="flex items-start gap-3">
+            <Clock className="mt-0.5 h-4 w-4 shrink-0 text-amber-700 dark:text-amber-300" />
+            <div className="flex-1 space-y-2">
+              <div className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+                {openShifts.length === 1
+                  ? "1 forgotten clock-out"
+                  : `${openShifts.length} forgotten clock-outs`}
+              </div>
+              <p className="text-xs text-amber-900/80 dark:text-amber-300/80">
+                These employees clocked in but never clocked out. Each open
+                shift inflates payroll until you close it.
+              </p>
+              <ul className="space-y-1.5 text-xs">
+                {openShifts.map((s) => (
+                  <li
+                    key={s.id}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-white/60 px-2.5 py-1.5 dark:bg-black/20"
+                  >
+                    <span className="text-amber-900 dark:text-amber-200">
+                      <span className="font-medium">{s.employee_name}</span>
+                      <span className="ml-1.5 text-amber-700 dark:text-amber-300">
+                        clocked in {formatDateTime(s.clock_in_at, orgTz)}
+                      </span>
+                      {s.client_name && (
+                        <span className="ml-1.5 text-amber-700 dark:text-amber-300">
+                          · {s.client_name}
+                        </span>
+                      )}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleCloseOpenShift(s.id)}
+                      className="inline-flex items-center gap-1 rounded-md bg-amber-700 px-2 py-1 text-[11px] font-medium text-white transition-opacity hover:opacity-90"
+                    >
+                      Close shift
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── Bulk selection bar (shown only when at least 1 row selected) ─ */}
+      {selectedIds.size > 0 && (
+        <div className="sticky top-2 z-10 flex items-center justify-between gap-3 rounded-lg border border-foreground/20 bg-foreground px-4 py-2.5 text-background shadow-lg">
+          <span className="text-sm font-medium">
+            {selectedIds.size} selected
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setSelectedIds(new Set())}
+              className="text-xs underline-offset-2 hover:underline"
+            >
+              Clear
+            </button>
+            <button
+              type="button"
+              onClick={handleBulkDelete}
+              disabled={bulkPending}
+              className="inline-flex items-center gap-1.5 rounded-md bg-red-600 px-2.5 py-1 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+            >
+              <Trash2 className="h-3 w-3" />
+              {bulkPending ? "Deleting…" : "Delete selected"}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ─── Date range picker ─────────────────────────────── */}
       <div className="flex flex-wrap items-end gap-3">
         <div className="flex items-center gap-2">
@@ -567,6 +712,27 @@ export function TimesheetsView({
                       <table className="w-full text-xs">
                         <thead>
                           <tr className="border-b border-border bg-muted/30 text-muted-foreground">
+                            <th className="px-2 py-2 text-left font-medium w-6">
+                              <input
+                                type="checkbox"
+                                aria-label="Select all entries for this employee"
+                                onChange={(e) => {
+                                  setSelectedIds((prev) => {
+                                    const next = new Set(prev);
+                                    if (e.target.checked) {
+                                      for (const r of empEntries) next.add(r.id);
+                                    } else {
+                                      for (const r of empEntries) next.delete(r.id);
+                                    }
+                                    return next;
+                                  });
+                                }}
+                                checked={
+                                  empEntries.length > 0 &&
+                                  empEntries.every((r) => selectedIds.has(r.id))
+                                }
+                              />
+                            </th>
                             <th className="px-4 py-2 text-left font-medium">
                               Clock in
                             </th>
@@ -598,8 +764,19 @@ export function TimesheetsView({
                           {empEntries.map((r) => (
                             <tr
                               key={r.id}
-                              className="group border-b border-border last:border-0"
+                              className={cn(
+                                "group border-b border-border last:border-0",
+                                selectedIds.has(r.id) && "bg-muted/40",
+                              )}
                             >
+                              <td className="px-2 py-2.5">
+                                <input
+                                  type="checkbox"
+                                  aria-label="Select entry"
+                                  checked={selectedIds.has(r.id)}
+                                  onChange={() => toggleSelected(r.id)}
+                                />
+                              </td>
                               <td className="px-4 py-2.5 tabular-nums">
                                 <div className="flex items-center gap-1.5">
                                   {formatDateTime(r.clock_in_at)}
@@ -678,6 +855,27 @@ export function TimesheetsView({
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-border bg-muted/30 text-muted-foreground">
+                  <th className="px-2 py-2.5 text-left font-medium w-6">
+                    <input
+                      type="checkbox"
+                      aria-label="Select all"
+                      onChange={(e) => {
+                        setSelectedIds((prev) => {
+                          const next = new Set(prev);
+                          if (e.target.checked) {
+                            for (const r of filteredEntries) next.add(r.id);
+                          } else {
+                            for (const r of filteredEntries) next.delete(r.id);
+                          }
+                          return next;
+                        });
+                      }}
+                      checked={
+                        filteredEntries.length > 0 &&
+                        filteredEntries.every((r) => selectedIds.has(r.id))
+                      }
+                    />
+                  </th>
                   <th className="px-4 py-2.5 text-left font-medium">
                     Employee
                   </th>
@@ -712,8 +910,19 @@ export function TimesheetsView({
                 {filteredEntries.map((r) => (
                   <tr
                     key={r.id}
-                    className="group border-b border-border last:border-0"
+                    className={cn(
+                      "group border-b border-border last:border-0",
+                      selectedIds.has(r.id) && "bg-muted/40",
+                    )}
                   >
+                    <td className="px-2 py-2.5">
+                      <input
+                        type="checkbox"
+                        aria-label="Select entry"
+                        checked={selectedIds.has(r.id)}
+                        onChange={() => toggleSelected(r.id)}
+                      />
+                    </td>
                     <td className="px-4 py-2.5 font-medium">
                       <div className="flex items-center gap-1.5">
                         {r.employee_name}

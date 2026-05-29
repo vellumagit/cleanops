@@ -242,6 +242,42 @@ export default async function TimesheetsPage({
     client_name: b.client?.name ?? "—",
   }));
 
+  // OPEN SHIFTS — entries with clock_out_at IS NULL anywhere in the past
+  // (not just inside the date filter — these are the operational fires).
+  // Surfaces "Olha clocked in 2 days ago and never clocked out" — the kind
+  // of thing that destroys payroll accuracy if left to rot.
+  const { data: openShiftsRaw } = (await supabase
+    .from("time_entries")
+    .select(
+      `id, employee_id, clock_in_at,
+       booking:bookings ( id, scheduled_at, service_type, client:clients ( name ) )`,
+    )
+    .is("clock_out_at" as never, null as never)
+    .order("clock_in_at", { ascending: true })
+    .limit(50)) as unknown as {
+    data: Array<{
+      id: string;
+      employee_id: string;
+      clock_in_at: string;
+      booking: {
+        id: string;
+        scheduled_at: string | null;
+        service_type: string | null;
+        client: { name: string | null } | null;
+      } | null;
+    }> | null;
+  };
+
+  const openShifts = (openShiftsRaw ?? []).map((o) => ({
+    id: o.id,
+    employee_id: o.employee_id,
+    employee_name: empMeta[o.employee_id]?.name ?? "Unknown",
+    clock_in_at: o.clock_in_at,
+    booking_id: o.booking?.id ?? null,
+    client_name: o.booking?.client?.name ?? null,
+    service_type: o.booking?.service_type ?? null,
+  }));
+
   const orgTz = await getOrgTimezone(membership.organization_id);
 
   // PTO data
@@ -274,6 +310,7 @@ export default async function TimesheetsPage({
         employees={empMeta}
         ptoEntries={ptoRows}
         bookings={bookingOptions}
+        openShifts={openShifts}
         orgTz={orgTz}
         from={from}
         to={to}

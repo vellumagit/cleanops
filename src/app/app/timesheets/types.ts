@@ -56,3 +56,18 @@ export type PtoEntry = {
   status: "pending" | "approved" | "declined" | "cancelled";
   reason: string | null;
 };
+
+/**
+ * Time entries whose clock_in_at exists but clock_out_at is NULL. Used
+ * by the timesheets page banner so owners can find and close forgotten
+ * punches without scrolling through the full list.
+ */
+export type OpenShift = {
+  id: string;
+  employee_id: string;
+  employee_name: string;
+  clock_in_at: string;
+  booking_id: string | null;
+  client_name: string | null;
+  service_type: string | null;
+};

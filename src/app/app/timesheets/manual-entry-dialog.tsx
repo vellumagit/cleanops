@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { History, Pencil, Plus, Trash2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -21,6 +21,8 @@ import {
   createManualTimeEntryAction,
   updateTimeEntryAction,
   deleteTimeEntryAction,
+  fetchTimeEntryHistoryAction,
+  type TimeEntryHistoryRow,
 } from "./actions";
 import type { EmployeeMeta, BookingOption } from "./types";
 
@@ -108,6 +110,13 @@ export function ManualEntryDialog({
   const [notes, setNotes] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
 
+  // Inline edit history (audit_log entries for this time_entry). Lazy-loaded
+  // when the dialog opens in edit mode; hidden by default to keep the
+  // form view uncluttered. Owners click "Show history" to reveal.
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [history, setHistory] = useState<TimeEntryHistoryRow[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
   // Reset fields when the dialog opens in a new mode or for a new entry.
   // Sync'ing local form state to an external trigger (the open toggle) is
   // the idiomatic effect use — acknowledged via the compiler escape hatch.
@@ -132,7 +141,25 @@ export function ManualEntryDialog({
       setNotes("");
     }
     setFormError(null);
+    // Reset history state when dialog opens for a new entry
+    setHistoryOpen(false);
+    setHistory([]);
   }, [open, mode, editing, employees, orgTz]);
+
+  async function loadHistory() {
+    if (!editing || mode !== "edit") return;
+    setHistoryOpen(true);
+    setHistoryLoading(true);
+    try {
+      const rows = await fetchTimeEntryHistoryAction(editing.id);
+      setHistory(rows);
+    } catch (err) {
+      console.error("[timesheet] history load failed:", err);
+      toast.error("Could not load entry history.");
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
   /* eslint-enable react-hooks/set-state-in-effect */
 
   const activeEmployees = useMemo(
@@ -293,6 +320,64 @@ export function ManualEntryDialog({
               placeholder="e.g. Filled in for Pat; client asked to extend an hour."
             />
           </div>
+
+          {/* Inline edit history (edit mode only). Lazy-loaded so the
+              dialog stays snappy when opening a long-history entry. */}
+          {mode === "edit" && editing && (
+            <div className="rounded-md border border-border bg-muted/30 p-3">
+              {!historyOpen ? (
+                <button
+                  type="button"
+                  onClick={loadHistory}
+                  className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
+                >
+                  <History className="h-3.5 w-3.5" />
+                  Show history
+                </button>
+              ) : (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                    <History className="h-3.5 w-3.5" />
+                    Audit history
+                  </div>
+                  {historyLoading ? (
+                    <p className="text-xs text-muted-foreground">Loading…</p>
+                  ) : history.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">
+                      No audit entries for this row yet.
+                    </p>
+                  ) : (
+                    <ol className="space-y-1.5 text-[11px]">
+                      {history.map((h) => (
+                        <li
+                          key={h.id}
+                          className="rounded border border-border/60 bg-background px-2 py-1.5"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-medium text-foreground">
+                              {h.action}
+                            </span>
+                            <span className="tabular-nums text-muted-foreground">
+                              {new Date(h.created_at).toLocaleString("en-US", {
+                                timeZone: orgTz,
+                                month: "short",
+                                day: "numeric",
+                                hour: "numeric",
+                                minute: "2-digit",
+                              })}
+                            </span>
+                          </div>
+                          <div className="text-muted-foreground">
+                            by {h.actor_name}
+                          </div>
+                        </li>
+                      ))}
+                    </ol>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           <DialogFooter className="flex items-center justify-between gap-2 sm:justify-between">
             {mode === "edit" ? (
