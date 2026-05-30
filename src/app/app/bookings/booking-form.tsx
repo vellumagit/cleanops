@@ -421,6 +421,41 @@ export function BookingForm({
     }
   }
 
+  /**
+   * Service selection pre-fill. Mirrors handlePackageChange exactly —
+   * only fills blank fields, never clobbers something the user typed.
+   *
+   * Precedence with packages: whichever is touched last wins on a blank
+   * field, both are no-ops on a populated field. Picking a package
+   * first then a service won't override the package's values; picking
+   * a service first then a package won't override the service's
+   * values. This matches the principle that the form never silently
+   * loses user input.
+   *
+   * Called from the service dropdown's onChange — not on initial mount
+   * — so editing an existing booking never triggers an unexpected
+   * prefill.
+   */
+  function handleServiceChange(serviceId: string) {
+    const s = services.find((x) => x.id === serviceId);
+    if (!s) return;
+    if (
+      !totalValue &&
+      s.default_price_cents !== null &&
+      s.default_price_cents > 0
+    ) {
+      setTotalValue((s.default_price_cents / 100).toFixed(2));
+    }
+    if (
+      durationSeed === 0 &&
+      s.default_duration_minutes !== null &&
+      s.default_duration_minutes > 0
+    ) {
+      setDurationSeed(s.default_duration_minutes);
+      setDurationKey((k) => k + 1);
+    }
+  }
+
   const isEditingSeries = mode === "edit" && !!defaults?.series_id;
 
   const [updateScope, setUpdateScope] = useState<"this_only" | "this_and_future">(
@@ -813,7 +848,10 @@ export function BookingForm({
           <FormSelect
             id="service_type_select"
             value={serviceTypeId}
-            onChange={(e) => setServiceTypeId(e.target.value)}
+            onChange={(e) => {
+              setServiceTypeId(e.target.value);
+              handleServiceChange(e.target.value);
+            }}
           >
             {groupServicesByCategory(services).map(([category, items]) => (
               <optgroup key={category} label={prettyCategory(category)}>
