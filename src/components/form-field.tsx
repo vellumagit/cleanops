@@ -15,7 +15,9 @@ type Props = {
   label: string;
   htmlFor: string;
   error?: string;
-  hint?: string;
+  /** Hint can be plain text or a small JSX snippet (for inline links
+   *  like "No services configured. Add one →"). */
+  hint?: React.ReactNode;
   required?: boolean;
   className?: string;
   children: React.ReactNode;

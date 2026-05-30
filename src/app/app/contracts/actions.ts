@@ -27,6 +27,22 @@ function readFormValues(formData: FormData) {
   };
 }
 
+/**
+ * Read the FK + label hidden inputs the contract form ships alongside
+ * the legacy enum value. Mirrors readServiceExtras() in bookings/actions.
+ */
+function readContractServiceExtras(formData: FormData): {
+  service_type_id: string | null;
+  service_type_label: string | null;
+} {
+  const id = String(formData.get("service_type_id") ?? "").trim();
+  const label = String(formData.get("service_type_label") ?? "").trim();
+  return {
+    service_type_id: id.length > 0 ? id : null,
+    service_type_label: label.length > 0 ? label : null,
+  };
+}
+
 export async function createContractAction(
   _prev: ContractFormState,
   formData: FormData,
@@ -36,17 +52,20 @@ export async function createContractAction(
   if (!parsed.ok) return { errors: parsed.errors, values: raw };
 
   const { membership, supabase } = await getActionContext();
+  const extras = readContractServiceExtras(formData);
   const { error } = await supabase.from("contracts").insert({
     organization_id: membership.organization_id,
     client_id: parsed.data.client_id,
     estimate_id: parsed.data.estimate_id,
     service_type: parsed.data.service_type,
+    service_type_id: extras.service_type_id,
+    service_type_label: extras.service_type_label,
     start_date: parsed.data.start_date,
     end_date: parsed.data.end_date,
     agreed_price_cents: parsed.data.agreed_price_cents,
     payment_terms: parsed.data.payment_terms ?? null,
     status: parsed.data.status,
-  });
+  } as never);
 
   if (error) return { errors: { _form: error.message }, values: raw };
   revalidatePath("/app/contracts");
@@ -64,18 +83,21 @@ export async function updateContractAction(
   if (!parsed.ok) return { errors: parsed.errors, values: raw };
 
   const { membership, supabase } = await getActionContext();
+  const extras = readContractServiceExtras(formData);
   const { error } = await supabase
     .from("contracts")
     .update({
       client_id: parsed.data.client_id,
       estimate_id: parsed.data.estimate_id,
       service_type: parsed.data.service_type,
+      service_type_id: extras.service_type_id,
+      service_type_label: extras.service_type_label,
       start_date: parsed.data.start_date,
       end_date: parsed.data.end_date,
       agreed_price_cents: parsed.data.agreed_price_cents,
       payment_terms: parsed.data.payment_terms ?? null,
       status: parsed.data.status,
-    })
+    } as never)
     .eq("id", id)
     .eq("organization_id", membership.organization_id);
 

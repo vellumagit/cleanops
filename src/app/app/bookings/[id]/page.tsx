@@ -73,7 +73,7 @@ export default async function BookingDetailPage({
     .from("bookings")
     .select(
       `
-        id, scheduled_at, duration_minutes, service_type, status,
+        id, scheduled_at, duration_minutes, service_type, service_type_label, status,
         total_cents, hourly_rate_cents, address, notes, created_at,
         estimate_id, series_id,
         client:clients ( id, name, phone, email, address ),
@@ -90,6 +90,7 @@ export default async function BookingDetailPage({
       scheduled_at: string;
       duration_minutes: number;
       service_type: string;
+      service_type_label: string | null;
       status: string;
       total_cents: number;
       hourly_rate_cents: number | null;
@@ -230,7 +231,7 @@ export default async function BookingDetailPage({
 
   return (
     <PageShell
-      title={humanizeEnum(booking.service_type)}
+      title={booking.service_type_label ?? humanizeEnum(booking.service_type)}
       description={formatDateTime(booking.scheduled_at, tz)}
       actions={
         canEdit ? (

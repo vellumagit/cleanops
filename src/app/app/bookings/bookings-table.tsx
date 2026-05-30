@@ -36,6 +36,10 @@ export type BookingRow = {
   scheduled_at: string;
   duration_minutes: number;
   service_type: string;
+  /** Denormalized service name from service_types. When set, prefer
+   *  this over humanizing the enum so the user sees their custom
+   *  service name (e.g. "Window Cleaning" not "Other"). */
+  service_type_label: string | null;
   status:
     | "pending"
     | "confirmed"
@@ -143,9 +147,17 @@ export function BookingsTable({
   const [clientFilter, setClientFilter] = useState<string>("all");
   const [dateFilter, setDateFilter] = useState<DateFilter>("all");
 
-  // Derive unique values for dropdown filters
+  // Derive unique values for dropdown filters.
+  // Filter by the displayed label so a user typing "Window cleaning"
+  // matches what their booking actually shows; falls back to the enum
+  // for rows without a label (very old historical rows).
   const services = useMemo(
-    () => [...new Set(rows.map((r) => r.service_type))].sort(),
+    () =>
+      [
+        ...new Set(
+          rows.map((r) => r.service_type_label ?? r.service_type),
+        ),
+      ].sort(),
     [rows],
   );
   const assignees = useMemo(
@@ -178,12 +190,15 @@ export function BookingsTable({
         (r) =>
           r.client_name.toLowerCase().includes(needle) ||
           r.service_type.toLowerCase().includes(needle) ||
+          (r.service_type_label ?? "").toLowerCase().includes(needle) ||
           (r.assigned_name ?? "").toLowerCase().includes(needle) ||
           (r.address ?? "").toLowerCase().includes(needle),
       );
     }
     if (serviceFilter !== "all") {
-      result = result.filter((r) => r.service_type === serviceFilter);
+      result = result.filter(
+        (r) => (r.service_type_label ?? r.service_type) === serviceFilter,
+      );
     }
     if (assigneeFilter !== "all") {
       if (assigneeFilter === "unassigned") {
@@ -534,7 +549,7 @@ function TableView({
                   </span>
                 </td>
                 <td className="px-3 py-2.5 text-muted-foreground hidden sm:table-cell">
-                  {humanizeEnum(r.service_type)}
+                  {r.service_type_label ?? humanizeEnum(r.service_type)}
                 </td>
                 <td className="px-3 py-2.5 text-muted-foreground hidden md:table-cell">
                   {formatDurationMinutes(r.duration_minutes)}
@@ -662,7 +677,7 @@ function CardsView({
                       )}
                     </div>
                     <span className="text-xs text-muted-foreground">
-                      {humanizeEnum(r.service_type)}
+                      {r.service_type_label ?? humanizeEnum(r.service_type)}
                     </span>
                   </div>
                   <StatusBadge tone={bookingStatusTone(r.status)}>

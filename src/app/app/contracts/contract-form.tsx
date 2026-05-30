@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import Link from "next/link";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -19,11 +19,18 @@ type Defaults = {
   client_id?: string;
   estimate_id?: string | null;
   service_type?: string;
+  service_type_id?: string | null;
   start_date?: string;
   end_date?: string | null;
   agreed_price_dollars?: string;
   payment_terms?: string | null;
   status?: string;
+};
+
+export type ContractServiceOption = {
+  id: string;
+  label: string;
+  category: string;
 };
 
 export function ContractForm({
@@ -32,6 +39,7 @@ export function ContractForm({
   defaults,
   clients,
   estimates,
+  services,
   currency = "CAD",
 }: {
   mode: "create" | "edit";
@@ -39,6 +47,7 @@ export function ContractForm({
   defaults?: Defaults;
   clients: { id: string; label: string }[];
   estimates: { id: string; label: string }[];
+  services: ContractServiceOption[];
   currency?: "CAD" | "USD";
 }) {
   const action =
@@ -47,6 +56,24 @@ export function ContractForm({
       : updateContractAction.bind(null, id ?? "");
   const [state, formAction] = useActionState(action, empty);
   const v = state.values ?? {};
+
+  // Same pick-initial logic as the booking form: prefer the explicit
+  // FK if known, else match by category, else first available.
+  const initialServiceId = (() => {
+    if (services.length === 0) return "";
+    if (defaults?.service_type_id) {
+      const m = services.find((s) => s.id === defaults.service_type_id);
+      if (m) return m.id;
+    }
+    if (defaults?.service_type) {
+      const m = services.find((s) => s.category === defaults.service_type);
+      if (m) return m.id;
+    }
+    const std = services.find((s) => s.category === "standard");
+    return (std ?? services[0]).id;
+  })();
+  const [serviceTypeId, setServiceTypeId] = useState(initialServiceId);
+  const selectedService = services.find((s) => s.id === serviceTypeId);
 
   return (
     <form action={formAction} className="space-y-5">
@@ -95,21 +122,53 @@ export function ContractForm({
 
       <div className="grid gap-5 sm:grid-cols-2">
         <FormField
-          label="Service type"
-          htmlFor="service_type"
+          label="Service"
+          htmlFor="service_type_select"
           required
           error={state.errors?.service_type}
+          hint={
+            services.length === 0 ? (
+              <>
+                No services configured.{" "}
+                <Link
+                  href="/app/settings/services"
+                  className="underline underline-offset-2"
+                >
+                  Add one
+                </Link>
+                .
+              </>
+            ) : undefined
+          }
         >
           <FormSelect
-            id="service_type"
-            name="service_type"
-            defaultValue={v.service_type ?? defaults?.service_type ?? "standard"}
+            id="service_type_select"
+            value={serviceTypeId}
+            onChange={(e) => setServiceTypeId(e.target.value)}
           >
-            <option value="standard">Standard</option>
-            <option value="deep">Deep</option>
-            <option value="move_out">Move out</option>
-            <option value="recurring">Recurring</option>
+            {services.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.label}
+              </option>
+            ))}
           </FormSelect>
+          {/* The enum stays the source of truth for the contracts table;
+              the FK + label ride along for display. */}
+          <input
+            type="hidden"
+            name="service_type"
+            value={selectedService?.category ?? "standard"}
+          />
+          <input
+            type="hidden"
+            name="service_type_id"
+            value={selectedService?.id ?? ""}
+          />
+          <input
+            type="hidden"
+            name="service_type_label"
+            value={selectedService?.label ?? ""}
+          />
         </FormField>
 
         <FormField

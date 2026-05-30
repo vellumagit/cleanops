@@ -31,6 +31,7 @@ export default async function BookingsPage({
         scheduled_at,
         duration_minutes,
         service_type,
+        service_type_label,
         status,
         total_cents,
         series_id,
@@ -58,6 +59,7 @@ export default async function BookingsPage({
       scheduled_at: string;
       duration_minutes: number;
       service_type: string;
+      service_type_label: string | null;
       status: string;
       total_cents: number;
       series_id: string | null;
@@ -126,6 +128,7 @@ export default async function BookingsPage({
     scheduled_at: b.scheduled_at,
     duration_minutes: b.duration_minutes,
     service_type: b.service_type,
+    service_type_label: b.service_type_label ?? null,
     status: b.status as BookingRow["status"],
     total_cents: b.total_cents,
     client_name: b.client?.name ?? "—",

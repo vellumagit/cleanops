@@ -33,7 +33,13 @@ export type BookingFormDefaults = {
   /** Raw UTC ISO string from the DB — used for "this and future" propagation. */
   scheduled_at_utc?: string;
   duration_minutes?: number;
+  /** Legacy enum value (e.g. "standard"). Kept for back-compat — the
+   *  form prefers `service_type_id` when present and only falls back
+   *  to enum-based defaults when the FK isn't set. */
   service_type?: string;
+  /** New FK pointing at the org's service_types row. Source of truth
+   *  for the dropdown selection. */
+  service_type_id?: string | null;
   status?: string;
   total_dollars?: string;
   hourly_rate_dollars?: string;
@@ -57,6 +63,20 @@ export type BookingFormDefaults = {
 
 type Option = { id: string; label: string; pay_rate_cents?: number | null };
 
+/** A service this org offers — loaded from service_types. The form
+ *  uses the row's `id` as the dropdown value but actually submits the
+ *  enum `category` as `service_type` so the legacy column stays
+ *  populated. Plus a hidden `service_type_id` and `service_type_label`
+ *  go along so downstream tables get the FK and the display name. */
+export type ServiceOption = {
+  id: string;
+  label: string;
+  category: string;
+  description: string | null;
+  default_duration_minutes: number | null;
+  default_price_cents: number | null;
+};
+
 type SplitSegment = {
   id: string;
   assigned_to: string;
@@ -79,6 +99,63 @@ function formatOffsetLabel(totalMinutes: number): string {
   if (h > 0 && m > 0) return `${h}h ${m}m`;
   if (h > 0) return `${h}h`;
   return `${m}m`;
+}
+
+/** Order categories the same way they were grouped in the old hardcoded
+ *  dropdown (Cleaning → Appointments → Other) so the move to a dynamic
+ *  list doesn't feel like a reshuffle. */
+const CATEGORY_ORDER: Record<string, number> = {
+  standard: 0,
+  deep: 1,
+  move_out: 2,
+  recurring: 3,
+  meeting: 10,
+  consultation: 11,
+  walkthrough: 12,
+  other: 99,
+};
+
+const CATEGORY_GROUP: Record<string, string> = {
+  standard: "Cleaning",
+  deep: "Cleaning",
+  move_out: "Cleaning",
+  recurring: "Cleaning",
+  meeting: "Appointments",
+  consultation: "Appointments",
+  walkthrough: "Appointments",
+  other: "Other",
+};
+
+function prettyCategory(group: string): string {
+  return group;
+}
+
+function groupServicesByCategory(
+  services: ServiceOption[],
+): Array<[string, ServiceOption[]]> {
+  const groups = new Map<string, ServiceOption[]>();
+  for (const s of services) {
+    const group = CATEGORY_GROUP[s.category] ?? "Other";
+    if (!groups.has(group)) groups.set(group, []);
+    groups.get(group)!.push(s);
+  }
+  const groupOrder = ["Cleaning", "Appointments", "Other"];
+  return groupOrder
+    .filter((g) => groups.has(g))
+    .map(
+      (g) =>
+        [g, groups.get(g)!.sort(byCategoryThenSortOrder)] as [
+          string,
+          ServiceOption[],
+        ],
+    );
+}
+
+function byCategoryThenSortOrder(a: ServiceOption, b: ServiceOption): number {
+  const ca = CATEGORY_ORDER[a.category] ?? 50;
+  const cb = CATEGORY_ORDER[b.category] ?? 50;
+  if (ca !== cb) return ca - cb;
+  return 0;
 }
 
 /** Client option carries the fields we auto-fill into the form. */
@@ -116,6 +193,7 @@ export function BookingForm({
   clients,
   packages,
   employees,
+  services,
   currency = "CAD",
   onSuccess,
 }: {
@@ -125,6 +203,7 @@ export function BookingForm({
   clients: ClientOption[];
   packages: PackageOption[];
   employees: Option[];
+  services: ServiceOption[];
   currency?: "CAD" | "USD";
   /** When provided, the form runs in "embedded" mode: submitting signals
    *  done via state instead of a page redirect, then calls onSuccess so
@@ -195,6 +274,35 @@ export function BookingForm({
       prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day].sort(),
     );
   }
+
+  // ── Service selection ─────────────────────────────────────────────────────
+  // The dropdown's value is a service_types.id. We pick the initial
+  // selection in this priority order:
+  //   1. Explicit defaults.service_type_id (edit mode of a booking
+  //      that already has the FK)
+  //   2. First active service whose category matches the legacy enum
+  //      defaults.service_type (edit mode pre-migration, or a booking
+  //      whose row was archived)
+  //   3. First active service with category "recurring" for recurring
+  //      bookings, else first "standard", else just the first row
+  function pickInitialServiceId(): string {
+    if (services.length === 0) return "";
+    if (defaults?.service_type_id) {
+      const m = services.find((s) => s.id === defaults.service_type_id);
+      if (m) return m.id;
+    }
+    if (defaults?.service_type) {
+      const m = services.find((s) => s.category === defaults.service_type);
+      if (m) return m.id;
+    }
+    const wantedCategory = isRecurring ? "recurring" : "standard";
+    const cat = services.find((s) => s.category === wantedCategory);
+    return (cat ?? services[0]).id;
+  }
+  const [serviceTypeId, setServiceTypeId] = useState<string>(
+    pickInitialServiceId(),
+  );
+  const selectedService = services.find((s) => s.id === serviceTypeId);
 
   // ── Split shifts ──────────────────────────────────────────────────────────
   const [splitEnabled, setSplitEnabled] = useState(
@@ -683,35 +791,59 @@ export function BookingForm({
 
       <div className="grid gap-5 sm:grid-cols-3">
         <FormField
-          label="Service type"
-          htmlFor="service_type"
+          label="Service"
+          htmlFor="service_type_select"
           required
           error={state.errors?.service_type}
+          hint={
+            services.length === 0 ? (
+              <>
+                No services configured.{" "}
+                <Link
+                  href="/app/settings/services"
+                  className="underline underline-offset-2"
+                >
+                  Add one
+                </Link>{" "}
+                first.
+              </>
+            ) : undefined
+          }
         >
           <FormSelect
-            id="service_type"
-            name="service_type"
-            defaultValue={
-              v.service_type ??
-              defaults?.service_type ??
-              (isRecurring ? "recurring" : "standard")
-            }
+            id="service_type_select"
+            value={serviceTypeId}
+            onChange={(e) => setServiceTypeId(e.target.value)}
           >
-            <optgroup label="Cleaning">
-              <option value="standard">Standard clean</option>
-              <option value="deep">Deep clean</option>
-              <option value="move_out">Move-out clean</option>
-              <option value="recurring">Recurring clean</option>
-            </optgroup>
-            <optgroup label="Appointments">
-              <option value="meeting">Meeting</option>
-              <option value="consultation">Initial consultation</option>
-              <option value="walkthrough">Walkthrough / quote visit</option>
-            </optgroup>
-            <optgroup label="Other">
-              <option value="other">Other</option>
-            </optgroup>
+            {groupServicesByCategory(services).map(([category, items]) => (
+              <optgroup key={category} label={prettyCategory(category)}>
+                {items.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.label}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
           </FormSelect>
+          {/* Three things flow to the server on submit:
+              - service_type        — the enum (still NOT NULL on the table)
+              - service_type_id     — the FK to service_types
+              - service_type_label  — denormalized display name */}
+          <input
+            type="hidden"
+            name="service_type"
+            value={selectedService?.category ?? "other"}
+          />
+          <input
+            type="hidden"
+            name="service_type_id"
+            value={selectedService?.id ?? ""}
+          />
+          <input
+            type="hidden"
+            name="service_type_label"
+            value={selectedService?.label ?? ""}
+          />
         </FormField>
 
         {!isRecurring && (

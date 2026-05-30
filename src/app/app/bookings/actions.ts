@@ -48,6 +48,29 @@ function readFormValues(formData: FormData) {
   };
 }
 
+/**
+ * Pull the FK + denormalized label that the booking form ships in
+ * hidden inputs alongside the enum `service_type`. These aren't part
+ * of the Zod schema (we don't want to fail validation on legacy form
+ * posts that don't ship them), so we read them ourselves and apply
+ * them to the booking insert/update payload.
+ *
+ * Returns nulls when the fields are absent — the table accepts NULL
+ * for both columns, so a partial caller (e.g. the public client
+ * portal request form) won't break.
+ */
+function readServiceExtras(formData: FormData): {
+  service_type_id: string | null;
+  service_type_label: string | null;
+} {
+  const id = String(formData.get("service_type_id") ?? "").trim();
+  const label = String(formData.get("service_type_label") ?? "").trim();
+  return {
+    service_type_id: id.length > 0 ? id : null,
+    service_type_label: label.length > 0 ? label : null,
+  };
+}
+
 function readRecurringFormValues(formData: FormData) {
   return {
     client_id: String(formData.get("client_id") ?? ""),
@@ -475,6 +498,7 @@ export async function createBookingAction(
       ? segmentZeroAssignee
       : (parsed.data.assigned_to ?? null);
 
+  const serviceExtras = readServiceExtras(formData);
   const { data: booking, error } = await supabase
     .from("bookings")
     .insert({
@@ -485,13 +509,15 @@ export async function createBookingAction(
       scheduled_at: parsed.data.scheduled_at,
       duration_minutes: parsed.data.duration_minutes,
       service_type: parsed.data.service_type as never,
+      service_type_id: serviceExtras.service_type_id,
+      service_type_label: serviceExtras.service_type_label,
       status: parsed.data.status,
       total_cents: parsed.data.total_cents,
       hourly_rate_cents: parsed.data.hourly_rate_cents ?? null,
       address: parsed.data.address ?? null,
       notes: parsed.data.notes ?? null,
       splits: splits as never,
-    })
+    } as never)
     .select("id")
     .single();
 
@@ -665,6 +691,10 @@ export async function createRecurringBookingAction(
       generate_ahead: parsed.data.generate_ahead,
       duration_minutes: parsed.data.duration_minutes,
       service_type: parsed.data.service_type,
+      // booking_series predates the service_type_id column. The cron
+      // that generates future occurrences reads from individual booking
+      // rows (which DO carry the FK after this migration), so leaving
+      // these off the series row is fine.
       package_id: parsed.data.package_id ?? null,
       assigned_to: parsed.data.assigned_to ?? null,
       total_cents: parsed.data.total_cents,
@@ -705,6 +735,7 @@ export async function createRecurringBookingAction(
   }
 
   // 3. Insert all booking instances
+  const recurringServiceExtras = readServiceExtras(formData);
   const bookingRows = occurrences.map((scheduled_at) => ({
     organization_id: membership.organization_id,
     client_id: parsed.data.client_id,
@@ -713,6 +744,8 @@ export async function createRecurringBookingAction(
     scheduled_at,
     duration_minutes: parsed.data.duration_minutes,
     service_type: parsed.data.service_type,
+    service_type_id: recurringServiceExtras.service_type_id,
+    service_type_label: recurringServiceExtras.service_type_label,
     status: "confirmed" as const,
     total_cents: parsed.data.total_cents,
     hourly_rate_cents: parsed.data.hourly_rate_cents ?? null,
@@ -885,6 +918,7 @@ export async function updateBookingAction(
       ? updateSegmentZeroAssignee
       : (parsed.data.assigned_to ?? null);
 
+  const updateServiceExtras = readServiceExtras(formData);
   const { error } = await supabase
     .from("bookings")
     .update({
@@ -894,13 +928,15 @@ export async function updateBookingAction(
       scheduled_at: parsed.data.scheduled_at,
       duration_minutes: parsed.data.duration_minutes,
       service_type: parsed.data.service_type as never,
+      service_type_id: updateServiceExtras.service_type_id,
+      service_type_label: updateServiceExtras.service_type_label,
       status: parsed.data.status,
       total_cents: parsed.data.total_cents,
       hourly_rate_cents: parsed.data.hourly_rate_cents ?? null,
       address: parsed.data.address ?? null,
       notes: parsed.data.notes ?? null,
       splits: updateSplits as never,
-    })
+    } as never)
     .eq("id", id);
 
   if (error) return { errors: { _form: error.message }, values: raw };
@@ -982,6 +1018,8 @@ export async function updateBookingAction(
     const propagatableFields = {
       duration_minutes: parsed.data.duration_minutes,
       service_type: parsed.data.service_type,
+      service_type_id: updateServiceExtras.service_type_id,
+      service_type_label: updateServiceExtras.service_type_label,
       total_cents: parsed.data.total_cents,
       hourly_rate_cents: parsed.data.hourly_rate_cents ?? null,
       assigned_to: updateEffectiveAssignedTo,
@@ -1326,7 +1364,7 @@ export async function duplicateBookingAction(id: string) {
   const { data: source } = (await supabase
     .from("bookings")
     .select(
-      "client_id, package_id, assigned_to, scheduled_at, duration_minutes, service_type, total_cents, hourly_rate_cents, address, notes, splits",
+      "client_id, package_id, assigned_to, scheduled_at, duration_minutes, service_type, service_type_id, service_type_label, total_cents, hourly_rate_cents, address, notes, splits",
     )
     .eq("id", id)
     .maybeSingle()) as unknown as {
@@ -1337,6 +1375,8 @@ export async function duplicateBookingAction(id: string) {
       scheduled_at: string;
       duration_minutes: number;
       service_type: string;
+      service_type_id: string | null;
+      service_type_label: string | null;
       total_cents: number;
       hourly_rate_cents: number | null;
       address: string | null;
@@ -1357,13 +1397,15 @@ export async function duplicateBookingAction(id: string) {
       scheduled_at: source.scheduled_at,
       duration_minutes: source.duration_minutes,
       service_type: source.service_type as never,
+      service_type_id: source.service_type_id,
+      service_type_label: source.service_type_label,
       status: "pending",
       total_cents: source.total_cents,
       hourly_rate_cents: source.hourly_rate_cents ?? null,
       address: source.address ?? null,
       notes: source.notes ?? null,
       splits: (source.splits ?? []) as never,
-    })
+    } as never)
     .select("id")
     .single();
 

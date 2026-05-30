@@ -39,6 +39,7 @@ export type AuditEntity =
   | "api_key"
   | "time_entry"
   | "training_assignment"
+  | "service_type"
   | "webhook_subscription";
 
 export type AuditAction =
@@ -51,6 +52,8 @@ export type AuditAction =
   | "assign"
   | "invite"
   | "deactivate"
+  | "archive"
+  | "restore"
   | "revoke";
 
 type LogArgs = {

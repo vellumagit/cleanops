@@ -15,6 +15,7 @@ import {
   ScrollText,
   Shield,
   Sliders,
+  Sparkles,
   Users,
   Webhook,
   Zap,
@@ -47,6 +48,13 @@ const SECTIONS: Section[] = [
     title: "Business",
     description: "What shows up on invoices, emails, and public pages.",
     items: [
+      {
+        href: "/app/settings/services",
+        icon: Sparkles,
+        title: "Services",
+        description:
+          "The list of services that show up when booking — rename the defaults, archive ones you don't offer, add your own.",
+      },
       {
         href: "/app/settings/branding",
         icon: Palette,

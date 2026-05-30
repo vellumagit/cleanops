@@ -8,9 +8,20 @@ import { memberDisplayName } from "@/lib/member-display";
  * the booking form when one is selected. Pre-fill rules are handled by
  * the form itself — here we just ship the data.
  */
+export type ServiceOption = {
+  id: string;
+  label: string;
+  category: string;
+  description: string | null;
+  default_duration_minutes: number | null;
+  default_price_cents: number | null;
+  color: string | null;
+  sort_order: number;
+};
+
 export async function fetchBookingFormOptions() {
   const supabase = await createSupabaseServerClient();
-  const [clients, packages, employees] = await Promise.all([
+  const [clients, packages, employees, services] = await Promise.all([
     // preferred_cleaner_id lets the form auto-fill the primary
     // assignee when a client is picked — one fewer click when the
     // client always wants the same cleaner. Column isn't in generated
@@ -53,6 +64,27 @@ export async function fetchBookingFormOptions() {
         pay_rate_cents: number | null;
       }> | null;
     }>,
+    // Active service catalog for this org. RLS scopes by membership so we
+    // don't need an explicit organization_id filter.
+    supabase
+      .from("service_types" as never)
+      .select(
+        "id, category, name, description, default_duration_minutes, default_price_cents, color, sort_order",
+      )
+      .eq("is_active" as never, true as never)
+      .order("sort_order" as never, { ascending: true } as never)
+      .order("name" as never, { ascending: true } as never) as unknown as Promise<{
+      data: Array<{
+        id: string;
+        category: string;
+        name: string;
+        description: string | null;
+        default_duration_minutes: number | null;
+        default_price_cents: number | null;
+        color: string | null;
+        sort_order: number;
+      }> | null;
+    }>,
   ]);
 
   return {
@@ -77,5 +109,16 @@ export async function fetchBookingFormOptions() {
         label: memberDisplayName(m),
         pay_rate_cents: m.pay_rate_cents ?? null,
       })) ?? []).sort((a, b) => a.label.localeCompare(b.label)),
+    services:
+      (services.data ?? []).map((s) => ({
+        id: s.id,
+        label: s.name,
+        category: s.category,
+        description: s.description,
+        default_duration_minutes: s.default_duration_minutes,
+        default_price_cents: s.default_price_cents,
+        color: s.color,
+        sort_order: s.sort_order,
+      })) as ServiceOption[],
   };
 }

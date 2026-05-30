@@ -30,7 +30,7 @@ export default async function EditBookingPage({
       supabase
         .from("bookings")
         .select(
-          "id, client_id, package_id, assigned_to, scheduled_at, duration_minutes, service_type, status, total_cents, hourly_rate_cents, address, notes, series_id, splits",
+          "id, client_id, package_id, assigned_to, scheduled_at, duration_minutes, service_type, service_type_id, status, total_cents, hourly_rate_cents, address, notes, series_id, splits",
         )
         .eq("id", id)
         .maybeSingle() as unknown as Promise<{
@@ -42,6 +42,7 @@ export default async function EditBookingPage({
           scheduled_at: string;
           duration_minutes: number;
           service_type: string;
+          service_type_id: string | null;
           status: string;
           total_cents: number;
           hourly_rate_cents: number | null;
@@ -118,6 +119,7 @@ export default async function EditBookingPage({
               scheduled_at_local: toDatetimeLocal(booking.scheduled_at, orgTz),
               duration_minutes: booking.duration_minutes,
               service_type: booking.service_type,
+              service_type_id: booking.service_type_id,
               status: booking.status,
               total_dollars: centsToDollarString(booking.total_cents),
               hourly_rate_dollars: centsToDollarString(

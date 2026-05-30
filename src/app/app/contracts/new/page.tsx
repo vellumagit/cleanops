@@ -8,13 +8,19 @@ export const metadata = { title: "New contract" };
 
 export default async function NewContractPage() {
   const membership = await requireMembership(["owner", "admin", "manager"]);
-  const { clients, estimates } = await fetchContractFormOptions();
+  const { clients, estimates, services } = await fetchContractFormOptions();
   const currency = await getOrgCurrency(membership.organization_id);
 
   return (
     <PageShell title="New contract" description="Lock in a recurring engagement.">
       <div className="max-w-2xl rounded-lg border border-border bg-card p-6">
-        <ContractForm mode="create" clients={clients} estimates={estimates} currency={currency} />
+        <ContractForm
+          mode="create"
+          clients={clients}
+          estimates={estimates}
+          services={services}
+          currency={currency}
+        />
       </div>
     </PageShell>
   );

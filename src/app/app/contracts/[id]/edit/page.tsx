@@ -23,13 +23,27 @@ export default async function EditContractPage({
   const supabase = await createSupabaseServerClient();
   const currency = await getOrgCurrency(membership.organization_id);
 
-  const { data: contract, error } = await supabase
+  const { data: contract, error } = (await supabase
     .from("contracts")
     .select(
-      "id, client_id, estimate_id, service_type, start_date, end_date, agreed_price_cents, payment_terms, status",
+      "id, client_id, estimate_id, service_type, service_type_id, start_date, end_date, agreed_price_cents, payment_terms, status",
     )
     .eq("id", id)
-    .maybeSingle();
+    .maybeSingle()) as unknown as {
+    data: {
+      id: string;
+      client_id: string;
+      estimate_id: string | null;
+      service_type: string;
+      service_type_id: string | null;
+      start_date: string;
+      end_date: string | null;
+      agreed_price_cents: number;
+      payment_terms: string | null;
+      status: string;
+    } | null;
+    error: { message: string } | null;
+  };
 
   if (error) throw error;
   if (!contract) notFound();
@@ -56,7 +70,7 @@ export default async function EditContractPage({
   const siteUrl =
     process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
 
-  const [{ clients, estimates }, { data: docsRaw }] = await Promise.all([
+  const [{ clients, estimates, services }, { data: docsRaw }] = await Promise.all([
     fetchContractFormOptions(),
     admin
       .from("contract_documents" as never)
@@ -102,10 +116,12 @@ export default async function EditContractPage({
             currency={currency}
             clients={clients}
             estimates={estimates}
+            services={services}
             defaults={{
               client_id: contract.client_id,
               estimate_id: contract.estimate_id,
               service_type: contract.service_type,
+              service_type_id: contract.service_type_id,
               start_date: contract.start_date,
               end_date: contract.end_date,
               agreed_price_dollars: centsToDollarString(
