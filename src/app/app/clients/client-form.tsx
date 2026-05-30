@@ -26,6 +26,12 @@ type Defaults = {
   preferred_contact?: string;
   preferred_cleaner_id?: string | null;
   sms_opted_in?: boolean | null;
+  /** When true on create, pre-marks this client's gbp_review_state =
+   *  'reviewed' so the Google review cron never asks them. Use when
+   *  the customer already left you a Google review before being
+   *  added to Sollos. Hidden on edit (use the client detail page to
+   *  change state after creation). */
+  gbp_already_reviewed?: boolean | null;
   billing_cadence?: string | null;
   billing_type?: string | null;
   flat_rate_cents?: number | null;
@@ -126,6 +132,36 @@ export function ClientForm({
           </p>
         </div>
       </div>
+
+      {/* Google review opt-out at create time. Only shown when adding
+          a new client — for existing clients, use the per-client controls
+          on the client detail page to change review state. The cron
+          checks gbp_review_state and won't ask anyone marked "reviewed"
+          here. */}
+      {mode === "create" && (
+        <div className="flex items-start gap-3 rounded-md border border-border bg-muted/40 px-4 py-3">
+          <input
+            type="checkbox"
+            id="gbp_already_reviewed"
+            name="gbp_already_reviewed"
+            defaultChecked={v.gbp_already_reviewed ?? false}
+            className="mt-0.5 h-4 w-4 shrink-0 rounded border-input accent-primary"
+          />
+          <div className="space-y-0.5">
+            <label
+              htmlFor="gbp_already_reviewed"
+              className="cursor-pointer text-sm font-medium leading-none"
+            >
+              This customer has already left us a Google review
+            </label>
+            <p className="text-xs text-muted-foreground">
+              Skips the automated Google review request that would
+              otherwise go out 24 hours after their first job. They&apos;ll
+              still get the regular per-job cleaning review email.
+            </p>
+          </div>
+        </div>
+      )}
 
       <FormField label="Address" htmlFor="address" error={state.errors?.address}>
         <AddressAutocomplete

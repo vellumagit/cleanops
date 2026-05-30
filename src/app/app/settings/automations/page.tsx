@@ -105,10 +105,17 @@ const CATEGORIES: Category[] = [
       },
       {
         key: "review_request_after_completion" as AutomationKey,
-        title: "Review request 24h after job completion",
+        title: "Internal review request — 2h after every job",
         description:
-          "Emails the client a review link roughly 24 hours after a booking is marked completed. Sent at most once per booking regardless of invoice state — works even for cash/offline payments. Rating ≥ 4 shows a Google Review CTA if your Google Review URL is configured in Settings → Branding.",
-        trigger: "Daily cron, ~10:00 UTC",
+          "Emails the client a Sollos-hosted review link about 2 hours after each completed booking. Captures a 1-5 star rating + comment scoped to the employee who did the work. Sent at most once per booking. Powers the dashboard rating, per-employee scores, and bonus rules.",
+        trigger: "Hourly cron — fires once per booking",
+      },
+      {
+        key: "gbp_review_request" as AutomationKey,
+        title: "Google review request — 24h after first job, then monthly",
+        description:
+          "Emails the client a Google review link 24 hours after their FIRST completed booking, then monthly reminders if they haven't clicked. Stops automatically when the client clicks the link or hits the reminder cap (configurable per org — default 5). Requires your Google Review URL in Settings → Branding. Customers can unsubscribe from this track only without losing other email.",
+        trigger: "Daily cron, ~11:00 UTC",
       },
       {
         key: "invoice_paid_receipt",

@@ -361,34 +361,153 @@ export function senderVerificationEmail(args: {
 // Review request
 // ---------------------------------------------------------------------------
 
+/**
+ * Internal review request — fired ~2h after every completed job.
+ *
+ * This is the SOLLOS-hosted form; goes to /review/<token>. Captures
+ * an employee-scoped star rating + comment. Distinct from the Google
+ * review ask (gbpReviewRequestEmail) which only fires 24h after the
+ * client's first job and is one-and-done per customer.
+ */
 export function reviewRequestEmail(args: {
   clientName: string;
   orgName: string;
+  /** Optional: name of the employee who did the job. When present we
+   *  personalize the ask ("How was Sarah?") which materially boosts
+   *  reply rate. */
+  employeeName?: string;
   reviewUrl: string;
   brandColor?: string;
   logoUrl?: string;
 }) {
-  const subject = `How did we do? — ${args.orgName}`;
+  const subject = args.employeeName
+    ? `How was ${args.employeeName}? — ${args.orgName}`
+    : `How did we do? — ${args.orgName}`;
+  const headline = args.employeeName
+    ? `How was ${escapeHtml(args.employeeName)}?`
+    : `How was your service?`;
+  const opening = args.employeeName
+    ? `Hi ${escapeHtml(args.clientName)} — quick favor. We'd love to know how <strong style="color:#18181b;">${escapeHtml(args.employeeName)}</strong> did on your recent clean. It takes about 30 seconds.`
+    : `Hi ${escapeHtml(args.clientName)}, <strong style="color:#18181b;">${escapeHtml(args.orgName)}</strong> would love your feedback. It only takes 30 seconds.`;
   const html = layout(
     `
-    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;letter-spacing:-0.02em;color:#18181b;line-height:1.3;">How was your service?</h1>
-    <p style="margin:0 0 24px;font-size:14px;line-height:1.55;color:#52525b;">
-      Hi ${escapeHtml(args.clientName)}, <strong style="color:#18181b;">${escapeHtml(args.orgName)}</strong> would love your
-      feedback. It only takes 30 seconds.
-    </p>
-    ${button("Leave a Review", args.reviewUrl, args.brandColor ? `#${args.brandColor.replace(/^#/, "")}` : DEFAULT_BRAND)}
+    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;letter-spacing:-0.02em;color:#18181b;line-height:1.3;">${headline}</h1>
+    <p style="margin:0 0 24px;font-size:14px;line-height:1.55;color:#52525b;">${opening}</p>
+    ${button("Leave a rating", args.reviewUrl, args.brandColor ? `#${args.brandColor.replace(/^#/, "")}` : DEFAULT_BRAND)}
     <p style="margin:0;font-size:12px;line-height:1.5;color:#a1a1aa;">
-      Your feedback helps us improve. Thank you!
+      Your feedback goes straight to ${escapeHtml(args.orgName)} and helps us improve. Thank you!
     </p>
     `,
     {
       brandColor: args.brandColor,
       orgName: args.orgName,
       logoUrl: args.logoUrl,
-      preheader: `${args.orgName} would love your feedback — it only takes 30 seconds`,
+      preheader: args.employeeName
+        ? `Tell us how ${args.employeeName} did — takes 30 seconds`
+        : `${args.orgName} would love your feedback — it only takes 30 seconds`,
     },
   );
-  const text = `Hi ${args.clientName}, ${args.orgName} would love your feedback.\n\nLeave a review: ${args.reviewUrl}`;
+  const text = args.employeeName
+    ? `Hi ${args.clientName}, how was ${args.employeeName} on your recent clean?\n\nRate it here: ${args.reviewUrl}`
+    : `Hi ${args.clientName}, ${args.orgName} would love your feedback.\n\nLeave a review: ${args.reviewUrl}`;
+  return { subject, html, text };
+}
+
+// ---------------------------------------------------------------------------
+// Google review request — initial + reminder
+// ---------------------------------------------------------------------------
+
+/**
+ * First-time Google review ask. Sent ~24h after the client's FIRST
+ * completed job (per-client, not per-booking). The redirect URL is a
+ * Sollos /r/g/<token> that logs the click and 302s to the org's
+ * google_review_url — clicking is our stop signal so reminders cease.
+ */
+export function gbpReviewRequestEmail(args: {
+  clientName: string;
+  orgName: string;
+  /** /r/g/<token> redirect URL — NOT the raw Google review URL. */
+  redirectUrl: string;
+  /** /u/g/<token> unsubscribe URL for this track only. */
+  unsubscribeUrl: string;
+  brandColor?: string;
+  logoUrl?: string;
+}) {
+  const subject = `Would you share your experience on Google? — ${args.orgName}`;
+  const html = layout(
+    `
+    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;letter-spacing:-0.02em;color:#18181b;line-height:1.3;">A quick favor?</h1>
+    <p style="margin:0 0 20px;font-size:14px;line-height:1.55;color:#52525b;">
+      Hi ${escapeHtml(args.clientName)} — thanks again for choosing
+      <strong style="color:#18181b;">${escapeHtml(args.orgName)}</strong>. If we did a good
+      job, the single best thing you could do for us is leave a quick
+      Google review. It helps neighbors find us and means more than you
+      know.
+    </p>
+    ${button("Leave a Google review", args.redirectUrl, args.brandColor ? `#${args.brandColor.replace(/^#/, "")}` : DEFAULT_BRAND)}
+    <p style="margin:0 0 16px;font-size:13px;line-height:1.55;color:#71717a;">
+      It only takes about 30 seconds.
+    </p>
+    <p style="margin:0;font-size:11px;line-height:1.5;color:#a1a1aa;">
+      Not interested in Google review emails?
+      <a href="${args.unsubscribeUrl}" style="color:#a1a1aa;text-decoration:underline;">Unsubscribe from this list only</a>
+      — you'll still get booking confirmations and receipts.
+    </p>
+    `,
+    {
+      brandColor: args.brandColor,
+      orgName: args.orgName,
+      logoUrl: args.logoUrl,
+      preheader: `Would you share your experience with ${args.orgName} on Google?`,
+    },
+  );
+  const text = `Hi ${args.clientName}, thanks for choosing ${args.orgName}. If we did a good job, would you share a quick Google review? It really helps.\n\nLeave a review: ${args.redirectUrl}\n\nUnsubscribe from Google review emails: ${args.unsubscribeUrl}`;
+  return { subject, html, text };
+}
+
+/**
+ * Gentler reminder email. Same shape, softer copy, sent every N days
+ * (org-configurable, default 30) until the customer clicks, opts out,
+ * or we hit the reminder cap.
+ */
+export function gbpReviewReminderEmail(args: {
+  clientName: string;
+  orgName: string;
+  redirectUrl: string;
+  unsubscribeUrl: string;
+  /** 1-indexed: 1 means first reminder, 2 means second, etc. Used in
+   *  the copy so a 4th reminder reads slightly differently from a 1st. */
+  reminderNumber: number;
+  brandColor?: string;
+  logoUrl?: string;
+}) {
+  const subject =
+    args.reminderNumber === 1
+      ? `One more thing — ${args.orgName}`
+      : `Friendly nudge — ${args.orgName}`;
+  const opening =
+    args.reminderNumber === 1
+      ? `Hi ${escapeHtml(args.clientName)} — we know you're busy, so this is the only nudge for a while. If you have a moment, a Google review really does help <strong style="color:#18181b;">${escapeHtml(args.orgName)}</strong> grow.`
+      : `Hi ${escapeHtml(args.clientName)} — quick reminder! A Google review from you would mean the world to <strong style="color:#18181b;">${escapeHtml(args.orgName)}</strong>. Takes 30 seconds.`;
+  const html = layout(
+    `
+    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;letter-spacing:-0.02em;color:#18181b;line-height:1.3;">Still up for it?</h1>
+    <p style="margin:0 0 20px;font-size:14px;line-height:1.55;color:#52525b;">${opening}</p>
+    ${button("Leave a Google review", args.redirectUrl, args.brandColor ? `#${args.brandColor.replace(/^#/, "")}` : DEFAULT_BRAND)}
+    <p style="margin:0;font-size:11px;line-height:1.5;color:#a1a1aa;">
+      Not the right time?
+      <a href="${args.unsubscribeUrl}" style="color:#a1a1aa;text-decoration:underline;">Unsubscribe from these emails only</a>
+      — you'll still get booking confirmations and receipts.
+    </p>
+    `,
+    {
+      brandColor: args.brandColor,
+      orgName: args.orgName,
+      logoUrl: args.logoUrl,
+      preheader: `A quick Google review would mean a lot to ${args.orgName}`,
+    },
+  );
+  const text = `Hi ${args.clientName}, a Google review for ${args.orgName} would really help.\n\nLeave one here: ${args.redirectUrl}\n\nUnsubscribe from these emails: ${args.unsubscribeUrl}`;
   return { subject, html, text };
 }
 

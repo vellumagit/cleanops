@@ -31,6 +31,12 @@ import {
 } from "@/lib/format";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { PortalInviteButton } from "./portal-invite-button";
+import {
+  markGbpReviewedAction,
+  optOutGbpAction,
+  resetGbpAction,
+  forceResendGbpAction,
+} from "../actions";
 
 export const metadata = { title: "Client" };
 
@@ -53,7 +59,7 @@ export default async function ClientDetailPage({
   ] = await Promise.all([
     supabase
       .from("clients")
-      .select("id, name, email, phone, address, notes, preferred_contact, balance_cents, created_at, profile_id, portal_invited_at, portal_accepted_at, portal_invite_expires_at, referred_by_client_id")
+      .select("id, name, email, phone, address, notes, preferred_contact, balance_cents, created_at, profile_id, portal_invited_at, portal_accepted_at, portal_invite_expires_at, referred_by_client_id, gbp_review_state, gbp_first_asked_at, gbp_last_asked_at, gbp_clicked_at, gbp_reminders_sent, gbp_unsubscribed_at")
       .eq("id", id)
       .maybeSingle() as unknown as Promise<{
       data: {
@@ -71,6 +77,12 @@ export default async function ClientDetailPage({
         portal_accepted_at: string | null;
         portal_invite_expires_at: string | null;
         referred_by_client_id: string | null;
+        gbp_review_state: string;
+        gbp_first_asked_at: string | null;
+        gbp_last_asked_at: string | null;
+        gbp_clicked_at: string | null;
+        gbp_reminders_sent: number;
+        gbp_unsubscribed_at: string | null;
       } | null;
       error: { message: string } | null;
     }>,
@@ -320,6 +332,23 @@ export default async function ClientDetailPage({
           })}
         </div>
 
+        {/* ── Google review status ──
+            One-row panel showing where this client sits in the Google-
+            review request flow. Owners can override the cron from here:
+            mark-as-reviewed (silences future asks), opt-out (customer
+            asked us to stop), reset (start the cycle over), or
+            force-resend (queue for tomorrow's cron). */}
+        <GbpReviewPanel
+          clientId={client.id}
+          state={client.gbp_review_state}
+          firstAskedAt={client.gbp_first_asked_at}
+          lastAskedAt={client.gbp_last_asked_at}
+          clickedAt={client.gbp_clicked_at}
+          remindersSent={client.gbp_reminders_sent}
+          unsubscribedAt={client.gbp_unsubscribed_at}
+          canEdit={["owner", "admin", "manager"].includes(membership.role)}
+        />
+
         <div className="grid gap-6 lg:grid-cols-2">
           {/* ── Bookings ── */}
           <Section
@@ -520,4 +549,172 @@ function Section({
       )}
     </div>
   );
+}
+
+/**
+ * Per-client Google review-request state + manual overrides.
+ *
+ * The state machine lives in the DB; this just visualizes it and
+ * exposes the override actions. Buttons render based on which
+ * transitions are sensible from the current state:
+ *
+ *   never_asked  →  no actions yet (cron will pick them up on first job)
+ *   pending      →  Mark reviewed | Stop asking | Force resend
+ *   clicked      →  (terminal — cron won't ask again) | Reset
+ *   reviewed     →  Reset
+ *   opted_out    →  Reset
+ *   lapsed       →  Reset
+ */
+function GbpReviewPanel({
+  clientId,
+  state,
+  firstAskedAt,
+  lastAskedAt,
+  clickedAt,
+  remindersSent,
+  unsubscribedAt,
+  canEdit,
+}: {
+  clientId: string;
+  state: string;
+  firstAskedAt: string | null;
+  lastAskedAt: string | null;
+  clickedAt: string | null;
+  remindersSent: number;
+  unsubscribedAt: string | null;
+  canEdit: boolean;
+}) {
+  const statusCopy = (() => {
+    switch (state) {
+      case "never_asked":
+        return {
+          label: "Not asked yet",
+          tone: "neutral" as const,
+          detail:
+            "Will be asked 24h after their first completed booking. No action needed.",
+        };
+      case "pending":
+        return {
+          label: "Asking",
+          tone: "amber" as const,
+          detail: `Asked ${formatRelative(firstAskedAt)}${
+            remindersSent > 0
+              ? `, ${remindersSent} reminder${remindersSent === 1 ? "" : "s"} sent`
+              : ""
+          }. Reminders continue until they click the link or hit the cap.`,
+        };
+      case "clicked":
+        return {
+          label: "Clicked ✓",
+          tone: "green" as const,
+          detail: `Clicked ${formatRelative(clickedAt)}. No more emails — we treat a click as done.`,
+        };
+      case "reviewed":
+        return {
+          label: "Reviewed ✓",
+          tone: "green" as const,
+          detail: "Marked as reviewed. No more emails.",
+        };
+      case "opted_out":
+        return {
+          label: "Opted out",
+          tone: "neutral" as const,
+          detail: `Customer unsubscribed${unsubscribedAt ? ` ${formatRelative(unsubscribedAt)}` : ""}. They still get other emails.`,
+        };
+      case "lapsed":
+        return {
+          label: "Stopped (no response)",
+          tone: "neutral" as const,
+          detail: `Hit the reminder cap after ${remindersSent} reminder${remindersSent === 1 ? "" : "s"} without a click. Click Reset to start over.`,
+        };
+      default:
+        return {
+          label: state,
+          tone: "neutral" as const,
+          detail: "Unknown state.",
+        };
+    }
+  })();
+
+  return (
+    <div className="rounded-lg border border-border bg-card p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <Star className="h-4 w-4 text-muted-foreground" />
+            <h3 className="text-sm font-semibold">Google review status</h3>
+            <StatusBadge tone={statusCopy.tone}>{statusCopy.label}</StatusBadge>
+          </div>
+          <p className="mt-1.5 text-xs text-muted-foreground">
+            {statusCopy.detail}
+          </p>
+          {state === "pending" && lastAskedAt && (
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
+              Last email sent {formatRelative(lastAskedAt)}.
+            </p>
+          )}
+        </div>
+        {canEdit && (
+          <div className="flex flex-wrap items-center gap-2">
+            {(state === "pending" || state === "never_asked") && (
+              <>
+                <form action={markGbpReviewedAction}>
+                  <input type="hidden" name="id" value={clientId} />
+                  <button
+                    type="submit"
+                    className="rounded-md border border-border bg-background px-2.5 py-1 text-xs hover:bg-muted"
+                  >
+                    Mark reviewed
+                  </button>
+                </form>
+                <form action={optOutGbpAction}>
+                  <input type="hidden" name="id" value={clientId} />
+                  <button
+                    type="submit"
+                    className="rounded-md border border-border bg-background px-2.5 py-1 text-xs hover:bg-muted"
+                  >
+                    Stop asking
+                  </button>
+                </form>
+                {state === "pending" && (
+                  <form action={forceResendGbpAction}>
+                    <input type="hidden" name="id" value={clientId} />
+                    <button
+                      type="submit"
+                      className="rounded-md border border-border bg-background px-2.5 py-1 text-xs hover:bg-muted"
+                    >
+                      Resend now
+                    </button>
+                  </form>
+                )}
+              </>
+            )}
+            {["clicked", "reviewed", "opted_out", "lapsed"].includes(state) && (
+              <form action={resetGbpAction}>
+                <input type="hidden" name="id" value={clientId} />
+                <button
+                  type="submit"
+                  className="rounded-md border border-border bg-background px-2.5 py-1 text-xs hover:bg-muted"
+                >
+                  Reset
+                </button>
+              </form>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function formatRelative(iso: string | null): string {
+  if (!iso) return "—";
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const days = Math.floor(diffMs / (24 * 60 * 60 * 1000));
+  if (days === 0) return "today";
+  if (days === 1) return "yesterday";
+  if (days < 7) return `${days} days ago`;
+  if (days < 30) return `${Math.floor(days / 7)} weeks ago`;
+  if (days < 365) return `${Math.floor(days / 30)} months ago`;
+  return `${Math.floor(days / 365)} year${Math.floor(days / 365) === 1 ? "" : "s"} ago`;
 }

@@ -1532,17 +1532,25 @@ export async function sendOverdueReminders(): Promise<{
 }
 
 // ─────────────────────────────────────────────────────────────────
-// 7c-2. Post-completion review request (daily cron, ~10:00 UTC)
+// 7c-2. Internal review request (HOURLY cron)
 //
-// 24+ hours after a booking is marked completed, emails the client a
-// review link (/review/<token>). After a ≥4 star submission the review
-// page shows a Google CTA using organizations.google_review_url.
+// Fires once per completed booking, ~2h after the job ends (org-
+// configurable via organizations.internal_review_delay_minutes,
+// default 120). Emails the client a Sollos-hosted review link
+// (/review/<token>) that captures a 1-5 star rating + comment scoped
+// to the employee who did the job. This is the per-job feedback loop
+// powering the dashboard rating, per-employee scores, and bonus rules.
+//
+// The Google review ask is a SEPARATE track — see
+// sendGbpReviewRequests() below. That one fires only on a client's
+// first job and is one-and-done with monthly reminders.
 //
 // Gated:
 //   1. Platform kill switch (CLIENT_EMAILS_PAUSED)
 //   2. Per-org toggle `review_request_after_completion`
-//   3. Dedup by bookings.review_request_sent_at (sent at most once per booking)
-//   4. Client must have an email address
+//   3. Per-org timing (internal_review_delay_minutes)
+//   4. Dedup by bookings.review_request_sent_at (sent at most once per booking)
+//   5. Client must have an email address
 // ─────────────────────────────────────────────────────────────────
 
 export async function sendBookingReviewRequests(): Promise<{
@@ -1562,33 +1570,53 @@ export async function sendBookingReviewRequests(): Promise<{
 
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
 
-  // Target: completed bookings where the job finished at least 20h ago,
-  // no review request sent yet, and the client has an email address.
-  // We use scheduled_at as the proxy for "job ended" — good enough since
-  // auto_complete_past_bookings runs daily and marks them completed shortly
-  // after the scheduled time. The generous window (20h+) means we catch
-  // jobs even when auto-complete ran late.
-  const cutoff = new Date(Date.now() - 20 * 60 * 60 * 1000).toISOString();
+  // Target: completed bookings where the job ended at least
+  // organizations.internal_review_delay_minutes ago (default 120 min /
+  // 2h per product decision), no review request sent yet, and the
+  // client has an email. The MAX window cap (72h) is a safety: if the
+  // cron was down for days, we don't suddenly blast a backlog of
+  // week-old jobs with "how did we do?" emails that feel stale.
+  //
+  // The org-level delay is enforced in the per-booking branch below
+  // (after we have the org's configured value) so we can honor each
+  // org's setting in a single batched query.
+  const earliestCutoff = new Date(
+    Date.now() - 72 * 60 * 60 * 1000,
+  ).toISOString();
+  const latestCutoff = new Date(
+    Date.now() - 30 * 60 * 1000, // at LEAST 30 min must have elapsed
+  ).toISOString();
 
   const { data: candidates } = await db
     .from("bookings")
     .select(`
-      id, organization_id, scheduled_at, service_type,
-      client:clients ( id, name, email )
+      id, organization_id, scheduled_at, service_type, duration_minutes, assigned_to,
+      client:clients ( id, name, email ),
+      assigned:memberships!bookings_assigned_to_fkey (
+        display_name,
+        profile:profiles ( full_name )
+      )
     `)
     .eq("status", "completed")
     .is("review_request_sent_at" as never, null as never)
-    .lte("scheduled_at", cutoff)
+    .gte("scheduled_at", earliestCutoff)
+    .lte("scheduled_at", latestCutoff)
     .limit(200) as unknown as {
     data: Array<{
       id: string;
       organization_id: string;
       scheduled_at: string;
       service_type: string;
+      duration_minutes: number;
+      assigned_to: string | null;
       client: {
         id: string;
         name: string | null;
         email: string | null;
+      } | null;
+      assigned: {
+        display_name: string | null;
+        profile: { full_name: string | null } | null;
       } | null;
     }> | null;
   };
@@ -1609,8 +1637,15 @@ export async function sendBookingReviewRequests(): Promise<{
       brand_color: string | null;
       logo_url: string | null;
       enabled: boolean;
+      /** Org-configured delay (minutes) after job end before the
+       *  internal review email is allowed to fire. We filter per-booking
+       *  rather than globally because different orgs may set different
+       *  values. */
+      internal_review_delay_minutes: number;
     } | null
   >();
+
+  const now = Date.now();
 
   for (const booking of candidates) {
     if (!booking.client?.email) {
@@ -1626,20 +1661,42 @@ export async function sendBookingReviewRequests(): Promise<{
       );
       const { data: orgData } = await db
         .from("organizations")
-        .select("name, brand_color, logo_url")
+        .select("name, brand_color, logo_url, internal_review_delay_minutes")
         .eq("id", booking.organization_id)
         .maybeSingle() as unknown as {
         data: {
           name: string;
           brand_color: string | null;
           logo_url: string | null;
+          internal_review_delay_minutes: number | null;
         } | null;
       };
-      cached = orgData ? { ...orgData, enabled } : null;
+      cached = orgData
+        ? {
+            name: orgData.name,
+            brand_color: orgData.brand_color,
+            logo_url: orgData.logo_url,
+            enabled,
+            internal_review_delay_minutes:
+              orgData.internal_review_delay_minutes ?? 120,
+          }
+        : null;
       orgCache.set(booking.organization_id, cached);
     }
 
     if (!cached?.enabled) {
+      skipped += 1;
+      continue;
+    }
+
+    // Honor the org's configured delay. The DB query already excluded
+    // jobs that ended < 30 min ago; this additional check makes sure
+    // an org set to 6h doesn't get an email at the 2h-default mark.
+    const jobEndedAt =
+      new Date(booking.scheduled_at).getTime() +
+      booking.duration_minutes * 60 * 1000;
+    const delayMs = cached.internal_review_delay_minutes * 60 * 1000;
+    if (now - jobEndedAt < delayMs) {
       skipped += 1;
       continue;
     }
@@ -1663,9 +1720,20 @@ export async function sendBookingReviewRequests(): Promise<{
       }
 
       const reviewUrl = `${siteUrl}/review/${reviewToken}`;
+      // Personalize with the cleaner's first name if we have one —
+      // "How was Sarah?" reliably beats "How did we do?" on engagement.
+      const employeeName = (() => {
+        const full =
+          booking.assigned?.profile?.full_name ??
+          booking.assigned?.display_name ??
+          null;
+        if (!full) return undefined;
+        return full.trim().split(/\s+/)[0]; // first name only
+      })();
       const template = reviewRequestEmail({
         clientName: booking.client.name ?? "there",
         orgName: cached.name,
+        employeeName,
         reviewUrl,
         brandColor: cached.brand_color ?? undefined,
         logoUrl: cached.logo_url ?? undefined,
@@ -1700,6 +1768,396 @@ export async function sendBookingReviewRequests(): Promise<{
   }
 
   return { considered, sent, skipped };
+}
+
+// ─────────────────────────────────────────────────────────────────
+// 7c-3. Google review request (DAILY cron)
+//
+// Two phases handled in one pass:
+//
+//   PHASE A — Initial ask
+//     Trigger: 24h after the client's FIRST completed booking
+//     Per-client (not per-booking). State moves never_asked → pending.
+//
+//   PHASE B — Monthly reminders
+//     Trigger: every `gbp_review_reminder_days` (default 30) while
+//     state = pending, capped at `gbp_review_max_reminders` total
+//     (default 5). Reminder counter increments each time. When the
+//     cap is hit, state flips to lapsed and the client never receives
+//     another reminder unless the owner manually re-enables.
+//
+// Stop signals (any of these means we never email again):
+//   - Customer clicked the /r/g/<token> link → state = clicked
+//   - Customer clicked /u/g/<token> unsubscribe → state = opted_out
+//   - Owner manually marked reviewed → state = reviewed
+//   - Reminder cap hit → state = lapsed
+//
+// Gated:
+//   1. Platform kill switch (CLIENT_EMAILS_PAUSED)
+//   2. Per-org toggle `gbp_review_request`
+//   3. Org must have google_review_url configured
+//   4. Client must have an email
+//   5. State machine (never_asked or pending only)
+// ─────────────────────────────────────────────────────────────────
+
+export async function sendGbpReviewRequests(): Promise<{
+  considered: number;
+  initialSent: number;
+  remindersSent: number;
+  lapsed: number;
+  skipped: number;
+}> {
+  const db = admin();
+  const { sendOrgEmail, isClientEmailPaused } = await import("@/lib/email");
+  const { gbpReviewRequestEmail, gbpReviewReminderEmail } = await import(
+    "@/lib/email-templates"
+  );
+  const { generateClaimToken } = await import("@/lib/claim-token");
+
+  if (isClientEmailPaused()) {
+    console.log("[auto] sendGbpReviewRequests: CLIENT_EMAILS_PAUSED — skipping");
+    return {
+      considered: 0,
+      initialSent: 0,
+      remindersSent: 0,
+      lapsed: 0,
+      skipped: 0,
+    };
+  }
+
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+  const nowIso = new Date().toISOString();
+  const now = Date.now();
+
+  let initialSent = 0;
+  let remindersSent = 0;
+  let lapsed = 0;
+  let skipped = 0;
+
+  // -----------------------------------------------------------------
+  // PHASE A: Initial asks
+  // -----------------------------------------------------------------
+  // A client qualifies for the initial ask when:
+  //   - gbp_review_state = 'never_asked'
+  //   - has email
+  //   - has a completed booking that ended >= 24h ago and <= 14d ago
+  //     (14d ceiling avoids dredging up ancient first-jobs after the
+  //     feature is enabled for the first time — we don't want to spam
+  //     existing customers from 6 months ago)
+  //   - org has gbp_review_request automation enabled
+  //   - org has google_review_url set
+  const earliestFirstJob = new Date(
+    now - 14 * 24 * 60 * 60 * 1000,
+  ).toISOString();
+  const latestFirstJob = new Date(now - 24 * 60 * 60 * 1000).toISOString();
+
+  // Pull qualifying candidate (client, oldest-completed-booking) pairs.
+  // We use a bookings query because we need the triggering booking id.
+  const { data: initialCandidates } = (await db
+    .from("bookings")
+    .select(
+      `
+      id, organization_id, scheduled_at, duration_minutes,
+      client:clients!inner ( id, name, email, gbp_review_state, gbp_redirect_token, gbp_unsubscribe_token )
+    `,
+    )
+    .eq("status", "completed")
+    .gte("scheduled_at", earliestFirstJob)
+    .lte("scheduled_at", latestFirstJob)
+    .eq("client.gbp_review_state" as never, "never_asked" as never)
+    .not("client.email" as never, "is" as never, null as never)
+    .limit(500)) as unknown as {
+    data: Array<{
+      id: string;
+      organization_id: string;
+      scheduled_at: string;
+      duration_minutes: number;
+      client: {
+        id: string;
+        name: string | null;
+        email: string | null;
+        gbp_review_state: string;
+        gbp_redirect_token: string | null;
+        gbp_unsubscribe_token: string | null;
+      } | null;
+    }> | null;
+  };
+
+  // Dedup to one booking per client — earliest scheduled_at wins,
+  // matching "their FIRST completed job" intent. PostgREST gave us
+  // rows ordered arbitrarily; sort here.
+  const byClient = new Map<
+    string,
+    NonNullable<typeof initialCandidates>[number]
+  >();
+  for (const row of initialCandidates ?? []) {
+    if (!row.client) continue;
+    const existing = byClient.get(row.client.id);
+    if (
+      !existing ||
+      new Date(row.scheduled_at).getTime() <
+        new Date(existing.scheduled_at).getTime()
+    ) {
+      byClient.set(row.client.id, row);
+    }
+  }
+
+  const considered = byClient.size;
+  const orgCache = await buildOrgGbpCache(
+    db,
+    Array.from(new Set(Array.from(byClient.values()).map((r) => r.organization_id))),
+  );
+
+  for (const row of byClient.values()) {
+    const client = row.client!;
+    const org = orgCache.get(row.organization_id);
+    if (!org || !org.enabled || !org.google_review_url) {
+      skipped += 1;
+      continue;
+    }
+
+    try {
+      // Mint tokens lazily — most clients will never reach this point,
+      // so we don't pre-allocate for everyone.
+      const redirectToken =
+        client.gbp_redirect_token ?? (await generateClaimToken(24));
+      const unsubToken =
+        client.gbp_unsubscribe_token ?? (await generateClaimToken(24));
+
+      const nextReminderAt = new Date(
+        now + org.reminder_days * 24 * 60 * 60 * 1000,
+      ).toISOString();
+
+      // Stamp state atomically. If two cron runs happened to race on
+      // the same client we still only send once because the WHERE
+      // clause requires state = never_asked.
+      const { error: stampErr } = (await db
+        .from("clients")
+        .update({
+          gbp_review_state: "pending",
+          gbp_first_asked_at: nowIso,
+          gbp_last_asked_at: nowIso,
+          gbp_next_reminder_at: nextReminderAt,
+          gbp_redirect_token: redirectToken,
+          gbp_unsubscribe_token: unsubToken,
+          gbp_first_triggering_booking_id: row.id,
+        } as never)
+        .eq("id", client.id)
+        .eq("gbp_review_state" as never, "never_asked" as never)) as unknown as {
+        error: { message: string } | null;
+      };
+      if (stampErr) {
+        skipped += 1;
+        continue;
+      }
+
+      const template = gbpReviewRequestEmail({
+        clientName: client.name ?? "there",
+        orgName: org.name,
+        redirectUrl: `${siteUrl}/r/g/${redirectToken}`,
+        unsubscribeUrl: `${siteUrl}/u/g/${unsubToken}`,
+        brandColor: org.brand_color ?? undefined,
+        logoUrl: org.logo_url ?? undefined,
+      });
+
+      const ok = await sendOrgEmail(row.organization_id, {
+        to: client.email!,
+        toName: client.name ?? undefined,
+        ...template,
+      });
+
+      if (ok) {
+        initialSent += 1;
+      } else {
+        // Roll back state so the next cron run retries.
+        await db
+          .from("clients")
+          .update({
+            gbp_review_state: "never_asked",
+            gbp_first_asked_at: null,
+            gbp_last_asked_at: null,
+            gbp_next_reminder_at: null,
+            gbp_first_triggering_booking_id: null,
+          } as never)
+          .eq("id", client.id);
+        skipped += 1;
+      }
+    } catch (err) {
+      console.error(
+        "[auto] sendGbpReviewRequests initial error:",
+        client.id,
+        err,
+      );
+      skipped += 1;
+    }
+  }
+
+  // -----------------------------------------------------------------
+  // PHASE B: Reminders
+  // -----------------------------------------------------------------
+  // Pending clients whose next_reminder_at is <= now.
+  const { data: reminderCandidates } = (await db
+    .from("clients")
+    .select(
+      "id, organization_id, name, email, gbp_reminders_sent, gbp_redirect_token, gbp_unsubscribe_token",
+    )
+    .eq("gbp_review_state" as never, "pending" as never)
+    .lte("gbp_next_reminder_at" as never, nowIso as never)
+    .not("email" as never, "is" as never, null as never)
+    .limit(500)) as unknown as {
+    data: Array<{
+      id: string;
+      organization_id: string;
+      name: string | null;
+      email: string | null;
+      gbp_reminders_sent: number;
+      gbp_redirect_token: string | null;
+      gbp_unsubscribe_token: string | null;
+    }> | null;
+  };
+
+  // Expand the org cache for any orgs we haven't loaded yet (reminder
+  // batch may include orgs that had no initial-ask candidates today).
+  await expandOrgGbpCache(
+    db,
+    orgCache,
+    (reminderCandidates ?? []).map((c) => c.organization_id),
+  );
+
+  for (const c of reminderCandidates ?? []) {
+    const org = orgCache.get(c.organization_id);
+    if (!org || !org.enabled || !org.google_review_url) {
+      skipped += 1;
+      continue;
+    }
+    if (!c.email || !c.gbp_redirect_token || !c.gbp_unsubscribe_token) {
+      // Should not happen for state=pending — tokens are minted at
+      // initial-ask time — but be defensive against partial rows.
+      skipped += 1;
+      continue;
+    }
+
+    // Check the cap. Reminders already sent + this one > max means lapse.
+    const nextCount = c.gbp_reminders_sent + 1;
+    if (nextCount > org.max_reminders) {
+      await db
+        .from("clients")
+        .update({
+          gbp_review_state: "lapsed",
+          gbp_next_reminder_at: null,
+        } as never)
+        .eq("id", c.id);
+      lapsed += 1;
+      continue;
+    }
+
+    try {
+      const template = gbpReviewReminderEmail({
+        clientName: c.name ?? "there",
+        orgName: org.name,
+        redirectUrl: `${siteUrl}/r/g/${c.gbp_redirect_token}`,
+        unsubscribeUrl: `${siteUrl}/u/g/${c.gbp_unsubscribe_token}`,
+        reminderNumber: nextCount,
+        brandColor: org.brand_color ?? undefined,
+        logoUrl: org.logo_url ?? undefined,
+      });
+
+      const ok = await sendOrgEmail(c.organization_id, {
+        to: c.email,
+        toName: c.name ?? undefined,
+        ...template,
+      });
+
+      if (ok) {
+        // Increment + schedule next reminder. If this WAS the cap-th
+        // reminder, the NEXT cycle will catch it and lapse it — we
+        // don't pre-lapse here so the customer still gets the email
+        // we just sent.
+        const nextReminderAt = new Date(
+          now + org.reminder_days * 24 * 60 * 60 * 1000,
+        ).toISOString();
+        await db
+          .from("clients")
+          .update({
+            gbp_reminders_sent: nextCount,
+            gbp_last_asked_at: nowIso,
+            gbp_next_reminder_at: nextReminderAt,
+          } as never)
+          .eq("id", c.id);
+        remindersSent += 1;
+      } else {
+        // Send failed — leave state as-is so the next cron retries.
+        skipped += 1;
+      }
+    } catch (err) {
+      console.error(
+        "[auto] sendGbpReviewRequests reminder error:",
+        c.id,
+        err,
+      );
+      skipped += 1;
+    }
+  }
+
+  return { considered, initialSent, remindersSent, lapsed, skipped };
+}
+
+type OrgGbpCacheEntry = {
+  name: string;
+  brand_color: string | null;
+  logo_url: string | null;
+  google_review_url: string | null;
+  enabled: boolean;
+  reminder_days: number;
+  max_reminders: number;
+};
+
+async function buildOrgGbpCache(
+  db: ReturnType<typeof admin>,
+  orgIds: string[],
+): Promise<Map<string, OrgGbpCacheEntry>> {
+  const cache = new Map<string, OrgGbpCacheEntry>();
+  await expandOrgGbpCache(db, cache, orgIds);
+  return cache;
+}
+
+async function expandOrgGbpCache(
+  db: ReturnType<typeof admin>,
+  cache: Map<string, OrgGbpCacheEntry>,
+  orgIds: string[],
+): Promise<void> {
+  const missing = Array.from(new Set(orgIds)).filter((id) => !cache.has(id));
+  if (missing.length === 0) return;
+
+  const { data } = (await db
+    .from("organizations")
+    .select(
+      "id, name, brand_color, logo_url, google_review_url, gbp_review_reminder_days, gbp_review_max_reminders",
+    )
+    .in("id", missing)) as unknown as {
+    data: Array<{
+      id: string;
+      name: string;
+      brand_color: string | null;
+      logo_url: string | null;
+      google_review_url: string | null;
+      gbp_review_reminder_days: number | null;
+      gbp_review_max_reminders: number | null;
+    }> | null;
+  };
+
+  for (const o of data ?? []) {
+    const enabled = await isAutomationEnabled(o.id, "gbp_review_request");
+    cache.set(o.id, {
+      name: o.name,
+      brand_color: o.brand_color,
+      logo_url: o.logo_url,
+      google_review_url: o.google_review_url,
+      enabled,
+      reminder_days: o.gbp_review_reminder_days ?? 30,
+      max_reminders: o.gbp_review_max_reminders ?? 5,
+    });
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────

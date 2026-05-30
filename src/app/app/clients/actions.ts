@@ -87,6 +87,12 @@ export async function createClientAction(
 
   // Checkbox sends "on" when checked, nothing when unchecked.
   const smsOptedIn = formData.get("sms_opted_in") === "on";
+  // "I've already reviewed this business" checkbox — pre-marks the
+  // client so the Google review cron never asks them. Audit marker
+  // (gbp_marked_reviewed_at_creation) preserves the distinction
+  // between "owner said this at creation" and "owner clicked
+  // 'mark reviewed' later".
+  const gbpAlreadyReviewed = formData.get("gbp_already_reviewed") === "on";
 
   const { data: inserted, error } = (await supabase
     .from("clients")
@@ -104,6 +110,12 @@ export async function createClientAction(
       billing_type: parsed.data.billing_type,
       flat_rate_cents: parsed.data.flat_rate_cents ?? null,
       referred_by_client_id: parsed.data.referred_by_client_id ?? null,
+      ...(gbpAlreadyReviewed
+        ? {
+            gbp_review_state: "reviewed",
+            gbp_marked_reviewed_at_creation: true,
+          }
+        : {}),
     } as never)
     .select("id")
     .single()) as unknown as {
@@ -263,4 +275,95 @@ export async function deleteClientAction(formData: FormData) {
   revalidatePath("/app/clients");
   revalidatePath("/app");
   redirect("/app/clients");
+}
+
+// ---------------------------------------------------------------------------
+// Google review state — manual overrides (owner / admin / manager)
+// ---------------------------------------------------------------------------
+//
+// These run from the client detail page when the owner wants to nudge,
+// silence, or reset the GBP review cron's behavior for a specific
+// customer. Each is idempotent — clicking twice on the same button
+// produces the same end state.
+
+type GbpAction = "mark_reviewed" | "opt_out" | "reset" | "force_resend";
+
+async function setGbpState(id: string, action: GbpAction): Promise<void> {
+  const { membership, supabase } = await getActionContext();
+  if (!["owner", "admin", "manager"].includes(membership.role)) return;
+
+  // Patch differs per action — gathered up here so the WHERE clauses
+  // below stay readable. All paths also reset the reminder cycle so
+  // re-enabling a lapsed customer feels like a fresh start.
+  const nowIso = new Date().toISOString();
+  let patch: Record<string, unknown> = {};
+  switch (action) {
+    case "mark_reviewed":
+      patch = { gbp_review_state: "reviewed", gbp_next_reminder_at: null };
+      break;
+    case "opt_out":
+      patch = {
+        gbp_review_state: "opted_out",
+        gbp_unsubscribed_at: nowIso,
+        gbp_next_reminder_at: null,
+      };
+      break;
+    case "reset":
+      // Wipe state back to never_asked. Use case: owner archived,
+      // restored, wants the cron to ask from scratch. Reminder counter
+      // resets so the cap is honored from the new "first ask".
+      patch = {
+        gbp_review_state: "never_asked",
+        gbp_first_asked_at: null,
+        gbp_last_asked_at: null,
+        gbp_next_reminder_at: null,
+        gbp_reminders_sent: 0,
+      };
+      break;
+    case "force_resend":
+      // Pretend the last reminder went out long enough ago that the
+      // next cron run will pick this client up — schedules an
+      // immediate retry on the daily cron.
+      patch = {
+        gbp_review_state: "pending",
+        gbp_next_reminder_at: nowIso,
+      };
+      break;
+  }
+
+  await (supabase
+    .from("clients")
+    .update(patch as never)
+    .eq("id", id)
+    .eq("organization_id" as never, membership.organization_id as never));
+
+  await logAuditEvent({
+    membership,
+    action: action === "mark_reviewed" ? "update" : "update",
+    entity: "client",
+    entity_id: id,
+    after: { gbp_action: action },
+  });
+
+  revalidatePath(`/app/clients/${id}`);
+}
+
+export async function markGbpReviewedAction(formData: FormData) {
+  const id = String(formData.get("id") ?? "");
+  if (id) await setGbpState(id, "mark_reviewed");
+}
+
+export async function optOutGbpAction(formData: FormData) {
+  const id = String(formData.get("id") ?? "");
+  if (id) await setGbpState(id, "opt_out");
+}
+
+export async function resetGbpAction(formData: FormData) {
+  const id = String(formData.get("id") ?? "");
+  if (id) await setGbpState(id, "reset");
+}
+
+export async function forceResendGbpAction(formData: FormData) {
+  const id = String(formData.get("id") ?? "");
+  if (id) await setGbpState(id, "force_resend");
 }
