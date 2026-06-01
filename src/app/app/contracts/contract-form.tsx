@@ -266,7 +266,10 @@ export function ContractForm({
         >
           Cancel
         </Link>
-        <SubmitButton pendingLabel="Saving…">
+        <SubmitButton
+          pendingLabel="Saving…"
+          disabled={services.length === 0}
+        >
           {mode === "create" ? "Create contract" : "Save changes"}
         </SubmitButton>
       </div>

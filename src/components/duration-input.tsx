@@ -14,10 +14,17 @@ export function DurationInput({
   name,
   defaultMinutes = 0,
   required = false,
+  onUserInput,
 }: {
   name: string;
   defaultMinutes?: number;
   required?: boolean;
+  /** Fires once per keystroke when the user types in either field.
+   *  Lets the parent track "user has interacted" so programmatic
+   *  prefill (e.g. picking a service after typing a duration) can
+   *  avoid clobbering the user's value. Not fired on the initial
+   *  mount or on a key-driven remount. */
+  onUserInput?: () => void;
 }) {
   const [hours, setHours] = useState<string>(
     defaultMinutes > 0 ? String(Math.floor(defaultMinutes / 60)) : "",
@@ -50,7 +57,10 @@ export function DurationInput({
           step={1}
           inputMode="numeric"
           value={hours}
-          onChange={(e) => setHours(e.target.value)}
+          onChange={(e) => {
+            setHours(e.target.value);
+            onUserInput?.();
+          }}
           className="w-20"
           placeholder="0"
           aria-label="Hours"
@@ -66,7 +76,10 @@ export function DurationInput({
           step={5}
           inputMode="numeric"
           value={minutes}
-          onChange={(e) => setMinutes(e.target.value)}
+          onChange={(e) => {
+            setMinutes(e.target.value);
+            onUserInput?.();
+          }}
           onBlur={normalize}
           className="w-20"
           placeholder="0"

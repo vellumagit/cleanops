@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useActionState, useEffect } from "react";
+import { useState, useActionState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { Repeat, CalendarPlus, SplitSquareVertical, Plus, Trash2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -381,6 +381,13 @@ export function BookingForm({
   // kicked when the user picks a package AND duration is still empty.
   const [durationSeed, setDurationSeed] = useState<number>(defaultMinutes);
   const [durationKey, setDurationKey] = useState<number>(0);
+  // Tracks whether the user has typed in the duration input themselves.
+  // DurationInput is uncontrolled so the parent doesn't see its value;
+  // we set this ref via the onUserInput callback. The package + service
+  // prefill paths gate on this so they don't silently overwrite what
+  // the user just typed. Reset to false when we deliberately remount
+  // DurationInput via durationKey.
+  const durationTouched = useRef<boolean>(false);
 
   /**
    * Pre-fill rule: only set the target field if it's currently empty.
@@ -413,9 +420,15 @@ export function BookingForm({
     if (!totalValue && p.price_cents > 0) {
       setTotalValue((p.price_cents / 100).toFixed(2));
     }
-    // Duration only swaps in when DurationInput hasn't been touched
-    // yet (durationSeed still matches its original default).
-    if (durationSeed === 0 && p.duration_minutes > 0) {
+    // Duration only swaps in when the user hasn't typed anything yet
+    // AND the seed is still the original blank value. The touched
+    // ref catches user-typed values (DurationInput is uncontrolled so
+    // the seed wouldn't otherwise reflect them).
+    if (
+      !durationTouched.current &&
+      durationSeed === 0 &&
+      p.duration_minutes > 0
+    ) {
       setDurationSeed(p.duration_minutes);
       setDurationKey((k) => k + 1);
     }
@@ -447,6 +460,7 @@ export function BookingForm({
       setTotalValue((s.default_price_cents / 100).toFixed(2));
     }
     if (
+      !durationTouched.current &&
       durationSeed === 0 &&
       s.default_duration_minutes !== null &&
       s.default_duration_minutes > 0
@@ -455,6 +469,22 @@ export function BookingForm({
       setDurationKey((k) => k + 1);
     }
   }
+
+  // Fire the service prefill once on mount in CREATE mode. The form
+  // already pre-selects a service via pickInitialServiceId() but its
+  // defaults (duration + price) don't propagate to Total / Duration
+  // until the user re-picks the same option. This effect closes that
+  // gap. Edit mode is intentionally skipped — defaults already populate
+  // the fields and a programmatic prefill would clobber them.
+  useEffect(() => {
+    if (mode === "create" && serviceTypeId) {
+      handleServiceChange(serviceTypeId);
+    }
+    // Intentionally fire once on mount only. handleServiceChange has
+    // its own only-if-blank gates so re-running it isn't dangerous,
+    // but we want one-shot semantics here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const isEditingSeries = mode === "edit" && !!defaults?.series_id;
 
@@ -481,6 +511,9 @@ export function BookingForm({
         name="duration_minutes"
         defaultMinutes={durationSeed}
         required
+        onUserInput={() => {
+          durationTouched.current = true;
+        }}
       />
     </FormField>
   );
@@ -1464,7 +1497,10 @@ export function BookingForm({
             Cancel
           </Link>
         )}
-        <SubmitButton pendingLabel={isRecurring ? "Creating…" : "Saving…"}>
+        <SubmitButton
+          pendingLabel={isRecurring ? "Creating…" : "Saving…"}
+          disabled={services.length === 0}
+        >
           {mode === "create"
             ? isRecurring
               ? "Create recurring booking"

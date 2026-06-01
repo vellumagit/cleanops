@@ -18,6 +18,9 @@ type Props = {
   value?: string;
   /** Optionally override the form action (e.g. for delete buttons). */
   formAction?: string;
+  /** Force-disable independent of pending state — use when the form's
+   *  required preconditions aren't met (e.g. empty service catalog). */
+  disabled?: boolean;
 };
 
 /**
@@ -34,6 +37,7 @@ export function SubmitButton({
   name,
   value,
   formAction,
+  disabled,
 }: Props) {
   const { pending } = useFormStatus();
   return (
@@ -41,7 +45,7 @@ export function SubmitButton({
       type="submit"
       variant={variant}
       size={size}
-      disabled={pending}
+      disabled={pending || disabled}
       name={name}
       value={value}
       formAction={formAction}
