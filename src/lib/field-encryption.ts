@@ -46,7 +46,22 @@
 import "server-only";
 import { encryptSecret, decryptSecret } from "@/lib/crypto";
 
-const CIPHERTEXT_PREFIX = "v1:";
+/**
+ * Structural check for the v1 wire format: `v1:<iv>:<tag>:<ct>` where
+ * each segment is non-empty base64. Used to distinguish ciphertext
+ * from legacy plaintext that happens to start with "v1:".
+ *
+ * The naive prefix check (startsWith("v1:")) would treat a user-
+ * entered "v1: see invoice for details" as ciphertext and try to
+ * decrypt it on read. With the structural check it's correctly
+ * detected as plaintext and passed through.
+ *
+ * We accept both standard base64 (A-Z a-z 0-9 + / =) and URL-safe
+ * base64 (A-Z a-z 0-9 - _) so future encrypt() implementations that
+ * switch alphabets don't break detection.
+ */
+const CIPHERTEXT_PATTERN =
+  /^v1:[A-Za-z0-9+/=_-]+:[A-Za-z0-9+/=_-]+:[A-Za-z0-9+/=_-]+$/;
 
 /**
  * Encrypt a string for storage. Returns null for null/empty so callers
@@ -92,9 +107,13 @@ export function maybeDecryptField(
   }
 }
 
-/** Cheap prefix check — does this look like our v1 GCM wire format? */
+/**
+ * Structural check for our v1 GCM wire format. A literal "v1:..."
+ * substring in user-entered text won't fool this; only a value with
+ * the full `v1:<iv>:<tag>:<ct>` shape matches. See CIPHERTEXT_PATTERN.
+ */
 export function isFieldEncrypted(value: string): boolean {
-  return value.startsWith(CIPHERTEXT_PREFIX);
+  return CIPHERTEXT_PATTERN.test(value);
 }
 
 /**
