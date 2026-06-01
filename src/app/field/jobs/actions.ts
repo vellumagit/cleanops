@@ -35,6 +35,20 @@ export async function startJobAction(
     .maybeSingle();
   if (fetchError) return { ok: false, error: fetchError.message };
   if (!booking) return { ok: false, error: "Job not found" };
+
+  // Refuse clock-in on a cancelled booking. A cleaner could be
+  // holding a bookmarked /field/jobs/[id] for a job that got
+  // cancelled while the page was open. Without this check, tapping
+  // "Clock in" would create a time entry against the dead booking
+  // and feed payroll for work that never happened.
+  if (booking.status === "cancelled") {
+    return {
+      ok: false,
+      error:
+        "This job was cancelled. Talk to your manager if you think this is a mistake.",
+    };
+  }
+
   if (booking.assigned_to !== membership.id) {
     // Multi-crew: allow any assignee via booking_assignees junction.
     const { data: crewRow } = (await supabase

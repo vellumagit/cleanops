@@ -884,10 +884,14 @@ export async function updateBookingAction(
   const orgTz = await getOrgTimezone(membership.organization_id);
   parsed.data.scheduled_at = localInputToUtcIso(raw.scheduled_at, orgTz);
 
-  // Fetch the existing booking to detect assignee + scheduled_at + status changes
+  // Fetch the existing booking to detect assignee + scheduled_at + status changes.
+  // service_type is pulled too so the "this and future" schedule-change
+  // path can carry the original enum forward onto regenerated rows —
+  // without it, the regenerate path silently rewrites the enum and
+  // bypasses the immutability rule the field-only edit path enforces.
   const { data: existing } = (await supabase
     .from("bookings")
-    .select("google_calendar_event_id, assigned_to, scheduled_at, status")
+    .select("google_calendar_event_id, assigned_to, scheduled_at, status, service_type")
     .eq("id", id)
     .maybeSingle()) as unknown as {
     data: {
@@ -895,6 +899,7 @@ export async function updateBookingAction(
       assigned_to: string | null;
       scheduled_at: string | null;
       status: string | null;
+      service_type: string | null;
     } | null;
   };
 
@@ -1178,6 +1183,15 @@ export async function updateBookingAction(
         );
 
         if (occurrences.length > 0) {
+          // Carry the EXISTING booking's service_type enum onto the
+          // regenerated siblings — never the form-posted value.
+          // service_type immutability: the form drops it from the
+          // field-only edit path, so the schedule-change path must do
+          // the same here. Without this, an admin who changes both
+          // schedule + service in one save silently rewrites the enum
+          // on every regenerated row in the series.
+          const seriesServiceTypeEnum =
+            existing?.service_type ?? parsed.data.service_type;
           const bookingRows = occurrences.map((scheduled_at) => ({
             organization_id: membership.organization_id,
             client_id: parsed.data.client_id,
@@ -1186,7 +1200,9 @@ export async function updateBookingAction(
             assigned_to: updateEffectiveAssignedTo,
             scheduled_at,
             duration_minutes: parsed.data.duration_minutes,
-            service_type: parsed.data.service_type,
+            service_type: seriesServiceTypeEnum,
+            service_type_id: updateServiceExtras.service_type_id,
+            service_type_label: updateServiceExtras.service_type_label,
             status: "confirmed" as const,
             total_cents: parsed.data.total_cents,
             hourly_rate_cents: parsed.data.hourly_rate_cents ?? null,

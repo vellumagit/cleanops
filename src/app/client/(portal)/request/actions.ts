@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { requireClient } from "@/lib/client-auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { sendOrgEmail, isClientEmailPaused, isEmailConfigured } from "@/lib/email";
+import { detectCardNumber, CARD_DETECTED_MESSAGE } from "@/lib/card-detection";
 
 export type RequestBookingState = {
   error?: string;
@@ -38,6 +39,22 @@ export async function submitBookingRequestAction(
 
   if (!serviceType) {
     return { error: "Please describe what you need cleaned." };
+  }
+
+  // PCI guard: Luhn-validated card number detection on every free-text
+  // field. The other write paths (bookings, clients, invoices, etc.)
+  // all run the same check via the noCardNumber Zod validator —
+  // booking_requests fell through the cracks because it doesn't go
+  // through a Zod schema. Without this, a client pasting their card
+  // into the Notes / Address field would store it plaintext.
+  for (const [label, value] of [
+    ["service description", serviceType],
+    ["address", address],
+    ["notes", notes],
+  ] as const) {
+    if (value && detectCardNumber(value)) {
+      return { error: `${CARD_DETECTED_MESSAGE} (in ${label})` };
+    }
   }
 
   // Time window is constrained on the DB side, but validate here too

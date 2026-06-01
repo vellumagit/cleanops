@@ -23,6 +23,7 @@
 
 import { redirect } from "next/navigation";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
 
 export const runtime = "nodejs";
 
@@ -36,6 +37,18 @@ export async function GET(
       status: 404,
       headers: { "content-type": "text/html; charset=utf-8" },
     });
+  }
+
+  // Rate-limit by IP. Without this, an attacker iterating
+  // gbp_redirect_token guesses could silently flip every customer's
+  // gbp_clicked_at across the customer base — same defense every
+  // other public token route applies.
+  const rl = await checkIpRateLimit("gbp-redirect", 30, 60_000);
+  if (!rl.allowed) {
+    return new Response(
+      `<!doctype html><meta charset="utf-8"><title>Too many requests</title><body style="font-family:system-ui;padding:40px;text-align:center"><p>Too many requests. Try again shortly.</p></body>`,
+      { status: 429, headers: { "content-type": "text/html; charset=utf-8" } },
+    );
   }
 
   const admin = createSupabaseAdminClient();

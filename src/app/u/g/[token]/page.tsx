@@ -14,6 +14,8 @@
  */
 
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
+import { RateLimitedPage } from "@/components/rate-limited-page";
 
 export const metadata = { title: "Unsubscribed" };
 
@@ -23,6 +25,14 @@ export default async function GbpUnsubscribePage({
   params: Promise<{ token: string }>;
 }) {
   const { token } = await params;
+
+  // Rate-limit by IP. Without this, an attacker iterating
+  // gbp_unsubscribe_token guesses could silently opt out every
+  // customer in the system.
+  const rl = await checkIpRateLimit("gbp-unsubscribe", 30, 60_000);
+  if (!rl.allowed) {
+    return <RateLimitedPage retryAfterSeconds={rl.retryAfterSeconds} />;
+  }
 
   let orgName: string | null = null;
   let success = false;
