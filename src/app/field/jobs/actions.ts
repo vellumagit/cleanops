@@ -82,6 +82,20 @@ export async function startJobAction(
     .limit(1)
     .maybeSingle();
 
+  // Snapshot the employee's current pay rate for the new time entry
+  // (only needed when we're about to insert one). Read paths prefer
+  // this snapshot so historical hours don't retroactively re-price if
+  // the employee's rate changes later. Fetched once up-front so both
+  // insert branches use the same value.
+  const { data: rateRow } = (await supabase
+    .from("memberships")
+    .select("pay_rate_cents")
+    .eq("id", membership.id)
+    .maybeSingle()) as unknown as {
+    data: { pay_rate_cents: number | null } | null;
+  };
+  const payRateSnapshot = rateRow?.pay_rate_cents ?? null;
+
   if (anyOpenEntry) {
     if ((anyOpenEntry as { booking_id: string | null }).booking_id === bookingId) {
       // Already clocked in on this exact job — idempotent, nothing to do.
@@ -106,7 +120,8 @@ export async function startJobAction(
         clock_in_at: new Date().toISOString(),
         clock_in_lat: lat,
         clock_in_lng: lng,
-      });
+        pay_rate_cents_snapshot: payRateSnapshot,
+      } as never);
       if (insertError) {
         const code = (insertError as { code?: string }).code;
         if (code === "23505") {
@@ -124,7 +139,8 @@ export async function startJobAction(
       clock_in_at: new Date().toISOString(),
       clock_in_lat: lat,
       clock_in_lng: lng,
-    });
+      pay_rate_cents_snapshot: payRateSnapshot,
+    } as never);
     if (insertError) {
       const code = (insertError as { code?: string }).code;
       if (code === "23505") {

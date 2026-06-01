@@ -65,6 +65,7 @@ export default async function TimesheetsPage({
           notes,
           employee_id,
           created_manually,
+          pay_rate_cents_snapshot,
           employee:memberships!time_entries_employee_id_fkey (
             id,
             pay_rate_cents,
@@ -86,7 +87,34 @@ export default async function TimesheetsPage({
         .gte("clock_in_at", fromIso)
         .lte("clock_in_at", toIso)
         .order("clock_in_at", { ascending: false })
-        .limit(1000),
+        .limit(1000) as unknown as Promise<{
+        data: Array<{
+          id: string;
+          clock_in_at: string;
+          clock_out_at: string | null;
+          notes: string | null;
+          employee_id: string;
+          created_manually: boolean | null;
+          pay_rate_cents_snapshot: number | null;
+          employee: {
+            id: string;
+            pay_rate_cents: number | null;
+            display_name: string | null;
+            profile: { full_name: string | null } | null;
+          } | null;
+          booking: {
+            id: string;
+            scheduled_at: string;
+            duration_minutes: number;
+            service_type: string;
+            total_cents: number;
+            hourly_rate_cents: number | null;
+            status: string;
+            client: { name: string | null } | null;
+          } | null;
+        }> | null;
+        error: { message: string } | null;
+      }>,
       // Previously filtered to employees/managers only. Owners often work
       // shifts themselves (and shadow-added members never have a linked
       // profile), so we pull every active membership and let the UI
@@ -191,10 +219,22 @@ export default async function TimesheetsPage({
       }
     }
 
-    // Pay calculation
+    // Pay calculation. Precedence (first non-null wins):
+    //   1. booking.hourly_rate_cents — owner-set per-booking override
+    //   2. time_entries.pay_rate_cents_snapshot — locked at clock-in time
+    //   3. memberships.pay_rate_cents — current rate (legacy fallback)
+    //
+    // The snapshot path fixes the "raise this month silently re-prices
+    // last month's payroll" bug. Legacy entries without a snapshot fall
+    // through to the current-rate path, matching old behavior.
     const empId = e.employee_id ?? e.employee?.id ?? "";
     const meta = empMeta[empId];
-    const payRateCents = e.booking?.hourly_rate_cents ?? meta?.pay_rate_cents ?? 0;
+    const entryRow = e as { pay_rate_cents_snapshot?: number | null };
+    const payRateCents =
+      e.booking?.hourly_rate_cents ??
+      entryRow.pay_rate_cents_snapshot ??
+      meta?.pay_rate_cents ??
+      0;
     const payType = meta?.pay_type ?? "hourly";
 
     let earnedCents = 0;

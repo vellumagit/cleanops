@@ -366,6 +366,20 @@ export async function createManualTimeEntryAction(
     };
   }
 
+  // Snapshot the employee's current pay rate. Manual entries created
+  // after the fact still use the rate THAT'S CURRENT NOW — we don't
+  // know what their rate was at the actual shift time. That's
+  // documented behavior: admins editing historical entries get the
+  // current rate. If they want a different rate, they can update the
+  // snapshot directly via the entry edit form (separate code path).
+  const { data: manualRateRow } = (await supabase
+    .from("memberships")
+    .select("pay_rate_cents")
+    .eq("id", parsed.employee_id)
+    .maybeSingle()) as unknown as {
+    data: { pay_rate_cents: number | null } | null;
+  };
+
   const { data: inserted, error } = await supabase
     .from("time_entries")
     .insert({
@@ -377,6 +391,7 @@ export async function createManualTimeEntryAction(
       // Encrypt before write. Read sites use maybeDecryptField; legacy
       // plaintext rows still display correctly until they're next saved.
       notes: encryptField(parsed.notes),
+      pay_rate_cents_snapshot: manualRateRow?.pay_rate_cents ?? null,
       created_manually: true,
       created_by: membership.id,
     } as never)

@@ -40,11 +40,19 @@ export async function createPayrollRunAction(
       supabase
         .from("time_entries")
         .select(
-          "employee_id, clock_in_at, clock_out_at, booking:bookings ( hourly_rate_cents, total_cents )",
+          "employee_id, clock_in_at, clock_out_at, pay_rate_cents_snapshot, booking:bookings ( hourly_rate_cents, total_cents )",
         )
         .gte("clock_in_at", fromIso)
         .lte("clock_in_at", toIso)
-        .not("clock_out_at", "is", null),
+        .not("clock_out_at", "is", null) as unknown as Promise<{
+        data: Array<{
+          employee_id: string | null;
+          clock_in_at: string | null;
+          clock_out_at: string | null;
+          pay_rate_cents_snapshot: number | null;
+          booking: { hourly_rate_cents: number | null; total_cents: number } | null;
+        }> | null;
+      }>,
       // Include every active membership — owners who work shifts, and
       // manually-added shadow members, both belong on payroll.
       supabase
@@ -110,7 +118,19 @@ export async function createPayrollRunAction(
       ),
     );
     bucket.minutes += mins;
-    const rate = e.booking?.hourly_rate_cents ?? bucket.payRateCents;
+    // Rate precedence (first non-null wins):
+    //   1. booking.hourly_rate_cents — owner-set per-booking override
+    //   2. time_entries.pay_rate_cents_snapshot — locked at clock-in
+    //   3. memberships.pay_rate_cents — current (legacy fallback)
+    //
+    // The snapshot fixes the "raise this month silently re-prices last
+    // month's payroll" bug — historical hours stay at their original
+    // rate even when memberships.pay_rate_cents changes later.
+    const entry = e as { pay_rate_cents_snapshot?: number | null };
+    const rate =
+      e.booking?.hourly_rate_cents ??
+      entry.pay_rate_cents_snapshot ??
+      bucket.payRateCents;
     bucket.regularCents += Math.round((mins * rate) / 60);
   }
 

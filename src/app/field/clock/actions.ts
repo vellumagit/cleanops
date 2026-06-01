@@ -41,6 +41,18 @@ export async function clockInAction(
     return { ok: false, error: "You're already clocked in." };
   }
 
+  // Snapshot the employee's current pay rate so historical hours
+  // don't retroactively re-price if their rate changes later.
+  // Fallback for read paths: when this column is NULL on a legacy
+  // row, payroll reads memberships.pay_rate_cents (the old behavior).
+  const { data: rateRow } = (await supabase
+    .from("memberships")
+    .select("pay_rate_cents")
+    .eq("id", membership.id)
+    .maybeSingle()) as unknown as {
+    data: { pay_rate_cents: number | null } | null;
+  };
+
   const { error } = await supabase.from("time_entries").insert({
     organization_id: membership.organization_id,
     employee_id: membership.id,
@@ -48,7 +60,8 @@ export async function clockInAction(
     clock_in_at: new Date().toISOString(),
     clock_in_lat: lat,
     clock_in_lng: lng,
-  });
+    pay_rate_cents_snapshot: rateRow?.pay_rate_cents ?? null,
+  } as never);
   if (error) {
     // Postgres unique_violation — partial index rejected a concurrent
     // double clock-in. Treat as "you're already clocked in" instead of
