@@ -176,6 +176,29 @@ export async function requireMembership(
  * no verified factor exists (its own check redirects to /app).
  */
 async function enforceMfa(): Promise<void> {
+  // API-route exemption.
+  //
+  // OAuth callbacks (Stripe Connect, Square Connect, etc.) and a
+  // handful of other API routes call requireMembership at the top.
+  // Their current pathname is `/api/...` which is NOT in our
+  // /mfa-verify allowlist, so a redirect there would (a) drop
+  // critical query params like ?code and ?state, breaking the OAuth
+  // round-trip, and (b) bounce the user to an HTML page from what
+  // was expecting JSON or a 302 to Stripe/Square.
+  //
+  // These routes have their own narrow auth — OAuth state
+  // validation, signed checkout, API-key headers, CRON_SECRET — and
+  // don't render UI a user could interact with at aal1, so MFA
+  // enforcement at the route-handler entrypoint adds nothing. The
+  // user came from a fully-MFA-gated `/app/*` page that already
+  // verified aal2 before the API call.
+  //
+  // If a future API route DOES need the gate, it can call
+  // enforceMfa() directly (it's an exported-as-private helper today;
+  // promote it if needed).
+  const currentPath = await getRequestPath();
+  if (currentPath.startsWith("/api/")) return;
+
   const supabase = await createSupabaseServerClient();
 
   const { data: factorsData, error: factorsErr } =
@@ -185,7 +208,7 @@ async function enforceMfa(): Promise<void> {
   // silently disable MFA for an enrolled user. /mfa-verify itself
   // bounces back to /app if the user actually has no verified factor.
   if (factorsErr) {
-    redirect(buildMfaVerifyUrl(await getRequestPath()));
+    redirect(buildMfaVerifyUrl(currentPath));
   }
 
   const hasVerifiedFactor = (factorsData?.totp ?? []).some(
@@ -203,7 +226,7 @@ async function enforceMfa(): Promise<void> {
   if (aalData?.currentLevel === "aal2") return;
 
   // aal1 with at least one verified factor → must clear MFA challenge.
-  redirect(buildMfaVerifyUrl(await getRequestPath()));
+  redirect(buildMfaVerifyUrl(currentPath));
 }
 
 /**
