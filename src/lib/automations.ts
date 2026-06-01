@@ -1532,14 +1532,21 @@ export async function sendOverdueReminders(): Promise<{
 }
 
 // ─────────────────────────────────────────────────────────────────
-// 7c-2. Internal review request (HOURLY cron)
+// 7c-2. Internal review request (DAILY cron, 10:00 UTC)
 //
-// Fires once per completed booking, ~2h after the job ends (org-
-// configurable via organizations.internal_review_delay_minutes,
-// default 120). Emails the client a Sollos-hosted review link
-// (/review/<token>) that captures a 1-5 star rating + comment scoped
-// to the employee who did the job. This is the per-job feedback loop
-// powering the dashboard rating, per-employee scores, and bonus rules.
+// Fires once per completed booking. Originally planned as hourly so
+// the "2h after job end" delay would feel snappy, but Vercel Hobby
+// only allows daily crons — upgrade to Pro to tighten the cadence.
+// In practice the cron picks up everything completed in the last
+// 30 days that hasn't been review-requested yet, so the delay is
+// effectively "between (delay) and ~24h after job end."
+//
+// Org-configurable timing via organizations.internal_review_delay_minutes
+// (default 120 min, lower bound is just defensive — daily cadence
+// makes anything under 24h academic). Emails the client a Sollos-
+// hosted review link (/review/<token>) capturing a 1-5 star rating +
+// comment scoped to the employee. Powers the dashboard rating, per-
+// employee scores, and bonus rules.
 //
 // The Google review ask is a SEPARATE track — see
 // sendGbpReviewRequests() below. That one fires only on a client's

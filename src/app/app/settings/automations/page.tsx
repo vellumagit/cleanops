@@ -105,10 +105,10 @@ const CATEGORIES: Category[] = [
       },
       {
         key: "review_request_after_completion" as AutomationKey,
-        title: "Internal review request — 2h after every job",
+        title: "Internal review request — within 24h of every job",
         description:
-          "Emails the client a Sollos-hosted review link about 2 hours after each completed booking. Captures a 1-5 star rating + comment scoped to the employee who did the work. Sent at most once per booking. Powers the dashboard rating, per-employee scores, and bonus rules.",
-        trigger: "Hourly cron — fires once per booking",
+          "Emails the client a Sollos-hosted review link within 24 hours of each completed booking. Captures a 1-5 star rating + comment scoped to the employee who did the work. Sent at most once per booking. Powers the dashboard rating, per-employee scores, and bonus rules.",
+        trigger: "Daily cron, ~10:00 UTC — fires once per booking",
       },
       {
         key: "gbp_review_request" as AutomationKey,
