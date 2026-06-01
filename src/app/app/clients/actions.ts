@@ -1,5 +1,6 @@
 "use server";
 
+import { randomBytes } from "crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
@@ -8,6 +9,16 @@ import { ClientSchema } from "@/lib/validators/clients";
 import { redirectAfterSetup } from "@/lib/setup-return";
 import { normalizePhone } from "@/lib/phone";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+
+/**
+ * Generate a URL-safe token for the GBP redirect / unsubscribe links.
+ * Matches the entropy used by the cron's lazy mint (24 chars from
+ * base64url-encoded random bytes) so links from a "Reset" look
+ * indistinguishable from cron-minted ones.
+ */
+function randomTokenSafe(): string {
+  return randomBytes(18).toString("base64url").slice(0, 24);
+}
 
 type Field = keyof typeof ClientSchema.shape;
 export type ClientFormState = ActionState<Field>;
@@ -292,6 +303,20 @@ async function setGbpState(id: string, action: GbpAction): Promise<void> {
   const { membership, supabase } = await getActionContext();
   if (!["owner", "admin", "manager"].includes(membership.role)) return;
 
+  // Read the current tokens so Reset can preserve them if present —
+  // re-minting would invalidate any link the customer might still
+  // have in their inbox from a prior cycle. RLS scopes by org.
+  const { data: existingRow } = (await supabase
+    .from("clients")
+    .select("gbp_redirect_token, gbp_unsubscribe_token")
+    .eq("id", id)
+    .maybeSingle()) as unknown as {
+    data: {
+      gbp_redirect_token: string | null;
+      gbp_unsubscribe_token: string | null;
+    } | null;
+  };
+
   // Patch differs per action — gathered up here so the WHERE clauses
   // below stay readable. All paths also reset the reminder cycle so
   // re-enabling a lapsed customer feels like a fresh start.
@@ -309,24 +334,44 @@ async function setGbpState(id: string, action: GbpAction): Promise<void> {
       };
       break;
     case "reset":
-      // Wipe state back to never_asked. Use case: owner archived,
-      // restored, wants the cron to ask from scratch. Reminder counter
-      // resets so the cap is honored from the new "first ask".
-      patch = {
-        gbp_review_state: "never_asked",
-        gbp_first_asked_at: null,
-        gbp_last_asked_at: null,
-        gbp_next_reminder_at: null,
-        gbp_reminders_sent: 0,
-      };
+      // Bring the customer BACK into the asking rotation.
+      //
+      // We DON'T flip to never_asked because the initial-ask cron
+      // phase only looks at bookings 24h-14d old — a 6-month
+      // customer has no qualifying "first job" and would silently
+      // never get picked up again.
+      //
+      // Instead we flip directly to pending with tokens minted (if
+      // missing) and the next reminder scheduled for "now", so the
+      // very next daily cron run treats them as a reminder candidate
+      // (the cron's reminder branch doesn't gate on booking recency).
+      // Reminder counter resets so the cap is honored from scratch.
+      {
+        const newRedirect =
+          existingRow?.gbp_redirect_token ?? randomTokenSafe();
+        const newUnsub =
+          existingRow?.gbp_unsubscribe_token ?? randomTokenSafe();
+        patch = {
+          gbp_review_state: "pending",
+          gbp_first_asked_at: nowIso,
+          gbp_last_asked_at: null,
+          gbp_next_reminder_at: nowIso,
+          gbp_reminders_sent: 0,
+          gbp_clicked_at: null,
+          gbp_unsubscribed_at: null,
+          gbp_redirect_token: newRedirect,
+          gbp_unsubscribe_token: newUnsub,
+        };
+      }
       break;
     case "force_resend":
-      // Pretend the last reminder went out long enough ago that the
-      // next cron run will pick this client up — schedules an
-      // immediate retry on the daily cron.
+      // Schedule an immediate retry on the daily cron AND reset the
+      // reminder counter so a previously-lapsed customer (at the cap)
+      // doesn't immediately re-lapse without an email going out.
       patch = {
         gbp_review_state: "pending",
         gbp_next_reminder_at: nowIso,
+        gbp_reminders_sent: 0,
       };
       break;
   }

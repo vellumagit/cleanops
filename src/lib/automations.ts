@@ -1580,8 +1580,16 @@ export async function sendBookingReviewRequests(): Promise<{
   // The org-level delay is enforced in the per-booking branch below
   // (after we have the org's configured value) so we can honor each
   // org's setting in a single batched query.
+  //
+  // Earliest-cutoff bumped from 72h to 30d. The original 72h ceiling
+  // permanently silenced any booking the cron missed during multi-day
+  // downtime; the dedup column (review_request_sent_at) prevents
+  // doubling-up, so a 30d window is safe and gives us a month of
+  // catch-up if Vercel crons go dark. We DO want some ceiling so that
+  // enabling the feature for the first time on an org with years of
+  // history doesn't blast a year of "How did we do?" emails.
   const earliestCutoff = new Date(
-    Date.now() - 72 * 60 * 60 * 1000,
+    Date.now() - 30 * 24 * 60 * 60 * 1000,
   ).toISOString();
   const latestCutoff = new Date(
     Date.now() - 30 * 60 * 1000, // at LEAST 30 min must have elapsed
@@ -1727,8 +1735,12 @@ export async function sendBookingReviewRequests(): Promise<{
           booking.assigned?.profile?.full_name ??
           booking.assigned?.display_name ??
           null;
-        if (!full) return undefined;
-        return full.trim().split(/\s+/)[0]; // first name only
+        // Empty AND whitespace-only both rejected so we never email
+        // "How was   ?". The ?.trim() prevents a "   " value (which
+        // is truthy) from sneaking past the falsy check.
+        const trimmed = full?.trim();
+        if (!trimmed) return undefined;
+        return trimmed.split(/\s+/)[0]; // first name only
       })();
       const template = reviewRequestEmail({
         clientName: booking.client.name ?? "there",
