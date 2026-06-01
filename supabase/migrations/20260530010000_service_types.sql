@@ -100,7 +100,7 @@ CREATE POLICY "members read service_types" ON public.service_types
   USING (
     organization_id IN (
       SELECT m.organization_id FROM public.memberships m
-      WHERE m.user_id = auth.uid() AND m.status = 'active'
+      WHERE m.profile_id = auth.uid() AND m.status = 'active'
     )
   );
 
@@ -111,7 +111,7 @@ CREATE POLICY "admins write service_types" ON public.service_types
   USING (
     organization_id IN (
       SELECT m.organization_id FROM public.memberships m
-      WHERE m.user_id = auth.uid()
+      WHERE m.profile_id = auth.uid()
         AND m.status = 'active'
         AND m.role IN ('owner', 'admin')
     )
@@ -119,7 +119,7 @@ CREATE POLICY "admins write service_types" ON public.service_types
   WITH CHECK (
     organization_id IN (
       SELECT m.organization_id FROM public.memberships m
-      WHERE m.user_id = auth.uid()
+      WHERE m.profile_id = auth.uid()
         AND m.status = 'active'
         AND m.role IN ('owner', 'admin')
     )
