@@ -166,6 +166,22 @@ export default async function ClientDetailPage({
     membership.role === "admin" ||
     membership.role === "manager";
 
+  // Preconditions for Reset / Force-resend on the GBP review panel.
+  // The cron requires the client to have an email AND the org to
+  // have google_review_url set. If either is missing the cron
+  // silently skips and the owner is confused why no email goes out.
+  // We disable the buttons in the panel + show a hint so the cause
+  // is discoverable from the UI. The server action also refuses.
+  const { data: orgGbp } = (await supabase
+    .from("organizations")
+    .select("google_review_url")
+    .eq("id", membership.organization_id)
+    .maybeSingle()) as unknown as {
+    data: { google_review_url: string | null } | null;
+  };
+  const gbpPreconditionsMet =
+    !!client.email && !!orgGbp?.google_review_url;
+
   return (
     <PageShell
       title={client.name}
@@ -347,6 +363,9 @@ export default async function ClientDetailPage({
           remindersSent={client.gbp_reminders_sent}
           unsubscribedAt={client.gbp_unsubscribed_at}
           canEdit={["owner", "admin", "manager"].includes(membership.role)}
+          preconditionsMet={gbpPreconditionsMet}
+          missingEmail={!client.email}
+          missingOrgUrl={!orgGbp?.google_review_url}
         />
 
         <div className="grid gap-6 lg:grid-cols-2">
@@ -574,6 +593,9 @@ function GbpReviewPanel({
   remindersSent,
   unsubscribedAt,
   canEdit,
+  preconditionsMet,
+  missingEmail,
+  missingOrgUrl,
 }: {
   clientId: string;
   state: string;
@@ -583,6 +605,13 @@ function GbpReviewPanel({
   remindersSent: number;
   unsubscribedAt: string | null;
   canEdit: boolean;
+  /** True when the client has an email AND the org has
+   *  google_review_url set — both required for the cron to actually
+   *  send mail. When false, Reset / Force-resend would silently
+   *  result in no email; we disable those buttons and surface why. */
+  preconditionsMet: boolean;
+  missingEmail: boolean;
+  missingOrgUrl: boolean;
 }) {
   const statusCopy = (() => {
     switch (state) {
@@ -681,7 +710,8 @@ function GbpReviewPanel({
                     <input type="hidden" name="id" value={clientId} />
                     <button
                       type="submit"
-                      className="rounded-md border border-border bg-background px-2.5 py-1 text-xs hover:bg-muted"
+                      disabled={!preconditionsMet}
+                      className="rounded-md border border-border bg-background px-2.5 py-1 text-xs hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-background"
                     >
                       Resend now
                     </button>
@@ -694,7 +724,8 @@ function GbpReviewPanel({
                 <input type="hidden" name="id" value={clientId} />
                 <button
                   type="submit"
-                  className="rounded-md border border-border bg-background px-2.5 py-1 text-xs hover:bg-muted"
+                  disabled={!preconditionsMet}
+                  className="rounded-md border border-border bg-background px-2.5 py-1 text-xs hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-background"
                 >
                   Reset
                 </button>
@@ -703,6 +734,21 @@ function GbpReviewPanel({
           </div>
         )}
       </div>
+      {/* Precondition hint — only when one of the asking-related actions
+          is disabled. Tells the owner exactly what's missing so they
+          don't sit there confused after clicking. */}
+      {canEdit && !preconditionsMet && (
+        <p className="mt-3 rounded-md bg-amber-50 px-3 py-2 text-[11px] text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+          <strong>Reset and Resend are disabled</strong> because{" "}
+          {missingEmail && missingOrgUrl
+            ? "this client has no email AND your Google review URL isn't configured"
+            : missingEmail
+              ? "this client has no email on file"
+              : "your Google review URL isn't configured"}
+          . {missingOrgUrl && "Add it in Settings → Branding. "}
+          {missingEmail && "Add an email to this client to unblock."}
+        </p>
+      )}
     </div>
   );
 }

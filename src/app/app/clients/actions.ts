@@ -303,25 +303,60 @@ async function setGbpState(id: string, action: GbpAction): Promise<void> {
   const { membership, supabase } = await getActionContext();
   if (!["owner", "admin", "manager"].includes(membership.role)) return;
 
-  // Read the current tokens so Reset can preserve them if present —
-  // re-minting would invalidate any link the customer might still
-  // have in their inbox from a prior cycle. RLS scopes by org.
+  // Pull existing tokens + the preconditions we need to validate
+  // reset / force_resend in one round trip. RLS scopes by org.
   const { data: existingRow } = (await supabase
     .from("clients")
-    .select("gbp_redirect_token, gbp_unsubscribe_token")
+    .select(
+      "gbp_redirect_token, gbp_unsubscribe_token, gbp_review_state, email, organization:organizations ( google_review_url )",
+    )
     .eq("id", id)
     .maybeSingle()) as unknown as {
     data: {
       gbp_redirect_token: string | null;
       gbp_unsubscribe_token: string | null;
+      gbp_review_state: string;
+      email: string | null;
+      organization: { google_review_url: string | null } | null;
     } | null;
   };
 
-  // Patch differs per action — gathered up here so the WHERE clauses
-  // below stay readable. All paths also reset the reminder cycle so
-  // re-enabling a lapsed customer feels like a fresh start.
+  if (!existingRow) return; // client not found / not in org
+
+  // ── Precondition checks ─────────────────────────────────────────
+  // reset + force_resend flip state to "pending" which means the cron
+  // WILL pick this client up on the next run. The cron requires both
+  // a client email AND the org's google_review_url. Without either,
+  // the cron silently skips and the owner sits there confused why no
+  // email goes out. Refuse server-side and log so the case is
+  // discoverable. The UI also disables the corresponding buttons when
+  // preconditions aren't met (defense-in-depth).
+  if (action === "reset" || action === "force_resend") {
+    const missing: string[] = [];
+    if (!existingRow.email) missing.push("client email");
+    if (!existingRow.organization?.google_review_url) {
+      missing.push("organization's Google review URL (Settings → Branding)");
+    }
+    if (missing.length > 0) {
+      console.warn(
+        `[gbp/${action}] precondition failed for client ${id}: missing ${missing.join(", ")}`,
+      );
+      revalidatePath(`/app/clients/${id}`);
+      return;
+    }
+  }
+
+  // ── Compute the patch ──────────────────────────────────────────
+  // All paths also reset the reminder cycle so re-enabling a lapsed
+  // customer feels like a fresh start.
   const nowIso = new Date().toISOString();
   let patch: Record<string, unknown> = {};
+  // Optional WHERE-clause guard so the UPDATE is atomic. Force-resend
+  // gates on "pending" only (lapsed customers should use Reset which
+  // mints fresh tokens + clears all the timestamps). Other actions
+  // don't gate.
+  let stateGuard: string | null = null;
+
   switch (action) {
     case "mark_reviewed":
       patch = { gbp_review_state: "reviewed", gbp_next_reminder_at: null };
@@ -368,23 +403,37 @@ async function setGbpState(id: string, action: GbpAction): Promise<void> {
       // Schedule an immediate retry on the daily cron AND reset the
       // reminder counter so a previously-lapsed customer (at the cap)
       // doesn't immediately re-lapse without an email going out.
+      //
+      // State CAS guard: only valid from pending. The UI gates the
+      // button on this too, but a CSRF / multi-tab race could POST
+      // from a `reviewed` or `clicked` UI; this WHERE clause makes
+      // sure we can't accidentally resurrect them.
       patch = {
         gbp_review_state: "pending",
         gbp_next_reminder_at: nowIso,
         gbp_reminders_sent: 0,
       };
+      stateGuard = "pending";
       break;
   }
 
-  await (supabase
+  // ── Apply ──────────────────────────────────────────────────────
+  let updateQuery = supabase
     .from("clients")
     .update(patch as never)
     .eq("id", id)
-    .eq("organization_id" as never, membership.organization_id as never));
+    .eq("organization_id" as never, membership.organization_id as never);
+  if (stateGuard) {
+    updateQuery = updateQuery.eq(
+      "gbp_review_state" as never,
+      stateGuard as never,
+    );
+  }
+  await updateQuery;
 
   await logAuditEvent({
     membership,
-    action: action === "mark_reviewed" ? "update" : "update",
+    action: "update",
     entity: "client",
     entity_id: id,
     after: { gbp_action: action },
