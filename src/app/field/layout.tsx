@@ -3,6 +3,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { FieldShell } from "@/components/field-shell";
 import { BrandProvider } from "@/components/brand-provider";
 import { PushPrompt } from "@/components/push-prompt";
+import { isFeedVisible } from "@/lib/feed-visibility";
 
 export default async function FieldLayout({
   children,
@@ -14,7 +15,7 @@ export default async function FieldLayout({
   const membership = await requireMembership();
   const supabase = await createSupabaseServerClient();
 
-  const [{ data: profile }, { data: org }] = await Promise.all([
+  const [{ data: profile }, { data: org }, feedEnabled] = await Promise.all([
     supabase
       .from("profiles")
       .select("full_name")
@@ -27,6 +28,7 @@ export default async function FieldLayout({
       .maybeSingle() as unknown as {
       data: { logo_url: string | null; brand_color: string | null } | null;
     },
+    isFeedVisible(membership.organization_id),
   ]);
 
   return (
@@ -37,6 +39,7 @@ export default async function FieldLayout({
         logoUrl={org?.logo_url ?? null}
         brandColor={org?.brand_color ?? null}
         role={membership.role}
+        feedEnabled={feedEnabled}
       >
         <PushPrompt
           membershipId={membership.id}

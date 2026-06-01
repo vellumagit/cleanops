@@ -347,10 +347,17 @@ const CATEGORIES: Category[] = [
     icon: Rss,
     automations: [
       {
+        key: "feed_visible" as AutomationKey,
+        title: "Show team feed",
+        description:
+          "Off by default. When on, the Feed tab appears in the sidebar of both the admin app and the field app, with a shared activity stream where managers can post updates the team can see. When off, /app/feed and /field/feed return 404 and the nav links are hidden — useful if you don't want a social-style feed in your workflow.",
+        trigger: "Feed feature toggle",
+      },
+      {
         key: "system_feed_events" as AutomationKey,
         title: "Auto-post system events to feed",
         description:
-          "Automatically posts activity to the team feed when bookings are created, updated, or completed. Off by default — with this off, only posts made manually by managers appear in the feed.",
+          "Automatically posts activity to the team feed when bookings are created, updated, or completed. Off by default — with this off, only posts made manually by managers appear in the feed. Only matters when the feed itself is visible (toggle above).",
         trigger: "Booking events",
       },
     ],

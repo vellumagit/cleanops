@@ -9,6 +9,7 @@ import { SetupReturnBanner } from "@/components/setup-return-banner";
 import { QuickActions } from "@/components/quick-actions";
 import { AIWidget } from "@/components/ai-assistant/ai-widget";
 import { DEFAULT_TZ } from "@/lib/format";
+import { isFeedVisible } from "@/lib/feed-visibility";
 
 // Orgs with the AI assistant enabled — must match the allow-list in /api/ai-chat
 const AI_ENABLED_ORGS = new Set([
@@ -136,6 +137,11 @@ export default async function AppLayout({
     !org?.onboarding_completed_at &&
     (membership.role === "owner" || membership.role === "admin");
 
+  // Per-org feature gate — feed defaults to OFF. Sidebar uses this
+  // to hide the Feed link entirely; the page itself also checks and
+  // 404s if a bookmarked URL is hit.
+  const feedEnabled = await isFeedVisible(membership.organization_id);
+
   return (
     <BrandProvider brandColor={org?.brand_color ?? null} className="flex min-h-[100dvh] lg:h-screen">
       <AppSidebar
@@ -146,6 +152,7 @@ export default async function AppLayout({
         logoUrl={org?.logo_url ?? null}
         brandColor={org?.brand_color ?? null}
         unreadNotifications={unreadNotifications ?? 0}
+        feedEnabled={feedEnabled}
         tabBadges={{
           "/app/bookings": todayBookings ?? 0,
           "/app/bookings/requests": pendingRequests ?? 0,

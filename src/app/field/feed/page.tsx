@@ -1,14 +1,23 @@
+import { notFound } from "next/navigation";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { FieldHeader } from "@/components/field-shell";
 import { ComposeBox } from "@/components/feed/compose-box";
 import { FeedCard } from "@/components/feed/feed-card";
 import { fetchFeedPosts } from "@/lib/feed-data";
+import { isFeedVisible } from "@/lib/feed-visibility";
 
 export const metadata = { title: "Feed" };
 
 export default async function FieldFeedPage() {
   const membership = await requireMembership();
+
+  // Feed is opt-in per-org. When the toggle is off, 404 the route so
+  // a bookmarked URL doesn't surface the feature anyway.
+  if (!(await isFeedVisible(membership.organization_id))) {
+    notFound();
+  }
+
   const supabase = await createSupabaseServerClient();
 
   const { data: profile } = await supabase

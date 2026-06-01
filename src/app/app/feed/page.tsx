@@ -1,14 +1,24 @@
+import { notFound } from "next/navigation";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
 import { ComposeBox } from "@/components/feed/compose-box";
 import { FeedCard } from "@/components/feed/feed-card";
 import { fetchFeedPosts } from "@/lib/feed-data";
+import { isFeedVisible } from "@/lib/feed-visibility";
 
 export const metadata = { title: "Feed" };
 
 export default async function AdminFeedPage() {
   const membership = await requireMembership();
+
+  // Feed feature is opt-in per-org (default OFF). When disabled,
+  // 404 a bookmarked URL so the route doesn't surface even though
+  // the sidebar link is already hidden by the layout.
+  if (!(await isFeedVisible(membership.organization_id))) {
+    notFound();
+  }
+
   const supabase = await createSupabaseServerClient();
 
   const { data: profile } = await supabase

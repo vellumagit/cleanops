@@ -42,6 +42,7 @@ export function FieldShell({
   logoUrl,
   brandColor,
   role,
+  feedEnabled = false,
   children,
 }: {
   organizationName: string;
@@ -50,9 +51,19 @@ export function FieldShell({
   brandColor?: string | null;
   /** Membership role — owners/admins/managers get a "Back to Dashboard" link */
   role?: string;
+  /** Per-org feed toggle. When false, the Feed tab is removed from
+   *  the bottom nav entirely. Default off matches the feed_visible
+   *  automation default. */
+  feedEnabled?: boolean;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+
+  // Strip the Feed tab when the org has the feature turned off. The
+  // /field/feed page itself also 404s as defense-in-depth.
+  const visibleNav = FIELD_NAV.filter(
+    (item) => feedEnabled || item.href !== "/field/feed",
+  );
 
   return (
     <div className="flex min-h-[100dvh] flex-col bg-muted/30">
@@ -114,7 +125,7 @@ export function FieldShell({
       {/* ── Bottom tab bar ── */}
       <nav className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-card/95 backdrop-blur pb-[env(safe-area-inset-bottom)]">
         <ul className="mx-auto flex max-w-2xl">
-          {FIELD_NAV.map((item) => {
+          {visibleNav.map((item) => {
             const active =
               item.href === "/field"
                 ? pathname === "/field"

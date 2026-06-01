@@ -50,7 +50,11 @@ export type AutomationKey =
   | "booking_reminder_client_sms"
   | "booking_assignment_sms"
   // Feed
-  | "system_feed_events";
+  | "system_feed_events"
+  // Feed FEATURE visibility — when off (default), the /app/feed and
+  // /field/feed routes 404 and the sidebar links are hidden. system_
+  // feed_events only matters when this is on.
+  | "feed_visible";
 
 /**
  * Runtime allowlist derived from the AutomationKey union. Keeps the type
@@ -95,6 +99,7 @@ const VALID_AUTOMATION_KEYS = new Set<AutomationKey>([
   "booking_reminder_client_sms",
   "booking_assignment_sms",
   "system_feed_events",
+  "feed_visible",
 ]);
 
 export async function toggleAutomationAction(formData: FormData) {

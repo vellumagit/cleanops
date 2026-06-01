@@ -146,6 +146,10 @@ type Props = {
   unreadNotifications?: number;
   /** Per-tab badge counts, keyed by href (e.g. "/app/bookings": 3) */
   tabBadges?: Record<string, number>;
+  /** Per-org feed feature toggle. When false, the Feed nav link is
+   *  removed entirely from the Comms section. Default off matches the
+   *  feed_visible automation default. */
+  feedEnabled?: boolean;
 };
 
 export function AppSidebar({
@@ -157,6 +161,7 @@ export function AppSidebar({
   brandColor,
   unreadNotifications = 0,
   tabBadges = {},
+  feedEnabled = false,
 }: Props) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -180,10 +185,20 @@ export function AppSidebar({
     }
   }, [mobileOpen]);
 
+  // Apply the per-org feed visibility toggle: when off, strip the
+  // /app/feed entry from the Comms section entirely (rather than
+  // rendering a dead link that 404s).
+  const visibleNavSections = NAV_SECTIONS.map((section) => ({
+    ...section,
+    items: section.items.filter(
+      (item) => feedEnabled || item.href !== "/app/feed",
+    ),
+  }));
+
   // "Longest prefix wins" — prevents /app/bookings from being active
   // when the user is on /app/bookings/requests (a deeper nav item).
   const allNavHrefs = [
-    ...NAV_SECTIONS.flatMap((s) => s.items.map((i) => i.href)),
+    ...visibleNavSections.flatMap((s) => s.items.map((i) => i.href)),
     ...FOOTER_NAV.map((i) => i.href),
   ];
   const bestMatch = allNavHrefs
@@ -271,7 +286,7 @@ export function AppSidebar({
 
       {/* Sections */}
       <nav className="flex-1 overflow-y-auto px-3 py-3">
-        {NAV_SECTIONS.map((section) => {
+        {visibleNavSections.map((section) => {
           const visibleItems = section.items.filter(
             (item) => !item.roles || item.roles.includes(role),
           );

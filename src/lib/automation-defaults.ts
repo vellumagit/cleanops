@@ -29,6 +29,13 @@ export const DEFAULT_OFF: ReadonlySet<string> = new Set([
   // Owners see only real human posts unless they explicitly opt in.
   "system_feed_events",
 
+  // The feed feature itself (the /app/feed + /field/feed pages, the
+  // sidebar links). Default OFF so fresh orgs aren't asked to manage
+  // a social-style feed during onboarding — they can opt in if they
+  // want a shared team-update space. When false the sidebar links
+  // are hidden and the routes return notFound().
+  "feed_visible",
+
   // SMS automations — all default OFF. SMS is a higher-friction channel
   // than email: clients may not have opted in to texts, and A2P 10DLC
   // registration must be complete before the platform-level
