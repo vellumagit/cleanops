@@ -1,0 +1,33 @@
+# Lightweight pre-merge guards that catch deploy-blocking mistakes
+# BEFORE they hit Vercel. The cron-schedule check exists because a
+# single sub-daily expression (the Hobby plan limit) froze ALL deploys
+# for 2 days — every subsequent build failed at Vercel's gate.
+#
+# Runs on every push + PR. Cheap, fast, catches a specific class of
+# mistake that's hard to find in code review otherwise.
+
+name: CI guards
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate-vercel-config:
+    name: Validate Vercel cron schedules
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install tsx (no full repo install needed)
+        run: npm install --no-save tsx@4
+
+      - name: Validate cron schedules
+        run: npx tsx scripts/validate-cron-schedules.ts
