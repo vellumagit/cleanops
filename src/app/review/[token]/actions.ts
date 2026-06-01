@@ -35,6 +35,15 @@ export async function submitReviewAction(
   if (!rating || rating < 1 || rating > 5) {
     return { success: false, error: "Please select a rating." };
   }
+  // Server-side comment length cap. Defends against blob-DoS attempts
+  // from automated submissions and matches the textarea's UI maxLength.
+  // 2000 chars is more than 4× a generous Yelp review.
+  if (comment && comment.length > 2000) {
+    return {
+      success: false,
+      error: "Please keep your comment under 2000 characters.",
+    };
+  }
 
   const admin = createSupabaseAdminClient();
 

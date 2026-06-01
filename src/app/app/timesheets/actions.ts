@@ -271,6 +271,15 @@ function readManualTimeFormValues(
     return { _error: "Invalid start time." };
   }
 
+  // Reject future-dated manual entries. A typo (admin meant "2024" but
+  // typed "2124") would otherwise create a permanently-broken
+  // "currently clocked in" indicator and pollute payroll forecasts.
+  // 5-minute slack allows a manual entry for a shift that JUST
+  // started (clock-in is delayed by network or typo).
+  if (new Date(start_at).getTime() > Date.now() + 5 * 60 * 1000) {
+    return { _error: "Start time can't be in the future." };
+  }
+
   let end_at: string | null = null;
   if (end_local) {
     end_at = localInputToUtcIso(end_local, orgTz);
@@ -279,6 +288,10 @@ function readManualTimeFormValues(
     }
     if (new Date(end_at).getTime() <= new Date(start_at).getTime()) {
       return { _error: "End time must be after start time." };
+    }
+    // Same forward bound on end_at.
+    if (new Date(end_at).getTime() > Date.now() + 5 * 60 * 1000) {
+      return { _error: "End time can't be in the future." };
     }
   }
 
@@ -724,6 +737,16 @@ export async function closeOpenShiftAction(
   }
   if (new Date(endUtc).getTime() <= new Date(before.clock_in_at).getTime()) {
     return { ok: false, error: "End time must be after the clock-in time." };
+  }
+  // Cap end time to now + 24h. Without this, an admin typo (year 2126
+  // instead of 2026) would silently land a permanent open-looking
+  // shift years in the future. Generous bound (24h) handles legitimate
+  // late-night closures that cross into the next day.
+  if (new Date(endUtc).getTime() > Date.now() + 24 * 60 * 60 * 1000) {
+    return {
+      ok: false,
+      error: "End time can't be more than 24 hours from now.",
+    };
   }
 
   const { error } = await supabase
