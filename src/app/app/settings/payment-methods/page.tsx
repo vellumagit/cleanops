@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { maybeDecryptField } from "@/lib/field-encryption";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
 import { PaymentMethodsForm } from "./payment-methods-form";
@@ -29,7 +30,6 @@ export default async function PaymentMethodsPage() {
 
   // Decrypt for the edit form so the owner sees their existing text
   // (legacy plaintext rows pass through unchanged).
-  const { maybeDecryptField } = await import("@/lib/field-encryption");
   const plainInstructions = maybeDecryptField(
     org?.default_payment_instructions ?? null,
   );

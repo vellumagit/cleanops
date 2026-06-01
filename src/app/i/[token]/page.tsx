@@ -5,6 +5,7 @@ import { getOrgCurrency } from "@/lib/org-currency";
 import { formatCurrencyCents, formatDate } from "@/lib/format";
 import { humanizePaymentMethod } from "@/lib/validators/invoice-payment";
 import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
+import { maybeDecryptField } from "@/lib/field-encryption";
 import { RateLimitedPage } from "@/components/rate-limited-page";
 import {
   startSquareCheckoutAction,
@@ -157,7 +158,6 @@ export default async function PublicInvoicePage({
   // the customer; render the instructions as missing instead. The
   // admin-facing payment-methods edit page keeps the default behavior
   // so the owner can SEE that a row is broken and re-enter it.
-  const { maybeDecryptField } = await import("@/lib/field-encryption");
   const paymentInstructions =
     invoice.payment_instructions ??
     maybeDecryptField(

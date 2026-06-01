@@ -4,6 +4,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { PageShell } from "@/components/page-shell";
 import { memberDisplayName } from "@/lib/member-display";
 import { getOrgTimezone } from "@/lib/org-timezone";
+import { maybeDecryptField } from "@/lib/field-encryption";
 import { TimesheetsView } from "./timesheets-view";
 import type {
   TimesheetEntry,
@@ -141,9 +142,8 @@ export default async function TimesheetsPage({
     };
   }
 
-  // Decryption helper — time_entries.notes is encrypted at write; legacy
-  // plaintext rows pass through unchanged via maybeDecryptField.
-  const { maybeDecryptField } = await import("@/lib/field-encryption");
+  // time_entries.notes is encrypted at write; legacy plaintext rows
+  // pass through unchanged via maybeDecryptField (imported at top).
 
   // Build entries
   const rows: TimesheetEntry[] = (entries ?? []).map((e) => {
