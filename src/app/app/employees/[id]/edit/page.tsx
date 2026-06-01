@@ -11,6 +11,7 @@ import {
   type EmployeeEditDefaults,
 } from "./employee-edit-form";
 import { DeleteEmployeeForm } from "./delete-employee-form";
+import { RecoveryLinkCard } from "./recovery-link-card";
 
 export const metadata = { title: "Edit employee" };
 
@@ -108,6 +109,18 @@ export default async function EditEmployeePage({
             isSelf={isSelf}
           />
         </div>
+
+        {/* Emergency password recovery — hand-deliverable reset link for
+            when the employee can't reset themselves (email rate-limited,
+            stuck in spam, lost access to inbox, etc). Hidden for shadow
+            members (no auth account) and for self-edit (use the normal
+            settings flow on your own account). */}
+        {!defaults.is_shadow && !isSelf && (
+          <RecoveryLinkCard
+            memberId={member.id}
+            memberName={currentDisplayName}
+          />
+        )}
 
         {/* Danger zone — delete only available to owners on disabled employees */}
         {viewer.role === "owner" && !isSelf && member.status === "disabled" && (

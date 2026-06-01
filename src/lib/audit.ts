@@ -54,7 +54,11 @@ export type AuditAction =
   | "deactivate"
   | "archive"
   | "restore"
-  | "revoke";
+  | "revoke"
+  // An owner/admin minted a single-use password recovery link for a
+  // member from /app/employees/[id]/edit. Logged so the audit trail
+  // shows who could have hijacked which account, and when.
+  | "generate_recovery_link";
 
 type LogArgs = {
   membership: CurrentMembership;

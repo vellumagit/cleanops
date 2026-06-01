@@ -686,3 +686,145 @@ export async function createManualEmployeeAction(
 
   return { done: true };
 }
+
+/* ------------------------------------------------------------------ */
+/*  Generate password recovery link (emergency owner/admin override)   */
+/* ------------------------------------------------------------------ */
+
+export type GenerateRecoveryLinkResult =
+  | { ok: true; url: string; email: string; expires_in_minutes: number }
+  | { ok: false; error: string };
+
+/**
+ * Mint a single-use password recovery link for a member and return it
+ * so the owner/admin can hand-deliver it (text, DM, in-person) without
+ * relying on email. Bypasses Supabase's per-email/per-hour reset rate
+ * limit, which is the whole reason this exists — when an employee
+ * can't reset and we've already burned our hour's allotment of emails,
+ * the owner can still get them in.
+ *
+ * Security notes:
+ *   - Owner/admin only. Same gate as the edit page.
+ *   - Always audited as `generate_recovery_link` — the row records
+ *     who issued the link and for whom. Hijacking an account this
+ *     way is *possible* but never *invisible*.
+ *   - Returns a URL pointing at our own /auth/callback?token_hash=...
+ *     route (not Supabase's verify URL) so the Site URL allowlist
+ *     can't strip the post-verify redirect. The callback then routes
+ *     to /reset-password where the member sets a new password.
+ *   - The token is single-use and expires in ~1 hour (Supabase default).
+ *   - Shadow employees (no profile_id, manual-add only) have no auth
+ *     account to recover; we surface a clean error instead of throwing.
+ */
+export async function generateRecoveryLinkAction(
+  memberId: string,
+): Promise<GenerateRecoveryLinkResult> {
+  const { membership } = await getActionContext();
+
+  if (!["owner", "admin"].includes(membership.role)) {
+    return {
+      ok: false,
+      error: "Only owners and admins can generate recovery links.",
+    };
+  }
+
+  const admin = createSupabaseAdminClient();
+
+  // Resolve the target membership in the caller's org. Cross-org access
+  // is impossible because we filter on organization_id explicitly.
+  const { data: target } = (await admin
+    .from("memberships")
+    .select("id, organization_id, profile_id, display_name, profile:profiles(full_name)")
+    .eq("id", memberId)
+    .eq("organization_id", membership.organization_id)
+    .maybeSingle()) as unknown as {
+    data: {
+      id: string;
+      organization_id: string;
+      profile_id: string | null;
+      display_name: string | null;
+      profile: { full_name: string | null } | null;
+    } | null;
+  };
+
+  if (!target) {
+    return { ok: false, error: "Employee not found in your organization." };
+  }
+
+  if (!target.profile_id) {
+    return {
+      ok: false,
+      error:
+        "This employee was added manually and doesn't have a login account, so there's no password to reset. Send them an invitation instead.",
+    };
+  }
+
+  // Look up their actual auth email — contact_email on memberships is
+  // an editable display field and may not match the account email.
+  const { data: authUser, error: authErr } = await admin.auth.admin.getUserById(
+    target.profile_id,
+  );
+  if (authErr || !authUser.user?.email) {
+    return {
+      ok: false,
+      error:
+        authErr?.message ??
+        "Couldn't look up this employee's login email. They may need to re-invite.",
+    };
+  }
+
+  const email = authUser.user.email;
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+
+  // generateLink with type='recovery' mints a recovery token but doesn't
+  // send the email (admin API path). We grab `hashed_token` from the
+  // response and build our own callback URL — Supabase's `action_link`
+  // routes through /auth/v1/verify which redirects to the Site URL
+  // allowlist, and any mismatch silently falls back to the bare site
+  // URL (we saw exactly this 2026-06-01 when the curl-built link came
+  // back with redirect_to=https://sollos3.com instead of the callback
+  // path we asked for). Building our own URL sidesteps that whole class
+  // of misconfig.
+  const { data: linkData, error: linkErr } = (await admin.auth.admin.generateLink({
+    type: "recovery",
+    email,
+  })) as unknown as {
+    data: {
+      properties: { hashed_token: string } | null;
+    } | null;
+    error: { message: string } | null;
+  };
+
+  if (linkErr || !linkData?.properties?.hashed_token) {
+    return {
+      ok: false,
+      error: linkErr?.message ?? "Couldn't mint a recovery token. Try again.",
+    };
+  }
+
+  const url = `${siteUrl}/auth/callback?token_hash=${linkData.properties.hashed_token}&type=recovery`;
+
+  await logAuditEvent({
+    membership,
+    action: "generate_recovery_link",
+    entity: "membership",
+    entity_id: target.id,
+    after: {
+      // Hashed token NOT logged — would defeat the audit purpose of
+      // showing _that_ a link was issued without making the log itself
+      // an account-hijacking tool. Email + member name are enough to
+      // reconstruct who got recovery access.
+      email,
+      member_name: target.display_name ?? target.profile?.full_name ?? null,
+    },
+  });
+
+  return {
+    ok: true,
+    url,
+    email,
+    // Supabase recovery tokens default to 1 hour. Surfaced in the UI
+    // so the admin knows how urgent the hand-off is.
+    expires_in_minutes: 60,
+  };
+}
