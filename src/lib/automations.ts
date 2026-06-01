@@ -1978,7 +1978,6 @@ export async function sendGbpReviewRequests(): Promise<{
           gbp_next_reminder_at: nextReminderAt,
           gbp_redirect_token: redirectToken,
           gbp_unsubscribe_token: unsubToken,
-          gbp_first_triggering_booking_id: row.id,
         } as never)
         .eq("id", client.id)
         .eq("gbp_review_state" as never, "never_asked" as never)
@@ -2023,7 +2022,6 @@ export async function sendGbpReviewRequests(): Promise<{
             gbp_first_asked_at: null,
             gbp_last_asked_at: null,
             gbp_next_reminder_at: null,
-            gbp_first_triggering_booking_id: null,
           } as never)
           .eq("id", client.id);
         skipped += 1;
