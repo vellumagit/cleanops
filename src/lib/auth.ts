@@ -199,34 +199,79 @@ async function enforceMfa(): Promise<void> {
   const currentPath = await getRequestPath();
   if (currentPath.startsWith("/api/")) return;
 
-  const supabase = await createSupabaseServerClient();
+  // Wrap the MFA-related Supabase calls in try/catch and FAIL-OPEN
+  // on unhandled exceptions. The previous fail-closed shape was
+  // crashing every authed page on transient supabase-js errors:
+  //
+  //   1. supabase.auth.mfa.listFactors() can THROW (vs. returning
+  //      { error }) on network blips, expired refresh tokens,
+  //      malformed JWTs, or edge-runtime instabilities.
+  //   2. The throw propagated up to the page render → Next surfaced
+  //      a generic runtime error reference (the @E394 we saw on
+  //      /field/jobs).
+  //
+  // Trade-off accepted: a transient error could let an aal1
+  // user reach a page without re-clearing MFA. That window is small
+  // and bounded — the login fast-path is the primary enforcement
+  // point. The alternative (crash every page on transient errors)
+  // is materially worse.
+  let factorsData:
+    | { totp?: Array<{ status: string }> | null }
+    | null = null;
+  let factorsCallFailed = false;
+  try {
+    const supabase = await createSupabaseServerClient();
+    const result = await supabase.auth.mfa.listFactors();
+    if (result.error) {
+      factorsCallFailed = true;
+      console.error("[mfa] listFactors returned error:", result.error);
+    } else {
+      factorsData = result.data;
+    }
 
-  const { data: factorsData, error: factorsErr } =
-    await supabase.auth.mfa.listFactors();
+    if (factorsCallFailed) {
+      // Returned error (vs. throw) — still soft-fail, log loud.
+      return;
+    }
 
-  // Fail-closed on listFactors error so a transient Supabase blip can't
-  // silently disable MFA for an enrolled user. /mfa-verify itself
-  // bounces back to /app if the user actually has no verified factor.
-  if (factorsErr) {
+    const hasVerifiedFactor = (factorsData?.totp ?? []).some(
+      (f) => f.status === "verified",
+    );
+
+    // Carveout: never-enrolled users (the default) pass through. This
+    // preserves the opt-in model AND prevents a redirect loop when a
+    // first-time enroller is mid-flow on /app/profile/security.
+    if (!hasVerifiedFactor) return;
+
+    const { data: aalData } =
+      await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+
+    if (aalData?.currentLevel === "aal2") return;
+
+    // aal1 with at least one verified factor → must clear MFA challenge.
     redirect(buildMfaVerifyUrl(currentPath));
+  } catch (err) {
+    // redirect() throws NEXT_REDIRECT — re-throw so Next can complete
+    // the navigation. Anything else (genuine exception in supabase-js,
+    // crypto, etc.) is soft-failed.
+    if (isNextRedirectError(err)) throw err;
+    console.error(
+      "[mfa] enforceMfa threw, allowing request to proceed:",
+      err,
+    );
+    return;
   }
+}
 
-  const hasVerifiedFactor = (factorsData?.totp ?? []).some(
-    (f) => f.status === "verified",
-  );
-
-  // Carveout: never-enrolled users (the default) pass through. This
-  // preserves the opt-in model AND prevents a redirect loop when a
-  // first-time enroller is mid-flow on /app/profile/security.
-  if (!hasVerifiedFactor) return;
-
-  const { data: aalData } =
-    await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
-
-  if (aalData?.currentLevel === "aal2") return;
-
-  // aal1 with at least one verified factor → must clear MFA challenge.
-  redirect(buildMfaVerifyUrl(currentPath));
+/**
+ * Detect Next.js's `redirect()` sentinel error so our try/catch can
+ * re-throw it instead of swallowing the navigation. Next 16 marks the
+ * error with a `digest` starting with "NEXT_REDIRECT".
+ */
+function isNextRedirectError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const digest = (err as { digest?: unknown }).digest;
+  return typeof digest === "string" && digest.startsWith("NEXT_REDIRECT");
 }
 
 /**
