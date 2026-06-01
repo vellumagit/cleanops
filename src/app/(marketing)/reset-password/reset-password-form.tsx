@@ -4,7 +4,8 @@ import { useActionState } from "react";
 import Link from "next/link";
 import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import {
   resetPasswordAction,
   type ResetPasswordState,
@@ -40,10 +41,17 @@ export function ResetPasswordForm() {
         <p className="text-sm text-muted-foreground">
           Your password has been changed. You&apos;re now signed in.
         </p>
-        <Link href="/app">
-          <Button size="lg" className="mt-2 w-full">
-            Go to dashboard
-          </Button>
+        {/* href="/" (not "/app") so the homepage's role-aware redirect
+            routes employees to /field/jobs. And the Link is styled
+            directly with buttonVariants instead of wrapping a Button —
+            <a><button> is invalid HTML and the click never navigated,
+            which is exactly the "button is inactive" report we got
+            from an employee resetting their password. */}
+        <Link
+          href="/"
+          className={cn(buttonVariants({ size: "lg" }), "mt-2 w-full")}
+        >
+          Go to dashboard
         </Link>
       </div>
     );
