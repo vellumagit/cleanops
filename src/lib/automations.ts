@@ -1712,17 +1712,34 @@ export async function sendBookingReviewRequests(): Promise<{
     try {
       // Mint the review token and stamp sent timestamp atomically.
       const reviewToken = await generateClaimToken();
-      const { error: updateErr } = await db
+      // Atomic claim: WHERE review_request_sent_at IS NULL + .select()
+      // back so we can tell whether we actually won. If a parallel
+      // cron beat us to it (Vercel deduplicates same-cron invocations
+      // but defense is cheap), the UPDATE matches zero rows and we
+      // skip without re-sending. The race window without this check
+      // is small but non-zero.
+      const { data: stamped, error: updateErr } = (await db
         .from("bookings")
         .update({
           review_token: reviewToken,
           review_request_sent_at: new Date().toISOString(),
         } as never)
         .eq("id", booking.id)
-        .is("review_request_sent_at" as never, null as never); // extra safety
+        .is("review_request_sent_at" as never, null as never)
+        .select("id")) as unknown as {
+        data: Array<{ id: string }> | null;
+        error: { message: string } | null;
+      };
 
       if (updateErr) {
         console.error("[auto] review token stamp failed:", booking.id, updateErr.message);
+        skipped += 1;
+        continue;
+      }
+      if (!stamped || stamped.length === 0) {
+        // Lost the race — another cron just stamped this booking.
+        // Drop the silently-minted reviewToken; the winner already
+        // wrote its own. No retry needed.
         skipped += 1;
         continue;
       }
@@ -1940,10 +1957,12 @@ export async function sendGbpReviewRequests(): Promise<{
         now + org.reminder_days * 24 * 60 * 60 * 1000,
       ).toISOString();
 
-      // Stamp state atomically. If two cron runs happened to race on
-      // the same client we still only send once because the WHERE
-      // clause requires state = never_asked.
-      const { error: stampErr } = (await db
+      // Atomic claim with rowcount check. WHERE state = 'never_asked'
+      // is the race guard; .select() back tells us whether THIS UPDATE
+      // actually flipped a row. Both error path AND zero-rowcount path
+      // skip the send — without the rowcount check, a parallel cron
+      // that beat us to it would still proceed to mail.
+      const { data: claimed, error: stampErr } = (await db
         .from("clients")
         .update({
           gbp_review_state: "pending",
@@ -1955,10 +1974,18 @@ export async function sendGbpReviewRequests(): Promise<{
           gbp_first_triggering_booking_id: row.id,
         } as never)
         .eq("id", client.id)
-        .eq("gbp_review_state" as never, "never_asked" as never)) as unknown as {
+        .eq("gbp_review_state" as never, "never_asked" as never)
+        .select("id")) as unknown as {
+        data: Array<{ id: string }> | null;
         error: { message: string } | null;
       };
       if (stampErr) {
+        skipped += 1;
+        continue;
+      }
+      if (!claimed || claimed.length === 0) {
+        // Lost the race — someone else just transitioned this client
+        // out of never_asked. No retry, no email.
         skipped += 1;
         continue;
       }
