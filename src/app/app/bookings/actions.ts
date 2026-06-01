@@ -499,6 +499,21 @@ export async function createBookingAction(
       : (parsed.data.assigned_to ?? null);
 
   const serviceExtras = readServiceExtras(formData);
+  // Server-side gate: the form's submit button is disabled when the
+  // service catalog is empty, but pressing Enter inside an input
+  // bypasses the button-disabled check via native form submission.
+  // Without this guard a booking would save with service_type_id=NULL
+  // and service_type_label="" — exactly the bug the empty-catalog
+  // submit-button fix tried to close. Belt + braces.
+  if (!serviceExtras.service_type_id) {
+    return {
+      errors: {
+        _form:
+          "No services configured. Go to Settings → Services and add at least one before creating a booking.",
+      },
+      values: raw,
+    };
+  }
   const { data: booking, error } = await supabase
     .from("bookings")
     .insert({
@@ -673,6 +688,18 @@ export async function createRecurringBookingAction(
   // Read service FK once up front — used by both the series row and
   // each generated occurrence so they all stay in sync.
   const recurringServiceExtras = readServiceExtras(formData);
+  // Same Enter-key guard as createBookingAction. Without a real
+  // service_type_id the recurring series + all generated occurrences
+  // would have NULL FK + empty label.
+  if (!recurringServiceExtras.service_type_id) {
+    return {
+      errors: {
+        _form:
+          "No services configured. Go to Settings → Services and add at least one before creating a recurring booking.",
+      },
+      values: raw,
+    };
+  }
   const { data: series, error: seriesErr } = await (supabase
     .from("booking_series" as never)
     .insert({

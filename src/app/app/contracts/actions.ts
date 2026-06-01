@@ -53,6 +53,18 @@ export async function createContractAction(
 
   const { membership, supabase } = await getActionContext();
   const extras = readContractServiceExtras(formData);
+  // Server-side gate: submit-button disable doesn't catch Enter-key
+  // submission. Without a real service_type_id the contract would
+  // save with NULL FK + empty label.
+  if (!extras.service_type_id) {
+    return {
+      errors: {
+        _form:
+          "No services configured. Go to Settings → Services and add at least one before creating a contract.",
+      },
+      values: raw,
+    };
+  }
   const { error } = await supabase.from("contracts").insert({
     organization_id: membership.organization_id,
     client_id: parsed.data.client_id,
