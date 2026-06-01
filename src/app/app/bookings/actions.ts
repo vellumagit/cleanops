@@ -951,6 +951,20 @@ export async function updateBookingAction(
       : (parsed.data.assigned_to ?? null);
 
   const updateServiceExtras = readServiceExtras(formData);
+  // Server-side gate matching createBookingAction: if the service
+  // catalog is empty (everything archived) and the user pressed Enter
+  // to submit (bypassing the disabled submit button), refuse the
+  // update rather than writing service_type_id=NULL and breaking the
+  // FK denormalization downstream paths rely on.
+  if (!updateServiceExtras.service_type_id) {
+    return {
+      errors: {
+        _form:
+          "No services configured. Go to Settings → Services and add at least one before saving this booking.",
+      },
+      values: raw,
+    };
+  }
   // IMMUTABILITY: service_type (the legacy enum) is omitted from the
   // UPDATE payload. The form still posts a value (which the recurring
   // propagation paths below need), but we never rewrite this column

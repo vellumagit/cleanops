@@ -96,6 +96,18 @@ export async function updateContractAction(
 
   const { membership, supabase } = await getActionContext();
   const extras = readContractServiceExtras(formData);
+  // Server-side gate matching createContractAction — Enter-key on an
+  // edit form with an empty service catalog would otherwise write
+  // service_type_id=NULL. Refuse with a friendly error.
+  if (!extras.service_type_id) {
+    return {
+      errors: {
+        _form:
+          "No services configured. Go to Settings → Services and add at least one before saving this contract.",
+      },
+      values: raw,
+    };
+  }
   // IMMUTABILITY: service_type (the legacy enum) is omitted from the
   // UPDATE so re-categorizing a service in Settings → Services can't
   // silently rewrite the contract's historical enum bucket. The FK
