@@ -688,6 +688,128 @@ export async function createManualEmployeeAction(
 }
 
 /* ------------------------------------------------------------------ */
+/*  Force-remove employee (hard delete, including auth account)        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Owner-only nuclear delete. Bypasses the "must be disabled first"
+ * guardrail and best-effort wipes the underlying auth.users row too.
+ *
+ * Use cases:
+ *   - The auth account got wiped from the Supabase dashboard but the
+ *     membership row is still hanging around (orphaned profile_id with
+ *     no profile behind it). Happens when someone cleans up via SQL or
+ *     the Auth dashboard without going through /app/employees first.
+ *   - An invited member never accepted, their state is mangled, and you
+ *     just want a clean slate to re-invite the same email.
+ *
+ * Differs from deleteEmployeeAction:
+ *   - No status='disabled' precondition
+ *   - Tries to delete the auth user too (best-effort — if the dashboard
+ *     already removed it, the 404 is swallowed silently)
+ *   - Same payroll-history guardrail though: if payroll_run_entries
+ *     reference this membership, the delete is blocked because dropping
+ *     the row would corrupt historical payroll.
+ *
+ * The recipe for "Mariya can't reset her password, let's nuke her account":
+ *   1. Owner clicks Force remove → membership gone, audit row written
+ *   2. (Optional, if auth still existed) auth.users.delete_user runs
+ *   3. Owner re-invites the same email → fresh signup flow → done.
+ */
+export async function forceDeleteEmployeeAction(formData: FormData) {
+  const targetId = String(formData.get("id") ?? "").trim();
+  if (!targetId) return;
+
+  const { membership } = await getActionContext();
+
+  if (membership.role !== "owner") {
+    throw new Error("Only owners can force-remove employees.");
+  }
+
+  if (targetId === membership.id) {
+    throw new Error("You cannot remove your own account.");
+  }
+
+  const admin = createSupabaseAdminClient();
+
+  const { data: target } = (await admin
+    .from("memberships")
+    .select("id, status, display_name, profile_id, contact_email")
+    .eq("id", targetId)
+    .eq("organization_id", membership.organization_id)
+    .maybeSingle()) as unknown as {
+    data: {
+      id: string;
+      status: string;
+      display_name: string | null;
+      profile_id: string | null;
+      contact_email: string | null;
+    } | null;
+  };
+
+  if (!target) throw new Error("Employee not found.");
+
+  // Best-effort: wipe the auth.users row tied to this membership. The
+  // dashboard-delete path that prompted this feature already removed
+  // it, so a "user not found" response is the expected normal case.
+  // Any unexpected error is logged but doesn't block the membership
+  // delete — orphan cleanup is the whole point of this action.
+  if (target.profile_id) {
+    try {
+      const { error: authErr } = await admin.auth.admin.deleteUser(
+        target.profile_id,
+      );
+      if (authErr && !/not.*found|user.*deleted/i.test(authErr.message)) {
+        console.error("[force-delete] auth.users delete failed:", authErr.message);
+      }
+    } catch (err) {
+      console.error("[force-delete] auth.users delete threw:", err);
+    }
+  }
+
+  const { error } = await admin
+    .from("memberships")
+    .delete()
+    .eq("id", targetId)
+    .eq("organization_id", membership.organization_id);
+
+  if (error) {
+    // Same payroll guard as the normal delete — protect historical
+    // pay records even in the force path.
+    if (
+      error.message.includes("payroll_run_entries") ||
+      error.code === "23503"
+    ) {
+      throw new Error(
+        "This employee has payroll records and cannot be force-removed. " +
+          "Keep them deactivated to preserve historical payroll data.",
+      );
+    }
+    throw error;
+  }
+
+  await logAuditEvent({
+    membership,
+    action: "delete",
+    entity: "membership",
+    entity_id: targetId,
+    before: {
+      id: targetId,
+      status: target.status,
+      display_name: target.display_name,
+      contact_email: target.contact_email,
+      force_removed: true,
+      auth_user_also_deleted: Boolean(target.profile_id),
+    },
+    after: null,
+  });
+
+  revalidatePath("/app/employees");
+  revalidatePath("/app/settings/members");
+  redirect("/app/employees");
+}
+
+/* ------------------------------------------------------------------ */
 /*  Generate password recovery link (emergency owner/admin override)   */
 /* ------------------------------------------------------------------ */
 

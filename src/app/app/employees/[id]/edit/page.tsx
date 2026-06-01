@@ -11,6 +11,7 @@ import {
   type EmployeeEditDefaults,
 } from "./employee-edit-form";
 import { DeleteEmployeeForm } from "./delete-employee-form";
+import { ForceDeleteForm } from "./force-delete-form";
 import { RecoveryLinkCard } from "./recovery-link-card";
 
 export const metadata = { title: "Edit employee" };
@@ -122,20 +123,52 @@ export default async function EditEmployeePage({
           />
         )}
 
-        {/* Danger zone — delete only available to owners on disabled employees */}
-        {viewer.role === "owner" && !isSelf && member.status === "disabled" && (
+        {/* Danger zone — two flavors of delete for owners.
+            "Delete employee" is the gentle path: requires the member to
+            be Disabled first, leaves their auth login account intact.
+            "Force-remove" is the nuclear path: works on any status and
+            also wipes the auth user. Use this when an account is broken
+            (couldn't reset password, never accepted invite, MFA-stuck)
+            and you want a clean slate to re-invite from. */}
+        {viewer.role === "owner" && !isSelf && (
           <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-6">
             <h2 className="text-sm font-semibold text-destructive">
               Danger zone
             </h2>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Permanently removes this employee from your organization.
-              Historical bookings and timesheets that reference them are
-              preserved — their name will show as &ldquo;Unknown&rdquo; on those
-              records. Employees with payroll run history cannot be deleted.
-            </p>
-            <div className="mt-4">
-              <DeleteEmployeeForm memberId={member.id} name={currentDisplayName} />
+
+            {member.status === "disabled" && (
+              <div className="mt-3 border-b border-destructive/20 pb-4">
+                <p className="text-xs text-muted-foreground">
+                  <strong className="text-foreground">Delete employee.</strong>{" "}
+                  Permanently removes this employee from your organization but
+                  leaves their login account intact. Historical bookings and
+                  timesheets that reference them are preserved — their name
+                  will show as &ldquo;Unknown&rdquo; on those records.
+                  Employees with payroll run history cannot be deleted.
+                </p>
+                <div className="mt-3">
+                  <DeleteEmployeeForm
+                    memberId={member.id}
+                    name={currentDisplayName}
+                  />
+                </div>
+              </div>
+            )}
+
+            <div className={member.status === "disabled" ? "mt-4" : "mt-3"}>
+              <p className="text-xs text-muted-foreground">
+                <strong className="text-foreground">Force-remove.</strong>{" "}
+                Removes this employee AND deletes their login account in one
+                step. Use when the account is broken or stuck and you want to
+                re-invite the same email from scratch. Works regardless of
+                status.
+              </p>
+              <div className="mt-3">
+                <ForceDeleteForm
+                  memberId={member.id}
+                  name={currentDisplayName}
+                />
+              </div>
             </div>
           </div>
         )}
