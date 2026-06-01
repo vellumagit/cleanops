@@ -63,20 +63,19 @@ export function ServiceTypeForm({
   const [state, formAction] = useActionState(boundAction, empty);
   const v = state.values ?? {};
 
-  // The action resolves to `{}` on success. We tell the parent to
-  // close us only when the state object is truly empty (no errors,
-  // no echoed values).
+  // Successful submit is signaled by the action returning `{ ok: true }`.
+  // The initial state passed to useActionState is bare `{}` which has
+  // `ok: undefined`, so this effect ONLY fires after a real submission.
+  // Previously we tried to detect success by "values is empty + no
+  // errors", which matched the initial state too and collapsed the
+  // form the instant it mounted.
   useEffect(() => {
-    if (
-      state &&
-      !state.errors &&
-      (!state.values || Object.keys(state.values).length === 0)
-    ) {
+    if (state.ok) {
       toast.success(mode === "edit" ? "Service saved" : "Service added");
       onSaved();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state]);
+  }, [state.ok]);
 
   return (
     <form action={formAction} className="space-y-4">

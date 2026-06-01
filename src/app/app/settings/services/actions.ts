@@ -7,7 +7,19 @@ import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
 import { ServiceTypeRowSchema } from "@/lib/validators/service-types";
 
 type Field = keyof typeof ServiceTypeRowSchema.shape;
-export type ServiceTypeFormState = ActionState<Field & string>;
+/**
+ * Action state extended with an `ok` sentinel so the form's
+ * onSuccess effect can distinguish "initial mount" (state is `{}`,
+ * `ok` is undefined) from "successful submit" (`ok: true`).
+ *
+ * Without this, returning bare `{}` on success matched the initial
+ * empty state by structural equality and the create/edit form
+ * collapsed itself the instant it mounted. See the canonical
+ * pattern in edit-employee-dialog.tsx + sign-form.tsx.
+ */
+export type ServiceTypeFormState = ActionState<Field & string> & {
+  ok?: boolean;
+};
 
 function readFormValues(formData: FormData) {
   return {
@@ -80,7 +92,9 @@ export async function createServiceTypeAction(
   });
 
   revalidatePath("/app/settings/services");
-  return {};
+  // `ok: true` sentinel — see ServiceTypeFormState comment. Without it,
+  // the form's success effect would fire on initial mount.
+  return { ok: true };
 }
 
 /**
@@ -149,7 +163,9 @@ export async function updateServiceTypeAction(
   });
 
   revalidatePath("/app/settings/services");
-  return {};
+  // `ok: true` sentinel — see ServiceTypeFormState comment. Without it,
+  // the form's success effect would fire on initial mount.
+  return { ok: true };
 }
 
 /**
