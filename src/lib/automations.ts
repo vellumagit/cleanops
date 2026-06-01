@@ -2038,7 +2038,7 @@ export async function sendGbpReviewRequests(): Promise<{
   const { data: reminderCandidates } = (await db
     .from("clients")
     .select(
-      "id, organization_id, name, email, gbp_reminders_sent, gbp_redirect_token, gbp_unsubscribe_token",
+      "id, organization_id, name, email, gbp_reminders_sent, gbp_last_asked_at, gbp_next_reminder_at, gbp_redirect_token, gbp_unsubscribe_token",
     )
     .eq("gbp_review_state" as never, "pending" as never)
     .lte("gbp_next_reminder_at" as never, nowIso as never)
@@ -2050,6 +2050,8 @@ export async function sendGbpReviewRequests(): Promise<{
       name: string | null;
       email: string | null;
       gbp_reminders_sent: number;
+      gbp_last_asked_at: string | null;
+      gbp_next_reminder_at: string | null;
       gbp_redirect_token: string | null;
       gbp_unsubscribe_token: string | null;
     }> | null;
@@ -2077,6 +2079,9 @@ export async function sendGbpReviewRequests(): Promise<{
     }
 
     // Check the cap. Reminders already sent + this one > max means lapse.
+    // Lapse via a CAS UPDATE so a parallel cron can't accidentally
+    // lapse-then-restore-then-lapse a client whose state was just
+    // changed by a click or opt-out.
     const nextCount = c.gbp_reminders_sent + 1;
     if (nextCount > org.max_reminders) {
       await db
@@ -2085,8 +2090,41 @@ export async function sendGbpReviewRequests(): Promise<{
           gbp_review_state: "lapsed",
           gbp_next_reminder_at: null,
         } as never)
-        .eq("id", c.id);
+        .eq("id", c.id)
+        .eq("gbp_review_state" as never, "pending" as never);
       lapsed += 1;
+      continue;
+    }
+
+    // CAS-claim the reminder slot BEFORE sending. WHERE guards on
+    // both state ("pending") AND counter (must match what we read)
+    // make this atomic: if a parallel cron already incremented the
+    // counter, or a click / opt-out / mark-reviewed transitioned the
+    // state, our UPDATE matches zero rows and we skip without
+    // sending. Without this, two crons reading counter=4 could both
+    // proceed to send (double email, double Resend quota burn) before
+    // either wrote 5. Send-first-update-second was the original
+    // shape; claim-first is the safer one.
+    const nextReminderAt = new Date(
+      now + org.reminder_days * 24 * 60 * 60 * 1000,
+    ).toISOString();
+    const { data: claimed } = (await db
+      .from("clients")
+      .update({
+        gbp_reminders_sent: nextCount,
+        gbp_last_asked_at: nowIso,
+        gbp_next_reminder_at: nextReminderAt,
+      } as never)
+      .eq("id", c.id)
+      .eq("gbp_review_state" as never, "pending" as never)
+      .eq("gbp_reminders_sent" as never, c.gbp_reminders_sent as never)
+      .select("id")) as unknown as {
+      data: Array<{ id: string }> | null;
+    };
+    if (!claimed || claimed.length === 0) {
+      // Lost the race or state changed mid-batch (clicked, opted_out,
+      // reviewed, lapsed). Skip without sending.
+      skipped += 1;
       continue;
     }
 
@@ -2108,24 +2146,22 @@ export async function sendGbpReviewRequests(): Promise<{
       });
 
       if (ok) {
-        // Increment + schedule next reminder. If this WAS the cap-th
-        // reminder, the NEXT cycle will catch it and lapse it — we
-        // don't pre-lapse here so the customer still gets the email
-        // we just sent.
-        const nextReminderAt = new Date(
-          now + org.reminder_days * 24 * 60 * 60 * 1000,
-        ).toISOString();
+        remindersSent += 1;
+      } else {
+        // Send failed AFTER we claimed the slot — roll back so the
+        // next cron run can retry. We restore the counter and
+        // schedule an immediate retry; gbp_last_asked_at may show
+        // the failed attempt's timestamp instead of the prior value
+        // (we only SELECTed enough to roll back the cron-relevant
+        // fields), which is acceptable cosmetic drift.
         await db
           .from("clients")
           .update({
-            gbp_reminders_sent: nextCount,
-            gbp_last_asked_at: nowIso,
-            gbp_next_reminder_at: nextReminderAt,
+            gbp_reminders_sent: c.gbp_reminders_sent,
+            gbp_next_reminder_at: c.gbp_next_reminder_at ?? nowIso,
+            gbp_last_asked_at: c.gbp_last_asked_at,
           } as never)
           .eq("id", c.id);
-        remindersSent += 1;
-      } else {
-        // Send failed — leave state as-is so the next cron retries.
         skipped += 1;
       }
     } catch (err) {
