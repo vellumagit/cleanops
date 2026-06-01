@@ -104,10 +104,15 @@ export default async function JoinPage({
     .update({ accepted_at: new Date().toISOString() } as never)
     .eq("id", invite.id);
 
-  // Set the new org as the active org cookie
+  // Set the new org as the active org cookie. Cookie name must match
+  // the constant in src/lib/auth.ts (ACTIVE_ORG_COOKIE) — previously
+  // we wrote "sollos_active_org" here but the auth helper reads
+  // "cleanops_active_org", which meant a user accepting an invite
+  // while logged into a different org would have their new org
+  // silently ignored on multi-org accounts.
   const { cookies } = await import("next/headers");
   const cookieStore = await cookies();
-  cookieStore.set("sollos_active_org", invite.organization_id, {
+  cookieStore.set("cleanops_active_org", invite.organization_id, {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",

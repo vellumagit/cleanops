@@ -311,7 +311,7 @@ export function teamInviteEmail(args: {
     </p>
     ${button("Accept Invitation", args.signupUrl, args.brandColor ? `#${args.brandColor.replace(/^#/, "")}` : DEFAULT_BRAND)}
     <p style="margin:0;font-size:12px;line-height:1.5;color:#a1a1aa;">
-      This link expires in 7 days. If you didn't expect this, ignore this email.
+      This link expires in 14 days. If you didn't expect this, ignore this email.
     </p>
     `,
     {
@@ -320,7 +320,7 @@ export function teamInviteEmail(args: {
       preheader: `${args.orgName} invited you to join as ${args.role}`,
     },
   );
-  const text = `${greeting}\n\n${args.orgName} invited you to join as ${args.role}.\n\nAccept: ${args.signupUrl}\n\nLink expires in 7 days.`;
+  const text = `${greeting}\n\n${args.orgName} invited you to join as ${args.role}.\n\nAccept: ${args.signupUrl}\n\nLink expires in 14 days.`;
   return { subject, html, text };
 }
 

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ChevronRight, GraduationCap, Calendar, CalendarClock, MapPin, CalendarDays, CheckCircle2, XCircle } from "lucide-react";
+import { ChevronRight, GraduationCap, Calendar, CalendarClock, MapPin, CalendarDays, CheckCircle2, XCircle, Shield } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -99,6 +99,23 @@ export default async function FieldProfilePage() {
           organizationId={membership.organization_id}
         />
       </div>
+
+      {/* Security — two-factor auth */}
+      <Link
+        href="/field/profile/security"
+        className="mt-5 flex items-center gap-3 rounded-xl border border-border bg-card p-5 transition-colors active:bg-muted"
+      >
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
+          <Shield className="h-5 w-5 text-muted-foreground" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <h2 className="text-sm font-semibold">Security</h2>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Add a second factor to your sign-in.
+          </p>
+        </div>
+        <ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground" />
+      </Link>
 
       {/* Google Calendar */}
       <div className="mt-5 rounded-xl border border-border bg-card p-5">
