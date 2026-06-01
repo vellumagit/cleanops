@@ -124,7 +124,15 @@ export async function getCurrentMembership(): Promise<CurrentMembership | null> 
  * to /login. If `allowed` is provided, also redirects when their role isn't
  * in the allowed list. Returns the membership when access is granted.
  *
- * Use at the top of server components inside protected layouts.
+ * Also enforces MFA: if the user has any verified TOTP factor and their
+ * session is still at aal1 (just-logged-in-with-password), redirects to
+ * /mfa-verify. Users who never enrolled MFA skip this gate — MFA is
+ * opt-in and stays opt-in.
+ *
+ * Use at the top of server components inside protected layouts, and via
+ * getActionContext() in server actions. Cron routes, public-API routes
+ * (API-key auth), and webhook routes don't call this — they have their
+ * own auth and no user session.
  */
 export async function requireMembership(
   allowed?: MembershipRole[],
@@ -143,7 +151,92 @@ export async function requireMembership(
     redirect("/app");
   }
 
+  // ── MFA gate ─────────────────────────────────────────────────────────
+  // The login action used to be the only AAL checkpoint, which meant a
+  // stale aal1 session (closed tab between sign-in and /mfa-verify,
+  // transient listFactors error, etc.) could reach every authed page.
+  // Now every layout + server action funnels through here.
+  //
+  // The carveout: users with ZERO verified factors are never checked
+  // for AAL — they haven't opted in, MFA is optional. The login action
+  // also checks this so first-time enrollers can reach
+  // /app/profile/security without a redirect loop.
+  await enforceMfa();
+
   return membership;
+}
+
+/**
+ * MFA gate shared by requireMembership. Extracted so route handlers
+ * that intentionally bypass requireMembership (OAuth callbacks, etc.)
+ * can still invoke it where appropriate.
+ *
+ * Fails CLOSED: if listFactors errors, we assume the user might have
+ * MFA enrolled and route them to /mfa-verify, which self-heals when
+ * no verified factor exists (its own check redirects to /app).
+ */
+async function enforceMfa(): Promise<void> {
+  const supabase = await createSupabaseServerClient();
+
+  const { data: factorsData, error: factorsErr } =
+    await supabase.auth.mfa.listFactors();
+
+  // Fail-closed on listFactors error so a transient Supabase blip can't
+  // silently disable MFA for an enrolled user. /mfa-verify itself
+  // bounces back to /app if the user actually has no verified factor.
+  if (factorsErr) {
+    redirect(buildMfaVerifyUrl(await getRequestPath()));
+  }
+
+  const hasVerifiedFactor = (factorsData?.totp ?? []).some(
+    (f) => f.status === "verified",
+  );
+
+  // Carveout: never-enrolled users (the default) pass through. This
+  // preserves the opt-in model AND prevents a redirect loop when a
+  // first-time enroller is mid-flow on /app/profile/security.
+  if (!hasVerifiedFactor) return;
+
+  const { data: aalData } =
+    await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+
+  if (aalData?.currentLevel === "aal2") return;
+
+  // aal1 with at least one verified factor → must clear MFA challenge.
+  redirect(buildMfaVerifyUrl(await getRequestPath()));
+}
+
+/**
+ * Best-effort lookup of the current request's pathname so the MFA
+ * gate can preserve where the user was headed. Reads the x-pathname
+ * header set by middleware.ts. Returns "/app" as a sensible default
+ * if middleware isn't running (build-time RSC, etc.).
+ */
+async function getRequestPath(): Promise<string> {
+  try {
+    const { headers } = await import("next/headers");
+    const h = await headers();
+    const pathname = h.get("x-pathname");
+    if (pathname && pathname.startsWith("/")) return pathname;
+  } catch {
+    // Headers not available in this context (build-time, etc.) — fall through.
+  }
+  return "/app";
+}
+
+/**
+ * Build /mfa-verify URL with a safe ?next= param. Mirrors the same
+ * allowlist used in /login so a header-spoofed pathname can't be
+ * turned into an open redirect.
+ */
+function buildMfaVerifyUrl(intendedPath: string): string {
+  const isSafe =
+    intendedPath === "/app" ||
+    intendedPath === "/field" ||
+    intendedPath.startsWith("/app/") ||
+    intendedPath.startsWith("/field/");
+  if (!isSafe) return "/mfa-verify";
+  return `/mfa-verify?next=${encodeURIComponent(intendedPath)}`;
 }
 
 /**

@@ -83,14 +83,21 @@ export async function loginAction(
     };
   }
 
-  // MFA gate — if this account has a verified TOTP factor, password
-  // alone leaves the session at aal1. Bounce to /mfa-verify so the user
-  // can clear the second factor before reaching any authed page. Users
-  // without a verified factor (MFA never enabled) skip this entirely.
-  const { data: factors } = await supabase.auth.mfa.listFactors();
-  const hasVerifiedFactor = (factors?.totp ?? []).some(
-    (f) => f.status === "verified",
-  );
+  // MFA gate — fast path. The same check also lives inside
+  // requireMembership() (src/lib/auth.ts), which catches stale aal1
+  // sessions that bypass login entirely (closed tab between sign-in
+  // and /mfa-verify, magic-link/reset flows, etc.). This early check
+  // here means MFA-enrolled users get redirected straight to
+  // /mfa-verify without a transient flash of /app.
+  //
+  // Fail CLOSED on listFactors error — if Supabase is having a hiccup
+  // we'd rather over-prompt for MFA (the /mfa-verify page bounces back
+  // to /app for users with no verified factor) than under-prompt.
+  const { data: factors, error: factorsErr } =
+    await supabase.auth.mfa.listFactors();
+  const hasVerifiedFactor =
+    factorsErr != null ||
+    (factors?.totp ?? []).some((f) => f.status === "verified");
   if (hasVerifiedFactor) {
     const { data: aalData } =
       await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
