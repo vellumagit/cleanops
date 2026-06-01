@@ -372,10 +372,18 @@ export async function createManualTimeEntryAction(
   // documented behavior: admins editing historical entries get the
   // current rate. If they want a different rate, they can update the
   // snapshot directly via the entry edit form (separate code path).
-  const { data: manualRateRow } = (await supabase
+  // RLS lockdown (migration 20260601040000): pay_rate_cents is no
+  // longer SELECT-able via end-user JWT. Use admin client scoped to
+  // the target employee's row in THIS admin's org.
+  const { createSupabaseAdminClient: createAdminForRate } = await import(
+    "@/lib/supabase/admin"
+  );
+  const rateAdmin = createAdminForRate();
+  const { data: manualRateRow } = (await rateAdmin
     .from("memberships")
     .select("pay_rate_cents")
     .eq("id", parsed.employee_id)
+    .eq("organization_id", membership.organization_id)
     .maybeSingle()) as unknown as {
     data: { pay_rate_cents: number | null } | null;
   };

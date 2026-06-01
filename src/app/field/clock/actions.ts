@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { getActionContext } from "@/lib/actions";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 export type ClockResult = { ok: true } | { ok: false; error: string };
 
@@ -43,12 +44,17 @@ export async function clockInAction(
 
   // Snapshot the employee's current pay rate so historical hours
   // don't retroactively re-price if their rate changes later.
-  // Fallback for read paths: when this column is NULL on a legacy
-  // row, payroll reads memberships.pay_rate_cents (the old behavior).
-  const { data: rateRow } = (await supabase
+  //
+  // RLS lockdown (migration 20260601040000): pay_rate_cents is no
+  // longer SELECT-able via the end-user JWT. We use the admin
+  // client here — scoped explicitly to THIS employee's own row in
+  // their own org so the bypass doesn't leak anyone else's data.
+  const admin = createSupabaseAdminClient();
+  const { data: rateRow } = (await admin
     .from("memberships")
     .select("pay_rate_cents")
     .eq("id", membership.id)
+    .eq("organization_id", membership.organization_id)
     .maybeSingle()) as unknown as {
     data: { pay_rate_cents: number | null } | null;
   };

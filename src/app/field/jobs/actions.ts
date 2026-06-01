@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { getActionContext } from "@/lib/actions";
 import { autoInvoiceOnJobComplete } from "@/lib/automations";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 export type JobActionResult = { ok: true } | { ok: false; error: string };
 
@@ -82,15 +83,16 @@ export async function startJobAction(
     .limit(1)
     .maybeSingle();
 
-  // Snapshot the employee's current pay rate for the new time entry
-  // (only needed when we're about to insert one). Read paths prefer
-  // this snapshot so historical hours don't retroactively re-price if
-  // the employee's rate changes later. Fetched once up-front so both
-  // insert branches use the same value.
-  const { data: rateRow } = (await supabase
+  // Snapshot the employee's current pay rate for the new time entry.
+  // RLS lockdown (migration 20260601040000): pay_rate_cents is no
+  // longer SELECT-able via end-user JWT. Use admin client scoped
+  // strictly to this employee's own row in their own org.
+  const adminForRate = createSupabaseAdminClient();
+  const { data: rateRow } = (await adminForRate
     .from("memberships")
     .select("pay_rate_cents")
     .eq("id", membership.id)
+    .eq("organization_id", membership.organization_id)
     .maybeSingle()) as unknown as {
     data: { pay_rate_cents: number | null } | null;
   };

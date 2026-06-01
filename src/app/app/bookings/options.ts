@@ -1,5 +1,7 @@
 import "server-only";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { requireMembership } from "@/lib/auth";
 import { memberDisplayName } from "@/lib/member-display";
 
 /**
@@ -21,6 +23,11 @@ export type ServiceOption = {
 
 export async function fetchBookingFormOptions() {
   const supabase = await createSupabaseServerClient();
+  // Admin client only for the memberships read that needs
+  // pay_rate_cents (RLS-locked from end-user JWTs). Scoped
+  // explicitly to the caller's org.
+  const membership = await requireMembership(["owner", "admin", "manager"]);
+  const admin = createSupabaseAdminClient();
   const [clients, packages, employees, services] = await Promise.all([
     // preferred_cleaner_id lets the form auto-fill the primary
     // assignee when a client is picked — one fewer click when the
@@ -52,11 +59,14 @@ export async function fetchBookingFormOptions() {
       .order("name"),
     // Every active membership is assignable — owners, admins, and shadow
     // (manually-added) members included. pay_rate_cents is used to
-    // pre-fill split-shift hourly rates.
-    supabase
+    // pre-fill split-shift hourly rates. Admin client because the
+    // column is RLS-locked from end-user JWTs; explicit org filter
+    // keeps the bypass narrow.
+    admin
       .from("memberships")
       .select("id, display_name, profile:profiles ( full_name ), pay_rate_cents")
-      .eq("status", "active") as unknown as Promise<{
+      .eq("status", "active")
+      .eq("organization_id", membership.organization_id) as unknown as Promise<{
       data: Array<{
         id: string;
         display_name: string | null;

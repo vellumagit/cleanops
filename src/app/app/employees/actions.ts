@@ -346,13 +346,15 @@ export async function updateMemberAction(
     }
   }
 
-  // Get previous state for audit. Using the user-scoped client (RLS active)
-  // also doubles as a cross-org ownership check: if memberId belongs to a
-  // different org, RLS prevents the read and before will be null.
-  const { data: before } = await supabase
+  // Get previous state for audit. pay_rate_cents is RLS-locked from
+  // end-user JWTs (migration 20260601040000), so we use the admin
+  // client and add an explicit org filter as the ownership check.
+  const adminForBefore = createSupabaseAdminClient();
+  const { data: before } = await adminForBefore
     .from("memberships")
     .select("role, status, pay_rate_cents, profile_id, display_name, contact_email, contact_phone")
     .eq("id", memberId)
+    .eq("organization_id", membership.organization_id)
     .single();
 
   if (!before) {

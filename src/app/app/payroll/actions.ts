@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getActionContext } from "@/lib/actions";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { logAuditEvent } from "@/lib/audit";
 import { notifyPayrollPaid } from "@/lib/automations";
 
@@ -55,7 +56,9 @@ export async function createPayrollRunAction(
       }>,
       // Include every active membership — owners who work shifts, and
       // manually-added shadow members, both belong on payroll.
-      supabase
+      // Admin client because pay_rate_cents is RLS-locked from end-user
+      // JWTs (migration 20260601040000). Org-filtered to stay scoped.
+      createSupabaseAdminClient()
         .from("memberships")
         .select(
           "id, pay_rate_cents, display_name, profile:profiles ( full_name )",

@@ -68,7 +68,6 @@ export default async function TimesheetsPage({
           pay_rate_cents_snapshot,
           employee:memberships!time_entries_employee_id_fkey (
             id,
-            pay_rate_cents,
             display_name,
             profile:profiles ( full_name )
           ),
@@ -98,7 +97,6 @@ export default async function TimesheetsPage({
           pay_rate_cents_snapshot: number | null;
           employee: {
             id: string;
-            pay_rate_cents: number | null;
             display_name: string | null;
             profile: { full_name: string | null } | null;
           } | null;
@@ -119,7 +117,12 @@ export default async function TimesheetsPage({
       // shifts themselves (and shadow-added members never have a linked
       // profile), so we pull every active membership and let the UI
       // decide how to present them.
-      supabase
+      //
+      // Uses admin client because pay_rate_cents is RLS-locked from
+      // end-user JWTs (migration 20260601040000). This page is already
+      // owner/admin/manager gated via the /app layout, and we filter
+      // explicitly to this org so the bypass doesn't leak data.
+      createSupabaseAdminClient()
         .from("memberships")
         .select(
           `
@@ -131,6 +134,7 @@ export default async function TimesheetsPage({
         `,
         )
         .eq("status", "active")
+        .eq("organization_id", membership.organization_id)
         .limit(500),
       // Use admin client: role is already gated above (owner/admin/manager),
       // and RLS on pto_requests may not cover admins viewing others' rows.

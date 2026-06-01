@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ChevronLeft } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { PageShell } from "@/components/page-shell";
 import { memberDisplayName } from "@/lib/member-display";
 import { MembersTable, type MemberRow } from "./members-table";
@@ -10,9 +10,11 @@ export const metadata = { title: "Team members" };
 
 export default async function MembersPage() {
   const membership = await requireMembership(["owner", "admin"]);
-  const supabase = await createSupabaseServerClient();
 
-  const { data, error } = await supabase
+  // Admin client because pay_rate_cents is RLS-locked from end-user
+  // JWTs. Explicit org filter on every read keeps the bypass safe.
+  const admin = createSupabaseAdminClient();
+  const { data, error } = await admin
     .from("memberships")
     .select(
       `

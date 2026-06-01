@@ -1,5 +1,6 @@
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { PageShell } from "@/components/page-shell";
 import { memberDisplayName } from "@/lib/member-display";
 import { EmployeesTable, type EmployeeRow } from "./employees-table";
@@ -10,13 +11,17 @@ import { AddManualEmployeeDialog } from "./add-manual-dialog";
 export const metadata = { title: "Employees" };
 
 export default async function EmployeesPage() {
-  const membership = await requireMembership();
+  const membership = await requireMembership(["owner", "admin", "manager"]);
   const supabase = await createSupabaseServerClient();
   const isAdmin = membership.role === "owner" || membership.role === "admin";
   const canInvite = isAdmin; // managers can view but not invite
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
 
-  const { data, error } = await supabase
+  // Use admin client because pay_rate_cents is RLS-locked from end-
+  // user JWTs (migration 20260601040000). Explicit org filter keeps
+  // the bypass from leaking other orgs' data.
+  const admin = createSupabaseAdminClient();
+  const { data, error } = await admin
     .from("memberships")
     .select(
       `
@@ -32,6 +37,7 @@ export default async function EmployeesPage() {
         profile:profiles ( full_name, phone )
       `,
     )
+    .eq("organization_id", membership.organization_id)
     .order("created_at", { ascending: false })
     .limit(500);
 
