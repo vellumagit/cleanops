@@ -185,13 +185,25 @@ export async function autoInvoiceOnJobComplete(
     const db = admin();
 
     // Fetch the completed booking with client info
-    const { data: booking } = await db
+    const { data: booking } = (await db
       .from("bookings")
       .select(
-        "id, organization_id, client_id, total_cents, service_type, address, duration_minutes, scheduled_at",
+        "id, organization_id, client_id, total_cents, service_type, service_type_label, address, duration_minutes, scheduled_at",
       )
       .eq("id", bookingId)
-      .maybeSingle();
+      .maybeSingle()) as unknown as {
+      data: {
+        id: string;
+        organization_id: string;
+        client_id: string | null;
+        total_cents: number;
+        service_type: string;
+        service_type_label: string | null;
+        address: string | null;
+        duration_minutes: number;
+        scheduled_at: string;
+      } | null;
+    };
 
     if (!booking) {
       const reason = `Booking ${bookingId} not found.`;
@@ -358,7 +370,7 @@ export async function autoInvoiceOnJobComplete(
     const { error: liErr } = await db.from("invoice_line_items").insert({
       organization_id: booking.organization_id,
       invoice_id: invoice.id,
-      label: `${humanize(booking.service_type)} — ${booking.address ?? "on site"}`,
+      label: `${booking.service_type_label ?? humanize(booking.service_type)} — ${booking.address ?? "on site"}`,
       quantity: 1,
       unit_price_cents: subtotalCents,
       sort_order: 0,
@@ -397,16 +409,27 @@ export async function notifyUpcomingJobs() {
     const in1h = new Date(now.getTime() + 60 * 60 * 1000);
 
     // Find jobs starting in the next hour that are assigned
-    const { data: jobs } = await db
+    const { data: jobs } = (await db
       .from("bookings")
       .select(`
-        id, organization_id, assigned_to, scheduled_at, service_type, address,
+        id, organization_id, assigned_to, scheduled_at, service_type, service_type_label, address,
         client:clients ( name )
       `)
       .not("assigned_to", "is", null)
       .gte("scheduled_at", now.toISOString())
       .lte("scheduled_at", in1h.toISOString())
-      .in("status", ["pending", "confirmed"]);
+      .in("status", ["pending", "confirmed"])) as unknown as {
+      data: Array<{
+        id: string;
+        organization_id: string;
+        assigned_to: string | null;
+        scheduled_at: string;
+        service_type: string;
+        service_type_label: string | null;
+        address: string | null;
+        client: { name: string | null } | null;
+      }> | null;
+    };
 
     if (!jobs || jobs.length === 0) return 0;
 
@@ -452,7 +475,7 @@ export async function notifyUpcomingJobs() {
           recipient_membership_id: j.assigned_to,
           type: "general" as const,
           title: "Job starting soon",
-          body: `${humanize(j.service_type)} for ${clientName} at ${when}${j.address ? ` — ${j.address}` : ""}`,
+          body: `${(j as { service_type_label?: string | null }).service_type_label ?? humanize(j.service_type)} for ${clientName} at ${when}${j.address ? ` — ${j.address}` : ""}`,
           href: `/field/jobs/${j.id}`,
         };
       });
@@ -733,7 +756,7 @@ export async function sendBookingConfirmation(bookingId: string) {
     const { data: booking } = await db
       .from("bookings")
       .select(`
-        id, organization_id, scheduled_at, service_type, address,
+        id, organization_id, scheduled_at, service_type, service_type_label, address,
         confirmation_email_sent_at,
         client:clients ( name, email, phone )
       `)
@@ -744,6 +767,7 @@ export async function sendBookingConfirmation(bookingId: string) {
         organization_id: string;
         scheduled_at: string;
         service_type: string;
+        service_type_label: string | null;
         address: string | null;
         confirmation_email_sent_at: string | null;
         client: {
@@ -792,7 +816,7 @@ export async function sendBookingConfirmation(bookingId: string) {
     const template = bookingConfirmationEmail({
       clientName: booking.client.name ?? "there",
       orgName: org?.name ?? "your service provider",
-      serviceName: humanize(booking.service_type),
+      serviceName: booking.service_type_label ?? humanize(booking.service_type),
       dateTime,
       address: booking.address ?? "(address to be confirmed)",
       brandColor: org?.brand_color ?? undefined,
@@ -861,16 +885,30 @@ export async function sendBookingRescheduled(
     const { sendOrgEmail } = await import("@/lib/email");
     const { bookingRescheduledEmail } = await import("@/lib/email-templates");
 
-    const { data: booking } = await db
+    const { data: booking } = (await db
       .from("bookings")
       .select(`
-        id, organization_id, scheduled_at, service_type, address, assigned_to,
+        id, organization_id, scheduled_at, service_type, service_type_label, address, assigned_to,
         client:clients ( name, email )
       `)
       .eq("id", bookingId)
-      .maybeSingle();
+      .maybeSingle()) as unknown as {
+      data: {
+        id: string;
+        organization_id: string;
+        scheduled_at: string;
+        service_type: string;
+        service_type_label: string | null;
+        address: string | null;
+        assigned_to: string | null;
+        client: { name: string | null; email: string | null } | null;
+      } | null;
+    };
 
     if (!booking) return;
+
+    const serviceDisplayName =
+      booking.service_type_label ?? humanize(booking.service_type);
 
     // Push the assigned employee first — the field app banner needs to
     // update even if the client email is paused or blocked.
@@ -884,7 +922,7 @@ export async function sendBookingRescheduled(
       });
       sendPushToMembership(booking.assigned_to, {
         title: "Booking rescheduled",
-        body: `${humanize(booking.service_type)} moved to ${when}`,
+        body: `${serviceDisplayName} moved to ${when}`,
         href: `/field/jobs/${bookingId}`,
       }).catch(() => {});
       // In-app notification row so it lingers in their feed.
@@ -893,7 +931,7 @@ export async function sendBookingRescheduled(
         type: "general",
         recipient_membership_id: booking.assigned_to,
         title: "Booking rescheduled",
-        body: `${humanize(booking.service_type)} moved to ${when}`,
+        body: `${serviceDisplayName} moved to ${when}`,
         href: `/field/jobs/${bookingId}`,
       } as never) as unknown as Promise<unknown>).catch(() => {});
     }
@@ -925,7 +963,7 @@ export async function sendBookingRescheduled(
     const template = bookingRescheduledEmail({
       clientName: booking.client.name ?? "there",
       orgName: org?.name ?? "your service provider",
-      serviceName: humanize(booking.service_type),
+      serviceName: serviceDisplayName,
       oldDateTime: fmt(oldScheduledAt),
       newDateTime: fmt(booking.scheduled_at),
       address: booking.address ?? "(address on file)",
@@ -966,7 +1004,7 @@ export async function notifyBookingCancelledToEmployee(bookingId: string) {
     const { data: booking } = await db
       .from("bookings")
       .select(
-        "id, organization_id, assigned_to, scheduled_at, service_type, client:clients ( name )",
+        "id, organization_id, assigned_to, scheduled_at, service_type, service_type_label, client:clients ( name )",
       )
       .eq("id", bookingId)
       .maybeSingle() as unknown as {
@@ -976,6 +1014,7 @@ export async function notifyBookingCancelledToEmployee(bookingId: string) {
         assigned_to: string | null;
         scheduled_at: string;
         service_type: string;
+        service_type_label: string | null;
         client: { name: string | null } | null;
       } | null;
     };
@@ -989,8 +1028,10 @@ export async function notifyBookingCancelledToEmployee(bookingId: string) {
       hour: "numeric",
       minute: "2-digit",
     });
+    const serviceDisplay =
+      booking.service_type_label ?? humanize(booking.service_type);
     const title = "Job cancelled";
-    const body = `${humanize(booking.service_type)} for ${booking.client?.name ?? "a client"} on ${when} was cancelled. You don't need to go.`;
+    const body = `${serviceDisplay} for ${booking.client?.name ?? "a client"} on ${when} was cancelled. You don't need to go.`;
 
     await (db.from("notifications" as never).insert({
       organization_id: booking.organization_id,
@@ -1026,7 +1067,7 @@ export async function sendBookingCancelledToClient(bookingId: string) {
     const { data: booking } = await db
       .from("bookings")
       .select(`
-        id, organization_id, scheduled_at, service_type, address,
+        id, organization_id, scheduled_at, service_type, service_type_label, address,
         cancelled_email_sent_at,
         client:clients ( name, email )
       `)
@@ -1037,6 +1078,7 @@ export async function sendBookingCancelledToClient(bookingId: string) {
         organization_id: string;
         scheduled_at: string;
         service_type: string;
+        service_type_label: string | null;
         address: string | null;
         cancelled_email_sent_at: string | null;
         client: { name: string | null; email: string | null } | null;
@@ -1075,7 +1117,7 @@ export async function sendBookingCancelledToClient(bookingId: string) {
     const template = bookingCancelledEmail({
       clientName: booking.client.name ?? "there",
       orgName: org?.name ?? "your service provider",
-      serviceName: humanize(booking.service_type),
+      serviceName: booking.service_type_label ?? humanize(booking.service_type),
       dateTime,
       address: booking.address ?? "(address on file)",
       brandColor: org?.brand_color ?? undefined,
@@ -2271,7 +2313,7 @@ export async function sendUpcomingBookingReminders(): Promise<{
   const { data: candidates } = await db
     .from("bookings")
     .select(`
-      id, organization_id, scheduled_at, service_type, address,
+      id, organization_id, scheduled_at, service_type, service_type_label, address,
       client:clients ( name, email, phone )
     `)
     .is("client_reminder_sent_at" as never, null as never)
@@ -2283,6 +2325,7 @@ export async function sendUpcomingBookingReminders(): Promise<{
       organization_id: string;
       scheduled_at: string;
       service_type: string;
+      service_type_label: string | null;
       address: string | null;
       client: {
         name: string | null;
@@ -2350,7 +2393,7 @@ export async function sendUpcomingBookingReminders(): Promise<{
     const template = bookingReminderEmail({
       clientName: booking.client.name ?? "there",
       orgName: cached.name,
-      serviceName: humanize(booking.service_type),
+      serviceName: booking.service_type_label ?? humanize(booking.service_type),
       dateTime,
       address: booking.address ?? "(address on file)",
       brandColor: cached.brand_color ?? undefined,
@@ -3163,7 +3206,7 @@ export async function sendUnassignedBookingAlerts(): Promise<{
 
   const { data: rawCandidates } = await db
     .from("bookings")
-    .select("id, organization_id, scheduled_at, service_type, address, client:clients ( name )")
+    .select("id, organization_id, scheduled_at, service_type, service_type_label, address, client:clients ( name )")
     .is("assigned_to", null)
     .is("unassigned_alert_sent_at" as never, null as never)
     .in("status", ["pending", "confirmed"])
@@ -3174,6 +3217,7 @@ export async function sendUnassignedBookingAlerts(): Promise<{
       organization_id: string;
       scheduled_at: string;
       service_type: string;
+      service_type_label: string | null;
       address: string | null;
       client: { name: string | null } | null;
     }> | null;
@@ -3236,7 +3280,7 @@ export async function sendUnassignedBookingAlerts(): Promise<{
 
     const bookingRows = bookings.map((b) => ({
       clientName: b.client?.name ?? "A client",
-      serviceName: humanize(b.service_type),
+      serviceName: b.service_type_label ?? humanize(b.service_type),
       dateTime: new Date(b.scheduled_at).toLocaleString("en-US", {
         weekday: "short",
         month: "short",
@@ -3815,7 +3859,7 @@ export async function sendDailyEmployeeSchedules(): Promise<{
     const { data: bookings } = await db
       .from("bookings")
       .select(`
-        id, scheduled_at, service_type, duration_minutes, address, notes,
+        id, scheduled_at, service_type, service_type_label, duration_minutes, address, notes,
         assigned_to,
         client:clients ( name )
       `)
@@ -3829,6 +3873,7 @@ export async function sendDailyEmployeeSchedules(): Promise<{
         id: string;
         scheduled_at: string;
         service_type: string;
+        service_type_label: string | null;
         duration_minutes: number;
         address: string | null;
         notes: string | null;
@@ -3866,7 +3911,7 @@ export async function sendDailyEmployeeSchedules(): Promise<{
             minute: "2-digit",
             timeZone: orgTz,
           }),
-          serviceName: humanize(j.service_type),
+          serviceName: j.service_type_label ?? humanize(j.service_type),
           clientName: j.client?.name ?? "A client",
           address: j.address ?? "(address on file)",
           durationLabel:
@@ -3927,7 +3972,7 @@ export async function sendWeeklyEmployeeSchedules(): Promise<{
     const { data: bookings } = await db
       .from("bookings")
       .select(`
-        id, scheduled_at, service_type, assigned_to,
+        id, scheduled_at, service_type, service_type_label, assigned_to,
         client:clients ( name )
       `)
       .eq("organization_id", org.id)
@@ -3940,6 +3985,7 @@ export async function sendWeeklyEmployeeSchedules(): Promise<{
         id: string;
         scheduled_at: string;
         service_type: string;
+        service_type_label: string | null;
         assigned_to: string;
         client: { name: string | null } | null;
       }> | null;
@@ -3988,7 +4034,7 @@ export async function sendWeeklyEmployeeSchedules(): Promise<{
             minute: "2-digit",
             timeZone: orgTz,
           }),
-          serviceName: humanize(j.service_type),
+          serviceName: j.service_type_label ?? humanize(j.service_type),
           clientName: j.client?.name ?? "A client",
         })),
       }));
