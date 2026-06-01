@@ -84,12 +84,15 @@ export async function updateContractAction(
 
   const { membership, supabase } = await getActionContext();
   const extras = readContractServiceExtras(formData);
+  // IMMUTABILITY: service_type (the legacy enum) is omitted from the
+  // UPDATE so re-categorizing a service in Settings → Services can't
+  // silently rewrite the contract's historical enum bucket. The FK
+  // + denormalized label still propagate.
   const { error } = await supabase
     .from("contracts")
     .update({
       client_id: parsed.data.client_id,
       estimate_id: parsed.data.estimate_id,
-      service_type: parsed.data.service_type,
       service_type_id: extras.service_type_id,
       service_type_label: extras.service_type_label,
       start_date: parsed.data.start_date,

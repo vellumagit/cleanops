@@ -866,11 +866,27 @@ export function BookingForm({
           {/* Three things flow to the server on submit:
               - service_type        — the enum (still NOT NULL on the table)
               - service_type_id     — the FK to service_types
-              - service_type_label  — denormalized display name */}
+              - service_type_label  — denormalized display name
+
+              IMMUTABILITY: on edit, we send the ORIGINAL enum that the
+              booking was created with, not the current category of the
+              selected service. Otherwise re-categorizing a service in
+              Settings → Services would silently rewrite the enum on
+              every existing booking that used it (next time someone
+              saved an unrelated edit), breaking reports and calendar
+              coloring for historical jobs. The server actions also
+              drop service_type from the UPDATE payload as belt-and-
+              braces, but the hidden input matters too for the
+              "this and future" + recurring expansion paths that copy
+              the form value forward. */}
           <input
             type="hidden"
             name="service_type"
-            value={selectedService?.category ?? "other"}
+            value={
+              mode === "edit"
+                ? (defaults?.service_type ?? selectedService?.category ?? "other")
+                : (selectedService?.category ?? "other")
+            }
           />
           <input
             type="hidden"

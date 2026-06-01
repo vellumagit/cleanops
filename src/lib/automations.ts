@@ -2835,6 +2835,11 @@ export async function autoExtendRecurringSeries(): Promise<number> {
         generate_ahead: number;
         duration_minutes: number;
         service_type: string;
+        // Migration 20260531010000 added these. Older series rows
+        // backfilled from their latest live booking; new rows
+        // populate them at create time.
+        service_type_id: string | null;
+        service_type_label: string | null;
         package_id: string | null;
         assigned_to: string | null;
         total_cents: number;
@@ -2904,6 +2909,13 @@ export async function autoExtendRecurringSeries(): Promise<number> {
         scheduled_at,
         duration_minutes: s.duration_minutes,
         service_type: s.service_type,
+        // Carry the FK + denormalized label forward so cron-generated
+        // bookings display the org's custom service name (and not the
+        // humanized enum). NULL when the series predates the migration
+        // backfill — handled gracefully by the display layer's enum
+        // fallback.
+        service_type_id: s.service_type_id,
+        service_type_label: s.service_type_label,
         status: "confirmed" as const,
         total_cents: s.total_cents,
         hourly_rate_cents: s.hourly_rate_cents,

@@ -153,11 +153,19 @@ export function ContractForm({
             ))}
           </FormSelect>
           {/* The enum stays the source of truth for the contracts table;
-              the FK + label ride along for display. */}
+              the FK + label ride along for display.
+
+              IMMUTABILITY (see booking-form.tsx for the long form): on
+              edit, send the original enum so re-categorizing a service
+              in settings can't silently rewrite existing contracts. */}
           <input
             type="hidden"
             name="service_type"
-            value={selectedService?.category ?? "standard"}
+            value={
+              mode === "edit"
+                ? (defaults?.service_type ?? selectedService?.category ?? "standard")
+                : (selectedService?.category ?? "standard")
+            }
           />
           <input
             type="hidden"

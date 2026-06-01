@@ -670,6 +670,9 @@ export async function createRecurringBookingAction(
   }
 
   // 1. Create the booking series
+  // Read service FK once up front — used by both the series row and
+  // each generated occurrence so they all stay in sync.
+  const recurringServiceExtras = readServiceExtras(formData);
   const { data: series, error: seriesErr } = await (supabase
     .from("booking_series" as never)
     .insert({
@@ -691,10 +694,13 @@ export async function createRecurringBookingAction(
       generate_ahead: parsed.data.generate_ahead,
       duration_minutes: parsed.data.duration_minutes,
       service_type: parsed.data.service_type,
-      // booking_series predates the service_type_id column. The cron
-      // that generates future occurrences reads from individual booking
-      // rows (which DO carry the FK after this migration), so leaving
-      // these off the series row is fine.
+      // FK + label live on the series row too (migration
+      // 20260531010000) so the extend-series cron can carry them
+      // forward onto each generated occurrence — without these,
+      // cron-generated bookings would display the humanized enum
+      // instead of the org's custom service name.
+      service_type_id: recurringServiceExtras.service_type_id,
+      service_type_label: recurringServiceExtras.service_type_label,
       package_id: parsed.data.package_id ?? null,
       assigned_to: parsed.data.assigned_to ?? null,
       total_cents: parsed.data.total_cents,
@@ -734,8 +740,7 @@ export async function createRecurringBookingAction(
     };
   }
 
-  // 3. Insert all booking instances
-  const recurringServiceExtras = readServiceExtras(formData);
+  // 3. Insert all booking instances (recurringServiceExtras declared above)
   const bookingRows = occurrences.map((scheduled_at) => ({
     organization_id: membership.organization_id,
     client_id: parsed.data.client_id,
@@ -919,6 +924,14 @@ export async function updateBookingAction(
       : (parsed.data.assigned_to ?? null);
 
   const updateServiceExtras = readServiceExtras(formData);
+  // IMMUTABILITY: service_type (the legacy enum) is omitted from the
+  // UPDATE payload. The form still posts a value (which the recurring
+  // propagation paths below need), but we never rewrite this column
+  // on a booking once it exists. Re-categorizing a service in
+  // Settings → Services could otherwise silently corrupt the historical
+  // enum value the next time someone edited an unrelated field. The
+  // FK + denormalized label still update so renames + display follow
+  // the catalog.
   const { error } = await supabase
     .from("bookings")
     .update({
@@ -927,7 +940,6 @@ export async function updateBookingAction(
       assigned_to: updateEffectiveAssignedTo,
       scheduled_at: parsed.data.scheduled_at,
       duration_minutes: parsed.data.duration_minutes,
-      service_type: parsed.data.service_type as never,
       service_type_id: updateServiceExtras.service_type_id,
       service_type_label: updateServiceExtras.service_type_label,
       status: parsed.data.status,
@@ -1015,9 +1027,13 @@ export async function updateBookingAction(
     //     structure. The booking_assignees rows for each sibling are
     //     rebuilt below via syncBookingAssignees so the calendar +
     //     field app actually see the new split shape.
+    // IMMUTABILITY (see UPDATE payload above): service_type enum is
+    // intentionally excluded from sibling propagation. Each sibling
+    // keeps its original enum value. service_type_id and the
+    // denormalized label still propagate so renames + display in the
+    // service catalog follow through.
     const propagatableFields = {
       duration_minutes: parsed.data.duration_minutes,
-      service_type: parsed.data.service_type,
       service_type_id: updateServiceExtras.service_type_id,
       service_type_label: updateServiceExtras.service_type_label,
       total_cents: parsed.data.total_cents,
