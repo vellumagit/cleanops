@@ -13,10 +13,20 @@ import { getOrgTimezone } from "@/lib/org-timezone";
 
 export const metadata = { title: "My jobs" };
 
+// TEMP DIAGNOSTIC: tracks where in the render chain we crash so the
+// error.tsx fallback doesn't swallow the actual cause. Increment the
+// stage variable as each step succeeds; on catch, surface stage +
+// error text on screen so the user can paste it back. Remove after
+// the field/jobs regression is root-caused.
 export default async function FieldJobsPage() {
-  const membership = await requireMembership();
-  const supabase = await createSupabaseServerClient();
-  const tz = await getOrgTimezone(membership.organization_id);
+  let stage = "init";
+  try {
+    stage = "requireMembership";
+    const membership = await requireMembership();
+    stage = "createSupabaseServerClient";
+    const supabase = await createSupabaseServerClient();
+    stage = "getOrgTimezone";
+    const tz = await getOrgTimezone(membership.organization_id);
 
   // Show jobs assigned to this member from yesterday onwards so an in-progress
   // overnight job doesn't disappear.
@@ -27,6 +37,7 @@ export default async function FieldJobsPage() {
   // Step 1: get this member's assignee rows (with split metadata).
   // We avoid filtering on the embedded booking here — PostgREST embedded
   // filters were causing intermittent failures on this route.
+    stage = "booking_assignees query";
   const assigneeResp = (await supabase
     .from("booking_assignees" as never)
     .select(
@@ -41,7 +52,9 @@ export default async function FieldJobsPage() {
     error: { message: string } | null;
   };
 
-  if (assigneeResp.error) throw assigneeResp.error;
+  if (assigneeResp.error) throw new Error(
+    `booking_assignees: ${JSON.stringify(assigneeResp.error)}`,
+  );
 
   const assigneeByBooking = new Map(
     (assigneeResp.data ?? []).map((r) => [r.booking_id, r]),
@@ -50,6 +63,7 @@ export default async function FieldJobsPage() {
 
   // Step 2: fetch the actual booking rows in a single query. No more
   // embedded filters — straight SQL on the bookings table.
+    stage = `bookings query (${bookingIds.length} ids)`;
   const bookingsResp =
     bookingIds.length === 0
       ? { data: [], error: null }
@@ -65,7 +79,9 @@ export default async function FieldJobsPage() {
           .order("scheduled_at", { ascending: true })
           .limit(50);
 
-  if (bookingsResp.error) throw bookingsResp.error;
+  if (bookingsResp.error) throw new Error(
+    `bookings: ${JSON.stringify(bookingsResp.error)}`,
+  );
 
   const jobs = (bookingsResp.data ?? []).map((b) => {
     const seg = assigneeByBooking.get(b.id);
@@ -169,4 +185,28 @@ export default async function FieldJobsPage() {
       )}
     </>
   );
+  } catch (err) {
+    // TEMP DIAGNOSTIC — surface the real error instead of letting it
+    // get swallowed by /field/error.tsx. Remove once root-caused.
+    const msg = err instanceof Error ? err.message : String(err);
+    const stack = err instanceof Error ? err.stack : null;
+    return (
+      <div className="rounded-xl border border-red-200 bg-red-50 p-5 text-sm dark:border-red-900/40 dark:bg-red-950/30">
+        <h2 className="mb-2 text-base font-semibold text-red-900 dark:text-red-200">
+          Diagnostic — /field/jobs crashed
+        </h2>
+        <p className="mb-2 text-red-800 dark:text-red-300">
+          <strong>Stage:</strong> {stage}
+        </p>
+        <p className="mb-2 text-red-800 dark:text-red-300">
+          <strong>Error:</strong> {msg}
+        </p>
+        {stack && (
+          <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded bg-red-100 p-2 text-[11px] text-red-900 dark:bg-red-950/50 dark:text-red-200">
+            {stack}
+          </pre>
+        )}
+      </div>
+    );
+  }
 }
