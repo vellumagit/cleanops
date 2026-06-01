@@ -3,6 +3,10 @@ import { authenticateApiKey } from "@/lib/api-key-auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { dispatchWebhookEvent } from "@/lib/webhooks";
 import { findOrCreateClient } from "@/lib/find-or-create-client";
+import {
+  isValidServiceTypeEnum,
+  resolveServiceTypeColumns,
+} from "@/lib/api/service-type-columns";
 
 /**
  * GET /api/v1/bookings — List bookings for the authenticated org.
@@ -34,7 +38,8 @@ export async function GET(request: NextRequest) {
     .from("bookings")
     .select(
       `id, client_id, assigned_to, scheduled_at, duration_minutes,
-       service_type, status, total_cents, hourly_rate_cents, address, notes,
+       service_type, service_type_id, service_type_label,
+       status, total_cents, hourly_rate_cents, address, notes,
        created_at, updated_at,
        client:clients ( name, email )`,
       { count: "exact" },
@@ -113,6 +118,34 @@ export async function POST(request: NextRequest) {
   if (!scheduled_at) return NextResponse.json({ error: "scheduled_at is required" }, { status: 400 });
   if (!duration_minutes) return NextResponse.json({ error: "duration_minutes is required" }, { status: 400 });
 
+  // Validate service_type against the enum and resolve FK + label
+  // from the org's catalog. Defaults to "standard" when omitted. An
+  // invalid value gets a 400 instead of a Postgres enum error.
+  const requestedServiceType =
+    (body.service_type as string | undefined) ?? "standard";
+  if (!isValidServiceTypeEnum(requestedServiceType)) {
+    return NextResponse.json(
+      {
+        error:
+          "Invalid service_type. Allowed: standard, deep, move_out, recurring, meeting, consultation, walkthrough, other.",
+      },
+      { status: 400 },
+    );
+  }
+  const serviceCols = await resolveServiceTypeColumns(
+    admin,
+    auth.organizationId,
+    requestedServiceType,
+  );
+  // resolveServiceTypeColumns only returns null when the enum itself
+  // is invalid, which we already 400'd above; assert non-null here.
+  if (!serviceCols) {
+    return NextResponse.json(
+      { error: "Failed to resolve service_type" },
+      { status: 500 },
+    );
+  }
+
   const { data, error } = await admin
     .from("bookings" as never)
     .insert({
@@ -120,7 +153,9 @@ export async function POST(request: NextRequest) {
       client_id: clientId,
       scheduled_at,
       duration_minutes,
-      service_type: (body.service_type as string) ?? "standard",
+      service_type: serviceCols.service_type,
+      service_type_id: serviceCols.service_type_id,
+      service_type_label: serviceCols.service_type_label,
       status: (body.status as string) ?? "pending",
       total_cents: (body.total_cents as number) ?? 0,
       hourly_rate_cents: (body.hourly_rate_cents as number) ?? null,
@@ -129,7 +164,7 @@ export async function POST(request: NextRequest) {
       assigned_to: (body.assigned_to as string) ?? null,
       package_id: (body.package_id as string) ?? null,
     } as never)
-    .select("id, client_id, scheduled_at, duration_minutes, service_type, status, total_cents, address, notes, created_at")
+    .select("id, client_id, scheduled_at, duration_minutes, service_type, service_type_id, service_type_label, status, total_cents, address, notes, created_at")
     .single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
