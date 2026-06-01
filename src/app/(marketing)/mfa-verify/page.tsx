@@ -46,13 +46,26 @@ export default async function MfaVerifyPage({
   const { next } = await searchParams;
   const nextPath = isSafeNext(next) ? next! : "/app";
 
+  // Pass ALL verified factors, not just the first. Users with a backup
+  // device added (after losing access to the primary) need to pick
+  // which one they have in hand right now. Sorted by created_at
+  // ascending — primary first, backups after — so the default
+  // selection matches the historical behavior.
+  const factors = verifiedFactors
+    .slice()
+    .sort((a, b) => {
+      const ta = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const tb = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return ta - tb;
+    })
+    .map((f) => ({
+      id: f.id,
+      friendlyName: f.friendly_name ?? "Authenticator",
+    }));
+
   return (
     <div className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-6 py-12">
-      <MfaVerifyForm
-        factorId={verifiedFactors[0].id}
-        friendlyName={verifiedFactors[0].friendly_name ?? "Authenticator"}
-        nextPath={nextPath}
-      />
+      <MfaVerifyForm factors={factors} nextPath={nextPath} />
     </div>
   );
 }

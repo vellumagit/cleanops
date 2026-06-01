@@ -10,12 +10,14 @@ import { Label } from "@/components/ui/label";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
 export function MfaVerifyForm({
-  factorId,
-  friendlyName,
+  factors,
   nextPath,
 }: {
-  factorId: string;
-  friendlyName: string;
+  /** Every verified TOTP factor on the account, sorted oldest-first
+   *  (primary first, backups after). The form challenges the
+   *  currently-selected factor; users with multiple devices can
+   *  switch from a small picker shown below the code field. */
+  factors: Array<{ id: string; friendlyName: string }>;
   nextPath: string;
 }) {
   const router = useRouter();
@@ -23,6 +25,16 @@ export function MfaVerifyForm({
   const [code, setCode] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Track the picked factor in state so the user can switch devices
+  // without leaving the page. Defaults to the first (primary) which
+  // matches the previous always-pick-factor-0 behavior.
+  const [selectedFactorId, setSelectedFactorId] = useState<string>(
+    factors[0]?.id ?? "",
+  );
+  const selectedFactor =
+    factors.find((f) => f.id === selectedFactorId) ?? factors[0];
+  const factorId = selectedFactor?.id ?? "";
+  const friendlyName = selectedFactor?.friendlyName ?? "Authenticator";
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -102,10 +114,47 @@ export function MfaVerifyForm({
       <Button
         type="submit"
         className="w-full"
-        disabled={pending || code.length !== 6}
+        disabled={pending || code.length !== 6 || !factorId}
       >
         {pending ? "Verifying…" : "Continue"}
       </Button>
+
+      {/* Factor switcher — only shown when the account has more than
+          one verified device. Lost-primary recovery: user picks the
+          backup device and uses its code. Default selection is the
+          oldest (primary) factor so existing single-factor users see
+          identical behavior. */}
+      {factors.length > 1 && (
+        <div className="space-y-2 rounded-md border border-border bg-muted/30 p-3 text-center">
+          <p className="text-xs text-muted-foreground">
+            Using a different device?
+          </p>
+          <div className="flex flex-wrap justify-center gap-2">
+            {factors.map((f) => {
+              const isSelected = f.id === selectedFactorId;
+              return (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => {
+                    setSelectedFactorId(f.id);
+                    setCode("");
+                    setError(null);
+                  }}
+                  className={`rounded-full border px-3 py-1 text-xs transition-colors ${
+                    isSelected
+                      ? "border-primary bg-primary/10 font-medium text-foreground"
+                      : "border-border text-muted-foreground hover:bg-muted"
+                  }`}
+                  disabled={pending}
+                >
+                  {f.friendlyName}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="text-center">
         <button
