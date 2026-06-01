@@ -6,12 +6,31 @@ import { deleteEmployeeAction } from "../../actions";
 
 type State = { error?: string } | undefined;
 
+/**
+ * next/navigation's redirect() and notFound() signal navigation by
+ * throwing errors with a `digest` property. They MUST propagate up to
+ * Next.js's handler — catching them as if they were real errors
+ * strands the user on a now-deleted page that then fails to re-render
+ * (the "Server Components render" error we hit 2026-06-01).
+ */
+function isNextNavigationError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const digest = (err as { digest?: unknown }).digest;
+  return (
+    typeof digest === "string" &&
+    (digest.startsWith("NEXT_REDIRECT") || digest === "NEXT_NOT_FOUND")
+  );
+}
+
 function deleteAction(_prev: State, formData: FormData): Promise<State> {
   return deleteEmployeeAction(formData)
     .then(() => undefined)
-    .catch((err: unknown) => ({
-      error: err instanceof Error ? err.message : "Could not delete employee.",
-    }));
+    .catch((err: unknown) => {
+      if (isNextNavigationError(err)) throw err;
+      return {
+        error: err instanceof Error ? err.message : "Could not delete employee.",
+      };
+    });
 }
 
 export function DeleteEmployeeForm({
