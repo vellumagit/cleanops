@@ -68,13 +68,16 @@ export function encryptField(
  * Decrypt a stored value, transparently handling legacy plaintext.
  * Returns null for null/empty.
  *
- * Catches decrypt errors and falls back to the raw value — better to
- * show "v1:abc..." in a UI than to crash the whole page if a single
- * row has malformed ciphertext (e.g., from a key rotation that didn't
- * re-encrypt everything).
+ * On decrypt error the default behavior is to fall back to the raw
+ * ciphertext so an admin reading their own data can see SOMETHING and
+ * understand that a row is unreadable. For PUBLIC-facing pages, pass
+ * `{ publicFallback: true }` — we return `null` instead so customers
+ * never see "v1:abc..." in an invoice or a quote PDF after a botched
+ * key rotation.
  */
 export function maybeDecryptField(
   value: string | null | undefined,
+  options: { publicFallback?: boolean } = {},
 ): string | null {
   if (value == null || value === "") return null;
   if (!isFieldEncrypted(value)) return value; // legacy plaintext
@@ -82,10 +85,10 @@ export function maybeDecryptField(
     return decryptSecret(value);
   } catch (err) {
     console.error(
-      "[field-encryption] decrypt failed; returning raw ciphertext",
+      "[field-encryption] decrypt failed; falling back",
       err,
     );
-    return value;
+    return options.publicFallback ? null : value;
   }
 }
 

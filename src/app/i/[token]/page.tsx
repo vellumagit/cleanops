@@ -148,14 +148,21 @@ export default async function PublicInvoicePage({
   const balanceCents = Math.max(0, invoice.amount_cents - paidCents);
   const isVoid = !!invoice.voided_at;
   const isPaid = invoice.status === "paid" || balanceCents === 0;
-  // Transparently decrypt the org's default payment_instructions before
-  // rendering. Legacy plaintext rows pass through unchanged via the
-  // maybeDecryptField helper.
+  // Transparently decrypt the org's default payment_instructions
+  // before rendering. Legacy plaintext rows pass through unchanged.
+  //
+  // publicFallback: true — this page is shown to the customer
+  // receiving the invoice. On a decrypt failure (e.g. botched key
+  // rotation) we DON'T want to leak the raw "v1:abc..." ciphertext to
+  // the customer; render the instructions as missing instead. The
+  // admin-facing payment-methods edit page keeps the default behavior
+  // so the owner can SEE that a row is broken and re-enter it.
   const { maybeDecryptField } = await import("@/lib/field-encryption");
   const paymentInstructions =
     invoice.payment_instructions ??
     maybeDecryptField(
       invoice.organization?.default_payment_instructions ?? null,
+      { publicFallback: true },
     ) ??
     null;
 
