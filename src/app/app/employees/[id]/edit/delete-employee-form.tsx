@@ -2,37 +2,20 @@
 
 import { useActionState } from "react";
 import { Trash2 } from "lucide-react";
-import { deleteEmployeeAction } from "../../actions";
-
-type State = { error?: string } | undefined;
+import {
+  deleteEmployeeAction,
+  type DeleteEmployeeState,
+} from "../../actions";
 
 /**
- * next/navigation's redirect() and notFound() signal navigation by
- * throwing errors with a `digest` property. They MUST propagate up to
- * Next.js's handler — catching them as if they were real errors
- * strands the user on a now-deleted page that then fails to re-render
- * (the "Server Components render" error we hit 2026-06-01).
+ * Form that calls the action directly via useActionState. The action
+ * returns state for business-logic errors (wrong role, missing FK,
+ * payroll-protection) and only throws on redirect() success. That
+ * way Next's framework handles the redirect natively without our
+ * wrapper having to detect-and-re-throw the NEXT_REDIRECT digest —
+ * the dance that caused the "Server Components render" error we hit
+ * 2026-06-01.
  */
-function isNextNavigationError(err: unknown): boolean {
-  if (!err || typeof err !== "object") return false;
-  const digest = (err as { digest?: unknown }).digest;
-  return (
-    typeof digest === "string" &&
-    (digest.startsWith("NEXT_REDIRECT") || digest === "NEXT_NOT_FOUND")
-  );
-}
-
-function deleteAction(_prev: State, formData: FormData): Promise<State> {
-  return deleteEmployeeAction(formData)
-    .then(() => undefined)
-    .catch((err: unknown) => {
-      if (isNextNavigationError(err)) throw err;
-      return {
-        error: err instanceof Error ? err.message : "Could not delete employee.",
-      };
-    });
-}
-
 export function DeleteEmployeeForm({
   memberId,
   name,
@@ -40,7 +23,10 @@ export function DeleteEmployeeForm({
   memberId: string;
   name: string;
 }) {
-  const [state, formAction, pending] = useActionState(deleteAction, undefined);
+  const [state, formAction, pending] = useActionState<
+    DeleteEmployeeState,
+    FormData
+  >(deleteEmployeeAction, undefined);
 
   return (
     <form action={formAction}>

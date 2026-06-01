@@ -475,18 +475,31 @@ export async function updateMemberAction(
 /*     we catch that FK error and surface a friendly message.          */
 /* ------------------------------------------------------------------ */
 
-export async function deleteEmployeeAction(formData: FormData) {
+// Return state for both delete actions. useActionState propagates
+// thrown errors to the error boundary, which manifests in production
+// as the generic "An error occurred in the Server Components render"
+// digest message — we hit that 2026-06-01 from the payroll-guard
+// throw on a member with historical payroll. Returning state instead
+// keeps the failure inside the form where it can be rendered nicely.
+// Only `redirect()` is allowed to throw (it's control flow that Next
+// expects to throw NEXT_REDIRECT).
+export type DeleteEmployeeState = { error?: string } | undefined;
+
+export async function deleteEmployeeAction(
+  _prev: DeleteEmployeeState,
+  formData: FormData,
+): Promise<DeleteEmployeeState> {
   const targetId = String(formData.get("id") ?? "").trim();
-  if (!targetId) return;
+  if (!targetId) return { error: "Missing employee id." };
 
   const { membership } = await getActionContext();
 
   if (membership.role !== "owner") {
-    throw new Error("Only owners can permanently delete employees.");
+    return { error: "Only owners can permanently delete employees." };
   }
 
   if (targetId === membership.id) {
-    throw new Error("You cannot delete your own account.");
+    return { error: "You cannot delete your own account." };
   }
 
   const admin = createSupabaseAdminClient();
@@ -501,11 +514,11 @@ export async function deleteEmployeeAction(formData: FormData) {
     data: { id: string; status: string; display_name: string | null } | null;
   };
 
-  if (!target) throw new Error("Employee not found.");
+  if (!target) return { error: "Employee not found." };
   if (target.status !== "disabled") {
-    throw new Error(
-      "Only disabled employees can be deleted. Deactivate them first.",
-    );
+    return {
+      error: "Only disabled employees can be deleted. Deactivate them first.",
+    };
   }
 
   const { error } = await admin
@@ -520,12 +533,13 @@ export async function deleteEmployeeAction(formData: FormData) {
       error.message.includes("payroll_run_entries") ||
       error.code === "23503"
     ) {
-      throw new Error(
-        "This employee has payroll records and cannot be permanently deleted. " +
+      return {
+        error:
+          "This employee has payroll records and cannot be permanently deleted. " +
           "Keep them deactivated to preserve historical payroll data.",
-      );
+      };
     }
-    throw error;
+    return { error: error.message };
   }
 
   await logAuditEvent({
@@ -716,18 +730,21 @@ export async function createManualEmployeeAction(
  *   2. (Optional, if auth still existed) auth.users.delete_user runs
  *   3. Owner re-invites the same email → fresh signup flow → done.
  */
-export async function forceDeleteEmployeeAction(formData: FormData) {
+export async function forceDeleteEmployeeAction(
+  _prev: DeleteEmployeeState,
+  formData: FormData,
+): Promise<DeleteEmployeeState> {
   const targetId = String(formData.get("id") ?? "").trim();
-  if (!targetId) return;
+  if (!targetId) return { error: "Missing employee id." };
 
   const { membership } = await getActionContext();
 
   if (membership.role !== "owner") {
-    throw new Error("Only owners can force-remove employees.");
+    return { error: "Only owners can force-remove employees." };
   }
 
   if (targetId === membership.id) {
-    throw new Error("You cannot remove your own account.");
+    return { error: "You cannot remove your own account." };
   }
 
   const admin = createSupabaseAdminClient();
@@ -747,7 +764,7 @@ export async function forceDeleteEmployeeAction(formData: FormData) {
     } | null;
   };
 
-  if (!target) throw new Error("Employee not found.");
+  if (!target) return { error: "Employee not found." };
 
   // Best-effort: wipe the auth.users row tied to this membership. The
   // dashboard-delete path that prompted this feature already removed
@@ -780,12 +797,13 @@ export async function forceDeleteEmployeeAction(formData: FormData) {
       error.message.includes("payroll_run_entries") ||
       error.code === "23503"
     ) {
-      throw new Error(
-        "This employee has payroll records and cannot be force-removed. " +
+      return {
+        error:
+          "This employee has payroll records and cannot be force-removed. " +
           "Keep them deactivated to preserve historical payroll data.",
-      );
+      };
     }
-    throw error;
+    return { error: error.message };
   }
 
   await logAuditEvent({

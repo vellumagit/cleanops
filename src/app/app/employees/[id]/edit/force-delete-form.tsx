@@ -2,39 +2,10 @@
 
 import { useActionState } from "react";
 import { Trash2 } from "lucide-react";
-import { forceDeleteEmployeeAction } from "../../actions";
-
-type State = { error?: string } | undefined;
-
-/**
- * Re-throw the control-flow errors that next/navigation uses to signal
- * redirect() and notFound() so Next.js's framework handler can act on
- * them. Catching them as if they were real errors strands the user on
- * a now-deleted page that then fails to re-render — the exact
- * "Server Components render" error we saw 2026-06-01.
- */
-function isNextNavigationError(err: unknown): boolean {
-  if (!err || typeof err !== "object") return false;
-  const digest = (err as { digest?: unknown }).digest;
-  return (
-    typeof digest === "string" &&
-    (digest.startsWith("NEXT_REDIRECT") || digest === "NEXT_NOT_FOUND")
-  );
-}
-
-function forceDeleteAction(
-  _prev: State,
-  formData: FormData,
-): Promise<State> {
-  return forceDeleteEmployeeAction(formData)
-    .then(() => undefined)
-    .catch((err: unknown) => {
-      if (isNextNavigationError(err)) throw err;
-      return {
-        error: err instanceof Error ? err.message : "Could not remove employee.",
-      };
-    });
-}
+import {
+  forceDeleteEmployeeAction,
+  type DeleteEmployeeState,
+} from "../../actions";
 
 /**
  * Owner-only nuclear delete. Bypasses the "must be disabled first"
@@ -42,8 +13,10 @@ function forceDeleteAction(
  * a broken state (auth wiped from dashboard out-of-band, never
  * accepted invite, MFA-stuck, etc) and you just need a clean slate.
  *
- * Shown alongside the normal delete in the danger zone — different
- * label and warning so it's obvious which one is the bigger hammer.
+ * Passes the action directly to useActionState — the action returns
+ * state for business-logic errors and only throws redirect() on
+ * success, which Next handles natively. (See delete-employee-form
+ * for the longer explanation of why this pattern matters.)
  */
 export function ForceDeleteForm({
   memberId,
@@ -52,10 +25,10 @@ export function ForceDeleteForm({
   memberId: string;
   name: string;
 }) {
-  const [state, formAction, pending] = useActionState(
-    forceDeleteAction,
-    undefined,
-  );
+  const [state, formAction, pending] = useActionState<
+    DeleteEmployeeState,
+    FormData
+  >(forceDeleteEmployeeAction, undefined);
 
   return (
     <form action={formAction}>
