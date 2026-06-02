@@ -5,6 +5,7 @@ import { getOrgCurrency } from "@/lib/org-currency";
 import { formatCurrencyCents } from "@/lib/format";
 import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
 import { RateLimitedPage } from "@/components/rate-limited-page";
+import { PrintButton } from "@/app/app/clients/[id]/statement/print-button";
 
 export const metadata: Metadata = {
   title: "Estimate",
@@ -84,6 +85,14 @@ export default async function PublicEstimatePage({
   return (
     <main className="min-h-screen bg-[#fafafa] py-10 px-4">
       <div className="mx-auto max-w-2xl">
+        {/* Print / Save PDF button. Hidden on print so the printed
+            output is just the branded estimate, no chrome. Right-
+            aligned above the card so it doesn't shift the layout
+            on screens narrower than the card. */}
+        <div className="print:hidden mb-3 flex justify-end">
+          <PrintButton />
+        </div>
+
         {/* Branded header */}
         <div className="rounded-t-xl border border-b-0 border-border bg-white px-8 py-6 text-center">
           {logoUrl ? (
@@ -202,8 +211,11 @@ export default async function PublicEstimatePage({
           </section>
         </div>
 
-        {/* Footer */}
-        <p className="mt-6 text-center text-xs text-muted-foreground">
+        {/* Footer — hidden on print. The org's brand is at the top of
+            the card; on a printed estimate we don't need a second
+            attribution line, and "Sent by ... via Sollos" doesn't
+            belong on a customer-facing PDF. */}
+        <p className="print:hidden mt-6 text-center text-xs text-muted-foreground">
           Sent by <strong className="text-foreground">{orgName}</strong> via{" "}
           <a
             href="https://sollos3.com"

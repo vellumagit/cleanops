@@ -9,6 +9,7 @@ import { centsToDollarString } from "@/lib/validators/common";
 import { EstimateForm } from "../../estimate-form";
 import { DeleteEstimateForm } from "./delete-form";
 import { SendEstimateForm } from "./send-form";
+import { PublicLinkActions } from "./public-link-actions";
 
 export const metadata = { title: "Edit estimate" };
 
@@ -27,7 +28,7 @@ export default async function EditEstimatePage({
       supabase
         .from("estimates")
         .select(
-          "id, client_id, service_description, notes, status, total_cents, pdf_url, client_email_sent_at",
+          "id, client_id, service_description, notes, status, total_cents, pdf_url, client_email_sent_at, public_token",
         )
         .eq("id", id)
         .maybeSingle() as unknown as {
@@ -40,6 +41,7 @@ export default async function EditEstimatePage({
           total_cents: number;
           pdf_url: string | null;
           client_email_sent_at: string | null;
+          public_token: string | null;
         } | null;
         error: unknown;
       },
@@ -61,6 +63,16 @@ export default async function EditEstimatePage({
 
   if (error) throw error;
   if (!estimate) notFound();
+
+  // Public shareable URL for the branded estimate page. The customer
+  // can view it without logging in; the owner uses this same page to
+  // print → save as PDF (the public estimate template has a "Print /
+  // Save PDF" button in the top-right that's hidden on print).
+  const siteUrl =
+    process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+  const publicUrl = estimate.public_token
+    ? `${siteUrl}/e/${estimate.public_token}`
+    : null;
 
   return (
     <PageShell title="Edit estimate">
@@ -97,6 +109,26 @@ export default async function EditEstimatePage({
             }}
           />
         </div>
+
+        {/* Public link + Save as PDF. Owner clicks View → branded
+            public page opens in new tab → owner clicks Print / Save
+            PDF on that page. Same URL is what gets sent to the
+            customer via Send estimate (below). */}
+        {publicUrl && (
+          <div className="rounded-lg border border-border bg-card p-6">
+            <h2 className="text-sm font-semibold text-foreground">
+              Public link &amp; PDF
+            </h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Open the customer-facing version of this estimate to share or
+              save it as a branded PDF. This is the same page customers see
+              when you email the estimate.
+            </p>
+            <div className="mt-4">
+              <PublicLinkActions url={publicUrl} />
+            </div>
+          </div>
+        )}
 
         <SendEstimateForm
           estimateId={estimate.id}
