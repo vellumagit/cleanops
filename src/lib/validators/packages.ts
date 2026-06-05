@@ -8,8 +8,8 @@ export const PackageSchema = z.object({
     .string()
     .transform((s) => Number(s))
     .refine(
-      (n) => Number.isFinite(n) && n > 0 && n <= 24 * 60,
-      "Duration must be between 1 and 1440 minutes",
+      (n) => Number.isFinite(n) && n > 0,
+      "Duration must be a positive number of minutes",
     ),
   price_cents: dollarStringToCents,
   is_active: z

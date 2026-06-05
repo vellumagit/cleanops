@@ -27,9 +27,8 @@ export const ServiceTypeRowSchema = z.object({
     .string()
     .transform((s) => (s === "" ? null : Number(s)))
     .refine(
-      (n) =>
-        n === null || (Number.isFinite(n) && n > 0 && n <= 24 * 60),
-      "Duration must be 1–1440 minutes",
+      (n) => n === null || (Number.isFinite(n) && n > 0),
+      "Duration must be a positive number of minutes",
     )
     .nullable()
     .optional(),

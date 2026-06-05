@@ -41,7 +41,10 @@ export const BookingStatusEnum = z.enum([
  *
  * Required invariants:
  *   - assigned_to is a non-empty UUID (no blank segments)
- *   - duration_minutes is a positive integer ≤ 24h
+ *   - duration_minutes is a positive integer (no upper bound — long
+ *     multi-day jobs like post-construction or move-outs may have
+ *     individual segments that exceed 24h; the per-booking duration
+ *     is also uncapped for the same reason. See 2026-06-02 chat.)
  *
  * Optional fields (id, hourly_rate_cents) are preserved as-is into the
  * bookings.splits JSONB but not strictly enforced here.
@@ -54,8 +57,7 @@ export const SplitSegmentSchema = z.object({
   duration_minutes: z
     .number()
     .int()
-    .positive("Segment duration must be greater than zero")
-    .max(24 * 60, "Segment duration cannot exceed 24 hours"),
+    .positive("Segment duration must be greater than zero"),
   hourly_rate_cents: z.number().int().nonnegative().optional(),
 });
 
@@ -103,8 +105,8 @@ export const BookingSchema = z.object({
     .string()
     .transform((s) => Number(s))
     .refine(
-      (n) => Number.isFinite(n) && n > 0 && n <= 24 * 60,
-      "Duration must be between 1 and 1440 minutes",
+      (n) => Number.isFinite(n) && n > 0,
+      "Duration must be a positive number of minutes",
     ),
   service_type: ServiceTypeEnum,
   status: BookingStatusEnum,
@@ -185,8 +187,8 @@ export const RecurringBookingSchema = z.object({
     .string()
     .transform((s) => Number(s))
     .refine(
-      (n) => Number.isFinite(n) && n > 0 && n <= 24 * 60,
-      "Duration must be between 1 and 1440 minutes",
+      (n) => Number.isFinite(n) && n > 0,
+      "Duration must be a positive number of minutes",
     ),
   service_type: ServiceTypeEnum,
   total_cents: dollarStringToCents,

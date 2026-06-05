@@ -53,7 +53,10 @@ export function DurationInput({
         <Input
           type="number"
           min={0}
-          max={24}
+          // No upper bound — multi-day cleanings (post-construction,
+          // move-outs, week-long deep cleans) are legitimate. Server
+          // validators also allow any positive duration. See chat
+          // 2026-06-02 for the call to lift the previous 24h cap.
           step={1}
           inputMode="numeric"
           value={hours}
