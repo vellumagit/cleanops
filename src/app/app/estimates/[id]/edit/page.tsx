@@ -10,6 +10,7 @@ import { EstimateForm } from "../../estimate-form";
 import { DeleteEstimateForm } from "./delete-form";
 import { SendEstimateForm } from "./send-form";
 import { PublicLinkActions } from "./public-link-actions";
+import { DownloadPdfButton } from "./download-pdf-button";
 
 export const metadata = { title: "Edit estimate" };
 
@@ -110,25 +111,27 @@ export default async function EditEstimatePage({
           />
         </div>
 
-        {/* Public link + Save as PDF. Owner clicks View → branded
-            public page opens in new tab → owner clicks Print / Save
-            PDF on that page. Same URL is what gets sent to the
-            customer via Send estimate (below). */}
-        {publicUrl && (
-          <div className="rounded-lg border border-border bg-card p-6">
-            <h2 className="text-sm font-semibold text-foreground">
-              Public link &amp; PDF
-            </h2>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Open the customer-facing version of this estimate to share or
-              save it as a branded PDF. This is the same page customers see
-              when you email the estimate.
-            </p>
-            <div className="mt-4">
-              <PublicLinkActions url={publicUrl} />
-            </div>
+        {/* Public link + PDF actions. The Download PDF button generates
+            a real .pdf file server-side (Puppeteer renders the branded
+            /e/[token] page and streams it back inline). View / Copy
+            link still open the web version for share-via-link cases. */}
+        <div className="rounded-lg border border-border bg-card p-6">
+          <h2 className="text-sm font-semibold text-foreground">
+            Share &amp; PDF
+          </h2>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Download a branded PDF copy or grab the link to the public
+            customer-facing version. The PDF is the same layout your
+            customer sees when they open the link.
+          </p>
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <DownloadPdfButton
+              estimateId={estimate.id}
+              initialToken={estimate.public_token}
+            />
+            {publicUrl && <PublicLinkActions url={publicUrl} />}
           </div>
-        )}
+        </div>
 
         <SendEstimateForm
           estimateId={estimate.id}

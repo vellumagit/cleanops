@@ -2579,6 +2579,36 @@ export async function sendEstimateToClient(
       logoUrl: orgData?.logo_url ?? undefined,
     });
 
+    // Attach a PDF snapshot of the estimate so the customer has a
+    // permanent copy that survives the 30-day token expiry, and can
+    // forward it to their accountant / file it for records without
+    // depending on our hosted page staying up. Best-effort: if PDF
+    // rendering fails (Chromium hiccup, cold-start timeout), we still
+    // send the email — the link in the body works as the fallback.
+    let pdfAttachment: { filename: string; content: Buffer; contentType: string } | null = null;
+    try {
+      const { renderEstimatePdf } = await import("@/lib/estimate-pdf");
+      const pdfBuffer = await renderEstimatePdf({ publicToken });
+      const slug = (estimate.client.name ?? estimateId)
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 40);
+      pdfAttachment = {
+        filename: `estimate-${slug || estimateId}.pdf`,
+        content: pdfBuffer,
+        contentType: "application/pdf",
+      };
+    } catch (pdfErr) {
+      // Don't fail the whole send if the PDF render hiccups. The
+      // customer still gets the email with the link; we just lose
+      // the attachment. Sentry picks this up in production.
+      console.error(
+        "[auto] estimate PDF attach failed (continuing without):",
+        pdfErr,
+      );
+    }
+
     // Owner clicking "Send" should always go through, even when the
     // automated-client-email kill switch is on. The cron-driven follow-up
     // path (sendStaleEstimateFollowups) leaves manualSend false so it
@@ -2588,6 +2618,7 @@ export async function sendEstimateToClient(
       toName: estimate.client.name ?? undefined,
       pauseExempt: !!opts.manualSend,
       ...template,
+      ...(pdfAttachment ? { attachments: [pdfAttachment] } : {}),
     });
     const sendOk = sendResult.ok;
 

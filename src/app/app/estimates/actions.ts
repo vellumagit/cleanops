@@ -251,6 +251,74 @@ export async function sendEstimateAction(
   return { ok: true };
 }
 
+/**
+ * Owner-side helper: make sure the estimate has a public_token + expiry,
+ * mint one if it doesn't, and return the resulting public URL so the
+ * Download PDF button can navigate to /api/e/[token]/pdf without
+ * needing the estimate to have been Sent first.
+ *
+ * Same mint logic as sendEstimateToClient — 30-day expiry, 16-char
+ * unguessable token. Idempotent: subsequent calls just return the
+ * existing token.
+ */
+export type EnsureTokenResult =
+  | { ok: true; token: string }
+  | { ok: false; error: string };
+
+export async function ensureEstimatePublicTokenAction(
+  estimateId: string,
+): Promise<EnsureTokenResult> {
+  if (!estimateId) return { ok: false, error: "Missing estimate id" };
+
+  const { membership } = await getActionContext();
+
+  // Admin client because the existing send path also writes via admin
+  // (token mint isn't a user-driven column). We strictly scope to the
+  // caller's org for safety.
+  const admin = createSupabaseAdminClient();
+  const { data: estimate } = (await admin
+    .from("estimates")
+    .select("id, public_token, expires_at, organization_id")
+    .eq("id", estimateId)
+    .eq("organization_id", membership.organization_id)
+    .maybeSingle()) as unknown as {
+    data: {
+      id: string;
+      public_token: string | null;
+      expires_at: string | null;
+      organization_id: string;
+    } | null;
+  };
+
+  if (!estimate) {
+    return { ok: false, error: "Estimate not found." };
+  }
+
+  if (estimate.public_token) {
+    return { ok: true, token: estimate.public_token };
+  }
+
+  // Mint a new token + 30-day expiry. Use the same claim-token helper
+  // the send path uses so format and entropy are identical.
+  const { generateClaimToken } = await import("@/lib/claim-token");
+  const token = generateClaimToken();
+  const expiresAt = new Date(
+    Date.now() + 30 * 24 * 60 * 60 * 1000,
+  ).toISOString();
+
+  const { error } = await admin
+    .from("estimates")
+    .update({ public_token: token, expires_at: expiresAt } as never)
+    .eq("id", estimateId)
+    .eq("organization_id", membership.organization_id);
+
+  if (error) {
+    return { ok: false, error: error.message };
+  }
+
+  return { ok: true, token };
+}
+
 export async function deleteEstimateAction(formData: FormData) {
   const id = String(formData.get("id") ?? "");
   if (!id) return;

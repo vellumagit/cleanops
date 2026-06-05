@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { FileText } from "lucide-react";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { formatCurrencyCents } from "@/lib/format";
 import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
 import { RateLimitedPage } from "@/components/rate-limited-page";
-import { PrintButton } from "@/app/app/clients/[id]/statement/print-button";
 
 export const metadata: Metadata = {
   title: "Estimate",
@@ -85,12 +85,23 @@ export default async function PublicEstimatePage({
   return (
     <main className="min-h-screen bg-[#fafafa] py-10 px-4">
       <div className="mx-auto max-w-2xl">
-        {/* Print / Save PDF button. Hidden on print so the printed
-            output is just the branded estimate, no chrome. Right-
-            aligned above the card so it doesn't shift the layout
-            on screens narrower than the card. */}
+        {/* Download PDF link — hits /api/e/[token]/pdf which renders
+            this same page via headless Chromium and streams the PDF
+            back inline. The browser opens it in a new tab with its
+            own save/download controls.
+            print:hidden so the button doesn't show up IN the PDF when
+            the same page is captured by Chromium (page.pdf() applies
+            print media styles). */}
         <div className="print:hidden mb-3 flex justify-end">
-          <PrintButton />
+          <a
+            href={`/api/e/${token}/pdf`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-sm font-medium shadow-sm transition-colors hover:bg-muted/60"
+          >
+            <FileText className="h-3.5 w-3.5" />
+            Download PDF
+          </a>
         </div>
 
         {/* Branded header */}

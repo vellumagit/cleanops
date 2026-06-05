@@ -1,4 +1,10 @@
 {
+  "functions": {
+    "src/app/api/e/[token]/pdf/route.ts": {
+      "memory": 1024,
+      "maxDuration": 60
+    }
+  },
   "headers": [
     {
       "source": "/i/:path*",

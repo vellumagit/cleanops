@@ -77,6 +77,12 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: path.join(__dirname),
   },
+  // Don't bundle puppeteer-core / @sparticuz/chromium with the server
+  // function code — the Chromium binary path resolution must happen at
+  // runtime against node_modules, not against a webpack-relocated dist
+  // directory. Without this the PDF endpoint fails on Vercel with
+  // "Could not find Chromium" or similar binary-resolution errors.
+  serverExternalPackages: ["puppeteer-core", "@sparticuz/chromium"],
   experimental: {
     // Raise server action body limit for image/PDF uploads via forms.
     // Default is 1 MB; feed images + estimate PDFs can be up to 10 MB.

@@ -49,6 +49,15 @@ function getDefaultFromName(): string {
 // (automations.ts, crons, invoice actions, etc.) still works as-is.
 // ---------------------------------------------------------------------------
 
+export type EmailAttachment = {
+  /** Filename the recipient sees (include the extension, e.g. "estimate.pdf"). */
+  filename: string;
+  /** Raw bytes of the attachment. Resend accepts Buffer/Uint8Array directly. */
+  content: Buffer;
+  /** Optional MIME type — Resend infers from filename if omitted. */
+  contentType?: string;
+};
+
 export type SendEmailArgs = {
   /** Recipient address */
   to: string;
@@ -68,6 +77,13 @@ export type SendEmailArgs = {
   replyTo?: string;
   /** Reply-To display name */
   replyToName?: string;
+  /**
+   * Optional attachments. Resend supports up to 40MB total. Files
+   * larger than 8MB count against your monthly transfer quota
+   * differently — for estimate/invoice PDFs (typically <100KB) this
+   * is a non-issue.
+   */
+  attachments?: EmailAttachment[];
 };
 
 /**
@@ -118,6 +134,17 @@ export async function sendEmailDetailed(
       ...(args.text ? { text: args.text } : {}),
       ...(args.replyTo
         ? { replyTo: formatAddress(args.replyTo, args.replyToName) }
+        : {}),
+      // Map our internal attachment shape into Resend's wire format.
+      // Buffer.content gets sent as-is; Resend handles the encoding.
+      ...(args.attachments && args.attachments.length > 0
+        ? {
+            attachments: args.attachments.map((a) => ({
+              filename: a.filename,
+              content: a.content,
+              ...(a.contentType ? { contentType: a.contentType } : {}),
+            })),
+          }
         : {}),
     };
 
