@@ -955,11 +955,11 @@ const TESTIMONIALS = [
 const FAQS = [
   {
     q: "Do I own my data?",
-    a: "Always. Export everything to CSV anytime, for any reason — clients, bookings, invoices, time entries, the works. If you cancel, your data is yours to take with you.",
+    a: "Always. Download a full backup of your account anytime — clients, bookings, invoices, time entries, the works — as a JSON file from Settings → Your data. If you cancel, your data is yours to take with you.",
   },
   {
     q: "I'm switching from Jobber / Housecall Pro / a spreadsheet. Can I import?",
-    a: "Yes. We have a bulk client and job importer that takes CSV exports from any tool. If your data is messy, send it to support and we'll help clean it up during your trial.",
+    a: "Yes — we have a bulk client importer that takes a CSV from any tool. If your client list is messy, send it to support and we'll help clean it up during your trial.",
   },
   {
     q: "Do I need a credit card to start the trial?",

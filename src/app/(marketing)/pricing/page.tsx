@@ -153,7 +153,7 @@ export default function PricingPage() {
                 "Onboarding call included",
                 "Advanced reports and exports",
                 "Custom branding on invoices",
-                "Bulk import of clients & jobs",
+                "Bulk client import from CSV",
               ].map((item) => (
                 <li key={item} className="flex items-start gap-2 text-muted-foreground">
                   <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
@@ -364,7 +364,7 @@ const COMPARISON_ROWS: Array<{
   { feature: "Estimates and quotes", starter: true, growth: true, enterprise: true },
   { feature: "Payroll reports", starter: true, growth: true, enterprise: true },
   { feature: "Custom branding on invoices", starter: false, growth: true, enterprise: true },
-  { feature: "Bulk data import", starter: false, growth: true, enterprise: true },
+  { feature: "Bulk client import (CSV)", starter: false, growth: true, enterprise: true },
   { feature: "Advanced reports and exports", starter: false, growth: true, enterprise: true },
   { feature: "Onboarding call", starter: false, growth: true, enterprise: true },
   { feature: "Email support", starter: true, growth: "Priority", enterprise: "Priority" },
@@ -402,7 +402,7 @@ const FAQS = [
   },
   {
     q: "Can I export my data if I cancel?",
-    a: "Absolutely. You can export everything — clients, jobs, invoices, timesheets — to CSV anytime, even before you cancel. When you do cancel, you have 30 days to export before your data is deleted.",
+    a: "Absolutely. Download a full account backup — clients, jobs, invoices, timesheets — anytime as a JSON file from Settings → Your data, even before you cancel. When you do cancel, you have 30 days to grab a final backup before your data is deleted.",
   },
   {
     q: "Do you offer annual billing?",

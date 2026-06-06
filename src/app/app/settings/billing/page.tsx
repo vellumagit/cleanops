@@ -66,7 +66,7 @@ const PLANS: PlanDef[] = [
       "Onboarding call included",
       "Advanced reports and exports",
       "Custom branding on invoices",
-      "Bulk import of clients & jobs",
+      "Bulk client import from CSV",
     ],
     highlight: true,
   },
