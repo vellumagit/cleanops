@@ -81,3 +81,26 @@ export async function checkIpRateLimit(
   const ip = getIp(h);
   return checkRateLimit(`${bucket}:${ip}`, max, windowMs);
 }
+
+/**
+ * Per-email rate limit. Use for auth flows keyed on the email the user typed
+ * (password reset, signup confirm resend, magic-link request) where
+ * IP-based limits leak: a shared NAT'd network can have one bad actor burn
+ * the whole project's email-provider quota for every user on that IP.
+ *
+ * Email is lowercased + trimmed so case/whitespace variants share one bucket.
+ *
+ * ```ts
+ * const rl = await checkEmailRateLimit("auth-forgot", email, 3, 15 * 60_000);
+ * if (!rl.allowed) return { error: `Try again in ${rl.retryAfterSeconds}s` };
+ * ```
+ */
+export async function checkEmailRateLimit(
+  bucket: string,
+  email: string,
+  max: number,
+  windowMs: number,
+): Promise<{ allowed: true } | { allowed: false; retryAfterSeconds: number }> {
+  const normalized = email.trim().toLowerCase();
+  return checkRateLimit(`${bucket}:email:${normalized}`, max, windowMs);
+}

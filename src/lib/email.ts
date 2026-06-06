@@ -122,6 +122,32 @@ export async function sendEmailDetailed(
     return { ok: false, reason: "Resend not configured (RESEND_API_KEY missing)." };
   }
 
+  // Suppression check — skip addresses Resend has previously reported as
+  // bounced or marked as spam by the recipient. Protects sender reputation
+  // for every org on our shared Resend account. Soft-fails to "allow" if
+  // the suppression table is unreachable so a Supabase blip doesn't block
+  // all email org-wide.
+  try {
+    const { isEmailSuppressed } = await import("@/lib/email-suppression");
+    if (await isEmailSuppressed(args.to)) {
+      console.log(
+        "[email] address is suppressed, skipping:",
+        args.to,
+        args.subject,
+      );
+      return {
+        ok: false,
+        reason:
+          "Recipient address is on the suppression list (previous bounce or spam complaint).",
+      };
+    }
+  } catch (err) {
+    // Don't fail the send if the suppression check itself crashes —
+    // worst case we send to a bouncing address (Resend will drop it
+    // and we'll re-suppress on the next webhook).
+    console.warn("[email] suppression check failed, continuing:", err);
+  }
+
   try {
     const fromEmail = args.from ?? getDefaultFromEmail();
     const fromName = args.fromName ?? getDefaultFromName();
