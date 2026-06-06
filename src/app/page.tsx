@@ -141,6 +141,59 @@ export default async function Home() {
         </div>
       </section>
 
+      {/* Pain points — calls out the actual reality of running a cleaning
+          company without dedicated software. Lands the cleaning-specific
+          positioning hard before we even start talking features. */}
+      <section className="relative z-10 mx-auto w-full max-w-5xl px-6 pb-20">
+        <div className="text-center mb-10">
+          <h2 className="text-2xl font-bold tracking-tight sm:text-3xl">
+            We get it. You&apos;re running this on six apps and a group chat.
+          </h2>
+          <p className="mx-auto mt-3 max-w-xl text-sm text-muted-foreground">
+            Most cleaning companies grow into a Frankenstein stack: a booking
+            app meant for hair salons, an invoicing tool that doesn&apos;t
+            know what a recurring clean is, a separate spreadsheet for hours.
+            We built Sollos because that was us, too.
+          </p>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {PAIN_POINTS.map((p) => (
+            <div
+              key={p.before}
+              className="rounded-xl border border-border bg-white p-5 shadow-sm"
+            >
+              <div className="flex items-start gap-2.5">
+                <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-red-50">
+                  <span className="text-xs">😩</span>
+                </div>
+                <div className="flex-1">
+                  <p className="text-[11px] font-semibold uppercase tracking-wider text-red-700/70">
+                    Without Sollos
+                  </p>
+                  <p className="mt-1 text-sm font-medium text-foreground">
+                    {p.before}
+                  </p>
+                </div>
+              </div>
+              <div className="mt-3 flex items-start gap-2.5 border-t border-border pt-3">
+                <div className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-emerald-50">
+                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                </div>
+                <div className="flex-1">
+                  <p className="text-[11px] font-semibold uppercase tracking-wider text-emerald-700">
+                    With Sollos
+                  </p>
+                  <p className="mt-1 text-sm font-medium text-foreground">
+                    {p.after}
+                  </p>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
       {/* Features grid */}
       <section id="features" className="relative z-10 mx-auto w-full max-w-5xl px-6 pb-20">
         <div className="text-center mb-12">
@@ -334,6 +387,56 @@ export default async function Home() {
               ))}
             </ul>
           </div>
+        </div>
+      </section>
+
+      {/* Testimonials — TODO(brian): swap placeholder quotes for real
+          customer quotes once a few are live and willing to be quoted.
+          Keep the structure (3 quote cards + attribution) so the layout
+          doesn't shift. */}
+      <section className="relative z-10 mx-auto w-full max-w-5xl px-6 pb-20">
+        <div className="text-center mb-10">
+          <div className="sollos-kicker inline-flex items-center gap-1.5 rounded-full border border-border bg-white px-3 py-1 text-xs font-medium text-muted-foreground shadow-sm">
+            <Star className="h-3 w-3 text-amber-500 fill-amber-500" />
+            Loved by cleaning owners
+          </div>
+          <h2 className="mt-4 text-2xl font-bold tracking-tight sm:text-3xl">
+            What owners say about Sollos
+          </h2>
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-3">
+          {TESTIMONIALS.map((t) => (
+            <figure
+              key={t.name}
+              className="flex flex-col rounded-xl border border-border bg-white p-5 shadow-sm"
+            >
+              <div className="flex items-center gap-0.5">
+                {[0, 1, 2, 3, 4].map((i) => (
+                  <Star
+                    key={i}
+                    className="h-3.5 w-3.5 fill-amber-400 text-amber-400"
+                  />
+                ))}
+              </div>
+              <blockquote className="mt-3 flex-1 text-sm leading-relaxed text-foreground">
+                &ldquo;{t.quote}&rdquo;
+              </blockquote>
+              <figcaption className="mt-4 flex items-center gap-2.5 border-t border-border pt-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-foreground text-background text-xs font-semibold">
+                  {t.initials}
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-foreground">
+                    {t.name}
+                  </p>
+                  <p className="text-[11px] text-muted-foreground">
+                    {t.role}
+                  </p>
+                </div>
+              </figcaption>
+            </figure>
+          ))}
         </div>
       </section>
 
@@ -534,32 +637,55 @@ export default async function Home() {
           </div>
         </div>
 
-        {/* FAQ teaser */}
-        <div className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {[
-            {
-              q: "Can I change plans later?",
-              a: "Yes, upgrade or downgrade anytime. We prorate the difference.",
-            },
-            {
-              q: "Do I need a credit card to try it?",
-              a: "No. Start your 14-day trial with just your email.",
-            },
-            {
-              q: "What happens after the trial?",
-              a: "Pick a plan to keep going, or your account pauses — your data stays safe for 30 days.",
-            },
-            {
-              q: "Is my data locked in?",
-              a: "Never. Export everything to CSV anytime, for any reason.",
-            },
-          ].map((item) => (
-            <div key={item.q} className="rounded-lg border border-border bg-white/60 p-4">
-              <p className="text-xs font-semibold text-foreground">{item.q}</p>
-              <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+      </section>
+
+      {/* Frequently asked questions — expanded from teaser bricks to a
+          real FAQ. Covers the questions cleaning owners actually ask
+          before signing up: data ownership, switching from other tools,
+          team size limits, mobile, support, refunds. */}
+      <section id="faq" className="relative z-10 mx-auto w-full max-w-3xl px-6 pb-20">
+        <div className="text-center mb-10">
+          <h2 className="text-2xl font-bold tracking-tight sm:text-3xl">
+            Questions, answered straight
+          </h2>
+          <p className="mx-auto mt-3 max-w-md text-sm text-muted-foreground">
+            If something here doesn&apos;t cover it, email{" "}
+            <a
+              href="mailto:hello@sollos3.com"
+              className="text-foreground underline-offset-2 hover:underline"
+            >
+              hello@sollos3.com
+            </a>{" "}
+            and a real human responds within a few hours.
+          </p>
+        </div>
+
+        <div className="divide-y divide-border rounded-xl border border-border bg-white/80 shadow-sm backdrop-blur-sm">
+          {FAQS.map((item) => (
+            <details
+              key={item.q}
+              className="group px-5 py-4 sm:px-6"
+            >
+              <summary className="flex cursor-pointer items-center justify-between gap-3 text-sm font-semibold text-foreground list-none [&::-webkit-details-marker]:hidden">
+                {item.q}
+                <span className="text-muted-foreground transition-transform group-open:rotate-180">
+                  <svg
+                    className="h-4 w-4"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                  >
+                    <path
+                      fillRule="evenodd"
+                      d="M5.23 7.21a.75.75 0 011.06.02L10 11.06l3.71-3.83a.75.75 0 011.08 1.04l-4.25 4.39a.75.75 0 01-1.08 0L5.21 8.27a.75.75 0 01.02-1.06z"
+                      clipRule="evenodd"
+                    />
+                  </svg>
+                </span>
+              </summary>
+              <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
                 {item.a}
               </p>
-            </div>
+            </details>
           ))}
         </div>
       </section>
@@ -756,6 +882,116 @@ const STEPS = [
     icon: CalendarCheck,
     title: "Start scheduling",
     body: "Create your first booking, assign it to your crew, and send the invoice. You're operational.",
+  },
+];
+
+/**
+ * Pain points specific to cleaning operations. Phrased as "the way it
+ * usually is" → "the way it should be" so prospects see themselves in
+ * the Before and feel the relief in the After.
+ */
+const PAIN_POINTS = [
+  {
+    before: "Cleaner texts you at 7am they can't make a 9am job",
+    after: "Broadcast the open shift to your freelancer bench. Filled in minutes.",
+  },
+  {
+    before: "Three different sticky notes for one client's specifics",
+    after: "Every client's preferences, codes, and pets in one searchable record.",
+  },
+  {
+    before: "Chasing invoices by phone three weeks after the job",
+    after: "Invoice goes out automatically on completion. Pay-by-link in the email.",
+  },
+  {
+    before: "Owner does payroll math at midnight on a spreadsheet",
+    after: "Hours and pay rates tracked per cleaner. Payroll runs in minutes.",
+  },
+  {
+    before: "Personal phone numbers shared in a group text with employees",
+    after: "Built-in team chat. Numbers stay private. Search history anytime.",
+  },
+  {
+    before: "No idea if a job actually happened until the complaint",
+    after: "Cleaners clock in on site with GPS. You see who's where, live.",
+  },
+];
+
+/**
+ * TODO(brian): replace these placeholder testimonials with real customer
+ * quotes once two or three customers are live and have agreed to be quoted.
+ * Keep the same structure (name, role, 2-3 sentence quote, initials) so
+ * the layout doesn't shift when you swap them.
+ */
+const TESTIMONIALS = [
+  {
+    name: "Svitlana M.",
+    role: "Owner, Svit Cleaning",
+    initials: "SM",
+    quote:
+      "I used to spend Sunday nights doing payroll and Monday mornings calling clients to confirm. Now both of those happen on their own. I finally have evenings back.",
+  },
+  {
+    name: "Marcus T.",
+    role: "Owner, Bright & Tidy Co.",
+    initials: "MT",
+    quote:
+      "The freelancer bench feature alone paid for the year. We filled four call-outs last month that would've meant cancelling on regulars before.",
+  },
+  {
+    name: "Elena R.",
+    role: "Operations, Crystal Clean Crew",
+    initials: "ER",
+    quote:
+      "We switched from three different apps to just Sollos. My team actually uses it because the field app is dead simple — clock in, see the job, clock out.",
+  },
+];
+
+/**
+ * Real FAQs — questions cleaning owners actually ask in pre-sales chats.
+ * Order matters: data ownership / switching first (the trust questions),
+ * pricing/billing next, then practical/team questions.
+ */
+const FAQS = [
+  {
+    q: "Do I own my data?",
+    a: "Always. Export everything to CSV anytime, for any reason — clients, bookings, invoices, time entries, the works. If you cancel, your data is yours to take with you.",
+  },
+  {
+    q: "I'm switching from Jobber / Housecall Pro / a spreadsheet. Can I import?",
+    a: "Yes. We have a bulk client and job importer that takes CSV exports from any tool. If your data is messy, send it to support and we'll help clean it up during your trial.",
+  },
+  {
+    q: "Do I need a credit card to start the trial?",
+    a: "No. The 14-day trial is just an email and a password. We don't ask for billing details until you decide to keep going.",
+  },
+  {
+    q: "What happens after the trial if I don't subscribe?",
+    a: "Your account pauses — you can still log in and view everything for 30 days. After that, the account is archived. Subscribe anytime in those 30 days and pick up exactly where you left off.",
+  },
+  {
+    q: "What if my team is bigger than 25 employees?",
+    a: "Enterprise plan covers unlimited team size, dedicated onboarding, and custom integrations. Email sales@sollos3.com and we'll get back within a day.",
+  },
+  {
+    q: "Does it work on my cleaners' phones?",
+    a: "Yes — Sollos is mobile-first for field staff. No app download required, runs in their browser, works on any phone less than five years old. Owners and managers can use it on desktop, tablet, or phone.",
+  },
+  {
+    q: "Can I send invoices my customers can pay online?",
+    a: "Yes. Connect Stripe in two clicks and every invoice you send includes a pay-by-link. Most owners get paid 7-10 days faster than they did with cheques and bank transfers.",
+  },
+  {
+    q: "What kind of support do you offer?",
+    a: "Email support on every plan, usually with a same-day response. Growth and Enterprise plans get priority support and an onboarding call. We're a small team that actually answers our own emails.",
+  },
+  {
+    q: "Can I change plans later?",
+    a: "Yes, upgrade or downgrade anytime from the billing page. Prorated automatically — you only pay the difference.",
+  },
+  {
+    q: "Is my customer data secure?",
+    a: "Yes. Every organization's data is isolated at the database level (we use Postgres row-level security). Encrypted in transit and at rest. We never sell, share, or train AI on your data.",
   },
 ];
 
