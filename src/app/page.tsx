@@ -390,55 +390,9 @@ export default async function Home() {
         </div>
       </section>
 
-      {/* Testimonials — TODO(brian): swap placeholder quotes for real
-          customer quotes once a few are live and willing to be quoted.
-          Keep the structure (3 quote cards + attribution) so the layout
-          doesn't shift. */}
-      <section className="relative z-10 mx-auto w-full max-w-5xl px-6 pb-20">
-        <div className="text-center mb-10">
-          <div className="sollos-kicker inline-flex items-center gap-1.5 rounded-full border border-border bg-white px-3 py-1 text-xs font-medium text-muted-foreground shadow-sm">
-            <Star className="h-3 w-3 text-amber-500 fill-amber-500" />
-            Loved by cleaning owners
-          </div>
-          <h2 className="mt-4 text-2xl font-bold tracking-tight sm:text-3xl">
-            What owners say about Sollos
-          </h2>
-        </div>
-
-        <div className="grid gap-4 lg:grid-cols-3">
-          {TESTIMONIALS.map((t) => (
-            <figure
-              key={t.name}
-              className="flex flex-col rounded-xl border border-border bg-white p-5 shadow-sm"
-            >
-              <div className="flex items-center gap-0.5">
-                {[0, 1, 2, 3, 4].map((i) => (
-                  <Star
-                    key={i}
-                    className="h-3.5 w-3.5 fill-amber-400 text-amber-400"
-                  />
-                ))}
-              </div>
-              <blockquote className="mt-3 flex-1 text-sm leading-relaxed text-foreground">
-                &ldquo;{t.quote}&rdquo;
-              </blockquote>
-              <figcaption className="mt-4 flex items-center gap-2.5 border-t border-border pt-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-foreground text-background text-xs font-semibold">
-                  {t.initials}
-                </div>
-                <div>
-                  <p className="text-xs font-semibold text-foreground">
-                    {t.name}
-                  </p>
-                  <p className="text-[11px] text-muted-foreground">
-                    {t.role}
-                  </p>
-                </div>
-              </figcaption>
-            </figure>
-          ))}
-        </div>
-      </section>
+      {/* Testimonials section removed until we have real, consented customer
+          quotes. Re-add a section here once two or three customers are live
+          and have agreed to be quoted. */}
 
       {/* Security / trust */}
       <section className="relative z-10 mx-auto w-full max-w-5xl px-6 pb-20">
@@ -914,36 +868,6 @@ const PAIN_POINTS = [
   {
     before: "No idea if a job actually happened until the complaint",
     after: "Cleaners clock in on site with GPS. You see who's where, live.",
-  },
-];
-
-/**
- * TODO(brian): replace these placeholder testimonials with real customer
- * quotes once two or three customers are live and have agreed to be quoted.
- * Keep the same structure (name, role, 2-3 sentence quote, initials) so
- * the layout doesn't shift when you swap them.
- */
-const TESTIMONIALS = [
-  {
-    name: "Svitlana M.",
-    role: "Owner, Svit Cleaning",
-    initials: "SM",
-    quote:
-      "I used to spend Sunday nights doing payroll and Monday mornings calling clients to confirm. Now both of those happen on their own. I finally have evenings back.",
-  },
-  {
-    name: "Marcus T.",
-    role: "Owner, Bright & Tidy Co.",
-    initials: "MT",
-    quote:
-      "The freelancer bench feature alone paid for the year. We filled four call-outs last month that would've meant cancelling on regulars before.",
-  },
-  {
-    name: "Elena R.",
-    role: "Operations, Crystal Clean Crew",
-    initials: "ER",
-    quote:
-      "We switched from three different apps to just Sollos. My team actually uses it because the field app is dead simple — clock in, see the job, clock out.",
   },
 ];
 
