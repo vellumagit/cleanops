@@ -3859,6 +3859,184 @@ export async function sendMonthlyOpsDigests(): Promise<{ orgsSent: number }> {
 // kill switch is scoped to org→client only.
 // ─────────────────────────────────────────────────────────────────
 
+// ── Split-shift aware crew resolution ──────────────────────────────
+// booking_assignees is the source of truth for who works a job and,
+// for split shifts, which segment each person covers. These helpers let
+// the schedule emails (a) reach EVERY assignee, not just the forced
+// segment-0 employee in bookings.assigned_to, and (b) render each
+// person's OWN window for a split rather than the whole-booking time.
+
+type SegRow = {
+  booking_id: string;
+  membership_id: string;
+  is_primary: boolean;
+  split_start_offset_minutes: number | null;
+  split_duration_minutes: number | null;
+};
+
+// Fetch assignee rows + a membership_id→display-name map for a set of
+// bookings. The name map feeds split handoff labels ("Ana takes over…").
+async function loadCrewForBookings(
+  db: ReturnType<typeof admin>,
+  bookingIds: string[],
+): Promise<{ rowsByBooking: Map<string, SegRow[]>; nameById: Map<string, string> }> {
+  const rowsByBooking = new Map<string, SegRow[]>();
+  const nameById = new Map<string, string>();
+  if (bookingIds.length === 0) return { rowsByBooking, nameById };
+
+  const { data: assigneeRows } = (await db
+    .from("booking_assignees" as never)
+    .select(
+      "booking_id, membership_id, is_primary, split_start_offset_minutes, split_duration_minutes",
+    )
+    .in("booking_id" as never, bookingIds as never)) as unknown as {
+    data: SegRow[] | null;
+  };
+
+  for (const r of assigneeRows ?? []) {
+    const arr = rowsByBooking.get(r.booking_id) ?? [];
+    arr.push(r);
+    rowsByBooking.set(r.booking_id, arr);
+  }
+
+  const memberIds = [...new Set((assigneeRows ?? []).map((r) => r.membership_id))];
+  if (memberIds.length > 0) {
+    const { data: memberRows } = (await db
+      .from("memberships")
+      .select("id, display_name, profile:profiles ( full_name )")
+      .in("id", memberIds)) as unknown as {
+      data: Array<{
+        id: string;
+        display_name: string | null;
+        profile: { full_name: string | null } | null;
+      }> | null;
+    };
+    for (const m of memberRows ?? []) {
+      nameById.set(
+        m.id,
+        m.display_name ?? m.profile?.full_name ?? "A teammate",
+      );
+    }
+  }
+
+  return { rowsByBooking, nameById };
+}
+
+// Resolve the window THIS employee actually works on a booking. For a
+// split shift it's their segment (booking start + offset, segment
+// duration); otherwise it's the whole booking. Also returns a handoff
+// label naming the cleaner immediately before/after them.
+function employeeShiftWindow(args: {
+  bookingStart: string;
+  bookingDurationMinutes: number;
+  row: SegRow;
+  bookingSegments: SegRow[];
+  nameById: Map<string, string>;
+  tz: string;
+}): {
+  start: Date;
+  durationMinutes: number;
+  isSplit: boolean;
+  windowLabel: string | null;
+  handoffLabel: string | null;
+} {
+  const fmt = (d: Date) =>
+    d.toLocaleTimeString("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+      timeZone: args.tz,
+    });
+
+  const segs = args.bookingSegments
+    .filter(
+      (s) =>
+        s.split_start_offset_minutes != null &&
+        s.split_duration_minutes != null,
+    )
+    .sort(
+      (a, b) =>
+        (a.split_start_offset_minutes ?? 0) -
+        (b.split_start_offset_minutes ?? 0),
+    );
+
+  const bookingStartDate = new Date(args.bookingStart);
+  const isSplit = segs.length >= 2;
+
+  if (
+    !isSplit ||
+    args.row.split_start_offset_minutes == null ||
+    args.row.split_duration_minutes == null
+  ) {
+    return {
+      start: bookingStartDate,
+      durationMinutes: args.bookingDurationMinutes,
+      isSplit: false,
+      windowLabel: null,
+      handoffLabel: null,
+    };
+  }
+
+  const start = new Date(
+    bookingStartDate.getTime() + args.row.split_start_offset_minutes * 60000,
+  );
+  const durationMinutes = args.row.split_duration_minutes;
+  const end = new Date(start.getTime() + durationMinutes * 60000);
+
+  const myIdx = segs.findIndex(
+    (s) =>
+      s.membership_id === args.row.membership_id &&
+      s.split_start_offset_minutes === args.row.split_start_offset_minutes,
+  );
+  const next = myIdx >= 0 ? segs[myIdx + 1] : undefined;
+  const prev = myIdx > 0 ? segs[myIdx - 1] : undefined;
+
+  let handoffLabel: string | null = null;
+  if (next) {
+    handoffLabel = `${args.nameById.get(next.membership_id) ?? "The next cleaner"} takes over at ${fmt(end)}`;
+  } else if (prev) {
+    handoffLabel = `You take over from ${args.nameById.get(prev.membership_id) ?? "the previous cleaner"} at ${fmt(start)}`;
+  }
+
+  return {
+    start,
+    durationMinutes,
+    isSplit: true,
+    windowLabel: `${fmt(start)} – ${fmt(end)}`,
+    handoffLabel,
+  };
+}
+
+// Build the effective per-employee assignment list for a set of
+// bookings: one entry per (booking, assignee). Falls back to
+// bookings.assigned_to for legacy bookings that predate booking_assignees
+// so nobody silently drops off the schedule email.
+function effectiveAssignments<
+  B extends { id: string; assigned_to: string | null },
+>(
+  bookings: B[],
+  rowsByBooking: Map<string, SegRow[]>,
+): Array<{ booking: B; row: SegRow }> {
+  const out: Array<{ booking: B; row: SegRow }> = [];
+  for (const b of bookings) {
+    const rows = rowsByBooking.get(b.id);
+    if (rows && rows.length > 0) {
+      for (const r of rows) out.push({ booking: b, row: r });
+    } else if (b.assigned_to) {
+      out.push({
+        booking: b,
+        row: {
+          booking_id: b.id,
+          membership_id: b.assigned_to,
+          is_primary: true,
+          split_start_offset_minutes: null,
+          split_duration_minutes: null,
+        },
+      });
+    }
+  }
+  return out;
+}
+
 // 15. Daily employee schedule email (cron at 06:00 UTC)
 export async function sendDailyEmployeeSchedules(): Promise<{
   emailsSent: number;
@@ -3895,7 +4073,6 @@ export async function sendDailyEmployeeSchedules(): Promise<{
         client:clients ( name )
       `)
       .eq("organization_id", org.id)
-      .not("assigned_to", "is", null)
       .in("status", ["pending", "confirmed"])
       .gte("scheduled_at", startOfDay.toISOString())
       .lt("scheduled_at", endOfDay.toISOString())
@@ -3908,24 +4085,67 @@ export async function sendDailyEmployeeSchedules(): Promise<{
         duration_minutes: number;
         address: string | null;
         notes: string | null;
-        assigned_to: string;
+        assigned_to: string | null;
         client: { name: string | null } | null;
       }> | null;
     };
 
     if (!bookings || bookings.length === 0) continue;
 
-    // Group by employee (assigned_to = membership id)
-    const byEmployee = new Map<string, typeof bookings>();
-    for (const b of bookings) {
-      const list = byEmployee.get(b.assigned_to) ?? [];
-      list.push(b);
-      byEmployee.set(b.assigned_to, list);
+    // Resolve crew + split segments from the junction table, then build
+    // one entry per (booking, assignee). This reaches every cleaner on a
+    // job — not just bookings.assigned_to — and lets us render each
+    // person's own segment for split shifts.
+    const { rowsByBooking, nameById } = await loadCrewForBookings(
+      db,
+      bookings.map((b) => b.id),
+    );
+    const assignments = effectiveAssignments(bookings, rowsByBooking);
+
+    const byEmployee = new Map<string, typeof assignments>();
+    for (const a of assignments) {
+      const list = byEmployee.get(a.row.membership_id) ?? [];
+      list.push(a);
+      byEmployee.set(a.row.membership_id, list);
     }
 
-    for (const [membershipId, jobs] of byEmployee) {
+    for (const [membershipId, items] of byEmployee) {
       const recipient = await getMembershipRecipient(membershipId);
       if (!recipient) continue;
+
+      // Order each employee's jobs by their OWN segment start, not the
+      // booking start — otherwise a late split segment sorts wrong.
+      const jobs = items
+        .map(({ booking, row }) => {
+          const win = employeeShiftWindow({
+            bookingStart: booking.scheduled_at,
+            bookingDurationMinutes: booking.duration_minutes,
+            row,
+            bookingSegments: rowsByBooking.get(booking.id) ?? [],
+            nameById,
+            tz: orgTz,
+          });
+          return { booking, win };
+        })
+        .sort((a, b) => a.win.start.getTime() - b.win.start.getTime())
+        .map(({ booking, win }) => ({
+          time: win.start.toLocaleTimeString("en-US", {
+            hour: "numeric",
+            minute: "2-digit",
+            timeZone: orgTz,
+          }),
+          serviceName:
+            booking.service_type_label ?? humanize(booking.service_type),
+          clientName: booking.client?.name ?? "A client",
+          address: booking.address ?? "(address on file)",
+          durationLabel:
+            win.durationMinutes >= 60
+              ? `${Math.round((win.durationMinutes / 60) * 10) / 10}h`
+              : `${win.durationMinutes}m`,
+          notes: booking.notes,
+          windowLabel: win.windowLabel,
+          handoffLabel: win.handoffLabel,
+        }));
 
       const template = employeeDailyScheduleEmail({
         recipientName: recipient.fullName ?? "there",
@@ -3936,21 +4156,7 @@ export async function sendDailyEmployeeSchedules(): Promise<{
           day: "numeric",
           timeZone: orgTz,
         }),
-        jobs: jobs.map((j) => ({
-          time: new Date(j.scheduled_at).toLocaleTimeString("en-US", {
-            hour: "numeric",
-            minute: "2-digit",
-            timeZone: orgTz,
-          }),
-          serviceName: j.service_type_label ?? humanize(j.service_type),
-          clientName: j.client?.name ?? "A client",
-          address: j.address ?? "(address on file)",
-          durationLabel:
-            j.duration_minutes >= 60
-              ? `${Math.round((j.duration_minutes / 60) * 10) / 10}h`
-              : `${j.duration_minutes}m`,
-          notes: j.notes,
-        })),
+        jobs,
         fieldAppUrl: `${siteUrl}/field/jobs`,
       });
 
@@ -4003,11 +4209,10 @@ export async function sendWeeklyEmployeeSchedules(): Promise<{
     const { data: bookings } = await db
       .from("bookings")
       .select(`
-        id, scheduled_at, service_type, service_type_label, assigned_to,
+        id, scheduled_at, service_type, service_type_label, duration_minutes, assigned_to,
         client:clients ( name )
       `)
       .eq("organization_id", org.id)
-      .not("assigned_to", "is", null)
       .in("status", ["pending", "confirmed"])
       .gte("scheduled_at", startOfTomorrow.toISOString())
       .lt("scheduled_at", endOfWeek.toISOString())
@@ -4017,38 +4222,62 @@ export async function sendWeeklyEmployeeSchedules(): Promise<{
         scheduled_at: string;
         service_type: string;
         service_type_label: string | null;
-        assigned_to: string;
+        duration_minutes: number;
+        assigned_to: string | null;
         client: { name: string | null } | null;
       }> | null;
     };
 
     if (!bookings) continue;
 
-    const byEmployee = new Map<string, typeof bookings>();
-    for (const b of bookings) {
-      const list = byEmployee.get(b.assigned_to) ?? [];
-      list.push(b);
-      byEmployee.set(b.assigned_to, list);
+    // Crew + split segments, then one entry per (booking, assignee) so
+    // every cleaner gets their week — and split shifts show each person's
+    // own segment start.
+    const { rowsByBooking, nameById } = await loadCrewForBookings(
+      db,
+      bookings.map((b) => b.id),
+    );
+    const assignments = effectiveAssignments(bookings, rowsByBooking);
+
+    const byEmployee = new Map<string, typeof assignments>();
+    for (const a of assignments) {
+      const list = byEmployee.get(a.row.membership_id) ?? [];
+      list.push(a);
+      byEmployee.set(a.row.membership_id, list);
     }
 
-    for (const [membershipId, jobs] of byEmployee) {
-      if (jobs.length === 0) continue;
+    for (const [membershipId, items] of byEmployee) {
+      if (items.length === 0) continue;
       const recipient = await getMembershipRecipient(membershipId);
       if (!recipient) continue;
+
+      // Resolve each assignment to this employee's actual window first,
+      // so day-bucketing and times use their segment, not the booking.
+      const resolved = items.map(({ booking, row }) => ({
+        booking,
+        win: employeeShiftWindow({
+          bookingStart: booking.scheduled_at,
+          bookingDurationMinutes: booking.duration_minutes,
+          row,
+          bookingSegments: rowsByBooking.get(booking.id) ?? [],
+          nameById,
+          tz: orgTz,
+        }),
+      }));
 
       // Bucket into 7 day bins using the org's local date, not UTC date.
       // Without this, a job at 10 PM local time (= next UTC day) ends up in
       // the wrong bucket when the server runs in UTC.
-      const dayMap = new Map<string, typeof jobs>();
+      const dayMap = new Map<string, typeof resolved>();
       for (let i = 0; i < 7; i += 1) {
         const d = new Date(startOfTomorrow.getTime() + i * 24 * 60 * 60 * 1000);
         const localKey = d.toLocaleDateString("en-CA", { timeZone: orgTz }); // YYYY-MM-DD
         dayMap.set(localKey, []);
       }
-      for (const j of jobs) {
-        const localKey = new Date(j.scheduled_at).toLocaleDateString("en-CA", { timeZone: orgTz });
+      for (const r of resolved) {
+        const localKey = r.win.start.toLocaleDateString("en-CA", { timeZone: orgTz });
         const bucket = dayMap.get(localKey) ?? [];
-        bucket.push(j);
+        bucket.push(r);
         dayMap.set(localKey, bucket);
       }
 
@@ -4059,15 +4288,19 @@ export async function sendWeeklyEmployeeSchedules(): Promise<{
           day: "numeric",
           timeZone: "UTC",
         }),
-        jobs: jobsOfDay.map((j) => ({
-          time: new Date(j.scheduled_at).toLocaleTimeString("en-US", {
-            hour: "numeric",
-            minute: "2-digit",
-            timeZone: orgTz,
-          }),
-          serviceName: j.service_type_label ?? humanize(j.service_type),
-          clientName: j.client?.name ?? "A client",
-        })),
+        jobs: jobsOfDay
+          .sort((a, b) => a.win.start.getTime() - b.win.start.getTime())
+          .map(({ booking, win }) => ({
+            time: win.start.toLocaleTimeString("en-US", {
+              hour: "numeric",
+              minute: "2-digit",
+              timeZone: orgTz,
+            }),
+            serviceName:
+              booking.service_type_label ?? humanize(booking.service_type),
+            clientName: booking.client?.name ?? "A client",
+            isSplit: win.isSplit,
+          })),
       }));
 
       const template = employeeWeeklyScheduleEmail({
@@ -4075,7 +4308,7 @@ export async function sendWeeklyEmployeeSchedules(): Promise<{
         orgName: org.name,
         weekLabel,
         days,
-        totalJobs: jobs.length,
+        totalJobs: items.length,
         fieldAppUrl: `${siteUrl}/field/jobs`,
       });
 

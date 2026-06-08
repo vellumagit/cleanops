@@ -621,12 +621,18 @@ export function employeeDailyScheduleEmail(args: {
   orgName: string;
   dateLabel: string; // e.g. "Monday, Apr 21"
   jobs: Array<{
-    time: string; // "8:00 AM"
+    time: string; // "8:00 AM" — for split shifts this is the employee's segment start
     serviceName: string;
     clientName: string;
     address: string;
-    durationLabel: string; // "2h"
+    durationLabel: string; // "2h" — for split shifts this is the employee's segment length
     notes: string | null;
+    // Split-shift context. When set, this job is one segment of a shared
+    // booking and `time`/`durationLabel` already reflect ONLY this
+    // employee's portion. windowLabel spells out the start–end of their
+    // segment; handoffLabel names the cleaner before/after them.
+    windowLabel?: string | null; // "9:00 AM – 1:00 PM"
+    handoffLabel?: string | null; // "Ana takes over at 1:00 PM"
   }>;
   fieldAppUrl: string;
 }) {
@@ -653,6 +659,7 @@ export function employeeDailyScheduleEmail(args: {
         <div style="font-size:14px;color:#18181b;font-weight:600;">${escapeHtml(j.serviceName)}</div>
         <div style="font-size:12px;color:#52525b;margin-top:3px;">${escapeHtml(j.clientName)}</div>
         <div style="font-size:12px;color:#71717a;margin-top:2px;">${escapeHtml(j.address)}</div>
+        ${j.windowLabel ? `<div style="margin-top:8px;display:inline-block;padding:4px 9px;background:#fef3c7;border:1px solid #fde68a;border-radius:6px;font-size:11px;color:#92400e;font-weight:700;">Split shift · your portion ${escapeHtml(j.windowLabel)}</div>${j.handoffLabel ? `<div style="font-size:11px;color:#a16207;margin-top:4px;">${escapeHtml(j.handoffLabel)}</div>` : ""}` : ""}
         ${j.notes ? `<div style="margin-top:8px;padding:8px 10px;background:#fafafa;border-radius:6px;font-size:12px;color:#52525b;line-height:1.45;white-space:pre-wrap;">${escapeHtml(j.notes)}</div>` : ""}
       </td>
     </tr>`,
@@ -687,7 +694,7 @@ export function employeeDailyScheduleEmail(args: {
   const text =
     n === 0
       ? `No jobs scheduled for ${args.dateLabel}. Enjoy the day.`
-      : `Your schedule for ${args.dateLabel}\n\n${args.jobs.map((j) => `${j.time} — ${j.serviceName} for ${j.clientName} (${j.durationLabel})\n  ${j.address}${j.notes ? `\n  Notes: ${j.notes}` : ""}`).join("\n\n")}\n\nOpen: ${args.fieldAppUrl}`;
+      : `Your schedule for ${args.dateLabel}\n\n${args.jobs.map((j) => `${j.time} — ${j.serviceName} for ${j.clientName} (${j.durationLabel})\n  ${j.address}${j.windowLabel ? `\n  Split shift — your portion: ${j.windowLabel}${j.handoffLabel ? ` (${j.handoffLabel})` : ""}` : ""}${j.notes ? `\n  Notes: ${j.notes}` : ""}`).join("\n\n")}\n\nOpen: ${args.fieldAppUrl}`;
   return { subject, html, text };
 }
 
@@ -702,9 +709,10 @@ export function employeeWeeklyScheduleEmail(args: {
   days: Array<{
     dateLabel: string; // "Monday, Apr 21"
     jobs: Array<{
-      time: string;
+      time: string; // split shift: the employee's segment start
       serviceName: string;
       clientName: string;
+      isSplit?: boolean; // marks the job as the employee's portion of a split
     }>;
   }>;
   totalJobs: number;
@@ -727,7 +735,7 @@ export function employeeWeeklyScheduleEmail(args: {
         .map(
           (j) => `
         <div style="margin-top:6px;font-size:12px;color:#52525b;line-height:1.5;">
-          <strong style="color:#18181b;">${escapeHtml(j.time)}</strong> — ${escapeHtml(j.serviceName)} for ${escapeHtml(j.clientName)}
+          <strong style="color:#18181b;">${escapeHtml(j.time)}</strong> — ${escapeHtml(j.serviceName)} for ${escapeHtml(j.clientName)}${j.isSplit ? ` <span style="display:inline-block;padding:1px 6px;background:#fef3c7;border:1px solid #fde68a;border-radius:4px;font-size:10px;color:#92400e;font-weight:700;vertical-align:middle;">SPLIT · your portion</span>` : ""}
         </div>`,
         )
         .join("");
@@ -765,7 +773,7 @@ export function employeeWeeklyScheduleEmail(args: {
   const text = `Your week ahead — ${args.orgName}\n${args.weekLabel}\n${args.totalJobs} total job${args.totalJobs === 1 ? "" : "s"}\n\n${args.days
     .map(
       (d) =>
-        `${d.dateLabel}:\n${d.jobs.length === 0 ? "  (no jobs)" : d.jobs.map((j) => `  ${j.time} — ${j.serviceName} for ${j.clientName}`).join("\n")}`,
+        `${d.dateLabel}:\n${d.jobs.length === 0 ? "  (no jobs)" : d.jobs.map((j) => `  ${j.time} — ${j.serviceName} for ${j.clientName}${j.isSplit ? " (split — your portion)" : ""}`).join("\n")}`,
     )
     .join("\n\n")}\n\nOpen: ${args.fieldAppUrl}`;
   return { subject, html, text };
