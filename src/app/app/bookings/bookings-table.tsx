@@ -56,6 +56,9 @@ export type BookingRow = {
   /** Non-primary crew membership ids on this booking, sourced from
    *  the booking_assignees junction. Pre-checked in the dialog. */
   additional_assignee_ids: string[];
+  /** Number of split-shift segments (rows carrying split metadata). 0 or
+   *  1 = not a split; 2+ renders a "Split · N" chip. */
+  segment_count: number;
   series_id: string | null;
   address: string | null;
 };
@@ -546,6 +549,14 @@ function TableView({
                         <Repeat className="h-2.5 w-2.5" />
                       </span>
                     )}
+                    {r.segment_count >= 2 && (
+                      <span
+                        className="inline-flex items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
+                        title={`Split shift — ${r.segment_count} segments`}
+                      >
+                        Split · {r.segment_count}
+                      </span>
+                    )}
                   </span>
                 </td>
                 <td className="px-3 py-2.5 text-muted-foreground hidden sm:table-cell">
@@ -674,6 +685,14 @@ function CardsView({
                       </span>
                       {r.series_id && (
                         <Repeat className="h-3 w-3 shrink-0 text-blue-500" />
+                      )}
+                      {r.segment_count >= 2 && (
+                        <span
+                          className="inline-flex shrink-0 items-center rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
+                          title={`Split shift — ${r.segment_count} segments`}
+                        >
+                          Split · {r.segment_count}
+                        </span>
                       )}
                     </div>
                     <span className="text-xs text-muted-foreground">

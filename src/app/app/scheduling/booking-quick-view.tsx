@@ -25,6 +25,11 @@ import { humanizeEnum } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { ScheduleBooking, ScheduleEmployee } from "./data";
 import { AssignCrewDialog } from "@/app/app/bookings/assign-crew-dialog";
+import {
+  SplitShiftTimeline,
+  type SplitTimelineSegment,
+} from "./split-shift-timeline";
+import { toneForEmployee } from "./color";
 
 function formatDateTime(iso: string, tz?: string) {
   const d = new Date(iso);
@@ -126,6 +131,22 @@ export function BookingQuickView({
       },
     );
 
+  // Shape the sorted segments for the master-shift timeline block. Each
+  // assignee is tinted in their scheduler lane color so the popup reads
+  // consistently with the grid the owner clicked from.
+  const timelineSegments: SplitTimelineSegment[] = sortedSegments.map((seg) => {
+    const laneIdx = employees.findIndex((e) => e.id === seg.membershipId);
+    return {
+      key: seg.membershipId,
+      employeeName: seg.employeeName,
+      startOffsetMinutes: seg.start_offset_minutes,
+      durationMinutes: seg.duration_minutes,
+      color: toneForEmployee(laneIdx < 0 ? 0 : laneIdx),
+      startLabel: segmentTimeLabel(seg.start_offset_minutes),
+      durationLabel: formatDuration(seg.duration_minutes),
+    };
+  });
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
@@ -162,20 +183,10 @@ export function BookingQuickView({
 
           {hasSplits ? (
             <Row icon={<Users className="h-3.5 w-3.5" />} label="Crew">
-              <ul className="space-y-1.5">
-                {sortedSegments.map((seg) => (
-                  <li
-                    key={seg.membershipId}
-                    className="flex items-baseline gap-2"
-                  >
-                    <span className="font-medium">{seg.employeeName}</span>
-                    <span className="tabular-nums text-xs text-muted-foreground">
-                      {segmentTimeLabel(seg.start_offset_minutes)} ·{" "}
-                      {formatDuration(seg.duration_minutes)}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+              <SplitShiftTimeline
+                segments={timelineSegments}
+                className="mt-1"
+              />
             </Row>
           ) : (
             <Row icon={<User className="h-3.5 w-3.5" />} label="Assigned">

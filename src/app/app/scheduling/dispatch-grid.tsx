@@ -23,6 +23,7 @@ import { rescheduleBookingAction } from "./actions";
 import type { ScheduleBooking, ScheduleEmployee } from "./data";
 import { BookingQuickView } from "./booking-quick-view";
 import { toneForBooking, toneForEmployee, type ColorBy } from "./color";
+import { computeSplitCue, type SplitCue } from "./split-cue";
 
 /**
  * Dispatch view: single-day, time-of-day axis, employee columns.
@@ -157,6 +158,12 @@ export function DispatchGrid({
     }
     return map;
   }, [bookings, date, tz]);
+
+  // membership_id → display name, for split-shift handoff labels on cards.
+  const nameById = useMemo(
+    () => new Map(employees.map((e) => [e.id, e.name])),
+    [employees],
+  );
 
   // Compute overlap conflicts per employee. O(n log n) total across all
   // employees — n is small (most cleaners have <10 jobs a day).
@@ -372,6 +379,7 @@ export function DispatchGrid({
                 onQuickView={setQuickViewId}
                 onSlotClick={handleSlotClick}
                 colorBy={colorBy}
+                nameById={nameById}
               />
             ))}
           </div>
@@ -432,6 +440,7 @@ function EmployeeColumn({
   onQuickView,
   onSlotClick,
   colorBy,
+  nameById,
 }: {
   employee: ScheduleEmployee;
   laneIdx: number;
@@ -447,6 +456,8 @@ function EmployeeColumn({
   onQuickView: (id: string) => void;
   onSlotClick: (employeeId: string, minutes: number) => void;
   colorBy: ColorBy;
+  /** membership_id → display name, for split-shift handoff labels. */
+  nameById: Map<string, string>;
 }) {
   return (
     <div
@@ -501,6 +512,7 @@ function EmployeeColumn({
             canEdit={canEdit}
             hasConflict={conflictIds.has(b.id)}
             onQuickView={onQuickView}
+            splitCue={computeSplitCue(b, employee.id, nameById)}
           />
         );
       })}
@@ -563,6 +575,7 @@ function PositionedBooking({
   canEdit,
   hasConflict,
   onQuickView,
+  splitCue,
 }: {
   booking: ScheduleBooking;
   top: number;
@@ -575,6 +588,8 @@ function PositionedBooking({
   canEdit: boolean;
   hasConflict: boolean;
   onQuickView: (id: string) => void;
+  /** Split-shift sequence cue for this lane's employee, or null. */
+  splitCue?: SplitCue | null;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: booking.id,
@@ -631,13 +646,29 @@ function PositionedBooking({
               <StatusBadge tone={bookingStatusTone(booking.status)}>
                 {humanizeEnum(booking.status)}
               </StatusBadge>
-              {/* See week-grid.tsx for the rationale on this pill. */}
-              {Object.keys(booking.assigneeSegments ?? {}).length > 0 && (
+              {/* See week-grid.tsx for the rationale on this cue. */}
+              {splitCue && (
                 <span
-                  className="inline-flex items-center rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
-                  title="Split shift — this card shows this cleaner's segment, not the booking start"
+                  className="inline-flex max-w-full items-center gap-1 truncate rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
+                  title={
+                    "Split shift — segment " +
+                    splitCue.index +
+                    " of " +
+                    splitCue.total +
+                    (splitCue.prevName ? ` · after ${splitCue.prevName}` : "") +
+                    (splitCue.nextName ? ` · then ${splitCue.nextName}` : "")
+                  }
                 >
-                  Split
+                  Split {splitCue.index}/{splitCue.total}
+                  {splitCue.nextName ? (
+                    <span className="truncate font-medium normal-case">
+                      → {splitCue.nextName}
+                    </span>
+                  ) : splitCue.prevName ? (
+                    <span className="truncate font-medium normal-case">
+                      after {splitCue.prevName}
+                    </span>
+                  ) : null}
                 </span>
               )}
               {(booking.all_assignee_ids?.length ?? 0) > 1 && (

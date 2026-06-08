@@ -106,21 +106,46 @@ export default async function BookingsPage({
   const { data: assigneesData } = bookingIds.length
     ? ((await supabase
         .from("booking_assignees" as never)
-        .select("booking_id, membership_id, is_primary")
+        .select(
+          "booking_id, membership_id, is_primary, split_start_offset_minutes, split_duration_minutes",
+        )
         .in("booking_id" as never, bookingIds as never)) as unknown as {
         data: Array<{
           booking_id: string;
           membership_id: string;
           is_primary: boolean;
+          split_start_offset_minutes: number | null;
+          split_duration_minutes: number | null;
         }> | null;
       })
-    : { data: [] as Array<{ booking_id: string; membership_id: string; is_primary: boolean }> };
+    : {
+        data: [] as Array<{
+          booking_id: string;
+          membership_id: string;
+          is_primary: boolean;
+          split_start_offset_minutes: number | null;
+          split_duration_minutes: number | null;
+        }>,
+      };
   const additionalByBooking = new Map<string, string[]>();
+  // Count split segments per booking (rows carrying split metadata). 2+
+  // means the booking is a split shift — feeds the table's "Split" chip.
+  const segmentCountByBooking = new Map<string, number>();
   for (const r of assigneesData ?? []) {
-    if (r.is_primary) continue;
-    const arr = additionalByBooking.get(r.booking_id) ?? [];
-    arr.push(r.membership_id);
-    additionalByBooking.set(r.booking_id, arr);
+    if (!r.is_primary) {
+      const arr = additionalByBooking.get(r.booking_id) ?? [];
+      arr.push(r.membership_id);
+      additionalByBooking.set(r.booking_id, arr);
+    }
+    if (
+      r.split_start_offset_minutes != null &&
+      r.split_duration_minutes != null
+    ) {
+      segmentCountByBooking.set(
+        r.booking_id,
+        (segmentCountByBooking.get(r.booking_id) ?? 0) + 1,
+      );
+    }
   }
 
   const rows: BookingRow[] = (data ?? []).map((b) => ({
@@ -135,6 +160,7 @@ export default async function BookingsPage({
     assigned_name: b.assigned ? memberDisplayName(b.assigned) : null,
     assigned_to: b.assigned_to,
     additional_assignee_ids: additionalByBooking.get(b.id) ?? [],
+    segment_count: segmentCountByBooking.get(b.id) ?? 0,
     series_id: b.series_id ?? null,
     address: b.address ?? null,
   }));

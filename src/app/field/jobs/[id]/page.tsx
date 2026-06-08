@@ -6,6 +6,7 @@ import {
   Clock as ClockIcon,
   FileText,
   Phone,
+  Users,
 } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -15,6 +16,12 @@ import {
   formatDurationMinutes,
   humanizeEnum,
 } from "@/lib/format";
+import { memberDisplayName } from "@/lib/member-display";
+import {
+  SplitShiftTimeline,
+  type SplitTimelineSegment,
+} from "@/app/app/scheduling/split-shift-timeline";
+import { toneForEmployee } from "@/app/app/scheduling/color";
 import { JobActionButtons } from "./job-actions";
 import { JobPhotos } from "./job-photos";
 import { fetchJobPhotos } from "@/lib/job-photos";
@@ -126,6 +133,63 @@ export default async function FieldJobDetailPage({
   // Fetch photos only after the assignment check passes.
   const photos = await fetchJobPhotos(booking.id);
 
+  // Pull every assignee's segment so a split-shift cleaner sees the whole
+  // shift laid out — their own window lit, the rest dimmed — instead of
+  // just their isolated slot. Only renders when 2+ segments exist.
+  const { data: allSegRows } = (await supabase
+    .from("booking_assignees" as never)
+    .select(
+      `membership_id, split_start_offset_minutes, split_duration_minutes,
+       membership:memberships ( display_name, profile:profiles ( full_name ) )`,
+    )
+    .eq("booking_id" as never, booking.id as never)) as unknown as {
+    data: Array<{
+      membership_id: string;
+      split_start_offset_minutes: number | null;
+      split_duration_minutes: number | null;
+      membership: {
+        display_name: string | null;
+        profile: { full_name: string | null } | null;
+      } | null;
+    }> | null;
+  };
+
+  const splitRows = (allSegRows ?? [])
+    .filter(
+      (r) =>
+        r.split_start_offset_minutes != null &&
+        r.split_duration_minutes != null,
+    )
+    .sort(
+      (a, b) =>
+        (a.split_start_offset_minutes ?? 0) -
+        (b.split_start_offset_minutes ?? 0),
+    );
+
+  const bookingStartMs = new Date(booking.scheduled_at).getTime();
+  const splitSegments: SplitTimelineSegment[] =
+    splitRows.length >= 2
+      ? splitRows.map((r, i) => {
+          const offset = r.split_start_offset_minutes ?? 0;
+          return {
+            key: r.membership_id,
+            employeeName: memberDisplayName(r.membership ?? {}),
+            startOffsetMinutes: offset,
+            durationMinutes: r.split_duration_minutes ?? 0,
+            color: toneForEmployee(i),
+            startLabel: new Date(
+              bookingStartMs + offset * 60_000,
+            ).toLocaleTimeString("en-US", {
+              hour: "numeric",
+              minute: "2-digit",
+              timeZone: tz,
+            }),
+            durationLabel: formatDurationMinutes(r.split_duration_minutes ?? 0),
+            highlight: r.membership_id === membership.id,
+          };
+        })
+      : [];
+
   // Checklist items (if any).
   const { data: checklistItems } = (await supabase
     .from("booking_checklist_items" as never)
@@ -173,6 +237,17 @@ export default async function FieldJobDetailPage({
               </div>
             </div>
           </div>
+          {splitSegments.length > 0 && (
+            <div className="flex items-start gap-3">
+              <Users className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
+              <div className="min-w-0 flex-1">
+                <div className="mb-1.5 text-sm font-semibold">
+                  Split shift — your window is highlighted
+                </div>
+                <SplitShiftTimeline segments={splitSegments} />
+              </div>
+            </div>
+          )}
           {booking.address ? (
             <div className="flex items-start gap-3">
               <MapPin className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />

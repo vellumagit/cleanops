@@ -23,6 +23,7 @@ import { rescheduleBookingAction } from "./actions";
 import type { ScheduleBooking, ScheduleEmployee } from "./data";
 import { BookingQuickView } from "./booking-quick-view";
 import { toneForBooking, toneForEmployee, type ColorBy } from "./color";
+import { computeSplitCue, type SplitCue } from "./split-cue";
 
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -121,6 +122,13 @@ export function WeekGrid({
   const bookingById = useMemo(
     () => new Map(bookings.map((b) => [b.id, b])),
     [bookings],
+  );
+
+  // membership_id → display name, for split-shift handoff labels on cards
+  // ("→ then Ana" / "after Maria"). Built once from the employee list.
+  const nameById = useMemo(
+    () => new Map(employees.map((e) => [e.id, e.name])),
+    [employees],
   );
 
   const unassigned = useMemo(
@@ -296,6 +304,7 @@ export function WeekGrid({
                 tz={tz}
                 offDates={offDaysByEmployee.get(emp.id) ?? new Set()}
                 colorBy={colorBy}
+                nameById={nameById}
               />
             ))}
           </div>
@@ -334,6 +343,7 @@ function EmployeeRow({
   tz,
   offDates,
   colorBy,
+  nameById,
 }: {
   employee: ScheduleEmployee;
   /** Hex color for the employee's lane header left border. */
@@ -350,6 +360,8 @@ function EmployeeRow({
   /** Days this employee is off (YYYY-MM-DD set). */
   offDates: Set<string>;
   colorBy: ColorBy;
+  /** membership_id → display name, for split-shift handoff labels. */
+  nameById: Map<string, string>;
 }) {
   return (
     <>
@@ -375,6 +387,7 @@ function EmployeeRow({
             tz={tz}
             isOff={offDates.has(dateStr)}
             colorBy={colorBy}
+            nameById={nameById}
           />
         );
       })}
@@ -392,6 +405,7 @@ function DayCell({
   tz,
   isOff,
   colorBy,
+  nameById,
 }: {
   employeeId: string;
   laneIdx: number;
@@ -405,6 +419,8 @@ function DayCell({
    *  droppable — server will reject or warn based on its own logic. */
   isOff: boolean;
   colorBy: ColorBy;
+  /** membership_id → display name, for split-shift handoff labels. */
+  nameById: Map<string, string>;
 }) {
   const droppableId = `cell:${employeeId}:${date}`;
   const { setNodeRef, isOver } = useDroppable({
@@ -434,6 +450,7 @@ function DayCell({
           onQuickView={onQuickView}
           tz={tz}
           accent={toneForBooking(b, colorBy, laneIdx)}
+          splitCue={computeSplitCue(b, employeeId, nameById)}
         />
       ))}
     </div>
@@ -458,6 +475,7 @@ function DraggableBooking({
   onQuickView,
   tz,
   accent,
+  splitCue,
 }: {
   booking: ScheduleBooking;
   canEdit: boolean;
@@ -467,6 +485,8 @@ function DraggableBooking({
    *  Applied as the left-border accent; "" in the unassigned tray since
    *  there's no employee lane idx to anchor the employee mode against. */
   accent: string;
+  /** Split-shift sequence cue for this employee, or null when not a split. */
+  splitCue?: SplitCue | null;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: booking.id,
@@ -486,6 +506,7 @@ function DraggableBooking({
         onClick={() => onQuickView(booking.id)}
         dragListeners={listeners}
         tz={tz}
+        splitCue={splitCue}
       />
     </div>
   );
@@ -499,6 +520,7 @@ function BookingCard({
   onClick,
   dragListeners,
   tz,
+  splitCue,
 }: {
   booking: ScheduleBooking;
   /** Hex color for the card's left-border accent. Empty string skips
@@ -506,6 +528,9 @@ function BookingCard({
   accent: string;
   dragging?: boolean;
   canDrag?: boolean;
+  /** Split-shift sequence cue for the employee whose lane this card is
+   *  in. Null/undefined when not a split. */
+  splitCue?: SplitCue | null;
   /** Fires on left-click anywhere on the card except the drag grip.
    *  Omit in the DragOverlay preview. */
   onClick?: () => void;
@@ -562,17 +587,33 @@ function BookingCard({
         <StatusBadge tone={bookingStatusTone(booking.status)}>
           {humanizeEnum(booking.status)}
         </StatusBadge>
-        {/* SPLIT pill — the card position uses this employee's segment
-            time (not the booking's overall start), which surprised owners
-            who only saw one column at a time. The visible badge gives
-            an at-a-glance hint that the displayed time is a segment
-            slot and the full structure is in the popup. */}
-        {Object.keys(booking.assigneeSegments ?? {}).length > 0 && (
+        {/* SPLIT cue — the grids are per-employee, so a split booking's
+            segments live in separate lanes. Rather than a bare "Split"
+            pill, show this employee's place in the sequence ("1 of 2")
+            plus who they hand off to / from, so a separated card still
+            reads as part of one shift. Full block view is in the popup. */}
+        {splitCue && (
           <span
-            className="inline-flex items-center rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
-            title="Split shift — this card shows this cleaner's segment, not the booking start"
+            className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
+            title={
+              "Split shift — segment " +
+              splitCue.index +
+              " of " +
+              splitCue.total +
+              (splitCue.prevName ? ` · after ${splitCue.prevName}` : "") +
+              (splitCue.nextName ? ` · then ${splitCue.nextName}` : "")
+            }
           >
-            Split
+            Split {splitCue.index}/{splitCue.total}
+            {splitCue.nextName ? (
+              <span className="font-medium normal-case">
+                → {splitCue.nextName}
+              </span>
+            ) : splitCue.prevName ? (
+              <span className="font-medium normal-case">
+                after {splitCue.prevName}
+              </span>
+            ) : null}
           </span>
         )}
         {(booking.all_assignee_ids?.length ?? 0) > 1 && (
