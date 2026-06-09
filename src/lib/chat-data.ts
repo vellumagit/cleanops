@@ -24,6 +24,11 @@ export type ChatMessage = {
 export type TeammateOption = {
   id: string;
   label: string;
+  // A teammate is only reachable in chat if they have a login account
+  // (memberships.profile_id is set). Manually-added "shadow" employees
+  // have profile_id = null — they show up on the roster but cannot open
+  // the app to read a DM, so the picker must not let you message a void.
+  reachable: boolean;
 };
 
 /**
@@ -174,7 +179,7 @@ export async function fetchTeammates(
 
   const { data, error } = await admin
     .from("memberships")
-    .select("id, display_name, profile:profiles ( full_name )")
+    .select("id, display_name, profile_id, profile:profiles ( full_name )")
     .eq("organization_id", membership.organization_id)
     .eq("status", "active")
     .neq("id", membership.id);
@@ -184,8 +189,16 @@ export async function fetchTeammates(
     return [];
   }
 
-  return (data ?? []).map((m) => ({
-    id: m.id,
-    label: memberDisplayName(m),
-  }));
+  return (data ?? [])
+    .map((m) => ({
+      id: m.id,
+      label: memberDisplayName(m),
+      reachable: Boolean((m as { profile_id: string | null }).profile_id),
+    }))
+    // Reachable teammates first, then alphabetical — so the people the
+    // owner can actually message surface at the top of the picker.
+    .sort((a, b) => {
+      if (a.reachable !== b.reachable) return a.reachable ? -1 : 1;
+      return a.label.localeCompare(b.label);
+    });
 }

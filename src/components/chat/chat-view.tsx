@@ -173,6 +173,12 @@ export function ChatView({
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
   const isMobile = variant === "mobile";
 
+  // Only members with a login account can actually open the app and read a
+  // DM. Manually-added "shadow" employees (reachable === false) are shown as
+  // a note instead of selectable options so messages never go to a void.
+  const reachableTeammates = teammates.filter((t) => t.reachable);
+  const unreachableTeammates = teammates.filter((t) => !t.reachable);
+
   // On mobile we collapse to a single pane: thread list OR active thread.
   const showThreadList = !isMobile || !activeThread;
   const showThreadPane = !isMobile || !!activeThread;
@@ -214,10 +220,11 @@ export function ChatView({
               onSubmit={handleCreateDm}
               className="space-y-2 border-b border-border bg-card/60 px-3 py-3"
             >
-              {teammates.length === 0 ? (
+              {reachableTeammates.length === 0 ? (
                 <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-200">
-                  No teammates yet. When the owner invites or adds
-                  another member, they&rsquo;ll show up here to DM.
+                  {teammates.length === 0
+                    ? "No teammates yet. When the owner invites or adds another member, they’ll show up here to DM."
+                    : "No teammates have joined the app yet. Once they accept their invite or claim their account, you can message them here."}
                 </p>
               ) : (
                 <FormSelect
@@ -225,12 +232,28 @@ export function ChatView({
                   onChange={(e) => setOtherId(e.target.value)}
                 >
                   <option value="">Pick a teammate…</option>
-                  {teammates.map((t) => (
+                  {reachableTeammates.map((t) => (
                     <option key={t.id} value={t.id}>
                       {t.label}
                     </option>
                   ))}
                 </FormSelect>
+              )}
+              {unreachableTeammates.length > 0 && (
+                <p className="text-[11px] leading-relaxed text-muted-foreground">
+                  {unreachableTeammates.length} teammate
+                  {unreachableTeammates.length === 1 ? "" : "s"} (
+                  {unreachableTeammates
+                    .slice(0, 3)
+                    .map((t) => t.label)
+                    .join(", ")}
+                  {unreachableTeammates.length > 3
+                    ? `, +${unreachableTeammates.length - 3} more`
+                    : ""}
+                  ) haven&rsquo;t joined the app yet, so they can&rsquo;t receive
+                  messages. Invite them from Employees, or have them accept their
+                  invite.
+                </p>
               )}
               <div className="flex items-center justify-end gap-2">
                 <Button
@@ -242,9 +265,9 @@ export function ChatView({
                     setOtherId("");
                   }}
                 >
-                  {teammates.length === 0 ? "Close" : "Cancel"}
+                  {reachableTeammates.length === 0 ? "Close" : "Cancel"}
                 </Button>
-                {teammates.length > 0 && (
+                {reachableTeammates.length > 0 && (
                   <Button
                     type="submit"
                     size="sm"

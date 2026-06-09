@@ -127,7 +127,7 @@ export async function createDmThreadAction(
 
   const { data: other, error: otherErr } = await admin
     .from("memberships")
-    .select("id, organization_id, status")
+    .select("id, organization_id, status, profile_id")
     .eq("id", otherMembershipId)
     .maybeSingle();
 
@@ -144,6 +144,16 @@ export async function createDmThreadAction(
   }
   if (other.status !== "active") {
     return { ok: false, error: "Teammate is not active." };
+  }
+  // A teammate with no login account (manually-added shadow employee)
+  // can't open the app to read a DM — block it with a clear reason
+  // rather than silently creating a thread nobody will ever see.
+  if (!(other as { profile_id: string | null }).profile_id) {
+    return {
+      ok: false,
+      error:
+        "This teammate hasn't joined the app yet, so they can't receive messages. Invite them (or have them accept their invite) first.",
+    };
   }
 
   // Existing-DM lookup via admin client — if it returns nothing under
