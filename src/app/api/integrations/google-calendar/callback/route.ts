@@ -146,6 +146,16 @@ async function handleOrgCallback(
 
   try {
     const tokens = await exchangeCodeForTokens(code);
+
+    // Reject a grant that's missing the Calendar permission (user unchecked
+    // it on Google's consent screen). Without it every event write 403s and
+    // the connection silently syncs nothing despite looking "active".
+    if (!(tokens.scope ?? "").includes("calendar")) {
+      return errRedirect(
+        "Calendar access wasn't granted. Please reconnect and keep the Google Calendar permission checked.",
+      );
+    }
+
     const expiresAt = new Date(Date.now() + tokens.expires_in * 1000).toISOString();
     const admin = createSupabaseAdminClient();
 
@@ -281,6 +291,18 @@ async function handleMemberCallback(
 
   try {
     const tokens = await exchangeCodeForTokens(code);
+
+    // Google lets the user UNCHECK the Calendar permission on the consent
+    // screen while still granting email/openid. That yields a token that
+    // refreshes fine (so the connection looks "active") but 403s on every
+    // calendar write — events silently never sync. Reject it here with a
+    // clear message instead of saving a dead connection.
+    if (!(tokens.scope ?? "").includes("calendar")) {
+      return errRedirect(
+        "Calendar access wasn't granted. Please reconnect and keep the Google Calendar permission checked.",
+      );
+    }
+
     const expiresAt = new Date(Date.now() + tokens.expires_in * 1000).toISOString();
 
     // Check for existing active member-level connection.

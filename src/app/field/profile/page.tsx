@@ -49,14 +49,24 @@ export default async function FieldProfilePage() {
     // Check if this member has a personal GCal connection.
     admin
       .from("integration_connections" as never)
-      .select("external_account_id, connected_at")
+      .select("external_account_id, connected_at, scope")
       .eq("membership_id" as never, membership.id)
       .eq("provider" as never, "google_calendar")
       .eq("status" as never, "active")
       .maybeSingle() as unknown as {
-      data: { external_account_id: string | null; connected_at: string } | null;
+      data: {
+        external_account_id: string | null;
+        connected_at: string;
+        scope: string | null;
+      } | null;
     },
   ]);
+
+  // A connection can be "active" (token refreshes) yet useless if the user
+  // unchecked Calendar access on Google's consent screen — every event write
+  // then 403s. Detect that so we can prompt a reconnect instead of showing a
+  // misleading green "Connected".
+  const calendarGranted = (gcalConn?.scope ?? "").includes("calendar");
 
   return (
     <>
@@ -129,7 +139,46 @@ export default async function FieldProfilePage() {
             schedule changes.
           </p>
 
-          {gcalConn ? (
+          {gcalConn && !calendarGranted ? (
+            // Connected, but Calendar permission was NOT granted — events will
+            // never sync. Prompt a reconnect with the permission checked.
+            <div className="space-y-3">
+              <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-xs">
+                <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
+                <div className="min-w-0 flex-1 text-amber-800 dark:text-amber-200">
+                  {gcalConn.external_account_id && (
+                    <div className="truncate font-medium">
+                      {gcalConn.external_account_id}
+                    </div>
+                  )}
+                  <div>
+                    Calendar access wasn&rsquo;t granted, so your jobs can&rsquo;t
+                    sync. Reconnect and keep the{" "}
+                    <span className="font-medium">Google Calendar</span> checkbox
+                    ticked on the permission screen.
+                  </div>
+                </div>
+              </div>
+              <form action={connectMyGoogleCalendarAction}>
+                <button
+                  type="submit"
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-foreground px-3 py-2.5 text-sm font-medium text-background transition-colors hover:bg-foreground/90 active:scale-95"
+                >
+                  <CalendarDays className="h-4 w-4" />
+                  Reconnect &amp; allow Calendar
+                </button>
+              </form>
+              <form action={disconnectMyGoogleCalendarAction}>
+                <button
+                  type="submit"
+                  className="inline-flex w-full items-center justify-center gap-1 rounded-md border border-border bg-background px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground active:scale-95"
+                >
+                  <XCircle className="h-3.5 w-3.5" />
+                  Disconnect
+                </button>
+              </form>
+            </div>
+          ) : gcalConn ? (
             <div className="space-y-3">
               <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2.5 text-xs">
                 <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
