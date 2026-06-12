@@ -40,6 +40,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import type { CalendarEvent } from "./page";
+import { OpenInMaps } from "@/components/open-in-maps";
 import {
   Sheet,
   SheetContent,
@@ -963,15 +964,6 @@ function formatHourLabel(hour: number): string {
 // Event Detail Panel
 // ---------------------------------------------------------------------------
 
-/**
- * Build a Google Maps search URL for an address. Works on desktop +
- * iOS + Android — on phones, the OS intercepts and opens the native
- * Maps / Google Maps / Apple Maps app where available.
- */
-function mapsUrl(address: string): string {
-  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
-}
-
 function EventDetail({
   event,
   onClose,
@@ -1105,15 +1097,13 @@ function EventDetail({
           a new tab (OS intercepts to the native app on mobile). */}
       <div className="mt-4 flex flex-wrap gap-1.5 border-t border-border pt-4">
         {addressForMaps && (
-          <a
-            href={mapsUrl(addressForMaps)}
-            target="_blank"
-            rel="noopener noreferrer"
+          <OpenInMaps
+            address={addressForMaps}
             className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
           >
             <Navigation className="h-3.5 w-3.5" />
             Open in Maps
-          </a>
+          </OpenInMaps>
         )}
 
         {event.type === "booking" && isLinkable && (

@@ -25,6 +25,7 @@ import { humanizeEnum } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { ScheduleBooking, ScheduleEmployee } from "./data";
 import { AssignCrewDialog } from "@/app/app/bookings/assign-crew-dialog";
+import { OpenInMaps } from "@/components/open-in-maps";
 import {
   SplitShiftTimeline,
   type SplitTimelineSegment,
@@ -220,15 +221,13 @@ export function BookingQuickView({
           className="flex-wrap gap-2"
         >
           {booking.address && (
-            <a
-              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(booking.address)}`}
-              target="_blank"
-              rel="noopener noreferrer"
+            <OpenInMaps
+              address={booking.address}
               className={buttonVariants({ variant: "outline", size: "sm" })}
             >
               <Navigation className="h-4 w-4" />
               Maps
-            </a>
+            </OpenInMaps>
           )}
           <Button
             type="button"

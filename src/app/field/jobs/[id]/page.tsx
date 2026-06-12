@@ -24,6 +24,7 @@ import {
 import { toneForEmployee } from "@/app/app/scheduling/color";
 import { JobActionButtons } from "./job-actions";
 import { JobPhotos } from "./job-photos";
+import { OpenInMaps } from "@/components/open-in-maps";
 import { fetchJobPhotos } from "@/lib/job-photos";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import {
@@ -259,16 +260,12 @@ export default async function FieldJobDetailPage({
               <MapPin className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
               <div className="min-w-0">
                 <div className="font-semibold">{displayAddress}</div>
-                <a
-                  href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-                    displayAddress,
-                  )}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                <OpenInMaps
+                  address={displayAddress}
                   className="mt-1 inline-flex items-center rounded-lg bg-primary/10 px-3 py-1.5 text-sm font-medium text-primary active:bg-primary/20"
                 >
                   Open in Maps
-                </a>
+                </OpenInMaps>
               </div>
             </div>
           ) : null}

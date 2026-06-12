@@ -8,6 +8,7 @@ import {
 } from "@/lib/format";
 import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
 import { RateLimitedPage } from "@/components/rate-limited-page";
+import { OpenInMaps } from "@/components/open-in-maps";
 import { ClaimForm } from "./claim-form";
 
 export const metadata: Metadata = {
@@ -325,14 +326,12 @@ function GotItState({
           <p className="whitespace-pre-wrap text-sm font-medium text-foreground">
             {booking.address}
           </p>
-          <a
-            href={`https://maps.google.com/?q=${encodeURIComponent(booking.address)}`}
-            target="_blank"
-            rel="noopener noreferrer"
+          <OpenInMaps
+            address={booking.address}
             className="mt-3 inline-flex text-xs font-semibold text-primary underline-offset-4 hover:underline"
           >
-            Open in Google Maps →
-          </a>
+            Open in Maps →
+          </OpenInMaps>
         </div>
       )}
 
