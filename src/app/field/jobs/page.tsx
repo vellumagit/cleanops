@@ -57,7 +57,7 @@ export default async function FieldJobsPage() {
           .from("bookings")
           .select(
             `id, scheduled_at, duration_minutes, status, service_type,
-             address, notes, client:clients ( name )`,
+             address, notes, client:clients ( name, address )`,
           )
           .in("id", bookingIds)
           .gte("scheduled_at", since.toISOString())
@@ -73,6 +73,10 @@ export default async function FieldJobsPage() {
     const segDur = seg?.split_duration_minutes ?? null;
     return {
       ...b,
+      // Bookings created without a per-job address (some recurring series,
+      // portal requests) fall back to the client's address on file so the
+      // cleaner always sees where to go.
+      display_address: b.address ?? b.client?.address ?? null,
       effective_scheduled_at:
         offset != null
           ? new Date(
@@ -151,10 +155,12 @@ export default async function FieldJobsPage() {
                           {formatDurationMinutes(job.effective_duration_minutes)} ·{" "}
                           {humanizeEnum(job.service_type)}
                         </div>
-                        {job.address ? (
+                        {job.display_address ? (
                           <div className="mt-1.5 flex items-center gap-1.5 text-sm text-muted-foreground">
                             <MapPin className="h-3.5 w-3.5 shrink-0" />
-                            <span className="line-clamp-1">{job.address}</span>
+                            <span className="line-clamp-1">
+                              {job.display_address}
+                            </span>
                           </div>
                         ) : null}
                       </div>

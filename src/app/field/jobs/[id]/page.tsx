@@ -55,7 +55,7 @@ export default async function FieldJobDetailPage({
         address,
         notes,
         assigned_to,
-        client:clients ( name, phone )
+        client:clients ( name, phone, address )
       `,
     )
     .eq("id", id)
@@ -132,6 +132,12 @@ export default async function FieldJobDetailPage({
 
   // Fetch photos only after the assignment check passes.
   const photos = await fetchJobPhotos(booking.id);
+
+  // Per-job address wins (some jobs override it), otherwise fall back to the
+  // client's address on file. Bookings created without a snapshotted address
+  // (certain recurring series / portal requests) were showing nothing here.
+  const displayAddress =
+    booking.address ?? booking.client?.address ?? null;
 
   // Pull every assignee's segment so a split-shift cleaner sees the whole
   // shift laid out — their own window lit, the rest dimmed — instead of
@@ -248,14 +254,14 @@ export default async function FieldJobDetailPage({
               </div>
             </div>
           )}
-          {booking.address ? (
+          {displayAddress ? (
             <div className="flex items-start gap-3">
               <MapPin className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
               <div className="min-w-0">
-                <div className="font-semibold">{booking.address}</div>
+                <div className="font-semibold">{displayAddress}</div>
                 <a
                   href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-                    booking.address,
+                    displayAddress,
                   )}`}
                   target="_blank"
                   rel="noopener noreferrer"

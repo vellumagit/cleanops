@@ -4070,7 +4070,7 @@ export async function sendDailyEmployeeSchedules(): Promise<{
       .select(`
         id, scheduled_at, service_type, service_type_label, duration_minutes, address, notes,
         assigned_to,
-        client:clients ( name )
+        client:clients ( name, address )
       `)
       .eq("organization_id", org.id)
       .in("status", ["pending", "confirmed"])
@@ -4086,7 +4086,7 @@ export async function sendDailyEmployeeSchedules(): Promise<{
         address: string | null;
         notes: string | null;
         assigned_to: string | null;
-        client: { name: string | null } | null;
+        client: { name: string | null; address: string | null } | null;
       }> | null;
     };
 
@@ -4137,7 +4137,8 @@ export async function sendDailyEmployeeSchedules(): Promise<{
           serviceName:
             booking.service_type_label ?? humanize(booking.service_type),
           clientName: booking.client?.name ?? "A client",
-          address: booking.address ?? "(address on file)",
+          address:
+            booking.address ?? booking.client?.address ?? "(address on file)",
           durationLabel:
             win.durationMinutes >= 60
               ? `${Math.round((win.durationMinutes / 60) * 10) / 10}h`
