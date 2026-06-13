@@ -260,17 +260,46 @@ export async function acceptShiftAction(
   // Admin client: there's no member-level UPDATE policy on booking_assignees,
   // and we scope the write to this member's own row, so it's safe.
   const admin = createSupabaseAdminClient();
+  const now = new Date().toISOString();
   const { error } = (await admin
     .from("booking_assignees" as never)
     .update({
       acceptance_status: "accepted",
-      responded_at: new Date().toISOString(),
+      responded_at: now,
     } as never)
     .eq("booking_id" as never, bookingId as never)
     .eq("membership_id" as never, membership.id as never)) as unknown as {
     error: { message: string } | null;
   };
   if (error) return { ok: false, error: error.message };
+
+  // Option 2: confirming a recurring shift confirms the whole standing
+  // series at once — the cleaner vouches for the client, not every visit.
+  // Auto-accept all their other pending occurrences in the same series.
+  const { data: bk } = (await admin
+    .from("bookings")
+    .select("series_id")
+    .eq("id", bookingId)
+    .maybeSingle()) as unknown as { data: { series_id: string | null } | null };
+  if (bk?.series_id) {
+    const { data: sibs } = (await admin
+      .from("bookings")
+      .select("id")
+      .eq("series_id" as never, bk.series_id as never)
+      .gte("scheduled_at", now)) as unknown as {
+      data: Array<{ id: string }> | null;
+    };
+    const ids = (sibs ?? []).map((b) => b.id);
+    if (ids.length > 0) {
+      await (admin
+        .from("booking_assignees" as never)
+        .update({ acceptance_status: "accepted", responded_at: now } as never)
+        .eq("membership_id" as never, membership.id as never)
+        .eq("acceptance_status" as never, "pending" as never)
+        .in("booking_id" as never, ids as never) as unknown as Promise<unknown>);
+    }
+  }
+
   revalidatePath(`/field/jobs/${bookingId}`, "page");
   revalidatePath("/field/jobs", "page");
   revalidatePath("/field", "layout");

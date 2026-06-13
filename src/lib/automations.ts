@@ -3085,6 +3085,47 @@ export async function autoExtendRecurringSeries(): Promise<number> {
         data: Array<{ id: string; scheduled_at: string }> | null;
       }>));
 
+      // Create the crew junction rows so generated occurrences actually show
+      // up in the cleaner's field app (the field views read booking_assignees,
+      // not bookings.assigned_to). Option 2: if the standing cleaner has
+      // already confirmed this series, the new occurrences inherit 'accepted'
+      // so they don't have to re-confirm every visit; otherwise 'pending'.
+      if (inserted && inserted.length > 0 && s.assigned_to) {
+        const { data: seriesBookings } = (await db
+          .from("bookings")
+          .select("id")
+          .eq("series_id" as never, s.id as never)
+          .limit(2000)) as unknown as { data: Array<{ id: string }> | null };
+        const seriesIds = (seriesBookings ?? []).map((b) => b.id);
+        let seriesAccepted = false;
+        if (seriesIds.length > 0) {
+          const { count } = (await db
+            .from("booking_assignees" as never)
+            .select("id", { count: "exact", head: true })
+            .eq("membership_id" as never, s.assigned_to as never)
+            .eq("acceptance_status" as never, "accepted" as never)
+            .in("booking_id" as never, seriesIds as never)) as unknown as {
+            count: number | null;
+          };
+          seriesAccepted = (count ?? 0) > 0;
+        }
+        const status = seriesAccepted ? "accepted" : "pending";
+        const junctionRows = inserted.map((b) => ({
+          organization_id: s.organization_id,
+          booking_id: b.id,
+          membership_id: s.assigned_to,
+          is_primary: true,
+          acceptance_status: status,
+          responded_at: seriesAccepted ? new Date().toISOString() : null,
+        }));
+        await (db
+          .from("booking_assignees" as never)
+          .upsert(junctionRows as never, {
+            onConflict: "booking_id,membership_id",
+            ignoreDuplicates: true,
+          } as never) as unknown as Promise<unknown>);
+      }
+
       // Sync to calendar
       if (inserted) {
         for (const b of inserted) {
