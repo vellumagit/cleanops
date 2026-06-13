@@ -142,7 +142,7 @@ export function FieldShell({
                   href={item.href}
                   prefetch={false}
                   className={cn(
-                    "flex flex-col items-center gap-1 py-2.5 text-xs font-medium transition-colors",
+                    "flex touch-manipulation flex-col items-center gap-1 py-2.5 text-xs font-medium transition-transform active:scale-90",
                     active
                       ? "text-primary"
                       : "text-muted-foreground active:text-foreground",

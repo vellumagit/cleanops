@@ -333,8 +333,8 @@ export function ChatView({
       className={cn(
         "flex w-full",
         isMobile
-          ? "min-h-[calc(100vh-12rem)] flex-col"
-          : "h-[calc(100vh-7rem)] overflow-hidden rounded-lg border border-border bg-card",
+          ? "h-[calc(100dvh-12rem)] flex-col"
+          : "h-[calc(100dvh-12rem)] overflow-hidden rounded-lg border border-border bg-card",
       )}
     >
       {showThreadList && (

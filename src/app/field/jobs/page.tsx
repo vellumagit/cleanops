@@ -145,7 +145,7 @@ export default async function FieldJobsPage() {
                     <Link
                       href={`/field/jobs/${job.id}`}
                       className={cn(
-                        "flex items-center gap-3 rounded-xl border bg-card p-4 transition-colors active:bg-muted",
+                        "flex touch-manipulation items-center gap-3 rounded-xl border bg-card p-4 transition-all active:scale-[0.98] active:bg-muted",
                         job.needs_acceptance
                           ? "border-amber-300 bg-amber-50/60 dark:border-amber-900/50 dark:bg-amber-950/20"
                           : "border-border",
