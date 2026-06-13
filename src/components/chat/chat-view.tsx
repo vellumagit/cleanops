@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
-import { Hash, MessageCircle, Plus, Send } from "lucide-react";
+import { Hash, MessageCircle, Plus, Send, Check, RotateCw } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { FormSelect } from "@/components/form-field";
@@ -28,12 +28,43 @@ type Props = {
   variant: "desktop" | "mobile";
 };
 
+// Local message shape: the persisted ChatMessage plus optimistic send state.
+type UiMessage = ChatMessage & {
+  clientKey?: string;
+  status?: "sending" | "failed";
+};
+
+const GROUP_GAP_MS = 5 * 60 * 1000; // start a new visual group after 5 min
+
 function formatTime(iso: string) {
-  const d = new Date(iso);
-  return d.toLocaleTimeString("en-US", {
+  return new Date(iso).toLocaleTimeString("en-US", {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+function dayLabel(iso: string) {
+  const d = new Date(iso);
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+  if (d.toDateString() === today.toDateString()) return "Today";
+  if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
+  return d.toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: d.getFullYear() === today.getFullYear() ? undefined : "numeric",
+  });
+}
+
+function initialsOf(name: string | null | undefined) {
+  const n = (name ?? "").trim();
+  if (!n) return "?";
+  const parts = n.split(/\s+/);
+  return (
+    (parts[0]?.[0] ?? "") + (parts.length > 1 ? (parts[1]?.[0] ?? "") : "")
+  ).toUpperCase();
 }
 
 function ThreadIcon({ kind }: { kind: ChatThreadSummary["kind"] }) {
@@ -41,6 +72,14 @@ function ThreadIcon({ kind }: { kind: ChatThreadSummary["kind"] }) {
     <Hash className="h-4 w-4 shrink-0" />
   ) : (
     <MessageCircle className="h-4 w-4 shrink-0" />
+  );
+}
+
+function Avatar({ name }: { name: string | null | undefined }) {
+  return (
+    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted text-[11px] font-semibold text-muted-foreground">
+      {initialsOf(name)}
+    </div>
   );
 }
 
@@ -57,31 +96,40 @@ export function ChatView({
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
+  const [messages, setMessages] = useState<UiMessage[]>(initialMessages);
   const [draft, setDraft] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
   const [otherId, setOtherId] = useState("");
-  const [sending, startSending] = useTransition();
+  const [, startSending] = useTransition();
   const [creatingDm, startCreatingDm] = useTransition();
   const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const keyCounter = useRef(0);
 
-  // Reset local messages whenever the active thread changes (or initial set
-  // changes due to a server refresh). React 19's compiler flags the
-  // setState-in-effect here; the idiomatic alternative is `key={activeThreadId}`
-  // on the parent to force remount, but that also loses transitions. Intentional.
+  const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
+  const isMobile = variant === "mobile";
+
+  // For DM threads we can resolve any incoming sender's name from the thread
+  // (it's the other participant), so realtime rows that arrive without a name
+  // still render correctly without a server round-trip.
+  const dmOtherName =
+    activeThread?.kind === "dm" ? activeThread.display_name : null;
+  const resolveName = (m: UiMessage) =>
+    m.sender_name ?? (dmOtherName || "Teammate");
+
+  // Reset to server state whenever the active thread changes.
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setMessages(initialMessages);
   }, [initialMessages, activeThreadId]);
 
-  // Scroll to bottom whenever the message list changes.
+  // Keep pinned to the newest message.
   useEffect(() => {
     const el = scrollerRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
+    if (el) el.scrollTop = el.scrollHeight;
   }, [messages]);
 
-  // Realtime subscription scoped to the active thread.
+  // Realtime: append inbound messages, replacing the optimistic copy of our
+  // own sends so they never double up.
   useEffect(() => {
     if (!activeThreadId) return;
     const supabase = createSupabaseBrowserClient();
@@ -95,7 +143,7 @@ export function ChatView({
           table: "chat_messages",
           filter: `thread_id=eq.${activeThreadId}`,
         },
-        async (payload) => {
+        (payload) => {
           const row = payload.new as {
             id: string;
             thread_id: string;
@@ -103,23 +151,30 @@ export function ChatView({
             body: string;
             created_at: string;
           };
-          // Drop duplicates if the optimistic insert already added it.
           setMessages((prev) => {
             if (prev.some((m) => m.id === row.id)) return prev;
-            // Best-effort sender name lookup from the threads list members
-            // is unavailable here, so leave it null and the UI falls back
-            // to "Teammate".
-            return [
-              ...prev,
-              {
-                id: row.id,
-                thread_id: row.thread_id,
-                sender_id: row.sender_id,
-                sender_name: null,
-                body: row.body,
-                created_at: row.created_at,
-              },
-            ];
+            // Replace our own optimistic message (matched by body + sender)
+            // rather than appending a duplicate.
+            const optimisticIdx = prev.findIndex(
+              (m) =>
+                m.status === "sending" &&
+                m.sender_id === row.sender_id &&
+                m.body === row.body,
+            );
+            const next: UiMessage = {
+              id: row.id,
+              thread_id: row.thread_id,
+              sender_id: row.sender_id,
+              sender_name: null,
+              body: row.body,
+              created_at: row.created_at,
+            };
+            if (optimisticIdx >= 0) {
+              const copy = prev.slice();
+              copy[optimisticIdx] = next;
+              return copy;
+            }
+            return [...prev, next];
           });
         },
       )
@@ -136,22 +191,59 @@ export function ChatView({
     router.push(`${pathname}?${next.toString()}`);
   }
 
+  function deliver(threadId: string, body: string, clientKey: string) {
+    startSending(async () => {
+      const res = await sendChatMessageAction(threadId, body);
+      if (!res.ok) {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.clientKey === clientKey ? { ...m, status: "failed" } : m,
+          ),
+        );
+        toast.error(res.error);
+        return;
+      }
+      // Promote the optimistic message to a real one (unless realtime already
+      // swapped it in).
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.clientKey === clientKey
+            ? { ...m, id: res.id, status: undefined, clientKey: undefined }
+            : m,
+        ),
+      );
+    });
+  }
+
   function handleSend(e: React.FormEvent) {
     e.preventDefault();
     if (!activeThreadId) return;
     const body = draft.trim();
     if (!body) return;
     setDraft("");
-    startSending(async () => {
-      const res = await sendChatMessageAction(activeThreadId, body);
-      if (!res.ok) {
-        toast.error(res.error);
-        setDraft(body);
-        return;
-      }
-      // Refresh server data so sender name + persisted state are up to date.
-      router.refresh();
-    });
+    const clientKey = `local-${(keyCounter.current += 1)}`;
+    const optimistic: UiMessage = {
+      id: clientKey,
+      clientKey,
+      thread_id: activeThreadId,
+      sender_id: currentMembershipId,
+      sender_name: null,
+      body,
+      created_at: new Date().toISOString(),
+      status: "sending",
+    };
+    setMessages((prev) => [...prev, optimistic]);
+    deliver(activeThreadId, body, clientKey);
+  }
+
+  function retry(m: UiMessage) {
+    if (!m.clientKey) return;
+    setMessages((prev) =>
+      prev.map((x) =>
+        x.clientKey === m.clientKey ? { ...x, status: "sending" } : x,
+      ),
+    );
+    deliver(m.thread_id, m.body, m.clientKey);
   }
 
   function handleCreateDm(e: React.FormEvent) {
@@ -170,18 +262,61 @@ export function ChatView({
     });
   }
 
-  const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
-  const isMobile = variant === "mobile";
-
   // Only members with a login account can actually open the app and read a
   // DM. Manually-added "shadow" employees (reachable === false) are shown as
   // a note instead of selectable options so messages never go to a void.
   const reachableTeammates = teammates.filter((t) => t.reachable);
   const unreachableTeammates = teammates.filter((t) => !t.reachable);
 
+  // Pre-compute day dividers + message grouping so the render stays declarative.
+  const rows = useMemo(() => {
+    const out: Array<
+      | { kind: "divider"; key: string; label: string }
+      | {
+          kind: "msg";
+          key: string;
+          m: UiMessage;
+          mine: boolean;
+          firstOfGroup: boolean;
+          lastOfGroup: boolean;
+        }
+    > = [];
+    let lastDay: string | null = null;
+    messages.forEach((m, i) => {
+      const prev = messages[i - 1];
+      const next = messages[i + 1];
+      const t = new Date(m.created_at).getTime();
+      const day = new Date(m.created_at).toDateString();
+      if (day !== lastDay) {
+        out.push({ kind: "divider", key: `d-${day}`, label: dayLabel(m.created_at) });
+        lastDay = day;
+      }
+      const firstOfGroup =
+        !prev ||
+        prev.sender_id !== m.sender_id ||
+        new Date(prev.created_at).toDateString() !== day ||
+        t - new Date(prev.created_at).getTime() >= GROUP_GAP_MS;
+      const lastOfGroup =
+        !next ||
+        next.sender_id !== m.sender_id ||
+        new Date(next.created_at).toDateString() !== day ||
+        new Date(next.created_at).getTime() - t >= GROUP_GAP_MS;
+      out.push({
+        kind: "msg",
+        key: m.id,
+        m,
+        mine: m.sender_id === currentMembershipId,
+        firstOfGroup,
+        lastOfGroup,
+      });
+    });
+    return out;
+  }, [messages, currentMembershipId]);
+
   // On mobile we collapse to a single pane: thread list OR active thread.
   const showThreadList = !isMobile || !activeThread;
   const showThreadPane = !isMobile || !!activeThread;
+  const isGroup = activeThread?.kind === "group";
 
   return (
     <div
@@ -294,13 +429,19 @@ export function ChatView({
                       type="button"
                       onClick={() => selectThread(t.id)}
                       className={cn(
-                        "flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm transition-colors",
+                        "flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm transition-colors",
                         active
                           ? "bg-muted font-medium text-foreground"
                           : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
                       )}
                     >
-                      <ThreadIcon kind={t.kind} />
+                      {t.kind === "dm" ? (
+                        <Avatar name={t.display_name} />
+                      ) : (
+                        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
+                          <Hash className="h-3.5 w-3.5" />
+                        </div>
+                      )}
                       <span className="truncate">{t.display_name}</span>
                     </button>
                   </li>
@@ -312,20 +453,27 @@ export function ChatView({
       )}
 
       {showThreadPane && (
-        <section className="flex min-w-0 flex-1 flex-col">
+        <section className="flex min-w-0 flex-1 flex-col bg-background/30">
           {activeThread ? (
             <>
-              <header className="flex items-center gap-2 border-b border-border px-4 py-3">
+              <header className="flex items-center gap-2.5 border-b border-border bg-card/80 px-3 py-2.5 backdrop-blur">
                 {isMobile && (
                   <button
                     type="button"
                     onClick={() => router.push(basePath)}
-                    className="text-xs text-muted-foreground hover:text-foreground"
+                    className="-ml-1 rounded-md px-1.5 py-1 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+                    aria-label="Back to threads"
                   >
-                    ← Back
+                    ←
                   </button>
                 )}
-                <ThreadIcon kind={activeThread.kind} />
+                {activeThread.kind === "dm" ? (
+                  <Avatar name={activeThread.display_name} />
+                ) : (
+                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
+                    <Hash className="h-3.5 w-3.5" />
+                  </div>
+                )}
                 <span className="truncate text-sm font-semibold">
                   {activeThread.display_name}
                 </span>
@@ -333,47 +481,110 @@ export function ChatView({
 
               <div
                 ref={scrollerRef}
-                className="flex-1 space-y-2 overflow-y-auto px-4 py-4"
+                className="flex-1 space-y-1 overflow-y-auto px-3 py-4"
               >
                 {messages.length === 0 ? (
-                  <p className="text-center text-xs text-muted-foreground">
-                    No messages yet. Say hi.
-                  </p>
+                  <div className="flex h-full flex-col items-center justify-center gap-1 text-center">
+                    <ThreadIcon kind={activeThread.kind} />
+                    <p className="mt-1 text-sm font-medium">
+                      {activeThread.display_name}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      This is the start of your conversation. Say hi 👋
+                    </p>
+                  </div>
                 ) : (
-                  messages.map((m) => {
-                    const mine = m.sender_id === currentMembershipId;
+                  rows.map((r) => {
+                    if (r.kind === "divider") {
+                      return (
+                        <div
+                          key={r.key}
+                          className="flex justify-center py-2"
+                        >
+                          <span className="rounded-full bg-muted px-2.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+                            {r.label}
+                          </span>
+                        </div>
+                      );
+                    }
+                    const { m, mine, firstOfGroup, lastOfGroup } = r;
+                    const showAvatar = !mine && isGroup;
                     return (
                       <div
-                        key={m.id}
+                        key={r.key}
                         className={cn(
-                          "flex",
+                          "flex items-end gap-2",
                           mine ? "justify-end" : "justify-start",
+                          firstOfGroup ? "mt-2" : "mt-0.5",
                         )}
                       >
+                        {showAvatar &&
+                          (lastOfGroup ? (
+                            <Avatar name={resolveName(m)} />
+                          ) : (
+                            <div className="w-7 shrink-0" />
+                          ))}
                         <div
                           className={cn(
-                            "max-w-[80%] rounded-2xl px-3 py-2 text-sm",
-                            mine
-                              ? "bg-foreground text-background"
-                              : "bg-muted text-foreground",
+                            "flex max-w-[78%] flex-col",
+                            mine ? "items-end" : "items-start",
                           )}
                         >
-                          {!mine && (
-                            <div className="mb-0.5 text-[10px] font-medium uppercase tracking-wide opacity-70">
-                              {m.sender_name ?? "Teammate"}
-                            </div>
+                          {firstOfGroup && !mine && isGroup && (
+                            <span className="mb-0.5 px-1 text-[11px] font-medium text-muted-foreground">
+                              {resolveName(m)}
+                            </span>
                           )}
-                          <div className="whitespace-pre-wrap break-words">
-                            {m.body}
-                          </div>
                           <div
                             className={cn(
-                              "mt-1 text-[10px] tabular-nums",
-                              mine ? "opacity-70" : "text-muted-foreground",
+                              "px-3 py-2 text-sm leading-relaxed shadow-xs",
+                              mine
+                                ? "bg-primary text-primary-foreground"
+                                : "bg-card text-foreground ring-1 ring-border",
+                              // Asymmetric radius for a chat-bubble tail.
+                              "rounded-2xl",
+                              mine
+                                ? lastOfGroup
+                                  ? "rounded-br-sm"
+                                  : ""
+                                : lastOfGroup
+                                  ? "rounded-bl-sm"
+                                  : "",
+                              m.status === "failed" && "opacity-70",
                             )}
                           >
-                            {formatTime(m.created_at)}
+                            <span className="whitespace-pre-wrap break-words">
+                              {m.body}
+                            </span>
                           </div>
+                          {lastOfGroup && (
+                            <div
+                              className={cn(
+                                "mt-0.5 flex items-center gap-1 px-1 text-[10px] tabular-nums",
+                                mine
+                                  ? "text-muted-foreground"
+                                  : "text-muted-foreground",
+                              )}
+                            >
+                              {m.status === "sending" ? (
+                                <span>Sending…</span>
+                              ) : m.status === "failed" ? (
+                                <button
+                                  type="button"
+                                  onClick={() => retry(m)}
+                                  className="inline-flex items-center gap-1 font-medium text-red-600 hover:underline dark:text-red-400"
+                                >
+                                  <RotateCw className="h-3 w-3" />
+                                  Failed — tap to retry
+                                </button>
+                              ) : (
+                                <>
+                                  <span>{formatTime(m.created_at)}</span>
+                                  {mine && <Check className="h-3 w-3" />}
+                                </>
+                              )}
+                            </div>
+                          )}
                         </div>
                       </div>
                     );
@@ -383,7 +594,7 @@ export function ChatView({
 
               <form
                 onSubmit={handleSend}
-                className="flex items-end gap-2 border-t border-border bg-background/60 px-3 py-3"
+                className="flex items-end gap-2 border-t border-border bg-card/80 px-3 py-3 backdrop-blur"
               >
                 <textarea
                   value={draft}
@@ -395,20 +606,23 @@ export function ChatView({
                     }
                   }}
                   onFocus={(e) => {
-                    // On mobile, scroll the input into view after the keyboard opens
                     setTimeout(() => {
-                      e.target.scrollIntoView({ behavior: "smooth", block: "center" });
+                      e.target.scrollIntoView({
+                        behavior: "smooth",
+                        block: "center",
+                      });
                     }, 300);
                   }}
-                  placeholder="Type a message…"
+                  placeholder="Message…"
                   rows={1}
-                  className="flex max-h-32 min-h-9 flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-base shadow-xs outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
+                  className="flex max-h-32 min-h-10 flex-1 resize-none rounded-2xl border border-input bg-background px-4 py-2.5 text-base shadow-xs outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
                 />
                 <Button
                   type="submit"
                   size="icon"
-                  disabled={sending || draft.trim().length === 0}
+                  disabled={draft.trim().length === 0}
                   aria-label="Send"
+                  className="h-10 w-10 shrink-0 rounded-full"
                 >
                   <Send className="h-4 w-4" />
                 </Button>
