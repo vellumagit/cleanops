@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import { getActionContext } from "@/lib/actions";
 import { autoInvoiceOnJobComplete } from "@/lib/automations";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { deleteMemberCalendarEvent } from "@/lib/google-calendar";
+import { sendPushToMembership } from "@/lib/push";
 
 export type JobActionResult = { ok: true } | { ok: false; error: string };
 
@@ -242,4 +244,152 @@ export async function acceptGpsConsentAction(): Promise<void> {
     .update({ gps_consent_accepted_at: new Date().toISOString() } as never)
     .eq("id", membership.id);
   revalidatePath("/field", "layout");
+}
+
+// ── Shift acceptance ───────────────────────────────────────────────
+// Every assigned cleaner must confirm their shift. The booking_assignees
+// row starts 'pending'; accepting flips it to 'accepted'. Declining
+// removes them from the job and flags it unfilled (+ alerts the owner).
+
+/** Confirm the current member's assignment to a booking. */
+export async function acceptShiftAction(
+  bookingId: string,
+): Promise<JobActionResult> {
+  if (!bookingId) return { ok: false, error: "Missing booking id" };
+  const { membership } = await getActionContext();
+  // Admin client: there's no member-level UPDATE policy on booking_assignees,
+  // and we scope the write to this member's own row, so it's safe.
+  const admin = createSupabaseAdminClient();
+  const { error } = (await admin
+    .from("booking_assignees" as never)
+    .update({
+      acceptance_status: "accepted",
+      responded_at: new Date().toISOString(),
+    } as never)
+    .eq("booking_id" as never, bookingId as never)
+    .eq("membership_id" as never, membership.id as never)) as unknown as {
+    error: { message: string } | null;
+  };
+  if (error) return { ok: false, error: error.message };
+  revalidatePath(`/field/jobs/${bookingId}`, "page");
+  revalidatePath("/field/jobs", "page");
+  revalidatePath("/field", "layout");
+  return { ok: true };
+}
+
+/**
+ * Decline a shift: remove the member from the job, clear the primary
+ * assignment if it was theirs (so it surfaces as unfilled), drop their
+ * calendar event, and alert the org's owners/admins to reassign.
+ */
+export async function declineShiftAction(
+  bookingId: string,
+): Promise<JobActionResult> {
+  if (!bookingId) return { ok: false, error: "Missing booking id" };
+  const { membership } = await getActionContext();
+  const admin = createSupabaseAdminClient();
+
+  const { data: booking } = (await admin
+    .from("bookings")
+    .select(
+      "id, organization_id, assigned_to, scheduled_at, service_type, address, client:clients ( name )",
+    )
+    .eq("id", bookingId)
+    .maybeSingle()) as unknown as {
+    data: {
+      id: string;
+      organization_id: string;
+      assigned_to: string | null;
+      scheduled_at: string;
+      service_type: string;
+      address: string | null;
+      client: { name: string | null } | null;
+    } | null;
+  };
+  if (!booking) return { ok: false, error: "Job not found" };
+
+  // Remove this cleaner from the crew.
+  await (admin
+    .from("booking_assignees" as never)
+    .delete()
+    .eq("booking_id" as never, bookingId as never)
+    .eq("membership_id" as never, membership.id as never) as unknown as Promise<unknown>);
+
+  // If they were the primary, clear it so the job reads as unfilled.
+  if (booking.assigned_to === membership.id) {
+    await (admin
+      .from("bookings")
+      .update({ assigned_to: null } as never)
+      .eq("id", bookingId) as unknown as Promise<unknown>);
+  }
+
+  // Pull their personal calendar event for this job.
+  deleteMemberCalendarEvent(membership.id, bookingId).catch(() => {});
+
+  // Who declined (for the owner alert).
+  const { data: me } = (await admin
+    .from("memberships")
+    .select("display_name, profile:profiles ( full_name )")
+    .eq("id", membership.id)
+    .maybeSingle()) as unknown as {
+    data: {
+      display_name: string | null;
+      profile: { full_name: string | null } | null;
+    } | null;
+  };
+  const who =
+    me?.display_name ?? me?.profile?.full_name ?? "A cleaner";
+
+  const { data: org } = (await admin
+    .from("organizations")
+    .select("timezone")
+    .eq("id", booking.organization_id)
+    .maybeSingle()) as unknown as { data: { timezone: string | null } | null };
+  const when = new Date(booking.scheduled_at).toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: org?.timezone ?? "America/Edmonton",
+  });
+  const title = "Shift declined — needs reassignment";
+  const body = `${who} can't make ${booking.client?.name ?? "a job"} on ${when}${booking.address ? ` — ${booking.address}` : ""}.`;
+
+  // Alert every owner/admin/manager so someone can re-cover it.
+  const { data: managers } = (await admin
+    .from("memberships")
+    .select("id")
+    .eq("organization_id", booking.organization_id)
+    .in("role", ["owner", "admin", "manager"])
+    .eq("status", "active")) as unknown as {
+    data: Array<{ id: string }> | null;
+  };
+  const recipients = managers ?? [];
+  if (recipients.length > 0) {
+    await (admin.from("notifications" as never).insert(
+      recipients.map((r) => ({
+        organization_id: booking.organization_id,
+        recipient_membership_id: r.id,
+        type: "general",
+        title,
+        body,
+        href: `/app/bookings/${bookingId}`,
+      })) as never,
+    ) as unknown as Promise<unknown>);
+    await Promise.allSettled(
+      recipients.map((r) =>
+        sendPushToMembership(r.id, {
+          title,
+          body,
+          href: `/app/bookings/${bookingId}`,
+        }),
+      ),
+    );
+  }
+
+  revalidatePath(`/field/jobs/${bookingId}`, "page");
+  revalidatePath("/field/jobs", "page");
+  revalidatePath("/field", "layout");
+  return { ok: true };
 }

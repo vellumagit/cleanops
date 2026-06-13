@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ChevronRight, MapPin } from "lucide-react";
+import { ChevronRight, MapPin, CalendarClock } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { FieldHeader } from "@/components/field-shell";
@@ -10,6 +10,7 @@ import {
   humanizeEnum,
 } from "@/lib/format";
 import { getOrgTimezone } from "@/lib/org-timezone";
+import { cn } from "@/lib/utils";
 
 export const metadata = { title: "My jobs" };
 
@@ -30,13 +31,14 @@ export default async function FieldJobsPage() {
   const assigneeResp = (await supabase
     .from("booking_assignees" as never)
     .select(
-      "booking_id, split_start_offset_minutes, split_duration_minutes",
+      "booking_id, split_start_offset_minutes, split_duration_minutes, acceptance_status",
     )
     .eq("membership_id" as never, membership.id as never)) as unknown as {
     data: Array<{
       booking_id: string;
       split_start_offset_minutes: number | null;
       split_duration_minutes: number | null;
+      acceptance_status: string | null;
     }> | null;
     error: { message: string } | null;
   };
@@ -77,6 +79,8 @@ export default async function FieldJobsPage() {
       // portal requests) fall back to the client's address on file so the
       // cleaner always sees where to go.
       display_address: b.address ?? b.client?.address ?? null,
+      needs_acceptance:
+        seg?.acceptance_status === "pending" && b.status !== "completed",
       effective_scheduled_at:
         offset != null
           ? new Date(
@@ -105,12 +109,23 @@ export default async function FieldJobsPage() {
     groups.set(key, arr);
   }
 
+  const pendingCount = jobs.filter((j) => j.needs_acceptance).length;
+
   return (
     <>
       <FieldHeader
         title="My jobs"
         description="Everything assigned to you, soonest first."
       />
+
+      {pendingCount > 0 && (
+        <div className="mb-4 flex items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+          <CalendarClock className="h-4 w-4 shrink-0" />
+          {pendingCount} shift{pendingCount === 1 ? "" : "s"} need
+          {pendingCount === 1 ? "s" : ""} your confirmation — tap a
+          highlighted job to accept.
+        </div>
+      )}
 
       {jobs.length === 0 ? (
         <div className="rounded-xl border border-dashed border-border bg-card px-5 py-14 text-center text-base text-muted-foreground">
@@ -129,26 +144,38 @@ export default async function FieldJobsPage() {
                   <li key={job.id}>
                     <Link
                       href={`/field/jobs/${job.id}`}
-                      className="flex items-center gap-3 rounded-xl border border-border bg-card p-4 transition-colors active:bg-muted"
+                      className={cn(
+                        "flex items-center gap-3 rounded-xl border bg-card p-4 transition-colors active:bg-muted",
+                        job.needs_acceptance
+                          ? "border-amber-300 bg-amber-50/60 dark:border-amber-900/50 dark:bg-amber-950/20"
+                          : "border-border",
+                      )}
                     >
                       <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           <span className="truncate text-base font-semibold">
                             {job.client?.name ?? "—"}
                           </span>
-                          <StatusBadge
-                            tone={bookingStatusTone(
-                              job.status as
-                                | "pending"
-                                | "confirmed"
-                                | "en_route"
-                                | "in_progress"
-                                | "completed"
-                                | "cancelled",
-                            )}
-                          >
-                            {humanizeEnum(job.status)}
-                          </StatusBadge>
+                          {job.needs_acceptance ? (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-amber-500 px-2 py-0.5 text-[11px] font-bold text-white">
+                              <CalendarClock className="h-3 w-3" />
+                              Confirm
+                            </span>
+                          ) : (
+                            <StatusBadge
+                              tone={bookingStatusTone(
+                                job.status as
+                                  | "pending"
+                                  | "confirmed"
+                                  | "en_route"
+                                  | "in_progress"
+                                  | "completed"
+                                  | "cancelled",
+                              )}
+                            >
+                              {humanizeEnum(job.status)}
+                            </StatusBadge>
+                          )}
                         </div>
                         <div className="mt-1.5 text-sm text-muted-foreground">
                           {formatDateTime(job.effective_scheduled_at, tz)} ·{" "}

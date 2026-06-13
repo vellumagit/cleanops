@@ -2683,8 +2683,8 @@ export async function notifyBookingAssignment(
       minute: "2-digit",
       timeZone: orgTz,
     });
-    const title = "You've been assigned a job";
-    const body = `${humanize(meta.serviceType)} for ${meta.clientName} on ${when}${meta.address ? ` — ${meta.address}` : ""}`;
+    const title = "New shift assigned — tap to confirm";
+    const body = `${humanize(meta.serviceType)} for ${meta.clientName} on ${when}${meta.address ? ` — ${meta.address}` : ""}. Open the job to accept or decline.`;
 
     await (db.from("notifications" as never).insert({
       organization_id: organizationId,

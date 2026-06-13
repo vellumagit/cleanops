@@ -24,6 +24,7 @@ import {
 import { toneForEmployee } from "@/app/app/scheduling/color";
 import { JobActionButtons } from "./job-actions";
 import { JobPhotos } from "./job-photos";
+import { ShiftAcceptance } from "./shift-acceptance";
 import { OpenInMaps } from "@/components/open-in-maps";
 import { fetchJobPhotos } from "@/lib/job-photos";
 import { getOrgTimezone } from "@/lib/org-timezone";
@@ -91,11 +92,18 @@ export default async function FieldJobDetailPage({
   // own segment start time and duration instead of the full booking.
   const { data: crewRow } = (await supabase
     .from("booking_assignees" as never)
-    .select("id, split_start_offset_minutes, split_duration_minutes")
+    .select(
+      "id, split_start_offset_minutes, split_duration_minutes, acceptance_status",
+    )
     .eq("booking_id" as never, id as never)
     .eq("membership_id" as never, membership.id as never)
     .maybeSingle()) as unknown as {
-    data: { id: string; split_start_offset_minutes: number | null; split_duration_minutes: number | null } | null;
+    data: {
+      id: string;
+      split_start_offset_minutes: number | null;
+      split_duration_minutes: number | null;
+      acceptance_status: string | null;
+    } | null;
   };
 
   const isAssignee =
@@ -112,6 +120,13 @@ export default async function FieldJobDetailPage({
 
   const effectiveDurationMinutes =
     crewRow?.split_duration_minutes ?? booking.duration_minutes;
+
+  // The cleaner must confirm a pending shift before they can start it.
+  // (Legacy bookings with no junction row have crewRow === null and skip
+  // acceptance — they're treated as already accepted.)
+  const needsAcceptance =
+    crewRow?.acceptance_status === "pending" &&
+    booking.status !== "completed";
 
   // Defence in depth: even though the field UI only links to assigned jobs,
   // employees viewing someone else's job by URL should bounce back.
@@ -308,7 +323,11 @@ export default async function FieldJobDetailPage({
         </div>
       )}
 
-      <JobActionButtons bookingId={booking.id} status={booking.status} />
+      {needsAcceptance ? (
+        <ShiftAcceptance bookingId={booking.id} />
+      ) : (
+        <JobActionButtons bookingId={booking.id} status={booking.status} />
+      )}
     </div>
   );
 }
