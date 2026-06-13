@@ -10,6 +10,34 @@ export type RescheduleResult =
   | { ok: false; error: string };
 
 /**
+ * Mark a cleaner's "take me off the recurring client" request as handled.
+ * Owner/admin/manager only (also enforced by RLS on shift_change_requests).
+ */
+export async function resolveShiftRequestAction(
+  requestId: string,
+): Promise<RescheduleResult> {
+  if (!requestId) return { ok: false, error: "Missing request id" };
+  const { membership, supabase } = await getActionContext();
+  if (!["owner", "admin", "manager"].includes(membership.role)) {
+    return { ok: false, error: "Not allowed." };
+  }
+  const { error } = await (supabase
+    .from("shift_change_requests" as never)
+    .update({
+      status: "resolved",
+      resolved_by: membership.id,
+      resolved_at: new Date().toISOString(),
+    } as never)
+    .eq("id" as never, requestId as never)
+    .eq("status" as never, "open" as never) as unknown as Promise<{
+    error: { message: string } | null;
+  }>);
+  if (error) return { ok: false, error: error.message };
+  revalidatePath("/app/scheduling", "page");
+  return { ok: true };
+}
+
+/**
  * Move a booking to a new (employee, day, optional time) slot.
  *
  *   - `assignedTo: null` drops into the unassigned tray.

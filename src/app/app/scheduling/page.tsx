@@ -15,6 +15,7 @@ import {
   startOfWeek,
 } from "./data";
 import { SchedulerShell } from "./scheduler-shell";
+import { CoveragePanel } from "./coverage-panel";
 
 export const metadata = { title: "Scheduling" };
 
@@ -262,6 +263,12 @@ export default async function SchedulingPage({
       }
     >
       <div className="space-y-4">
+        {canEdit || membership.role === "manager" ? (
+          <CoveragePanel
+            organizationId={membership.organization_id}
+            tz={tz}
+          />
+        ) : null}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="text-sm font-medium text-muted-foreground">
             {range}

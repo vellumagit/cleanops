@@ -473,6 +473,30 @@ export async function requestSeriesStopAction(
     return { ok: false, error: "Please add a short reason." };
   }
   const { membership } = await getActionContext();
+  const admin = createSupabaseAdminClient();
+
+  // Persist the request so it shows in the owner's "Needs coverage" panel
+  // (not just a fleeting notification). Captured before dropShift clears
+  // the primary assignment.
+  const { data: bk } = (await admin
+    .from("bookings")
+    .select("organization_id, series_id")
+    .eq("id", bookingId)
+    .maybeSingle()) as unknown as {
+    data: { organization_id: string; series_id: string | null } | null;
+  };
+  if (bk) {
+    await (admin.from("shift_change_requests" as never).insert({
+      organization_id: bk.organization_id,
+      membership_id: membership.id,
+      booking_id: bookingId,
+      series_id: bk.series_id,
+      kind: "series_stop",
+      reason: trimmed,
+      status: "open",
+    } as never) as unknown as Promise<unknown>);
+  }
+
   return dropShift(membership.id, bookingId, {
     titleVerb: "cancelled",
     reason: trimmed,
