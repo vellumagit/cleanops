@@ -10,6 +10,10 @@ export type ChatThreadSummary = {
   name: string | null;
   display_name: string;
   other_member_id: string | null;
+  /** Unread messages for the current member (0 when caught up). */
+  unread: number;
+  /** Timestamp of the newest message, for recency sorting. */
+  last_message_at: string | null;
 };
 
 export type ChatMessage = {
@@ -106,12 +110,37 @@ export async function fetchChatThreads(
       name: t.name,
       display_name,
       other_member_id,
+      unread: 0,
+      last_message_at: null,
     });
   }
 
-  // Sort: #general first, then DMs alphabetically.
+  // Merge in per-thread unread counts + last activity (one round trip via
+  // the SECURITY DEFINER helper, which is RLS-safe and scoped to this user).
+  const { data: unreadRows } = (await supabase.rpc(
+    "chat_unread_threads" as never,
+  )) as unknown as {
+    data: Array<{
+      thread_id: string;
+      unread: number;
+      last_message_at: string | null;
+    }> | null;
+  };
+  const statByThread = new Map(
+    (unreadRows ?? []).map((r) => [r.thread_id, r]),
+  );
+  for (const t of threads) {
+    const s = statByThread.get(t.id);
+    t.unread = Number(s?.unread ?? 0);
+    t.last_message_at = s?.last_message_at ?? null;
+  }
+
+  // Sort by most recent activity (like a normal messenger). Threads with no
+  // messages yet fall to the bottom, ordered by name.
   threads.sort((a, b) => {
-    if (a.kind !== b.kind) return a.kind === "group" ? -1 : 1;
+    const at = a.last_message_at ? Date.parse(a.last_message_at) : 0;
+    const bt = b.last_message_at ? Date.parse(b.last_message_at) : 0;
+    if (bt !== at) return bt - at;
     return a.display_name.localeCompare(b.display_name);
   });
 

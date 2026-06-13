@@ -11,6 +11,7 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import {
   sendChatMessageAction,
   createDmThreadAction,
+  markThreadReadAction,
 } from "@/lib/chat-actions";
 import type {
   ChatMessage,
@@ -128,6 +129,11 @@ export function ChatView({
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages]);
 
+  // Mark the open thread read (advances the unread watermark).
+  useEffect(() => {
+    if (activeThreadId) markThreadReadAction(activeThreadId).catch(() => {});
+  }, [activeThreadId]);
+
   // Realtime: append inbound messages, replacing the optimistic copy of our
   // own sends so they never double up.
   useEffect(() => {
@@ -176,6 +182,10 @@ export function ChatView({
             }
             return [...prev, next];
           });
+          // We're looking at this thread, so anything that lands is read.
+          if (row.sender_id !== currentMembershipId) {
+            markThreadReadAction(activeThreadId).catch(() => {});
+          }
         },
       )
       .subscribe();
@@ -183,7 +193,7 @@ export function ChatView({
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [activeThreadId]);
+  }, [activeThreadId, currentMembershipId]);
 
   function selectThread(id: string) {
     const next = new URLSearchParams(searchParams.toString());
@@ -423,6 +433,8 @@ export function ChatView({
             ) : (
               threads.map((t) => {
                 const active = t.id === activeThreadId;
+                // The thread you're viewing is, by definition, read.
+                const unread = active ? 0 : t.unread;
                 return (
                   <li key={t.id}>
                     <button
@@ -432,7 +444,9 @@ export function ChatView({
                         "flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-sm transition-colors",
                         active
                           ? "bg-muted font-medium text-foreground"
-                          : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
+                          : unread > 0
+                            ? "font-semibold text-foreground hover:bg-muted/50"
+                            : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
                       )}
                     >
                       {t.kind === "dm" ? (
@@ -442,7 +456,12 @@ export function ChatView({
                           <Hash className="h-3.5 w-3.5" />
                         </div>
                       )}
-                      <span className="truncate">{t.display_name}</span>
+                      <span className="flex-1 truncate">{t.display_name}</span>
+                      {unread > 0 && (
+                        <span className="ml-1 inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-primary px-1.5 text-[11px] font-bold text-primary-foreground">
+                          {unread > 99 ? "99+" : unread}
+                        </span>
+                      )}
                     </button>
                   </li>
                 );

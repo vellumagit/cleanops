@@ -43,6 +43,7 @@ export function FieldShell({
   brandColor,
   role,
   feedEnabled = false,
+  chatUnread = 0,
   children,
 }: {
   organizationName: string;
@@ -55,6 +56,8 @@ export function FieldShell({
    *  the bottom nav entirely. Default off matches the feed_visible
    *  automation default. */
   feedEnabled?: boolean;
+  /** Unread chat messages — shows a badge on the Chat tab. */
+  chatUnread?: number;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
@@ -131,6 +134,8 @@ export function FieldShell({
                 ? pathname === "/field"
                 : pathname.startsWith(item.href);
             const Icon = item.icon;
+            const badge =
+              item.href === "/field/chat" && chatUnread > 0 ? chatUnread : 0;
             return (
               <li key={item.href} className="flex-1">
                 <Link
@@ -148,17 +153,24 @@ export function FieldShell({
                       : undefined
                   }
                 >
-                  <Icon
-                    className={cn(
-                      "h-6 w-6",
-                      active ? "text-primary" : "text-muted-foreground",
+                  <span className="relative">
+                    <Icon
+                      className={cn(
+                        "h-6 w-6",
+                        active ? "text-primary" : "text-muted-foreground",
+                      )}
+                      style={
+                        active && brandColor
+                          ? { color: `var(--brand)` }
+                          : undefined
+                      }
+                    />
+                    {badge > 0 && (
+                      <span className="absolute -right-2 -top-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold leading-none text-primary-foreground">
+                        {badge > 99 ? "99+" : badge}
+                      </span>
                     )}
-                    style={
-                      active && brandColor
-                        ? { color: `var(--brand)` }
-                        : undefined
-                    }
-                  />
+                  </span>
                   <span>{item.label}</span>
                 </Link>
               </li>

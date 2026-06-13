@@ -113,6 +113,19 @@ export async function sendChatMessageAction(
  * next silent failure shows up in Vercel logs instead of a generic
  * error toast.
  */
+/**
+ * Mark a thread read for the current member (advances their last_read_at
+ * watermark to now via the SECURITY DEFINER helper). Fire-and-forget from
+ * the client when a thread is opened or a message arrives while viewing.
+ */
+export async function markThreadReadAction(threadId: string): Promise<void> {
+  if (!threadId) return;
+  const { supabase } = await getActionContext();
+  await supabase.rpc("chat_mark_thread_read" as never, {
+    p_thread_id: threadId,
+  } as never);
+}
+
 export async function createDmThreadAction(
   otherMembershipId: string,
 ): Promise<Result<{ thread_id: string }>> {

@@ -51,7 +51,7 @@ export default async function AppLayout({
     { count: todayBookings },
     { count: overdueInvoices },
     { count: pendingEstimates },
-    { count: unreadChat },
+    { data: unreadChat },
     { count: newReviews },
     { count: pendingRequests },
     { count: overdueTasks },
@@ -59,7 +59,6 @@ export default async function AppLayout({
     // Capture once — used as the lower bound on two time-windowed counts.
     // eslint-disable-next-line react-hooks/purity
     const nowMs = Date.now();
-    const chatSince = new Date(nowMs - 24 * 60 * 60 * 1000).toISOString();
     const reviewsSince = new Date(nowMs - 7 * 24 * 60 * 60 * 1000).toISOString();
     return Promise.all([
     supabase
@@ -103,15 +102,10 @@ export default async function AppLayout({
       .from("estimates")
       .select("id", { count: "exact", head: true })
       .eq("status", "sent"),
-    // Unread chat — threads with messages newer than last read (simplified:
-    // count threads updated in the last 24h as a proxy)
-    supabase
-      .from("chat_messages" as never)
-      .select("id", { count: "exact", head: true })
-      .eq("organization_id", membership.organization_id)
-      .gte("created_at", chatSince)
-      .neq("sender_id", membership.id) as unknown as {
-      count: number | null;
+    // Unread chat — real per-member unread count (messages after each
+    // thread's last_read_at watermark that the member didn't send).
+    supabase.rpc("chat_unread_total" as never) as unknown as {
+      data: number | null;
     },
     // New reviews in the last 7 days
     supabase
@@ -158,7 +152,7 @@ export default async function AppLayout({
           "/app/bookings/requests": pendingRequests ?? 0,
           "/app/invoices": overdueInvoices ?? 0,
           "/app/estimates": pendingEstimates ?? 0,
-          "/app/chat": unreadChat ?? 0,
+          "/app/chat": Number(unreadChat ?? 0),
           "/app/reviews": newReviews ?? 0,
           "/app/tasks": overdueTasks ?? 0,
         }}

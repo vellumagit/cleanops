@@ -15,21 +15,25 @@ export default async function FieldLayout({
   const membership = await requireMembership();
   const supabase = await createSupabaseServerClient();
 
-  const [{ data: profile }, { data: org }, feedEnabled] = await Promise.all([
-    supabase
-      .from("profiles")
-      .select("full_name")
-      .eq("id", membership.profile_id)
-      .maybeSingle(),
-    supabase
-      .from("organizations")
-      .select("logo_url, brand_color")
-      .eq("id", membership.organization_id)
-      .maybeSingle() as unknown as {
-      data: { logo_url: string | null; brand_color: string | null } | null;
-    },
-    isFeedVisible(membership.organization_id),
-  ]);
+  const [{ data: profile }, { data: org }, feedEnabled, { data: chatUnread }] =
+    await Promise.all([
+      supabase
+        .from("profiles")
+        .select("full_name")
+        .eq("id", membership.profile_id)
+        .maybeSingle(),
+      supabase
+        .from("organizations")
+        .select("logo_url, brand_color")
+        .eq("id", membership.organization_id)
+        .maybeSingle() as unknown as {
+        data: { logo_url: string | null; brand_color: string | null } | null;
+      },
+      isFeedVisible(membership.organization_id),
+      supabase.rpc("chat_unread_total" as never) as unknown as {
+        data: number | null;
+      },
+    ]);
 
   return (
     <BrandProvider brandColor={org?.brand_color ?? null}>
@@ -40,6 +44,7 @@ export default async function FieldLayout({
         brandColor={org?.brand_color ?? null}
         role={membership.role}
         feedEnabled={feedEnabled}
+        chatUnread={Number(chatUnread ?? 0)}
       >
         <PushPrompt
           membershipId={membership.id}
