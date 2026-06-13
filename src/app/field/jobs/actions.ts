@@ -307,21 +307,26 @@ export async function acceptShiftAction(
 }
 
 /**
- * Decline a shift: remove the member from the job, clear the primary
- * assignment if it was theirs (so it surfaces as unfilled), drop their
- * calendar event, and alert the org's owners/admins to reassign.
+ * Shared core for a cleaner dropping a shift: remove them from the job,
+ * clear the primary assignment if it was theirs (so it surfaces as
+ * unfilled), drop their calendar event, and alert owners/admins/managers.
+ *
+ * `reason` (when given) and `seriesStopRequest` shape the owner alert.
+ * seriesStopRequest = the cleaner is also asking to be taken off the
+ * standing recurring client going forward (their FUTURE occurrences are
+ * intentionally left in place for the owner to reassign).
  */
-export async function declineShiftAction(
+async function dropShift(
+  membershipId: string,
   bookingId: string,
+  opts: { titleVerb: string; reason?: string; seriesStopRequest?: boolean },
 ): Promise<JobActionResult> {
-  if (!bookingId) return { ok: false, error: "Missing booking id" };
-  const { membership } = await getActionContext();
   const admin = createSupabaseAdminClient();
 
   const { data: booking } = (await admin
     .from("bookings")
     .select(
-      "id, organization_id, assigned_to, scheduled_at, service_type, address, client:clients ( name )",
+      "id, organization_id, assigned_to, scheduled_at, service_type, address, series_id, client:clients ( name )",
     )
     .eq("id", bookingId)
     .maybeSingle()) as unknown as {
@@ -332,42 +337,39 @@ export async function declineShiftAction(
       scheduled_at: string;
       service_type: string;
       address: string | null;
+      series_id: string | null;
       client: { name: string | null } | null;
     } | null;
   };
   if (!booking) return { ok: false, error: "Job not found" };
 
-  // Remove this cleaner from the crew.
+  // Remove this cleaner from THIS occurrence only.
   await (admin
     .from("booking_assignees" as never)
     .delete()
     .eq("booking_id" as never, bookingId as never)
-    .eq("membership_id" as never, membership.id as never) as unknown as Promise<unknown>);
+    .eq("membership_id" as never, membershipId as never) as unknown as Promise<unknown>);
 
-  // If they were the primary, clear it so the job reads as unfilled.
-  if (booking.assigned_to === membership.id) {
+  if (booking.assigned_to === membershipId) {
     await (admin
       .from("bookings")
       .update({ assigned_to: null } as never)
       .eq("id", bookingId) as unknown as Promise<unknown>);
   }
 
-  // Pull their personal calendar event for this job.
-  deleteMemberCalendarEvent(membership.id, bookingId).catch(() => {});
+  deleteMemberCalendarEvent(membershipId, bookingId).catch(() => {});
 
-  // Who declined (for the owner alert).
   const { data: me } = (await admin
     .from("memberships")
     .select("display_name, profile:profiles ( full_name )")
-    .eq("id", membership.id)
+    .eq("id", membershipId)
     .maybeSingle()) as unknown as {
     data: {
       display_name: string | null;
       profile: { full_name: string | null } | null;
     } | null;
   };
-  const who =
-    me?.display_name ?? me?.profile?.full_name ?? "A cleaner";
+  const who = me?.display_name ?? me?.profile?.full_name ?? "A cleaner";
 
   const { data: org } = (await admin
     .from("organizations")
@@ -382,10 +384,16 @@ export async function declineShiftAction(
     minute: "2-digit",
     timeZone: org?.timezone ?? "America/Edmonton",
   });
-  const title = "Shift declined — needs reassignment";
-  const body = `${who} can't make ${booking.client?.name ?? "a job"} on ${when}${booking.address ? ` — ${booking.address}` : ""}.`;
+  const client = booking.client?.name ?? "a job";
+  const title = opts.seriesStopRequest
+    ? "Shift cancelled + recurring change request"
+    : `Shift ${opts.titleVerb} — needs reassignment`;
+  let body = `${who} can't make ${client} on ${when}${booking.address ? ` — ${booking.address}` : ""}.`;
+  if (opts.reason) body += ` Reason: “${opts.reason}”.`;
+  if (opts.seriesStopRequest) {
+    body += ` They're also requesting to be taken off the recurring ${client} going forward — please reassign the series.`;
+  }
 
-  // Alert every owner/admin/manager so someone can re-cover it.
   const { data: managers } = (await admin
     .from("memberships")
     .select("id")
@@ -395,6 +403,7 @@ export async function declineShiftAction(
     data: Array<{ id: string }> | null;
   };
   const recipients = managers ?? [];
+  const href = `/app/bookings/${bookingId}`;
   if (recipients.length > 0) {
     await (admin.from("notifications" as never).insert(
       recipients.map((r) => ({
@@ -403,17 +412,11 @@ export async function declineShiftAction(
         type: "general",
         title,
         body,
-        href: `/app/bookings/${bookingId}`,
+        href,
       })) as never,
     ) as unknown as Promise<unknown>);
     await Promise.allSettled(
-      recipients.map((r) =>
-        sendPushToMembership(r.id, {
-          title,
-          body,
-          href: `/app/bookings/${bookingId}`,
-        }),
-      ),
+      recipients.map((r) => sendPushToMembership(r.id, { title, body, href })),
     );
   }
 
@@ -421,4 +424,58 @@ export async function declineShiftAction(
   revalidatePath("/field/jobs", "page");
   revalidatePath("/field", "layout");
   return { ok: true };
+}
+
+/**
+ * Decline a still-pending shift (cleaner hadn't accepted yet). Quick, no
+ * reason required.
+ */
+export async function declineShiftAction(
+  bookingId: string,
+): Promise<JobActionResult> {
+  if (!bookingId) return { ok: false, error: "Missing booking id" };
+  const { membership } = await getActionContext();
+  return dropShift(membership.id, bookingId, { titleVerb: "declined" });
+}
+
+/**
+ * Cancel a shift the cleaner had already ACCEPTED. Reason required.
+ * Cancels only this occurrence.
+ */
+export async function cancelShiftAction(
+  bookingId: string,
+  reason: string,
+): Promise<JobActionResult> {
+  if (!bookingId) return { ok: false, error: "Missing booking id" };
+  const trimmed = (reason ?? "").trim();
+  if (trimmed.length < 3) {
+    return { ok: false, error: "Please add a short reason for cancelling." };
+  }
+  const { membership } = await getActionContext();
+  return dropShift(membership.id, bookingId, {
+    titleVerb: "cancelled",
+    reason: trimmed,
+  });
+}
+
+/**
+ * Cancel this occurrence now AND request to be taken off the recurring
+ * client going forward. Future occurrences stay assigned until the owner
+ * reassigns the series. Reason required.
+ */
+export async function requestSeriesStopAction(
+  bookingId: string,
+  reason: string,
+): Promise<JobActionResult> {
+  if (!bookingId) return { ok: false, error: "Missing booking id" };
+  const trimmed = (reason ?? "").trim();
+  if (trimmed.length < 3) {
+    return { ok: false, error: "Please add a short reason." };
+  }
+  const { membership } = await getActionContext();
+  return dropShift(membership.id, bookingId, {
+    titleVerb: "cancelled",
+    reason: trimmed,
+    seriesStopRequest: true,
+  });
 }
