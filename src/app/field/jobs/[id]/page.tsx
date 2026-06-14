@@ -148,35 +148,47 @@ export default async function FieldJobDetailPage({
     );
   }
 
-  // Fetch photos only after the assignment check passes.
-  const photos = await fetchJobPhotos(booking.id);
-
   // Per-job address wins (some jobs override it), otherwise fall back to the
   // client's address on file. Bookings created without a snapshotted address
   // (certain recurring series / portal requests) were showing nothing here.
   const displayAddress =
     booking.address ?? booking.client?.address ?? null;
 
-  // Pull every assignee's segment so a split-shift cleaner sees the whole
-  // shift laid out — their own window lit, the rest dimmed — instead of
-  // just their isolated slot. Only renders when 2+ segments exist.
-  const { data: allSegRows } = (await supabase
-    .from("booking_assignees" as never)
-    .select(
-      `membership_id, split_start_offset_minutes, split_duration_minutes,
-       membership:memberships ( display_name, profile:profiles ( full_name ) )`,
-    )
-    .eq("booking_id" as never, booking.id as never)) as unknown as {
-    data: Array<{
-      membership_id: string;
-      split_start_offset_minutes: number | null;
-      split_duration_minutes: number | null;
-      membership: {
-        display_name: string | null;
-        profile: { full_name: string | null } | null;
-      } | null;
-    }> | null;
-  };
+  // Photos, all assignee segments, and checklist items only depend on
+  // booking.id — fetch them in parallel. Serializing these round-trips made
+  // the detail page slow to first paint (a stuck-feeling loader on a poor
+  // mobile connection).
+  const [photos, segResult, checklistResult] = await Promise.all([
+    fetchJobPhotos(booking.id),
+    supabase
+      .from("booking_assignees" as never)
+      .select(
+        `membership_id, split_start_offset_minutes, split_duration_minutes,
+         membership:memberships ( display_name, profile:profiles ( full_name ) )`,
+      )
+      .eq("booking_id" as never, booking.id as never) as unknown as Promise<{
+      data: Array<{
+        membership_id: string;
+        split_start_offset_minutes: number | null;
+        split_duration_minutes: number | null;
+        membership: {
+          display_name: string | null;
+          profile: { full_name: string | null } | null;
+        } | null;
+      }> | null;
+    }>,
+    supabase
+      .from("booking_checklist_items" as never)
+      .select("id, ordinal, title, phase, is_required, checked_at")
+      .eq("booking_id" as never, booking.id as never)
+      .order("ordinal" as never, {
+        ascending: true,
+      } as never) as unknown as Promise<{
+      data: BookingChecklistItem[] | null;
+    }>,
+  ]);
+  const allSegRows = segResult.data;
+  const checklistItems = checklistResult.data;
 
   const splitRows = (allSegRows ?? [])
     .filter(
@@ -213,17 +225,6 @@ export default async function FieldJobDetailPage({
           };
         })
       : [];
-
-  // Checklist items (if any).
-  const { data: checklistItems } = (await supabase
-    .from("booking_checklist_items" as never)
-    .select("id, ordinal, title, phase, is_required, checked_at")
-    .eq("booking_id" as never, booking.id as never)
-    .order("ordinal" as never, {
-      ascending: true,
-    } as never)) as unknown as {
-    data: BookingChecklistItem[] | null;
-  };
 
   return (
     <div className="space-y-5">

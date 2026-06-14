@@ -15,7 +15,24 @@ export default async function FieldLayout({
   const membership = await requireMembership();
   const supabase = await createSupabaseServerClient();
 
-  const [{ data: profile }, { data: org }, feedEnabled, { data: chatUnread }] =
+  // Chat unread powers a nav badge only — it must NEVER block the field
+  // shell from rendering. Race it against a short timeout and fall back to
+  // 0 so a slow/hanging RPC can't leave the whole app stuck on the loader.
+  const chatUnreadPromise: Promise<number> = (async () => {
+    try {
+      const res = (await Promise.race([
+        supabase.rpc("chat_unread_total" as never),
+        new Promise((resolve) =>
+          setTimeout(() => resolve({ data: 0 }), 2500),
+        ),
+      ])) as { data: number | null };
+      return Number(res?.data ?? 0);
+    } catch {
+      return 0;
+    }
+  })();
+
+  const [{ data: profile }, { data: org }, feedEnabled, chatUnread] =
     await Promise.all([
       supabase
         .from("profiles")
@@ -30,9 +47,7 @@ export default async function FieldLayout({
         data: { logo_url: string | null; brand_color: string | null } | null;
       },
       isFeedVisible(membership.organization_id),
-      supabase.rpc("chat_unread_total" as never) as unknown as {
-        data: number | null;
-      },
+      chatUnreadPromise,
     ]);
 
   return (
@@ -44,7 +59,7 @@ export default async function FieldLayout({
         brandColor={org?.brand_color ?? null}
         role={membership.role}
         feedEnabled={feedEnabled}
-        chatUnread={Number(chatUnread ?? 0)}
+        chatUnread={chatUnread}
       >
         <PushPrompt
           membershipId={membership.id}
