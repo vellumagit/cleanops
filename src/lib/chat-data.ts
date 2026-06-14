@@ -119,6 +119,7 @@ export async function fetchChatThreads(
   // the SECURITY DEFINER helper, which is RLS-safe and scoped to this user).
   const { data: unreadRows } = (await supabase.rpc(
     "chat_unread_threads" as never,
+    { p_org_id: membership.organization_id } as never,
   )) as unknown as {
     data: Array<{
       thread_id: string;

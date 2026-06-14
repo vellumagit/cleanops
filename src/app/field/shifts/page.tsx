@@ -1,7 +1,7 @@
 import { CalendarClock } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { FieldHeader } from "@/components/field-shell";
-import { fetchMyFieldJobs, localDate } from "../jobs/data";
+import { fetchMyFieldJobs, localDate, isStarted } from "../jobs/data";
 import { JobCard } from "../jobs/job-card";
 
 export const metadata = { title: "Shifts" };
@@ -18,7 +18,9 @@ export default async function FieldShiftsPage() {
 
   const upcoming = jobs.filter((j) => {
     const d = localDate(j.effective_scheduled_at, tz);
-    return d > todayStr && j.status !== "completed";
+    // Future days only, and not already started — a started job lives on
+    // the Today tab so it can't appear in both.
+    return d > todayStr && j.status !== "completed" && !isStarted(j.status);
   });
 
   const groups = new Map<string, typeof upcoming>();

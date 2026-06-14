@@ -125,10 +125,14 @@ export default async function FieldJobDetailPage({
 
   // The cleaner must confirm a pending shift before they can start it.
   // (Legacy bookings with no junction row have crewRow === null and skip
-  // acceptance — they're treated as already accepted.)
+  // acceptance — they're treated as already accepted.) Once a job is
+  // started or done we never gate it behind acceptance — otherwise a
+  // pending cleaner on an in-progress job would lose Start/Complete.
   const needsAcceptance =
     crewRow?.acceptance_status === "pending" &&
-    booking.status !== "completed";
+    booking.status !== "completed" &&
+    booking.status !== "in_progress" &&
+    booking.status !== "en_route";
 
   // Defence in depth: even though the field UI only links to assigned jobs,
   // employees viewing someone else's job by URL should bounce back.

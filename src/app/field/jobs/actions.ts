@@ -343,6 +343,21 @@ async function dropShift(
   };
   if (!booking) return { ok: false, error: "Job not found" };
 
+  // Authorization: the caller must actually be on this booking (an assignee
+  // row, or the primary). dropShift runs on the admin client against ANY
+  // booking id, so without this a cleaner could drop / alert managers on a
+  // booking in another org entirely.
+  const { data: myRow } = (await admin
+    .from("booking_assignees" as never)
+    .select("id")
+    .eq("booking_id" as never, bookingId as never)
+    .eq("membership_id" as never, membershipId as never)
+    .maybeSingle()) as unknown as { data: { id: string } | null };
+  const wasPrimary = booking.assigned_to === membershipId;
+  if (!myRow && !wasPrimary) {
+    return { ok: false, error: "This shift isn't assigned to you." };
+  }
+
   // Remove this cleaner from THIS occurrence only.
   await (admin
     .from("booking_assignees" as never)
@@ -350,11 +365,33 @@ async function dropShift(
     .eq("booking_id" as never, bookingId as never)
     .eq("membership_id" as never, membershipId as never) as unknown as Promise<unknown>);
 
-  if (booking.assigned_to === membershipId) {
+  // If they were the primary, promote a remaining crew member so a job
+  // that still has crew doesn't read as "unfilled". Only null it out when
+  // nobody is left.
+  if (wasPrimary) {
+    const { data: remaining } = (await admin
+      .from("booking_assignees" as never)
+      .select("membership_id")
+      .eq("booking_id" as never, bookingId as never)
+      .order("split_index" as never, {
+        ascending: true,
+        nullsFirst: true,
+      } as never)
+      .limit(1)) as unknown as {
+      data: Array<{ membership_id: string }> | null;
+    };
+    const next = remaining?.[0]?.membership_id ?? null;
     await (admin
       .from("bookings")
-      .update({ assigned_to: null } as never)
+      .update({ assigned_to: next } as never)
       .eq("id", bookingId) as unknown as Promise<unknown>);
+    if (next) {
+      await (admin
+        .from("booking_assignees" as never)
+        .update({ is_primary: true } as never)
+        .eq("booking_id" as never, bookingId as never)
+        .eq("membership_id" as never, next as never) as unknown as Promise<unknown>);
+    }
   }
 
   deleteMemberCalendarEvent(membershipId, bookingId).catch(() => {});
@@ -473,11 +510,18 @@ export async function requestSeriesStopAction(
     return { ok: false, error: "Please add a short reason." };
   }
   const { membership } = await getActionContext();
-  const admin = createSupabaseAdminClient();
 
-  // Persist the request so it shows in the owner's "Needs coverage" panel
-  // (not just a fleeting notification). Captured before dropShift clears
-  // the primary assignment.
+  // Drop first — dropShift authorizes that the caller is actually on this
+  // booking. Only then record the persistent request (so a forged booking
+  // id can't inject a request row into another org's coverage panel).
+  const result = await dropShift(membership.id, bookingId, {
+    titleVerb: "cancelled",
+    reason: trimmed,
+    seriesStopRequest: true,
+  });
+  if (!result.ok) return result;
+
+  const admin = createSupabaseAdminClient();
   const { data: bk } = (await admin
     .from("bookings")
     .select("organization_id, series_id")
@@ -497,11 +541,7 @@ export async function requestSeriesStopAction(
     } as never) as unknown as Promise<unknown>);
   }
 
-  return dropShift(membership.id, bookingId, {
-    titleVerb: "cancelled",
-    reason: trimmed,
-    seriesStopRequest: true,
-  });
+  return result;
 }
 
 /**

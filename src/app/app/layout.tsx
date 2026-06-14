@@ -104,7 +104,9 @@ export default async function AppLayout({
       .eq("status", "sent"),
     // Unread chat — real per-member unread count (messages after each
     // thread's last_read_at watermark that the member didn't send).
-    supabase.rpc("chat_unread_total" as never) as unknown as {
+    supabase.rpc("chat_unread_total" as never, {
+      p_org_id: membership.organization_id,
+    } as never) as unknown as {
       data: number | null;
     },
     // New reviews in the last 7 days
