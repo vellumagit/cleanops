@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Briefcase,
+  CalendarClock,
   Clock,
   MessageSquare,
   Rss,
@@ -21,7 +22,8 @@ type FieldNavItem = {
 };
 
 const FIELD_NAV: FieldNavItem[] = [
-  { href: "/field/jobs", label: "Jobs", icon: Briefcase },
+  { href: "/field/jobs", label: "Today", icon: Briefcase },
+  { href: "/field/shifts", label: "Shifts", icon: CalendarClock },
   { href: "/field/clock", label: "Clock", icon: Clock },
   { href: "/field/feed", label: "Feed", icon: Rss },
   { href: "/field/chat", label: "Chat", icon: MessageSquare },

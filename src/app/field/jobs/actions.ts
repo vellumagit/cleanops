@@ -503,3 +503,18 @@ export async function requestSeriesStopAction(
     seriesStopRequest: true,
   });
 }
+
+/**
+ * Call in sick for a shift — same removal + owner alert as a cancel, but the
+ * reason is pre-filled so it's a one-tap action for the cleaner.
+ */
+export async function callInSickAction(
+  bookingId: string,
+): Promise<JobActionResult> {
+  if (!bookingId) return { ok: false, error: "Missing booking id" };
+  const { membership } = await getActionContext();
+  return dropShift(membership.id, bookingId, {
+    titleVerb: "cancelled (sick)",
+    reason: "Called in sick",
+  });
+}

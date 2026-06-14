@@ -25,7 +25,7 @@ import { toneForEmployee } from "@/app/app/scheduling/color";
 import { JobActionButtons } from "./job-actions";
 import { JobPhotos } from "./job-photos";
 import { ShiftAcceptance } from "./shift-acceptance";
-import { ShiftCancel } from "./shift-cancel";
+import { ManageShift } from "./manage-shift";
 import { OpenInMaps } from "@/components/open-in-maps";
 import { fetchJobPhotos } from "@/lib/job-photos";
 import { getOrgTimezone } from "@/lib/org-timezone";
@@ -331,7 +331,7 @@ export default async function FieldJobDetailPage({
         <>
           <JobActionButtons bookingId={booking.id} status={booking.status} />
           {booking.status !== "completed" && (
-            <ShiftCancel
+            <ManageShift
               bookingId={booking.id}
               isRecurring={Boolean(booking.series_id)}
             />
