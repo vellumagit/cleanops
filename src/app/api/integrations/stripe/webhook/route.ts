@@ -23,6 +23,79 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+/**
+ * Record a Stripe card payment as an invoice_payments row (mirrors the
+ * Square path) and let the sync_invoice_payment_totals trigger flip the
+ * invoice status. This records the ACTUAL amount paid — so an underpayment
+ * can't mark an invoice fully paid — and keeps the payments ledger complete.
+ *
+ * Deduped by (provider, provider_payment_id): checkout.session.completed and
+ * payment_intent.succeeded both fire for one payment, and Stripe can retry —
+ * only the first insert sticks. The fee (only on the PI event) backfills onto
+ * an already-recorded row.
+ */
+async function recordStripeInvoicePayment(
+  admin: ReturnType<typeof createSupabaseAdminClient>,
+  args: {
+    invoiceId: string;
+    ownerOrgId: string;
+    amountCents: number;
+    piId: string | null;
+    feeCents: number | null;
+  },
+): Promise<void> {
+  if (!args.piId || !args.amountCents || args.amountCents <= 0) return;
+
+  const { data: invoice } = (await admin
+    .from("invoices")
+    .select("id, organization_id, voided_at")
+    .eq("id", args.invoiceId)
+    .maybeSingle()) as unknown as {
+    data: {
+      id: string;
+      organization_id: string;
+      voided_at: string | null;
+    } | null;
+  };
+  if (!invoice) return;
+  // Cross-tenant guard — the invoice must belong to the org that owns the
+  // connected account this event arrived on.
+  if (invoice.organization_id !== args.ownerOrgId) return;
+  if (invoice.voided_at) return;
+
+  const { data: dup } = (await admin
+    .from("invoice_payments" as never)
+    .select("id, provider_fee_cents")
+    .eq("provider" as never, "stripe" as never)
+    .eq("provider_payment_id" as never, args.piId as never)
+    .maybeSingle()) as unknown as {
+    data: { id: string; provider_fee_cents: number | null } | null;
+  };
+  if (dup) {
+    // Already recorded (the paired event/ retry). Backfill the fee if this
+    // event carried it and the row didn't have it yet.
+    if (args.feeCents != null && dup.provider_fee_cents == null) {
+      await (admin
+        .from("invoice_payments" as never)
+        .update({ provider_fee_cents: args.feeCents } as never)
+        .eq("id" as never, dup.id as never) as unknown as Promise<unknown>);
+    }
+    return;
+  }
+
+  await (admin.from("invoice_payments" as never).insert({
+    organization_id: invoice.organization_id,
+    invoice_id: invoice.id,
+    amount_cents: args.amountCents,
+    method: "card",
+    reference: "Stripe",
+    received_at: new Date().toISOString(),
+    provider: "stripe",
+    provider_payment_id: args.piId,
+    provider_fee_cents: args.feeCents,
+  } as never) as unknown as Promise<unknown>);
+}
+
 export async function POST(req: NextRequest) {
   // 600/min/IP — DoS defense before signature verification.
   const { rateLimitByIp } = await import("@/lib/rate-limit-helpers");
@@ -116,10 +189,8 @@ export async function POST(req: NextRequest) {
         const invoiceId =
           (session.metadata && session.metadata.invoice_id) || null;
         if (invoiceId && session.payment_status === "paid") {
-          // CRITICAL: enforce that the invoice belongs to the org that
-          // owns this Stripe account. Without this filter, a malicious
-          // Connect-enabled tenant could forge metadata.invoice_id to
-          // flip another org's invoice to paid.
+          // Cross-tenant guard: the invoice must belong to the org that
+          // owns this connected account (metadata is attacker-controllable).
           const ownerOrgId = await ownerOrgForAccount(accountId);
           if (!ownerOrgId) {
             console.warn(
@@ -127,23 +198,16 @@ export async function POST(req: NextRequest) {
             );
             break;
           }
-          const { error: updateErr } = await admin
-            .from("invoices")
-            .update({
-              status: "paid",
-              stripe_paid_at: new Date().toISOString(),
-              paid_at: new Date().toISOString(),
-              stripe_payment_intent_id:
-                typeof session.payment_intent === "string"
-                  ? session.payment_intent
-                  : session.payment_intent?.id ?? null,
-            } as never)
-            .eq("id", invoiceId)
-            .eq("organization_id", ownerOrgId);
-          if (updateErr) {
-            console.error("[stripe connect] checkout.session.completed invoice update failed:", updateErr.message);
-            return NextResponse.json({ error: "DB update failed" }, { status: 500 });
-          }
+          await recordStripeInvoicePayment(admin, {
+            invoiceId,
+            ownerOrgId,
+            amountCents: session.amount_total ?? 0,
+            piId:
+              typeof session.payment_intent === "string"
+                ? session.payment_intent
+                : session.payment_intent?.id ?? null,
+            feeCents: null, // not present on the session; the PI event has it
+          });
         }
         break;
       }
@@ -152,9 +216,6 @@ export async function POST(req: NextRequest) {
         const pi = event.data.object as Stripe.PaymentIntent;
         const invoiceId = pi.metadata?.invoice_id ?? null;
         if (invoiceId) {
-          // Same cross-tenant guard as checkout.session.completed —
-          // metadata is attacker-controlled when the PI is created
-          // outside our code.
           const ownerOrgId = await ownerOrgForAccount(accountId);
           if (!ownerOrgId) {
             console.warn(
@@ -162,21 +223,13 @@ export async function POST(req: NextRequest) {
             );
             break;
           }
-          const { error: updateErr } = await admin
-            .from("invoices")
-            .update({
-              status: "paid",
-              stripe_paid_at: new Date().toISOString(),
-              paid_at: new Date().toISOString(),
-              stripe_payment_intent_id: pi.id,
-              stripe_fee_cents: pi.application_fee_amount ?? null,
-            } as never)
-            .eq("id", invoiceId)
-            .eq("organization_id", ownerOrgId);
-          if (updateErr) {
-            console.error("[stripe connect] payment_intent.succeeded invoice update failed:", updateErr.message);
-            return NextResponse.json({ error: "DB update failed" }, { status: 500 });
-          }
+          await recordStripeInvoicePayment(admin, {
+            invoiceId,
+            ownerOrgId,
+            amountCents: pi.amount_received ?? 0,
+            piId: pi.id,
+            feeCents: pi.application_fee_amount ?? null,
+          });
         }
         break;
       }

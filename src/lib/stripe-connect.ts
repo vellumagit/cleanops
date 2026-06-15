@@ -243,6 +243,22 @@ export async function createInvoiceCheckoutSession(args: {
   if (invoice.status === "paid") return null;
   if (!invoice.amount_cents || invoice.amount_cents <= 0) return null;
 
+  // Charge the OUTSTANDING balance, not the full invoice — otherwise a
+  // client who already paid part (cash, etc.) gets re-charged the whole
+  // amount. Including the balance in the idempotency key below also makes
+  // an edited invoice mint a fresh session instead of the stale old-price
+  // one.
+  const { data: paidRows } = await admin
+    .from("invoice_payments")
+    .select("amount_cents")
+    .eq("invoice_id", invoice.id);
+  const paidCents = ((paidRows ?? []) as Array<{ amount_cents: number }>).reduce(
+    (s, p) => s + (p.amount_cents ?? 0),
+    0,
+  );
+  const balanceCents = Math.max(0, invoice.amount_cents - paidCents);
+  if (balanceCents <= 0) return null;
+
   const { data: org } = await admin
     .from("organizations")
     .select(
@@ -272,7 +288,7 @@ export async function createInvoiceCheckoutSession(args: {
   // Platform fee in cents, clamped to non-negative.
   const feeCents = Math.max(
     0,
-    Math.round((invoice.amount_cents * orgRow.stripe_application_fee_bps) / 10000),
+    Math.round((balanceCents * orgRow.stripe_application_fee_bps) / 10000),
   );
 
   const stripe = getStripe();
@@ -284,7 +300,7 @@ export async function createInvoiceCheckoutSession(args: {
         {
           price_data: {
             currency: "usd",
-            unit_amount: invoice.amount_cents,
+            unit_amount: balanceCents,
             product_data: {
               name: `Invoice from ${orgRow.name}`,
               description: `Invoice #${invoice.id.slice(0, 8).toUpperCase()}`,
@@ -311,7 +327,7 @@ export async function createInvoiceCheckoutSession(args: {
     // Scope the session to the org id + invoice id so repeated clicks on
     // "Send payment link" produce the same session instead of piling up.
     {
-      idempotencyKey: `invoice_checkout_${invoice.id}`,
+      idempotencyKey: `invoice_checkout_${invoice.id}_${balanceCents}`,
     },
   );
 

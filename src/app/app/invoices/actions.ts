@@ -133,16 +133,47 @@ export async function updateInvoiceAction(
     .eq("id", id)
     .maybeSingle();
 
-  const stamps = maybeStamp(parsed.data.status, prev ?? undefined);
   const tax = computeTax(parsed.data.subtotal_cents, {
     rateBps: parsed.data.tax_rate_bps,
   });
+
+  // Respect the payment ledger: if the invoice has recorded payments, the
+  // edit form can't revert it below its paid state (which would null
+  // paid_at and re-arm overdue reminders despite real money received).
+  // Recompute status from what's actually been paid vs the (possibly
+  // edited) total. With NO payments, the form's status stands — so manual
+  // "mark paid" for a cash invoice still works.
+  const { data: payRows } = (await supabase
+    .from("invoice_payments")
+    .select("amount_cents")
+    .eq("invoice_id", id)) as unknown as {
+    data: Array<{ amount_cents: number }> | null;
+  };
+  const totalPaid = (payRows ?? []).reduce(
+    (s, p) => s + (p.amount_cents ?? 0),
+    0,
+  );
+
+  // Widen to the DB invoice_status (the form enum lacks partially_paid).
+  let effectiveStatus: string = parsed.data.status;
+  let stamps: { sent_at: string | null; paid_at: string | null };
+  if (totalPaid > 0 && prev?.status !== "void") {
+    const now = new Date().toISOString();
+    effectiveStatus = totalPaid >= tax.totalCents ? "paid" : "partially_paid";
+    stamps = {
+      sent_at: prev?.sent_at ?? now, // a (part-)paid invoice was sent
+      paid_at: effectiveStatus === "paid" ? prev?.paid_at ?? now : null,
+    };
+  } else {
+    stamps = maybeStamp(parsed.data.status, prev ?? undefined);
+  }
+
   const { error } = await (supabase
     .from("invoices")
     .update({
       client_id: parsed.data.client_id,
       booking_id: parsed.data.booking_id,
-      status: parsed.data.status,
+      status: effectiveStatus,
       amount_cents: tax.totalCents,
       tax_rate_bps: tax.rateBps,
       tax_amount_cents: tax.taxAmountCents,
@@ -157,19 +188,19 @@ export async function updateInvoiceAction(
 
   // Promote a status change to its own audit action so the viewer can
   // distinguish a "mark paid" from a generic update.
-  const becamePaid = prev?.status !== "paid" && parsed.data.status === "paid";
+  const becamePaid = prev?.status !== "paid" && effectiveStatus === "paid";
   await logAuditEvent({
     membership,
     action: becamePaid
       ? "mark_paid"
-      : prev?.status !== parsed.data.status
+      : prev?.status !== effectiveStatus
         ? "status_change"
         : "update",
     entity: "invoice",
     entity_id: id,
     before: prev ?? null,
     after: {
-      status: parsed.data.status,
+      status: effectiveStatus,
       amount_cents: tax.totalCents,
       tax_amount_cents: tax.taxAmountCents,
       paid_at: stamps.paid_at,

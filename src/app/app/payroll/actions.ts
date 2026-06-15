@@ -41,12 +41,15 @@ export async function createPayrollRunAction(
       supabase
         .from("time_entries")
         .select(
-          "employee_id, clock_in_at, clock_out_at, pay_rate_cents_snapshot, booking:bookings ( hourly_rate_cents, total_cents )",
+          "id, employee_id, clock_in_at, clock_out_at, pay_rate_cents_snapshot, booking:bookings ( hourly_rate_cents, total_cents )",
         )
+        .eq("organization_id", membership.organization_id)
+        .is("payroll_run_id" as never, null as never) // not already in a run
         .gte("clock_in_at", fromIso)
         .lte("clock_in_at", toIso)
         .not("clock_out_at", "is", null) as unknown as Promise<{
         data: Array<{
+          id: string;
           employee_id: string | null;
           clock_in_at: string | null;
           clock_out_at: string | null;
@@ -67,8 +70,9 @@ export async function createPayrollRunAction(
         .eq("organization_id", membership.organization_id),
       supabase
         .from("bonuses")
-        .select("employee_id, amount_cents, status, period_end")
+        .select("id, employee_id, amount_cents, status, period_end")
         .eq("organization_id", membership.organization_id)
+        .is("payroll_run_id" as never, null as never) // not already in a run
         .gte("period_end", period_start)
         .lte("period_end", period_end)
         .in("status", ["pending"] as never),
@@ -92,6 +96,10 @@ export async function createPayrollRunAction(
   };
 
   const buckets = new Map<string, Bucket>();
+  // Track which rows actually fed this run so we can stamp them with the
+  // run id and never pay them again.
+  const countedEntryIds: string[] = [];
+  const countedBonusIds: string[] = [];
 
   // Seed with every active employee (so zero-hour rows still show up)
   for (const emp of employees ?? []) {
@@ -112,6 +120,7 @@ export async function createPayrollRunAction(
     if (!e.employee_id || !e.clock_in_at || !e.clock_out_at) continue;
     const bucket = buckets.get(e.employee_id);
     if (!bucket) continue;
+    countedEntryIds.push(e.id);
     const mins = Math.max(
       0,
       Math.round(
@@ -142,6 +151,7 @@ export async function createPayrollRunAction(
     if (!b.employee_id) continue;
     const bucket = buckets.get(b.employee_id);
     if (!bucket) continue;
+    countedBonusIds.push(b.id);
     bucket.bonusCents += b.amount_cents ?? 0;
   }
 
@@ -221,6 +231,23 @@ export async function createPayrollRunAction(
     return { ok: false, error: itemsErr.message };
   }
 
+  // Stamp the consumed time entries + bonuses with this run so a later
+  // overlapping run can't pay them again. Admin client, scoped strictly to
+  // the ids we collected from this org's own query above.
+  const stampDb = createSupabaseAdminClient();
+  if (countedEntryIds.length > 0) {
+    await (stampDb
+      .from("time_entries")
+      .update({ payroll_run_id: run.id } as never)
+      .in("id", countedEntryIds) as unknown as Promise<unknown>);
+  }
+  if (countedBonusIds.length > 0) {
+    await (stampDb
+      .from("bonuses")
+      .update({ payroll_run_id: run.id } as never)
+      .in("id", countedBonusIds) as unknown as Promise<unknown>);
+  }
+
   await logAuditEvent({
     membership,
     action: "create",
@@ -245,6 +272,8 @@ export async function finalizePayrollRunAction(formData: FormData) {
   const { membership, supabase } = await getActionContext();
   if (!["owner", "admin"].includes(membership.role)) return;
 
+  // Only a draft can be finalized (atomic guard — a replayed/forged POST
+  // can't re-finalize or skip the draft stage).
   await (supabase
     .from("payroll_runs" as never)
     .update({
@@ -252,7 +281,8 @@ export async function finalizePayrollRunAction(formData: FormData) {
       finalized_at: new Date().toISOString(),
     } as never)
     .eq("id" as never, id as never)
-    .eq("organization_id" as never, membership.organization_id as never) as unknown as Promise<unknown>);
+    .eq("organization_id" as never, membership.organization_id as never)
+    .eq("status" as never, "draft" as never) as unknown as Promise<unknown>);
 
   await logAuditEvent({
     membership,
@@ -275,6 +305,7 @@ export async function markPayrollPaidAction(formData: FormData) {
   const { membership, supabase } = await getActionContext();
   if (!["owner", "admin"].includes(membership.role)) return;
 
+  // Only a finalized run can be marked paid (atomic state-machine guard).
   await (supabase
     .from("payroll_runs" as never)
     .update({
@@ -282,6 +313,18 @@ export async function markPayrollPaidAction(formData: FormData) {
       paid_at: new Date().toISOString(),
     } as never)
     .eq("id" as never, id as never)
+    .eq("organization_id" as never, membership.organization_id as never)
+    .eq("status" as never, "finalized" as never) as unknown as Promise<unknown>);
+
+  // Mark the bonuses consumed by this run as paid, so they reflect as paid
+  // in the bonuses list and can't be separately marked paid again.
+  await (supabase
+    .from("bonuses" as never)
+    .update({
+      status: "paid",
+      paid_at: new Date().toISOString(),
+    } as never)
+    .eq("payroll_run_id" as never, id as never)
     .eq("organization_id" as never, membership.organization_id as never) as unknown as Promise<unknown>);
 
   await logAuditEvent({

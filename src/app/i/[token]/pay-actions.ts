@@ -67,6 +67,23 @@ export async function startSquareCheckoutAction(formData: FormData) {
     redirect(`/i/${token}?pay_error=zero_amount`);
   }
 
+  // Charge the outstanding balance, not the full invoice — a client who
+  // already paid part shouldn't be re-charged the whole amount.
+  const { data: paidRows } = (await admin
+    .from("invoice_payments")
+    .select("amount_cents")
+    .eq("invoice_id", invoice.id)) as unknown as {
+    data: Array<{ amount_cents: number }> | null;
+  };
+  const paidCents = (paidRows ?? []).reduce(
+    (s, p) => s + (p.amount_cents ?? 0),
+    0,
+  );
+  const balanceCents = Math.max(0, invoice.amount_cents - paidCents);
+  if (balanceCents <= 0) {
+    redirect(`/i/${token}?pay_error=already_settled`);
+  }
+
   const siteUrl =
     process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
   const successUrl = `${siteUrl}/pay/${invoice.id}/success?token=${token}&provider=square`;
@@ -76,7 +93,7 @@ export async function startSquareCheckoutAction(formData: FormData) {
     link = await createInvoiceCheckoutLink({
       organizationId: invoice.organization_id,
       invoiceId: invoice.id,
-      amountCents: invoice.amount_cents,
+      amountCents: balanceCents,
       orgName: invoice.organization?.name ?? "Invoice",
       invoiceNumber:
         invoice.number ?? invoice.id.slice(0, 8).toUpperCase(),
