@@ -102,7 +102,12 @@ export default async function EditInvoicePage({
             recompute the invoice total automatically.
           </p>
           <div className="mt-4">
-            <LineItemsEditor invoiceId={invoice.id} existing={lineItems} />
+            <LineItemsEditor
+              invoiceId={invoice.id}
+              existing={lineItems}
+              taxRateBps={invoice.tax_rate_bps}
+              taxLabel={invoice.tax_label}
+            />
           </div>
         </div>
         <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-6">

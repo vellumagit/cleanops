@@ -5,6 +5,7 @@ import { z } from "zod";
 import { getActionContext, type ActionState } from "@/lib/actions";
 import { logAuditEvent } from "@/lib/audit";
 import { parseDollarsToCents } from "@/lib/validators/common";
+import { computeTax } from "@/lib/invoice-tax";
 
 const LineItemRowSchema = z.object({
   db_id: z.string().nullable(),
@@ -61,11 +62,17 @@ export async function saveLineItemsAction(
   const { membership, supabase } = await getActionContext();
 
   // Verify invoice belongs to org
-  const { data: invoice } = await supabase
+  const { data: invoice } = (await supabase
     .from("invoices")
-    .select("id, organization_id")
+    .select("id, organization_id, tax_rate_bps")
     .eq("id", invoiceId)
-    .maybeSingle();
+    .maybeSingle()) as unknown as {
+    data: {
+      id: string;
+      organization_id: string;
+      tax_rate_bps: number | null;
+    } | null;
+  };
 
   if (!invoice) {
     return { errors: { _form: "Invoice not found" } };
@@ -119,14 +126,21 @@ export async function saveLineItemsAction(
     }
   }
 
-  // Recompute invoice total from line items
-  const newTotal = parsed.reduce((sum, row) => {
+  // Line items are the subtotal; re-apply the invoice's tax on top so the
+  // stored total (amount_cents) stays subtotal + tax. Without this, saving
+  // line items silently wiped any tax off the invoice and left
+  // tax_amount_cents stale — so "adding tax" never changed the total.
+  const subtotalCents = parsed.reduce((sum, row) => {
     return sum + Math.round((row.quantity as number) * (row.unit_price_dollars as number));
   }, 0);
+  const tax = computeTax(subtotalCents, { rateBps: invoice.tax_rate_bps });
 
   const { error: updateErr } = await supabase
     .from("invoices")
-    .update({ amount_cents: newTotal })
+    .update({
+      amount_cents: tax.totalCents,
+      tax_amount_cents: tax.taxAmountCents,
+    } as never)
     .eq("id", invoiceId);
 
   if (updateErr) {
@@ -140,7 +154,8 @@ export async function saveLineItemsAction(
     entity_id: invoiceId,
     after: {
       line_items_count: parsed.length,
-      amount_cents: newTotal,
+      amount_cents: tax.totalCents,
+      tax_amount_cents: tax.taxAmountCents,
     },
   });
 

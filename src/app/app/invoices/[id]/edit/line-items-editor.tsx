@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/form-field";
 import { SubmitButton } from "@/components/submit-button";
 import { formatCurrencyCents } from "@/lib/format";
+import { computeTax, formatTaxRate } from "@/lib/invoice-tax";
 import {
   saveLineItemsAction,
   type LineItemsFormState,
@@ -48,9 +49,15 @@ export type ExistingLineItem = {
 export function LineItemsEditor({
   invoiceId,
   existing,
+  taxRateBps,
+  taxLabel,
 }: {
   invoiceId: string;
   existing: ExistingLineItem[];
+  /** The invoice's saved tax rate (bps), so the running total matches what
+   *  gets stored. Null = no tax. Reflects the LAST SAVED tax setting. */
+  taxRateBps?: number | null;
+  taxLabel?: string | null;
 }) {
   const prefix = useId();
   const boundAction = saveLineItemsAction.bind(null, invoiceId);
@@ -89,12 +96,14 @@ export function LineItemsEditor({
     [],
   );
 
-  // Compute running total for display
-  const totalCents = items.reduce((sum, item) => {
+  // Line items are the subtotal; the invoice's tax is applied on top so this
+  // preview matches the total that actually gets saved.
+  const subtotalCents = items.reduce((sum, item) => {
     const qty = Number(item.quantity) || 0;
     const price = Number(item.unitPriceDollars.replace(/[$,\s]/g, "")) || 0;
     return sum + Math.round(qty * price * 100);
   }, 0);
+  const tax = computeTax(subtotalCents, { rateBps: taxRateBps ?? null });
 
   return (
     <form action={formAction} className="space-y-4">
@@ -176,10 +185,35 @@ export function LineItemsEditor({
           Add line item
         </Button>
         <div className="text-right">
-          <span className="text-xs text-muted-foreground">Total: </span>
-          <span className="font-mono text-sm font-semibold tabular-nums">
-            {formatCurrencyCents(totalCents)}
-          </span>
+          {tax.rateBps && tax.taxAmountCents !== null ? (
+            <div className="space-y-0.5">
+              <div className="text-xs text-muted-foreground">
+                Subtotal:{" "}
+                <span className="font-mono tabular-nums">
+                  {formatCurrencyCents(subtotalCents)}
+                </span>
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {(taxLabel?.trim() || "Tax")} {formatTaxRate(tax.rateBps)}:{" "}
+                <span className="font-mono tabular-nums">
+                  {formatCurrencyCents(tax.taxAmountCents)}
+                </span>
+              </div>
+              <div>
+                <span className="text-xs text-muted-foreground">Total: </span>
+                <span className="font-mono text-sm font-semibold tabular-nums">
+                  {formatCurrencyCents(tax.totalCents)}
+                </span>
+              </div>
+            </div>
+          ) : (
+            <>
+              <span className="text-xs text-muted-foreground">Total: </span>
+              <span className="font-mono text-sm font-semibold tabular-nums">
+                {formatCurrencyCents(tax.totalCents)}
+              </span>
+            </>
+          )}
         </div>
       </div>
 
