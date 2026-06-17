@@ -18,6 +18,7 @@ import {
   Sparkles,
   Users,
   Webhook,
+  Inbox,
   Zap,
 } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
@@ -160,9 +161,16 @@ const SECTIONS: Section[] = [
       {
         href: "/app/settings/webhooks",
         icon: Webhook,
-        title: "Webhooks",
+        title: "Webhooks (outbound)",
         description:
           "POST real-time events to external systems when bookings, invoices, or reviews change.",
+      },
+      {
+        href: "/app/settings/intake-forms",
+        icon: Inbox,
+        title: "Intake forms (inbound)",
+        description:
+          "Get a webhook URL to paste into your hiring or lead forms — submissions land in Sollos automatically.",
       },
     ],
   },
