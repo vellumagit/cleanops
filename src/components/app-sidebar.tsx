@@ -21,6 +21,7 @@ import {
   GraduationCap,
   Boxes,
   ClipboardCheck,
+  ClipboardList,
   CheckSquare,
   MessageSquare,
   Rss,
@@ -93,6 +94,7 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { href: "/app/clients", label: "Clients", icon: Users, roles: ["owner", "admin", "manager"] },
       { href: "/app/employees", label: "Employees", icon: UserRound, roles: ["owner", "admin"] },
+      { href: "/app/applicants", label: "Applicants", icon: ClipboardList, roles: ["owner", "admin"] },
       { href: "/app/timesheets", label: "Timesheets", icon: Clock, roles: ["owner", "admin", "manager"] },
       { href: "/app/freelancers", label: "Freelancer bench", icon: UserPlus, roles: ["owner", "admin"] },
       { href: "/app/reviews", label: "Reviews", icon: Star },
@@ -134,6 +136,7 @@ const BADGE_LABELS: Record<string, string> = {
   "/app/estimates": "pending",
   "/app/chat": "new",
   "/app/reviews": "this week",
+  "/app/applicants": "new",
 };
 
 type Props = {

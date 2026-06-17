@@ -55,6 +55,7 @@ export default async function AppLayout({
     { count: newReviews },
     { count: pendingRequests },
     { count: overdueTasks },
+    { count: newApplicants },
   ] = await (async () => {
     // Capture once — used as the lower bound on two time-windowed counts.
     // eslint-disable-next-line react-hooks/purity
@@ -126,6 +127,12 @@ export default async function AppLayout({
       .select("id", { count: "exact", head: true })
       .lte("due_at" as never, todayEnd.toISOString())
       .is("completed_at" as never, null) as unknown as { count: number | null },
+    // New job applicants awaiting review
+    supabase
+      .from("job_applicants" as never)
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id" as never, membership.organization_id as never)
+      .eq("status" as never, "new" as never) as unknown as { count: number | null },
   ]);
   })();
 
@@ -157,6 +164,7 @@ export default async function AppLayout({
           "/app/chat": Number(unreadChat ?? 0),
           "/app/reviews": newReviews ?? 0,
           "/app/tasks": overdueTasks ?? 0,
+          "/app/applicants": newApplicants ?? 0,
         }}
       />
       {/* pt-14 on mobile for the fixed top bar, lg:pt-0 when sidebar is visible */}
