@@ -19,6 +19,27 @@ import { rateLimitByIp } from "@/lib/rate-limit-helpers";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+// This is a public webhook receiver — any tenant's external form (their
+// website, Typeform, Zapier…) posts here from the browser, so it must allow
+// cross-origin requests. Without these the browser's preflight blocks the
+// POST. Headers go on the OPTIONS preflight AND every actual response
+// (including 4xx/5xx, or client-side error parsing breaks).
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Max-Age": "86400",
+} as const;
+
+/** JSON response with CORS headers attached. */
+function corsJson(body: unknown, status: number): NextResponse {
+  return NextResponse.json(body, { status, headers: CORS_HEADERS });
+}
+
+export async function OPTIONS(): Promise<Response> {
+  return new Response(null, { status: 204, headers: CORS_HEADERS });
+}
+
 /** First non-empty value among the candidate keys (case-insensitive). */
 function pick(
   body: Record<string, unknown>,
@@ -67,11 +88,14 @@ export async function POST(
   { params }: { params: Promise<{ token: string }> },
 ) {
   const limited = await rateLimitByIp(req, "intake-webhook", 60, 60_000);
-  if (limited) return limited;
+  if (limited) {
+    for (const [k, v] of Object.entries(CORS_HEADERS)) limited.headers.set(k, v);
+    return limited;
+  }
 
   const { token } = await params;
   if (!token) {
-    return NextResponse.json({ error: "Missing token" }, { status: 400 });
+    return corsJson({ error: "Missing token" }, 400);
   }
 
   const admin = createSupabaseAdminClient();
@@ -91,7 +115,7 @@ export async function POST(
 
   // Don't reveal whether the token exists vs is inactive.
   if (!form || !form.active) {
-    return NextResponse.json({ error: "Unknown form" }, { status: 404 });
+    return corsJson({ error: "Unknown form" }, 404);
   }
 
   const body = await parseBody(req);
@@ -144,14 +168,11 @@ export async function POST(
 
     if (error) {
       console.error("[intake] job_applicant insert failed:", error.message);
-      return NextResponse.json({ error: "Could not save" }, { status: 500 });
+      return corsJson({ error: "Could not save" }, 500);
     }
-    return NextResponse.json({ ok: true }, { status: 201 });
+    return corsJson({ ok: true }, 201);
   }
 
   // Future types (booking_lead, contact, …) plug in here.
-  return NextResponse.json(
-    { error: `Unsupported form type: ${form.type}` },
-    { status: 422 },
-  );
+  return corsJson({ error: `Unsupported form type: ${form.type}` }, 422);
 }
