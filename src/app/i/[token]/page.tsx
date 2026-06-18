@@ -32,10 +32,15 @@ export const metadata: Metadata = {
  */
 export default async function PublicInvoicePage({
   params,
+  searchParams,
 }: {
   params: Promise<{ token: string }>;
+  searchParams: Promise<{ pdf?: string }>;
 }) {
   const { token } = await params;
+  // Rendered headless to a PDF — drop interactive payment buttons so the
+  // saved/attached copy doesn't show a dead "Pay with card" button.
+  const isPdf = (await searchParams)?.pdf === "1";
   if (!token || token.length < 8) notFound();
 
   // Rate limit by IP to slow token brute-force. 30 req/min per IP is
@@ -390,7 +395,7 @@ export default async function PublicInvoicePage({
             <div className="mt-6 rounded-lg border border-border bg-muted/20 p-5">
               <p className="sollos-label">How to pay</p>
 
-              {activeProcessor && (
+              {!isPdf && activeProcessor && (
                 <form
                   action={
                     activeProcessor === "square"

@@ -599,6 +599,34 @@ async function deliverInvoiceEmail(
       : null,
   });
 
+  // Generate + attach a PDF copy of the invoice (mirrors the estimate
+  // flow). Best-effort: if the render hiccups we still send the email with
+  // the link, just without the attachment.
+  let pdfAttachment:
+    | { filename: string; content: Buffer; contentType: string }
+    | null = null;
+  try {
+    const { renderInvoicePdf } = await import("@/lib/invoice-pdf");
+    const pdfBuffer = await renderInvoicePdf({
+      publicToken: prev.public_token,
+    });
+    const slug = String(prev.number ?? invoiceId.slice(0, 8))
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 40);
+    pdfAttachment = {
+      filename: `invoice-${slug || invoiceId}.pdf`,
+      content: pdfBuffer,
+      contentType: "application/pdf",
+    };
+  } catch (pdfErr) {
+    console.error(
+      "[invoice] PDF attach failed (continuing without):",
+      pdfErr,
+    );
+  }
+
   const result = await sendOrgEmailDetailed(membership.organization_id, {
     to: clientEmail,
     toName: prev.client?.name ?? undefined,
@@ -607,6 +635,7 @@ async function deliverInvoiceEmail(
     // CLIENT_EMAILS_PAUSED kill switch. Automated invoice emails
     // (paid receipts, overdue reminders) continue to respect it.
     pauseExempt: true,
+    ...(pdfAttachment ? { attachments: [pdfAttachment] } : {}),
   });
   if (!result.ok) {
     return {
