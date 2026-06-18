@@ -272,6 +272,7 @@ export function BookingQuickView({
         initialAdditionalIds={additionalIds}
         seriesId={booking.series_id}
         seriesScheduledAt={booking.scheduled_at}
+        clientName={booking.client_name}
         open={assignOpen}
         onOpenChange={setAssignOpen}
       />

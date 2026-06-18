@@ -23,6 +23,7 @@ export function AssignCrewButton({
   initialAdditionalIds,
   seriesId,
   seriesScheduledAt,
+  clientName,
   /** Visual flavor — the bookings list wants a compact icon-only chip,
    *  the detail page header wants a labelled outline button. Both flow
    *  through here so the dialog wiring stays in one place. */
@@ -40,6 +41,7 @@ export function AssignCrewButton({
   /** When set, the Assign dialog shows the recurring-scope radio. */
   seriesId?: string | null;
   seriesScheduledAt?: string;
+  clientName?: string | null;
   variant?: "default" | "outline" | "ghost" | "secondary";
   size?: "default" | "sm" | "lg" | "icon";
   label?: string;
@@ -68,6 +70,7 @@ export function AssignCrewButton({
         initialAdditionalIds={initialAdditionalIds}
         seriesId={seriesId}
         seriesScheduledAt={seriesScheduledAt}
+        clientName={clientName}
         open={open}
         onOpenChange={setOpen}
       />

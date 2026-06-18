@@ -1063,9 +1063,14 @@ export function BookingForm({
               className="h-4 w-4 rounded border-input"
             />
             <SplitSquareVertical className="h-4 w-4 text-muted-foreground" />
-            <span className="text-sm font-medium">Split shift</span>
-            <span className="text-xs text-muted-foreground">— divide this booking between multiple employees</span>
+            <span className="text-sm font-medium">Split shift (hand-off)</span>
           </label>
+          <p className="-mt-1 pl-7 text-xs text-muted-foreground">
+            One cleaner works the first part, another takes over partway
+            through — they do <strong>not</strong> overlap. For two cleaners
+            working the <strong>same hours together</strong>, don&rsquo;t split:
+            just assign them both as crew.
+          </p>
 
           {splitEnabled && (
             <div className="space-y-3 pt-1">
