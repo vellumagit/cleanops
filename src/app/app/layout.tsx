@@ -11,11 +11,6 @@ import { AIWidget } from "@/components/ai-assistant/ai-widget";
 import { DEFAULT_TZ } from "@/lib/format";
 import { isFeedVisible } from "@/lib/feed-visibility";
 
-// Orgs with the AI assistant enabled — must match the allow-list in /api/ai-chat
-const AI_ENABLED_ORGS = new Set([
-  "4cf4c402-5889-43c9-91f3-7186f66ee08b", // Svit Company Inc
-]);
-
 export default async function AppLayout({
   children,
 }: {
@@ -176,11 +171,8 @@ export default async function AppLayout({
           organizationId={membership.organization_id}
         />
         {children}
-        <QuickActions
-          role={membership.role}
-          hasAssistant={AI_ENABLED_ORGS.has(membership.organization_id)}
-        />
-        {AI_ENABLED_ORGS.has(membership.organization_id) && <AIWidget />}
+        <QuickActions role={membership.role} hasAssistant />
+        <AIWidget />
       </div>
     </BrandProvider>
   );

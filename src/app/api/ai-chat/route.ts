@@ -2,7 +2,8 @@
  * AI assistant chat endpoint.
  *
  * Streams a Claude response back to the floating widget.
- * Only available to orgs in the ENABLED_ORGS allow-list.
+ * Available to every org — gated only by an active membership and the
+ * presence of ANTHROPIC_API_KEY.
  * Every conversation is saved to ai_conversations for UX/bug review.
  */
 
@@ -10,12 +11,6 @@ import { NextRequest } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-
-// ─── Feature flag ────────────────────────────────────────────────────────────
-// Add org IDs here to enable the AI assistant for them.
-const ENABLED_ORGS = new Set([
-  "4cf4c402-5889-43c9-91f3-7186f66ee08b", // Svit Company Inc
-]);
 
 // ─── System prompt ───────────────────────────────────────────────────────────
 const BASE_SYSTEM_PROMPT = `You are Sollos Assistant — a friendly, knowledgeable helper built into Sollos, a cleaning business management platform.
@@ -61,8 +56,17 @@ export async function POST(request: NextRequest) {
     } | null;
   };
 
-  if (!membership || !ENABLED_ORGS.has(membership.organization_id)) {
+  if (!membership) {
     return Response.json({ error: "Not available" }, { status: 403 });
+  }
+
+  // The assistant needs a configured Anthropic key. Fail soft with a
+  // friendly message instead of a stream that errors mid-flight.
+  if (!process.env.ANTHROPIC_API_KEY) {
+    return Response.json(
+      { error: "The assistant isn't available right now. Please try again later." },
+      { status: 503 },
+    );
   }
 
   const body = await request.json();
