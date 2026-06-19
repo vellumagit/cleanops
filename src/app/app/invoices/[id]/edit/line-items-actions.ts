@@ -5,7 +5,7 @@ import { z } from "zod";
 import { getActionContext, type ActionState } from "@/lib/actions";
 import { logAuditEvent } from "@/lib/audit";
 import { parseDollarsToCents } from "@/lib/validators/common";
-import { computeTax } from "@/lib/invoice-tax";
+import { computeTax, parseTaxRate } from "@/lib/invoice-tax";
 
 const LineItemRowSchema = z.object({
   db_id: z.string().nullable(),
@@ -64,13 +64,14 @@ export async function saveLineItemsAction(
   // Verify invoice belongs to org
   const { data: invoice } = (await supabase
     .from("invoices")
-    .select("id, organization_id, tax_rate_bps")
+    .select("id, organization_id, tax_rate_bps, tax_label")
     .eq("id", invoiceId)
     .maybeSingle()) as unknown as {
     data: {
       id: string;
       organization_id: string;
       tax_rate_bps: number | null;
+      tax_label: string | null;
     } | null;
   };
 
@@ -126,20 +127,35 @@ export async function saveLineItemsAction(
     }
   }
 
-  // Line items are the subtotal; re-apply the invoice's tax on top so the
-  // stored total (amount_cents) stays subtotal + tax. Without this, saving
-  // line items silently wiped any tax off the invoice and left
-  // tax_amount_cents stale — so "adding tax" never changed the total.
+  // Line items are the subtotal; tax is applied on top. The tax rate now
+  // comes from THIS form (the line-items editor is the one place an owner
+  // manages totals + tax). Falls back to the invoice's existing rate only
+  // if the form didn't submit tax fields (older cached client).
   const subtotalCents = parsed.reduce((sum, row) => {
     return sum + Math.round((row.quantity as number) * (row.unit_price_dollars as number));
   }, 0);
-  const tax = computeTax(subtotalCents, { rateBps: invoice.tax_rate_bps });
+
+  const rawRate = formData.get("tax_rate_percent");
+  const rawLabel = formData.get("tax_label");
+  const rateBps =
+    rawRate !== null
+      ? parseTaxRate(typeof rawRate === "string" ? rawRate : "")
+      : invoice.tax_rate_bps;
+  const tax = computeTax(subtotalCents, { rateBps });
+  const taxLabel =
+    tax.rateBps && tax.rateBps > 0
+      ? (typeof rawLabel === "string" && rawLabel.trim()
+          ? rawLabel.trim()
+          : invoice.tax_label) || null
+      : null;
 
   const { error: updateErr } = await supabase
     .from("invoices")
     .update({
       amount_cents: tax.totalCents,
       tax_amount_cents: tax.taxAmountCents,
+      tax_rate_bps: tax.rateBps,
+      tax_label: taxLabel,
     } as never)
     .eq("id", invoiceId);
 

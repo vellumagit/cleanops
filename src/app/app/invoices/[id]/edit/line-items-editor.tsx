@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/form-field";
 import { SubmitButton } from "@/components/submit-button";
 import { formatCurrencyCents } from "@/lib/format";
-import { computeTax, formatTaxRate } from "@/lib/invoice-tax";
+import { computeTax, formatTaxRate, parseTaxRate } from "@/lib/invoice-tax";
 import {
   saveLineItemsAction,
   type LineItemsFormState,
@@ -96,14 +96,26 @@ export function LineItemsEditor({
     [],
   );
 
-  // Line items are the subtotal; the invoice's tax is applied on top so this
-  // preview matches the total that actually gets saved.
+  // Tax is editable right here so line items + tax + total all live in ONE
+  // form with ONE "Save" — the source of the long-standing "I add tax and
+  // nothing changes" confusion was tax living in a separate form.
+  const [taxEnabled, setTaxEnabled] = useState<boolean>(
+    Boolean(taxRateBps && taxRateBps > 0),
+  );
+  const [rateText, setRateText] = useState<string>(
+    taxRateBps != null && taxRateBps > 0 ? String(taxRateBps / 100) : "",
+  );
+  const [labelText, setLabelText] = useState<string>(taxLabel ?? "");
+
+  // Line items are the subtotal; tax is applied on top so this preview
+  // matches the total that actually gets saved.
   const subtotalCents = items.reduce((sum, item) => {
     const qty = Number(item.quantity) || 0;
     const price = Number(item.unitPriceDollars.replace(/[$,\s]/g, "")) || 0;
     return sum + Math.round(qty * price * 100);
   }, 0);
-  const tax = computeTax(subtotalCents, { rateBps: taxRateBps ?? null });
+  const rateBps = taxEnabled ? parseTaxRate(rateText) : null;
+  const tax = computeTax(subtotalCents, { rateBps });
 
   return (
     <form action={formAction} className="space-y-4">
@@ -119,6 +131,17 @@ export function LineItemsEditor({
           sort_order: idx,
         })),
       )} />
+      {/* Tax — read by saveLineItemsAction and applied on top of the items. */}
+      <input
+        type="hidden"
+        name="tax_rate_percent"
+        value={taxEnabled ? rateText : ""}
+      />
+      <input
+        type="hidden"
+        name="tax_label"
+        value={taxEnabled ? labelText : ""}
+      />
 
       <div className="space-y-2">
         {/* Header */}
@@ -174,6 +197,44 @@ export function LineItemsEditor({
         ))}
       </div>
 
+      {/* Tax — owners set it right here so items, tax, and total all save
+          together with one "Save line items" click. */}
+      <div className="rounded-md border border-border bg-muted/30 p-3">
+        <label className="flex items-center gap-2 text-sm font-medium">
+          <input
+            type="checkbox"
+            checked={taxEnabled}
+            onChange={(e) => setTaxEnabled(e.target.checked)}
+            className="h-4 w-4 rounded border-input"
+          />
+          Add tax
+        </label>
+        {taxEnabled ? (
+          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="space-y-1">
+              <span className="text-xs text-muted-foreground">Rate (%)</span>
+              <Input
+                value={rateText}
+                onChange={(e) => setRateText(e.target.value)}
+                inputMode="decimal"
+                placeholder="13"
+                className="tabular-nums"
+              />
+            </div>
+            <div className="space-y-1">
+              <span className="text-xs text-muted-foreground">
+                Label (optional)
+              </span>
+              <Input
+                value={labelText}
+                onChange={(e) => setLabelText(e.target.value)}
+                placeholder="HST"
+              />
+            </div>
+          </div>
+        ) : null}
+      </div>
+
       <div className="flex items-center justify-between gap-3">
         <Button
           type="button"
@@ -194,7 +255,7 @@ export function LineItemsEditor({
                 </span>
               </div>
               <div className="text-xs text-muted-foreground">
-                {(taxLabel?.trim() || "Tax")} {formatTaxRate(tax.rateBps)}:{" "}
+                {(labelText.trim() || "Tax")} {formatTaxRate(tax.rateBps)}:{" "}
                 <span className="font-mono tabular-nums">
                   {formatCurrencyCents(tax.taxAmountCents)}
                 </span>
