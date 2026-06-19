@@ -128,7 +128,9 @@ export async function POST(request: NextRequest) {
     async start(controller) {
       try {
         const anthropicStream = anthropic.messages.stream({
-          model: "claude-3-5-haiku-20241022",
+          // Current fast/cheap Haiku. The old claude-3-5-haiku-20241022 was
+          // retired by Anthropic, which made every assistant request error.
+          model: "claude-haiku-4-5-20251001",
           max_tokens: 1024,
           system: systemPrompt,
           messages,
