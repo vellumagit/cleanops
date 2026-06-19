@@ -280,6 +280,11 @@ export function InvoiceForm({
    *  On edit we use whatever was saved on the invoice itself. */
   orgDefaultTaxRatePercent,
   orgDefaultTaxLabel,
+  /** When this invoice has line items, the line-items editor below owns
+   *  the subtotal + tax. This form then hides its own money fields and
+   *  leaves amount_cents untouched on save, so the two forms can't fight
+   *  over the total. */
+  lineItemsMode = false,
 }: {
   mode: "create" | "edit";
   id?: string;
@@ -289,6 +294,7 @@ export function InvoiceForm({
   currency?: CurrencyCode;
   orgDefaultTaxRatePercent?: string;
   orgDefaultTaxLabel?: string;
+  lineItemsMode?: boolean;
 }) {
   const action =
     mode === "create"
@@ -338,6 +344,27 @@ export function InvoiceForm({
     const rateBps = taxEnabled ? parseTaxRate(rateText) : null;
     return computeTax(subtotalCents, { rateBps });
   }, [subtotalText, rateText, taxEnabled]);
+
+  const statusField = (
+    <FormField
+      label="Status"
+      htmlFor="status"
+      required
+      error={state.errors?.status}
+      hint="Sent / paid dates auto-stamp on transition"
+    >
+      <FormSelect
+        id="status"
+        name="status"
+        defaultValue={v.status ?? defaults?.status ?? "draft"}
+      >
+        <option value="draft">Draft</option>
+        <option value="sent">Sent</option>
+        <option value="paid">Paid</option>
+        <option value="overdue">Overdue</option>
+      </FormSelect>
+    </FormField>
+  );
 
   return (
     <form action={formAction} className="space-y-5">
@@ -393,46 +420,47 @@ export function InvoiceForm({
         />
       </FormField>
 
-      <div className="grid gap-5 sm:grid-cols-2">
-        <FormField
-          label="Status"
-          htmlFor="status"
-          required
-          error={state.errors?.status}
-          hint="Sent / paid dates auto-stamp on transition"
-        >
-          <FormSelect
-            id="status"
-            name="status"
-            defaultValue={v.status ?? defaults?.status ?? "draft"}
-          >
-            <option value="draft">Draft</option>
-            <option value="sent">Sent</option>
-            <option value="paid">Paid</option>
-            <option value="overdue">Overdue</option>
-          </FormSelect>
-        </FormField>
+      {lineItemsMode ? (
+        <>
+          {statusField}
+          {/* Line items below own the money. Carry the saved subtotal so
+              validation passes, but updateInvoiceAction ignores it and
+              leaves amount_cents / tax untouched. */}
+          <input type="hidden" name="subtotal_cents" value={subtotalText} />
+          <input type="hidden" name="tax_rate_bps" value="" />
+          <input type="hidden" name="tax_label" value="" />
+          <input type="hidden" name="totals_managed_elsewhere" value="1" />
+          <p className="rounded-lg border border-dashed border-border bg-muted/20 p-4 text-xs text-muted-foreground">
+            The subtotal and tax for this invoice are calculated from its
+            line items below. Edit them in the <strong>Line items</strong>{" "}
+            section.
+          </p>
+        </>
+      ) : (
+        <>
+          <div className="grid gap-5 sm:grid-cols-2">
+            {statusField}
 
-        <FormField
-          label={`Subtotal (${currency})`}
-          htmlFor="subtotal_cents"
-          required
-          error={state.errors?.subtotal_cents}
-          hint={taxEnabled ? "Pre-tax amount — tax is added below" : undefined}
-        >
-          <Input
-            id="subtotal_cents"
-            name="subtotal_cents"
-            inputMode="decimal"
-            required
-            value={subtotalText}
-            onChange={(e) => setSubtotalText(e.target.value)}
-          />
-        </FormField>
-      </div>
+            <FormField
+              label={`Subtotal (${currency})`}
+              htmlFor="subtotal_cents"
+              required
+              error={state.errors?.subtotal_cents}
+              hint={taxEnabled ? "Pre-tax amount — tax is added below" : undefined}
+            >
+              <Input
+                id="subtotal_cents"
+                name="subtotal_cents"
+                inputMode="decimal"
+                required
+                value={subtotalText}
+                onChange={(e) => setSubtotalText(e.target.value)}
+              />
+            </FormField>
+          </div>
 
-      {/* Tax section */}
-      <div className="rounded-lg border border-border bg-muted/20 p-4">
+          {/* Tax section */}
+          <div className="rounded-lg border border-border bg-muted/20 p-4">
         <label className="flex items-start gap-3 cursor-pointer">
           <input
             type="checkbox"
@@ -524,7 +552,9 @@ export function InvoiceForm({
             </div>
           </dl>
         )}
-      </div>
+          </div>
+        </>
+      )}
 
       <FormField
         label="Due date"

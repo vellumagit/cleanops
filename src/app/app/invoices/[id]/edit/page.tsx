@@ -84,6 +84,7 @@ export default async function EditInvoicePage({
             currency={currency}
             clients={clients}
             bookings={bookings}
+            lineItemsMode={lineItems.length > 0}
             defaults={{
               client_id: invoice.client_id,
               booking_id: invoice.booking_id,

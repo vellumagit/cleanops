@@ -137,6 +137,14 @@ export async function updateInvoiceAction(
     rateBps: parsed.data.tax_rate_bps,
   });
 
+  // When the invoice has line items, the line-items editor is the single
+  // owner of amount_cents + tax. This form then leaves those columns
+  // untouched so the two forms can't overwrite each other's total.
+  const managedElsewhere = formData.get("totals_managed_elsewhere") === "1";
+  const effectiveTotal = managedElsewhere
+    ? prev?.amount_cents ?? 0
+    : tax.totalCents;
+
   // Respect the payment ledger: if the invoice has recorded payments, the
   // edit form can't revert it below its paid state (which would null
   // paid_at and re-arm overdue reminders despite real money received).
@@ -159,7 +167,7 @@ export async function updateInvoiceAction(
   let stamps: { sent_at: string | null; paid_at: string | null };
   if (totalPaid > 0 && prev?.status !== "void") {
     const now = new Date().toISOString();
-    effectiveStatus = totalPaid >= tax.totalCents ? "paid" : "partially_paid";
+    effectiveStatus = totalPaid >= effectiveTotal ? "paid" : "partially_paid";
     stamps = {
       sent_at: prev?.sent_at ?? now, // a (part-)paid invoice was sent
       paid_at: effectiveStatus === "paid" ? prev?.paid_at ?? now : null,
@@ -168,16 +176,24 @@ export async function updateInvoiceAction(
     stamps = maybeStamp(parsed.data.status, prev ?? undefined);
   }
 
+  // In line-items mode, omit the money columns entirely — the line-items
+  // editor owns them. Otherwise this form computes and writes the total.
+  const moneyFields = managedElsewhere
+    ? {}
+    : {
+        amount_cents: tax.totalCents,
+        tax_rate_bps: tax.rateBps,
+        tax_amount_cents: tax.taxAmountCents,
+        tax_label: tax.rateBps ? parsed.data.tax_label : null,
+      };
+
   const { error } = await (supabase
     .from("invoices")
     .update({
       client_id: parsed.data.client_id,
       booking_id: parsed.data.booking_id,
       status: effectiveStatus,
-      amount_cents: tax.totalCents,
-      tax_rate_bps: tax.rateBps,
-      tax_amount_cents: tax.taxAmountCents,
-      tax_label: tax.rateBps ? parsed.data.tax_label : null,
+      ...moneyFields,
       due_date: parsed.data.due_date,
       sent_at: stamps.sent_at,
       paid_at: stamps.paid_at,
@@ -201,8 +217,8 @@ export async function updateInvoiceAction(
     before: prev ?? null,
     after: {
       status: effectiveStatus,
-      amount_cents: tax.totalCents,
-      tax_amount_cents: tax.taxAmountCents,
+      amount_cents: effectiveTotal,
+      tax_amount_cents: managedElsewhere ? undefined : tax.taxAmountCents,
       paid_at: stamps.paid_at,
     },
   });
