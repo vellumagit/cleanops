@@ -7,6 +7,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { formatDateTime } from "@/lib/format";
+import { ApplicantQuickStatus } from "./applicant-quick-status";
 
 export const metadata = { title: "Applicants" };
 
@@ -113,47 +114,41 @@ export default async function ApplicantsPage({
       ) : (
         <ul className="space-y-2">
           {rows.map((r) => (
-            <li key={r.id}>
+            <li
+              key={r.id}
+              className="flex items-center gap-3 rounded-xl border border-border bg-card p-4 transition-colors hover:bg-muted/50"
+            >
               <Link
                 href={`/app/applicants/${r.id}`}
-                className="flex items-center gap-3 rounded-xl border border-border bg-card p-4 transition-colors hover:bg-muted/50"
+                className="min-w-0 flex-1"
               >
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="truncate text-base font-semibold">
-                      {r.name ?? "Unnamed applicant"}
-                    </span>
-                    <span
-                      className={cn(
-                        "rounded-full px-2 py-0.5 text-[11px] font-semibold capitalize",
-                        STATUS_TONE[r.status] ?? STATUS_TONE.new,
-                      )}
-                    >
-                      {r.status}
-                    </span>
-                  </div>
-                  <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                    {r.position && (
-                      <span className="inline-flex items-center gap-1">
-                        <Briefcase className="h-3 w-3" /> {r.position}
-                      </span>
-                    )}
-                    {r.email && (
-                      <span className="inline-flex items-center gap-1">
-                        <Mail className="h-3 w-3" /> {r.email}
-                      </span>
-                    )}
-                    {r.phone && (
-                      <span className="inline-flex items-center gap-1">
-                        <Phone className="h-3 w-3" /> {r.phone}
-                      </span>
-                    )}
-                  </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="truncate text-base font-semibold">
+                    {r.name ?? "Unnamed applicant"}
+                  </span>
                 </div>
-                <span className="shrink-0 text-xs text-muted-foreground">
-                  {formatDateTime(r.created_at, tz)}
-                </span>
+                <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                  {r.position && (
+                    <span className="inline-flex items-center gap-1">
+                      <Briefcase className="h-3 w-3" /> {r.position}
+                    </span>
+                  )}
+                  {r.email && (
+                    <span className="inline-flex items-center gap-1">
+                      <Mail className="h-3 w-3" /> {r.email}
+                    </span>
+                  )}
+                  {r.phone && (
+                    <span className="inline-flex items-center gap-1">
+                      <Phone className="h-3 w-3" /> {r.phone}
+                    </span>
+                  )}
+                </div>
               </Link>
+              <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">
+                {formatDateTime(r.created_at, tz)}
+              </span>
+              <ApplicantQuickStatus id={r.id} status={r.status} />
             </li>
           ))}
         </ul>
