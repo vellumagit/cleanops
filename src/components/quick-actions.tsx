@@ -91,7 +91,15 @@ const ACTIONS: Action[] = [
   },
 ];
 
-export function QuickActions({ role }: { role: string }) {
+export function QuickActions({
+  role,
+  /** When the AI assistant widget is also on screen (bottom-right), lift
+   *  this button so the two stack vertically instead of overlapping. */
+  hasAssistant = false,
+}: {
+  role: string;
+  hasAssistant?: boolean;
+}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -131,8 +139,12 @@ export function QuickActions({ role }: { role: string }) {
         onClick={toggle}
         title="Quick actions (⌘K)"
         className={cn(
-          "fixed bottom-24 right-4 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-foreground text-background shadow-lg transition-transform active:scale-95 lg:bottom-6",
-          "lg:h-10 lg:w-10",
+          "fixed z-40 flex h-12 w-12 items-center justify-center rounded-full bg-foreground text-background shadow-lg transition-transform active:scale-95 lg:h-10 lg:w-10",
+          // Stack above the AI assistant button (bottom-5, 48px tall) when
+          // present; otherwise sit in the normal bottom-right FAB slot.
+          hasAssistant
+            ? "bottom-24 right-5 lg:bottom-20"
+            : "bottom-24 right-4 lg:bottom-6",
         )}
         aria-label="Quick actions"
       >

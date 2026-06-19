@@ -176,7 +176,10 @@ export default async function AppLayout({
           organizationId={membership.organization_id}
         />
         {children}
-        <QuickActions role={membership.role} />
+        <QuickActions
+          role={membership.role}
+          hasAssistant={AI_ENABLED_ORGS.has(membership.organization_id)}
+        />
         {AI_ENABLED_ORGS.has(membership.organization_id) && <AIWidget />}
       </div>
     </BrandProvider>
