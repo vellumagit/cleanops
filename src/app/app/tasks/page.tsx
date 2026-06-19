@@ -121,30 +121,14 @@ export default async function TasksPage() {
     error: Error | null;
   };
 
-  // TEMPORARY: Show the actual error to the user instead of throwing.
-  // The Next.js "Something went wrong" page hides the real Postgres
-  // error which has been making this impossible to diagnose. Will
-  // revert after we identify what's actually broken.
   if (error) {
     return (
-      <PageShell title="Tasks — diagnostic" description="">
-        <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm dark:border-red-900/40 dark:bg-red-950/40">
-          <p className="font-semibold text-red-900 dark:text-red-200">
-            Tasks query failed (this panel is a temporary diagnostic — send Brian a screenshot):
-          </p>
-          <pre className="mt-2 whitespace-pre-wrap break-words text-xs text-red-900 dark:text-red-200">
-            {JSON.stringify(
-              {
-                message: (error as { message?: string }).message,
-                details: (error as { details?: string }).details,
-                hint: (error as { hint?: string }).hint,
-                code: (error as { code?: string }).code,
-                full: error,
-              },
-              null,
-              2,
-            )}
-          </pre>
+      <PageShell
+        title="Tasks & Reminders"
+        description="To-do items, supply reminders, and recurring checklists for your team."
+      >
+        <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          Could not load tasks: {error.message}
         </div>
       </PageShell>
     );
