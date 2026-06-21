@@ -3,6 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
+import type { Database, Json } from "@/lib/supabase/types";
+
+type ServiceTypeEnum = Database["public"]["Enums"]["service_type"];
 import {
   BookingSchema,
   RecurringBookingSchema,
@@ -161,9 +164,9 @@ async function syncBookingAssignees(
   // Drop the existing set. RLS scopes this to the caller's org; the
   // booking_id filter is the authoritative narrowing.
   await (supabase
-    .from("booking_assignees" as never)
+    .from("booking_assignees")
     .delete()
-    .eq("booking_id" as never, bookingId as never) as unknown as Promise<unknown>);
+    .eq("booking_id", bookingId) as unknown as Promise<unknown>);
 
   const rows: Array<{
     organization_id: string;
@@ -244,8 +247,8 @@ async function syncBookingAssignees(
   if (rows.length === 0) return;
 
   await (supabase
-    .from("booking_assignees" as never)
-    .insert(rows as never) as unknown as Promise<unknown>);
+    .from("booking_assignees")
+    .insert(rows) as unknown as Promise<unknown>);
 }
 
 /**
@@ -301,9 +304,9 @@ async function syncBookingAssigneesBulk(
 
   // One DELETE for every target booking.
   await (supabase
-    .from("booking_assignees" as never)
+    .from("booking_assignees")
     .delete()
-    .in("booking_id" as never, bookingIds as never) as unknown as Promise<unknown>);
+    .in("booking_id", bookingIds) as unknown as Promise<unknown>);
 
   // Pre-compute the canonical row template once, then stamp each booking_id.
   type Row = {
@@ -383,8 +386,8 @@ async function syncBookingAssigneesBulk(
   if (allRows.length === 0) return;
 
   await (supabase
-    .from("booking_assignees" as never)
-    .insert(allRows as never) as unknown as Promise<unknown>);
+    .from("booking_assignees")
+    .insert(allRows) as unknown as Promise<unknown>);
 }
 
 /**
@@ -523,7 +526,7 @@ export async function createBookingAction(
       assigned_to: effectiveAssignedTo,
       scheduled_at: parsed.data.scheduled_at,
       duration_minutes: parsed.data.duration_minutes,
-      service_type: parsed.data.service_type as never,
+      service_type: parsed.data.service_type,
       service_type_id: serviceExtras.service_type_id,
       service_type_label: serviceExtras.service_type_label,
       status: parsed.data.status,
@@ -531,8 +534,8 @@ export async function createBookingAction(
       hourly_rate_cents: parsed.data.hourly_rate_cents ?? null,
       address: parsed.data.address ?? null,
       notes: parsed.data.notes ?? null,
-      splits: splits as never,
-    } as never)
+      splits: splits,
+    })
     .select("id")
     .single();
 
@@ -701,7 +704,7 @@ export async function createRecurringBookingAction(
     };
   }
   const { data: series, error: seriesErr } = await (supabase
-    .from("booking_series" as never)
+    .from("booking_series")
     .insert({
       organization_id: membership.organization_id,
       client_id: parsed.data.client_id,
@@ -734,7 +737,7 @@ export async function createRecurringBookingAction(
       hourly_rate_cents: parsed.data.hourly_rate_cents ?? null,
       address: parsed.data.address ?? null,
       notes: parsed.data.notes ?? null,
-    } as never)
+    })
     .select("id")
     .single() as unknown as { data: { id: string } | null; error: { message: string } | null });
 
@@ -790,7 +793,7 @@ export async function createRecurringBookingAction(
 
   const { data: insertedBookings, error: bookingsErr } = await (supabase
     .from("bookings")
-    .insert(bookingRows as never)
+    .insert(bookingRows)
     .select("id, scheduled_at") as unknown as {
     data: { id: string; scheduled_at: string }[] | null;
     error: { message: string } | null;
@@ -908,9 +911,9 @@ export async function updateBookingAction(
   // Includes split-segment employees because booking_assignees is now
   // the source of truth for them too.
   const { data: previousAssigneesRows } = (await supabase
-    .from("booking_assignees" as never)
+    .from("booking_assignees")
     .select("membership_id")
-    .eq("booking_id" as never, id as never)) as unknown as {
+    .eq("booking_id", id)) as unknown as {
     data: Array<{ membership_id: string }> | null;
   };
   const previousAssigneeIds = new Set(
@@ -993,8 +996,8 @@ export async function updateBookingAction(
       hourly_rate_cents: parsed.data.hourly_rate_cents ?? null,
       address: parsed.data.address ?? null,
       notes: parsed.data.notes ?? null,
-      splits: updateSplits as never,
-    } as never)
+      splits: updateSplits,
+    })
     .eq("id", id);
 
   if (error) return { errors: { _form: error.message }, values: raw };
@@ -1087,7 +1090,7 @@ export async function updateBookingAction(
       assigned_to: updateEffectiveAssignedTo,
       address: parsed.data.address ?? null,
       notes: parsed.data.notes ?? null,
-      splits: updateSplits as never,
+      splits: updateSplits,
     };
 
     // Check whether the owner is also changing the recurrence schedule.
@@ -1152,14 +1155,14 @@ export async function updateBookingAction(
         await (admin
           .from("bookings")
           .delete()
-          .eq("series_id" as never, seriesId as never)
+          .eq("series_id", seriesId)
           .eq("organization_id", membership.organization_id)
           .neq("id", id)
           .gte("scheduled_at", seriesScheduledAt)
           .not(
-            "status" as never,
-            "in" as never,
-            '("completed","cancelled")' as never,
+            "status",
+            "in",
+            '("completed","cancelled")',
           ) as unknown as Promise<unknown>);
 
         // Generate new occurrences strictly after the current booking's
@@ -1200,7 +1203,7 @@ export async function updateBookingAction(
             assigned_to: updateEffectiveAssignedTo,
             scheduled_at,
             duration_minutes: parsed.data.duration_minutes,
-            service_type: seriesServiceTypeEnum,
+            service_type: seriesServiceTypeEnum as ServiceTypeEnum,
             service_type_id: updateServiceExtras.service_type_id,
             service_type_label: updateServiceExtras.service_type_label,
             status: "confirmed" as const,
@@ -1208,13 +1211,13 @@ export async function updateBookingAction(
             hourly_rate_cents: parsed.data.hourly_rate_cents ?? null,
             address: parsed.data.address ?? null,
             notes: parsed.data.notes ?? null,
-            splits: updateSplits as never,
+            splits: updateSplits,
             series_id: seriesId,
           }));
 
           const { data: regenerated } = (await admin
             .from("bookings")
-            .insert(bookingRows as never)
+            .insert(bookingRows)
             .select("id") as unknown as {
             data: Array<{ id: string }> | null;
           });
@@ -1245,27 +1248,27 @@ export async function updateBookingAction(
       const { data: siblingIds } = (await admin
         .from("bookings")
         .select("id")
-        .eq("series_id" as never, seriesId as never)
+        .eq("series_id", seriesId)
         .eq("organization_id", membership.organization_id)
         .neq("id", id)
         .gte("scheduled_at", seriesScheduledAt)
         .not(
-          "status" as never,
-          "in" as never,
-          '("completed","cancelled")' as never,
+          "status",
+          "in",
+          '("completed","cancelled")',
         )) as unknown as { data: Array<{ id: string }> | null };
 
       await (admin
         .from("bookings")
-        .update(propagatableFields as never)
-        .eq("series_id" as never, seriesId as never)
+        .update(propagatableFields)
+        .eq("series_id", seriesId)
         .eq("organization_id", membership.organization_id)
         .neq("id", id)
         .gte("scheduled_at", seriesScheduledAt)
         .not(
-          "status" as never,
-          "in" as never,
-          '("completed","cancelled")' as never,
+          "status",
+          "in",
+          '("completed","cancelled")',
         ) as unknown as Promise<unknown>);
 
       // Rebuild booking_assignees for ALL siblings in a single bulk
@@ -1288,10 +1291,10 @@ export async function updateBookingAction(
     // (when changed) the new schedule so the nightly extend cron picks up
     // the right rule for future generations.
     await (admin
-      .from("booking_series" as never)
-      .update({ ...propagatableFields, ...scheduleFields } as never)
-      .eq("id" as never, seriesId as never)
-      .eq("organization_id" as never, membership.organization_id as never) as unknown as Promise<unknown>);
+      .from("booking_series")
+      .update({ ...propagatableFields, ...scheduleFields })
+      .eq("id", seriesId)
+      .eq("organization_id", membership.organization_id) as unknown as Promise<unknown>);
 
     console.log(`[series-update] saved changes to series ${seriesId}`);
   }
@@ -1351,7 +1354,7 @@ export async function updateBookingAction(
       // Clear the stored event ID so a later un-cancel re-creates clean.
       await supabase
         .from("bookings")
-        .update({ google_calendar_event_id: null } as never)
+        .update({ google_calendar_event_id: null })
         .eq("id", id);
     }
     // Clear member calendar events with awaited cleanup so the mapping
@@ -1454,7 +1457,7 @@ export async function duplicateBookingAction(id: string) {
       hourly_rate_cents: number | null;
       address: string | null;
       notes: string | null;
-      splits: unknown;
+      splits: Json;
     } | null;
   };
 
@@ -1469,16 +1472,16 @@ export async function duplicateBookingAction(id: string) {
       assigned_to: source.assigned_to ?? null,
       scheduled_at: source.scheduled_at,
       duration_minutes: source.duration_minutes,
-      service_type: source.service_type as never,
+      service_type: source.service_type as ServiceTypeEnum,
       service_type_id: source.service_type_id,
       service_type_label: source.service_type_label,
-      status: "pending",
+      status: "pending" as const,
       total_cents: source.total_cents,
       hourly_rate_cents: source.hourly_rate_cents ?? null,
       address: source.address ?? null,
       notes: source.notes ?? null,
-      splits: (source.splits ?? []) as never,
-    } as never)
+      splits: (source.splits ?? []),
+    })
     .select("id")
     .single();
 
@@ -1488,11 +1491,11 @@ export async function duplicateBookingAction(id: string) {
   // so a duplicated split booking lands in the same per-segment state
   // as the source, not a degraded multi-crew-no-segments state.
   const { data: assignees } = (await supabase
-    .from("booking_assignees" as never)
+    .from("booking_assignees")
     .select(
       "membership_id, is_primary, split_index, split_start_offset_minutes, split_duration_minutes",
     )
-    .eq("booking_id" as never, id)) as unknown as {
+    .eq("booking_id", id)) as unknown as {
     data: Array<{
       membership_id: string;
       is_primary: boolean;
@@ -1503,7 +1506,7 @@ export async function duplicateBookingAction(id: string) {
   };
 
   if (assignees && assignees.length > 0) {
-    await supabase.from("booking_assignees" as never).insert(
+    await supabase.from("booking_assignees").insert(
       assignees.map((a) => ({
         booking_id: copy.id,
         membership_id: a.membership_id,
@@ -1512,7 +1515,7 @@ export async function duplicateBookingAction(id: string) {
         split_index: a.split_index,
         split_start_offset_minutes: a.split_start_offset_minutes,
         split_duration_minutes: a.split_duration_minutes,
-      })) as never,
+      })),
     );
   }
 
@@ -1587,9 +1590,9 @@ export async function markBookingCompleteAction(id: string) {
 
   const { error } = await supabase
     .from("bookings")
-    .update({ status: "completed" } as never)
+    .update({ status: "completed" })
     .eq("id", id)
-    .eq("organization_id" as never, membership.organization_id as never);
+    .eq("organization_id", membership.organization_id);
 
   if (error) return;
 
@@ -1632,7 +1635,7 @@ export async function deleteBookingAction(formData: FormData) {
     const { data: siblings } = (await admin
       .from("bookings")
       .select("id, google_calendar_event_id")
-      .eq("series_id" as never, existing.series_id as never)
+      .eq("series_id", existing.series_id)
       .eq(
         "organization_id",
         membership.organization_id,
@@ -1643,7 +1646,7 @@ export async function deleteBookingAction(formData: FormData) {
     const { error: delBookingsErr, count: delBookingsCount } = await admin
       .from("bookings")
       .delete({ count: "exact" })
-      .eq("series_id" as never, existing.series_id as never)
+      .eq("series_id", existing.series_id)
       .eq("organization_id", membership.organization_id);
     if (delBookingsErr) {
       console.error(
@@ -1657,12 +1660,12 @@ export async function deleteBookingAction(formData: FormData) {
     );
 
     const { error: delSeriesErr } = (await admin
-      .from("booking_series" as never)
+      .from("booking_series")
       .delete()
-      .eq("id" as never, existing.series_id as never)
+      .eq("id", existing.series_id)
       .eq(
-        "organization_id" as never,
-        membership.organization_id as never,
+        "organization_id",
+        membership.organization_id,
       )) as unknown as { error: { message: string } | null };
     if (delSeriesErr) {
       console.error(
@@ -1766,9 +1769,9 @@ export async function skipBookingOccurrenceAction(formData: FormData) {
 
   // Pull the current skip_dates, append if not already there, write back.
   const { data: seriesRow } = (await supabase
-    .from("booking_series" as never)
+    .from("booking_series")
     .select("skip_dates")
-    .eq("id" as never, booking.series_id as never)
+    .eq("id", booking.series_id)
     .maybeSingle()) as unknown as {
     data: { skip_dates: string[] | null } | null;
   };
@@ -1776,12 +1779,12 @@ export async function skipBookingOccurrenceAction(formData: FormData) {
   const existingSkips = seriesRow?.skip_dates ?? [];
   if (!existingSkips.includes(skipDate)) {
     await (supabase
-      .from("booking_series" as never)
-      .update({ skip_dates: [...existingSkips, skipDate] } as never)
-      .eq("id" as never, booking.series_id as never)
+      .from("booking_series")
+      .update({ skip_dates: [...existingSkips, skipDate] })
+      .eq("id", booking.series_id)
       .eq(
-        "organization_id" as never,
-        membership.organization_id as never,
+        "organization_id",
+        membership.organization_id,
       ) as unknown as Promise<unknown>);
   }
 
@@ -1832,10 +1835,10 @@ export async function cancelSeriesAction(formData: FormData) {
   // Deactivate the series — explicit org filter guards against series_id
   // spoofing even though the supabase client applies RLS.
   await (supabase
-    .from("booking_series" as never)
-    .update({ active: false } as never)
-    .eq("id" as never, seriesId as never)
-    .eq("organization_id" as never, membership.organization_id as never) as unknown as Promise<unknown>);
+    .from("booking_series")
+    .update({ active: false })
+    .eq("id", seriesId)
+    .eq("organization_id", membership.organization_id) as unknown as Promise<unknown>);
 
   // Pull the affected occurrences FIRST so we have their event IDs.
   // After the status flip the booking rows still exist but their GCal
@@ -1844,21 +1847,21 @@ export async function cancelSeriesAction(formData: FormData) {
   const { data: affected } = (await supabase
     .from("bookings")
     .select("id, google_calendar_event_id")
-    .eq("series_id" as never, seriesId as never)
-    .eq("organization_id" as never, membership.organization_id as never)
-    .in("status" as never, ["pending", "confirmed"] as never)
-    .gte("scheduled_at" as never, now as never)) as unknown as {
+    .eq("series_id", seriesId)
+    .eq("organization_id", membership.organization_id)
+    .in("status", ["pending", "confirmed"])
+    .gte("scheduled_at", now)) as unknown as {
     data: Array<{ id: string; google_calendar_event_id: string | null }> | null;
   };
 
   // Flip status to cancelled.
   await (supabase
     .from("bookings")
-    .update({ status: "cancelled" } as never)
-    .eq("series_id" as never, seriesId as never)
-    .eq("organization_id" as never, membership.organization_id as never)
-    .in("status" as never, ["pending", "confirmed"] as never)
-    .gte("scheduled_at" as never, now as never) as unknown as Promise<unknown>);
+    .update({ status: "cancelled" })
+    .eq("series_id", seriesId)
+    .eq("organization_id", membership.organization_id)
+    .in("status", ["pending", "confirmed"])
+    .gte("scheduled_at", now) as unknown as Promise<unknown>);
 
   // Delete the corresponding calendar events. Order matters: the booking
   // rows still exist (cancelled, not deleted), so booking_member_calendar_events
@@ -1893,7 +1896,7 @@ export async function cancelSeriesAction(formData: FormData) {
     // Clear stored event IDs so a later un-cancel re-creates cleanly.
     await supabase
       .from("bookings")
-      .update({ google_calendar_event_id: null } as never)
+      .update({ google_calendar_event_id: null })
       .in(
         "id",
         affected.map((r) => r.id),
@@ -2126,14 +2129,14 @@ export async function assignBookingCrewAction(
     const { data: siblings } = await (admin
       .from("bookings")
       .select("id")
-      .eq("series_id" as never, seriesId as never)
-      .eq("organization_id" as never, membership.organization_id as never)
-      .gte("scheduled_at" as never, seriesScheduledAt as never)
-      .neq("id" as never, id as never)
+      .eq("series_id", seriesId)
+      .eq("organization_id", membership.organization_id)
+      .gte("scheduled_at", seriesScheduledAt)
+      .neq("id", id)
       .not(
-        "status" as never,
-        "in" as never,
-        '("completed","cancelled")' as never,
+        "status",
+        "in",
+        '("completed","cancelled")',
       )) as unknown as { data: Array<{ id: string }> | null };
 
     const siblingIds = (siblings ?? []).map((s) => s.id);
@@ -2142,17 +2145,17 @@ export async function assignBookingCrewAction(
       // Bulk-update assigned_to on all future siblings.
       await (admin
         .from("bookings")
-        .update({ assigned_to: primaryId } as never)
-        .in("id" as never, siblingIds as never)) as unknown as Promise<unknown>;
+        .update({ assigned_to: primaryId })
+        .in("id", siblingIds)) as unknown as Promise<unknown>;
 
       // Replace booking_assignees for each sibling so additional crew
       // propagates consistently with the current booking.
       await (admin
-        .from("booking_assignees" as never)
+        .from("booking_assignees")
         .delete()
         .in(
-          "booking_id" as never,
-          siblingIds as never,
+          "booking_id",
+          siblingIds,
         )) as unknown as Promise<unknown>;
 
       const assigneeRows: Array<{
@@ -2183,8 +2186,8 @@ export async function assignBookingCrewAction(
 
       if (assigneeRows.length > 0) {
         await (admin
-          .from("booking_assignees" as never)
-          .insert(assigneeRows as never)) as unknown as Promise<unknown>;
+          .from("booking_assignees")
+          .insert(assigneeRows)) as unknown as Promise<unknown>;
       }
     }
 
@@ -2192,10 +2195,10 @@ export async function assignBookingCrewAction(
     // inherit the new primary assignee. Admin client bypasses RLS so we
     // must filter by organization_id explicitly.
     await (admin
-      .from("booking_series" as never)
-      .update({ assigned_to: primaryId } as never)
-      .eq("id" as never, seriesId as never)
-      .eq("organization_id" as never, membership.organization_id as never)) as unknown as Promise<unknown>;
+      .from("booking_series")
+      .update({ assigned_to: primaryId })
+      .eq("id", seriesId)
+      .eq("organization_id", membership.organization_id)) as unknown as Promise<unknown>;
   }
 
   revalidatePath("/app/bookings");
