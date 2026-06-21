@@ -9,6 +9,10 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { sendPushToMembership, sendPushToOrg } from "@/lib/push";
 import type { CurrencyCode } from "@/lib/format";
 import { resolveAutomationEnabled } from "@/lib/automation-defaults";
+import type { Database } from "@/lib/supabase/types";
+
+type ServiceTypeEnum = Database["public"]["Enums"]["service_type"];
+type BonusInsert = Database["public"]["Tables"]["bonuses"]["Insert"];
 
 const admin = () => createSupabaseAdminClient();
 
@@ -304,7 +308,7 @@ export async function autoInvoiceOnJobComplete(
         status: "draft",
         amount_cents: subtotalCents,
         due_date: dueDate.toISOString().split("T")[0],
-      } as never)
+      })
       .select("id, number")
       .single()) as unknown as {
       data: { id: string; number: string | null } | null;
@@ -348,7 +352,7 @@ export async function autoInvoiceOnJobComplete(
             tax_rate_bps: rateBps,
             tax_amount_cents: taxAmountCents,
             tax_label: orgData?.default_tax_label ?? null,
-          } as never)
+          })
           .eq("id", invoice.id);
         if (taxErr) {
           console.error(
@@ -374,7 +378,7 @@ export async function autoInvoiceOnJobComplete(
       quantity: 1,
       unit_price_cents: subtotalCents,
       sort_order: 0,
-    } as never);
+    });
 
     if (liErr) {
       console.error(
@@ -448,10 +452,10 @@ export async function notifyUpcomingJobs() {
     // Dedupe — check what's already been notified
     const cutoff = new Date(now.getTime() - 2 * 60 * 60 * 1000).toISOString();
     const { data: existingNotifs } = (await db
-      .from("notifications" as never)
+      .from("notifications")
       .select("href")
-      .eq("type" as never, "general" as never)
-      .gte("created_at" as never, cutoff as never)
+      .eq("type", "general")
+      .gte("created_at", cutoff)
       .limit(500)) as unknown as {
       data: Array<{ href: string | null }> | null;
     };
@@ -482,7 +486,7 @@ export async function notifyUpcomingJobs() {
 
     if (rows.length === 0) return 0;
 
-    await (db.from("notifications" as never).insert(rows as never) as unknown as Promise<unknown>);
+    await (db.from("notifications").insert(rows) as unknown as Promise<unknown>);
 
     // Fire push notifications to each assigned employee
     await Promise.allSettled(
@@ -520,7 +524,7 @@ export async function autoAssignTraining(
       .from("training_modules")
       .select("id")
       .eq("organization_id", organizationId)
-      .eq("status" as never, "published" as never) as unknown as Promise<{
+      .eq("status", "published") as unknown as Promise<{
       data: Array<{ id: string }> | null;
     }>);
 
@@ -548,7 +552,7 @@ export async function autoAssignTraining(
     // Insert + return ids so we can fire a per-assignment email for each.
     const { data: inserted } = await (db
       .from("training_assignments")
-      .insert(rows as never)
+      .insert(rows)
       .select("id") as unknown as Promise<{
       data: Array<{ id: string }> | null;
     }>);
@@ -587,7 +591,7 @@ export async function autoBookingOnEstimateApproval(estimateId: string) {
     const { data: existing } = await db
       .from("bookings")
       .select("id")
-      .eq("estimate_id" as never, estimateId as never)
+      .eq("estimate_id", estimateId)
       .limit(1)
       .maybeSingle();
 
@@ -611,7 +615,7 @@ export async function autoBookingOnEstimateApproval(estimateId: string) {
       status: "pending",
       total_cents: estimate.total_cents,
       notes: estimate.service_description ?? "",
-    } as never).select("id").single() as unknown as Promise<{
+    }).select("id").single() as unknown as Promise<{
       data: { id: string } | null;
     }>));
 
@@ -626,11 +630,11 @@ export async function autoBookingOnEstimateApproval(estimateId: string) {
       href: bookingHref,
     };
 
-    await (db.from("notifications" as never).insert({
+    await (db.from("notifications").insert({
       organization_id: estimate.organization_id,
       type: "general",
       ...notifPayload,
-    } as never) as unknown as Promise<unknown>);
+    }) as unknown as Promise<unknown>);
 
     // Push to all org members (org-wide notification)
     sendPushToOrg(estimate.organization_id, notifPayload).catch(() => {});
@@ -666,11 +670,11 @@ export async function alertStaleEstimates() {
     cutoff.setDate(cutoff.getDate() - 7);
 
     const { data: existingNotifs } = (await db
-      .from("notifications" as never)
+      .from("notifications")
       .select("href")
-      .eq("type" as never, "general" as never)
-      .gte("created_at" as never, cutoff.toISOString() as never)
-      .ilike("title" as never, "%stale estimate%" as never)
+      .eq("type", "general")
+      .gte("created_at", cutoff.toISOString())
+      .ilike("title", "%stale estimate%")
       .limit(500)) as unknown as {
       data: Array<{ href: string | null }> | null;
     };
@@ -693,7 +697,7 @@ export async function alertStaleEstimates() {
       };
     });
 
-    await (db.from("notifications" as never).insert(rows as never) as unknown as Promise<unknown>);
+    await (db.from("notifications").insert(rows) as unknown as Promise<unknown>);
 
     // Push to each org (org-wide notifications)
     const orgIds = [...new Set(rows.map((r) => r.organization_id))];
@@ -733,11 +737,11 @@ export async function postSystemFeedEvent(
     const enabled = await isAutomationEnabled(organizationId, "system_feed_events");
     if (!enabled) return;
 
-    await (db.from("feed_posts" as never).insert({
+    await (db.from("feed_posts").insert({
       organization_id: organizationId,
       author_id: authorMembershipId,
       body: message,
-    } as never) as unknown as Promise<unknown>);
+    }) as unknown as Promise<unknown>);
   } catch (err) {
     console.error("[auto] postSystemFeedEvent failed:", err);
   }
@@ -833,7 +837,7 @@ export async function sendBookingConfirmation(bookingId: string) {
     if (sent) {
       await db
         .from("bookings")
-        .update({ confirmation_email_sent_at: new Date().toISOString() } as never)
+        .update({ confirmation_email_sent_at: new Date().toISOString() })
         .eq("id", booking.id);
     }
 
@@ -926,14 +930,14 @@ export async function sendBookingRescheduled(
         href: `/field/jobs/${bookingId}`,
       }).catch(() => {});
       // In-app notification row so it lingers in their feed.
-      (db.from("notifications" as never).insert({
+      (db.from("notifications").insert({
         organization_id: booking.organization_id,
         type: "general",
         recipient_membership_id: booking.assigned_to,
         title: "Booking rescheduled",
         body: `${serviceDisplayName} moved to ${when}`,
         href: `/field/jobs/${bookingId}`,
-      } as never) as unknown as Promise<unknown>).catch(() => {});
+      }) as unknown as Promise<unknown>).catch(() => {});
     }
 
     if (!booking.client?.email) return;
@@ -980,7 +984,7 @@ export async function sendBookingRescheduled(
     if (sent) {
       await db
         .from("bookings")
-        .update({ rescheduled_email_sent_at: new Date().toISOString() } as never)
+        .update({ rescheduled_email_sent_at: new Date().toISOString() })
         .eq("id", booking.id);
     }
 
@@ -1033,14 +1037,14 @@ export async function notifyBookingCancelledToEmployee(bookingId: string) {
     const title = "Job cancelled";
     const body = `${serviceDisplay} for ${booking.client?.name ?? "a client"} on ${when} was cancelled. You don't need to go.`;
 
-    await (db.from("notifications" as never).insert({
+    await (db.from("notifications").insert({
       organization_id: booking.organization_id,
       type: "general",
       recipient_membership_id: booking.assigned_to,
       title,
       body,
       href: `/field/jobs`,
-    } as never) as unknown as Promise<unknown>);
+    }) as unknown as Promise<unknown>);
 
     sendPushToMembership(booking.assigned_to, {
       title,
@@ -1133,7 +1137,7 @@ export async function sendBookingCancelledToClient(bookingId: string) {
     if (sent) {
       await db
         .from("bookings")
-        .update({ cancelled_email_sent_at: new Date().toISOString() } as never)
+        .update({ cancelled_email_sent_at: new Date().toISOString() })
         .eq("id", booking.id);
     }
 
@@ -1285,7 +1289,7 @@ export async function sendRebookingPrompts(): Promise<{
     if (ok) {
       await db
         .from("clients")
-        .update({ last_rebook_prompt_at: new Date().toISOString() } as never)
+        .update({ last_rebook_prompt_at: new Date().toISOString() })
         .eq("id", client.id);
       sent += 1;
       console.log(`[auto] Rebooking prompt sent to ${client.email}`);
@@ -1423,7 +1427,7 @@ export async function sendStaleEstimateFollowups(): Promise<{
           : { client_followup_7d_sent_at: stamp };
       await db
         .from("estimates")
-        .update(update as never)
+        .update(update)
         .eq("id", est.id);
 
       if (stage === "day14") sent14d += 1;
@@ -1561,7 +1565,7 @@ export async function sendOverdueReminders(): Promise<{
     if (ok) {
       await db
         .from("invoices")
-        .update({ overdue_reminder_sent_at: new Date().toISOString() } as never)
+        .update({ overdue_reminder_sent_at: new Date().toISOString() })
         .eq("id", inv.id);
       sent += 1;
       console.log(`[auto] Overdue reminder sent for invoice ${inv.id} to ${inv.client.email}`);
@@ -1655,7 +1659,7 @@ export async function sendBookingReviewRequests(): Promise<{
       )
     `)
     .eq("status", "completed")
-    .is("review_request_sent_at" as never, null as never)
+    .is("review_request_sent_at", null)
     .gte("scheduled_at", earliestCutoff)
     .lte("scheduled_at", latestCutoff)
     .limit(200) as unknown as {
@@ -1772,9 +1776,9 @@ export async function sendBookingReviewRequests(): Promise<{
         .update({
           review_token: reviewToken,
           review_request_sent_at: new Date().toISOString(),
-        } as never)
+        })
         .eq("id", booking.id)
-        .is("review_request_sent_at" as never, null as never)
+        .is("review_request_sent_at", null)
         .select("id")) as unknown as {
         data: Array<{ id: string }> | null;
         error: { message: string } | null;
@@ -1835,7 +1839,7 @@ export async function sendBookingReviewRequests(): Promise<{
           .update({
             review_request_sent_at: null,
             review_token: null,
-          } as never)
+          })
           .eq("id", booking.id);
         skipped += 1;
       }
@@ -1942,8 +1946,8 @@ export async function sendGbpReviewRequests(): Promise<{
     .eq("status", "completed")
     .gte("scheduled_at", earliestFirstJob)
     .lte("scheduled_at", latestFirstJob)
-    .eq("client.gbp_review_state" as never, "never_asked" as never)
-    .not("client.email" as never, "is" as never, null as never)
+    .eq("client.gbp_review_state", "never_asked")
+    .not("client.email", "is", null)
     .limit(500)) as unknown as {
     data: Array<{
       id: string;
@@ -2020,9 +2024,9 @@ export async function sendGbpReviewRequests(): Promise<{
           gbp_next_reminder_at: nextReminderAt,
           gbp_redirect_token: redirectToken,
           gbp_unsubscribe_token: unsubToken,
-        } as never)
+        })
         .eq("id", client.id)
-        .eq("gbp_review_state" as never, "never_asked" as never)
+        .eq("gbp_review_state", "never_asked")
         .select("id")) as unknown as {
         data: Array<{ id: string }> | null;
         error: { message: string } | null;
@@ -2064,7 +2068,7 @@ export async function sendGbpReviewRequests(): Promise<{
             gbp_first_asked_at: null,
             gbp_last_asked_at: null,
             gbp_next_reminder_at: null,
-          } as never)
+          })
           .eq("id", client.id);
         skipped += 1;
       }
@@ -2087,9 +2091,9 @@ export async function sendGbpReviewRequests(): Promise<{
     .select(
       "id, organization_id, name, email, gbp_reminders_sent, gbp_last_asked_at, gbp_next_reminder_at, gbp_redirect_token, gbp_unsubscribe_token",
     )
-    .eq("gbp_review_state" as never, "pending" as never)
-    .lte("gbp_next_reminder_at" as never, nowIso as never)
-    .not("email" as never, "is" as never, null as never)
+    .eq("gbp_review_state", "pending")
+    .lte("gbp_next_reminder_at", nowIso)
+    .not("email", "is", null)
     .limit(500)) as unknown as {
     data: Array<{
       id: string;
@@ -2136,9 +2140,9 @@ export async function sendGbpReviewRequests(): Promise<{
         .update({
           gbp_review_state: "lapsed",
           gbp_next_reminder_at: null,
-        } as never)
+        })
         .eq("id", c.id)
-        .eq("gbp_review_state" as never, "pending" as never);
+        .eq("gbp_review_state", "pending");
       lapsed += 1;
       continue;
     }
@@ -2161,10 +2165,10 @@ export async function sendGbpReviewRequests(): Promise<{
         gbp_reminders_sent: nextCount,
         gbp_last_asked_at: nowIso,
         gbp_next_reminder_at: nextReminderAt,
-      } as never)
+      })
       .eq("id", c.id)
-      .eq("gbp_review_state" as never, "pending" as never)
-      .eq("gbp_reminders_sent" as never, c.gbp_reminders_sent as never)
+      .eq("gbp_review_state", "pending")
+      .eq("gbp_reminders_sent", c.gbp_reminders_sent)
       .select("id")) as unknown as {
       data: Array<{ id: string }> | null;
     };
@@ -2207,7 +2211,7 @@ export async function sendGbpReviewRequests(): Promise<{
             gbp_reminders_sent: c.gbp_reminders_sent,
             gbp_next_reminder_at: c.gbp_next_reminder_at ?? nowIso,
             gbp_last_asked_at: c.gbp_last_asked_at,
-          } as never)
+          })
           .eq("id", c.id);
         skipped += 1;
       }
@@ -2316,7 +2320,7 @@ export async function sendUpcomingBookingReminders(): Promise<{
       id, organization_id, scheduled_at, service_type, service_type_label, address,
       client:clients ( name, email, phone )
     `)
-    .is("client_reminder_sent_at" as never, null as never)
+    .is("client_reminder_sent_at", null)
     .in("status", ["pending", "confirmed"])
     .gte("scheduled_at", windowStart)
     .lte("scheduled_at", windowEnd) as unknown as {
@@ -2409,7 +2413,7 @@ export async function sendUpcomingBookingReminders(): Promise<{
     if (ok) {
       await db
         .from("bookings")
-        .update({ client_reminder_sent_at: new Date().toISOString() } as never)
+        .update({ client_reminder_sent_at: new Date().toISOString() })
         .eq("id", booking.id);
       sent += 1;
       console.log(
@@ -2544,7 +2548,7 @@ export async function sendEstimateToClient(
         .update({
           public_token: publicToken,
           expires_at: expiresAt,
-        } as never)
+        })
         .eq("id", estimateId);
     }
 
@@ -2631,7 +2635,7 @@ export async function sendEstimateToClient(
           // Bump to "sent" for draft estimates. Don't downgrade
           // approved/declined if the admin re-sends.
           ...(estimate.status === "draft" ? { status: "sent" } : {}),
-        } as never)
+        })
         .eq("id", estimateId);
     }
 
@@ -2686,14 +2690,14 @@ export async function notifyBookingAssignment(
     const title = "New shift assigned — tap to confirm";
     const body = `${humanize(meta.serviceType)} for ${meta.clientName} on ${when}${meta.address ? ` — ${meta.address}` : ""}. Open the job to accept or decline.`;
 
-    await (db.from("notifications" as never).insert({
+    await (db.from("notifications").insert({
       organization_id: organizationId,
       recipient_membership_id: assignedTo,
       type: "general",
       title,
       body,
       href: `/field/jobs/${bookingId}`,
-    } as never) as unknown as Promise<unknown>);
+    }) as unknown as Promise<unknown>);
 
     sendPushToMembership(assignedTo, { title, body, href: `/field/jobs/${bookingId}` }).catch(() => {});
 
@@ -2839,7 +2843,7 @@ export async function autoOnInvoicePaid(invoiceId: string) {
       reviewToken = generateClaimToken();
       await db
         .from("invoices")
-        .update({ review_token: reviewToken } as never)
+        .update({ review_token: reviewToken })
         .eq("id", invoiceId);
     }
 
@@ -2893,13 +2897,13 @@ export async function notifyReviewSubmitted(
     const title = `New ${review.rating}-star review`;
     const body = `${review.clientName} left a ${stars} review${review.employeeName ? ` for ${review.employeeName}` : ""}.`;
 
-    await (db.from("notifications" as never).insert({
+    await (db.from("notifications").insert({
       organization_id: organizationId,
       type: "general",
       title,
       body,
       href: `/app/reviews`,
-    } as never) as unknown as Promise<unknown>);
+    }) as unknown as Promise<unknown>);
 
     sendPushToOrg(organizationId, { title, body, href: "/app/reviews" }).catch(() => {});
     console.log(`[auto] Review notification sent for ${organizationId}`);
@@ -2966,14 +2970,14 @@ export async function autoExtendRecurringSeries(): Promise<number> {
     // tombstoned by the purge flow. Otherwise the cron wastes cycles on
     // dead tenants and eventually tries to insert with FK violations.
     const { data: series } = (await db
-      .from("booking_series" as never)
+      .from("booking_series")
       .select(
         `*, organization:organizations!inner(deleted_at)`,
       )
-      .eq("active" as never, true as never)
+      .eq("active", true)
       .is(
-        "organization.deleted_at" as never,
-        null as never,
+        "organization.deleted_at",
+        null,
       )) as unknown as {
       data: Array<{
         id: string;
@@ -3017,8 +3021,8 @@ export async function autoExtendRecurringSeries(): Promise<number> {
       const { data: latest } = await db
         .from("bookings")
         .select("scheduled_at")
-        .eq("series_id" as never, s.id as never)
-        .is("archived_at" as never, null as never)
+        .eq("series_id", s.id)
+        .is("archived_at", null)
         .order("scheduled_at", { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -3062,7 +3066,7 @@ export async function autoExtendRecurringSeries(): Promise<number> {
         assigned_to: s.assigned_to,
         scheduled_at,
         duration_minutes: s.duration_minutes,
-        service_type: s.service_type,
+        service_type: s.service_type as ServiceTypeEnum,
         // Carry the FK + denormalized label forward so cron-generated
         // bookings display the org's custom service name (and not the
         // humanized enum). NULL when the series predates the migration
@@ -3080,7 +3084,7 @@ export async function autoExtendRecurringSeries(): Promise<number> {
 
       const { data: inserted } = (await (db
         .from("bookings")
-        .insert(rows as never)
+        .insert(rows)
         .select("id, scheduled_at") as unknown as Promise<{
         data: Array<{ id: string; scheduled_at: string }> | null;
       }>));
@@ -3094,17 +3098,17 @@ export async function autoExtendRecurringSeries(): Promise<number> {
         const { data: seriesBookings } = (await db
           .from("bookings")
           .select("id")
-          .eq("series_id" as never, s.id as never)
+          .eq("series_id", s.id)
           .limit(2000)) as unknown as { data: Array<{ id: string }> | null };
         const seriesIds = (seriesBookings ?? []).map((b) => b.id);
         let seriesAccepted = false;
         if (seriesIds.length > 0) {
           const { count } = (await db
-            .from("booking_assignees" as never)
+            .from("booking_assignees")
             .select("id", { count: "exact", head: true })
-            .eq("membership_id" as never, s.assigned_to as never)
-            .eq("acceptance_status" as never, "accepted" as never)
-            .in("booking_id" as never, seriesIds as never)) as unknown as {
+            .eq("membership_id", s.assigned_to)
+            .eq("acceptance_status", "accepted")
+            .in("booking_id", seriesIds)) as unknown as {
             count: number | null;
           };
           seriesAccepted = (count ?? 0) > 0;
@@ -3113,17 +3117,17 @@ export async function autoExtendRecurringSeries(): Promise<number> {
         const junctionRows = inserted.map((b) => ({
           organization_id: s.organization_id,
           booking_id: b.id,
-          membership_id: s.assigned_to,
+          membership_id: s.assigned_to as string,
           is_primary: true,
           acceptance_status: status,
           responded_at: seriesAccepted ? new Date().toISOString() : null,
         }));
         await (db
-          .from("booking_assignees" as never)
-          .upsert(junctionRows as never, {
+          .from("booking_assignees")
+          .upsert(junctionRows, {
             onConflict: "booking_id,membership_id",
             ignoreDuplicates: true,
-          } as never) as unknown as Promise<unknown>);
+          }) as unknown as Promise<unknown>);
       }
 
       // Sync to calendar
@@ -3217,7 +3221,7 @@ export async function autoComputeReviewBonuses(): Promise<number> {
         (existing ?? []).map((b) => b.employee_id),
       );
 
-      const toCreate: unknown[] = [];
+      const toCreate: BonusInsert[] = [];
       for (const [employeeId, bucket] of byEmployee.entries()) {
         if (bucket.count < r.min_reviews_count) continue;
         const avg = bucket.sum / bucket.count;
@@ -3236,7 +3240,7 @@ export async function autoComputeReviewBonuses(): Promise<number> {
       }
 
       if (toCreate.length > 0) {
-        await (db.from("bonuses").insert(toCreate as never) as unknown as Promise<unknown>);
+        await (db.from("bonuses").insert(toCreate) as unknown as Promise<unknown>);
         totalCreated += toCreate.length;
 
         // Notify the org that bonuses were computed
@@ -3280,7 +3284,7 @@ export async function sendUnassignedBookingAlerts(): Promise<{
     .from("bookings")
     .select("id, organization_id, scheduled_at, service_type, service_type_label, address, client:clients ( name )")
     .is("assigned_to", null)
-    .is("unassigned_alert_sent_at" as never, null as never)
+    .is("unassigned_alert_sent_at", null)
     .in("status", ["pending", "confirmed"])
     .gte("scheduled_at", new Date(now).toISOString())
     .lte("scheduled_at", windowEnd) as unknown as {
@@ -3306,9 +3310,9 @@ export async function sendUnassignedBookingAlerts(): Promise<{
   // for every split-shift booking in the org. Filter them out.
   const candidateIds = rawCandidates.map((b) => b.id);
   const { data: assigneeRows } = await db
-    .from("booking_assignees" as never)
+    .from("booking_assignees")
     .select("booking_id")
-    .in("booking_id" as never, candidateIds as never) as unknown as {
+    .in("booking_id", candidateIds) as unknown as {
     data: Array<{ booking_id: string }> | null;
   };
   const hasCrew = new Set(
@@ -3385,7 +3389,7 @@ export async function sendUnassignedBookingAlerts(): Promise<{
     // automatically if the booking later gets an assignee.
     await db
       .from("bookings")
-      .update({ unassigned_alert_sent_at: new Date().toISOString() } as never)
+      .update({ unassigned_alert_sent_at: new Date().toISOString() })
       .in(
         "id",
         bookings.map((b) => b.id),
@@ -3421,7 +3425,7 @@ export async function sendPayoutNotification(args: {
     const { data: org } = await db
       .from("organizations")
       .select("id, name")
-      .eq("stripe_account_id" as never, args.stripeAccountId as never)
+      .eq("stripe_account_id", args.stripeAccountId)
       .maybeSingle() as unknown as {
       data: { id: string; name: string } | null;
     };
@@ -3501,7 +3505,7 @@ export async function notifyPlatformPaymentFailed(
     const { data: sub } = (await db
       .from("subscriptions")
       .select("organization_id")
-      .eq("stripe_subscription_id" as never, stripeSubscriptionId as never)
+      .eq("stripe_subscription_id", stripeSubscriptionId)
       .maybeSingle()) as unknown as {
       data: { organization_id: string } | null;
     };
@@ -3624,8 +3628,8 @@ export async function sendWeeklyOpsDigests(): Promise<{
         .lte("scheduled_at", end.toISOString()),
       db.from("bookings").select("id", { count: "exact", head: true })
         .eq("organization_id", org.id).eq("status", "cancelled")
-        .gte("updated_at" as never, start.toISOString() as never)
-        .lte("updated_at" as never, end.toISOString() as never),
+        .gte("updated_at", start.toISOString())
+        .lte("updated_at", end.toISOString()),
       db.from("reviews").select("rating").eq("organization_id", org.id)
         .gte("created_at", start.toISOString())
         .lte("created_at", end.toISOString()) as unknown as Promise<{
@@ -3779,8 +3783,8 @@ export async function sendMonthlyOpsDigests(): Promise<{ orgsSent: number }> {
         .lt("scheduled_at", end.toISOString()),
       db.from("bookings").select("id", { count: "exact", head: true })
         .eq("organization_id", org.id).eq("status", "cancelled")
-        .gte("updated_at" as never, start.toISOString() as never)
-        .lt("updated_at" as never, end.toISOString() as never),
+        .gte("updated_at", start.toISOString())
+        .lt("updated_at", end.toISOString()),
       db.from("reviews").select("rating").eq("organization_id", org.id)
         .gte("created_at", start.toISOString())
         .lt("created_at", end.toISOString()) as unknown as Promise<{
@@ -3926,11 +3930,11 @@ async function loadCrewForBookings(
   if (bookingIds.length === 0) return { rowsByBooking, nameById };
 
   const { data: assigneeRows } = (await db
-    .from("booking_assignees" as never)
+    .from("booking_assignees")
     .select(
       "booking_id, membership_id, is_primary, split_start_offset_minutes, split_duration_minutes",
     )
-    .in("booking_id" as never, bookingIds as never)) as unknown as {
+    .in("booking_id", bookingIds)) as unknown as {
     data: SegRow[] | null;
   };
 
@@ -4403,8 +4407,8 @@ export async function sendOvertimeWarnings(): Promise<{ emailsSent: number }> {
       .from("time_entries")
       .select("membership_id, clock_in_at, clock_out_at")
       .eq("organization_id", org.id)
-      .gte("clock_in_at" as never, startOfWeek.toISOString() as never)
-      .lt("clock_in_at" as never, endOfWeek.toISOString() as never)
+      .gte("clock_in_at", startOfWeek.toISOString())
+      .lt("clock_in_at", endOfWeek.toISOString())
       .not("clock_out_at", "is", null) as unknown as {
       data: Array<{
         membership_id: string;
@@ -4467,11 +4471,11 @@ export async function notifyPtoStatus(ptoRequestId: string): Promise<void> {
     const { employeePtoStatusEmail } = await import("@/lib/email-templates");
 
     const { data: req } = await db
-      .from("pto_requests" as never)
+      .from("pto_requests")
       .select(
         "id, organization_id, employee_id, start_date, end_date, hours, reason, status",
       )
-      .eq("id" as never, ptoRequestId as never)
+      .eq("id", ptoRequestId)
       .maybeSingle() as unknown as {
       data: {
         id: string;
@@ -4541,9 +4545,9 @@ export async function notifyPayrollPaid(payrollRunId: string): Promise<void> {
     const { getOrgCurrency } = await import("@/lib/org-currency");
 
     const { data: run } = await db
-      .from("payroll_runs" as never)
+      .from("payroll_runs")
       .select("id, organization_id, period_start, period_end, paid_at")
-      .eq("id" as never, payrollRunId as never)
+      .eq("id", payrollRunId)
       .maybeSingle() as unknown as {
       data: {
         id: string;
@@ -4561,11 +4565,11 @@ export async function notifyPayrollPaid(payrollRunId: string): Promise<void> {
     }
 
     const { data: items } = await db
-      .from("payroll_items" as never)
+      .from("payroll_items")
       .select(
         "employee_id, hours_worked, regular_pay_cents, bonus_cents, pto_hours, pto_pay_cents, total_cents",
       )
-      .eq("payroll_run_id" as never, payrollRunId as never) as unknown as {
+      .eq("payroll_run_id", payrollRunId) as unknown as {
       data: Array<{
         employee_id: string;
         hours_worked: number;
@@ -4714,9 +4718,9 @@ export async function sendCertificationExpiryReminders(): Promise<{
       id, organization_id, employee_id, module_id, certification_expires_at,
       expiry_reminder_30d_sent_at, expiry_reminder_7d_sent_at
     `)
-    .not("certification_expires_at" as never, "is" as never, null as never)
-    .gte("certification_expires_at" as never, new Date(now).toISOString() as never)
-    .lte("certification_expires_at" as never, in30d as never) as unknown as {
+    .not("certification_expires_at", "is", null)
+    .gte("certification_expires_at", new Date(now).toISOString())
+    .lte("certification_expires_at", in30d) as unknown as {
     data: Array<{
       id: string;
       organization_id: string;
@@ -4800,7 +4804,7 @@ export async function sendCertificationExpiryReminders(): Promise<{
 
     await db
       .from("training_assignments")
-      .update(update as never)
+      .update(update)
       .eq("id", a.id);
 
     sent += 1;
@@ -4840,10 +4844,10 @@ export async function autoExpireStaleEstimates(): Promise<{ expired: number }> {
 
     const { data, error } = await db
       .from("estimates")
-      .update({ status: "expired" as never } as never)
+      .update({ status: "expired" })
       .eq("organization_id", org.id)
       .eq("status", "sent")
-      .lt("sent_at" as never, cutoff as never)
+      .lt("sent_at", cutoff)
       .select("id") as unknown as {
       data: Array<{ id: string }> | null;
       error: { message: string } | null;
@@ -4884,11 +4888,11 @@ export async function autoVoidOldInvoices(): Promise<{ voided: number }> {
 
     const { data, error } = await db
       .from("invoices")
-      .update({ status: "void" as never } as never)
+      .update({ status: "void" })
       .eq("organization_id", org.id)
       .eq("status", "overdue")
       .is("paid_at", null)
-      .lt("due_date" as never, cutoff as never)
+      .lt("due_date", cutoff)
       .select("id") as unknown as {
       data: Array<{ id: string }> | null;
       error: { message: string } | null;
@@ -4927,7 +4931,7 @@ export async function autoCompletePastBookings(): Promise<{ completed: number }>
 
     const { data, error } = await db
       .from("bookings")
-      .update({ status: "completed" as never } as never)
+      .update({ status: "completed" })
       .eq("organization_id", org.id)
       .in("status", ["pending", "confirmed"])
       .lt("scheduled_at", cutoff)
@@ -4977,21 +4981,21 @@ export async function autoArchiveOldRecords(): Promise<{
     // archived even if dated in the past (shouldn't happen if the complete
     // cron ran, but safety first).
     const [{ data: b }, { data: i }, { data: e }] = await Promise.all([
-      db.from("bookings").update({ archived_at: now } as never)
+      db.from("bookings").update({ archived_at: now })
         .eq("organization_id", org.id).is("archived_at", null)
         .in("status", ["completed", "cancelled"])
         .lt("scheduled_at", cutoff).select("id") as unknown as Promise<{
         data: Array<{ id: string }> | null;
       }>,
-      db.from("invoices").update({ archived_at: now } as never)
+      db.from("invoices").update({ archived_at: now })
         .eq("organization_id", org.id).is("archived_at", null)
         .in("status", ["paid", "void"])
         .lt("created_at", cutoff).select("id") as unknown as Promise<{
         data: Array<{ id: string }> | null;
       }>,
-      db.from("estimates").update({ archived_at: now } as never)
+      db.from("estimates").update({ archived_at: now })
         .eq("organization_id", org.id).is("archived_at", null)
-        .in("status", ["approved", "declined", "expired"] as never)
+        .in("status", ["approved", "declined", "expired"])
         .lt("created_at", cutoff).select("id") as unknown as Promise<{
         data: Array<{ id: string }> | null;
       }>,
@@ -5021,13 +5025,13 @@ export async function autoGenerateRecurringInvoices(): Promise<{
   const nowIso = now.toISOString();
 
   const { data: due } = await db
-    .from("invoice_series" as never)
+    .from("invoice_series")
     .select(`
       id, organization_id, client_id, name, cadence,
       amount_cents, line_items, notes, next_run_at, due_days
     `)
-    .eq("active" as never, true as never)
-    .lte("next_run_at" as never, nowIso as never) as unknown as {
+    .eq("active", true)
+    .lte("next_run_at", nowIso) as unknown as {
     data: Array<{
       id: string;
       organization_id: string;
@@ -5073,7 +5077,7 @@ export async function autoGenerateRecurringInvoices(): Promise<{
         due_date: dueDate.toISOString().slice(0, 10),
         line_items: series.line_items,
         notes: series.notes,
-      } as never)
+      })
       .select("id")
       .single() as unknown as {
       data: { id: string } | null;
@@ -5107,13 +5111,13 @@ export async function autoGenerateRecurringInvoices(): Promise<{
     }
 
     await db
-      .from("invoice_series" as never)
+      .from("invoice_series")
       .update({
         next_run_at: next.toISOString(),
         last_generated_at: nowIso,
         last_invoice_id: inserted.id,
-      } as never)
-      .eq("id" as never, series.id as never);
+      })
+      .eq("id", series.id);
 
     generated += 1;
     console.log(
@@ -5135,11 +5139,11 @@ export async function sendTaskReminder(taskId: string): Promise<void> {
   try {
     const db = admin();
     const { data: task } = await db
-      .from("tasks" as never)
+      .from("tasks")
       .select(
         "id, organization_id, title, notes, assigned_to, reminded_at, completed_at",
       )
-      .eq("id" as never, taskId)
+      .eq("id", taskId)
       .maybeSingle() as unknown as {
       data: {
         id: string;
@@ -5190,9 +5194,9 @@ export async function sendTaskReminder(taskId: string): Promise<void> {
 
     // Stamp reminded_at so the cron doesn't re-fire
     await db
-      .from("tasks" as never)
-      .update({ reminded_at: new Date().toISOString() } as never)
-      .eq("id" as never, taskId);
+      .from("tasks")
+      .update({ reminded_at: new Date().toISOString() })
+      .eq("id", taskId);
   } catch (err) {
     console.error("[auto] sendTaskReminder failed:", err);
   }
