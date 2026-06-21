@@ -161,12 +161,12 @@ async function handleOrgCallback(
 
     // Check for existing active ORG-level connection (membership_id IS NULL).
     const { data: existingActive } = (await admin
-      .from("integration_connections" as never)
+      .from("integration_connections")
       .select("id, external_account_id")
-      .eq("organization_id" as never, organizationId)
-      .eq("provider" as never, "google_calendar")
-      .eq("status" as never, "active")
-      .is("membership_id" as never, null as never)
+      .eq("organization_id", organizationId)
+      .eq("provider", "google_calendar")
+      .eq("status", "active")
+      .is("membership_id", null)
       .maybeSingle()) as unknown as {
       data: { id: string; external_account_id: string | null } | null;
     };
@@ -181,7 +181,7 @@ async function handleOrgCallback(
 
     if (isSameAccount) {
       await admin
-        .from("integration_connections" as never)
+        .from("integration_connections")
         .update({
           access_token_ciphertext: encryptSecret(tokens.access_token),
           refresh_token_ciphertext: encryptSecret(tokens.refresh_token),
@@ -194,8 +194,8 @@ async function handleOrgCallback(
                 external_account_label: `${tokens.email} (Google Calendar)`,
               }
             : {}),
-        } as never)
-        .eq("id" as never, existingActive.id);
+        })
+        .eq("id", existingActive.id);
 
       return NextResponse.redirect(successRedirect);
     }
@@ -204,14 +204,14 @@ async function handleOrgCallback(
     await cleanupOrgCalendarEvents(organizationId).catch(() => {});
 
     await admin
-      .from("integration_connections" as never)
-      .update({ status: "disconnected" } as never)
-      .eq("organization_id" as never, organizationId)
-      .eq("provider" as never, "google_calendar")
-      .eq("status" as never, "active")
-      .is("membership_id" as never, null as never);
+      .from("integration_connections")
+      .update({ status: "disconnected" })
+      .eq("organization_id", organizationId)
+      .eq("provider", "google_calendar")
+      .eq("status", "active")
+      .is("membership_id", null);
 
-    await admin.from("integration_connections" as never).insert({
+    await admin.from("integration_connections").insert({
       organization_id: organizationId,
       provider: "google_calendar",
       external_account_id: tokens.email ?? null,
@@ -225,7 +225,7 @@ async function handleOrgCallback(
       status: "active",
       metadata: { calendar_id: "primary" },
       // membership_id intentionally omitted (NULL = org-level)
-    } as never);
+    });
 
     await bulkSyncUpcomingBookings(organizationId).catch(() => {});
 
@@ -307,11 +307,11 @@ async function handleMemberCallback(
 
     // Check for existing active member-level connection.
     const { data: existingActive } = (await admin
-      .from("integration_connections" as never)
+      .from("integration_connections")
       .select("id, external_account_id")
-      .eq("membership_id" as never, membershipId)
-      .eq("provider" as never, "google_calendar")
-      .eq("status" as never, "active")
+      .eq("membership_id", membershipId)
+      .eq("provider", "google_calendar")
+      .eq("status", "active")
       .maybeSingle()) as unknown as {
       data: { id: string; external_account_id: string | null } | null;
     };
@@ -327,7 +327,7 @@ async function handleMemberCallback(
     if (isSameAccount) {
       // Same Google account — just rotate tokens.
       await admin
-        .from("integration_connections" as never)
+        .from("integration_connections")
         .update({
           access_token_ciphertext: encryptSecret(tokens.access_token),
           refresh_token_ciphertext: encryptSecret(tokens.refresh_token),
@@ -340,20 +340,20 @@ async function handleMemberCallback(
                 external_account_label: `${tokens.email} (Google Calendar)`,
               }
             : {}),
-        } as never)
-        .eq("id" as never, existingActive.id);
+        })
+        .eq("id", existingActive.id);
     } else {
       // Different account (or first connect) — clean up old events first.
       if (existingActive) {
         await cleanupMemberCalendarEvents(membershipId).catch(() => {});
 
         await admin
-          .from("integration_connections" as never)
-          .update({ status: "disconnected" } as never)
-          .eq("id" as never, existingActive.id);
+          .from("integration_connections")
+          .update({ status: "disconnected" })
+          .eq("id", existingActive.id);
       }
 
-      await admin.from("integration_connections" as never).insert({
+      await admin.from("integration_connections").insert({
         organization_id: orgId,
         membership_id: membershipId,
         provider: "google_calendar",
@@ -367,7 +367,7 @@ async function handleMemberCallback(
         scope: tokens.scope ?? "calendar.events",
         status: "active",
         metadata: { calendar_id: "primary" },
-      } as never);
+      });
     }
 
     // Push all upcoming assigned bookings to this member's calendar.

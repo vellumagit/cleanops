@@ -44,7 +44,7 @@ export async function createPayrollRunAction(
           "id, employee_id, clock_in_at, clock_out_at, pay_rate_cents_snapshot, booking:bookings ( hourly_rate_cents, total_cents )",
         )
         .eq("organization_id", membership.organization_id)
-        .is("payroll_run_id" as never, null as never) // not already in a run
+        .is("payroll_run_id", null) // not already in a run
         .gte("clock_in_at", fromIso)
         .lte("clock_in_at", toIso)
         .not("clock_out_at", "is", null) as unknown as Promise<{
@@ -72,17 +72,17 @@ export async function createPayrollRunAction(
         .from("bonuses")
         .select("id, employee_id, amount_cents, status, period_end")
         .eq("organization_id", membership.organization_id)
-        .is("payroll_run_id" as never, null as never) // not already in a run
+        .is("payroll_run_id", null) // not already in a run
         .gte("period_end", period_start)
         .lte("period_end", period_end)
-        .in("status", ["pending"] as never),
+        .in("status", ["pending"]),
       supabase
-        .from("pto_requests" as never)
+        .from("pto_requests")
         .select("employee_id, hours, status")
-        .eq("organization_id" as never, membership.organization_id as never)
-        .eq("status" as never, "approved" as never)
-        .gte("start_date" as never, period_start as never)
-        .lte("end_date" as never, period_end as never),
+        .eq("organization_id", membership.organization_id)
+        .eq("status", "approved")
+        .gte("start_date", period_start)
+        .lte("end_date", period_end),
     ]);
 
   type Bucket = {
@@ -186,7 +186,7 @@ export async function createPayrollRunAction(
 
   // Create the run
   const { data: run, error: runErr } = await (supabase
-    .from("payroll_runs" as never)
+    .from("payroll_runs")
     .insert({
       organization_id: membership.organization_id,
       period_start,
@@ -194,7 +194,7 @@ export async function createPayrollRunAction(
       status: "draft",
       total_cents: runTotalCents,
       created_by: membership.id,
-    } as never)
+    })
     .select("id")
     .single() as unknown as Promise<{
     data: { id: string } | null;
@@ -220,14 +220,14 @@ export async function createPayrollRunAction(
   }));
 
   const { error: itemsErr } = await (supabase
-    .from("payroll_items" as never)
-    .insert(itemsToInsert as never) as unknown as Promise<{
+    .from("payroll_items")
+    .insert(itemsToInsert) as unknown as Promise<{
     error: { message: string } | null;
   }>);
 
   if (itemsErr) {
     // Roll back the run
-    await supabase.from("payroll_runs" as never).delete().eq("id" as never, run.id as never);
+    await supabase.from("payroll_runs").delete().eq("id", run.id);
     return { ok: false, error: itemsErr.message };
   }
 
@@ -238,13 +238,13 @@ export async function createPayrollRunAction(
   if (countedEntryIds.length > 0) {
     await (stampDb
       .from("time_entries")
-      .update({ payroll_run_id: run.id } as never)
+      .update({ payroll_run_id: run.id })
       .in("id", countedEntryIds) as unknown as Promise<unknown>);
   }
   if (countedBonusIds.length > 0) {
     await (stampDb
       .from("bonuses")
-      .update({ payroll_run_id: run.id } as never)
+      .update({ payroll_run_id: run.id })
       .in("id", countedBonusIds) as unknown as Promise<unknown>);
   }
 
@@ -275,14 +275,14 @@ export async function finalizePayrollRunAction(formData: FormData) {
   // Only a draft can be finalized (atomic guard — a replayed/forged POST
   // can't re-finalize or skip the draft stage).
   await (supabase
-    .from("payroll_runs" as never)
+    .from("payroll_runs")
     .update({
       status: "finalized",
       finalized_at: new Date().toISOString(),
-    } as never)
-    .eq("id" as never, id as never)
-    .eq("organization_id" as never, membership.organization_id as never)
-    .eq("status" as never, "draft" as never) as unknown as Promise<unknown>);
+    })
+    .eq("id", id)
+    .eq("organization_id", membership.organization_id)
+    .eq("status", "draft") as unknown as Promise<unknown>);
 
   await logAuditEvent({
     membership,
@@ -307,25 +307,25 @@ export async function markPayrollPaidAction(formData: FormData) {
 
   // Only a finalized run can be marked paid (atomic state-machine guard).
   await (supabase
-    .from("payroll_runs" as never)
+    .from("payroll_runs")
     .update({
       status: "paid",
       paid_at: new Date().toISOString(),
-    } as never)
-    .eq("id" as never, id as never)
-    .eq("organization_id" as never, membership.organization_id as never)
-    .eq("status" as never, "finalized" as never) as unknown as Promise<unknown>);
+    })
+    .eq("id", id)
+    .eq("organization_id", membership.organization_id)
+    .eq("status", "finalized") as unknown as Promise<unknown>);
 
   // Mark the bonuses consumed by this run as paid, so they reflect as paid
   // in the bonuses list and can't be separately marked paid again.
   await (supabase
-    .from("bonuses" as never)
+    .from("bonuses")
     .update({
       status: "paid",
       paid_at: new Date().toISOString(),
-    } as never)
-    .eq("payroll_run_id" as never, id as never)
-    .eq("organization_id" as never, membership.organization_id as never) as unknown as Promise<unknown>);
+    })
+    .eq("payroll_run_id", id)
+    .eq("organization_id", membership.organization_id) as unknown as Promise<unknown>);
 
   await logAuditEvent({
     membership,
@@ -352,10 +352,10 @@ export async function deletePayrollRunAction(formData: FormData) {
   if (!["owner", "admin"].includes(membership.role)) return;
 
   const { data: run } = await (supabase
-    .from("payroll_runs" as never)
+    .from("payroll_runs")
     .select("status")
-    .eq("id" as never, id as never)
-    .eq("organization_id" as never, membership.organization_id as never)
+    .eq("id", id)
+    .eq("organization_id", membership.organization_id)
     .maybeSingle() as unknown as Promise<{
     data: { status: string } | null;
   }>);
@@ -368,10 +368,10 @@ export async function deletePayrollRunAction(formData: FormData) {
   if (run.status !== "draft" && confirmPhrase !== "DELETE") return;
 
   await (supabase
-    .from("payroll_runs" as never)
+    .from("payroll_runs")
     .delete()
-    .eq("id" as never, id as never)
-    .eq("organization_id" as never, membership.organization_id as never) as unknown as Promise<unknown>);
+    .eq("id", id)
+    .eq("organization_id", membership.organization_id) as unknown as Promise<unknown>);
 
   await logAuditEvent({
     membership,

@@ -70,7 +70,7 @@ async function spawnNextOccurrence(
     nextRemind = new Date(nextDue.getTime() - offsetMs);
   }
 
-  await supabase.from("tasks" as never).insert({
+  await supabase.from("tasks").insert({
     organization_id: task.organization_id,
     created_by: task.created_by,
     assigned_to: task.assigned_to,
@@ -79,7 +79,7 @@ async function spawnNextOccurrence(
     due_at: nextDue.toISOString(),
     remind_at: nextRemind ? nextRemind.toISOString() : null,
     recurrence: task.recurrence,
-  } as never);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -96,7 +96,7 @@ export async function createTaskAction(
 
   if (!parsed.ok) return { errors: parsed.errors, values: raw as never };
 
-  const { data, error } = await supabase.from("tasks" as never).insert({
+  const { error } = await supabase.from("tasks").insert({
     organization_id: membership.organization_id,
     created_by: membership.id,
     title: parsed.data.title,
@@ -105,7 +105,7 @@ export async function createTaskAction(
     due_at: parsed.data.due_at ?? null,
     remind_at: parsed.data.remind_at ?? null,
     recurrence: parsed.data.recurrence ?? null,
-  } as never).select("id").single() as unknown as { data: { id: string } | null; error: Error | null };
+  });
 
   if (error) {
     return { errors: { _form: "Failed to create task. Please try again." } };
@@ -131,7 +131,7 @@ export async function updateTaskAction(
   if (!parsed.ok) return { errors: parsed.errors, values: raw as never };
 
   const { error } = await supabase
-    .from("tasks" as never)
+    .from("tasks")
     .update({
       title: parsed.data.title,
       notes: parsed.data.notes ?? null,
@@ -141,8 +141,8 @@ export async function updateTaskAction(
       recurrence: parsed.data.recurrence ?? null,
       // Reset reminded_at whenever remind_at changes so the reminder fires again.
       reminded_at: null,
-    } as never)
-    .eq("id" as never, id);
+    })
+    .eq("id", id);
 
   if (error) {
     return { errors: { _form: "Failed to save task. Please try again." } };
@@ -164,9 +164,9 @@ export async function completeTaskAction(
   const { supabase } = await getActionContext();
 
   const { data: task, error: fetchErr } = await supabase
-    .from("tasks" as never)
+    .from("tasks")
     .select("id, organization_id, created_by, assigned_to, title, notes, due_at, remind_at, recurrence")
-    .eq("id" as never, id)
+    .eq("id", id)
     .maybeSingle() as unknown as { data: {
       id: string;
       organization_id: string;
@@ -184,9 +184,9 @@ export async function completeTaskAction(
   }
 
   const { error } = await supabase
-    .from("tasks" as never)
-    .update({ completed_at: new Date().toISOString() } as never)
-    .eq("id" as never, id);
+    .from("tasks")
+    .update({ completed_at: new Date().toISOString() })
+    .eq("id", id);
 
   if (error) {
     return { errors: { _form: "Failed to complete task." } };
@@ -211,9 +211,9 @@ export async function reopenTaskAction(
   const { supabase } = await getActionContext();
 
   const { error } = await supabase
-    .from("tasks" as never)
-    .update({ completed_at: null } as never)
-    .eq("id" as never, id);
+    .from("tasks")
+    .update({ completed_at: null })
+    .eq("id", id);
 
   if (error) {
     return { errors: { _form: "Failed to reopen task." } };
@@ -235,9 +235,9 @@ export async function deleteTaskAction(
   const { supabase } = await getActionContext();
 
   const { error } = await supabase
-    .from("tasks" as never)
+    .from("tasks")
     .delete()
-    .eq("id" as never, id);
+    .eq("id", id);
 
   if (error) {
     return { errors: { _form: "Failed to delete task." } };

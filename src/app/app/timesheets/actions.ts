@@ -39,7 +39,7 @@ export async function fetchTimeEntryHistoryAction(
     )
     .eq("entity", "time_entry")
     .eq("entity_id", entryId)
-    .eq("organization_id" as never, membership.organization_id as never)
+    .eq("organization_id", membership.organization_id)
     .order("created_at", { ascending: false })
     .limit(50)) as unknown as {
     data: Array<{
@@ -116,7 +116,7 @@ export async function createPtoRequestAction(
   }
 
   const { error } = await (supabase
-    .from("pto_requests" as never)
+    .from("pto_requests")
     .insert({
       organization_id: membership.organization_id,
       employee_id,
@@ -127,7 +127,7 @@ export async function createPtoRequestAction(
       status: "approved",
       reviewed_by: membership.id,
       reviewed_at: new Date().toISOString(),
-    } as never) as unknown as Promise<{ error: { message: string } | null }>);
+    }) as unknown as Promise<{ error: { message: string } | null }>);
 
   if (error) return { ok: false, error: error.message };
 
@@ -175,7 +175,7 @@ export async function submitSelfPtoRequestAction(
   }
 
   const { error } = await (supabase
-    .from("pto_requests" as never)
+    .from("pto_requests")
     .insert({
       organization_id: membership.organization_id,
       employee_id: membership.id,
@@ -184,7 +184,7 @@ export async function submitSelfPtoRequestAction(
       hours,
       reason: reason || null,
       status: "pending",
-    } as never) as unknown as Promise<{ error: { message: string } | null }>);
+    }) as unknown as Promise<{ error: { message: string } | null }>);
 
   if (error) return { ok: false, error: error.message };
 
@@ -212,16 +212,16 @@ export async function updatePtoStatusAction(
   }
 
   const { error } = await (supabase
-    .from("pto_requests" as never)
+    .from("pto_requests")
     .update({
       status,
       reviewed_by: membership.id,
       reviewed_at: new Date().toISOString(),
-    } as never)
-    .eq("id" as never, id as never)
+    })
+    .eq("id", id)
     .eq(
-      "organization_id" as never,
-      membership.organization_id as never,
+      "organization_id",
+      membership.organization_id,
     ) as unknown as Promise<{ error: { message: string } | null }>);
 
   if (error) return { ok: false, error: error.message };
@@ -402,7 +402,7 @@ export async function createManualTimeEntryAction(
       pay_rate_cents_snapshot: manualRateRow?.pay_rate_cents ?? null,
       created_manually: true,
       created_by: membership.id,
-    } as never)
+    })
     .select("id")
     .single();
 
@@ -453,7 +453,7 @@ export async function updateTimeEntryAction(
     .from("time_entries")
     .select("clock_in_at, clock_out_at, employee_id, booking_id")
     .eq("id", id)
-    .eq("organization_id" as never, membership.organization_id as never)
+    .eq("organization_id", membership.organization_id)
     .maybeSingle();
 
   // Overlap check — excludes the entry being edited so the entry doesn't
@@ -497,9 +497,9 @@ export async function updateTimeEntryAction(
       // Encrypt before write. Read sites use maybeDecryptField; legacy
       // plaintext rows still display correctly until they're next saved.
       notes: encryptField(parsed.notes),
-    } as never)
+    })
     .eq("id", id)
-    .eq("organization_id" as never, membership.organization_id as never);
+    .eq("organization_id", membership.organization_id);
 
   if (error) return { ok: false, error: error.message };
 
@@ -546,12 +546,12 @@ export async function deletePtoRequestAction(
   const admin = createSupabaseAdminClient();
 
   const { data: before } = (await admin
-    .from("pto_requests" as never)
+    .from("pto_requests")
     .select("id, employee_id, start_date, hours, status")
-    .eq("id" as never, id as never)
+    .eq("id", id)
     .eq(
-      "organization_id" as never,
-      membership.organization_id as never,
+      "organization_id",
+      membership.organization_id,
     )
     .maybeSingle()) as unknown as {
     data: {
@@ -566,12 +566,12 @@ export async function deletePtoRequestAction(
   if (!before) return { ok: false, error: "Request not found." };
 
   const { error } = (await admin
-    .from("pto_requests" as never)
+    .from("pto_requests")
     .delete()
-    .eq("id" as never, id as never)
+    .eq("id", id)
     .eq(
-      "organization_id" as never,
-      membership.organization_id as never,
+      "organization_id",
+      membership.organization_id,
     )) as unknown as { error: { message: string } | null };
   if (error) return { ok: false, error: error.message };
 
@@ -633,12 +633,12 @@ async function findOverlap(
   let query = supabase
     .from("time_entries")
     .select("id, clock_in_at, clock_out_at")
-    .eq("organization_id" as never, organizationId as never)
-    .eq("employee_id" as never, employeeId as never)
-    .lt("clock_in_at" as never, effectiveEnd as never);
+    .eq("organization_id", organizationId)
+    .eq("employee_id", employeeId)
+    .lt("clock_in_at", effectiveEnd);
 
   if (excludeId) {
-    query = query.neq("id" as never, excludeId as never);
+    query = query.neq("id", excludeId);
   }
 
   const { data } = (await query) as unknown as {
@@ -688,8 +688,8 @@ export async function bulkDeleteTimeEntriesAction(
   const { data: before } = (await supabase
     .from("time_entries")
     .select("id, employee_id, booking_id, clock_in_at, clock_out_at")
-    .in("id" as never, rawIds as never)
-    .eq("organization_id" as never, membership.organization_id as never)) as unknown as {
+    .in("id", rawIds)
+    .eq("organization_id", membership.organization_id)) as unknown as {
     data: Array<{
       id: string;
       employee_id: string;
@@ -702,8 +702,8 @@ export async function bulkDeleteTimeEntriesAction(
   const { error } = await supabase
     .from("time_entries")
     .delete()
-    .in("id" as never, rawIds as never)
-    .eq("organization_id" as never, membership.organization_id as never);
+    .in("id", rawIds)
+    .eq("organization_id", membership.organization_id);
   if (error) return { ok: false, error: error.message };
 
   for (const row of before ?? []) {
@@ -752,7 +752,7 @@ export async function closeOpenShiftAction(
     .from("time_entries")
     .select("clock_in_at, clock_out_at, employee_id")
     .eq("id", id)
-    .eq("organization_id" as never, membership.organization_id as never)
+    .eq("organization_id", membership.organization_id)
     .maybeSingle();
   if (!before) return { ok: false, error: "Entry not found." };
   if (before.clock_out_at) {
@@ -774,9 +774,9 @@ export async function closeOpenShiftAction(
 
   const { error } = await supabase
     .from("time_entries")
-    .update({ clock_out_at: endUtc } as never)
+    .update({ clock_out_at: endUtc })
     .eq("id", id)
-    .eq("organization_id" as never, membership.organization_id as never);
+    .eq("organization_id", membership.organization_id);
   if (error) return { ok: false, error: error.message };
 
   await logAuditEvent({
@@ -811,14 +811,14 @@ export async function deleteTimeEntryAction(
     .from("time_entries")
     .select("employee_id, booking_id, clock_in_at, clock_out_at")
     .eq("id", id)
-    .eq("organization_id" as never, membership.organization_id as never)
+    .eq("organization_id", membership.organization_id)
     .maybeSingle();
 
   const { error } = await supabase
     .from("time_entries")
     .delete()
     .eq("id", id)
-    .eq("organization_id" as never, membership.organization_id as never);
+    .eq("organization_id", membership.organization_id);
   if (error) return { ok: false, error: error.message };
 
   await logAuditEvent({

@@ -49,14 +49,14 @@ export async function createChecklistTemplateAction(
   const items = readItemsFromForm(formData);
 
   const { data: tpl, error } = (await supabase
-    .from("checklist_templates" as never)
+    .from("checklist_templates")
     .insert({
       organization_id: membership.organization_id,
       name,
       description: description || null,
       applies_to_service_type: service_type || null,
       is_active: true,
-    } as never)
+    })
     .select("id")
     .single()) as unknown as {
     data: { id: string } | null;
@@ -76,8 +76,8 @@ export async function createChecklistTemplateAction(
       is_required: it.is_required,
     }));
     await (supabase
-      .from("checklist_template_items" as never)
-      .insert(rows as never) as unknown as Promise<unknown>);
+      .from("checklist_template_items")
+      .insert(rows) as unknown as Promise<unknown>);
   }
 
   await logAuditEvent({
@@ -109,27 +109,27 @@ export async function updateChecklistTemplateAction(
   const items = readItemsFromForm(formData);
 
   const { error: upErr } = (await supabase
-    .from("checklist_templates" as never)
+    .from("checklist_templates")
     .update({
       name,
       description: description || null,
       applies_to_service_type: service_type || null,
       updated_at: new Date().toISOString(),
-    } as never)
-    .eq("id" as never, templateId as never)
+    })
+    .eq("id", templateId)
     .eq(
-      "organization_id" as never,
-      membership.organization_id as never,
+      "organization_id",
+      membership.organization_id,
     )) as unknown as { error: { message: string } | null };
   if (upErr) return { ok: false, error: upErr.message };
 
   // Wipe + recreate items. Fine for small lists and simplifies reorder.
   await (supabase
-    .from("checklist_template_items" as never)
+    .from("checklist_template_items")
     .delete()
     .eq(
-      "template_id" as never,
-      templateId as never,
+      "template_id",
+      templateId,
     ) as unknown as Promise<unknown>);
 
   if (items.length > 0) {
@@ -142,8 +142,8 @@ export async function updateChecklistTemplateAction(
       is_required: it.is_required,
     }));
     await (supabase
-      .from("checklist_template_items" as never)
-      .insert(rows as never) as unknown as Promise<unknown>);
+      .from("checklist_template_items")
+      .insert(rows) as unknown as Promise<unknown>);
   }
 
   revalidatePath("/app/checklists");
@@ -160,12 +160,12 @@ export async function deleteChecklistTemplateAction(
   if (!["owner", "admin", "manager"].includes(membership.role)) return;
 
   await (supabase
-    .from("checklist_templates" as never)
+    .from("checklist_templates")
     .delete()
-    .eq("id" as never, id as never)
+    .eq("id", id)
     .eq(
-      "organization_id" as never,
-      membership.organization_id as never,
+      "organization_id",
+      membership.organization_id,
     ) as unknown as Promise<unknown>);
 
   revalidatePath("/app/checklists");
@@ -192,12 +192,12 @@ export async function attachTemplateToBookingAction(
   }
 
   const { data: items } = (await supabase
-    .from("checklist_template_items" as never)
+    .from("checklist_template_items")
     .select("ordinal, title, phase, is_required")
-    .eq("template_id" as never, template_id as never)
-    .order("ordinal" as never, {
+    .eq("template_id", template_id)
+    .order("ordinal", {
       ascending: true,
-    } as never)) as unknown as {
+    })) as unknown as {
     data: Array<{
       ordinal: number;
       title: string;
@@ -212,10 +212,10 @@ export async function attachTemplateToBookingAction(
 
   // Find current max ordinal so appending keeps items in order.
   const { data: existing } = (await supabase
-    .from("booking_checklist_items" as never)
+    .from("booking_checklist_items")
     .select("ordinal")
-    .eq("booking_id" as never, booking_id as never)
-    .order("ordinal" as never, { ascending: false } as never)
+    .eq("booking_id", booking_id)
+    .order("ordinal", { ascending: false })
     .limit(1)) as unknown as {
     data: Array<{ ordinal: number }> | null;
   };
@@ -232,8 +232,8 @@ export async function attachTemplateToBookingAction(
   }));
 
   const { error } = (await supabase
-    .from("booking_checklist_items" as never)
-    .insert(rows as never)) as unknown as {
+    .from("booking_checklist_items")
+    .insert(rows)) as unknown as {
     error: { message: string } | null;
   };
   if (error) return { ok: false, error: error.message };
@@ -259,12 +259,12 @@ export async function toggleChecklistItemAction(
   if (!id) return { ok: false, error: "Missing item id." };
 
   const { error } = (await supabase
-    .from("booking_checklist_items" as never)
+    .from("booking_checklist_items")
     .update({
       checked_at: checked ? new Date().toISOString() : null,
       checked_by: checked ? membership.id : null,
-    } as never)
-    .eq("id" as never, id as never)) as unknown as {
+    })
+    .eq("id", id)) as unknown as {
     error: { message: string } | null;
   };
   if (error) return { ok: false, error: error.message };
@@ -286,9 +286,9 @@ export async function removeChecklistItemAction(
   if (!id) return { ok: false, error: "Missing item id." };
 
   const { error } = (await supabase
-    .from("booking_checklist_items" as never)
+    .from("booking_checklist_items")
     .delete()
-    .eq("id" as never, id as never)) as unknown as {
+    .eq("id", id)) as unknown as {
     error: { message: string } | null;
   };
   if (error) return { ok: false, error: error.message };

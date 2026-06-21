@@ -150,12 +150,12 @@ async function refreshAccessToken(
     // Mark the connection as error so the admin sees it needs re-auth
     const admin = createSupabaseAdminClient();
     await admin
-      .from("integration_connections" as never)
+      .from("integration_connections")
       .update({
         status: "error",
         last_error: `Token refresh failed: ${res.status}`,
-      } as never)
-      .eq("id" as never, connectionId);
+      })
+      .eq("id", connectionId);
     throw new Error(`Google token refresh failed: ${res.status} ${body}`);
   }
 
@@ -166,14 +166,14 @@ async function refreshAccessToken(
   // Persist the refreshed token
   const admin = createSupabaseAdminClient();
   await admin
-    .from("integration_connections" as never)
+    .from("integration_connections")
     .update({
       access_token_ciphertext: encryptSecret(newAccessToken),
       token_expires_at: expiresAt,
       status: "active",
       last_error: null,
-    } as never)
-    .eq("id" as never, connectionId);
+    })
+    .eq("id", connectionId);
 
   return newAccessToken;
 }
@@ -194,12 +194,12 @@ async function getConnection(
 ): Promise<(ConnectionRow & { access_token: string }) | null> {
   const admin = createSupabaseAdminClient();
   const { data } = (await admin
-    .from("integration_connections" as never)
+    .from("integration_connections")
     .select("id, access_token_ciphertext, refresh_token_ciphertext, token_expires_at, metadata")
-    .eq("organization_id" as never, organizationId)
-    .eq("provider" as never, "google_calendar")
-    .eq("status" as never, "active")
-    .is("membership_id" as never, null as never)
+    .eq("organization_id", organizationId)
+    .eq("provider", "google_calendar")
+    .eq("status", "active")
+    .is("membership_id", null)
     .maybeSingle()) as unknown as { data: ConnectionRow | null };
 
   if (!data || !data.access_token_ciphertext) return null;
@@ -313,9 +313,9 @@ export async function createCalendarEvent(
   const admin = createSupabaseAdminClient();
   await admin
     .from("bookings")
-    .update({ google_calendar_event_id: eventId } as never)
+    .update({ google_calendar_event_id: eventId })
     .eq("id", booking.id)
-    .is("google_calendar_event_id" as never, null as never);
+    .is("google_calendar_event_id", null);
 
   return eventId;
 }
@@ -521,12 +521,12 @@ export async function cleanupOrgCalendarEvents(
   const { data: bookings } = (await admin
     .from("bookings")
     .select("id, google_calendar_event_id")
-    .eq("organization_id" as never, organizationId as never)
-    .gte("scheduled_at" as never, now as never)
+    .eq("organization_id", organizationId)
+    .gte("scheduled_at", now)
     .not(
-      "google_calendar_event_id" as never,
-      "is" as never,
-      null as never,
+      "google_calendar_event_id",
+      "is",
+      null,
     )) as unknown as {
     data: Array<{ id: string; google_calendar_event_id: string }> | null;
   };
@@ -566,10 +566,10 @@ export async function cleanupOrgCalendarEvents(
   // the correct calendar without risk of duplication.
   await admin
     .from("bookings")
-    .update({ google_calendar_event_id: null } as never)
+    .update({ google_calendar_event_id: null })
     .in(
-      "id" as never,
-      clearedIds as never,
+      "id",
+      clearedIds,
     );
 }
 
@@ -607,11 +607,11 @@ export async function bulkSyncUpcomingBookings(
        client:clients!inner ( name ),
        assignee:memberships ( display_name, profile:profiles ( full_name ) )`,
     )
-    .eq("organization_id" as never, organizationId as never)
-    .gte("scheduled_at" as never, now as never)
-    .is("google_calendar_event_id" as never, null as never)
-    .neq("status" as never, "cancelled" as never)
-    .order("scheduled_at" as never, { ascending: true } as never)
+    .eq("organization_id", organizationId)
+    .gte("scheduled_at", now)
+    .is("google_calendar_event_id", null)
+    .neq("status", "cancelled")
+    .order("scheduled_at", { ascending: true })
     .limit(500)) as unknown as {
     data: Array<{
       id: string;
@@ -677,12 +677,12 @@ export async function hasGoogleCalendarConnection(
 ): Promise<boolean> {
   const admin = createSupabaseAdminClient();
   const { count } = await admin
-    .from("integration_connections" as never)
+    .from("integration_connections")
     .select("id", { count: "exact", head: true })
-    .eq("organization_id" as never, organizationId)
-    .eq("provider" as never, "google_calendar")
-    .eq("status" as never, "active")
-    .is("membership_id" as never, null as never);
+    .eq("organization_id", organizationId)
+    .eq("provider", "google_calendar")
+    .eq("status", "active")
+    .is("membership_id", null);
   return (count ?? 0) > 0;
 }
 
@@ -712,11 +712,11 @@ async function getMemberConnection(
 ): Promise<(MemberConnectionRow & { access_token: string }) | null> {
   const admin = createSupabaseAdminClient();
   const { data } = (await admin
-    .from("integration_connections" as never)
+    .from("integration_connections")
     .select("id, access_token_ciphertext, refresh_token_ciphertext, token_expires_at, metadata")
-    .eq("membership_id" as never, membershipId)
-    .eq("provider" as never, "google_calendar")
-    .eq("status" as never, "active")
+    .eq("membership_id", membershipId)
+    .eq("provider", "google_calendar")
+    .eq("status", "active")
     .maybeSingle()) as unknown as { data: MemberConnectionRow | null };
 
   if (!data || !data.access_token_ciphertext) return null;
@@ -744,11 +744,11 @@ export async function hasMemberCalendarConnection(
 ): Promise<boolean> {
   const admin = createSupabaseAdminClient();
   const { count } = await admin
-    .from("integration_connections" as never)
+    .from("integration_connections")
     .select("id", { count: "exact", head: true })
-    .eq("membership_id" as never, membershipId)
-    .eq("provider" as never, "google_calendar")
-    .eq("status" as never, "active");
+    .eq("membership_id", membershipId)
+    .eq("provider", "google_calendar")
+    .eq("status", "active");
   return (count ?? 0) > 0;
 }
 
@@ -822,14 +822,14 @@ export async function createMemberCalendarEvent(
   // just refreshes the ID.
   const admin = createSupabaseAdminClient();
   await admin
-    .from("booking_member_calendar_events" as never)
+    .from("booking_member_calendar_events")
     .upsert(
       {
         booking_id: booking.id,
         membership_id: membershipId,
         google_calendar_event_id: eventId,
-      } as never,
-      { onConflict: "booking_id,membership_id" } as never,
+      },
+      { onConflict: "booking_id,membership_id" },
     );
 
   return eventId;
@@ -849,10 +849,10 @@ export async function updateMemberCalendarEvent(
   // Look up the existing event ID for this (booking, member) pair.
   const admin = createSupabaseAdminClient();
   const { data: mapping } = (await admin
-    .from("booking_member_calendar_events" as never)
+    .from("booking_member_calendar_events")
     .select("google_calendar_event_id")
-    .eq("booking_id" as never, booking.id)
-    .eq("membership_id" as never, membershipId)
+    .eq("booking_id", booking.id)
+    .eq("membership_id", membershipId)
     .maybeSingle()) as unknown as {
     data: { google_calendar_event_id: string } | null;
   };
@@ -877,10 +877,10 @@ export async function updateMemberCalendarEvent(
       // Event missing on Google's side — create a fresh one.
       // Remove the stale row first so createMemberCalendarEvent upserts cleanly.
       await admin
-        .from("booking_member_calendar_events" as never)
+        .from("booking_member_calendar_events")
         .delete()
-        .eq("booking_id" as never, booking.id)
-        .eq("membership_id" as never, membershipId);
+        .eq("booking_id", booking.id)
+        .eq("membership_id", membershipId);
       const newId = await createMemberCalendarEvent(membershipId, booking);
       return newId !== null;
     }
@@ -904,10 +904,10 @@ export async function deleteMemberCalendarEvent(
 
   if (conn) {
     const { data: mapping } = (await admin
-      .from("booking_member_calendar_events" as never)
+      .from("booking_member_calendar_events")
       .select("google_calendar_event_id")
-      .eq("booking_id" as never, bookingId)
-      .eq("membership_id" as never, membershipId)
+      .eq("booking_id", bookingId)
+      .eq("membership_id", membershipId)
       .maybeSingle()) as unknown as {
       data: { google_calendar_event_id: string } | null;
     };
@@ -927,10 +927,10 @@ export async function deleteMemberCalendarEvent(
 
   // Always clean up the mapping row regardless of API outcome.
   await admin
-    .from("booking_member_calendar_events" as never)
+    .from("booking_member_calendar_events")
     .delete()
-    .eq("booking_id" as never, bookingId)
-    .eq("membership_id" as never, membershipId);
+    .eq("booking_id", bookingId)
+    .eq("membership_id", membershipId);
 
   return true;
 }
@@ -958,9 +958,9 @@ export async function syncMemberCalendarEvents(
 
   // 1. All existing member event rows for this booking.
   const { data: existingRows } = (await admin
-    .from("booking_member_calendar_events" as never)
+    .from("booking_member_calendar_events")
     .select("membership_id, google_calendar_event_id")
-    .eq("booking_id" as never, bookingId)) as unknown as {
+    .eq("booking_id", bookingId)) as unknown as {
     data: Array<{ membership_id: string; google_calendar_event_id: string }> | null;
   };
 
@@ -970,10 +970,10 @@ export async function syncMemberCalendarEvents(
   // Fetch segment metadata for all assignees on this booking so split
   // employees get a calendar event for their own segment, not the full job.
   const { data: segmentRows } = (await admin
-    .from("booking_assignees" as never)
+    .from("booking_assignees")
     .select("membership_id, split_start_offset_minutes, split_duration_minutes")
-    .eq("booking_id" as never, bookingId as never)
-    .in("membership_id" as never, assigneeIds as never)) as unknown as {
+    .eq("booking_id", bookingId)
+    .in("membership_id", assigneeIds)) as unknown as {
     data: Array<{
       membership_id: string;
       split_start_offset_minutes: number | null;
@@ -1050,10 +1050,10 @@ export async function cleanupMemberCalendarEvents(
   const rows: Array<{ booking_id: string; google_calendar_event_id: string }> = [];
   for (let offset = 0; ; offset += PAGE) {
     const { data: page } = (await admin
-      .from("booking_member_calendar_events" as never)
+      .from("booking_member_calendar_events")
       .select("booking_id, google_calendar_event_id")
-      .eq("membership_id" as never, membershipId)
-      .order("booking_id" as never, { ascending: true } as never)
+      .eq("membership_id", membershipId)
+      .order("booking_id", { ascending: true })
       .range(offset, offset + PAGE - 1)) as unknown as {
       data: Array<{
         booking_id: string;
@@ -1093,9 +1093,9 @@ export async function cleanupMemberCalendarEvents(
 
   // Remove all mapping rows for this member (past and upcoming).
   await admin
-    .from("booking_member_calendar_events" as never)
+    .from("booking_member_calendar_events")
     .delete()
-    .eq("membership_id" as never, membershipId);
+    .eq("membership_id", membershipId);
 }
 
 /**
@@ -1135,7 +1135,7 @@ export async function bulkSyncMemberBookings(
   }> = [];
   for (let offset = 0; ; offset += PAGE) {
     const { data: page } = (await admin
-      .from("booking_assignees" as never)
+      .from("booking_assignees")
       .select(
         `membership_id, split_start_offset_minutes, split_duration_minutes,
          booking:bookings!inner(
@@ -1143,12 +1143,12 @@ export async function bulkSyncMemberBookings(
            client:clients!inner(name)
          )`,
       )
-      .eq("membership_id" as never, membershipId)
-      .neq("booking.status" as never, "cancelled" as never)
-      .gte("booking.scheduled_at" as never, now as never)
+      .eq("membership_id", membershipId)
+      .neq("booking.status", "cancelled")
+      .gte("booking.scheduled_at", now)
       // Stable cursor across pages. Without .order(), Postgres can
       // repeat or skip rows between .range() calls.
-      .order("booking_id" as never, { ascending: true } as never)
+      .order("booking_id", { ascending: true })
       .range(offset, offset + PAGE - 1)) as unknown as {
       data: Array<(typeof bookings)[number]> | null;
     };
@@ -1171,10 +1171,10 @@ export async function bulkSyncMemberBookings(
   // Find which booking IDs already have a member event (don't double-create).
   const bookingIds = bookings.map((b) => b.booking.id);
   const { data: existingMappings } = (await admin
-    .from("booking_member_calendar_events" as never)
+    .from("booking_member_calendar_events")
     .select("booking_id")
-    .eq("membership_id" as never, membershipId)
-    .in("booking_id" as never, bookingIds as never)) as unknown as {
+    .eq("membership_id", membershipId)
+    .in("booking_id", bookingIds)) as unknown as {
     data: Array<{ booking_id: string }> | null;
   };
   const alreadySynced = new Set((existingMappings ?? []).map((r) => r.booking_id));

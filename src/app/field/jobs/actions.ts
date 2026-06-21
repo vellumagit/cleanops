@@ -55,10 +55,10 @@ export async function startJobAction(
   if (booking.assigned_to !== membership.id) {
     // Multi-crew: allow any assignee via booking_assignees junction.
     const { data: crewRow } = (await supabase
-      .from("booking_assignees" as never)
+      .from("booking_assignees")
       .select("id")
-      .eq("booking_id" as never, bookingId as never)
-      .eq("membership_id" as never, membership.id as never)
+      .eq("booking_id", bookingId)
+      .eq("membership_id", membership.id)
       .maybeSingle()) as unknown as { data: { id: string } | null };
     if (!crewRow) {
       return { ok: false, error: "This job isn't assigned to you" };
@@ -125,7 +125,7 @@ export async function startJobAction(
         clock_in_lat: lat,
         clock_in_lng: lng,
         pay_rate_cents_snapshot: payRateSnapshot,
-      } as never);
+      });
       if (insertError) {
         const code = (insertError as { code?: string }).code;
         if (code === "23505") {
@@ -144,7 +144,7 @@ export async function startJobAction(
       clock_in_lat: lat,
       clock_in_lng: lng,
       pay_rate_cents_snapshot: payRateSnapshot,
-    } as never);
+    });
     if (insertError) {
       const code = (insertError as { code?: string }).code;
       if (code === "23505") {
@@ -184,10 +184,10 @@ export async function completeJobAction(
   if (booking.assigned_to !== membership.id) {
     // Multi-crew: allow any assignee via booking_assignees junction.
     const { data: crewRow } = (await supabase
-      .from("booking_assignees" as never)
+      .from("booking_assignees")
       .select("id")
-      .eq("booking_id" as never, bookingId as never)
-      .eq("membership_id" as never, membership.id as never)
+      .eq("booking_id", bookingId)
+      .eq("membership_id", membership.id)
       .maybeSingle()) as unknown as { data: { id: string } | null };
     if (!crewRow) {
       return { ok: false, error: "This job isn't assigned to you" };
@@ -241,7 +241,7 @@ export async function acceptGpsConsentAction(): Promise<void> {
   const { membership, supabase } = await getActionContext();
   await supabase
     .from("memberships")
-    .update({ gps_consent_accepted_at: new Date().toISOString() } as never)
+    .update({ gps_consent_accepted_at: new Date().toISOString() })
     .eq("id", membership.id);
   revalidatePath("/field", "layout");
 }
@@ -262,13 +262,13 @@ export async function acceptShiftAction(
   const admin = createSupabaseAdminClient();
   const now = new Date().toISOString();
   const { error } = (await admin
-    .from("booking_assignees" as never)
+    .from("booking_assignees")
     .update({
       acceptance_status: "accepted",
       responded_at: now,
-    } as never)
-    .eq("booking_id" as never, bookingId as never)
-    .eq("membership_id" as never, membership.id as never)) as unknown as {
+    })
+    .eq("booking_id", bookingId)
+    .eq("membership_id", membership.id)) as unknown as {
     error: { message: string } | null;
   };
   if (error) return { ok: false, error: error.message };
@@ -285,18 +285,18 @@ export async function acceptShiftAction(
     const { data: sibs } = (await admin
       .from("bookings")
       .select("id")
-      .eq("series_id" as never, bk.series_id as never)
+      .eq("series_id", bk.series_id)
       .gte("scheduled_at", now)) as unknown as {
       data: Array<{ id: string }> | null;
     };
     const ids = (sibs ?? []).map((b) => b.id);
     if (ids.length > 0) {
       await (admin
-        .from("booking_assignees" as never)
-        .update({ acceptance_status: "accepted", responded_at: now } as never)
-        .eq("membership_id" as never, membership.id as never)
-        .eq("acceptance_status" as never, "pending" as never)
-        .in("booking_id" as never, ids as never) as unknown as Promise<unknown>);
+        .from("booking_assignees")
+        .update({ acceptance_status: "accepted", responded_at: now })
+        .eq("membership_id", membership.id)
+        .eq("acceptance_status", "pending")
+        .in("booking_id", ids) as unknown as Promise<unknown>);
     }
   }
 
@@ -348,10 +348,10 @@ async function dropShift(
   // booking id, so without this a cleaner could drop / alert managers on a
   // booking in another org entirely.
   const { data: myRow } = (await admin
-    .from("booking_assignees" as never)
+    .from("booking_assignees")
     .select("id")
-    .eq("booking_id" as never, bookingId as never)
-    .eq("membership_id" as never, membershipId as never)
+    .eq("booking_id", bookingId)
+    .eq("membership_id", membershipId)
     .maybeSingle()) as unknown as { data: { id: string } | null };
   const wasPrimary = booking.assigned_to === membershipId;
   if (!myRow && !wasPrimary) {
@@ -360,37 +360,37 @@ async function dropShift(
 
   // Remove this cleaner from THIS occurrence only.
   await (admin
-    .from("booking_assignees" as never)
+    .from("booking_assignees")
     .delete()
-    .eq("booking_id" as never, bookingId as never)
-    .eq("membership_id" as never, membershipId as never) as unknown as Promise<unknown>);
+    .eq("booking_id", bookingId)
+    .eq("membership_id", membershipId) as unknown as Promise<unknown>);
 
   // If they were the primary, promote a remaining crew member so a job
   // that still has crew doesn't read as "unfilled". Only null it out when
   // nobody is left.
   if (wasPrimary) {
     const { data: remaining } = (await admin
-      .from("booking_assignees" as never)
+      .from("booking_assignees")
       .select("membership_id")
-      .eq("booking_id" as never, bookingId as never)
-      .order("split_index" as never, {
+      .eq("booking_id", bookingId)
+      .order("split_index", {
         ascending: true,
         nullsFirst: true,
-      } as never)
+      })
       .limit(1)) as unknown as {
       data: Array<{ membership_id: string }> | null;
     };
     const next = remaining?.[0]?.membership_id ?? null;
     await (admin
       .from("bookings")
-      .update({ assigned_to: next } as never)
+      .update({ assigned_to: next })
       .eq("id", bookingId) as unknown as Promise<unknown>);
     if (next) {
       await (admin
-        .from("booking_assignees" as never)
-        .update({ is_primary: true } as never)
-        .eq("booking_id" as never, bookingId as never)
-        .eq("membership_id" as never, next as never) as unknown as Promise<unknown>);
+        .from("booking_assignees")
+        .update({ is_primary: true })
+        .eq("booking_id", bookingId)
+        .eq("membership_id", next) as unknown as Promise<unknown>);
     }
   }
 
@@ -442,15 +442,15 @@ async function dropShift(
   const recipients = managers ?? [];
   const href = `/app/bookings/${bookingId}`;
   if (recipients.length > 0) {
-    await (admin.from("notifications" as never).insert(
+    await (admin.from("notifications").insert(
       recipients.map((r) => ({
         organization_id: booking.organization_id,
         recipient_membership_id: r.id,
-        type: "general",
+        type: "general" as const,
         title,
         body,
         href,
-      })) as never,
+      })),
     ) as unknown as Promise<unknown>);
     await Promise.allSettled(
       recipients.map((r) => sendPushToMembership(r.id, { title, body, href })),
@@ -530,7 +530,7 @@ export async function requestSeriesStopAction(
     data: { organization_id: string; series_id: string | null } | null;
   };
   if (bk) {
-    await (admin.from("shift_change_requests" as never).insert({
+    await (admin.from("shift_change_requests").insert({
       organization_id: bk.organization_id,
       membership_id: membership.id,
       booking_id: bookingId,
@@ -538,7 +538,7 @@ export async function requestSeriesStopAction(
       kind: "series_stop",
       reason: trimmed,
       status: "open",
-    } as never) as unknown as Promise<unknown>);
+    }) as unknown as Promise<unknown>);
   }
 
   return result;

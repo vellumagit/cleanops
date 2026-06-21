@@ -70,11 +70,11 @@ export async function issueOAuthState(args: {
 }): Promise<string> {
   const state = randomBytes(32).toString("base64url");
   const admin = createSupabaseAdminClient();
-  await admin.from("square_oauth_states" as never).insert({
+  await admin.from("square_oauth_states").insert({
     state,
     organization_id: args.organizationId,
     membership_id: args.membershipId,
-  } as never);
+  });
   return state;
 }
 
@@ -87,7 +87,7 @@ export async function consumeOAuthState(
 ): Promise<{ organizationId: string; membershipId: string }> {
   const admin = createSupabaseAdminClient();
   const { data } = await admin
-    .from("square_oauth_states" as never)
+    .from("square_oauth_states")
     .select("organization_id, membership_id, expires_at")
     .eq("state", state)
     .maybeSingle();
@@ -104,7 +104,7 @@ export async function consumeOAuthState(
   }
 
   await admin
-    .from("square_oauth_states" as never)
+    .from("square_oauth_states")
     .delete()
     .eq("state", state);
 
@@ -303,7 +303,7 @@ export async function saveConnection(args: {
   // Upsert by (organization_id, provider). Any prior disconnected row gets
   // overwritten with active status.
   await admin
-    .from("integration_connections" as never)
+    .from("integration_connections")
     .upsert(
       {
         organization_id: args.organizationId,
@@ -321,8 +321,8 @@ export async function saveConnection(args: {
           : {},
         connected_by: args.membershipId,
         connected_at: new Date().toISOString(),
-      } as never,
-      { onConflict: "organization_id,provider" } as never,
+      },
+      { onConflict: "organization_id,provider" },
     );
 }
 
@@ -341,13 +341,13 @@ export async function loadConnection(
 } | null> {
   const admin = createSupabaseAdminClient();
   const { data } = (await admin
-    .from("integration_connections" as never)
+    .from("integration_connections")
     .select(
       "external_account_id, access_token_ciphertext, refresh_token_ciphertext, token_expires_at, metadata",
     )
-    .eq("organization_id" as never, organizationId as never)
-    .eq("provider" as never, "square" as never)
-    .eq("status" as never, "active" as never)
+    .eq("organization_id", organizationId)
+    .eq("provider", "square")
+    .eq("status", "active")
     .maybeSingle()) as unknown as {
     data: {
       external_account_id: string | null;
@@ -420,15 +420,15 @@ export async function disconnect(organizationId: string): Promise<void> {
 
   const admin = createSupabaseAdminClient();
   await admin
-    .from("integration_connections" as never)
+    .from("integration_connections")
     .update({
       status: "disconnected",
       access_token_ciphertext: null,
       refresh_token_ciphertext: null,
       token_expires_at: null,
-    } as never)
-    .eq("organization_id" as never, organizationId as never)
-    .eq("provider" as never, "square" as never);
+    })
+    .eq("organization_id", organizationId)
+    .eq("provider", "square");
 }
 
 // -----------------------------------------------------------------------------
@@ -568,13 +568,13 @@ export async function createInvoiceCheckoutLink(args: {
   // Stash the link id + order id on the invoice so the webhook can find us.
   const admin = createSupabaseAdminClient();
   await admin
-    .from("invoices" as never)
+    .from("invoices")
     .update({
       square_payment_link_id: json.payment_link.id,
       square_payment_link_url: json.payment_link.url,
       square_order_id: json.payment_link.order_id ?? null,
-    } as never)
-    .eq("id" as never, args.invoiceId as never);
+    })
+    .eq("id", args.invoiceId);
 
   return { url: json.payment_link.url, id: json.payment_link.id };
 }
