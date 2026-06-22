@@ -494,6 +494,53 @@ export async function listCalendarEvents(
 }
 
 /**
+ * List the event IDs of Sollos-managed events on the org calendar within a
+ * window. The inverse of listCalendarEvents (which excludes Sollos events).
+ * Used by the orphan-prune tool to find events whose booking was deleted.
+ */
+export async function listManagedEventIds(
+  organizationId: string,
+  timeMin: string,
+  timeMax: string,
+): Promise<string[]> {
+  const conn = await getConnection(organizationId);
+  if (!conn) return [];
+
+  const calendarId = (conn.metadata?.calendar_id as string) || "primary";
+  const params = new URLSearchParams({
+    timeMin,
+    timeMax,
+    singleEvents: "true",
+    orderBy: "startTime",
+    maxResults: "2500",
+  });
+
+  const res = await gcalFetch(
+    conn.access_token,
+    `/calendars/${encodeURIComponent(calendarId)}/events?${params.toString()}`,
+  );
+  if (!res.ok) {
+    console.error(
+      "[gcal] listManagedEventIds failed:",
+      res.status,
+      await res.text(),
+    );
+    return [];
+  }
+
+  const data = await res.json();
+  return (
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ((data.items ?? []) as any[])
+      .filter((item) => item.status !== "cancelled")
+      .filter((item) =>
+        (item.description ?? "").includes("Managed by Sollos"),
+      )
+      .map((item) => item.id as string)
+  );
+}
+
+/**
  * Delete all upcoming Google Calendar events for an org from the currently
  * connected calendar, then null out google_calendar_event_id on those
  * bookings so the next create/update pushes fresh events to whatever
