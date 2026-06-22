@@ -586,9 +586,10 @@ export async function cleanupOrgCalendarEvents(
  */
 export async function bulkSyncUpcomingBookings(
   organizationId: string,
-): Promise<void> {
+  opts?: { clientIds?: string[] },
+): Promise<number> {
   const conn = await getConnection(organizationId);
-  if (!conn) return;
+  if (!conn) return 0;
 
   const admin = createSupabaseAdminClient();
   const now = new Date().toISOString();
@@ -599,7 +600,7 @@ export async function bulkSyncUpcomingBookings(
   // sum of segment durations (matching createBookingAction's behavior)
   // rather than the booking's overall duration_minutes which is a slot
   // length and can be longer than the actual work.
-  const { data: bookings } = (await admin
+  let query = admin
     .from("bookings")
     .select(
       `id, scheduled_at, duration_minutes, service_type, address, notes,
@@ -612,7 +613,13 @@ export async function bulkSyncUpcomingBookings(
     .is("google_calendar_event_id", null)
     .neq("status", "cancelled")
     .order("scheduled_at", { ascending: true })
-    .limit(500)) as unknown as {
+    .limit(500);
+  // Optional client scope — used by the backfill tool to verify on a few
+  // clients before running the whole org.
+  if (opts?.clientIds && opts.clientIds.length > 0) {
+    query = query.in("client_id", opts.clientIds);
+  }
+  const { data: bookings } = (await query) as unknown as {
     data: Array<{
       id: string;
       scheduled_at: string;
@@ -630,7 +637,7 @@ export async function bulkSyncUpcomingBookings(
     }> | null;
   };
 
-  if (!bookings || bookings.length === 0) return;
+  if (!bookings || bookings.length === 0) return 0;
 
   // Process in batches of 10 (parallel within batch, sequential between).
   const BATCH = 10;
@@ -666,6 +673,8 @@ export async function bulkSyncUpcomingBookings(
       }),
     );
   }
+
+  return bookings.length;
 }
 
 /**
