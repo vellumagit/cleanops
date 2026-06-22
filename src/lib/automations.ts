@@ -3130,10 +3130,13 @@ export async function autoExtendRecurringSeries(): Promise<number> {
           }) as unknown as Promise<unknown>);
       }
 
-      // Sync to calendar
+      // Sync to calendar. Awaited (not fire-and-forget) so the cron's
+      // serverless invocation doesn't freeze before the Google Calendar
+      // writes complete — that left cron-extended occurrences with no
+      // calendar event.
       if (inserted) {
         for (const b of inserted) {
-          createCalendarEvent(s.organization_id, {
+          await createCalendarEvent(s.organization_id, {
             id: b.id,
             scheduled_at: b.scheduled_at,
             duration_minutes: s.duration_minutes,

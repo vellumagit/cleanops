@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
 import type { Database, Json } from "@/lib/supabase/types";
 
@@ -820,6 +821,8 @@ export async function createRecurringBookingAction(
       ...additionalIds,
     ].filter(Boolean) as string[];
 
+    // Assignee rows are written inline (awaited) — the scheduler and field
+    // app need them present the moment the save returns.
     for (const b of insertedBookings) {
       // Write booking_assignees rows so the scheduler shows the booking
       // in every assignee's lane, the field app surfaces it to additional
@@ -833,29 +836,40 @@ export async function createRecurringBookingAction(
         additionalIds,
         [],
       );
-
-      createCalendarEvent(membership.organization_id, {
-        id: b.id,
-        scheduled_at: b.scheduled_at,
-        duration_minutes: parsed.data.duration_minutes,
-        service_type: parsed.data.service_type,
-        address: parsed.data.address ?? null,
-        notes: parsed.data.notes ?? null,
-        client_name: labels.clientName,
-        employee_name: labels.employeeName,
-      }).catch((err) => console.error("[gcal] sync error on recurring create:", err));
-
-      // Personal calendar sync per employee per occurrence.
-      syncMemberCalendarEvents(b.id, recurringAssignees, {
-        id: b.id,
-        scheduled_at: b.scheduled_at,
-        duration_minutes: parsed.data.duration_minutes,
-        service_type: parsed.data.service_type,
-        address: parsed.data.address ?? null,
-        notes: parsed.data.notes ?? null,
-        client_name: labels.clientName,
-      }).catch(() => {});
     }
+
+    // Calendar sync runs in after() so the save returns immediately while the
+    // serverless runtime keeps the function alive until the Google Calendar
+    // writes actually finish. Firing these un-awaited (the old way) meant the
+    // function froze right after the redirect and the events silently never
+    // got created — the root cause of recurring bookings with no calendar
+    // entry. Awaited sequentially here so they reliably complete.
+    const calBookings = insertedBookings;
+    after(async () => {
+      for (const b of calBookings) {
+        await createCalendarEvent(membership.organization_id, {
+          id: b.id,
+          scheduled_at: b.scheduled_at,
+          duration_minutes: parsed.data.duration_minutes,
+          service_type: parsed.data.service_type,
+          address: parsed.data.address ?? null,
+          notes: parsed.data.notes ?? null,
+          client_name: labels.clientName,
+          employee_name: labels.employeeName,
+        }).catch((err) =>
+          console.error("[gcal] recurring create:", err),
+        );
+        await syncMemberCalendarEvents(b.id, recurringAssignees, {
+          id: b.id,
+          scheduled_at: b.scheduled_at,
+          duration_minutes: parsed.data.duration_minutes,
+          service_type: parsed.data.service_type,
+          address: parsed.data.address ?? null,
+          notes: parsed.data.notes ?? null,
+          client_name: labels.clientName,
+        }).catch(() => {});
+      }
+    });
   }
 
   revalidatePath("/app/bookings");
@@ -1294,33 +1308,35 @@ export async function updateBookingAction(
 
             // Create calendar events for each regenerated booking so the
             // rescheduled future occurrences actually land on the org
-            // calendar (and any connected personal calendars).
-            for (const rb of regenRows) {
-              createCalendarEvent(membership.organization_id, {
-                id: rb.id,
-                scheduled_at: rb.scheduled_at,
-                duration_minutes: parsed.data.duration_minutes,
-                service_type: seriesServiceTypeEnum,
-                address: parsed.data.address ?? null,
-                notes: parsed.data.notes ?? null,
-                client_name: regenLabels.clientName,
-                employee_name: regenLabels.employeeName,
-              }).catch((err) =>
-                console.error(
-                  "[gcal] series-reschedule create failed:",
-                  err,
-                ),
-              );
-              syncMemberCalendarEvents(rb.id, regenAssignees, {
-                id: rb.id,
-                scheduled_at: rb.scheduled_at,
-                duration_minutes: parsed.data.duration_minutes,
-                service_type: seriesServiceTypeEnum,
-                address: parsed.data.address ?? null,
-                notes: parsed.data.notes ?? null,
-                client_name: regenLabels.clientName,
-              }).catch(() => {});
-            }
+            // calendar (and any connected personal calendars). Runs in
+            // after() so the serverless runtime keeps the function alive
+            // until the Google writes finish, instead of freezing right
+            // after the redirect and dropping them.
+            after(async () => {
+              for (const rb of regenRows) {
+                await createCalendarEvent(membership.organization_id, {
+                  id: rb.id,
+                  scheduled_at: rb.scheduled_at,
+                  duration_minutes: parsed.data.duration_minutes,
+                  service_type: seriesServiceTypeEnum,
+                  address: parsed.data.address ?? null,
+                  notes: parsed.data.notes ?? null,
+                  client_name: regenLabels.clientName,
+                  employee_name: regenLabels.employeeName,
+                }).catch((err) =>
+                  console.error("[gcal] series-reschedule create:", err),
+                );
+                await syncMemberCalendarEvents(rb.id, regenAssignees, {
+                  id: rb.id,
+                  scheduled_at: rb.scheduled_at,
+                  duration_minutes: parsed.data.duration_minutes,
+                  service_type: seriesServiceTypeEnum,
+                  address: parsed.data.address ?? null,
+                  notes: parsed.data.notes ?? null,
+                  client_name: regenLabels.clientName,
+                }).catch(() => {});
+              }
+            });
           }
 
           console.log(
