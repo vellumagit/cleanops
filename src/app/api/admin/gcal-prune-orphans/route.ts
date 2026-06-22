@@ -58,8 +58,9 @@ export async function GET(request: NextRequest) {
 
   const admin = createSupabaseAdminClient();
   const now = new Date().toISOString();
+  // 3-year horizon so far-future managed events are also considered.
   const timeMax = new Date(
-    Date.now() + 400 * 24 * 60 * 60 * 1000,
+    Date.now() + 1095 * 24 * 60 * 60 * 1000,
   ).toISOString();
 
   // Valid event ids = every event id referenced by ANY booking (no date

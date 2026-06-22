@@ -507,37 +507,48 @@ export async function listManagedEventIds(
   if (!conn) return [];
 
   const calendarId = (conn.metadata?.calendar_id as string) || "primary";
-  const params = new URLSearchParams({
-    timeMin,
-    timeMax,
-    singleEvents: "true",
-    orderBy: "startTime",
-    maxResults: "2500",
-  });
+  const ids: string[] = [];
+  // Paginate via nextPageToken so the result is COMPLETE — the reconcile
+  // tool treats "not in this list" as "event deleted", so a truncated list
+  // would mis-flag live events as stale and create duplicates on re-sync.
+  let pageToken: string | undefined;
+  do {
+    const params = new URLSearchParams({
+      timeMin,
+      timeMax,
+      singleEvents: "true",
+      orderBy: "startTime",
+      maxResults: "2500",
+    });
+    if (pageToken) params.set("pageToken", pageToken);
 
-  const res = await gcalFetch(
-    conn.access_token,
-    `/calendars/${encodeURIComponent(calendarId)}/events?${params.toString()}`,
-  );
-  if (!res.ok) {
-    console.error(
-      "[gcal] listManagedEventIds failed:",
-      res.status,
-      await res.text(),
+    const res = await gcalFetch(
+      conn.access_token,
+      `/calendars/${encodeURIComponent(calendarId)}/events?${params.toString()}`,
     );
-    return [];
-  }
+    if (!res.ok) {
+      console.error(
+        "[gcal] listManagedEventIds failed:",
+        res.status,
+        await res.text(),
+      );
+      break;
+    }
 
-  const data = await res.json();
-  return (
+    const data = await res.json();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ((data.items ?? []) as any[])
-      .filter((item) => item.status !== "cancelled")
-      .filter((item) =>
-        (item.description ?? "").includes("Managed by Sollos"),
-      )
-      .map((item) => item.id as string)
-  );
+    for (const item of (data.items ?? []) as any[]) {
+      if (
+        item.status !== "cancelled" &&
+        (item.description ?? "").includes("Managed by Sollos")
+      ) {
+        ids.push(item.id as string);
+      }
+    }
+    pageToken = data.nextPageToken as string | undefined;
+  } while (pageToken);
+
+  return ids;
 }
 
 /**

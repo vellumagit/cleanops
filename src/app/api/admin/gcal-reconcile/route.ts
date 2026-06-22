@@ -48,8 +48,10 @@ export async function GET(request: NextRequest) {
   const since = new Date();
   since.setUTCHours(0, 0, 0, 0);
   const sinceIso = since.toISOString();
+  // 3-year horizon (well beyond how far series generate) so far-future
+  // bookings' events are in the list and never mis-flagged as stale.
   const timeMax = new Date(
-    Date.now() + 400 * 24 * 60 * 60 * 1000,
+    Date.now() + 1095 * 24 * 60 * 60 * 1000,
   ).toISOString();
 
   // Live event ids currently on the calendar.
