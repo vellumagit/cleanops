@@ -62,16 +62,18 @@ export async function GET(request: NextRequest) {
     Date.now() + 400 * 24 * 60 * 60 * 1000,
   ).toISOString();
 
-  // Valid event ids = every event id still referenced by a future booking.
-  // Paginated so we never miss one (deleting a referenced event would be a
-  // real data-loss bug, so this set must be complete).
+  // Valid event ids = every event id referenced by ANY booking (no date
+  // filter). An in-progress booking that started earlier today is listed by
+  // Google (its event hasn't ended) but has scheduled_at < now — filtering
+  // valid ids by `>= now` mis-flagged those live events as orphans and
+  // deleted them. Protecting every referenced id, regardless of date, makes
+  // a valid event impossible to delete. Paginated so the set is complete.
   const validIds = new Set<string>();
   for (let from = 0; ; from += 1000) {
     const { data } = (await admin
       .from("bookings")
       .select("google_calendar_event_id")
       .eq("organization_id", orgId)
-      .gte("scheduled_at", now)
       .not("google_calendar_event_id", "is", null)
       .range(from, from + 999)) as unknown as {
       data: Array<{ google_calendar_event_id: string | null }> | null;

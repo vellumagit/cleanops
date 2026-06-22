@@ -639,7 +639,11 @@ export async function bulkSyncUpcomingBookings(
   if (!conn) return 0;
 
   const admin = createSupabaseAdminClient();
-  const now = new Date().toISOString();
+  // Start of today (UTC), not the current instant, so already-started-today
+  // and in-progress bookings get an event too — not just strictly-future.
+  const since = new Date();
+  since.setUTCHours(0, 0, 0, 0);
+  const sinceIso = since.toISOString();
 
   // Fetch upcoming bookings that haven't been synced yet, joined to client
   // for the client name. Limit to 500 to guard against pathological cases.
@@ -656,7 +660,7 @@ export async function bulkSyncUpcomingBookings(
        assignee:memberships ( display_name, profile:profiles ( full_name ) )`,
     )
     .eq("organization_id", organizationId)
-    .gte("scheduled_at", now)
+    .gte("scheduled_at", sinceIso)
     .is("google_calendar_event_id", null)
     .neq("status", "cancelled")
     .order("scheduled_at", { ascending: true })
