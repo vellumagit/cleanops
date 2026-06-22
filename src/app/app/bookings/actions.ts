@@ -1149,6 +1149,70 @@ export async function updateBookingAction(
           monthly_dow: parsedMonthlyDow,
         };
 
+        // Labels + assignees + the carried service_type, computed once so
+        // both the stale-event teardown and the regenerated-event creation
+        // below reuse them.
+        const regenLabels = await getBookingLabels(
+          supabase,
+          parsed.data.client_id,
+          updateEffectiveAssignedTo,
+        );
+        const regenAssignees = Array.from(
+          new Set([
+            ...(updateEffectiveAssignedTo ? [updateEffectiveAssignedTo] : []),
+            ...readAdditionalAssignees(formData),
+            ...(updateSplits as SplitSegmentInput[])
+              .map((s) => s.assigned_to)
+              .filter(Boolean),
+          ]),
+        ) as string[];
+        // Carry the EXISTING booking's service_type enum onto the
+        // regenerated siblings — never the form-posted value. Without this,
+        // an admin who changes both schedule + service in one save silently
+        // rewrites the enum on every regenerated row in the series.
+        const seriesServiceTypeEnum = (existing?.service_type ??
+          parsed.data.service_type) as ServiceTypeEnum;
+
+        // Tear down the OLD future occurrences' calendar events BEFORE
+        // deleting the rows. Otherwise the Google Calendar events orphan at
+        // their old times and the reschedule never shows up on the calendar.
+        const { data: staleSiblings } = (await admin
+          .from("bookings")
+          .select("id, google_calendar_event_id")
+          .eq("series_id", seriesId)
+          .eq("organization_id", membership.organization_id)
+          .neq("id", id)
+          .gte("scheduled_at", seriesScheduledAt)
+          .not("status", "in", '("completed","cancelled")')) as unknown as {
+          data: Array<{
+            id: string;
+            google_calendar_event_id: string | null;
+          }> | null;
+        };
+        for (const sib of staleSiblings ?? []) {
+          if (sib.google_calendar_event_id) {
+            await deleteCalendarEvent(
+              membership.organization_id,
+              sib.google_calendar_event_id,
+            ).catch((err) =>
+              console.error(
+                "[gcal] series-reschedule stale cleanup failed:",
+                err,
+              ),
+            );
+          }
+          // Remove personal-calendar events (no-op when none are connected).
+          await syncMemberCalendarEvents(sib.id, [], {
+            id: sib.id,
+            scheduled_at: seriesScheduledAt,
+            duration_minutes: parsed.data.duration_minutes,
+            service_type: seriesServiceTypeEnum,
+            address: parsed.data.address ?? null,
+            notes: parsed.data.notes ?? null,
+            client_name: regenLabels.clientName,
+          }).catch(() => {});
+        }
+
         // Delete all future pending/confirmed occurrences in the series
         // (excluding the currently-edited booking — it's already updated).
         // The admin client bypasses RLS; org isolation enforced explicitly.
@@ -1186,15 +1250,6 @@ export async function updateBookingAction(
         );
 
         if (occurrences.length > 0) {
-          // Carry the EXISTING booking's service_type enum onto the
-          // regenerated siblings — never the form-posted value.
-          // service_type immutability: the form drops it from the
-          // field-only edit path, so the schedule-change path must do
-          // the same here. Without this, an admin who changes both
-          // schedule + service in one save silently rewrites the enum
-          // on every regenerated row in the series.
-          const seriesServiceTypeEnum =
-            existing?.service_type ?? parsed.data.service_type;
           const bookingRows = occurrences.map((scheduled_at) => ({
             organization_id: membership.organization_id,
             client_id: parsed.data.client_id,
@@ -1203,7 +1258,7 @@ export async function updateBookingAction(
             assigned_to: updateEffectiveAssignedTo,
             scheduled_at,
             duration_minutes: parsed.data.duration_minutes,
-            service_type: seriesServiceTypeEnum as ServiceTypeEnum,
+            service_type: seriesServiceTypeEnum,
             service_type_id: updateServiceExtras.service_type_id,
             service_type_label: updateServiceExtras.service_type_label,
             status: "confirmed" as const,
@@ -1218,14 +1273,15 @@ export async function updateBookingAction(
           const { data: regenerated } = (await admin
             .from("bookings")
             .insert(bookingRows)
-            .select("id") as unknown as {
-            data: Array<{ id: string }> | null;
+            .select("id, scheduled_at") as unknown as {
+            data: Array<{ id: string; scheduled_at: string }> | null;
           });
 
           // Build booking_assignees for ALL regenerated occurrences in a
           // single bulk pass. Doing this per-row would do ~3 sequential
           // round-trips per occurrence and time out on long series.
-          const regenIds = (regenerated ?? []).map((r) => r.id);
+          const regenRows = regenerated ?? [];
+          const regenIds = regenRows.map((r) => r.id);
           if (regenIds.length > 0) {
             await syncBookingAssigneesBulk(
               supabase,
@@ -1235,6 +1291,36 @@ export async function updateBookingAction(
               readAdditionalAssignees(formData),
               updateSplits as SplitSegmentInput[],
             );
+
+            // Create calendar events for each regenerated booking so the
+            // rescheduled future occurrences actually land on the org
+            // calendar (and any connected personal calendars).
+            for (const rb of regenRows) {
+              createCalendarEvent(membership.organization_id, {
+                id: rb.id,
+                scheduled_at: rb.scheduled_at,
+                duration_minutes: parsed.data.duration_minutes,
+                service_type: seriesServiceTypeEnum,
+                address: parsed.data.address ?? null,
+                notes: parsed.data.notes ?? null,
+                client_name: regenLabels.clientName,
+                employee_name: regenLabels.employeeName,
+              }).catch((err) =>
+                console.error(
+                  "[gcal] series-reschedule create failed:",
+                  err,
+                ),
+              );
+              syncMemberCalendarEvents(rb.id, regenAssignees, {
+                id: rb.id,
+                scheduled_at: rb.scheduled_at,
+                duration_minutes: parsed.data.duration_minutes,
+                service_type: seriesServiceTypeEnum,
+                address: parsed.data.address ?? null,
+                notes: parsed.data.notes ?? null,
+                client_name: regenLabels.clientName,
+              }).catch(() => {});
+            }
           }
 
           console.log(
