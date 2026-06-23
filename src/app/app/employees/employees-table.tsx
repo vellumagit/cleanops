@@ -1,7 +1,6 @@
 "use client";
 
-import Link from "next/link";
-import { Pencil } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { DataTable, type DataTableColumn } from "@/components/data-table";
 import { StatusBadge, type StatusTone } from "@/components/status-badge";
 import { formatCurrencyCents, formatDate, humanizeEnum } from "@/lib/format";
@@ -54,6 +53,7 @@ export function EmployeesTable({
   rows: EmployeeRow[];
   viewerRole: string;
 }) {
+  const router = useRouter();
   const canEdit = viewerRole === "owner" || viewerRole === "admin";
   // Pay rates are confidential — managers can see the team list but not compensation.
   const canSeePay = viewerRole === "owner" || viewerRole === "admin";
@@ -128,30 +128,16 @@ export function EmployeesTable({
       : []),
   ];
 
-  if (canEdit) {
-    columns.push({
-      key: "actions",
-      header: "",
-      headerClassName: "text-right",
-      className: "text-right",
-      render: (r) => (
-        <Link
-          href={`/app/employees/${r.id}/edit`}
-          aria-label={`Edit ${r.full_name}`}
-          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-        >
-          <Pencil className="h-3.5 w-3.5" />
-          Edit
-        </Link>
-      ),
-    });
-  }
-
   return (
     <DataTable
       data={rows}
       columns={columns}
       getRowId={(r) => r.id}
+      // Click a row to open that person's file (owner/admin only — the file
+      // page itself is gated the same way).
+      onRowClick={
+        canEdit ? (r) => router.push(`/app/employees/${r.id}`) : undefined
+      }
       searchPlaceholder="Search by name, phone, or role…"
       emptyState={{
         title: "No teammates yet",
