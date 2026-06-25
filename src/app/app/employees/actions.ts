@@ -271,6 +271,12 @@ const UpdateMemberSchema = z.object({
     .max(2000, "Keep notes under 2000 characters")
     .optional()
     .transform((s) => (s && s.length > 0 ? s : null)),
+  accommodations: z
+    .string()
+    .trim()
+    .max(2000, "Keep this under 2000 characters")
+    .optional()
+    .transform((s) => (s && s.length > 0 ? s : null)),
 });
 
 export type UpdateMemberState = {
@@ -284,6 +290,7 @@ export type UpdateMemberState = {
       | "contact_phone"
       | "address"
       | "notes"
+      | "accommodations"
       | "_form",
       string
     >
@@ -305,6 +312,7 @@ export async function updateMemberAction(
     contact_phone: String(formData.get("contact_phone") ?? ""),
     address: String(formData.get("address") ?? ""),
     notes: String(formData.get("notes") ?? ""),
+    accommodations: String(formData.get("accommodations") ?? ""),
   };
 
   const parsed = UpdateMemberSchema.safeParse(raw);
@@ -392,6 +400,8 @@ export async function updateMemberAction(
   const adminDataPayload: Record<string, unknown> = {};
   if (parsed.data.address !== undefined) adminDataPayload.address = parsed.data.address;
   if (parsed.data.notes !== undefined) adminDataPayload.notes = parsed.data.notes;
+  if (parsed.data.accommodations !== undefined)
+    adminDataPayload.accommodations = parsed.data.accommodations;
 
   if (
     Object.keys(updatePayload).length === 0 &&

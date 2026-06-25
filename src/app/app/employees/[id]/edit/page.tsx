@@ -56,10 +56,14 @@ export default async function EditEmployeePage({
   // these fields to employees querying the Supabase REST API directly.
   const { data: adminData } = (await admin
     .from("membership_admin_data" as never)
-    .select("notes, address")
+    .select("notes, address, accommodations")
     .eq("membership_id" as never, id as never)
     .maybeSingle()) as unknown as {
-    data: { notes: string | null; address: string | null } | null;
+    data: {
+      notes: string | null;
+      address: string | null;
+      accommodations: string | null;
+    } | null;
   };
 
   if (error) throw error;
@@ -81,6 +85,7 @@ export default async function EditEmployeePage({
     contact_phone: member.contact_phone ?? member.profile?.phone ?? null,
     address: adminData?.address ?? null,
     notes: adminData?.notes ?? null,
+    accommodations: adminData?.accommodations ?? null,
     role: member.role,
     pay_rate_cents: member.pay_rate_cents,
     status: member.status,

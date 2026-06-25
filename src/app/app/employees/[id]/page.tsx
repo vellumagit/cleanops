@@ -1,6 +1,15 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Pencil, Mail, Phone, Banknote, CalendarDays } from "lucide-react";
+import {
+  ArrowLeft,
+  Pencil,
+  Mail,
+  Phone,
+  Banknote,
+  CalendarDays,
+  HeartPulse,
+  StickyNote,
+} from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { PageShell } from "@/components/page-shell";
@@ -66,6 +75,15 @@ export default async function EmployeeFilePage({
   };
 
   if (!member) notFound();
+
+  // Admin-only fields (accommodations / health + general notes) for the file.
+  const { data: adminData } = (await admin
+    .from("membership_admin_data" as never)
+    .select("accommodations, notes")
+    .eq("membership_id" as never, id as never)
+    .maybeSingle()) as unknown as {
+    data: { accommodations: string | null; notes: string | null } | null;
+  };
 
   const name = memberDisplayName(member);
   const email = member.contact_email ?? null;
@@ -180,6 +198,41 @@ export default async function EmployeeFilePage({
             </div>
           </div>
         </div>
+
+        {/* Accommodations & health — surfaced prominently so anyone opening
+            the file sees safety-relevant info first. */}
+        {adminData?.accommodations && (
+          <div className="rounded-xl border border-amber-300/60 bg-amber-50 p-4 dark:border-amber-900/40 dark:bg-amber-950/20">
+            <div className="flex items-start gap-2.5">
+              <HeartPulse className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+              <div className="min-w-0">
+                <h3 className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+                  Accommodations &amp; health
+                </h3>
+                <p className="mt-1 whitespace-pre-wrap text-sm text-amber-900/90 dark:text-amber-200/90">
+                  {adminData.accommodations}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* General internal notes */}
+        {adminData?.notes && (
+          <div className="rounded-xl border border-border bg-card p-4">
+            <div className="flex items-start gap-2.5">
+              <StickyNote className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+              <div className="min-w-0">
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Internal notes
+                </h3>
+                <p className="mt-1 whitespace-pre-wrap text-sm">
+                  {adminData.notes}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Documents */}
         <div>

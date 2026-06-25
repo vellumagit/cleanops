@@ -18,6 +18,7 @@ export type EmployeeEditDefaults = {
   contact_phone: string | null;
   address: string | null;
   notes: string | null;
+  accommodations: string | null;
   role: "owner" | "admin" | "manager" | "employee";
   pay_rate_cents: number | null;
   status: "active" | "invited" | "disabled";
@@ -176,6 +177,34 @@ export function EmployeeEditForm({
             can&rsquo;t log in if they have an account.
           </p>
         )}
+      </div>
+
+      {/* ── Accommodations & health ──────────────────────────────────── */}
+      <div className="space-y-4 border-t border-border pt-5">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Accommodations &amp; health
+          </p>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">
+            Allergies, sensitivities, accessibility needs, or medical
+            considerations the team should know to keep this person safe and
+            supported. Admin-only.
+          </p>
+        </div>
+
+        <FormField
+          label="Details"
+          htmlFor="accommodations"
+          error={state.errors?.accommodations}
+        >
+          <Textarea
+            id="accommodations"
+            name="accommodations"
+            rows={3}
+            placeholder="e.g. reacts to certain cleaning products, needs accessible entry, mobility considerations…"
+            defaultValue={defaults.accommodations ?? ""}
+          />
+        </FormField>
       </div>
 
       {/* ── Internal notes ───────────────────────────────────────────── */}
