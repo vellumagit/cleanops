@@ -609,6 +609,9 @@ export async function createBookingAction(
     notes: parsed.data.notes ?? null,
     client_name: labels.clientName,
     employee_name: labels.employeeName,
+    split_count: new Set(
+      (splits as SplitSegmentInput[]).map((s) => s.assigned_to).filter(Boolean),
+    ).size,
   }).catch((err) => console.error("[gcal] sync error on create:", err));
 
   // Sync to each assigned employee's personal calendar (fire-and-forget).
@@ -1485,6 +1488,11 @@ export async function updateBookingAction(
         notes: parsed.data.notes ?? null,
         client_name: labels.clientName,
         employee_name: labels.employeeName,
+        split_count: new Set(
+          (updateSplits as SplitSegmentInput[])
+            .map((s) => s.assigned_to)
+            .filter(Boolean),
+        ).size,
       }).catch((err) => console.error("[gcal] sync error on update:", err));
     } else {
       // No event yet — create one
@@ -1497,6 +1505,11 @@ export async function updateBookingAction(
         notes: parsed.data.notes ?? null,
         client_name: labels.clientName,
         employee_name: labels.employeeName,
+        split_count: new Set(
+          (updateSplits as SplitSegmentInput[])
+            .map((s) => s.assigned_to)
+            .filter(Boolean),
+        ).size,
       }).catch((err) => console.error("[gcal] sync error on create:", err));
     }
 
@@ -1652,6 +1665,9 @@ export async function duplicateBookingAction(id: string) {
       notes: source.notes,
       client_name: labels.clientName,
       employee_name: labels.employeeName,
+      split_count: new Set(
+        sourceSplits.map((s) => s.assigned_to).filter(Boolean),
+      ).size,
     }).catch((err) =>
       console.error("[gcal] sync error on duplicate:", err),
     );

@@ -247,6 +247,41 @@ async function gcalFetch(
  * Create a Google Calendar event for a booking.
  * Returns the event ID or null if no connection exists.
  */
+/**
+ * Build the calendar event title + description from a booking. Shared by
+ * create + update so they never drift. Split shifts get a "Split shift" tag
+ * so a glance at the shared calendar shows it's a multi-cleaner hand-off
+ * (individual cleaners still see only their own segment on their personal
+ * calendar).
+ */
+function buildBookingEventContent(b: {
+  id: string;
+  service_type: string;
+  notes: string | null;
+  client_name?: string;
+  employee_name?: string;
+  split_count?: number;
+}): { summary: string; description: string } {
+  const isSplit = (b.split_count ?? 0) > 1;
+  const summary = [
+    b.service_type ? `${b.service_type} clean` : "Cleaning",
+    b.client_name ? `— ${b.client_name}` : "",
+    isSplit ? "· Split shift" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  const parts: string[] = [];
+  if (isSplit) {
+    parts.push(`Split shift — ${b.split_count} cleaners (sequential hand-off)`);
+  }
+  if (b.employee_name) parts.push(`Assigned to: ${b.employee_name}`);
+  if (b.notes) parts.push(`Notes: ${b.notes}`);
+  parts.push(`\nManaged by Sollos — /app/bookings/${b.id}`);
+
+  return { summary, description: parts.join("\n") };
+}
+
 export async function createCalendarEvent(
   organizationId: string,
   booking: {
@@ -258,6 +293,8 @@ export async function createCalendarEvent(
     notes: string | null;
     client_name?: string;
     employee_name?: string;
+    /** Number of cleaners on a split shift; > 1 adds a "Split shift" tag. */
+    split_count?: number;
   },
 ): Promise<string | null> {
   const conn = await getConnection(organizationId);
@@ -267,22 +304,11 @@ export async function createCalendarEvent(
   const start = new Date(booking.scheduled_at);
   const end = new Date(start.getTime() + booking.duration_minutes * 60_000);
 
-  const summary = [
-    booking.service_type ? `${booking.service_type} clean` : "Cleaning",
-    booking.client_name ? `— ${booking.client_name}` : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
-
-  const descriptionParts = [];
-  if (booking.employee_name)
-    descriptionParts.push(`Assigned to: ${booking.employee_name}`);
-  if (booking.notes) descriptionParts.push(`Notes: ${booking.notes}`);
-  descriptionParts.push(`\nManaged by Sollos — /app/bookings/${booking.id}`);
+  const { summary, description } = buildBookingEventContent(booking);
 
   const event: CalendarEvent = {
     summary,
-    description: descriptionParts.join("\n"),
+    description,
     location: booking.address ?? undefined,
     start: { dateTime: start.toISOString() },
     end: { dateTime: end.toISOString() },
@@ -335,6 +361,8 @@ export async function updateCalendarEvent(
     notes: string | null;
     client_name?: string;
     employee_name?: string;
+    /** Number of cleaners on a split shift; > 1 adds a "Split shift" tag. */
+    split_count?: number;
   },
 ): Promise<boolean> {
   const conn = await getConnection(organizationId);
@@ -344,22 +372,11 @@ export async function updateCalendarEvent(
   const start = new Date(booking.scheduled_at);
   const end = new Date(start.getTime() + booking.duration_minutes * 60_000);
 
-  const summary = [
-    booking.service_type ? `${booking.service_type} clean` : "Cleaning",
-    booking.client_name ? `— ${booking.client_name}` : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
-
-  const descriptionParts = [];
-  if (booking.employee_name)
-    descriptionParts.push(`Assigned to: ${booking.employee_name}`);
-  if (booking.notes) descriptionParts.push(`Notes: ${booking.notes}`);
-  descriptionParts.push(`\nManaged by Sollos — /app/bookings/${booking.id}`);
+  const { summary, description } = buildBookingEventContent(booking);
 
   const event: CalendarEvent = {
     summary,
-    description: descriptionParts.join("\n"),
+    description,
     location: booking.address ?? undefined,
     start: { dateTime: start.toISOString() },
     end: { dateTime: end.toISOString() },
@@ -731,6 +748,7 @@ export async function bulkSyncUpcomingBookings(
           notes: b.notes,
           client_name: b.client?.name,
           employee_name: employeeName,
+          split_count: splitsArr.length,
         }).catch(() => {});
       }),
     );
