@@ -48,12 +48,20 @@ export async function renderInvoicePdf(opts: {
   try {
     const page = await browser.newPage();
 
-    // networkidle0 waits for all network activity (incl. the org logo from
-    // Supabase storage) to settle so it lands on the PDF.
-    await page.goto(url, { waitUntil: "networkidle0", timeout: 30_000 });
+    // Wait for the `load` event (logo + CSS fetched) rather than full network
+    // idle. The invoice page can hold a connection open (payment SDK /
+    // realtime) that never lets networkidle0 settle, which timed out the
+    // render and dropped the email attachment. `load` fires regardless of
+    // those long-lived connections but still waits for the images/styles, and
+    // we don't hard-fail if it's slow — we capture what's painted.
+    try {
+      await page.goto(url, { waitUntil: "load", timeout: 30_000 });
+    } catch {
+      // Slow/hanging resource — proceed and capture the current frame.
+    }
 
-    // Let fonts / any CSS finish painting before capture.
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    // Let fonts / the logo image finish painting before capture.
+    await new Promise((resolve) => setTimeout(resolve, 700));
 
     const pdf = await page.pdf({
       format: "letter",
