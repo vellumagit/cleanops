@@ -21,6 +21,7 @@ import { fetchJobPhotos } from "@/lib/job-photos";
 import { memberDisplayName } from "@/lib/member-display";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { GenerateInvoiceButton } from "./generate-invoice-button";
+import { MakeRecurringButton } from "./make-recurring-button";
 import { JobPhotos } from "@/app/field/jobs/[id]/job-photos";
 import {
   BookingChecklist,
@@ -259,6 +260,10 @@ export default async function BookingDetailPage({
                 Duplicate
               </button>
             </form>
+            {!(booking as { series_id?: string | null }).series_id &&
+              bookingStatus !== "cancelled" && (
+                <MakeRecurringButton bookingId={booking.id} />
+              )}
             {assignableEmployees.length > 0 && (
               <AssignCrewButton
                 bookingId={booking.id}

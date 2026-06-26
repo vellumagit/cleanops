@@ -1544,6 +1544,222 @@ export async function updateBookingAction(
 
 // ─── Duplicate booking ────────────────────────────────────────────────────────
 
+// Simple cadences that "Make recurring" offers — each is anchored to the
+// existing booking's weekday/date, so no extra inputs (custom days, nth
+// weekday) are needed.
+const MAKE_RECURRING_PATTERNS = new Set([
+  "weekly",
+  "bi_weekly",
+  "tri_weekly",
+  "quad_weekly",
+  "monthly",
+]);
+
+/** Booking UTC time → local YYYY-MM-DD + HH:MM in the org's timezone. */
+function utcToOrgLocalParts(
+  iso: string,
+  tz: string,
+): { date: string; time: string } {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date(iso));
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  const hour = get("hour") === "24" ? "00" : get("hour");
+  return {
+    date: `${get("year")}-${get("month")}-${get("day")}`,
+    time: `${hour}:${get("minute")}`,
+  };
+}
+
+/**
+ * Turn an existing single booking into a recurring series. The booking
+ * becomes occurrence #1; future occurrences are generated from its
+ * date/time on the chosen cadence. Owner/admin/manager only.
+ */
+export async function convertBookingToRecurringAction(
+  bookingId: string,
+  formData: FormData,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { membership, supabase } = await getActionContext();
+  if (!["owner", "admin", "manager"].includes(membership.role)) {
+    return { ok: false, error: "You don't have permission." };
+  }
+
+  const pattern = String(formData.get("pattern") ?? "");
+  if (!MAKE_RECURRING_PATTERNS.has(pattern)) {
+    return { ok: false, error: "Pick a recurrence frequency." };
+  }
+
+  const { data: booking } = (await supabase
+    .from("bookings")
+    .select(
+      "id, organization_id, client_id, scheduled_at, duration_minutes, service_type, service_type_id, service_type_label, package_id, assigned_to, total_cents, hourly_rate_cents, address, notes, status, series_id",
+    )
+    .eq("id", bookingId)
+    .eq("organization_id", membership.organization_id)
+    .maybeSingle()) as unknown as {
+    data: {
+      id: string;
+      organization_id: string;
+      client_id: string;
+      scheduled_at: string;
+      duration_minutes: number;
+      service_type: string;
+      service_type_id: string | null;
+      service_type_label: string | null;
+      package_id: string | null;
+      assigned_to: string | null;
+      total_cents: number;
+      hourly_rate_cents: number | null;
+      address: string | null;
+      notes: string | null;
+      status: string;
+      series_id: string | null;
+    } | null;
+  };
+
+  if (!booking) return { ok: false, error: "Booking not found." };
+  if (booking.series_id) {
+    return { ok: false, error: "This booking is already part of a series." };
+  }
+  if (booking.status === "cancelled") {
+    return { ok: false, error: "Can't make a cancelled booking recurring." };
+  }
+
+  const orgTz = await getOrgTimezone(membership.organization_id);
+  const { date: startsAt, time: startTime } = utcToOrgLocalParts(
+    booking.scheduled_at,
+    orgTz,
+  );
+
+  const { data: series, error: seriesErr } = (await supabase
+    .from("booking_series")
+    .insert({
+      organization_id: membership.organization_id,
+      client_id: booking.client_id,
+      pattern,
+      custom_days: null,
+      monthly_nth: null,
+      monthly_dow: null,
+      start_time: startTime,
+      starts_at: startsAt,
+      ends_at: null,
+      generate_ahead: 8,
+      duration_minutes: booking.duration_minutes,
+      service_type: booking.service_type,
+      service_type_id: booking.service_type_id,
+      service_type_label: booking.service_type_label,
+      package_id: booking.package_id,
+      assigned_to: booking.assigned_to,
+      total_cents: booking.total_cents,
+      hourly_rate_cents: booking.hourly_rate_cents,
+      address: booking.address,
+      notes: booking.notes,
+    } as never)
+    .select("id")
+    .single()) as unknown as {
+    data: { id: string } | null;
+    error: { message: string } | null;
+  };
+
+  if (seriesErr || !series) {
+    return { ok: false, error: seriesErr?.message ?? "Couldn't create series." };
+  }
+
+  // Link the existing booking as the first occurrence.
+  await (supabase
+    .from("bookings")
+    .update({ series_id: series.id } as never)
+    .eq("id", bookingId) as unknown as Promise<unknown>);
+
+  // Generate future occurrences strictly after this booking's slot.
+  const rule: SeriesRule = {
+    pattern: pattern as SeriesRule["pattern"],
+    custom_days: null,
+    start_time: startTime,
+    starts_at: startsAt,
+    ends_at: null,
+    generate_ahead: 8,
+    monthly_nth: null,
+    monthly_dow: null,
+    tz: orgTz,
+  };
+  const occurrences = generateOccurrences(rule, 8, new Date(booking.scheduled_at));
+
+  if (occurrences.length > 0) {
+    const rows = occurrences.map((scheduled_at) => ({
+      organization_id: booking.organization_id,
+      client_id: booking.client_id,
+      package_id: booking.package_id,
+      assigned_to: booking.assigned_to,
+      scheduled_at,
+      duration_minutes: booking.duration_minutes,
+      service_type: booking.service_type as ServiceTypeEnum,
+      service_type_id: booking.service_type_id,
+      service_type_label: booking.service_type_label,
+      status: "confirmed" as const,
+      total_cents: booking.total_cents,
+      hourly_rate_cents: booking.hourly_rate_cents,
+      address: booking.address,
+      notes: booking.notes,
+      series_id: series.id,
+    }));
+
+    const { data: inserted } = (await supabase
+      .from("bookings")
+      .insert(rows as never)
+      .select("id, scheduled_at")) as unknown as {
+      data: Array<{ id: string; scheduled_at: string }> | null;
+    };
+    const newRows = inserted ?? [];
+    const newIds = newRows.map((r) => r.id);
+
+    if (newIds.length > 0) {
+      await syncBookingAssigneesBulk(
+        supabase,
+        membership.organization_id,
+        newIds,
+        booking.assigned_to,
+        [],
+        [],
+      );
+
+      const labels = await getBookingLabels(
+        supabase,
+        booking.client_id,
+        booking.assigned_to,
+      );
+      after(async () => {
+        for (const rb of newRows) {
+          await createCalendarEvent(membership.organization_id, {
+            id: rb.id,
+            scheduled_at: rb.scheduled_at,
+            duration_minutes: booking.duration_minutes,
+            service_type: booking.service_type,
+            address: booking.address,
+            notes: booking.notes,
+            client_name: labels.clientName,
+            employee_name: labels.employeeName,
+          }).catch((err) =>
+            console.error("[gcal] make-recurring create:", err),
+          );
+        }
+      });
+    }
+  }
+
+  revalidatePath(`/app/bookings/${bookingId}`);
+  revalidatePath("/app/bookings");
+  revalidatePath("/app/calendar");
+  return { ok: true };
+}
+
 /**
  * Create a copy of an existing booking (same client, service, crew, price)
  * with status reset to "pending". Redirects to the new booking's edit page
