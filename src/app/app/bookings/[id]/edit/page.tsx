@@ -11,6 +11,7 @@ import {
 import { BookingForm } from "../../booking-form";
 import { fetchBookingFormOptions } from "../../options";
 import { DeleteBookingForm } from "./delete-form";
+import { MakeRecurringButton } from "../make-recurring-button";
 
 export const metadata = { title: "Edit booking" };
 
@@ -146,6 +147,19 @@ export default async function EditBookingPage({
             }}
           />
         </div>
+        {!booking.series_id && booking.status !== "cancelled" && (
+          <div className="rounded-lg border border-border bg-card p-6">
+            <h2 className="text-sm font-semibold">Make this recurring</h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Turn this one-off into a recurring cleaning — this visit stays as
+              the first, and future visits are scheduled automatically on the
+              same day and time.
+            </p>
+            <div className="mt-4">
+              <MakeRecurringButton bookingId={booking.id} />
+            </div>
+          </div>
+        )}
         <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-6">
           <h2 className="text-sm font-semibold text-destructive">Danger zone</h2>
           <p className="mt-1 text-xs text-muted-foreground">
