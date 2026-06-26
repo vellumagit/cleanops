@@ -59,11 +59,7 @@ export async function GET(
   } catch (err) {
     console.error("[api/i/pdf] render failed:", err);
     return NextResponse.json(
-      {
-        error: "PDF generation failed. Try again in a moment.",
-        // TEMP diagnostic — remove after debugging the prod render failure.
-        detail: err instanceof Error ? err.stack ?? err.message : String(err),
-      },
+      { error: "PDF generation failed. Try again in a moment." },
       { status: 500 },
     );
   }
