@@ -10,7 +10,7 @@ import {
   InvoicePaymentSchema,
   type PAYMENT_METHODS,
 } from "@/lib/validators/invoice-payment";
-import { localInputToUtcIso } from "@/lib/validators/common";
+import { localInputToUtcIso, parseDollarsToCents } from "@/lib/validators/common";
 import { generateClaimToken } from "@/lib/claim-token";
 import {
   sendOrgEmailDetailed,
@@ -22,7 +22,7 @@ import { getOrgCurrency } from "@/lib/org-currency";
 import { autoOnInvoicePaid } from "@/lib/automations";
 import { canCreateData } from "@/lib/subscription";
 import { redirectAfterSetup } from "@/lib/setup-return";
-import { computeTax } from "@/lib/invoice-tax";
+import { computeTax, parseTaxRate } from "@/lib/invoice-tax";
 import { pushInvoiceToSage } from "@/lib/sage";
 
 type Field = keyof typeof InvoiceSchema.shape;
@@ -972,4 +972,136 @@ export async function bulkGenerateInvoicesAction(): Promise<BulkInvoiceResult> {
     skipped: bookings.length - uninvoiced.length,
     errors,
   };
+}
+
+// ── Bill for a period (consolidated invoice) ─────────────────────────────────
+
+export type PeriodInvoiceState = ActionState<"_form">;
+
+/**
+ * Create one consolidated invoice from a set of line items — typically a
+ * month of bookings pre-loaded by the period page, then edited by the user.
+ * Lines that came from a booking carry booking_id so that work shows as
+ * invoiced and won't be billed again. Owner/admin only.
+ */
+export async function createPeriodInvoiceAction(
+  _prev: PeriodInvoiceState,
+  formData: FormData,
+): Promise<PeriodInvoiceState> {
+  const { membership, supabase } = await getActionContext();
+  if (!["owner", "admin"].includes(membership.role)) {
+    return { errors: { _form: "You don't have permission." } };
+  }
+  if (!(await canCreateData(membership.organization_id))) {
+    return {
+      errors: {
+        _form:
+          "Your subscription has expired. Subscribe to create new invoices.",
+      },
+    };
+  }
+
+  const clientId = String(formData.get("client_id") ?? "");
+  if (!clientId) return { errors: { _form: "Pick a client." } };
+  const dueDateRaw = String(formData.get("due_date") ?? "").trim();
+  const dueDate = dueDateRaw.length > 0 ? dueDateRaw : null;
+
+  let rawLines: Array<{
+    label?: string;
+    quantity?: string;
+    unit_price_dollars?: string;
+    booking_id?: string | null;
+  }>;
+  try {
+    const arr = JSON.parse(String(formData.get("line_items_json") ?? "[]"));
+    if (!Array.isArray(arr)) throw new Error("not array");
+    rawLines = arr;
+  } catch {
+    return { errors: { _form: "Invalid line items." } };
+  }
+
+  // Keep only lines with a label, compute cents per line + subtotal.
+  const lineRows = rawLines
+    .map((l, idx) => {
+      const label = String(l.label ?? "").trim();
+      const qty = Number(l.quantity ?? "1") || 0;
+      const unit = parseDollarsToCents(String(l.unit_price_dollars ?? "")) ?? 0;
+      return {
+        label,
+        quantity: qty,
+        unit_price_cents: unit,
+        booking_id: l.booking_id || null,
+        sort_order: idx,
+        line_cents: Math.round(qty * unit),
+      };
+    })
+    .filter((r) => r.label.length > 0);
+
+  if (lineRows.length === 0) {
+    return { errors: { _form: "Add at least one line item." } };
+  }
+
+  const subtotalCents = lineRows.reduce((s, r) => s + r.line_cents, 0);
+  const rateBps = parseTaxRate(String(formData.get("tax_rate_percent") ?? ""));
+  const taxLabelRaw = String(formData.get("tax_label") ?? "").trim();
+  const tax = computeTax(subtotalCents, { rateBps });
+
+  // The invoice is consolidated, so there's no single booking_id on it —
+  // the bookings are tracked per line item instead.
+  const { data: inv, error: invErr } = (await supabase
+    .from("invoices")
+    .insert({
+      organization_id: membership.organization_id,
+      client_id: clientId,
+      booking_id: null,
+      status: "draft",
+      amount_cents: tax.totalCents,
+      tax_rate_bps: tax.rateBps,
+      tax_amount_cents: tax.taxAmountCents,
+      tax_label: tax.rateBps ? taxLabelRaw || null : null,
+      due_date: dueDate,
+      sent_at: null,
+      paid_at: null,
+    } as never)
+    .select("id")
+    .single()) as unknown as {
+    data: { id: string } | null;
+    error: { message: string } | null;
+  };
+
+  if (invErr || !inv) {
+    return { errors: { _form: invErr?.message ?? "Couldn't create invoice." } };
+  }
+
+  const itemsPayload = lineRows.map((r) => ({
+    invoice_id: inv.id,
+    organization_id: membership.organization_id,
+    label: r.label,
+    quantity: r.quantity,
+    unit_price_cents: r.unit_price_cents,
+    sort_order: r.sort_order,
+    booking_id: r.booking_id,
+  }));
+  const { error: itemsErr } = (await (supabase
+    .from("invoice_line_items")
+    .insert(itemsPayload as never) as unknown as Promise<{
+    error: { message: string } | null;
+  }>));
+  if (itemsErr) return { errors: { _form: itemsErr.message } };
+
+  await logAuditEvent({
+    membership,
+    action: "create",
+    entity: "invoice",
+    entity_id: inv.id,
+    after: {
+      client_id: clientId,
+      amount_cents: tax.totalCents,
+      lines: lineRows.length,
+    },
+  });
+
+  revalidatePath("/app/invoices");
+  revalidatePath("/app");
+  redirect(`/app/invoices/${inv.id}/edit`);
 }

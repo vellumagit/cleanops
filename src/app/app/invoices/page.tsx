@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Plus } from "lucide-react";
+import { Plus, CalendarRange } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getOrgCurrency } from "@/lib/org-currency";
@@ -76,6 +76,13 @@ export default async function InvoicesPage({
           {canEdit && !showArchived && (
             <>
               <BulkInvoiceButton />
+              <Link
+                href="/app/invoices/period"
+                className={buttonVariants({ variant: "outline" })}
+              >
+                <CalendarRange className="h-4 w-4" />
+                Bill for a period
+              </Link>
               <Link
                 href="/app/invoices/new"
                 className={buttonVariants({ variant: "default" })}
