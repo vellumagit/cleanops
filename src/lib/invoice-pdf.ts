@@ -20,6 +20,15 @@ import "server-only";
 import puppeteer from "puppeteer-core";
 import chromium from "@sparticuz/chromium";
 
+// Load the COMPLETE Chromium pack (binary + shared libs) from the matching
+// @sparticuz release at runtime. Vercel's file tracer drops the .so libs from
+// the bundle, so the locally-bundled binary fails with
+// "libnss3.so: cannot open shared object file". The remote pack ships every
+// dependency and is cached in /tmp after the first cold start. Must match the
+// installed @sparticuz/chromium version (131.0.1).
+const CHROMIUM_PACK =
+  "https://github.com/Sparticuz/chromium/releases/download/v131.0.1/chromium-v131.0.1-pack.tar";
+
 /**
  * Render the public invoice page to a PDF buffer. The public token in the
  * URL is the capability — the caller is responsible for resolving it.
@@ -41,7 +50,7 @@ export async function renderInvoicePdf(opts: {
   const browser = await puppeteer.launch({
     args: chromium.args,
     defaultViewport: chromium.defaultViewport,
-    executablePath: await chromium.executablePath(),
+    executablePath: await chromium.executablePath(CHROMIUM_PACK),
     headless: true,
   });
 
