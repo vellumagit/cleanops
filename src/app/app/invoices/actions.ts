@@ -595,6 +595,7 @@ async function deliverInvoiceEmail(
         })
       : "On receipt",
     publicUrl: `${siteUrl}/i/${prev.public_token}`,
+    pdfUrl: `${siteUrl}/api/i/${prev.public_token}/pdf`,
     orgName: orgData?.name ?? membership.organization_name,
     brandColor: orgData?.brand_color ?? undefined,
     logoUrl: orgData?.logo_url ?? undefined,
@@ -615,32 +616,41 @@ async function deliverInvoiceEmail(
       : null,
   });
 
-  // Generate + attach a PDF copy of the invoice (mirrors the estimate
-  // flow). Best-effort: if the render hiccups we still send the email with
-  // the link, just without the attachment.
+  // Attach a PDF copy of the invoice. The heavy Chromium render runs in the
+  // dedicated /api/i/[token]/pdf route (memory: 1024 + maxDuration: 60 in
+  // vercel.json) — the send function itself doesn't have the ~1GB Chromium
+  // needs, so an INLINE render silently failed and the email went out with no
+  // attachment. We fetch the rendered PDF here, bounded by a timeout so a slow
+  // cold render never blocks the email (which also carries a Download PDF link
+  // as a reliable fallback).
   let pdfAttachment:
     | { filename: string; content: Buffer; contentType: string }
     | null = null;
   try {
-    const { renderInvoicePdf } = await import("@/lib/invoice-pdf");
-    const pdfBuffer = await renderInvoicePdf({
-      publicToken: prev.public_token,
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 7_000);
+    const res = await fetch(`${siteUrl}/api/i/${prev.public_token}/pdf`, {
+      cache: "no-store",
+      signal: controller.signal,
     });
-    const slug = String(prev.number ?? invoiceId.slice(0, 8))
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 40);
-    pdfAttachment = {
-      filename: `invoice-${slug || invoiceId}.pdf`,
-      content: pdfBuffer,
-      contentType: "application/pdf",
-    };
+    clearTimeout(timer);
+    if (res.ok) {
+      const buf = Buffer.from(await res.arrayBuffer());
+      const slug = String(prev.number ?? invoiceId.slice(0, 8))
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 40);
+      pdfAttachment = {
+        filename: `invoice-${slug || invoiceId}.pdf`,
+        content: buf,
+        contentType: "application/pdf",
+      };
+    } else {
+      console.error("[invoice] PDF route returned", res.status);
+    }
   } catch (pdfErr) {
-    console.error(
-      "[invoice] PDF attach failed (continuing without):",
-      pdfErr,
-    );
+    console.error("[invoice] PDF attach failed (continuing without):", pdfErr);
   }
 
   const result = await sendOrgEmailDetailed(membership.organization_id, {

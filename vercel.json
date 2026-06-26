@@ -3,6 +3,10 @@
     "src/app/api/e/[token]/pdf/route.ts": {
       "memory": 1024,
       "maxDuration": 60
+    },
+    "src/app/api/i/[token]/pdf/route.ts": {
+      "memory": 1024,
+      "maxDuration": 60
     }
   },
   "headers": [

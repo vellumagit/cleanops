@@ -176,6 +176,10 @@ export function invoiceSentEmail(args: {
   amountFormatted: string;
   dueDate: string;
   publicUrl: string;
+  /** Direct link to the rendered PDF (the dedicated PDF route). Rendered as a
+   *  "Download PDF copy" link under the main button — a reliable fallback in
+   *  case the email attachment didn't make it. */
+  pdfUrl?: string;
   orgName: string;
   brandColor?: string;
   logoUrl?: string;
@@ -265,6 +269,11 @@ export function invoiceSentEmail(args: {
       </tr>
     </table>
     ${button("View & Pay Invoice", args.publicUrl, args.brandColor ? `#${args.brandColor.replace(/^#/, "")}` : DEFAULT_BRAND)}
+    ${
+      args.pdfUrl
+        ? `<p style="margin:14px 0 0;text-align:center;"><a href="${escapeAttr(args.pdfUrl)}" style="font-size:13px;color:#71717a;text-decoration:underline;">Download PDF copy</a></p>`
+        : ""
+    }
     ${contactBlock}
     `,
     {
@@ -284,7 +293,7 @@ export function invoiceSentEmail(args: {
     args.subtotalFormatted && args.taxAmountFormatted
       ? `Subtotal: ${args.subtotalFormatted}\n${args.taxLineLabel ?? "Tax"}: ${args.taxAmountFormatted}\nTotal: ${args.amountFormatted}`
       : `Amount: ${args.amountFormatted}`;
-  const text = `Invoice ${args.invoiceNumber} from ${args.orgName}\n\n${amountBlock}\nDue: ${args.dueDate}\n\nView: ${args.publicUrl}${contactText}`;
+  const text = `Invoice ${args.invoiceNumber} from ${args.orgName}\n\n${amountBlock}\nDue: ${args.dueDate}\n\nView: ${args.publicUrl}${args.pdfUrl ? `\nDownload PDF: ${args.pdfUrl}` : ""}${contactText}`;
   return { subject, html, text };
 }
 
