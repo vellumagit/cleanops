@@ -595,7 +595,10 @@ async function deliverInvoiceEmail(
         })
       : "On receipt",
     publicUrl: `${siteUrl}/i/${prev.public_token}`,
-    pdfUrl: `${siteUrl}/api/i/${prev.public_token}/pdf`,
+    // PDF link intentionally omitted until the renderer is fixed — the
+    // headless-Chromium render currently fails on the Vercel runtime
+    // (libnss3.so), so this link would 500 for the client.
+    // pdfUrl: `${siteUrl}/api/i/${prev.public_token}/pdf`,
     orgName: orgData?.name ?? membership.organization_name,
     brandColor: orgData?.brand_color ?? undefined,
     logoUrl: orgData?.logo_url ?? undefined,
