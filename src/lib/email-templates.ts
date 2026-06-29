@@ -298,6 +298,76 @@ export function invoiceSentEmail(args: {
 }
 
 // ---------------------------------------------------------------------------
+// Shift accepted / declined (internal — to org owners/admins/managers)
+// ---------------------------------------------------------------------------
+
+export function shiftResponseEmail(args: {
+  recipientName: string;
+  employeeName: string;
+  action: "accepted" | "declined";
+  clientName: string;
+  whenStr: string;
+  address?: string | null;
+  reason?: string | null;
+  orgName: string;
+  dashboardUrl: string;
+  brandColor?: string;
+  logoUrl?: string;
+}) {
+  const accepted = args.action === "accepted";
+  const verb = accepted ? "accepted" : "declined";
+  const subject = `${args.employeeName} ${verb} ${args.clientName} — ${args.whenStr}`;
+  const headline = accepted ? "Shift accepted" : "Shift declined";
+  const accent = accepted ? "#16a34a" : "#dc2626";
+
+  const html = layout(
+    `
+    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;letter-spacing:-0.02em;color:#18181b;line-height:1.3;">${headline}</h1>
+    <p style="margin:0 0 20px;font-size:14px;line-height:1.55;color:#52525b;">
+      <strong style="color:${accent};">${escapeHtml(args.employeeName)}</strong> ${verb} the job for
+      <strong style="color:#18181b;">${escapeHtml(args.clientName)}</strong>.
+    </p>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin-bottom:4px;border-top:1px solid #e4e4e7;">
+      <tr><td style="font-size:13px;color:#71717a;padding:12px 0;border-bottom:1px solid #f4f4f5;">When</td>
+          <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;font-weight:600;border-bottom:1px solid #f4f4f5;">${escapeHtml(args.whenStr)}</td></tr>
+      ${
+        args.address
+          ? `<tr><td style="font-size:13px;color:#71717a;padding:12px 0;border-bottom:1px solid #f4f4f5;">Address</td><td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;border-bottom:1px solid #f4f4f5;">${escapeHtml(args.address)}</td></tr>`
+          : ""
+      }
+      ${
+        !accepted && args.reason
+          ? `<tr><td style="font-size:13px;color:#71717a;padding:12px 0;">Reason</td><td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;">${escapeHtml(args.reason)}</td></tr>`
+          : ""
+      }
+    </table>
+    ${
+      !accepted
+        ? `<p style="margin:16px 0 0;font-size:13px;line-height:1.5;color:#dc2626;font-weight:600;">This job needs to be reassigned.</p>`
+        : ""
+    }
+    ${button(accepted ? "View booking" : "Reassign booking", args.dashboardUrl, args.brandColor ? `#${args.brandColor.replace(/^#/, "")}` : DEFAULT_BRAND)}
+    `,
+    {
+      brandColor: args.brandColor,
+      orgName: args.orgName,
+      logoUrl: args.logoUrl,
+      preheader: subject,
+    },
+  );
+
+  const text =
+    `${headline}\n\n${args.employeeName} ${verb} the job for ${args.clientName}.\n` +
+    `When: ${args.whenStr}` +
+    (args.address ? `\nAddress: ${args.address}` : "") +
+    (!accepted && args.reason ? `\nReason: ${args.reason}` : "") +
+    (!accepted ? "\n\nThis job needs to be reassigned." : "") +
+    `\n\n${args.dashboardUrl}`;
+
+  return { subject, html, text };
+}
+
+// ---------------------------------------------------------------------------
 // Team invite (Sollos platform email)
 // ---------------------------------------------------------------------------
 

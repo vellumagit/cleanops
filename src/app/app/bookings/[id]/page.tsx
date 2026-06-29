@@ -183,6 +183,37 @@ export default async function BookingDetailPage({
     (r) => r.membership_id,
   );
 
+  // Crew acceptance — who has confirmed vs is still pending. A cleaner who
+  // declines is removed from booking_assignees entirely (and the managers get
+  // a decline email), so the list only ever shows accepted/pending.
+  const { data: crewRows } = (await supabase
+    .from("booking_assignees" as never)
+    .select(
+      "membership_id, is_primary, acceptance_status, responded_at, membership:memberships ( display_name, profile:profiles ( full_name ) )",
+    )
+    .eq("booking_id" as never, booking.id as never)
+    .order("is_primary" as never, { ascending: false } as never)) as unknown as {
+    data: Array<{
+      is_primary: boolean;
+      acceptance_status: string | null;
+      responded_at: string | null;
+      membership: {
+        display_name: string | null;
+        profile: { full_name: string | null } | null;
+      } | null;
+    }> | null;
+  };
+  const crew = (crewRows ?? []).map((r, i) => ({
+    key: `${i}`,
+    name:
+      r.membership?.display_name?.trim() ||
+      r.membership?.profile?.full_name?.trim() ||
+      "Crew member",
+    isPrimary: r.is_primary,
+    status: r.acceptance_status ?? "pending",
+    respondedAt: r.responded_at,
+  }));
+
   // Active employees in the org — feeds the Assign-crew popup so the
   // owner can change the primary or add more crew without leaving this
   // page. RLS scopes memberships to the current org.
@@ -349,6 +380,50 @@ export default async function BookingDetailPage({
                 </dd>
               </div>
             </dl>
+
+            {crew.length > 0 && (
+              <div className="mt-4 border-t border-border pt-4">
+                <p className="text-xs font-medium text-muted-foreground">
+                  Crew response
+                </p>
+                <ul className="mt-2 space-y-1.5">
+                  {crew.map((c) => {
+                    const accepted = c.status === "accepted";
+                    return (
+                      <li
+                        key={c.key}
+                        className="flex items-center justify-between gap-3 text-sm"
+                      >
+                        <span className="font-medium text-foreground">
+                          {c.name}
+                          {c.isPrimary && (
+                            <span className="ml-1.5 text-[10px] font-normal text-muted-foreground">
+                              lead
+                            </span>
+                          )}
+                        </span>
+                        <span className="flex items-center gap-1.5">
+                          <span
+                            className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                              accepted
+                                ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                                : "bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                            }`}
+                          >
+                            {accepted ? "Accepted" : "Awaiting response"}
+                          </span>
+                          {accepted && c.respondedAt && (
+                            <span className="text-[10px] text-muted-foreground">
+                              {formatDateTime(c.respondedAt, tz)}
+                            </span>
+                          )}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
 
             {booking.package?.name && (
               <p className="mt-4 text-xs text-muted-foreground">

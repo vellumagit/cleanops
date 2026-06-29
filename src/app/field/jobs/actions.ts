@@ -252,6 +252,54 @@ export async function acceptGpsConsentAction(): Promise<void> {
 // removes them from the job and flags it unfilled (+ alerts the owner).
 
 /** Confirm the current member's assignment to a booking. */
+/**
+ * Email the org's owners/admins/managers when a cleaner accepts or declines a
+ * shift — "the account(s) that sent the job". Best-effort: a failure never
+ * blocks the accept/decline. Internal email (sendEmail), so it bypasses the
+ * client-facing CLIENT_EMAILS_PAUSED switch.
+ */
+async function emailShiftResponse(opts: {
+  orgId: string;
+  employeeName: string;
+  action: "accepted" | "declined";
+  clientName: string;
+  whenStr: string;
+  address: string | null;
+  reason?: string | null;
+  orgName: string | null;
+  brandColor?: string | null;
+}): Promise<void> {
+  try {
+    const { getOrgManagementRecipients } = await import("@/lib/org-recipients");
+    const { sendEmail } = await import("@/lib/email");
+    const { shiftResponseEmail } = await import("@/lib/email-templates");
+    const recipients = await getOrgManagementRecipients(opts.orgId);
+    if (recipients.length === 0) return;
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+    for (const r of recipients) {
+      const template = shiftResponseEmail({
+        recipientName: r.fullName ?? "there",
+        employeeName: opts.employeeName,
+        action: opts.action,
+        clientName: opts.clientName,
+        whenStr: opts.whenStr,
+        address: opts.address,
+        reason: opts.reason ?? null,
+        orgName: opts.orgName ?? "your team",
+        dashboardUrl: `${siteUrl}/app/bookings`,
+        brandColor: opts.brandColor ?? undefined,
+      });
+      await sendEmail({
+        to: r.email,
+        toName: r.fullName ?? undefined,
+        ...template,
+      });
+    }
+  } catch (err) {
+    console.error("[shift-response] email failed:", err);
+  }
+}
+
 export async function acceptShiftAction(
   bookingId: string,
 ): Promise<JobActionResult> {
@@ -298,6 +346,67 @@ export async function acceptShiftAction(
         .eq("acceptance_status", "pending")
         .in("booking_id", ids) as unknown as Promise<unknown>);
     }
+  }
+
+  // Email the management accounts that this cleaner accepted (best-effort).
+  try {
+    const { data: bkInfo } = (await admin
+      .from("bookings")
+      .select("scheduled_at, address, organization_id, client:clients ( name )")
+      .eq("id", bookingId)
+      .maybeSingle()) as unknown as {
+      data: {
+        scheduled_at: string;
+        address: string | null;
+        organization_id: string;
+        client: { name: string | null } | null;
+      } | null;
+    };
+    if (bkInfo) {
+      const { data: meInfo } = (await admin
+        .from("memberships")
+        .select("display_name, profile:profiles ( full_name )")
+        .eq("id", membership.id)
+        .maybeSingle()) as unknown as {
+        data: {
+          display_name: string | null;
+          profile: { full_name: string | null } | null;
+        } | null;
+      };
+      const { data: orgInfo } = (await admin
+        .from("organizations")
+        .select("name, brand_color, timezone")
+        .eq("id", bkInfo.organization_id)
+        .maybeSingle()) as unknown as {
+        data: {
+          name: string | null;
+          brand_color: string | null;
+          timezone: string | null;
+        } | null;
+      };
+      const whoName =
+        meInfo?.display_name ?? meInfo?.profile?.full_name ?? "A cleaner";
+      const whenStr = new Date(bkInfo.scheduled_at).toLocaleString("en-US", {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        timeZone: orgInfo?.timezone ?? "America/Edmonton",
+      });
+      await emailShiftResponse({
+        orgId: bkInfo.organization_id,
+        employeeName: whoName,
+        action: "accepted",
+        clientName: bkInfo.client?.name ?? "a client",
+        whenStr,
+        address: bkInfo.address,
+        orgName: orgInfo?.name ?? null,
+        brandColor: orgInfo?.brand_color,
+      });
+    }
+  } catch (err) {
+    console.error("[shift-response] accept email failed:", err);
   }
 
   revalidatePath(`/field/jobs/${bookingId}`, "page");
@@ -410,9 +519,15 @@ async function dropShift(
 
   const { data: org } = (await admin
     .from("organizations")
-    .select("timezone")
+    .select("timezone, name, brand_color")
     .eq("id", booking.organization_id)
-    .maybeSingle()) as unknown as { data: { timezone: string | null } | null };
+    .maybeSingle()) as unknown as {
+    data: {
+      timezone: string | null;
+      name: string | null;
+      brand_color: string | null;
+    } | null;
+  };
   const when = new Date(booking.scheduled_at).toLocaleDateString("en-US", {
     weekday: "short",
     month: "short",
@@ -456,6 +571,19 @@ async function dropShift(
       recipients.map((r) => sendPushToMembership(r.id, { title, body, href })),
     );
   }
+
+  // Email the management accounts that this cleaner declined (best-effort).
+  await emailShiftResponse({
+    orgId: booking.organization_id,
+    employeeName: who,
+    action: "declined",
+    clientName: booking.client?.name ?? "a client",
+    whenStr: when,
+    address: booking.address ?? null,
+    reason: opts.reason ?? null,
+    orgName: org?.name ?? null,
+    brandColor: org?.brand_color,
+  });
 
   revalidatePath(`/field/jobs/${bookingId}`, "page");
   revalidatePath("/field/jobs", "page");
