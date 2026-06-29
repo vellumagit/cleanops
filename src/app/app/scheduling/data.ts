@@ -228,7 +228,7 @@ export async function fetchScheduleWeek(
         "id, role, status, display_name, profile:profiles ( full_name )",
       )
       .eq("status", "active")
-      .in("role", ["employee", "admin", "owner"]),
+      .in("role", ["employee", "admin", "owner", "manager"]),
     // availability_overrides with kind='off' that land inside the
     // displayed range. kind='custom' is ignored here (v1 shading is
     // "fully off" only — partial shading for custom-hours is a

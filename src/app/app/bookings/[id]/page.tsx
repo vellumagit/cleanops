@@ -191,7 +191,7 @@ export default async function BookingDetailPage({
         .from("memberships")
         .select("id, display_name, profile:profiles ( full_name )")
         .eq("status", "active")
-        .in("role", ["employee", "admin", "owner"])
+        .in("role", ["employee", "admin", "owner", "manager"])
         .order("display_name", {
           ascending: true,
         })) as unknown as {
