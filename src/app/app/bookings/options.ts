@@ -3,6 +3,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { requireMembership } from "@/lib/auth";
 import { memberDisplayName } from "@/lib/member-display";
+import { getFlaggedCrewIds } from "@/lib/crew-accommodations";
 
 /**
  * Fetch the option lists every booking form needs (clients / packages /
@@ -97,6 +98,12 @@ export async function fetchBookingFormOptions() {
     }>,
   ]);
 
+  // Which assignable cleaners carry an accommodation / health note — surfaces a
+  // flag in the crew pickers (the note text stays on the employee file).
+  const flaggedCrew = await getFlaggedCrewIds(
+    (employees.data ?? []).map((m) => m.id),
+  );
+
   return {
     clients:
       clients.data?.map((c) => ({
@@ -118,6 +125,7 @@ export async function fetchBookingFormOptions() {
         id: m.id,
         label: memberDisplayName(m),
         pay_rate_cents: m.pay_rate_cents ?? null,
+        hasAccommodations: flaggedCrew.has(m.id),
       })) ?? []).sort((a, b) => a.label.localeCompare(b.label)),
     services:
       (services.data ?? []).map((s) => ({

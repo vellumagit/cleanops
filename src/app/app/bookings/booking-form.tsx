@@ -2,7 +2,7 @@
 
 import { useState, useActionState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { Repeat, CalendarPlus, SplitSquareVertical, Plus, Trash2 } from "lucide-react";
+import { Repeat, CalendarPlus, SplitSquareVertical, Plus, Trash2, AlertTriangle } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { buttonVariants } from "@/components/ui/button";
@@ -61,7 +61,14 @@ export type BookingFormDefaults = {
   splits?: SplitSegment[];
 };
 
-type Option = { id: string; label: string; pay_rate_cents?: number | null };
+type Option = {
+  id: string;
+  label: string;
+  pay_rate_cents?: number | null;
+  /** Cleaner has an accommodation / health note on file — surfaces a flag in
+   * the crew pickers so the assigner checks the employee file first. */
+  hasAccommodations?: boolean;
+};
 
 /** A service this org offers — loaded from service_types. The form
  *  uses the row's `id` as the dropdown value but actually submits the
@@ -983,6 +990,7 @@ export function BookingForm({
             {employees.map((e) => (
               <option key={e.id} value={e.id}>
                 {e.label}
+                {e.hasAccommodations ? " ⚠ (note on file)" : ""}
               </option>
             ))}
           </FormSelect>
@@ -1019,6 +1027,12 @@ export function BookingForm({
                     >
                       {checked ? "✓ " : ""}
                       {e.label}
+                      {e.hasAccommodations && (
+                        <AlertTriangle
+                          className="ml-1 inline-block h-3 w-3 align-[-1px] text-amber-600 dark:text-amber-400"
+                          aria-label="Has accommodations on file"
+                        />
+                      )}
                     </button>
                   );
                 })}

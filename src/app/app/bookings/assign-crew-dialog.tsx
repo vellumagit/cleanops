@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useState, useEffect, useMemo } from "react";
-import { Users, Check, Info } from "lucide-react";
+import { Users, Check, Info, AlertTriangle } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -21,7 +21,13 @@ import {
 
 const EMPTY: AssignCrewState = {};
 
-export type AssignableEmployee = { id: string; label: string };
+export type AssignableEmployee = {
+  id: string;
+  label: string;
+  /** True when this cleaner has an accommodation / health note on file. We
+   * surface a discreet flag here; the note itself stays on the employee file. */
+  hasAccommodations?: boolean;
+};
 
 /** Join names like "Maria, Anna & Olha". */
 function joinNames(names: string[]): string {
@@ -215,6 +221,15 @@ export function AssignCrewDialog({
                           {selected && <Check className="h-3 w-3" />}
                         </span>
                         <span>{e.label}</span>
+                        {e.hasAccommodations && (
+                          <span
+                            title="Has accommodations on file — check the employee file before assigning"
+                            className="ml-auto inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-400"
+                          >
+                            <AlertTriangle className="h-3 w-3" />
+                            Note
+                          </span>
+                        )}
                       </button>
                     );
                   })}

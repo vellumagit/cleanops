@@ -7,6 +7,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { ArchivedToggle } from "@/components/archived-toggle";
 import { memberDisplayName } from "@/lib/member-display";
 import { getOrgTimezone } from "@/lib/org-timezone";
+import { getFlaggedCrewIds } from "@/lib/crew-accommodations";
 import { BookingsTable, type BookingRow } from "./bookings-table";
 
 export const metadata = { title: "Bookings" };
@@ -93,9 +94,13 @@ export default async function BookingsPage({
       profile: { full_name: string | null } | null;
     }> | null;
   };
+  const flaggedCrew = await getFlaggedCrewIds(
+    (employeesData ?? []).map((m) => m.id),
+  );
   const employees = (employeesData ?? []).map((m) => ({
     id: m.id,
     label: memberDisplayName(m) ?? "Unnamed",
+    hasAccommodations: flaggedCrew.has(m.id),
   }));
 
   // Junction rows for the bookings on this page — gives us each

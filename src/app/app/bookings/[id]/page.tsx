@@ -20,6 +20,7 @@ import {
 import { fetchJobPhotos } from "@/lib/job-photos";
 import { memberDisplayName } from "@/lib/member-display";
 import { getOrgTimezone } from "@/lib/org-timezone";
+import { getFlaggedCrewIds } from "@/lib/crew-accommodations";
 import { GenerateInvoiceButton } from "./generate-invoice-button";
 import { MakeRecurringButton } from "./make-recurring-button";
 import { JobPhotos } from "@/app/field/jobs/[id]/job-photos";
@@ -233,9 +234,13 @@ export default async function BookingDetailPage({
         }> | null;
       })
     : { data: null };
+  const flaggedCrew = await getFlaggedCrewIds(
+    (employeesData ?? []).map((m) => m.id),
+  );
   const assignableEmployees = (employeesData ?? []).map((m) => ({
     id: m.id,
     label: memberDisplayName(m) ?? "Unnamed",
+    hasAccommodations: flaggedCrew.has(m.id),
   }));
 
   // Checklist items attached to this booking + available templates for
