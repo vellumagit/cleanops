@@ -1405,10 +1405,15 @@ export async function updateBookingAction(
   }
 
   // If the scheduled time changed, email the client + push employee
-  // (both handled inside sendBookingRescheduled).
+  // (both handled inside sendBookingRescheduled). Compare by INSTANT, not by
+  // string: the stored value comes back from Postgres as "…+00:00" while
+  // parsed.data.scheduled_at is a toISOString() "…Z" — same moment, different
+  // text. A string compare here fired a phantom "rescheduled" notification on
+  // every edit-form save (crew/notes changes included).
   if (
     existing?.scheduled_at &&
-    existing.scheduled_at !== parsed.data.scheduled_at
+    new Date(existing.scheduled_at).getTime() !==
+      new Date(parsed.data.scheduled_at).getTime()
   ) {
     sendBookingRescheduled(id, existing.scheduled_at);
   }

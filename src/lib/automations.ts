@@ -798,7 +798,7 @@ export async function sendBookingConfirmation(bookingId: string) {
 
     const { data: org } = await db
       .from("organizations")
-      .select("name, brand_color, logo_url, contact_phone")
+      .select("name, brand_color, logo_url, contact_phone, timezone")
       .eq("id", booking.organization_id)
       .maybeSingle() as unknown as {
       data: {
@@ -806,6 +806,7 @@ export async function sendBookingConfirmation(bookingId: string) {
         brand_color: string | null;
         logo_url: string | null;
         contact_phone: string | null;
+        timezone: string | null;
       } | null;
     };
 
@@ -815,6 +816,7 @@ export async function sendBookingConfirmation(bookingId: string) {
       day: "numeric",
       hour: "numeric",
       minute: "2-digit",
+      timeZone: org?.timezone ?? "America/Edmonton",
     });
 
     const template = bookingConfirmationEmail({
@@ -914,6 +916,22 @@ export async function sendBookingRescheduled(
     const serviceDisplayName =
       booking.service_type_label ?? humanize(booking.service_type);
 
+    // Org row up front — we need the timezone to format times in the client's
+    // local wall-clock, not Vercel's UTC clock (which turned noon into "6 PM").
+    const { data: org } = await db
+      .from("organizations")
+      .select("name, brand_color, logo_url, timezone")
+      .eq("id", booking.organization_id)
+      .maybeSingle() as unknown as {
+      data: {
+        name: string;
+        brand_color: string | null;
+        logo_url: string | null;
+        timezone: string | null;
+      } | null;
+    };
+    const tz = org?.timezone ?? "America/Edmonton";
+
     // Push the assigned employee first — the field app banner needs to
     // update even if the client email is paused or blocked.
     if (booking.assigned_to) {
@@ -923,6 +941,7 @@ export async function sendBookingRescheduled(
         day: "numeric",
         hour: "numeric",
         minute: "2-digit",
+        timeZone: tz,
       });
       sendPushToMembership(booking.assigned_to, {
         title: "Booking rescheduled",
@@ -947,14 +966,6 @@ export async function sendBookingRescheduled(
       return;
     }
 
-    const { data: org } = await db
-      .from("organizations")
-      .select("name, brand_color, logo_url")
-      .eq("id", booking.organization_id)
-      .maybeSingle() as unknown as {
-      data: { name: string; brand_color: string | null; logo_url: string | null } | null;
-    };
-
     const fmt = (iso: string) =>
       new Date(iso).toLocaleString("en-US", {
         weekday: "long",
@@ -962,6 +973,7 @@ export async function sendBookingRescheduled(
         day: "numeric",
         hour: "numeric",
         minute: "2-digit",
+        timeZone: tz,
       });
 
     const template = bookingRescheduledEmail({
@@ -1025,12 +1037,19 @@ export async function notifyBookingCancelledToEmployee(bookingId: string) {
 
     if (!booking || !booking.assigned_to) return;
 
+    const { data: orgTzRow } = await db
+      .from("organizations")
+      .select("timezone")
+      .eq("id", booking.organization_id)
+      .maybeSingle() as unknown as { data: { timezone: string | null } | null };
+
     const when = new Date(booking.scheduled_at).toLocaleString("en-US", {
       weekday: "short",
       month: "short",
       day: "numeric",
       hour: "numeric",
       minute: "2-digit",
+      timeZone: orgTzRow?.timezone ?? "America/Edmonton",
     });
     const serviceDisplay =
       booking.service_type_label ?? humanize(booking.service_type);
@@ -1104,10 +1123,15 @@ export async function sendBookingCancelledToClient(bookingId: string) {
 
     const { data: org } = await db
       .from("organizations")
-      .select("name, brand_color, logo_url")
+      .select("name, brand_color, logo_url, timezone")
       .eq("id", booking.organization_id)
       .maybeSingle() as unknown as {
-      data: { name: string; brand_color: string | null; logo_url: string | null } | null;
+      data: {
+        name: string;
+        brand_color: string | null;
+        logo_url: string | null;
+        timezone: string | null;
+      } | null;
     };
 
     const dateTime = new Date(booking.scheduled_at).toLocaleString("en-US", {
@@ -1116,6 +1140,7 @@ export async function sendBookingCancelledToClient(bookingId: string) {
       day: "numeric",
       hour: "numeric",
       minute: "2-digit",
+      timeZone: org?.timezone ?? "America/Edmonton",
     });
 
     const template = bookingCancelledEmail({
@@ -2350,7 +2375,13 @@ export async function sendUpcomingBookingReminders(): Promise<{
   // Cache org lookups (toggle + branding) across the batch.
   const orgCache = new Map<
     string,
-    { name: string; brand_color: string | null; logo_url: string | null; enabled: boolean } | null
+    {
+      name: string;
+      brand_color: string | null;
+      logo_url: string | null;
+      timezone: string | null;
+      enabled: boolean;
+    } | null
   >();
 
   for (const booking of candidates) {
@@ -2367,10 +2398,15 @@ export async function sendUpcomingBookingReminders(): Promise<{
       );
       const { data: orgData } = await db
         .from("organizations")
-        .select("name, brand_color, logo_url")
+        .select("name, brand_color, logo_url, timezone")
         .eq("id", booking.organization_id)
         .maybeSingle() as unknown as {
-        data: { name: string; brand_color: string | null; logo_url: string | null } | null;
+        data: {
+          name: string;
+          brand_color: string | null;
+          logo_url: string | null;
+          timezone: string | null;
+        } | null;
       };
       cached = orgData ? { ...orgData, enabled } : null;
       orgCache.set(booking.organization_id, cached);
@@ -2392,6 +2428,7 @@ export async function sendUpcomingBookingReminders(): Promise<{
       day: "numeric",
       hour: "numeric",
       minute: "2-digit",
+      timeZone: cached.timezone ?? "America/Edmonton",
     });
 
     const template = bookingReminderEmail({
@@ -3347,12 +3384,13 @@ export async function sendUnassignedBookingAlerts(): Promise<{
 
     const { data: orgData } = await db
       .from("organizations")
-      .select("name")
+      .select("name, timezone")
       .eq("id", orgId)
       .maybeSingle() as unknown as {
-      data: { name: string } | null;
+      data: { name: string; timezone: string | null } | null;
     };
     const orgName = orgData?.name ?? "your organization";
+    const orgTz = orgData?.timezone ?? "America/Edmonton";
 
     const recipients = await getOrgAdminRecipients(orgId);
     if (recipients.length === 0) continue;
@@ -3366,6 +3404,7 @@ export async function sendUnassignedBookingAlerts(): Promise<{
         day: "numeric",
         hour: "numeric",
         minute: "2-digit",
+        timeZone: orgTz,
       }),
       address: b.address ?? "(no address)",
       hoursUntil: Math.max(
