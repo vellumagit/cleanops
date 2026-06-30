@@ -36,6 +36,14 @@ import {
 
 export const metadata = { title: "Job detail" };
 
+/** First letters of the first two words — avatar fallback. "You" → "Y". */
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
 export default async function FieldJobDetailPage({
   params,
 }: {
@@ -167,12 +175,13 @@ export default async function FieldJobDetailPage({
     supabase
       .from("booking_assignees" as never)
       .select(
-        `membership_id, split_start_offset_minutes, split_duration_minutes,
+        `membership_id, is_primary, split_start_offset_minutes, split_duration_minutes,
          membership:memberships ( display_name, profile:profiles ( full_name ) )`,
       )
       .eq("booking_id" as never, booking.id as never) as unknown as Promise<{
       data: Array<{
         membership_id: string;
+        is_primary: boolean;
         split_start_offset_minutes: number | null;
         split_duration_minutes: number | null;
         membership: {
@@ -229,6 +238,42 @@ export default async function FieldJobDetailPage({
           };
         })
       : [];
+
+  // Full crew on this shift — everyone the cleaner works alongside. Built from
+  // booking_assignees (includes the primary), shown on EVERY team job, not just
+  // splits, so a cleaner always knows who they're with. Lead first, then "you",
+  // then the rest by name.
+  const crew = (allSegRows ?? [])
+    .map((r, i) => {
+      const offset = r.split_start_offset_minutes;
+      const dur = r.split_duration_minutes;
+      const isYou = r.membership_id === membership.id;
+      return {
+        key: r.membership_id,
+        name: isYou
+          ? "You"
+          : memberDisplayName(r.membership ?? {}) ?? "Crew member",
+        isPrimary: r.is_primary,
+        isYou,
+        color: toneForEmployee(i),
+        windowLabel:
+          offset != null && dur != null
+            ? `${new Date(
+                bookingStartMs + offset * 60_000,
+              ).toLocaleTimeString("en-US", {
+                hour: "numeric",
+                minute: "2-digit",
+                timeZone: tz,
+              })} · ${formatDurationMinutes(dur)}`
+            : null,
+      };
+    })
+    .sort((a, b) => {
+      if (a.isPrimary !== b.isPrimary) return a.isPrimary ? -1 : 1;
+      if (a.isYou !== b.isYou) return a.isYou ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+  const showCrew = crew.length >= 2;
 
   return (
     <div className="space-y-5">
@@ -312,6 +357,52 @@ export default async function FieldJobDetailPage({
           ) : null}
         </dl>
       </div>
+
+      {showCrew && (
+        <div className="rounded-xl border border-border bg-card p-5">
+          <h2 className="mb-3 flex items-center gap-2 text-base font-semibold">
+            <Users className="h-5 w-5 text-muted-foreground" />
+            Working with
+            <span className="text-sm font-normal text-muted-foreground">
+              · {crew.length} on this shift
+            </span>
+          </h2>
+          <ul className="space-y-2.5">
+            {crew.map((c) => (
+              <li key={c.key} className="flex items-center gap-3">
+                <span
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white"
+                  style={{ backgroundColor: c.color }}
+                >
+                  {initials(c.name)}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="truncate font-medium text-foreground">
+                      {c.name}
+                    </span>
+                    {c.isPrimary && (
+                      <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
+                        Lead
+                      </span>
+                    )}
+                    {c.isYou && (
+                      <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        You
+                      </span>
+                    )}
+                  </div>
+                  {c.windowLabel && (
+                    <div className="text-xs text-muted-foreground">
+                      {c.windowLabel}
+                    </div>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <JobPhotos
         bookingId={booking.id}
