@@ -569,6 +569,72 @@ export async function listManagedEventIds(
 }
 
 /**
+ * List Sollos-managed events on a MEMBER's personal calendar within a window.
+ * Returns full-enough detail to reconcile against our mapping table: the Google
+ * event id, its start, and the booking id parsed from the "Managed by Sollos —
+ * /field/jobs/{id}" marker in the description. Used by the member-calendar
+ * audit + orphan-sweep to find events whose booking/mapping no longer exists.
+ * Paginated so the result is complete (a truncated list would mis-flag live
+ * events as orphans).
+ */
+export async function listMemberManagedEvents(
+  membershipId: string,
+  timeMin: string,
+  timeMax: string,
+): Promise<Array<{ id: string; summary: string; start: string; bookingId: string | null }>> {
+  const conn = await getMemberConnection(membershipId);
+  if (!conn) return [];
+
+  const calendarId = (conn.metadata?.calendar_id as string) || "primary";
+  const out: Array<{ id: string; summary: string; start: string; bookingId: string | null }> = [];
+  let pageToken: string | undefined;
+  do {
+    const params = new URLSearchParams({
+      timeMin,
+      timeMax,
+      singleEvents: "true",
+      orderBy: "startTime",
+      maxResults: "2500",
+    });
+    if (pageToken) params.set("pageToken", pageToken);
+
+    const res = await gcalFetch(
+      conn.access_token,
+      `/calendars/${encodeURIComponent(calendarId)}/events?${params.toString()}`,
+    );
+    if (!res.ok) {
+      console.error(
+        "[gcal/member] listMemberManagedEvents failed:",
+        res.status,
+        await res.text(),
+      );
+      break;
+    }
+
+    const data = await res.json();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const item of (data.items ?? []) as any[]) {
+      const desc = (item.description ?? "") as string;
+      if (item.status === "cancelled" || !desc.includes("Managed by Sollos")) {
+        continue;
+      }
+      const m = desc.match(
+        /\/field\/jobs\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i,
+      );
+      out.push({
+        id: item.id as string,
+        summary: (item.summary ?? "(No title)") as string,
+        start: (item.start?.dateTime ?? item.start?.date ?? "") as string,
+        bookingId: m ? m[1] : null,
+      });
+    }
+    pageToken = data.nextPageToken as string | undefined;
+  } while (pageToken);
+
+  return out;
+}
+
+/**
  * Delete all upcoming Google Calendar events for an org from the currently
  * connected calendar, then null out google_calendar_event_id on those
  * bookings so the next create/update pushes fresh events to whatever
