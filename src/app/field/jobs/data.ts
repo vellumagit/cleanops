@@ -81,10 +81,46 @@ export async function fetchMyFieldJobs(
           .limit(100);
   if (bookingsResp.error) throw bookingsResp.error;
 
+  // For "divide hours evenly" jobs we show each cleaner their share
+  // (duration ÷ crew), so we need the full crew size per booking and the
+  // flag. Both live outside the generated types / this member's own row, so
+  // fetch them separately (cast around the untyped column).
+  const [crewRows, flagRows] = bookingIds.length
+    ? await Promise.all([
+        supabase
+          .from("booking_assignees" as never)
+          .select("booking_id" as never)
+          .in("booking_id" as never, bookingIds as never) as unknown as Promise<{
+          data: Array<{ booking_id: string }> | null;
+        }>,
+        supabase
+          .from("bookings" as never)
+          .select("id, divide_hours_evenly" as never)
+          .in("id" as never, bookingIds as never) as unknown as Promise<{
+          data: Array<{ id: string; divide_hours_evenly: boolean | null }> | null;
+        }>,
+      ])
+    : [{ data: [] }, { data: [] }];
+  const crewCountByBooking = new Map<string, number>();
+  for (const r of crewRows.data ?? []) {
+    crewCountByBooking.set(
+      r.booking_id,
+      (crewCountByBooking.get(r.booking_id) ?? 0) + 1,
+    );
+  }
+  const divideByBooking = new Map(
+    (flagRows.data ?? []).map((r) => [r.id, r.divide_hours_evenly === true]),
+  );
+
   const jobs: FieldJob[] = (bookingsResp.data ?? []).map((b) => {
     const seg = assigneeByBooking.get(b.id);
     const offset = seg?.split_start_offset_minutes ?? null;
     const segDur = seg?.split_duration_minutes ?? null;
+    // Share the total evenly when the owner flagged it and this cleaner isn't
+    // on a hand-off split segment.
+    const crewCount = crewCountByBooking.get(b.id) ?? 1;
+    const sharesEvenly =
+      divideByBooking.get(b.id) === true && segDur == null && crewCount >= 2;
     return {
       ...b,
       display_address: b.address ?? b.client?.address ?? null,
@@ -96,7 +132,9 @@ export async function fetchMyFieldJobs(
               new Date(b.scheduled_at).getTime() + offset * 60_000,
             ).toISOString()
           : b.scheduled_at,
-      effective_duration_minutes: segDur ?? b.duration_minutes,
+      effective_duration_minutes: sharesEvenly
+        ? Math.round(b.duration_minutes / crewCount)
+        : segDur ?? b.duration_minutes,
     };
   });
   jobs.sort(

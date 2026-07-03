@@ -170,7 +170,7 @@ export default async function FieldJobDetailPage({
   // booking.id — fetch them in parallel. Serializing these round-trips made
   // the detail page slow to first paint (a stuck-feeling loader on a poor
   // mobile connection).
-  const [photos, segResult, checklistResult] = await Promise.all([
+  const [photos, segResult, checklistResult, flagResult] = await Promise.all([
     fetchJobPhotos(booking.id),
     supabase
       .from("booking_assignees" as never)
@@ -199,9 +199,18 @@ export default async function FieldJobDetailPage({
       } as never) as unknown as Promise<{
       data: BookingChecklistItem[] | null;
     }>,
+    // divide_hours_evenly isn't in the generated types yet — cast around it.
+    supabase
+      .from("bookings" as never)
+      .select("divide_hours_evenly" as never)
+      .eq("id" as never, booking.id as never)
+      .maybeSingle() as unknown as Promise<{
+      data: { divide_hours_evenly: boolean | null } | null;
+    }>,
   ]);
   const allSegRows = segResult.data;
   const checklistItems = checklistResult.data;
+  const divideHoursEvenly = flagResult.data?.divide_hours_evenly === true;
 
   const splitRows = (allSegRows ?? [])
     .filter(
@@ -275,6 +284,17 @@ export default async function FieldJobDetailPage({
     });
   const showCrew = crew.length >= 2;
 
+  // When the owner marked the job "divide hours evenly" and this cleaner
+  // isn't on a hand-off split segment, show their SHARE of the total
+  // (duration ÷ crew) instead of the full visit length.
+  const sharesEvenly =
+    divideHoursEvenly &&
+    crewRow?.split_duration_minutes == null &&
+    crew.length >= 2;
+  const displayDurationMinutes = sharesEvenly
+    ? Math.round(booking.duration_minutes / crew.length)
+    : effectiveDurationMinutes;
+
   return (
     <div className="space-y-5">
       <Link
@@ -307,7 +327,14 @@ export default async function FieldJobDetailPage({
                 {formatDateTime(effectiveScheduledAt, tz)}
               </div>
               <div className="text-sm text-muted-foreground">
-                Estimated {formatDurationMinutes(effectiveDurationMinutes)}
+                Estimated {formatDurationMinutes(displayDurationMinutes)}
+                {sharesEvenly && (
+                  <span className="block text-xs">
+                    your share of a{" "}
+                    {formatDurationMinutes(booking.duration_minutes)} job, split
+                    evenly between {crew.length} cleaners
+                  </span>
+                )}
               </div>
             </div>
           </div>

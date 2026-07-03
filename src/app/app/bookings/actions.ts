@@ -49,6 +49,7 @@ function readFormValues(formData: FormData) {
     hourly_rate_cents: String(formData.get("hourly_rate_cents") ?? ""),
     address: String(formData.get("address") ?? ""),
     notes: String(formData.get("notes") ?? ""),
+    divide_hours_evenly: String(formData.get("divide_hours_evenly") ?? ""),
   };
 }
 
@@ -535,6 +536,7 @@ export async function createBookingAction(
       hourly_rate_cents: parsed.data.hourly_rate_cents ?? null,
       address: parsed.data.address ?? null,
       notes: parsed.data.notes ?? null,
+      divide_hours_evenly: parsed.data.divide_hours_evenly,
       splits: splits,
     })
     .select("id")
@@ -1013,6 +1015,7 @@ export async function updateBookingAction(
       hourly_rate_cents: parsed.data.hourly_rate_cents ?? null,
       address: parsed.data.address ?? null,
       notes: parsed.data.notes ?? null,
+      divide_hours_evenly: parsed.data.divide_hours_evenly,
       splits: updateSplits,
     })
     .eq("id", id);

@@ -59,6 +59,8 @@ export type BookingFormDefaults = {
   series_monthly_dow?: number | null;
   /** Pre-existing split segments when editing a booking that has splits. */
   splits?: SplitSegment[];
+  /** Show each cleaner their share (duration ÷ crew) in the field app. */
+  divide_hours_evenly?: boolean;
 };
 
 type Option = {
@@ -317,6 +319,9 @@ export function BookingForm({
   );
   const [splits, setSplits] = useState<SplitSegment[]>(
     defaults?.splits ?? [],
+  );
+  const [divideHours, setDivideHours] = useState<boolean>(
+    defaults?.divide_hours_evenly ?? false,
   );
 
   function addSplit() {
@@ -1052,6 +1057,34 @@ export function BookingForm({
           </>
         )}
       </FormField>
+
+      {/* Divide hours evenly — only meaningful for a team of 2+ working the
+          same hours (not a hand-off split). Purely a field-app display: each
+          cleaner sees their share (duration ÷ crew). Does not change the
+          window, payroll (clock-based), or the client's bill. */}
+      {!splitEnabled &&
+        (primaryAssignee ? 1 : 0) + additionalAssignees.length >= 2 && (
+          <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-border bg-muted/20 p-4">
+            <input
+              type="checkbox"
+              name="divide_hours_evenly"
+              checked={divideHours}
+              onChange={(e) => setDivideHours(e.target.checked)}
+              className="mt-0.5 h-4 w-4 rounded border-input"
+            />
+            <span>
+              <span className="text-sm font-medium">
+                Divide the hours evenly across the crew
+              </span>
+              <span className="mt-0.5 block text-xs text-muted-foreground">
+                Each cleaner sees their share in the field app — a 4h job with
+                2 cleaners shows as ~2h each. Doesn&rsquo;t change the visit
+                window, their pay (from clock-in/out), or the client&rsquo;s
+                bill.
+              </span>
+            </span>
+          </label>
+        )}
 
       {/* ── Split shift ────────────────────────────────────────────────────
           When enabled, the booking is divided into time segments, each

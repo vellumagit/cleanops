@@ -114,6 +114,12 @@ export const BookingSchema = z.object({
   hourly_rate_cents: optionalDollarStringToCents,
   address: optionalText,
   notes: cardSafeOptionalText,
+  // Checkbox: show each cleaner their share (duration ÷ crew) in the field app
+  // instead of the full duration. Absent when unchecked → false.
+  divide_hours_evenly: z
+    .string()
+    .optional()
+    .transform((s) => s === "on" || s === "true" || s === "1"),
 });
 
 export type BookingInput = z.infer<typeof BookingSchema>;
