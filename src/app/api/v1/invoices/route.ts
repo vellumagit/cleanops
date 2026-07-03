@@ -3,6 +3,7 @@ import { authenticateApiKey } from "@/lib/api-key-auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { dispatchWebhookEvent } from "@/lib/webhooks";
 import { findOrCreateClient } from "@/lib/find-or-create-client";
+import { findCrossOrgRef } from "@/lib/api/org-scope";
 
 /**
  * GET /api/v1/invoices
@@ -82,6 +83,22 @@ export async function POST(request: NextRequest) {
     if (!clientId) {
       return NextResponse.json({ error: "Failed to resolve client" }, { status: 500 });
     }
+  }
+
+  // A directly-supplied client_id / booking_id must belong to this org — the
+  // insert uses the service-role client (RLS bypassed) and the GET route
+  // embeds client:clients(name,email). (When client_id was resolved via
+  // findOrCreateClient above it's already org-scoped; findCrossOrgRef skips
+  // absent fields.)
+  const badRef = await findCrossOrgRef(admin, auth.organizationId, {
+    client_id: body.client_id,
+    booking_id: body.booking_id,
+  });
+  if (badRef) {
+    return NextResponse.json(
+      { error: `Invalid ${badRef}: not found in your organization` },
+      { status: 400 },
+    );
   }
 
   const amount_cents = body.amount_cents as number | undefined;

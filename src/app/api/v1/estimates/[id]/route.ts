@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { authenticateApiKey } from "@/lib/api-key-auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { dispatchWebhookEvent } from "@/lib/webhooks";
+import { findCrossOrgRef } from "@/lib/api/org-scope";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -79,8 +80,21 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     }
   }
 
-  // Handle PDF URL — download from external source and store
   const admin = createSupabaseAdminClient();
+
+  // client_id must belong to this org — the update uses the service-role
+  // client (RLS bypassed) and read routes embed client:clients(name,email).
+  const badRef = await findCrossOrgRef(admin, auth.organizationId, {
+    client_id: updates.client_id,
+  });
+  if (badRef) {
+    return NextResponse.json(
+      { error: `Invalid ${badRef}: not found in your organization` },
+      { status: 400 },
+    );
+  }
+
+  // Handle PDF URL — download from external source and store
   if ("pdf_url" in body) {
     if (body.pdf_url === null || body.pdf_url === "") {
       // Remove existing PDF

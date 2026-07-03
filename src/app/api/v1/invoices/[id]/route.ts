@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { authenticateApiKey } from "@/lib/api-key-auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { dispatchWebhookEvent } from "@/lib/webhooks";
+import { findCrossOrgRef } from "@/lib/api/org-scope";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -51,6 +52,20 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   const updates: Record<string, unknown> = {};
   for (const key of allowed) {
     if (key in body) updates[key] = body[key];
+  }
+
+  // Reject foreign ids that belong to another org — the service-role client
+  // below bypasses RLS, and the GET route embeds client:clients(name,email).
+  const preAdmin = createSupabaseAdminClient();
+  const badRef = await findCrossOrgRef(preAdmin, auth.organizationId, {
+    client_id: updates.client_id,
+    booking_id: updates.booking_id,
+  });
+  if (badRef) {
+    return NextResponse.json(
+      { error: `Invalid ${badRef}: not found in your organization` },
+      { status: 400 },
+    );
   }
 
   // Handle timestamp logic for status changes

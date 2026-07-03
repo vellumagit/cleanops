@@ -3,6 +3,7 @@ import { authenticateApiKey } from "@/lib/api-key-auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { dispatchWebhookEvent } from "@/lib/webhooks";
 import { findOrCreateClient } from "@/lib/find-or-create-client";
+import { findCrossOrgRef } from "@/lib/api/org-scope";
 
 /**
  * GET /api/v1/estimates
@@ -114,6 +115,20 @@ export async function POST(request: NextRequest) {
     if (!clientId) {
       return NextResponse.json({ error: "Failed to resolve client" }, { status: 500 });
     }
+  }
+
+  // A directly-supplied client_id must belong to this org — the insert uses
+  // the service-role client (RLS bypassed) and read routes embed
+  // client:clients(name,email). (A findOrCreateClient-resolved id is already
+  // org-scoped; absent fields are skipped.)
+  const badRef = await findCrossOrgRef(admin, auth.organizationId, {
+    client_id: body.client_id,
+  });
+  if (badRef) {
+    return NextResponse.json(
+      { error: `Invalid ${badRef}: not found in your organization` },
+      { status: 400 },
+    );
   }
 
   // ── Create the estimate ───────────────────────────────────

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { authenticateApiKey } from "@/lib/api-key-auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { dispatchWebhookEvent } from "@/lib/webhooks";
+import { findCrossOrgRef } from "@/lib/api/org-scope";
 import {
   isValidServiceTypeEnum,
   resolveServiceTypeColumns,
@@ -70,6 +71,21 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   // change-of-service request, not the silent side-effect of saving
   // an unrelated field.
   const admin = createSupabaseAdminClient();
+
+  // Foreign ids must belong to this org — the update uses the service-role
+  // client (RLS bypassed) and read routes embed client:clients(name,email).
+  const badRef = await findCrossOrgRef(admin, auth.organizationId, {
+    client_id: updates.client_id,
+    assigned_to: updates.assigned_to,
+    package_id: updates.package_id,
+  });
+  if (badRef) {
+    return NextResponse.json(
+      { error: `Invalid ${badRef}: not found in your organization` },
+      { status: 400 },
+    );
+  }
+
   if ("service_type" in body) {
     if (!isValidServiceTypeEnum(body.service_type)) {
       return NextResponse.json(
