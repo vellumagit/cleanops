@@ -44,6 +44,11 @@ export const DEFAULT_OFF: ReadonlySet<string> = new Set([
   "booking_confirmation_sms",
   "booking_reminder_client_sms",
   "booking_assignment_sms",
+
+  // Scheduling preference (internal, not client-facing): auto-divide team-job
+  // hours across the crew in the field app. Opt-in — off until the owner
+  // turns it on, so existing orgs keep showing full durations by default.
+  "divide_crew_hours",
 ]);
 
 /**

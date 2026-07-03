@@ -54,7 +54,11 @@ export type AutomationKey =
   // Feed FEATURE visibility — when off (default), the /app/feed and
   // /field/feed routes 404 and the sidebar links are hidden. system_
   // feed_events only matters when this is on.
-  | "feed_visible";
+  | "feed_visible"
+  // Scheduling: when ON, every team job (2+ cleaners working together)
+  // automatically shows each cleaner their share of the hours (duration ÷
+  // crew) in the field app — no per-booking checkbox needed. Default OFF.
+  | "divide_crew_hours";
 
 /**
  * Runtime allowlist derived from the AutomationKey union. Keeps the type
@@ -100,6 +104,7 @@ const VALID_AUTOMATION_KEYS = new Set<AutomationKey>([
   "booking_assignment_sms",
   "system_feed_events",
   "feed_visible",
+  "divide_crew_hours",
 ]);
 
 export async function toggleAutomationAction(formData: FormData) {

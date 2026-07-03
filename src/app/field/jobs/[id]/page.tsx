@@ -29,6 +29,7 @@ import { ManageShift } from "./manage-shift";
 import { OpenInMaps } from "@/components/open-in-maps";
 import { fetchJobPhotos } from "@/lib/job-photos";
 import { getOrgTimezone } from "@/lib/org-timezone";
+import { resolveAutomationEnabled } from "@/lib/automation-defaults";
 import {
   BookingChecklist,
   type BookingChecklistItem,
@@ -170,7 +171,8 @@ export default async function FieldJobDetailPage({
   // booking.id — fetch them in parallel. Serializing these round-trips made
   // the detail page slow to first paint (a stuck-feeling loader on a poor
   // mobile connection).
-  const [photos, segResult, checklistResult, flagResult] = await Promise.all([
+  const [photos, segResult, checklistResult, flagResult, orgAutoResult] =
+    await Promise.all([
     fetchJobPhotos(booking.id),
     supabase
       .from("booking_assignees" as never)
@@ -207,10 +209,28 @@ export default async function FieldJobDetailPage({
       .maybeSingle() as unknown as Promise<{
       data: { divide_hours_evenly: boolean | null } | null;
     }>,
+    // Org-level default — when on, every team job divides automatically.
+    supabase
+      .from("organizations")
+      .select("automation_settings")
+      .eq("id", membership.organization_id)
+      .maybeSingle() as unknown as Promise<{
+      data: {
+        automation_settings: Record<
+          string,
+          { enabled?: boolean } | undefined
+        > | null;
+      } | null;
+    }>,
   ]);
   const allSegRows = segResult.data;
   const checklistItems = checklistResult.data;
-  const divideHoursEvenly = flagResult.data?.divide_hours_evenly === true;
+  const divideHoursEvenly =
+    flagResult.data?.divide_hours_evenly === true ||
+    resolveAutomationEnabled(
+      orgAutoResult.data?.automation_settings ?? null,
+      "divide_crew_hours",
+    );
 
   const splitRows = (allSegRows ?? [])
     .filter(

@@ -9,6 +9,7 @@ import {
   PlayCircle,
   Archive,
   Rss,
+  Clock,
 } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -276,6 +277,22 @@ const CATEGORIES: Category[] = [
         description:
           "1st-of-month recap of the prior month: revenue, job counts, rating, top clients by revenue, top performer, and new clients added.",
         trigger: "1st of each month at 09:00 UTC",
+      },
+    ],
+  },
+  {
+    id: "scheduling",
+    label: "Scheduling",
+    description:
+      "How jobs and crews are shown to your team. These change what cleaners see, not pay or billing.",
+    icon: Clock,
+    automations: [
+      {
+        key: "divide_crew_hours" as AutomationKey,
+        title: "Divide team-job hours across the crew",
+        description:
+          "When two or more cleaners work a job together, show each of them their share of the hours (job length ÷ crew) in the field app — a 4-hour job with 2 cleaners shows as ~2h each. Turn this on and it applies to every team job automatically. Does not change the visit window, pay (from clock-in/out), or the client's bill.",
+        trigger: "Applies to any job with 2+ crew",
       },
     ],
   },

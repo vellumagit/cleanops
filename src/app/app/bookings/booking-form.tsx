@@ -204,6 +204,7 @@ export function BookingForm({
   employees,
   services,
   currency = "CAD",
+  divideHoursDefault = false,
   onSuccess,
 }: {
   mode: "create" | "edit";
@@ -214,6 +215,9 @@ export function BookingForm({
   employees: Option[];
   services: ServiceOption[];
   currency?: "CAD" | "USD";
+  /** Org-level "divide team-job hours" automation is ON — the per-booking
+   *  toggle is then redundant (every team job divides), so we show a note. */
+  divideHoursDefault?: boolean;
   /** When provided, the form runs in "embedded" mode: submitting signals
    *  done via state instead of a page redirect, then calls onSuccess so
    *  the parent can close the Sheet. */
@@ -1063,7 +1067,17 @@ export function BookingForm({
           cleaner sees their share (duration ÷ crew). Does not change the
           window, payroll (clock-based), or the client's bill. */}
       {!splitEnabled &&
-        (primaryAssignee ? 1 : 0) + additionalAssignees.length >= 2 && (
+        (primaryAssignee ? 1 : 0) + additionalAssignees.length >= 2 &&
+        (divideHoursDefault ? (
+          <p className="rounded-lg border border-border bg-muted/20 p-4 text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">
+              Hours are divided evenly across the crew
+            </span>{" "}
+            for all team jobs (Settings → Automations → Scheduling). Each
+            cleaner will see their share (~
+            {"job length ÷ crew"}) in the field app.
+          </p>
+        ) : (
           <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-border bg-muted/20 p-4">
             <input
               type="checkbox"
@@ -1084,7 +1098,7 @@ export function BookingForm({
               </span>
             </span>
           </label>
-        )}
+        ))}
 
       {/* ── Split shift ────────────────────────────────────────────────────
           When enabled, the booking is divided into time segments, each

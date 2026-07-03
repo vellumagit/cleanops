@@ -4,6 +4,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { requireMembership } from "@/lib/auth";
 import { memberDisplayName } from "@/lib/member-display";
 import { getFlaggedCrewIds } from "@/lib/crew-accommodations";
+import { resolveAutomationEnabled } from "@/lib/automation-defaults";
 
 /**
  * Fetch the option lists every booking form needs (clients / packages /
@@ -104,6 +105,25 @@ export async function fetchBookingFormOptions() {
     (employees.data ?? []).map((m) => m.id),
   );
 
+  // Org-level "divide team-job hours" automation — when on, the per-booking
+  // toggle is replaced by an info note in the form (every team job divides).
+  const { data: orgAuto } = (await admin
+    .from("organizations")
+    .select("automation_settings")
+    .eq("id", membership.organization_id)
+    .maybeSingle()) as unknown as {
+    data: {
+      automation_settings: Record<
+        string,
+        { enabled?: boolean } | undefined
+      > | null;
+    } | null;
+  };
+  const divideHoursDefault = resolveAutomationEnabled(
+    orgAuto?.automation_settings ?? null,
+    "divide_crew_hours",
+  );
+
   return {
     clients:
       clients.data?.map((c) => ({
@@ -138,5 +158,6 @@ export async function fetchBookingFormOptions() {
         color: s.color,
         sort_order: s.sort_order,
       })) as ServiceOption[],
+    divideHoursDefault,
   };
 }

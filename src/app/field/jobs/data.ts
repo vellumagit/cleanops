@@ -1,6 +1,7 @@
 import "server-only";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getOrgTimezone } from "@/lib/org-timezone";
+import { resolveAutomationEnabled } from "@/lib/automation-defaults";
 import type { CurrentMembership } from "@/lib/auth";
 
 export type FieldJob = {
@@ -85,7 +86,7 @@ export async function fetchMyFieldJobs(
   // (duration ÷ crew), so we need the full crew size per booking and the
   // flag. Both live outside the generated types / this member's own row, so
   // fetch them separately (cast around the untyped column).
-  const [crewRows, flagRows] = bookingIds.length
+  const [crewRows, flagRows, orgAutoResp] = bookingIds.length
     ? await Promise.all([
         supabase
           .from("booking_assignees" as never)
@@ -99,8 +100,25 @@ export async function fetchMyFieldJobs(
           .in("id" as never, bookingIds as never) as unknown as Promise<{
           data: Array<{ id: string; divide_hours_evenly: boolean | null }> | null;
         }>,
+        supabase
+          .from("organizations")
+          .select("automation_settings")
+          .eq("id", membership.organization_id)
+          .maybeSingle() as unknown as Promise<{
+          data: {
+            automation_settings: Record<
+              string,
+              { enabled?: boolean } | undefined
+            > | null;
+          } | null;
+        }>,
       ])
-    : [{ data: [] }, { data: [] }];
+    : [{ data: [] }, { data: [] }, { data: null }];
+  // Org-level default: when on, EVERY team job divides hours automatically.
+  const orgDivide = resolveAutomationEnabled(
+    orgAutoResp?.data?.automation_settings ?? null,
+    "divide_crew_hours",
+  );
   const crewCountByBooking = new Map<string, number>();
   for (const r of crewRows.data ?? []) {
     crewCountByBooking.set(
@@ -120,7 +138,9 @@ export async function fetchMyFieldJobs(
     // on a hand-off split segment.
     const crewCount = crewCountByBooking.get(b.id) ?? 1;
     const sharesEvenly =
-      divideByBooking.get(b.id) === true && segDur == null && crewCount >= 2;
+      (orgDivide || divideByBooking.get(b.id) === true) &&
+      segDur == null &&
+      crewCount >= 2;
     return {
       ...b,
       display_address: b.address ?? b.client?.address ?? null,
