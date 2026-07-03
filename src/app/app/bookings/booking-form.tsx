@@ -1070,12 +1070,20 @@ export function BookingForm({
         (primaryAssignee ? 1 : 0) + additionalAssignees.length >= 2 &&
         (divideHoursDefault ? (
           <p className="rounded-lg border border-border bg-muted/20 p-4 text-xs text-muted-foreground">
+            {/* Preserve this booking's own flag while the org-wide setting
+                hides the checkbox — otherwise editing the booking would
+                silently clear it, which would matter if the org setting is
+                later turned off. */}
+            <input
+              type="hidden"
+              name="divide_hours_evenly"
+              value={divideHours ? "on" : ""}
+            />
             <span className="font-medium text-foreground">
               Hours are divided evenly across the crew
             </span>{" "}
             for all team jobs (Settings → Automations → Scheduling). Each
-            cleaner will see their share (~
-            {"job length ÷ crew"}) in the field app.
+            cleaner will see their share (job length ÷ crew) in the field app.
           </p>
         ) : (
           <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-border bg-muted/20 p-4">
