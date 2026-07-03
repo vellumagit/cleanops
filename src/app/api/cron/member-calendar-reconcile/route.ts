@@ -27,7 +27,10 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { bulkSyncMemberBookings } from "@/lib/google-calendar";
+import {
+  bulkSyncMemberBookings,
+  sweepMemberCalendarOrphans,
+} from "@/lib/google-calendar";
 import { requireCronAuth } from "@/lib/cron-auth";
 
 export const runtime = "nodejs";
@@ -77,6 +80,7 @@ export async function GET(request: NextRequest) {
   const orgs = new Set(connections.map((c) => c.organization_id));
   let synced = 0;
   let failed = 0;
+  let orphansDeleted = 0;
   const errors: Array<{
     org_id: string;
     membership_id: string;
@@ -90,6 +94,12 @@ export async function GET(request: NextRequest) {
   for (const c of connections) {
     try {
       await bulkSyncMemberBookings(c.membership_id);
+      // Self-heal: remove ghost events whose booking was deleted (e.g. a
+      // series reschedule that regenerated occurrences under new IDs).
+      const sweep = await sweepMemberCalendarOrphans(c.membership_id, {
+        dryRun: false,
+      });
+      orphansDeleted += sweep.deleted;
       synced++;
     } catch (err) {
       failed++;
@@ -108,7 +118,7 @@ export async function GET(request: NextRequest) {
   }
 
   console.log(
-    `[cron/member-calendar-reconcile] orgs=${orgs.size} connections=${connections.length} synced=${synced} failed=${failed}`,
+    `[cron/member-calendar-reconcile] orgs=${orgs.size} connections=${connections.length} synced=${synced} failed=${failed} orphansDeleted=${orphansDeleted}`,
   );
 
   return NextResponse.json({
@@ -116,6 +126,7 @@ export async function GET(request: NextRequest) {
     connections_scanned: connections.length,
     synced,
     failed,
+    orphans_deleted: orphansDeleted,
     errors: errors.slice(0, 50), // cap response size
   });
 }

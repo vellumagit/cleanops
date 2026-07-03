@@ -635,6 +635,112 @@ export async function listMemberManagedEvents(
 }
 
 /**
+ * Self-heal a member's personal calendar: find Sollos-managed events whose
+ * booking no longer exists (deleted during a series reschedule, etc.) and
+ * delete them. These are the "ghost" duplicates — an old occurrence's event
+ * that lingered at its stale time after the booking row was removed.
+ *
+ * SAFETY: only deletes events we can positively tie to a booking id that the
+ * DB confirms is gone. Events with no parseable booking id, or whose booking
+ * still exists, are never touched. If the booking-existence lookup errors we
+ * abort rather than risk deleting a live event. Pass dryRun to report without
+ * deleting.
+ */
+export async function sweepMemberCalendarOrphans(
+  membershipId: string,
+  opts: { dryRun?: boolean; daysAhead?: number } = {},
+): Promise<{
+  scanned: number;
+  orphans: Array<{ eventId: string; start: string; summary: string; bookingId: string | null }>;
+  deleted: number;
+}> {
+  const daysAhead = opts.daysAhead ?? 400;
+  const now = new Date();
+  const timeMin = now.toISOString();
+  const timeMax = new Date(
+    now.getTime() + daysAhead * 24 * 60 * 60 * 1000,
+  ).toISOString();
+
+  const events = await listMemberManagedEvents(membershipId, timeMin, timeMax);
+  if (events.length === 0) return { scanned: 0, orphans: [], deleted: 0 };
+
+  const admin = createSupabaseAdminClient();
+  const bookingIds = [
+    ...new Set(events.map((e) => e.bookingId).filter(Boolean) as string[]),
+  ];
+
+  // Which of the referenced bookings still exist. Chunked to stay well under
+  // any IN() limit. A query error THROWS — we must never treat a failed lookup
+  // as "booking deleted" and nuke a live event.
+  const found = new Set<string>();
+  for (let i = 0; i < bookingIds.length; i += 200) {
+    const chunk = bookingIds.slice(i, i + 200);
+    const { data, error } = (await admin
+      .from("bookings")
+      .select("id")
+      .in("id", chunk)) as unknown as {
+      data: Array<{ id: string }> | null;
+      error: { message: string } | null;
+    };
+    if (error) {
+      throw new Error(`[sweep] booking existence check failed: ${error.message}`);
+    }
+    for (const b of data ?? []) found.add(b.id);
+  }
+
+  // Orphan = event tied to a booking id the DB says is gone.
+  const orphans = events.filter((e) => e.bookingId && !found.has(e.bookingId));
+  const orphanReport = orphans.map((o) => ({
+    eventId: o.id,
+    start: o.start,
+    summary: o.summary,
+    bookingId: o.bookingId,
+  }));
+
+  let deleted = 0;
+  if (!opts.dryRun && orphans.length > 0) {
+    const conn = await getMemberConnection(membershipId);
+    if (conn) {
+      const calendarId = (conn.metadata?.calendar_id as string) || "primary";
+      const BATCH = 10;
+      for (let i = 0; i < orphans.length; i += BATCH) {
+        const results = await Promise.allSettled(
+          orphans.slice(i, i + BATCH).map(async (o) => {
+            const res = await gcalFetch(
+              conn.access_token,
+              `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(o.id)}`,
+              { method: "DELETE" },
+            );
+            // 404/410 = already gone on Google's side — count as cleaned.
+            if (res.ok || res.status === 404 || res.status === 410) return true;
+            console.error(
+              "[gcal/member] sweep delete failed:",
+              res.status,
+              await res.text(),
+            );
+            return false;
+          }),
+        );
+        deleted += results.filter(
+          (r) => r.status === "fulfilled" && r.value === true,
+        ).length;
+      }
+      // Belt-and-suspenders: drop any lingering mapping rows for these events
+      // (there shouldn't be any — the booking delete cascaded them — but a
+      // partial state is possible).
+      const orphanEventIds = orphans.map((o) => o.id);
+      await admin
+        .from("booking_member_calendar_events")
+        .delete()
+        .eq("membership_id", membershipId)
+        .in("google_calendar_event_id", orphanEventIds);
+    }
+  }
+
+  return { scanned: events.length, orphans: orphanReport, deleted };
+}
+
+/**
  * Delete all upcoming Google Calendar events for an org from the currently
  * connected calendar, then null out google_calendar_event_id on those
  * bookings so the next create/update pushes fresh events to whatever
@@ -957,6 +1063,28 @@ export async function createMemberCalendarEvent(
   if (!conn) return null;
 
   const calendarId = (conn.metadata?.calendar_id as string) || "primary";
+  const admin = createSupabaseAdminClient();
+
+  // Orphan guard: if we already track an event for this (booking, member),
+  // delete it on Google BEFORE creating a replacement. Without this, the
+  // upsert below overwrites the stored id and strands the old event on the
+  // cleaner's calendar forever — a prime source of "ghost" duplicates.
+  const { data: prior } = (await admin
+    .from("booking_member_calendar_events")
+    .select("google_calendar_event_id")
+    .eq("booking_id", booking.id)
+    .eq("membership_id", membershipId)
+    .maybeSingle()) as unknown as {
+    data: { google_calendar_event_id: string } | null;
+  };
+  if (prior?.google_calendar_event_id) {
+    await gcalFetch(
+      conn.access_token,
+      `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(prior.google_calendar_event_id)}`,
+      { method: "DELETE" },
+    ).catch(() => {});
+  }
+
   const event = buildMemberEventPayload(booking);
 
   const res = await gcalFetch(
@@ -975,7 +1103,6 @@ export async function createMemberCalendarEvent(
 
   // Upsert the mapping — concurrent calls are fine; ON CONFLICT DO UPDATE
   // just refreshes the ID.
-  const admin = createSupabaseAdminClient();
   await admin
     .from("booking_member_calendar_events")
     .upsert(
