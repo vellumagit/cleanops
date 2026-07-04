@@ -113,35 +113,54 @@ export function localInputToUtcIso(
   datetimeLocal: string,
   tz: string = DEFAULT_TZ,
 ): string {
-  // Parse the components from the input string
   const d = new Date(datetimeLocal);
-  if (Number.isNaN(d.getTime())) return d.toISOString(); // fallback
+  if (Number.isNaN(d.getTime())) {
+    // Unparseable input — return it unchanged so callers' own Number.isNaN
+    // guards catch it. (Previously this returned d.toISOString(), which throws
+    // RangeError on an Invalid Date and 500'd the manual time-entry actions.)
+    return datetimeLocal;
+  }
 
-  // The input was parsed as if it were local/UTC. We need to find what UTC
-  // instant corresponds to this wall-clock time in the org's timezone.
-  //
-  // Strategy: render this UTC instant in the org tz to see what wall-clock
-  // it maps to, compute the offset between the two, and subtract it. For
-  // DST correctness we format the *target* date, not "now".
+  // Treat the wall-clock string AS IF it were UTC to get a stable anchor
+  // instant, then subtract the org tz's offset AT that instant.
   const naive = new Date(datetimeLocal + "Z"); // force UTC parse
-  const utcMs = naive.getTime();
+  const offsetMs = tzOffsetMsAt(naive, tz);
+  return new Date(naive.getTime() - offsetMs).toISOString();
+}
 
-  const inTz = new Date(
-    new Intl.DateTimeFormat("en-CA", {
-      timeZone: tz,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: false,
-    }).format(naive),
+/**
+ * Milliseconds that `tz` is ahead of UTC at the given instant (negative behind
+ * UTC). Computed deterministically from Intl parts + Date.UTC — NOT by parsing
+ * a formatted string with `new Date()`, which interprets it in the SERVER's
+ * timezone and corrupted the result on any non-UTC Node process (dev / seed /
+ * non-UTC hosts). DST-correct because Intl uses the actual rules for `date`.
+ */
+function tzOffsetMsAt(date: Date, tz: string): number {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const map: Record<string, number> = {};
+  for (const p of parts) {
+    if (p.type !== "literal") map[p.type] = Number(p.value);
+  }
+  // Some engines emit hour "24" for local midnight — normalize to 0.
+  const hour = map.hour === 24 ? 0 : map.hour;
+  const asUtc = Date.UTC(
+    map.year,
+    map.month - 1,
+    map.day,
+    hour,
+    map.minute,
+    map.second,
   );
-  // The offset is: what the tz clock shows minus the actual UTC
-  const offsetMs = inTz.getTime() - utcMs;
-  // Subtract the offset to go from wall-clock → UTC
-  return new Date(utcMs - offsetMs).toISOString();
+  return asUtc - date.getTime();
 }
 
 /** Convert cents to a plain dollar string suitable for an Input field. */
