@@ -393,6 +393,18 @@ export async function updateCalendarEvent(
     // (e.g. after an account switch). Fall through to create a fresh event
     // so the booking self-heals rather than silently failing forever.
     if (res.status === 404 || res.status === 410) {
+      // The stored event id is dead. Clear it FIRST (only if it still matches,
+      // to avoid clobbering a concurrent writer) so createCalendarEvent's
+      // ".is(google_calendar_event_id, null)" precondition matches and the new
+      // id actually persists. Without this the booking keeps pointing at the
+      // dead id, the new id is discarded, and every future sync creates and
+      // abandons another orphan event on the customer's calendar.
+      const adminForClear = createSupabaseAdminClient();
+      await adminForClear
+        .from("bookings")
+        .update({ google_calendar_event_id: null })
+        .eq("id", booking.id)
+        .eq("google_calendar_event_id", booking.google_calendar_event_id);
       const newEventId = await createCalendarEvent(organizationId, {
         id: booking.id,
         scheduled_at: booking.scheduled_at,
@@ -544,12 +556,13 @@ export async function listManagedEventIds(
       `/calendars/${encodeURIComponent(calendarId)}/events?${params.toString()}`,
     );
     if (!res.ok) {
-      console.error(
-        "[gcal] listManagedEventIds failed:",
-        res.status,
-        await res.text(),
-      );
-      break;
+      const body = await res.text();
+      console.error("[gcal] listManagedEventIds failed:", res.status, body);
+      // Do NOT return a partial list. Callers (reconcile) treat "absent from
+      // this list" as "event deleted" and would mass-null live bookings' event
+      // ids on a transient mid-pagination error. Fail loudly so the caller
+      // aborts instead of corrupting data.
+      throw new Error(`listManagedEventIds failed: HTTP ${res.status}`);
     }
 
     const data = await res.json();

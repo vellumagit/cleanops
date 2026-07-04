@@ -163,12 +163,30 @@ async function syncBookingAssignees(
   const safeAdditionalIds = additionalIds.filter(isValid);
   const safeSplits = splits.filter((s) => isValid(s.assigned_to));
 
+  // Snapshot the existing crew so we can restore it if the re-insert below
+  // fails. delete + insert isn't transactional here, and a failed insert
+  // previously left the booking with ZERO assignees while the caller still
+  // reported success — the job then showed on nobody's schedule.
+  const { data: priorRows } = (await supabase
+    .from("booking_assignees")
+    .select(
+      "organization_id, booking_id, membership_id, is_primary, split_index, split_start_offset_minutes, split_duration_minutes",
+    )
+    .eq("booking_id", bookingId)) as unknown as {
+    data: Array<Record<string, unknown>> | null;
+  };
+
   // Drop the existing set. RLS scopes this to the caller's org; the
   // booking_id filter is the authoritative narrowing.
-  await (supabase
+  const { error: deleteErr } = (await supabase
     .from("booking_assignees")
     .delete()
-    .eq("booking_id", bookingId) as unknown as Promise<unknown>);
+    .eq("booking_id", bookingId)) as unknown as {
+    error: { message: string } | null;
+  };
+  if (deleteErr) {
+    throw new Error(`Failed to update crew: ${deleteErr.message}`);
+  }
 
   const rows: Array<{
     organization_id: string;
@@ -248,9 +266,20 @@ async function syncBookingAssignees(
 
   if (rows.length === 0) return;
 
-  await (supabase
+  const { error: insertErr } = (await supabase
     .from("booking_assignees")
-    .insert(rows) as unknown as Promise<unknown>);
+    .insert(rows)) as unknown as { error: { message: string } | null };
+  if (insertErr) {
+    // Best-effort restore so a transient insert failure doesn't leave the
+    // booking crew-less, then surface the error loudly instead of a false
+    // success.
+    if (priorRows && priorRows.length > 0) {
+      await (supabase
+        .from("booking_assignees")
+        .insert(priorRows as never) as unknown as Promise<unknown>);
+    }
+    throw new Error(`Failed to update crew: ${insertErr.message}`);
+  }
 }
 
 /**
@@ -1239,7 +1268,8 @@ export async function updateBookingAction(
           .eq("organization_id", membership.organization_id)
           .neq("id", id)
           .gte("scheduled_at", seriesScheduledAt)
-          .not("status", "in", '("completed","cancelled")')) as unknown as {
+          // Match the delete below — leave live in_progress/en_route jobs alone.
+          .in("status", ["pending", "confirmed"])) as unknown as {
           data: Array<{
             id: string;
             google_calendar_event_id: string | null;
@@ -1269,9 +1299,13 @@ export async function updateBookingAction(
           }).catch(() => {});
         }
 
-        // Delete all future pending/confirmed occurrences in the series
-        // (excluding the currently-edited booking — it's already updated).
-        // The admin client bypasses RLS; org isolation enforced explicitly.
+        // Delete only future PENDING/CONFIRMED occurrences (excluding the
+        // currently-edited booking — it's already updated). A future-dated
+        // occurrence can legitimately be in_progress/en_route (a cleaner can
+        // start early); hard-deleting those would destroy live job state +
+        // photos and orphan time entries. Scope to the not-yet-worked statuses
+        // (mirrors cancelSeriesAction). The admin client bypasses RLS; org
+        // isolation enforced explicitly.
         await (admin
           .from("bookings")
           .delete()
@@ -1279,11 +1313,7 @@ export async function updateBookingAction(
           .eq("organization_id", membership.organization_id)
           .neq("id", id)
           .gte("scheduled_at", seriesScheduledAt)
-          .not(
-            "status",
-            "in",
-            '("completed","cancelled")',
-          ) as unknown as Promise<unknown>);
+          .in("status", ["pending", "confirmed"]) as unknown as Promise<unknown>);
 
         // Generate new occurrences strictly after the current booking's
         // datetime so we don't create a duplicate for today's slot.

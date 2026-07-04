@@ -91,6 +91,24 @@ export async function GET(request: NextRequest) {
     });
   }
 
+  // Safety guard: if the live-events list came back EMPTY but bookings claim
+  // event ids, that's almost certainly a transient/auth failure rather than a
+  // real "every event was deleted" — nulling here would orphan every event and
+  // make the backfill duplicate them all. Refuse and make the admin re-run.
+  if (liveIds.size === 0 && stale.length > 0) {
+    return NextResponse.json(
+      {
+        ok: false,
+        org_id: orgId,
+        error:
+          "Live event list was empty while bookings still reference events — aborting to avoid mass-nulling. Re-run (or dry-run) once Google Calendar is responding.",
+        checked,
+        stale_found: stale.length,
+      },
+      { status: 409 },
+    );
+  }
+
   // Null the stale ids in chunks so the backfill will re-create them.
   let nulled = 0;
   for (let i = 0; i < stale.length; i += 200) {

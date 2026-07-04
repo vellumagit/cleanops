@@ -52,17 +52,26 @@ export async function startJobAction(
     };
   }
 
-  if (booking.assigned_to !== membership.id) {
-    // Multi-crew: allow any assignee via booking_assignees junction.
-    const { data: crewRow } = (await supabase
-      .from("booking_assignees")
-      .select("id")
-      .eq("booking_id", bookingId)
-      .eq("membership_id", membership.id)
-      .maybeSingle()) as unknown as { data: { id: string } | null };
-    if (!crewRow) {
-      return { ok: false, error: "This job isn't assigned to you" };
-    }
+  // Authorization + acceptance in one lookup. The caller must be assigned to
+  // this job, and (when tracked via the junction) must have ACCEPTED their
+  // shift first. The UI hides Start for a pending cleaner, but a server action
+  // is a POST endpoint that can be invoked directly — enforce it here too.
+  // Note: fetch the junction row even for the primary (assigned_to), otherwise
+  // a pending PRIMARY would slip past the acceptance gate.
+  const isPrimary = booking.assigned_to === membership.id;
+  const { data: crewRow } = (await supabase
+    .from("booking_assignees")
+    .select("id, acceptance_status")
+    .eq("booking_id", bookingId)
+    .eq("membership_id", membership.id)
+    .maybeSingle()) as unknown as {
+    data: { id: string; acceptance_status: string | null } | null;
+  };
+  if (!isPrimary && !crewRow) {
+    return { ok: false, error: "This job isn't assigned to you" };
+  }
+  if (crewRow?.acceptance_status === "pending") {
+    return { ok: false, error: "Please accept this shift before starting it." };
   }
 
   // Update status if it's not already started or finished.
@@ -176,22 +185,39 @@ export async function completeJobAction(
 
   const { data: booking, error: fetchError } = await supabase
     .from("bookings")
-    .select("id, assigned_to")
+    .select("id, assigned_to, status")
     .eq("id", bookingId)
     .maybeSingle();
   if (fetchError) return { ok: false, error: fetchError.message };
   if (!booking) return { ok: false, error: "Job not found" };
-  if (booking.assigned_to !== membership.id) {
-    // Multi-crew: allow any assignee via booking_assignees junction.
-    const { data: crewRow } = (await supabase
-      .from("booking_assignees")
-      .select("id")
-      .eq("booking_id", bookingId)
-      .eq("membership_id", membership.id)
-      .maybeSingle()) as unknown as { data: { id: string } | null };
-    if (!crewRow) {
-      return { ok: false, error: "This job isn't assigned to you" };
-    }
+
+  // Don't resurrect a cancelled job. Without this, a cleaner tapping "Complete"
+  // on a stale page (or a replayed request) after the owner cancelled would
+  // flip it back to completed AND fire a draft invoice for work called off.
+  if (booking.status === "cancelled") {
+    return {
+      ok: false,
+      error:
+        "This job was cancelled. Talk to your manager if you think this is a mistake.",
+    };
+  }
+
+  // Authorization + acceptance (see startJobAction). Fetch the junction row
+  // even for the primary so a pending primary can't complete either.
+  const isPrimary = booking.assigned_to === membership.id;
+  const { data: crewRow } = (await supabase
+    .from("booking_assignees")
+    .select("id, acceptance_status")
+    .eq("booking_id", bookingId)
+    .eq("membership_id", membership.id)
+    .maybeSingle()) as unknown as {
+    data: { id: string; acceptance_status: string | null } | null;
+  };
+  if (!isPrimary && !crewRow) {
+    return { ok: false, error: "This job isn't assigned to you" };
+  }
+  if (crewRow?.acceptance_status === "pending") {
+    return { ok: false, error: "Please accept this shift first." };
   }
 
   const now = new Date().toISOString();

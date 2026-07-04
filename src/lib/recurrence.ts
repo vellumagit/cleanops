@@ -15,6 +15,7 @@ import {
   startOfDay,
   startOfMonth,
   lastDayOfMonth,
+  setDate,
   parseISO,
 } from "date-fns";
 import { localInputToUtcIso } from "@/lib/validators/common";
@@ -255,7 +256,7 @@ export function generateOccurrences(
 function advanceToNext(
   current: Date,
   pattern: RecurrencePattern,
-  _anchor: Date,
+  anchor: Date,
 ): Date {
   switch (pattern) {
     case "weekly":
@@ -267,16 +268,31 @@ function advanceToNext(
     case "quad_weekly":
       return addWeeks(current, 4);
     case "monthly":
-      return addMonths(current, 1);
+      return reanchorMonth(current, 1, anchor);
     case "every_2_months":
-      return addMonths(current, 2);
+      return reanchorMonth(current, 2, anchor);
     case "every_3_months":
-      return addMonths(current, 3);
+      return reanchorMonth(current, 3, anchor);
     case "every_6_months":
-      return addMonths(current, 6);
+      return reanchorMonth(current, 6, anchor);
     default:
       return addWeeks(current, 1);
   }
+}
+
+/**
+ * Advance `current` by `months`, re-anchoring to the SERIES START day-of-month
+ * (clamped to the target month's length). Plain date-fns addMonths clamps
+ * Jan 31 -> Feb 28, and because the cursor is mutated in place, every later
+ * month then inherits the 28th — permanently collapsing a "31st" series to the
+ * 28th from March on. Re-anchoring to the original day fixes this: the sequence
+ * becomes Jan 31, Feb 28, Mar 31, Apr 30, May 31, ...
+ */
+function reanchorMonth(current: Date, months: number, anchor: Date): Date {
+  const moved = addMonths(current, months);
+  const anchorDay = anchor.getDate();
+  const daysInMonth = lastDayOfMonth(moved).getDate();
+  return setDate(moved, Math.min(anchorDay, daysInMonth));
 }
 
 /**
