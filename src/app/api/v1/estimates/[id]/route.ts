@@ -3,6 +3,7 @@ import { authenticateApiKey } from "@/lib/api-key-auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { dispatchWebhookEvent } from "@/lib/webhooks";
 import { findCrossOrgRef } from "@/lib/api/org-scope";
+import { isSafeOutboundUrl } from "@/lib/url-safety";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -145,15 +146,25 @@ async function downloadAndStorePdf(
   estimateId: string,
   sourceUrl: string,
 ): Promise<{ url: string | null; error: string | null }> {
+  // SSRF guard: only https, and never loopback / link-local / RFC1918 / cloud
+  // metadata. A low-privilege API key must not turn the server into a fetcher
+  // of internal resources.
+  const safe = isSafeOutboundUrl(sourceUrl);
+  if (!safe.ok) {
+    return { url: null, error: `Invalid pdf_url: ${safe.reason}` };
+  }
+
   try {
-    const res = await fetch(sourceUrl, { signal: AbortSignal.timeout(30_000) });
+    const res = await fetch(safe.url, { signal: AbortSignal.timeout(30_000) });
+    // Deliberately generic — do not echo upstream status back to the caller
+    // (would be an SSRF/port-scan oracle even with the host allowlist above).
     if (!res.ok) {
-      return { url: null, error: `Failed to download PDF: HTTP ${res.status}` };
+      return { url: null, error: "Could not fetch a PDF from that URL" };
     }
 
     const contentType = res.headers.get("content-type") ?? "";
     if (!contentType.includes("pdf")) {
-      return { url: null, error: `URL does not point to a PDF (got ${contentType})` };
+      return { url: null, error: "That URL did not return a PDF" };
     }
 
     const blob = await res.blob();
@@ -177,10 +188,9 @@ async function downloadAndStorePdf(
       .getPublicUrl(path);
 
     return { url: `${urlData.publicUrl}?v=${Date.now()}`, error: null };
-  } catch (err) {
-    return {
-      url: null,
-      error: err instanceof Error ? err.message : "Failed to download PDF",
-    };
+  } catch {
+    // Generic on purpose — a fetch/timeout error must not reveal whether an
+    // internal host/port responded.
+    return { url: null, error: "Could not fetch a PDF from that URL" };
   }
 }

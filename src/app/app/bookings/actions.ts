@@ -478,6 +478,25 @@ export async function createBookingAction(
   }
   const splits = splitsParsed.data;
 
+  // A split shift is a HAND-OFF between different people, and booking_assignees
+  // is UNIQUE(booking_id, membership_id) — a cleaner can hold only one segment.
+  // Reject the same cleaner across two segments instead of silently dropping
+  // one (which undercounted their hours and broke the handoff).
+  {
+    const ids = (splits as SplitSegmentInput[])
+      .map((s) => s.assigned_to)
+      .filter(Boolean);
+    if (new Set(ids).size !== ids.length) {
+      return {
+        errors: {
+          _form:
+            "Each cleaner can take only one segment of a split shift. Assign a different cleaner to each segment — a split is a hand-off between people, not one person working two separate windows.",
+        },
+        values: raw,
+      };
+    }
+  }
+
   // When split segments exist, use their total duration for GCal (not the
   // booking's overall duration_minutes, which is the full slot length).
   const effectiveDuration =
@@ -956,6 +975,23 @@ export async function updateBookingAction(
     };
   }
   const updateSplits = updateSplitsParsed.data;
+
+  // Same cleaner can't hold two segments (UNIQUE(booking_id, membership_id)) —
+  // reject rather than silently drop a segment and undercount their hours.
+  {
+    const ids = (updateSplits as SplitSegmentInput[])
+      .map((s) => s.assigned_to)
+      .filter(Boolean);
+    if (new Set(ids).size !== ids.length) {
+      return {
+        errors: {
+          _form:
+            "Each cleaner can take only one segment of a split shift. Assign a different cleaner to each segment — a split is a hand-off between people, not one person working two separate windows.",
+        },
+        values: raw,
+      };
+    }
+  }
 
   const updateEffectiveDuration =
     updateSplits.length > 0
@@ -2107,7 +2143,15 @@ export async function skipBookingOccurrenceAction(formData: FormData) {
 
   if (!booking || !booking.series_id) return;
 
-  const skipDate = booking.scheduled_at.slice(0, 10); // YYYY-MM-DD
+  // Key the skip on the occurrence's ORG-LOCAL calendar date — that's what
+  // recurrence.isSkipped compares against (it reads the local Y/M/D of the
+  // generator's cursor). Using scheduled_at.slice(0,10) stored the UTC date,
+  // which for an evening booking in a negative-offset TZ is the NEXT day and
+  // never matched, so the nightly cron kept regenerating the skipped job.
+  const orgTz = await getOrgTimezone(membership.organization_id);
+  const skipDate = new Date(booking.scheduled_at).toLocaleDateString("en-CA", {
+    timeZone: orgTz,
+  }); // YYYY-MM-DD in the org's timezone
 
   // Pull the current skip_dates, append if not already there, write back.
   const { data: seriesRow } = (await supabase

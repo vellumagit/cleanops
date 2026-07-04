@@ -64,7 +64,9 @@ export async function saveLineItemsAction(
   // Verify invoice belongs to org
   const { data: invoice } = (await supabase
     .from("invoices")
-    .select("id, organization_id, tax_rate_bps, tax_label")
+    .select(
+      "id, organization_id, tax_rate_bps, tax_label, status, sent_at, paid_at",
+    )
     .eq("id", invoiceId)
     .maybeSingle()) as unknown as {
     data: {
@@ -72,6 +74,9 @@ export async function saveLineItemsAction(
       organization_id: string;
       tax_rate_bps: number | null;
       tax_label: string | null;
+      status: string;
+      sent_at: string | null;
+      paid_at: string | null;
     } | null;
   };
 
@@ -149,6 +154,35 @@ export async function saveLineItemsAction(
           : invoice.tax_label) || null
       : null;
 
+  // Re-derive status/paid_at from the payment ledger against the NEW total.
+  // The status-recompute DB trigger only fires on invoice_payments changes, so
+  // without this, adding a line item to a PAID invoice would leave it "paid"
+  // with a balance now owing (revenue over-counted, overdue reminders skip it);
+  // trimming a partially_paid invoice down to <= paid would never flip to paid
+  // (paid-receipt / review automation never fires). Only touch status when
+  // there are real payments and the invoice isn't void — otherwise the
+  // line-items editor must not change a draft/sent invoice's lifecycle.
+  const { data: payRows } = (await supabase
+    .from("invoice_payments")
+    .select("amount_cents")
+    .eq("invoice_id", invoiceId)) as unknown as {
+    data: Array<{ amount_cents: number }> | null;
+  };
+  const totalPaid = (payRows ?? []).reduce(
+    (s, p) => s + (p.amount_cents ?? 0),
+    0,
+  );
+  let statusFields: Record<string, unknown> = {};
+  if (totalPaid > 0 && invoice.status !== "void") {
+    const now = new Date().toISOString();
+    const newStatus = totalPaid >= tax.totalCents ? "paid" : "partially_paid";
+    statusFields = {
+      status: newStatus,
+      sent_at: invoice.sent_at ?? now,
+      paid_at: newStatus === "paid" ? invoice.paid_at ?? now : null,
+    };
+  }
+
   const { error: updateErr } = await supabase
     .from("invoices")
     .update({
@@ -156,6 +190,7 @@ export async function saveLineItemsAction(
       tax_amount_cents: tax.taxAmountCents,
       tax_rate_bps: tax.rateBps,
       tax_label: taxLabel,
+      ...statusFields,
     } as never)
     .eq("id", invoiceId);
 

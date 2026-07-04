@@ -9,6 +9,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { sendPushToMembership, sendPushToOrg } from "@/lib/push";
 import type { CurrencyCode } from "@/lib/format";
 import { resolveAutomationEnabled } from "@/lib/automation-defaults";
+import { localInputToUtcIso } from "@/lib/validators/common";
 import type { Database } from "@/lib/supabase/types";
 
 type ServiceTypeEnum = Database["public"]["Enums"]["service_type"];
@@ -287,6 +288,33 @@ export async function autoInvoiceOnJobComplete(
         ok: true,
         invoiceId: existing.id,
         number: existing.number,
+      };
+    }
+
+    // Also treat a booking already billed on a consolidated "period" invoice
+    // as invoiced. Those record the booking only via invoice_line_items.
+    // booking_id (invoices.booking_id is null), so the check above misses them
+    // — without this, bulk/force generation double-bills the booking. Void
+    // invoices don't count (their work is billable again).
+    const { data: liRows } = (await db
+      .from("invoice_line_items" as never)
+      .select("invoice:invoices!inner ( id, number, voided_at )")
+      .eq("booking_id" as never, booking.id as never)
+      .is("invoices.voided_at" as never, null as never)
+      .limit(1)) as unknown as {
+      data: Array<{
+        invoice: { id: string; number: string | null } | null;
+      }> | null;
+    };
+    const periodInvoice = liRows?.[0]?.invoice;
+    if (periodInvoice) {
+      console.log(
+        `[auto] autoInvoiceOnJobComplete: booking ${bookingId} already on invoice ${periodInvoice.id} via line items`,
+      );
+      return {
+        ok: true,
+        invoiceId: periodInvoice.id,
+        number: periodInvoice.number,
       };
     }
 
@@ -4133,9 +4161,6 @@ export async function sendDailyEmployeeSchedules(): Promise<{
   const { employeeDailyScheduleEmail } = await import("@/lib/email-templates");
 
   const now = new Date();
-  const startOfDay = new Date(now);
-  startOfDay.setUTCHours(0, 0, 0, 0);
-  const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000);
 
   const { data: orgs } = await db
     .from("organizations")
@@ -4151,6 +4176,15 @@ export async function sendDailyEmployeeSchedules(): Promise<{
   for (const org of orgs) {
     if (!(await isAutomationEnabled(org.id, "employee_daily_schedule"))) continue;
     const orgTz = org.timezone ?? "America/Edmonton";
+
+    // "Today" must be the org's LOCAL calendar day, not a UTC day. Using a UTC
+    // window dropped evening jobs (and pulled in the prior evening's) for
+    // negative-offset orgs. Compute the UTC instants that bound local midnight.
+    const localToday = now.toLocaleDateString("en-CA", { timeZone: orgTz }); // YYYY-MM-DD
+    const startOfDay = new Date(
+      localInputToUtcIso(`${localToday}T00:00`, orgTz),
+    );
+    const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000);
 
     const { data: bookings } = await db
       .from("bookings")

@@ -958,6 +958,25 @@ export async function bulkGenerateInvoicesAction(): Promise<BulkInvoiceResult> {
   const alreadyInvoiced = new Set(
     (existing ?? []).map((r) => r.booking_id as string),
   );
+
+  // Also exclude bookings already billed on a consolidated "period" invoice —
+  // those are recorded via invoice_line_items.booking_id (invoices.booking_id
+  // is null), so the single-invoice check above misses them. Void invoices
+  // don't count. Without this the booking gets a second invoice.
+  const { data: liExisting } = (await supabase
+    .from("invoice_line_items")
+    .select("booking_id, invoices!inner ( voided_at )")
+    .in(
+      "booking_id" as never,
+      bookings.map((b) => b.id) as never,
+    )
+    .is("invoices.voided_at" as never, null as never)) as unknown as {
+    data: Array<{ booking_id: string | null }> | null;
+  };
+  for (const r of liExisting ?? []) {
+    if (r.booking_id) alreadyInvoiced.add(r.booking_id);
+  }
+
   const uninvoiced = bookings.filter((b) => !alreadyInvoiced.has(b.id));
 
   if (!uninvoiced.length) return { created: 0, skipped: bookings.length, errors: [] };
