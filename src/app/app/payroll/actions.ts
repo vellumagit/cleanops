@@ -78,11 +78,19 @@ export async function createPayrollRunAction(
         .in("status", ["pending"]),
       supabase
         .from("pto_requests")
-        .select("employee_id, hours, status")
+        .select("id, employee_id, hours, status")
         .eq("organization_id", membership.organization_id)
         .eq("status", "approved")
-        .gte("start_date", period_start)
-        .lte("end_date", period_end),
+        // Not already paid in a run (prevents double-pay across overlapping /
+        // re-created runs — mirrors time_entries + bonuses).
+        .is("payroll_run_id" as never, null as never)
+        // OVERLAP with the period, not containment: a request that straddles
+        // the period boundary (start before period_start or end after
+        // period_end) must still be picked up, otherwise it was paid in
+        // neither period. Paid in full in the first run that overlaps it, then
+        // stamped so it can't be paid again.
+        .lte("start_date", period_end)
+        .gte("end_date", period_start),
     ]);
 
   type Bucket = {
@@ -100,6 +108,7 @@ export async function createPayrollRunAction(
   // run id and never pay them again.
   const countedEntryIds: string[] = [];
   const countedBonusIds: string[] = [];
+  const countedPtoIds: string[] = [];
 
   // Seed with every active employee (so zero-hour rows still show up)
   for (const emp of employees ?? []) {
@@ -157,11 +166,13 @@ export async function createPayrollRunAction(
 
   // Sum PTO
   for (const p of (ptoRequests ?? []) as Array<{
+    id: string;
     employee_id: string;
     hours: number;
   }>) {
     const bucket = buckets.get(p.employee_id);
     if (!bucket) continue;
+    countedPtoIds.push(p.id);
     const h = Number(p.hours) || 0;
     bucket.ptoHours += h;
     bucket.ptoCents += Math.round(h * bucket.payRateCents);
@@ -246,6 +257,12 @@ export async function createPayrollRunAction(
       .from("bonuses")
       .update({ payroll_run_id: run.id })
       .in("id", countedBonusIds) as unknown as Promise<unknown>);
+  }
+  if (countedPtoIds.length > 0) {
+    await (stampDb
+      .from("pto_requests")
+      .update({ payroll_run_id: run.id } as never)
+      .in("id", countedPtoIds) as unknown as Promise<unknown>);
   }
 
   await logAuditEvent({
