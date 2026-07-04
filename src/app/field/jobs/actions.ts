@@ -221,15 +221,15 @@ export async function completeJobAction(
   }
 
   const now = new Date().toISOString();
-  const { error: updateBookingError } = await supabase
-    .from("bookings")
-    .update({ status: "completed" })
-    .eq("id", bookingId);
-  if (updateBookingError) {
-    return { ok: false, error: updateBookingError.message };
-  }
 
-  // Close any open time entry for this job.
+  // Mark THIS cleaner's own segment complete, and close their open time entry.
+  // (completed_at is cast around — it isn't in the generated types yet.)
+  await (supabase
+    .from("booking_assignees")
+    .update({ completed_at: now } as never)
+    .eq("booking_id", bookingId)
+    .eq("membership_id", membership.id) as unknown as Promise<unknown>);
+
   const { error: closeEntryError } = await supabase
     .from("time_entries")
     .update({
@@ -242,12 +242,51 @@ export async function completeJobAction(
     .is("clock_out_at", null);
   if (closeEntryError) return { ok: false, error: closeEntryError.message };
 
+  // A split shift is a hand-off between people (2+ segments, each with its own
+  // duration). Don't finish (or invoice) the booking until EVERY segment is
+  // done — otherwise the first cleaner tapping Complete ends the job and bills
+  // the full duration while later cleaners still have to work. Team/solo jobs
+  // (no split segments) keep completing on the first tap.
+  const { data: allAssignees } = (await supabase
+    .from("booking_assignees" as never)
+    .select("membership_id, split_duration_minutes, completed_at")
+    .eq("booking_id" as never, bookingId as never)) as unknown as {
+    data: Array<{
+      membership_id: string;
+      split_duration_minutes: number | null;
+      completed_at: string | null;
+    }> | null;
+  };
+  const rows = allAssignees ?? [];
+  const isSplit =
+    rows.filter((r) => r.split_duration_minutes != null).length >= 2;
+  if (isSplit) {
+    // `rows` was read before our completed_at write landed, so count the caller
+    // as done and require every OTHER segment to already be complete.
+    const allDone = rows.every(
+      (r) => r.membership_id === membership.id || r.completed_at != null,
+    );
+    if (!allDone) {
+      // The caller's part is done; the booking stays open for the rest.
+      revalidatePath("/field/jobs");
+      revalidatePath(`/field/jobs/${bookingId}`);
+      revalidatePath("/field/clock");
+      return { ok: true };
+    }
+  }
+
+  const { error: updateBookingError } = await supabase
+    .from("bookings")
+    .update({ status: "completed" })
+    .eq("id", bookingId);
+  if (updateBookingError) {
+    return { ok: false, error: updateBookingError.message };
+  }
+
   // Auto-generate a draft invoice for the completed job. Awaited (not
   // fire-and-forget) so the draft is present by the time /app/invoices
-  // revalidates and the owner reloads — previously users reported "I
-  // finished a job and no invoice appeared" because the response
-  // returned before the insert ran. The automation catches its own
-  // errors internally, so awaiting it won't throw here.
+  // revalidates and the owner reloads. The automation catches its own errors
+  // internally, so awaiting it won't throw here.
   await autoInvoiceOnJobComplete(bookingId);
 
   revalidatePath("/field/jobs");

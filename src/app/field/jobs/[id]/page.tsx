@@ -104,7 +104,7 @@ export default async function FieldJobDetailPage({
   const { data: crewRow } = (await supabase
     .from("booking_assignees" as never)
     .select(
-      "id, split_start_offset_minutes, split_duration_minutes, acceptance_status",
+      "id, split_start_offset_minutes, split_duration_minutes, acceptance_status, completed_at",
     )
     .eq("booking_id" as never, id as never)
     .eq("membership_id" as never, membership.id as never)
@@ -114,6 +114,7 @@ export default async function FieldJobDetailPage({
       split_start_offset_minutes: number | null;
       split_duration_minutes: number | null;
       acceptance_status: string | null;
+      completed_at: string | null;
     } | null;
   };
 
@@ -472,7 +473,11 @@ export default async function FieldJobDetailPage({
         <ShiftAcceptance bookingId={booking.id} />
       ) : (
         <>
-          <JobActionButtons bookingId={booking.id} status={booking.status} />
+          <JobActionButtons
+            bookingId={booking.id}
+            status={booking.status}
+            youCompleted={crewRow?.completed_at != null}
+          />
           {booking.status !== "completed" && (
             <ManageShift
               bookingId={booking.id}

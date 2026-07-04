@@ -34,9 +34,13 @@ function buildFormData(bookingId: string, coords: Coords) {
 export function JobActionButtons({
   bookingId,
   status,
+  youCompleted = false,
 }: {
   bookingId: string;
   status: string;
+  /** This cleaner finished their own segment of a split shift, but the booking
+   *  isn't fully complete yet (later segments are still outstanding). */
+  youCompleted?: boolean;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -77,6 +81,18 @@ export function JobActionButtons({
       <div className="flex items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-base font-semibold text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-300">
         <CheckCircle2 className="h-5 w-5" />
         Job complete. Nice work.
+      </div>
+    );
+  }
+
+  // Split shift: this cleaner finished their segment, but the job stays open
+  // for the later crew — don't offer Complete again (it's already recorded).
+  if (youCompleted) {
+    return (
+      <div className="flex items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-center text-base font-semibold text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-300">
+        <CheckCircle2 className="h-5 w-5 shrink-0" />
+        Your part is done — the job stays open until the rest of the crew
+        finishes.
       </div>
     );
   }
