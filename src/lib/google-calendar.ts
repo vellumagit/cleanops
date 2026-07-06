@@ -1579,11 +1579,20 @@ export async function bulkSyncMemberBookings(
  */
 export async function resyncCrewDivisionForOrg(
   organizationId: string,
-): Promise<{ processed: number }> {
+  opts: { offset?: number; limit?: number } = {},
+): Promise<{ processed: number; scanned: number; hasMore: boolean }> {
   const admin = createSupabaseAdminClient();
   const now = new Date().toISOString();
   let processed = 0;
 
+  // Chunkable + resumable: a full org can have hundreds of upcoming team
+  // bookings, and reshaping each is several rate-limited Google writes — too
+  // much for one serverless invocation. Callers can page via offset/limit and
+  // loop until hasMore is false; a stable scheduled_at order keeps paging
+  // consistent. The background toggle-flip caller processes everything at once
+  // (bounded by the function's max duration; stragglers reshape on edit).
+  const offset = opts.offset ?? 0;
+  const limit = opts.limit ?? 2000;
   const { data: bookings } = (await admin
     .from("bookings")
     .select(
@@ -1592,7 +1601,9 @@ export async function resyncCrewDivisionForOrg(
     .eq("organization_id", organizationId)
     .neq("status", "cancelled")
     .gte("scheduled_at", now)
-    .limit(2000)) as unknown as {
+    .order("scheduled_at", { ascending: true })
+    .order("id", { ascending: true })
+    .range(offset, offset + limit - 1)) as unknown as {
     data: Array<{
       id: string;
       google_calendar_event_id: string | null;
@@ -1605,6 +1616,7 @@ export async function resyncCrewDivisionForOrg(
       client: { name: string | null } | null;
     }> | null;
   };
+  const scanned = (bookings ?? []).length;
 
   for (const b of bookings ?? []) {
     const { data: crew } = (await admin
@@ -1670,5 +1682,5 @@ export async function resyncCrewDivisionForOrg(
     // backfill doesn't 403-storm Google's per-user rate limit.
     await new Promise((r) => setTimeout(r, 200));
   }
-  return { processed };
+  return { processed, scanned, hasMore: scanned === limit };
 }

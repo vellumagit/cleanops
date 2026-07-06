@@ -21,14 +21,25 @@ export async function GET(request: NextRequest) {
   const orgId = url.searchParams.get("org") ?? DEFAULT_ORG;
   const apply = url.searchParams.get("apply") === "1";
 
-  // Apply mode: just run the paced resync (reshape existing events) and report
-  // how many bookings it processed. Skips the slow per-booking calc report.
+  // Apply mode: reshape a CHUNK of existing events (paced) and report whether
+  // more remain — the caller loops offset until hasMore is false. Keeps each
+  // invocation well under the serverless time limit.
   if (apply) {
-    const { processed } = await resyncCrewDivisionForOrg(orgId);
+    const offset = Number(url.searchParams.get("offset")) || 0;
+    const limit = Math.min(Number(url.searchParams.get("limit")) || 25, 50);
+    const { processed, scanned, hasMore } = await resyncCrewDivisionForOrg(
+      orgId,
+      { offset, limit },
+    );
     return NextResponse.json({
       org: orgId,
-      mode: "APPLIED (calendars reshaped)",
+      mode: "APPLIED (chunk reshaped)",
+      offset,
+      limit,
       processed,
+      scanned,
+      hasMore,
+      nextOffset: offset + limit,
     });
   }
 
