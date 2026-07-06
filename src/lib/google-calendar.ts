@@ -1579,9 +1579,10 @@ export async function bulkSyncMemberBookings(
  */
 export async function resyncCrewDivisionForOrg(
   organizationId: string,
-): Promise<void> {
+): Promise<{ processed: number }> {
   const admin = createSupabaseAdminClient();
   const now = new Date().toISOString();
+  let processed = 0;
 
   const { data: bookings } = (await admin
     .from("bookings")
@@ -1663,5 +1664,11 @@ export async function resyncCrewDivisionForOrg(
       notes: b.notes,
       client_name: clientName,
     }).catch(() => {});
+
+    processed += 1;
+    // Pace the org-calendar writes (all hit ONE Google account) so a large
+    // backfill doesn't 403-storm Google's per-user rate limit.
+    await new Promise((r) => setTimeout(r, 200));
   }
+  return { processed };
 }

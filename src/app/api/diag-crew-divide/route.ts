@@ -21,6 +21,17 @@ export async function GET(request: NextRequest) {
   const orgId = url.searchParams.get("org") ?? DEFAULT_ORG;
   const apply = url.searchParams.get("apply") === "1";
 
+  // Apply mode: just run the paced resync (reshape existing events) and report
+  // how many bookings it processed. Skips the slow per-booking calc report.
+  if (apply) {
+    const { processed } = await resyncCrewDivisionForOrg(orgId);
+    return NextResponse.json({
+      org: orgId,
+      mode: "APPLIED (calendars reshaped)",
+      processed,
+    });
+  }
+
   const admin = createSupabaseAdminClient();
   const now = new Date().toISOString();
 
@@ -54,16 +65,9 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  let resynced = false;
-  if (apply) {
-    await resyncCrewDivisionForOrg(orgId);
-    resynced = true;
-  }
-
   return NextResponse.json({
     org: orgId,
-    mode: apply ? "APPLIED (calendars reshaped)" : "DRY-RUN (calc only)",
-    resynced,
+    mode: "DRY-RUN (calc only)",
     teamBookings: report.length,
     dividedNow: report.filter((r) => r.divideOn).length,
     report: report.slice(0, 40),
