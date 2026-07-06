@@ -16,6 +16,7 @@ import "server-only";
 import { getEnv } from "@/lib/env";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { resolveTeamDivision } from "@/lib/crew-hours";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -254,19 +255,48 @@ async function gcalFetch(
  * (individual cleaners still see only their own segment on their personal
  * calendar).
  */
-function buildBookingEventContent(b: {
+/**
+ * Resolve the event length for an ORG-calendar booking event, applying the
+ * "divide hours across the crew" behavior for team jobs. Split shifts keep the
+ * duration the caller passed (their own summed segments) and are never divided.
+ * Returns dividedCrew > 1 only when the hours were actually divided, for the
+ * event's tag.
+ */
+async function effectiveEventMinutes(booking: {
   id: string;
-  service_type: string;
-  notes: string | null;
-  client_name?: string;
-  employee_name?: string;
+  duration_minutes: number;
   split_count?: number;
-}): { summary: string; description: string } {
+}): Promise<{ minutes: number; dividedCrew: number }> {
+  if ((booking.split_count ?? 0) > 1) {
+    return { minutes: booking.duration_minutes, dividedCrew: 0 };
+  }
+  const div = await resolveTeamDivision(booking.id, booking.duration_minutes);
+  return {
+    minutes: div.effectiveMinutes,
+    dividedCrew: div.divideOn ? div.crewCount : 0,
+  };
+}
+
+function buildBookingEventContent(
+  b: {
+    id: string;
+    service_type: string;
+    notes: string | null;
+    client_name?: string;
+    employee_name?: string;
+    split_count?: number;
+  },
+  /** When > 1, the job's hours are divided across this many cleaners (team job
+   *  with "divide hours" on) — tag it so the shortened window is understood. */
+  dividedCrew = 0,
+): { summary: string; description: string } {
   const isSplit = (b.split_count ?? 0) > 1;
+  const isDivided = dividedCrew > 1;
   const summary = [
     b.service_type ? `${b.service_type} clean` : "Cleaning",
     b.client_name ? `— ${b.client_name}` : "",
     isSplit ? "· Split shift" : "",
+    isDivided ? `· ${dividedCrew} cleaners` : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -274,6 +304,11 @@ function buildBookingEventContent(b: {
   const parts: string[] = [];
   if (isSplit) {
     parts.push(`Split shift — ${b.split_count} cleaners (sequential hand-off)`);
+  }
+  if (isDivided) {
+    parts.push(
+      `${dividedCrew} cleaners working together — hours divided evenly (each on site for the shown window).`,
+    );
   }
   if (b.employee_name) parts.push(`Assigned to: ${b.employee_name}`);
   if (b.notes) parts.push(`Notes: ${b.notes}`);
@@ -302,9 +337,17 @@ export async function createCalendarEvent(
 
   const calendarId = (conn.metadata?.calendar_id as string) || "primary";
   const start = new Date(booking.scheduled_at);
-  const end = new Date(start.getTime() + booking.duration_minutes * 60_000);
 
-  const { summary, description } = buildBookingEventContent(booking);
+  // Team jobs with "divide hours" on finish in duration/crew — reflect that on
+  // the org calendar (the job really ends earlier with more cleaners). Splits
+  // are excluded: they pass their own summed/segment duration + split_count>1.
+  const { minutes, dividedCrew } = await effectiveEventMinutes(booking);
+  const end = new Date(start.getTime() + minutes * 60_000);
+
+  const { summary, description } = buildBookingEventContent(
+    booking,
+    dividedCrew,
+  );
 
   const event: CalendarEvent = {
     summary,
@@ -370,9 +413,14 @@ export async function updateCalendarEvent(
 
   const calendarId = (conn.metadata?.calendar_id as string) || "primary";
   const start = new Date(booking.scheduled_at);
-  const end = new Date(start.getTime() + booking.duration_minutes * 60_000);
 
-  const { summary, description } = buildBookingEventContent(booking);
+  const { minutes, dividedCrew } = await effectiveEventMinutes(booking);
+  const end = new Date(start.getTime() + minutes * 60_000);
+
+  const { summary, description } = buildBookingEventContent(
+    booking,
+    dividedCrew,
+  );
 
   const event: CalendarEvent = {
     summary,
@@ -1280,8 +1328,13 @@ export async function syncMemberCalendarEvents(
     (segmentRows ?? []).map((r) => [r.membership_id, r]),
   );
 
-  // Build a per-member adjusted booking payload (segment-specific for
-  // split employees, full booking for regular employees).
+  // Team-job division (resolved once). For a member NOT on a split segment,
+  // "divide hours evenly" shortens their event to duration/crew; when off,
+  // effectiveMinutes == the full duration, so this is a no-op.
+  const teamDiv = await resolveTeamDivision(bookingId, booking.duration_minutes);
+
+  // Build a per-member adjusted booking payload (segment-specific for split
+  // employees, divided/full booking for regular team employees).
   function adjustedBooking(mid: string): BookingForMemberEvent {
     const seg = segmentByMember.get(mid);
     if (seg?.split_start_offset_minutes != null && seg.split_duration_minutes != null) {
@@ -1293,7 +1346,7 @@ export async function syncMemberCalendarEvents(
         duration_minutes: seg.split_duration_minutes,
       };
     }
-    return booking;
+    return { ...booking, duration_minutes: teamDiv.effectiveMinutes };
   }
 
   // 2. Upsert events for all current assignees who have a personal connection.
@@ -1480,10 +1533,9 @@ export async function bulkSyncMemberBookings(
   const BATCH = 10;
   for (let i = 0; i < toSync.length; i += BATCH) {
     await Promise.allSettled(
-      toSync.slice(i, i + BATCH).map((b) => {
+      toSync.slice(i, i + BATCH).map(async (b) => {
         // For split-segment employees, adjust start time and duration to
-        // their segment window. Non-split rows have null offset/duration
-        // and fall through to the full booking values.
+        // their segment window. Non-split rows have null offset/duration.
         const segOffset = b.split_start_offset_minutes;
         const segDuration = b.split_duration_minutes;
         const scheduled_at =
@@ -1493,7 +1545,16 @@ export async function bulkSyncMemberBookings(
                   segOffset * 60_000,
               ).toISOString()
             : b.booking.scheduled_at;
-        const duration_minutes = segDuration ?? b.booking.duration_minutes;
+        // Non-split member: apply team-job division (no-op when the behavior
+        // is off). Split members keep their own segment duration.
+        let duration_minutes = segDuration ?? b.booking.duration_minutes;
+        if (segDuration == null) {
+          const div = await resolveTeamDivision(
+            b.booking.id,
+            b.booking.duration_minutes,
+          );
+          duration_minutes = div.effectiveMinutes;
+        }
         return createMemberCalendarEvent(membershipId, {
           id: b.booking.id,
           scheduled_at,
@@ -1505,5 +1566,102 @@ export async function bulkSyncMemberBookings(
         }).catch(() => {});
       }),
     );
+  }
+}
+
+/**
+ * Re-push org + member calendar events for an org's upcoming TEAM bookings so
+ * they reflect the CURRENT "divide hours" state. Called when the org-level
+ * `divide_crew_hours` toggle is flipped — in both directions (turning it OFF
+ * restores full durations). Split shifts and solo bookings are skipped
+ * (division only applies to 2+ same-time crew). Best-effort per booking; meant
+ * to run in the background (after()).
+ */
+export async function resyncCrewDivisionForOrg(
+  organizationId: string,
+): Promise<void> {
+  const admin = createSupabaseAdminClient();
+  const now = new Date().toISOString();
+
+  const { data: bookings } = (await admin
+    .from("bookings")
+    .select(
+      "id, google_calendar_event_id, scheduled_at, duration_minutes, service_type, address, notes, assigned_to, client:clients ( name )",
+    )
+    .eq("organization_id", organizationId)
+    .neq("status", "cancelled")
+    .gte("scheduled_at", now)
+    .limit(2000)) as unknown as {
+    data: Array<{
+      id: string;
+      google_calendar_event_id: string | null;
+      scheduled_at: string;
+      duration_minutes: number;
+      service_type: string;
+      address: string | null;
+      notes: string | null;
+      assigned_to: string | null;
+      client: { name: string | null } | null;
+    }> | null;
+  };
+
+  for (const b of bookings ?? []) {
+    const { data: crew } = (await admin
+      .from("booking_assignees")
+      .select("membership_id, split_duration_minutes")
+      .eq("booking_id", b.id)) as unknown as {
+      data: Array<{
+        membership_id: string;
+        split_duration_minutes: number | null;
+      }> | null;
+    };
+    const rows = crew ?? [];
+    const isSplit =
+      rows.filter((r) => r.split_duration_minutes != null).length >= 2;
+    // Division only affects same-time teams of 2+.
+    if (isSplit || rows.length < 2) continue;
+
+    const assigneeIds = rows.map((r) => r.membership_id);
+    const clientName = b.client?.name ?? undefined;
+
+    // Keep the "Assigned to" line intact by passing the primary's name.
+    let employeeName: string | undefined;
+    if (b.assigned_to) {
+      const { data: m } = (await admin
+        .from("memberships")
+        .select("display_name, profile:profiles ( full_name )")
+        .eq("id", b.assigned_to)
+        .maybeSingle()) as unknown as {
+        data: {
+          display_name: string | null;
+          profile: { full_name: string | null } | null;
+        } | null;
+      };
+      employeeName =
+        m?.display_name?.trim() || m?.profile?.full_name?.trim() || undefined;
+    }
+
+    if (b.google_calendar_event_id) {
+      await updateCalendarEvent(organizationId, {
+        id: b.id,
+        google_calendar_event_id: b.google_calendar_event_id,
+        scheduled_at: b.scheduled_at,
+        duration_minutes: b.duration_minutes,
+        service_type: b.service_type,
+        address: b.address,
+        notes: b.notes,
+        client_name: clientName,
+        employee_name: employeeName,
+      }).catch(() => {});
+    }
+    await syncMemberCalendarEvents(b.id, assigneeIds, {
+      id: b.id,
+      scheduled_at: b.scheduled_at,
+      duration_minutes: b.duration_minutes,
+      service_type: b.service_type,
+      address: b.address,
+      notes: b.notes,
+      client_name: clientName,
+    }).catch(() => {});
   }
 }

@@ -600,6 +600,8 @@ export function bookingConfirmationEmail(args: {
   serviceName: string;
   dateTime: string;
   address: string;
+  /** When a team divides the hours, e.g. "2 cleaners — finishing around 6:30 PM". */
+  crewNote?: string;
   brandColor?: string;
   logoUrl?: string;
 }) {
@@ -620,6 +622,14 @@ export function bookingConfirmationEmail(args: {
         <td style="font-size:13px;color:#71717a;padding:12px 0;border-bottom:1px solid #f4f4f5;">When</td>
         <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;border-bottom:1px solid #f4f4f5;">${escapeHtml(args.dateTime)}</td>
       </tr>
+      ${
+        args.crewNote
+          ? `<tr>
+        <td style="font-size:13px;color:#71717a;padding:12px 0;border-bottom:1px solid #f4f4f5;">Crew</td>
+        <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;border-bottom:1px solid #f4f4f5;">${escapeHtml(args.crewNote)}</td>
+      </tr>`
+          : ""
+      }
       <tr>
         <td style="font-size:13px;color:#71717a;padding:12px 0;">Where</td>
         <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;">${escapeHtml(args.address)}</td>
@@ -636,7 +646,7 @@ export function bookingConfirmationEmail(args: {
       preheader: `${args.serviceName} · ${args.dateTime}`,
     },
   );
-  const text = `Booking confirmed — ${args.orgName}\n\nService: ${args.serviceName}\nWhen: ${args.dateTime}\nWhere: ${args.address}`;
+  const text = `Booking confirmed — ${args.orgName}\n\nService: ${args.serviceName}\nWhen: ${args.dateTime}${args.crewNote ? `\nCrew: ${args.crewNote}` : ""}\nWhere: ${args.address}`;
   return { subject, html, text };
 }
 
@@ -1497,6 +1507,8 @@ export function bookingReminderEmail(args: {
   serviceName: string;
   dateTime: string;
   address: string;
+  /** When a team divides the hours, e.g. "2 cleaners — finishing around 6:30 PM". */
+  crewNote?: string;
   brandColor?: string;
   logoUrl?: string;
 }) {
@@ -1517,6 +1529,14 @@ export function bookingReminderEmail(args: {
         <td style="font-size:13px;color:#71717a;padding:12px 0;border-bottom:1px solid #f4f4f5;">When</td>
         <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;font-weight:600;border-bottom:1px solid #f4f4f5;">${escapeHtml(args.dateTime)}</td>
       </tr>
+      ${
+        args.crewNote
+          ? `<tr>
+        <td style="font-size:13px;color:#71717a;padding:12px 0;border-bottom:1px solid #f4f4f5;">Crew</td>
+        <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;border-bottom:1px solid #f4f4f5;">${escapeHtml(args.crewNote)}</td>
+      </tr>`
+          : ""
+      }
       <tr>
         <td style="font-size:13px;color:#71717a;padding:12px 0;">Where</td>
         <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;">${escapeHtml(args.address)}</td>
@@ -1533,7 +1553,7 @@ export function bookingReminderEmail(args: {
       preheader: `${args.serviceName} · ${args.dateTime}`,
     },
   );
-  const text = `Reminder from ${args.orgName}\n\nService: ${args.serviceName}\nWhen: ${args.dateTime}\nWhere: ${args.address}\n\nReply to reschedule.`;
+  const text = `Reminder from ${args.orgName}\n\nService: ${args.serviceName}\nWhen: ${args.dateTime}${args.crewNote ? `\nCrew: ${args.crewNote}` : ""}\nWhere: ${args.address}\n\nReply to reschedule.`;
   return { subject, html, text };
 }
 

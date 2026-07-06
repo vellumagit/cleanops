@@ -2473,26 +2473,27 @@ export async function assignBookingCrewAction(
     }).catch(() => {});
   }
 
-  // Refresh the ORG-level Google Calendar event description so the
-  // "Assigned to: <name>" line names the NEW cleaner, not the old one.
-  // Quick-assign previously left this stale.
-  if (primaryId !== existing.assigned_to) {
+  // Refresh the ORG-level Google Calendar event after ANY crew change — not
+  // just a primary swap. Two reasons: the "Assigned to: <name>" line must name
+  // the current primary, AND the event duration must recompute when the crew
+  // COUNT changes (divide-hours shortens the window as cleaners are added or
+  // removed). booking_assignees was just synced above, so updateCalendarEvent's
+  // internal division sees the new crew count.
+  {
     const { data: gcal } = (await supabase
       .from("bookings")
-      .select("google_calendar_event_id")
+      .select("google_calendar_event_id, client_id")
       .eq("id", id)
       .maybeSingle()) as unknown as {
-      data: { google_calendar_event_id: string | null } | null;
+      data: {
+        google_calendar_event_id: string | null;
+        client_id: string | null;
+      } | null;
     };
     if (gcal?.google_calendar_event_id) {
       const labels = await getBookingLabels(
         supabase,
-        // Quick-assign doesn't change the client; look it up from existing
-        (await supabase
-          .from("bookings")
-          .select("client_id")
-          .eq("id", id)
-          .maybeSingle()).data?.client_id ?? "",
+        gcal.client_id ?? "",
         primaryId,
       );
       updateCalendarEvent(membership.organization_id, {

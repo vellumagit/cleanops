@@ -788,7 +788,7 @@ export async function sendBookingConfirmation(bookingId: string) {
     const { data: booking } = await db
       .from("bookings")
       .select(`
-        id, organization_id, scheduled_at, service_type, service_type_label, address,
+        id, organization_id, scheduled_at, duration_minutes, service_type, service_type_label, address,
         confirmation_email_sent_at,
         client:clients ( name, email, phone )
       `)
@@ -798,6 +798,7 @@ export async function sendBookingConfirmation(bookingId: string) {
         id: string;
         organization_id: string;
         scheduled_at: string;
+        duration_minutes: number;
         service_type: string;
         service_type_label: string | null;
         address: string | null;
@@ -847,11 +848,27 @@ export async function sendBookingConfirmation(bookingId: string) {
       timeZone: org?.timezone ?? "America/Edmonton",
     });
 
+    // When the team divides the hours, tell the client when the crew will
+    // finish (the visit is shorter with more cleaners).
+    const { resolveTeamDivision, crewFinishNote } = await import(
+      "@/lib/crew-hours"
+    );
+    const division = await resolveTeamDivision(
+      booking.id,
+      booking.duration_minutes,
+    );
+    const crewNote = crewFinishNote(
+      division,
+      booking.scheduled_at,
+      org?.timezone ?? "America/Edmonton",
+    );
+
     const template = bookingConfirmationEmail({
       clientName: booking.client.name ?? "there",
       orgName: org?.name ?? "your service provider",
       serviceName: booking.service_type_label ?? humanize(booking.service_type),
       dateTime,
+      crewNote,
       address: booking.address ?? "(address to be confirmed)",
       brandColor: org?.brand_color ?? undefined,
       logoUrl: org?.logo_url ?? undefined,
@@ -2370,7 +2387,7 @@ export async function sendUpcomingBookingReminders(): Promise<{
   const { data: candidates } = await db
     .from("bookings")
     .select(`
-      id, organization_id, scheduled_at, service_type, service_type_label, address,
+      id, organization_id, scheduled_at, duration_minutes, service_type, service_type_label, address,
       client:clients ( name, email, phone )
     `)
     .is("client_reminder_sent_at", null)
@@ -2381,6 +2398,7 @@ export async function sendUpcomingBookingReminders(): Promise<{
       id: string;
       organization_id: string;
       scheduled_at: string;
+      duration_minutes: number;
       service_type: string;
       service_type_label: string | null;
       address: string | null;
@@ -2459,11 +2477,25 @@ export async function sendUpcomingBookingReminders(): Promise<{
       timeZone: cached.timezone ?? "America/Edmonton",
     });
 
+    const { resolveTeamDivision, crewFinishNote } = await import(
+      "@/lib/crew-hours"
+    );
+    const division = await resolveTeamDivision(
+      booking.id,
+      booking.duration_minutes,
+    );
+    const crewNote = crewFinishNote(
+      division,
+      booking.scheduled_at,
+      cached.timezone ?? "America/Edmonton",
+    );
+
     const template = bookingReminderEmail({
       clientName: booking.client.name ?? "there",
       orgName: cached.name,
       serviceName: booking.service_type_label ?? humanize(booking.service_type),
       dateTime,
+      crewNote,
       address: booking.address ?? "(address on file)",
       brandColor: cached.brand_color ?? undefined,
       logoUrl: cached.logo_url ?? undefined,

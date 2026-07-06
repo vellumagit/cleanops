@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { getActionContext } from "@/lib/actions";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
@@ -137,6 +138,23 @@ export async function toggleAutomationAction(formData: FormData) {
     .from("organizations")
     .update({ automation_settings: updated } as never)
     .eq("id", membership.organization_id);
+
+  // Flipping "divide crew hours" changes the length of every existing team
+  // booking's calendar events — reshape them now (both directions) so existing
+  // jobs aren't left stale. Background via after() so the toggle responds fast.
+  if (key === "divide_crew_hours") {
+    const orgId = membership.organization_id;
+    after(async () => {
+      try {
+        const { resyncCrewDivisionForOrg } = await import(
+          "@/lib/google-calendar"
+        );
+        await resyncCrewDivisionForOrg(orgId);
+      } catch (err) {
+        console.error("[automations] divide_crew_hours resync failed:", err);
+      }
+    });
+  }
 
   revalidatePath("/app/settings/automations", "page");
 }
