@@ -7,6 +7,7 @@
 import "server-only";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { sendPushToMembership, sendPushToOrgAdmins } from "@/lib/push";
+import { notify } from "@/lib/notify";
 import type { CurrencyCode } from "@/lib/format";
 import { resolveAutomationEnabled } from "@/lib/automation-defaults";
 import { localInputToUtcIso } from "@/lib/validators/common";
@@ -165,43 +166,15 @@ async function getOrgAdminRecipients(
   return recipients;
 }
 
-/** Active owner/admin MEMBERSHIP ids for an org (for in-app + push targeting). */
-async function getOrgAdminMembershipIds(orgId: string): Promise<string[]> {
-  const db = admin();
-  const { data } = (await db
-    .from("memberships")
-    .select("id")
-    .eq("organization_id", orgId)
-    .in("role", ["owner", "admin"])
-    .eq("status", "active")) as unknown as { data: Array<{ id: string }> | null };
-  return (data ?? []).map((m) => m.id);
-}
-
 /**
- * In-app + push alert to an org's owners/admins ONLY. Management-facing content
- * (financials, reviews, bonuses, ops tasks) must never reach cleaners, so we
- * insert a per-admin notification row (recipient_membership_id) rather than a
- * null-recipient org-wide row (which any member can read at /app/notifications),
- * and push only to admin devices.
+ * In-app + push alert to an org's owners/admins ONLY. Thin wrapper over the
+ * notify() primitive (audience: 'org-admins') kept for call-site brevity.
  */
 async function notifyOrgAdmins(
   orgId: string,
   payload: { title: string; body: string; href: string },
 ): Promise<void> {
-  const adminIds = await getOrgAdminMembershipIds(orgId);
-  if (adminIds.length === 0) return;
-  const db = admin();
-  await (db.from("notifications").insert(
-    adminIds.map((id) => ({
-      organization_id: orgId,
-      recipient_membership_id: id,
-      type: "general" as const,
-      title: payload.title,
-      body: payload.body,
-      href: payload.href,
-    })),
-  ) as unknown as Promise<unknown>);
-  await sendPushToOrgAdmins(orgId, payload);
+  await notify({ audience: "org-admins", organizationId: orgId, ...payload });
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -553,13 +526,14 @@ export async function notifyUpcomingJobs() {
 
     if (rows.length === 0) return 0;
 
-    await (db.from("notifications").insert(rows) as unknown as Promise<unknown>);
-
-    // Fire push notifications to each assigned employee
+    // Each row targets one assigned cleaner — in-app + push via the primitive.
     await Promise.allSettled(
       rows.map((r) =>
         r.recipient_membership_id
-          ? sendPushToMembership(r.recipient_membership_id, {
+          ? notify({
+              audience: "membership",
+              membershipId: r.recipient_membership_id,
+              organizationId: r.organization_id,
               title: r.title,
               body: r.body,
               href: r.href,
@@ -763,9 +737,6 @@ export async function alertStaleEstimates() {
     let notified = 0;
     await Promise.allSettled(
       [...byOrg.entries()].map(async ([orgId, ests]) => {
-        const adminIds = await getOrgAdminMembershipIds(orgId);
-        if (adminIds.length === 0) return;
-
         const details = ests.map((e) => {
           const clientName =
             (e.client as unknown as { name: string } | null)?.name ?? "a client";
@@ -775,20 +746,18 @@ export async function alertStaleEstimates() {
           };
         });
 
-        // In-app: one recipient-targeted row per (estimate × admin).
-        const notifRows = details.flatMap((d) =>
-          adminIds.map((id) => ({
-            organization_id: orgId,
-            recipient_membership_id: id,
-            type: "general" as const,
+        // In-app: one per-estimate admin-only notification (push off — we send
+        // a single aggregate push below instead of one per estimate).
+        for (const d of details) {
+          await notify({
+            audience: "org-admins",
+            organizationId: orgId,
             title: "Stale estimate — needs follow-up",
             body: d.body,
             href: d.href,
-          })),
-        );
-        await (db
-          .from("notifications")
-          .insert(notifRows) as unknown as Promise<unknown>);
+            channels: { push: false },
+          });
+        }
         notified += details.length;
 
         // One aggregate push to the org's admins only. Grammar: "1 … needs" /
@@ -1050,20 +1019,14 @@ export async function sendBookingRescheduled(
         minute: "2-digit",
         timeZone: tz,
       });
-      sendPushToMembership(booking.assigned_to, {
+      await notify({
+        audience: "membership",
+        membershipId: booking.assigned_to,
+        organizationId: booking.organization_id,
         title: "Booking rescheduled",
         body: `${serviceDisplayName} moved to ${when}`,
         href: `/field/jobs/${bookingId}`,
-      }).catch(() => {});
-      // In-app notification row so it lingers in their feed.
-      (db.from("notifications").insert({
-        organization_id: booking.organization_id,
-        type: "general",
-        recipient_membership_id: booking.assigned_to,
-        title: "Booking rescheduled",
-        body: `${serviceDisplayName} moved to ${when}`,
-        href: `/field/jobs/${bookingId}`,
-      }) as unknown as Promise<unknown>).catch(() => {});
+      });
     }
 
     if (!booking.client?.email) return;
@@ -1163,20 +1126,14 @@ export async function notifyBookingCancelledToEmployee(bookingId: string) {
     const title = "Job cancelled";
     const body = `${serviceDisplay} for ${booking.client?.name ?? "a client"} on ${when} was cancelled. You don't need to go.`;
 
-    await (db.from("notifications").insert({
-      organization_id: booking.organization_id,
-      type: "general",
-      recipient_membership_id: booking.assigned_to,
+    await notify({
+      audience: "membership",
+      membershipId: booking.assigned_to,
+      organizationId: booking.organization_id,
       title,
       body,
       href: `/field/jobs`,
-    }) as unknown as Promise<unknown>);
-
-    sendPushToMembership(booking.assigned_to, {
-      title,
-      body,
-      href: `/field/jobs`,
-    }).catch(() => {});
+    });
 
     console.log(`[auto] Cancellation push sent for booking ${bookingId}`);
   } catch (err) {
@@ -2849,16 +2806,14 @@ export async function notifyBookingAssignment(
     const title = "New shift assigned — tap to confirm";
     const body = `${humanize(meta.serviceType)} for ${meta.clientName} on ${when}${meta.address ? ` — ${meta.address}` : ""}. Open the job to accept or decline.`;
 
-    await (db.from("notifications").insert({
-      organization_id: organizationId,
-      recipient_membership_id: assignedTo,
-      type: "general",
+    await notify({
+      audience: "membership",
+      membershipId: assignedTo,
+      organizationId,
       title,
       body,
       href: `/field/jobs/${bookingId}`,
-    }) as unknown as Promise<unknown>);
-
-    sendPushToMembership(assignedTo, { title, body, href: `/field/jobs/${bookingId}` }).catch(() => {});
+    });
 
     // SMS to the employee's phone (when Twilio is on, they have a phone,
     // and the org has enabled booking_assignment_sms). Field crews check

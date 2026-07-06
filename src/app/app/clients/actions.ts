@@ -8,6 +8,7 @@ import { logAuditEvent } from "@/lib/audit";
 import { ClientSchema } from "@/lib/validators/clients";
 import { redirectAfterSetup } from "@/lib/setup-return";
 import { normalizePhone } from "@/lib/phone";
+import { notify } from "@/lib/notify";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 /**
@@ -71,15 +72,15 @@ async function notifyReferralThankYou(
 
     const referrerName = referrer?.name ?? "the referring client";
 
-    await admin.from("notifications" as never).insert({
-      organization_id: organizationId,
-      // null recipient = visible to every admin/manager in the org
-      recipient_membership_id: null,
-      type: "general",
+    // Owner/admin only — referral/CRM content, not for cleaners. (The old
+    // null-recipient row was readable by any member via direct query.)
+    await notify({
+      audience: "org-admins",
+      organizationId,
       title: `Say thank you to ${referrerName}!`,
       body: `${newClientName} was referred by ${referrerName}. A quick thank-you message goes a long way.`,
       href: `/app/clients/${referrerId}`,
-    } as never);
+    });
   } catch {
     // Non-critical — log silently and let the client save succeed.
     console.error("[referral] Failed to insert thank-you notification");

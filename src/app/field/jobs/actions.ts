@@ -5,7 +5,7 @@ import { getActionContext } from "@/lib/actions";
 import { autoInvoiceOnJobComplete } from "@/lib/automations";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { deleteMemberCalendarEvent } from "@/lib/google-calendar";
-import { sendPushToMembership } from "@/lib/push";
+import { notify } from "@/lib/notify";
 
 export type JobActionResult = { ok: true } | { ok: false; error: string };
 
@@ -611,31 +611,14 @@ async function dropShift(
     body += ` They're also requesting to be taken off the recurring ${client} going forward — please reassign the series.`;
   }
 
-  const { data: managers } = (await admin
-    .from("memberships")
-    .select("id")
-    .eq("organization_id", booking.organization_id)
-    .in("role", ["owner", "admin", "manager"])
-    .eq("status", "active")) as unknown as {
-    data: Array<{ id: string }> | null;
-  };
-  const recipients = managers ?? [];
-  const href = `/app/bookings/${bookingId}`;
-  if (recipients.length > 0) {
-    await (admin.from("notifications").insert(
-      recipients.map((r) => ({
-        organization_id: booking.organization_id,
-        recipient_membership_id: r.id,
-        type: "general" as const,
-        title,
-        body,
-        href,
-      })),
-    ) as unknown as Promise<unknown>);
-    await Promise.allSettled(
-      recipients.map((r) => sendPushToMembership(r.id, { title, body, href })),
-    );
-  }
+  // Owner/admin/manager (the management team) — in-app + push via the primitive.
+  await notify({
+    audience: "org-management",
+    organizationId: booking.organization_id,
+    title,
+    body,
+    href: `/app/bookings/${bookingId}`,
+  });
 
   // Email the management accounts that this cleaner declined (best-effort).
   await emailShiftResponse({
