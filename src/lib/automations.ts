@@ -6,7 +6,7 @@
 
 import "server-only";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { sendPushToMembership, sendPushToOrg } from "@/lib/push";
+import { sendPushToMembership, sendPushToOrgAdmins } from "@/lib/push";
 import type { CurrencyCode } from "@/lib/format";
 import { resolveAutomationEnabled } from "@/lib/automation-defaults";
 import { localInputToUtcIso } from "@/lib/validators/common";
@@ -163,6 +163,45 @@ async function getOrgAdminRecipients(
   }
 
   return recipients;
+}
+
+/** Active owner/admin MEMBERSHIP ids for an org (for in-app + push targeting). */
+async function getOrgAdminMembershipIds(orgId: string): Promise<string[]> {
+  const db = admin();
+  const { data } = (await db
+    .from("memberships")
+    .select("id")
+    .eq("organization_id", orgId)
+    .in("role", ["owner", "admin"])
+    .eq("status", "active")) as unknown as { data: Array<{ id: string }> | null };
+  return (data ?? []).map((m) => m.id);
+}
+
+/**
+ * In-app + push alert to an org's owners/admins ONLY. Management-facing content
+ * (financials, reviews, bonuses, ops tasks) must never reach cleaners, so we
+ * insert a per-admin notification row (recipient_membership_id) rather than a
+ * null-recipient org-wide row (which any member can read at /app/notifications),
+ * and push only to admin devices.
+ */
+async function notifyOrgAdmins(
+  orgId: string,
+  payload: { title: string; body: string; href: string },
+): Promise<void> {
+  const adminIds = await getOrgAdminMembershipIds(orgId);
+  if (adminIds.length === 0) return;
+  const db = admin();
+  await (db.from("notifications").insert(
+    adminIds.map((id) => ({
+      organization_id: orgId,
+      recipient_membership_id: id,
+      type: "general" as const,
+      title: payload.title,
+      body: payload.body,
+      href: payload.href,
+    })),
+  ) as unknown as Promise<unknown>);
+  await sendPushToOrgAdmins(orgId, payload);
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -651,21 +690,14 @@ export async function autoBookingOnEstimateApproval(estimateId: string) {
       ? `/app/bookings/${newBooking.id}`
       : "/app/bookings";
 
-    // Create a notification for the org
+    // Owner/admin-only — this is an ops task ("set the date, assign a cleaner")
+    // and must not broadcast to cleaners.
     const notifPayload = {
       title: "Estimate approved — booking created",
       body: `A new pending ${humanize(serviceType).toLowerCase()} booking was auto-created. Set the date and assign a cleaner.`,
       href: bookingHref,
     };
-
-    await (db.from("notifications").insert({
-      organization_id: estimate.organization_id,
-      type: "general",
-      ...notifPayload,
-    }) as unknown as Promise<unknown>);
-
-    // Push to all org members (org-wide notification)
-    sendPushToOrg(estimate.organization_id, notifPayload).catch(() => {});
+    await notifyOrgAdmins(estimate.organization_id, notifPayload).catch(() => {});
 
     console.log(`[auto] Booking created from approved estimate ${estimateId}`);
   } catch (err) {
@@ -708,39 +740,69 @@ export async function alertStaleEstimates() {
     };
 
     const alreadyNotified = new Set(
-      (existingNotifs ?? []).map((n) => (n.href ?? "").split("/").pop()),
+      // href is /app/estimates/{id}/edit — the estimate id is the 2nd-to-last
+      // segment. (Previously .pop() returned "edit", so dedup never matched and
+      // this alert re-fired on every cron run.)
+      (existingNotifs ?? []).map((n) => (n.href ?? "").split("/").at(-2)),
     );
 
     const toNotify = stale.filter((e) => !alreadyNotified.has(e.id));
     if (toNotify.length === 0) return 0;
 
-    const rows = toNotify.map((e) => {
-      const clientName = (e.client as unknown as { name: string } | null)?.name ?? "a client";
-      return {
-        organization_id: e.organization_id,
-        type: "general" as const,
-        title: "Stale estimate — needs follow-up",
-        body: `Estimate for ${clientName} ($${((e.total_cents ?? 0) / 100).toFixed(0)}) has been pending for 7+ days.`,
-        href: `/app/estimates/${e.id}/edit`,
-      };
-    });
+    // Group by org and alert each org's owners/admins ONLY. This is financial
+    // content (client name + estimate value) and an owner task — it must never
+    // broadcast to cleaners, which is what the old sendPushToOrg + null-recipient
+    // in-app notification did.
+    const byOrg = new Map<string, typeof toNotify>();
+    for (const e of toNotify) {
+      const list = byOrg.get(e.organization_id) ?? [];
+      list.push(e);
+      byOrg.set(e.organization_id, list);
+    }
 
-    await (db.from("notifications").insert(rows) as unknown as Promise<unknown>);
-
-    // Push to each org (org-wide notifications)
-    const orgIds = [...new Set(rows.map((r) => r.organization_id))];
+    let notified = 0;
     await Promise.allSettled(
-      orgIds.map((orgId) => {
-        const orgRows = rows.filter((r) => r.organization_id === orgId);
-        return sendPushToOrg(orgId, {
-          title: `${orgRows.length} stale estimate${orgRows.length > 1 ? "s" : ""} need follow-up`,
-          body: orgRows.map((r) => r.body).join(" · "),
+      [...byOrg.entries()].map(async ([orgId, ests]) => {
+        const adminIds = await getOrgAdminMembershipIds(orgId);
+        if (adminIds.length === 0) return;
+
+        const details = ests.map((e) => {
+          const clientName =
+            (e.client as unknown as { name: string } | null)?.name ?? "a client";
+          return {
+            href: `/app/estimates/${e.id}/edit`,
+            body: `Estimate for ${clientName} ($${((e.total_cents ?? 0) / 100).toFixed(0)}) has been pending for 7+ days.`,
+          };
+        });
+
+        // In-app: one recipient-targeted row per (estimate × admin).
+        const notifRows = details.flatMap((d) =>
+          adminIds.map((id) => ({
+            organization_id: orgId,
+            recipient_membership_id: id,
+            type: "general" as const,
+            title: "Stale estimate — needs follow-up",
+            body: d.body,
+            href: d.href,
+          })),
+        );
+        await (db
+          .from("notifications")
+          .insert(notifRows) as unknown as Promise<unknown>);
+        notified += details.length;
+
+        // One aggregate push to the org's admins only. Grammar: "1 … needs" /
+        // "N … need".
+        const n = details.length;
+        await sendPushToOrgAdmins(orgId, {
+          title: `${n} stale estimate${n > 1 ? "s" : ""} need${n > 1 ? "" : "s"} follow-up`,
+          body: details.map((d) => d.body).join(" · "),
           href: "/app/estimates",
         });
       }),
     );
 
-    return rows.length;
+    return notified;
   } catch (err) {
     console.error("[auto] alertStaleEstimates failed:", err);
     return 0;
@@ -2994,15 +3056,12 @@ export async function notifyReviewSubmitted(
     const title = `New ${review.rating}-star review`;
     const body = `${review.clientName} left a ${stars} review${review.employeeName ? ` for ${review.employeeName}` : ""}.`;
 
-    await (db.from("notifications").insert({
-      organization_id: organizationId,
-      type: "general",
+    // Owner/admin-only — customer reviews are management-facing.
+    await notifyOrgAdmins(organizationId, {
       title,
       body,
-      href: `/app/reviews`,
-    }) as unknown as Promise<unknown>);
-
-    sendPushToOrg(organizationId, { title, body, href: "/app/reviews" }).catch(() => {});
+      href: "/app/reviews",
+    }).catch(() => {});
     console.log(`[auto] Review notification sent for ${organizationId}`);
 
     // Email alert for low ratings (≤3★). Fires only when there's a real
@@ -3343,8 +3402,8 @@ export async function autoComputeReviewBonuses(): Promise<number> {
         await (db.from("bonuses").insert(toCreate) as unknown as Promise<unknown>);
         totalCreated += toCreate.length;
 
-        // Notify the org that bonuses were computed
-        sendPushToOrg(r.organization_id, {
+        // Owner/admin-only — payroll/bonus info is management-facing.
+        await notifyOrgAdmins(r.organization_id, {
           title: "Bonuses computed",
           body: `${toCreate.length} new bonus${toCreate.length > 1 ? "es" : ""} awarded from recent reviews.`,
           href: "/app/bonuses",

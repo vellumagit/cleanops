@@ -104,8 +104,37 @@ export async function sendPushToMembership(
 }
 
 /**
+ * Send a push notification ONLY to an org's owners + admins (their subscribed
+ * devices). Use this for management-facing alerts — financials, reviews,
+ * bonuses, ops tasks — so they never broadcast to cleaners.
+ */
+export async function sendPushToOrgAdmins(
+  organizationId: string,
+  payload: PushPayload,
+): Promise<number> {
+  if (!isConfigured) return 0;
+
+  const db = createSupabaseAdminClient();
+  const { data: admins } = (await db
+    .from("memberships")
+    .select("id")
+    .eq("organization_id", organizationId)
+    .in("role", ["owner", "admin"])
+    .eq("status", "active")) as unknown as { data: Array<{ id: string }> | null };
+  const adminIds = (admins ?? []).map((a) => a.id);
+  if (adminIds.length === 0) return 0;
+
+  let total = 0;
+  for (const id of adminIds) {
+    total += await sendPushToMembership(id, payload);
+  }
+  return total;
+}
+
+/**
  * Send a push notification to ALL subscribed members of an org.
- * Used for org-wide notifications (null recipient).
+ * Used for genuinely org-wide notifications (null recipient). Do NOT use for
+ * management-facing content — see sendPushToOrgAdmins.
  */
 export async function sendPushToOrg(
   organizationId: string,
