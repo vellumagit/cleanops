@@ -151,7 +151,7 @@
     },
     {
       "path": "/api/cron/invoice-auto-send",
-      "schedule": "0 * * * *"
+      "schedule": "0 13 * * *"
     }
   ]
 }

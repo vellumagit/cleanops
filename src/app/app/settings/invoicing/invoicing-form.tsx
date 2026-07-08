@@ -64,7 +64,7 @@ export function InvoicingForm(props: InvoicingFormProps) {
         label="Review window"
         htmlFor="delay_hours"
         error={state.errors?.delay}
-        hint="How long a fresh draft waits before it auto-sends. Edit it any time during the window — whatever it says when the timer is up is what ships."
+        hint="How long a fresh draft waits before it auto-sends. Edit it any time during the window — whatever it says when the timer is up is what ships. Sends run once a day, so the actual send is at the next daily pass after the window elapses."
       >
         <select
           id="delay_hours"

@@ -1,8 +1,10 @@
 /**
  * Cron: Invoice auto-send
  *
- * Runs hourly. Sends drafted invoices whose review window (auto_send_at) has
- * elapsed and are still 'scheduled' drafts. Opt-in per org via
+ * Runs daily (Vercel Hobby caps cron frequency at once/day). Sends drafted
+ * invoices whose review window (auto_send_at) has elapsed and are still
+ * 'scheduled' drafts — so the actual send lands on the next daily pass after
+ * the window closes. Opt-in per org via
  * /app/settings/invoicing → auto-send. Reads each invoice live at send time so
  * edits made during the window are included. See src/lib/invoice-send.ts.
  *
