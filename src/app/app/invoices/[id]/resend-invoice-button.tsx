@@ -5,7 +5,8 @@ import { Send, AlertTriangle } from "lucide-react";
 import { SubmitButton } from "@/components/submit-button";
 import { FormError } from "@/components/form-field";
 import { Button } from "@/components/ui/button";
-import { resendInvoiceEmailAction, type SendInvoiceState } from "../actions";
+import { resendInvoiceEmailAction } from "../actions";
+import type { SendInvoiceState } from "@/lib/invoice-send";
 
 const EMPTY: SendInvoiceState = {};
 

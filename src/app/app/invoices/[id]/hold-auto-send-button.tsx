@@ -4,7 +4,8 @@ import { useActionState } from "react";
 import { PauseCircle } from "lucide-react";
 import { SubmitButton } from "@/components/submit-button";
 import { FormError } from "@/components/form-field";
-import { holdInvoiceAutoSendAction, type SendInvoiceState } from "../actions";
+import { holdInvoiceAutoSendAction } from "../actions";
+import type { SendInvoiceState } from "@/lib/invoice-send";
 
 const EMPTY: SendInvoiceState = {};
 

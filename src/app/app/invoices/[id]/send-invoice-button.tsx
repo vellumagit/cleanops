@@ -4,7 +4,8 @@ import { useActionState } from "react";
 import { Send } from "lucide-react";
 import { SubmitButton } from "@/components/submit-button";
 import { FormError } from "@/components/form-field";
-import { sendInvoiceAction, type SendInvoiceState } from "../actions";
+import { sendInvoiceAction } from "../actions";
+import type { SendInvoiceState } from "@/lib/invoice-send";
 
 const EMPTY: SendInvoiceState = {};
 

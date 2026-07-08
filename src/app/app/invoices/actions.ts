@@ -476,16 +476,9 @@ export async function deleteInvoicePaymentAction(formData: FormData) {
   revalidatePath("/app/invoices");
 }
 
-/**
- * State shape for `sendInvoiceAction` and `resendInvoiceEmailAction`.
- * Used by `useActionState` in the send/resend button components so
- * delivery failures can be shown inline instead of silently marking
- * the invoice as sent when the email never actually went out.
- */
-// SendInvoiceState + the shared delivery routine now live in
-// @/lib/invoice-send so the auto-send cron can reuse them. Re-exported here so
-// existing button-component imports keep working.
-export type { SendInvoiceState };
+// SendInvoiceState + the shared delivery routine live in @/lib/invoice-send so
+// the auto-send cron can reuse them. This "use server" file may only export
+// async actions, so consumers import the type from @/lib/invoice-send directly.
 
 /**
  * Owner-facing delivery wrapper: enforce the owner/admin permission check and
