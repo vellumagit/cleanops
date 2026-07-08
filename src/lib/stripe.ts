@@ -310,6 +310,124 @@ export async function markEventProcessed(eventId: string): Promise<void> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// SMS metered overage (Phase 1, model B).
+//
+// SMS is included in the plan up to a monthly segment allotment; only overage
+// past it is billed, as a metered subscription item on the org's EXISTING
+// subscription. Comped orgs never get the item (overage waived). See
+// docs/sms-phase1-spec.md and src/lib/sms.ts.
+// ---------------------------------------------------------------------------
+
+/**
+ * Ensure the org's subscription carries the metered SMS-overage item, and
+ * return its id. Idempotent. Returns null when overage can't be metered —
+ * Stripe disabled, no overage price configured, org comped, or no live Stripe
+ * subscription (nothing to attach to). Stores the id on organizations.
+ */
+export async function ensureSmsOverageItem(
+  organizationId: string,
+): Promise<string | null> {
+  const priceId = process.env.STRIPE_PRICE_SMS_OVERAGE;
+  if (!isStripeEnabled() || !priceId) return null;
+
+  const admin = createSupabaseAdminClient();
+
+  const { data: orgRow } = (await admin
+    .from("organizations")
+    .select("billing_override, sms_overage_item_id")
+    .eq("id", organizationId)
+    .maybeSingle()) as unknown as {
+    data: { billing_override: string | null; sms_overage_item_id: string | null } | null;
+  };
+
+  // Comped orgs are never billed for overage — no item.
+  if (!orgRow || orgRow.billing_override) return null;
+  if (orgRow.sms_overage_item_id) return orgRow.sms_overage_item_id;
+
+  const { data: sub } = await admin
+    .from("subscriptions")
+    .select("stripe_subscription_id")
+    .eq("organization_id", organizationId)
+    .maybeSingle();
+
+  const subscriptionId = sub?.stripe_subscription_id ?? null;
+  if (!subscriptionId) return null; // no live subscription to attach to
+
+  const stripe = getStripe();
+  // No static idempotency key: the sms_overage_item_id guard above already
+  // prevents duplicates, and a reused key would return a STALE (possibly
+  // deleted) item after a disable→re-enable within Stripe's 24h key window.
+  const item = await stripe.subscriptionItems.create({
+    subscription: subscriptionId,
+    price: priceId,
+  });
+
+  await (admin
+    .from("organizations")
+    .update({ sms_overage_item_id: item.id } as never)
+    .eq("id", organizationId) as unknown as Promise<unknown>);
+
+  return item.id;
+}
+
+/** Remove the metered overage item (on SMS disable) and clear the stored id. */
+export async function removeSmsOverageItem(
+  organizationId: string,
+): Promise<void> {
+  const admin = createSupabaseAdminClient();
+  const { data: orgRow } = (await admin
+    .from("organizations")
+    .select("sms_overage_item_id")
+    .eq("id", organizationId)
+    .maybeSingle()) as unknown as {
+    data: { sms_overage_item_id: string | null } | null;
+  };
+
+  const itemId = orgRow?.sms_overage_item_id ?? null;
+  if (itemId && isStripeEnabled()) {
+    try {
+      await getStripe().subscriptionItems.del(itemId, { clear_usage: true });
+    } catch (err) {
+      console.error("[stripe] removeSmsOverageItem failed:", err);
+    }
+  }
+
+  await (admin
+    .from("organizations")
+    .update({ sms_overage_item_id: null } as never)
+    .eq("id", organizationId) as unknown as Promise<unknown>);
+}
+
+/**
+ * Report `quantity` overage segments against the metered subscription item.
+ * Best-effort, guarded on isStripeEnabled(). Uses metered usage records (the
+ * classic pairing for a metered Price); if you migrate to Stripe Billing Meters,
+ * swap the body for a meterEvents.create keyed on the customer.
+ */
+export async function reportSmsOverageUsage(
+  subscriptionItemId: string,
+  quantity: number,
+): Promise<void> {
+  if (!isStripeEnabled() || quantity <= 0) return;
+  const stripe = getStripe();
+  // createUsageRecord isn't in the pinned SDK's typed surface for all price
+  // shapes — call through a minimal structural type.
+  const usage = (
+    stripe.subscriptionItems as unknown as {
+      createUsageRecord?: (
+        item: string,
+        params: { quantity: number; action: "increment"; timestamp: "now" },
+      ) => Promise<unknown>;
+    }
+  ).createUsageRecord;
+  if (!usage) {
+    console.error("[stripe] createUsageRecord unavailable — overage not metered");
+    return;
+  }
+  await usage(subscriptionItemId, { quantity, action: "increment", timestamp: "now" });
+}
+
 // Legacy export kept for the old placeholder import — no-op wrapper around
 // the real verifier so nothing breaks.
 export type StripeWebhookEvent = Stripe.Event;

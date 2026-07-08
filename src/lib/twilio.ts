@@ -33,11 +33,29 @@ import "server-only";
 import { isE164 } from "@/lib/phone";
 
 export type SmsSendResult =
-  | { ok: true; sid: string | null; status: "sent" | "skipped_disabled" }
+  | { ok: true; sid: string | null; status: "sent" | "skipped_disabled"; segments: number }
   | { ok: false; error: string };
 
 export function isTwilioEnabled(): boolean {
   return process.env.TWILIO_ENABLED === "true";
+}
+
+/**
+ * Estimate how many SMS segments a body will cost — this is the billable unit,
+ * not the message. GSM-7 fits 160 chars in one segment (153/segment when
+ * concatenated); any non-GSM character forces UCS-2 (70 / 67). Approximate but
+ * matches Twilio's own accounting closely enough for allotment/overage counting.
+ */
+export function smsSegments(body: string): number {
+  if (!body) return 1;
+  // GSM 03.38 basic + common extension set. Anything outside → UCS-2.
+  const gsm =
+    /^[A-Za-z0-9 \r\n@£$¥èéùìòÇØøÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ!"#¤%&'()*+,\-./:;<=>?¡ÄÖÑÜ§¿äöñüà^{}\\\[~\]|€]*$/;
+  const isGsm = gsm.test(body);
+  const single = isGsm ? 160 : 70;
+  const multi = isGsm ? 153 : 67;
+  if (body.length <= single) return 1;
+  return Math.ceil(body.length / multi);
 }
 
 /**
@@ -51,12 +69,20 @@ export function isTwilioEnabled(): boolean {
 export async function sendSms(
   to: string,
   body: string,
+  /**
+   * The sender number (E.164). Per-org callers pass the org's own provisioned
+   * number so each business texts from its own line. Omitted → falls back to
+   * the platform `TWILIO_FROM_NUMBER` (legacy / single-sender paths).
+   */
+  fromOverride?: string | null,
 ): Promise<SmsSendResult> {
+  const segments = smsSegments(body);
+
   if (!isTwilioEnabled()) {
     console.log(
       `[twilio:disabled] would send to ${to}: ${body.slice(0, 200)}`,
     );
-    return { ok: true, sid: null, status: "skipped_disabled" };
+    return { ok: true, sid: null, status: "skipped_disabled", segments };
   }
 
   // Reject malformed numbers before hitting the Twilio API — a bad "To"
@@ -69,13 +95,13 @@ export async function sendSms(
 
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
-  const from = process.env.TWILIO_FROM_NUMBER;
+  const from = fromOverride ?? process.env.TWILIO_FROM_NUMBER;
 
   if (!accountSid || !authToken || !from) {
     return {
       ok: false,
       error:
-        "TWILIO_ENABLED=true but TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_FROM_NUMBER are not set",
+        "TWILIO_ENABLED=true but Twilio credentials or a sender number are not set",
     };
   }
 
@@ -103,7 +129,7 @@ export async function sendSms(
     }
 
     const json = (await res.json()) as { sid?: string };
-    return { ok: true, sid: json.sid ?? null, status: "sent" };
+    return { ok: true, sid: json.sid ?? null, status: "sent", segments };
   } catch (err) {
     return {
       ok: false,

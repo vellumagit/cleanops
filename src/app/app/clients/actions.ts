@@ -118,6 +118,13 @@ export async function createClientAction(
       preferred_contact: parsed.data.preferred_contact,
       preferred_cleaner_id: parsed.data.preferred_cleaner_id ?? null,
       sms_opted_in: smsOptedIn,
+      // CASL consent audit stamp — recorded the moment consent is captured.
+      ...(smsOptedIn
+        ? {
+            sms_opted_in_at: new Date().toISOString(),
+            sms_opt_in_source: "client_form",
+          }
+        : {}),
       billing_cadence: parsed.data.billing_cadence,
       billing_type: parsed.data.billing_type,
       flat_rate_cents: parsed.data.flat_rate_cents ?? null,
@@ -181,7 +188,7 @@ export async function updateClientAction(
   const { data: previous } = (await supabase
     .from("clients")
     .select(
-      "name, email, phone, address, notes, preferred_contact, preferred_cleaner_id, referred_by_client_id",
+      "name, email, phone, address, notes, preferred_contact, preferred_cleaner_id, referred_by_client_id, sms_opted_in",
     )
     .eq("id", id)
     .eq("organization_id" as never, membership.organization_id as never)
@@ -195,10 +202,21 @@ export async function updateClientAction(
       preferred_contact: string;
       preferred_cleaner_id: string | null;
       referred_by_client_id: string | null;
+      sms_opted_in: boolean;
     } | null;
   };
 
   const smsOptedIn = formData.get("sms_opted_in") === "on";
+
+  // CASL consent audit stamp. Stamp on a false→true transition; clear on
+  // opt-out; leave an existing timestamp untouched on an unrelated edit.
+  const wasOptedIn = Boolean(previous?.sms_opted_in);
+  const consentPatch =
+    smsOptedIn && !wasOptedIn
+      ? { sms_opted_in_at: new Date().toISOString(), sms_opt_in_source: "client_form" }
+      : !smsOptedIn
+        ? { sms_opted_in_at: null, sms_opt_in_source: null }
+        : {};
 
   const { error } = await (supabase
     .from("clients")
@@ -211,6 +229,7 @@ export async function updateClientAction(
       preferred_contact: parsed.data.preferred_contact,
       preferred_cleaner_id: parsed.data.preferred_cleaner_id ?? null,
       sms_opted_in: smsOptedIn,
+      ...consentPatch,
       billing_cadence: parsed.data.billing_cadence,
       billing_type: parsed.data.billing_type,
       flat_rate_cents: parsed.data.flat_rate_cents ?? null,

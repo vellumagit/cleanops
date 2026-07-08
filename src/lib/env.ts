@@ -65,6 +65,11 @@ const BaseSchema = z.object({
   // purchasable.
   STRIPE_PRICE_STARTER: z.string().optional(),
   STRIPE_PRICE_GROWTH: z.string().optional(),
+  // Metered price for SMS overage (Phase 1, model B). Attached as a
+  // subscription item when an org enables SMS; usage reported per overage
+  // segment. Missing = overage can't be metered (SMS still works up to the
+  // included allotment).
+  STRIPE_PRICE_SMS_OVERAGE: z.string().optional(),
 
   // Cron authentication — every /api/cron/* route checks this header.
   // Missing means the Bearer check is skipped (caller-controlled risk).

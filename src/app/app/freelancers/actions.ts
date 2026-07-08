@@ -9,7 +9,8 @@ import {
   JobOfferSchema,
 } from "@/lib/validators/freelancer";
 import { generateClaimToken } from "@/lib/claim-token";
-import { sendSms, composeOfferSms } from "@/lib/twilio";
+import { composeOfferSms } from "@/lib/twilio";
+import { sendOrgSms } from "@/lib/sms";
 
 /**
  * Phase 11 server actions — freelancer bench.
@@ -322,7 +323,15 @@ export async function createJobOfferAction(
       tz: orgTz,
     });
 
-    const result = await sendSms(contact.phone, body);
+    // Routed through sendOrgSms so freelancer offers send from the org's OWN
+    // number and count toward its allotment. Not client-facing (independent
+    // contractors), so the opt-in gate is bypassed; the automation key defaults
+    // ON. Requires the org to have SMS enabled (a provisioned number).
+    const result = await sendOrgSms(membership.organization_id, {
+      to: contact.phone,
+      body,
+      automationKey: "freelancer_offer_sms",
+    });
 
     if (result.ok) {
       await supabase

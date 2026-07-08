@@ -9,6 +9,7 @@ import {
   Globe2,
   KeyRound,
   Mail,
+  MessageSquare,
   Palette,
   Plug,
   Repeat,
@@ -71,6 +72,13 @@ const SECTIONS: Section[] = [
           "Sender email for outgoing mail + the contact email / phone shown to clients on invoices.",
       },
       {
+        href: "/app/settings/sms",
+        icon: MessageSquare,
+        title: "SMS / Texting",
+        description:
+          "Text booking confirmations and reminders to clients from your own dedicated number. Included in your plan up to a monthly limit.",
+      },
+      {
         href: "/app/settings/currency",
         icon: Coins,
         title: "Currency & tax",
@@ -130,6 +138,13 @@ const SECTIONS: Section[] = [
         title: "Automations",
         description:
           "Toggle which automations fire — client emails, team notifications, owner alerts, housekeeping.",
+      },
+      {
+        href: "/app/settings/invoicing",
+        icon: CreditCard,
+        title: "Invoicing",
+        description:
+          "Auto-send drafted invoices after a review window (per-job + biweekly/monthly), with a hold / send-now escape hatch.",
       },
       {
         href: "/app/settings/recurring-invoices",
