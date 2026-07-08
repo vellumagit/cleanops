@@ -306,6 +306,17 @@ async function generateClientInvoice(
     );
   }
 
+  // Schedule auto-send for consolidated invoices if the org opted in.
+  try {
+    const { scheduleAutoSendIfEnabled } = await import("@/lib/invoice-send");
+    await scheduleAutoSendIfEnabled(invoice.id, org.id, { consolidated: true });
+  } catch (scheduleErr) {
+    console.error(
+      `[billing-cycle] auto-send schedule failed for invoice ${invoice.id} (still drafted):`,
+      scheduleErr,
+    );
+  }
+
   console.log(
     `[billing-cycle] Invoice ${invoice.number ?? invoice.id} created for client "${client.name}" (${client.billing_type}, ${bookings.length} booking(s))`,
   );

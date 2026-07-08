@@ -7,6 +7,8 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { StripePaymentLinkButton } from "./stripe-payment-link-button";
 import { SendInvoiceButton } from "./send-invoice-button";
+import { HoldAutoSendButton } from "./hold-auto-send-button";
+import { AutoSendNotice } from "./auto-send-notice";
 import { ResendInvoiceButton } from "./resend-invoice-button";
 import { SyncSageButton } from "./sync-sage-button";
 import { PageShell } from "@/components/page-shell";
@@ -142,6 +144,17 @@ export default async function InvoiceDetailPage({
   };
   const reviewToken = reviewData?.review_token ?? null;
 
+  // Auto-send schedule (columns not yet in generated types).
+  const { data: autoSendData } = (await supabase
+    .from("invoices")
+    .select("auto_send_at, auto_send_state")
+    .eq("id", id)
+    .maybeSingle()) as unknown as {
+    data: { auto_send_at: string | null; auto_send_state: string | null } | null;
+  };
+  const autoSendScheduled =
+    autoSendData?.auto_send_state === "scheduled" && Boolean(autoSendData?.auto_send_at);
+
   const status = invoice.status as InvoiceStatus;
   const paidCents =
     invoice.payments?.reduce((sum, p) => sum + (p.amount_cents ?? 0), 0) ?? 0;
@@ -228,9 +241,16 @@ export default async function InvoiceDetailPage({
               />
             </dl>
 
+            {status === "draft" && !isVoid && autoSendScheduled && (
+              <AutoSendNotice iso={autoSendData!.auto_send_at!} />
+            )}
+
             <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-border pt-4">
               {status === "draft" && !isVoid && (
                 <SendInvoiceButton invoiceId={invoice.id} />
+              )}
+              {status === "draft" && !isVoid && autoSendScheduled && (
+                <HoldAutoSendButton invoiceId={invoice.id} />
               )}
               {status !== "draft" && !isVoid && (
                 <ResendInvoiceButton invoiceId={invoice.id} />

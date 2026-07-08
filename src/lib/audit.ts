@@ -17,6 +17,7 @@
 
 import "server-only";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { CurrentMembership } from "@/lib/auth";
 
 export type AuditEntity =
@@ -95,5 +96,40 @@ export async function logAuditEvent(args: LogArgs): Promise<void> {
     }
   } catch (err) {
     console.error("[audit] unexpected failure:", err);
+  }
+}
+
+/**
+ * Append an audit event with NO human actor — for automation/cron writes (e.g.
+ * an invoice the auto-send cron sent on the org's behalf). Uses the admin
+ * client (no RLS session) and records actor_id = null so the trail shows the
+ * system performed it. Never throws.
+ */
+export async function logSystemAuditEvent(args: {
+  organizationId: string;
+  action: AuditAction;
+  entity: AuditEntity;
+  entity_id?: string | null;
+  after?: Record<string, unknown> | null;
+}): Promise<void> {
+  try {
+    const admin = createSupabaseAdminClient();
+    const { error } = await admin.from("audit_log").insert({
+      organization_id: args.organizationId,
+      actor_id: null,
+      action: args.action,
+      entity: args.entity,
+      entity_id: args.entity_id ?? null,
+      before: null as never,
+      after: (args.after ?? { system: true }) as never,
+    });
+    if (error) {
+      console.error("[audit] system insert failed:", error.message, {
+        action: args.action,
+        entity: args.entity,
+      });
+    }
+  } catch (err) {
+    console.error("[audit] system unexpected failure:", err);
   }
 }

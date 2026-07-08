@@ -12,18 +12,15 @@ import {
 } from "@/lib/validators/invoice-payment";
 import { localInputToUtcIso, parseDollarsToCents } from "@/lib/validators/common";
 import { generateClaimToken } from "@/lib/claim-token";
-import {
-  sendOrgEmailDetailed,
-  isEmailConfigured,
-} from "@/lib/email";
-import { invoiceSentEmail } from "@/lib/email-templates";
-import { formatCurrencyCents } from "@/lib/format";
-import { getOrgCurrency } from "@/lib/org-currency";
 import { autoOnInvoicePaid } from "@/lib/automations";
 import { canCreateData } from "@/lib/subscription";
 import { redirectAfterSetup } from "@/lib/setup-return";
 import { computeTax, parseTaxRate } from "@/lib/invoice-tax";
 import { pushInvoiceToSage } from "@/lib/sage";
+import {
+  deliverInvoiceEmailCore,
+  type SendInvoiceState,
+} from "@/lib/invoice-send";
 
 type Field = keyof typeof InvoiceSchema.shape;
 export type InvoiceFormState = ActionState<Field>;
@@ -485,23 +482,15 @@ export async function deleteInvoicePaymentAction(formData: FormData) {
  * delivery failures can be shown inline instead of silently marking
  * the invoice as sent when the email never actually went out.
  */
-export type SendInvoiceState = {
-  error?: string;
-  ok?: boolean;
-  /** Resend message id on success — gives the user something concrete
-   *  to search for in the Resend dashboard if the email still doesn't
-   *  arrive (e.g. went to spam, bounced downstream). */
-  messageId?: string;
-};
+// SendInvoiceState + the shared delivery routine now live in
+// @/lib/invoice-send so the auto-send cron can reuse them. Re-exported here so
+// existing button-component imports keep working.
+export type { SendInvoiceState };
 
 /**
- * Shared delivery routine. Reads the invoice + client + org branding,
- * runs every configuration / data gate, and hands off to Resend.
- * Returns a `SendInvoiceState`-shaped result so both the initial send
- * and the resend action can share the same success/error surface.
- *
- * Does NOT touch the invoices table — callers decide whether to flip
- * status (first send) or leave it alone (resend).
+ * Owner-facing delivery wrapper: enforce the owner/admin permission check and
+ * that the invoice belongs to the caller's org (the core uses the admin client
+ * and bypasses RLS), then hand off to the shared delivery routine.
  */
 async function deliverInvoiceEmail(
   invoiceId: string,
@@ -512,163 +501,17 @@ async function deliverInvoiceEmail(
     return { error: "Only owners and admins can send invoices." };
   }
 
-  const { data: prev } = await supabase
+  // Ownership check via the RLS-scoped client — a row comes back only if the
+  // invoice is in the caller's org.
+  const { data: owns } = await supabase
     .from("invoices")
-    .select(
-      "id, number, status, sent_at, public_token, amount_cents, due_date, client:clients ( name, email )",
-    )
+    .select("id")
     .eq("id", invoiceId)
+    .eq("organization_id", membership.organization_id)
     .maybeSingle();
-  if (!prev) return { error: "Invoice not found." };
+  if (!owns) return { error: "Invoice not found." };
 
-  // Fetch tax columns separately — not yet in generated types.
-  const { data: taxData } = (await supabase
-    .from("invoices")
-    .select("tax_rate_bps, tax_amount_cents, tax_label")
-    .eq("id", invoiceId)
-    .maybeSingle()) as unknown as {
-    data: {
-      tax_rate_bps: number | null;
-      tax_amount_cents: number | null;
-      tax_label: string | null;
-    } | null;
-  };
-
-  const clientEmail = prev.client?.email;
-  if (!clientEmail) {
-    return {
-      error:
-        "This client has no email address on file. Add one on the client's record first, then try again — or share the public invoice link manually.",
-    };
-  }
-  if (!prev.public_token) {
-    return {
-      error:
-        "This invoice is missing a public token. Refresh the page; if it persists, contact support.",
-    };
-  }
-
-  if (!isEmailConfigured()) {
-    return {
-      error:
-        "Email delivery isn't configured on this environment yet — the invoice wasn't sent. Contact support to enable sending, or share the public invoice link manually.",
-    };
-  }
-  // No CLIENT_EMAILS_PAUSED precheck here — owner clicking "Send Invoice"
-  // is operational and bypasses the kill switch via pauseExempt:true on
-  // the actual send below. Previously this precheck required a separate
-  // INVOICE_EMAILS_UNPAUSED env var, which meant owners couldn't even
-  // hand-send an invoice when the kill switch was on.
-
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
-  const currency = await getOrgCurrency(membership.organization_id);
-
-  const { data: orgData } = await supabase
-    .from("organizations")
-    .select("name, brand_color, logo_url, contact_email, contact_phone")
-    .eq("id", membership.organization_id)
-    .maybeSingle() as unknown as {
-    data: {
-      name: string;
-      brand_color: string | null;
-      logo_url: string | null;
-      contact_email: string | null;
-      contact_phone: string | null;
-    } | null;
-  };
-
-  const taxAmountCents = taxData?.tax_amount_cents ?? null;
-  const taxRateBps = taxData?.tax_rate_bps ?? null;
-  const taxLabel = taxData?.tax_label ?? null;
-  const subtotalCents = prev.amount_cents - (taxAmountCents ?? 0);
-  const hasTax = taxAmountCents !== null && taxAmountCents > 0;
-
-  const template = invoiceSentEmail({
-    clientName: prev.client?.name ?? "there",
-    invoiceNumber: prev.number ?? invoiceId.slice(0, 8).toUpperCase(),
-    amountFormatted: formatCurrencyCents(prev.amount_cents, currency),
-    dueDate: prev.due_date
-      ? new Date(prev.due_date).toLocaleDateString("en-US", {
-          month: "short",
-          day: "numeric",
-          year: "numeric",
-        })
-      : "On receipt",
-    publicUrl: `${siteUrl}/i/${prev.public_token}`,
-    pdfUrl: `${siteUrl}/api/i/${prev.public_token}/pdf`,
-    orgName: orgData?.name ?? membership.organization_name,
-    brandColor: orgData?.brand_color ?? undefined,
-    logoUrl: orgData?.logo_url ?? undefined,
-    contactEmail: orgData?.contact_email,
-    contactPhone: orgData?.contact_phone,
-    subtotalFormatted: hasTax
-      ? formatCurrencyCents(subtotalCents, currency)
-      : null,
-    taxAmountFormatted: hasTax
-      ? formatCurrencyCents(taxAmountCents!, currency)
-      : null,
-    taxLineLabel: hasTax
-      ? `${taxLabel || "Tax"}${
-          taxRateBps
-            ? ` (${(taxRateBps / 100).toFixed(2).replace(/\.?0+$/, "")}%)`
-            : ""
-        }`
-      : null,
-  });
-
-  // Attach a PDF copy of the invoice. The heavy Chromium render runs in the
-  // dedicated /api/i/[token]/pdf route (memory: 1024 + maxDuration: 60 in
-  // vercel.json) — the send function itself doesn't have the ~1GB Chromium
-  // needs, so an INLINE render silently failed and the email went out with no
-  // attachment. We fetch the rendered PDF here, bounded by a timeout so a slow
-  // cold render never blocks the email (which also carries a Download PDF link
-  // as a reliable fallback).
-  let pdfAttachment:
-    | { filename: string; content: Buffer; contentType: string }
-    | null = null;
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 7_000);
-    const res = await fetch(`${siteUrl}/api/i/${prev.public_token}/pdf`, {
-      cache: "no-store",
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
-    if (res.ok) {
-      const buf = Buffer.from(await res.arrayBuffer());
-      const slug = String(prev.number ?? invoiceId.slice(0, 8))
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/^-+|-+$/g, "")
-        .slice(0, 40);
-      pdfAttachment = {
-        filename: `invoice-${slug || invoiceId}.pdf`,
-        content: buf,
-        contentType: "application/pdf",
-      };
-    } else {
-      console.error("[invoice] PDF route returned", res.status);
-    }
-  } catch (pdfErr) {
-    console.error("[invoice] PDF attach failed (continuing without):", pdfErr);
-  }
-
-  const result = await sendOrgEmailDetailed(membership.organization_id, {
-    to: clientEmail,
-    toName: prev.client?.name ?? undefined,
-    ...template,
-    // Owner clicking "Send" is operational — always bypasses the
-    // CLIENT_EMAILS_PAUSED kill switch. Automated invoice emails
-    // (paid receipts, overdue reminders) continue to respect it.
-    pauseExempt: true,
-    ...(pdfAttachment ? { attachments: [pdfAttachment] } : {}),
-  });
-  if (!result.ok) {
-    return {
-      error: `Couldn't deliver the invoice email to ${clientEmail}. Resend said: "${result.reason}". Check Settings → Email sender and your Resend domain verification, then try again.`,
-    };
-  }
-  return { ok: true, messageId: result.id };
+  return deliverInvoiceEmailCore(invoiceId);
 }
 
 /**
@@ -703,7 +546,11 @@ export async function sendInvoiceAction(
     .update({
       status: "sent",
       sent_at: prev?.sent_at ?? new Date().toISOString(),
-    })
+      // A manual send supersedes any pending auto-send — clear the schedule so
+      // no stale 'scheduled' state lingers on a now-sent invoice.
+      auto_send_state: "sent",
+      auto_send_at: null,
+    } as never)
     .eq("id", id);
   if (error) return { error: error.message };
 
@@ -727,6 +574,46 @@ export async function sendInvoiceAction(
   revalidatePath(`/app/invoices/${id}`);
   revalidatePath("/app/invoices");
   return { ok: true, messageId: delivered.messageId };
+}
+
+/**
+ * Cancel a scheduled auto-send on a draft invoice ("Hold"). Flips
+ * auto_send_state → 'held' and clears the timer so the cron skips it; the owner
+ * can still send manually whenever they're ready.
+ */
+export async function holdInvoiceAutoSendAction(
+  _prev: SendInvoiceState,
+  formData: FormData,
+): Promise<SendInvoiceState> {
+  const id = String(formData.get("id") ?? "");
+  if (!id) return { error: "Missing invoice id." };
+
+  const { membership, supabase } = await getActionContext();
+  if (!["owner", "admin"].includes(membership.role)) {
+    return { error: "Only owners and admins can change invoices." };
+  }
+
+  const { error } = await (supabase
+    .from("invoices")
+    .update({ auto_send_state: "held", auto_send_at: null } as never)
+    .eq("id", id)
+    .eq("organization_id" as never, membership.organization_id as never)
+    .eq("auto_send_state" as never, "scheduled" as never) as unknown as Promise<{
+    error: { message: string } | null;
+  }>);
+  if (error) return { error: error.message };
+
+  await logAuditEvent({
+    membership,
+    action: "update",
+    entity: "invoice",
+    entity_id: id,
+    after: { auto_send_state: "held" },
+  });
+
+  revalidatePath(`/app/invoices/${id}`);
+  revalidatePath("/app/invoices");
+  return { ok: true };
 }
 
 /**

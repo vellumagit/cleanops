@@ -148,6 +148,10 @@
     {
       "path": "/api/cron/member-calendar-reconcile",
       "schedule": "30 4 * * *"
+    },
+    {
+      "path": "/api/cron/invoice-auto-send",
+      "schedule": "0 * * * *"
     }
   ]
 }

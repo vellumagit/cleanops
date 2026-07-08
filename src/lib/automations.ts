@@ -427,6 +427,37 @@ export async function autoInvoiceOnJobComplete(
       );
     }
 
+    // Stamp the booking as billed so the consolidated billing-cycle cron never
+    // re-bills this work. Matters when an owner force-generates a per-job
+    // invoice for a biweekly/monthly client — without this the 1st/15th cron
+    // would invoice the same booking again (a double bill, and with auto-send
+    // on, a second email to the client).
+    const { error: stampErr } = await db
+      .from("bookings")
+      .update({ billing_invoice_id: invoice.id } as never)
+      .eq("id", booking.id);
+    if (stampErr) {
+      console.error(
+        "[auto] autoInvoiceOnJobComplete billing_invoice_id stamp failed (invoice still created):",
+        stampErr.message,
+      );
+    }
+
+    // Schedule auto-send if the org opted in — but NOT for a force-generated
+    // invoice. Clicking "Generate invoice now" is a deliberate act to send it
+    // yourself, not to queue it for automatic delivery in 24h.
+    if (!options?.force) {
+      try {
+        const { scheduleAutoSendIfEnabled } = await import("@/lib/invoice-send");
+        await scheduleAutoSendIfEnabled(invoice.id, booking.organization_id);
+      } catch (scheduleErr) {
+        console.error(
+          "[auto] autoInvoiceOnJobComplete auto-send schedule failed (invoice still drafted):",
+          scheduleErr,
+        );
+      }
+    }
+
     console.log(
       `[auto] Draft invoice ${invoice.number ?? invoice.id} created for booking ${bookingId}`,
     );
