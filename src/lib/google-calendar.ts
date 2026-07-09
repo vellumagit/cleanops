@@ -1016,6 +1016,10 @@ export async function reconcileOrgCalendarEvents(
   const admin = createSupabaseAdminClient();
   const since = new Date();
   since.setUTCHours(0, 0, 0, 0); // include today's in-progress bookings
+  // Near horizon only: drift that matters is upcoming, and re-patching a year of
+  // recurring occurrences every night would blow Google's write quota. Anything
+  // further out is reconciled once it enters this window (the cron runs daily).
+  const until = new Date(since.getTime() + 45 * 24 * 60 * 60 * 1000);
 
   const { data: bookings } = (await admin
     .from("bookings")
@@ -1027,10 +1031,11 @@ export async function reconcileOrgCalendarEvents(
     )
     .eq("organization_id", organizationId)
     .gte("scheduled_at", since.toISOString())
+    .lte("scheduled_at", until.toISOString())
     .not("google_calendar_event_id", "is", null)
     .neq("status", "cancelled")
     .order("scheduled_at", { ascending: true })
-    .limit(500)) as unknown as {
+    .limit(300)) as unknown as {
     data: Array<{
       id: string;
       scheduled_at: string;
@@ -1052,42 +1057,46 @@ export async function reconcileOrgCalendarEvents(
   let patched = 0;
   let failed = 0;
 
-  const BATCH = 8;
-  for (let i = 0; i < rows.length; i += BATCH) {
-    const results = await Promise.allSettled(
-      rows.slice(i, i + BATCH).map((b) => {
-        const splitsArr = Array.isArray(b.splits) ? b.splits : [];
-        // Match the org event to the same duration the edit path writes: sum of
-        // split segments for split shifts, otherwise the booking duration.
-        // updateCalendarEvent applies crew-division from LIVE assignees itself.
-        const effectiveDuration =
-          splitsArr.length > 0
-            ? splitsArr.reduce((s, x) => s + (Number(x.duration_minutes) || 0), 0)
-            : b.duration_minutes;
-        const employeeName =
-          b.assignee?.display_name ?? b.assignee?.profile?.full_name ?? undefined;
-        const splitCount = new Set(
-          splitsArr.map((s) => s.assigned_to).filter(Boolean),
-        ).size;
-        return updateCalendarEvent(organizationId, {
-          id: b.id,
-          google_calendar_event_id: b.google_calendar_event_id,
-          scheduled_at: b.scheduled_at,
-          duration_minutes: effectiveDuration,
-          service_type: b.service_type,
-          address: b.address,
-          notes: b.notes,
-          client_name: b.client?.name,
-          employee_name: employeeName,
-          split_count: splitCount,
-        });
-      }),
-    );
-    for (const r of results) {
-      if (r.status === "fulfilled" && r.value) patched++;
-      else failed++;
+  // Sequential, ~6 writes/sec (matches the delete pacing in gcal-force-resync)
+  // so we stay under Google's per-user write quota, with one backoff retry to
+  // ride out a transient rate-limit. updateCalendarEvent PATCHes in place and
+  // self-heals to a fresh event only on 404/410, so no orphan is created.
+  for (const b of rows) {
+    const splitsArr = Array.isArray(b.splits) ? b.splits : [];
+    // Match the org event to the same duration the edit path writes: sum of
+    // split segments for split shifts, otherwise the booking duration.
+    // updateCalendarEvent applies crew-division from LIVE assignees itself.
+    const effectiveDuration =
+      splitsArr.length > 0
+        ? splitsArr.reduce((s, x) => s + (Number(x.duration_minutes) || 0), 0)
+        : b.duration_minutes;
+    const employeeName =
+      b.assignee?.display_name ?? b.assignee?.profile?.full_name ?? undefined;
+    const splitCount = new Set(
+      splitsArr.map((s) => s.assigned_to).filter(Boolean),
+    ).size;
+    const payload = {
+      id: b.id,
+      google_calendar_event_id: b.google_calendar_event_id,
+      scheduled_at: b.scheduled_at,
+      duration_minutes: effectiveDuration,
+      service_type: b.service_type,
+      address: b.address,
+      notes: b.notes,
+      client_name: b.client?.name,
+      employee_name: employeeName,
+      split_count: splitCount,
+    };
+
+    let ok = await updateCalendarEvent(organizationId, payload).catch(() => false);
+    if (!ok) {
+      await new Promise((r) => setTimeout(r, 800)); // back off a transient 429
+      ok = await updateCalendarEvent(organizationId, payload).catch(() => false);
     }
-    await new Promise((r) => setTimeout(r, 200)); // pace under Google's quota
+    if (ok) patched++;
+    else failed++;
+
+    await new Promise((r) => setTimeout(r, 170)); // ~6 writes/sec
   }
 
   // Fill any bookings that have no event at all yet (null id).
