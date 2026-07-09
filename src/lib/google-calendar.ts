@@ -229,19 +229,69 @@ async function getConnection(
 
 const CALENDAR_API = "https://www.googleapis.com/calendar/v3";
 
+/** Transient HTTP statuses worth retrying (server-side / rate-limit). */
+const GCAL_RETRY_5XX = new Set([500, 502, 503, 504]);
+
+/**
+ * Google Calendar fetch with transient-failure retry — so a booking edit's
+ * live push (or any calendar op) rides out a token blip / rate-limit / brief
+ * Google outage instead of silently drifting until the nightly reconcile.
+ *
+ * Retry policy (max 3 attempts, backoff honoring Retry-After):
+ *   - 429 (rate limited): retry ANY method — the request was rejected, not
+ *     processed, so re-sending is safe even for a create.
+ *   - 5xx / network error: retry only IDEMPOTENT methods (PATCH/DELETE/GET).
+ *     A POST create is NOT retried on these — a 5xx-after-success would create
+ *     a duplicate event; a failed create instead self-heals via the backfill,
+ *     which only fills bookings whose event id is still null.
+ * 401 is never retried here — the caller passes an already-refreshed token, so
+ * a re-send with the same token wouldn't help.
+ */
 async function gcalFetch(
   accessToken: string,
   path: string,
   options?: RequestInit,
 ): Promise<Response> {
-  return fetch(`${CALENDAR_API}${path}`, {
+  const url = `${CALENDAR_API}${path}`;
+  const init: RequestInit = {
     ...options,
     headers: {
       Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/json",
       ...options?.headers,
     },
-  });
+  };
+  const method = (init.method ?? "GET").toUpperCase();
+  const isIdempotent = method !== "POST";
+  const maxAttempts = 3;
+
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const res = await fetch(url, init);
+      const retryable =
+        res.status === 429 ||
+        (isIdempotent && GCAL_RETRY_5XX.has(res.status));
+      if (attempt < maxAttempts && retryable) {
+        const retryAfter = Number(res.headers.get("retry-after"));
+        const backoff =
+          Number.isFinite(retryAfter) && retryAfter > 0
+            ? Math.min(retryAfter * 1000, 5000)
+            : attempt * 600;
+        await res.body?.cancel().catch(() => {});
+        await new Promise((r) => setTimeout(r, backoff));
+        continue;
+      }
+      return res;
+    } catch (err) {
+      // Network-level failure. Retry only idempotent methods; otherwise re-throw
+      // immediately so the caller's .catch runs (and a create self-heals later).
+      lastErr = err;
+      if (!isIdempotent || attempt >= maxAttempts) throw err;
+      await new Promise((r) => setTimeout(r, attempt * 600));
+    }
+  }
+  throw lastErr;
 }
 
 /**
