@@ -991,6 +991,112 @@ export async function bulkSyncUpcomingBookings(
 }
 
 /**
+ * Self-healing ORG-calendar reconcile.
+ *
+ * Booking edits push to Google best-effort (`.catch()` swallows failures). When
+ * that push fails — a token blip mid-edit, a transient Google error — the org
+ * calendar event is left DRIFTED: it still exists, but shows the pre-edit day /
+ * crew / details, while the DB moved on. No existing tool fixes this:
+ * gcal-reconcile only nulls DEAD ids (this one is live), bulkSync only fills
+ * MISSING ids (this one has one), and force-resync's list starts at "now" so a
+ * past-dated drifted event is missed.
+ *
+ * This re-PATCHes every upcoming booking's org event in place (same id, so no
+ * orphan is created — updateCalendarEvent moves it to the correct day and
+ * re-renders the crew/details from live data, self-healing to a fresh event
+ * only on 404/410). Then fills any genuinely missing events. Idempotent and
+ * paced for Google's rate limits — safe to run nightly and on demand.
+ */
+export async function reconcileOrgCalendarEvents(
+  organizationId: string,
+): Promise<{ patched: number; failed: number; created: number }> {
+  const conn = await getConnection(organizationId);
+  if (!conn) return { patched: 0, failed: 0, created: 0 };
+
+  const admin = createSupabaseAdminClient();
+  const since = new Date();
+  since.setUTCHours(0, 0, 0, 0); // include today's in-progress bookings
+
+  const { data: bookings } = (await admin
+    .from("bookings")
+    .select(
+      `id, scheduled_at, duration_minutes, service_type, address, notes,
+       google_calendar_event_id, splits,
+       client:clients ( name ),
+       assignee:memberships ( display_name, profile:profiles ( full_name ) )`,
+    )
+    .eq("organization_id", organizationId)
+    .gte("scheduled_at", since.toISOString())
+    .not("google_calendar_event_id", "is", null)
+    .neq("status", "cancelled")
+    .order("scheduled_at", { ascending: true })
+    .limit(500)) as unknown as {
+    data: Array<{
+      id: string;
+      scheduled_at: string;
+      duration_minutes: number;
+      service_type: string;
+      address: string | null;
+      notes: string | null;
+      google_calendar_event_id: string;
+      splits: Array<{ duration_minutes?: number; assigned_to?: string }> | null;
+      client: { name: string } | null;
+      assignee: {
+        display_name: string | null;
+        profile: { full_name: string | null } | null;
+      } | null;
+    }> | null;
+  };
+
+  const rows = bookings ?? [];
+  let patched = 0;
+  let failed = 0;
+
+  const BATCH = 8;
+  for (let i = 0; i < rows.length; i += BATCH) {
+    const results = await Promise.allSettled(
+      rows.slice(i, i + BATCH).map((b) => {
+        const splitsArr = Array.isArray(b.splits) ? b.splits : [];
+        // Match the org event to the same duration the edit path writes: sum of
+        // split segments for split shifts, otherwise the booking duration.
+        // updateCalendarEvent applies crew-division from LIVE assignees itself.
+        const effectiveDuration =
+          splitsArr.length > 0
+            ? splitsArr.reduce((s, x) => s + (Number(x.duration_minutes) || 0), 0)
+            : b.duration_minutes;
+        const employeeName =
+          b.assignee?.display_name ?? b.assignee?.profile?.full_name ?? undefined;
+        const splitCount = new Set(
+          splitsArr.map((s) => s.assigned_to).filter(Boolean),
+        ).size;
+        return updateCalendarEvent(organizationId, {
+          id: b.id,
+          google_calendar_event_id: b.google_calendar_event_id,
+          scheduled_at: b.scheduled_at,
+          duration_minutes: effectiveDuration,
+          service_type: b.service_type,
+          address: b.address,
+          notes: b.notes,
+          client_name: b.client?.name,
+          employee_name: employeeName,
+          split_count: splitCount,
+        });
+      }),
+    );
+    for (const r of results) {
+      if (r.status === "fulfilled" && r.value) patched++;
+      else failed++;
+    }
+    await new Promise((r) => setTimeout(r, 200)); // pace under Google's quota
+  }
+
+  // Fill any bookings that have no event at all yet (null id).
+  const created = await bulkSyncUpcomingBookings(organizationId);
+
+  return { patched, failed, created };
+}
+
+/**
  * Check if an org has an active org-level Google Calendar connection.
  * Lightweight check — no token decryption.
  */
