@@ -30,6 +30,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
   bulkSyncMemberBookings,
   sweepMemberCalendarOrphans,
+  reconcileMemberCalendarEvents,
 } from "@/lib/google-calendar";
 import { requireCronAuth } from "@/lib/cron-auth";
 
@@ -81,6 +82,7 @@ export async function GET(request: NextRequest) {
   let synced = 0;
   let failed = 0;
   let orphansDeleted = 0;
+  let drifted = 0;
   const errors: Array<{
     org_id: string;
     membership_id: string;
@@ -93,7 +95,12 @@ export async function GET(request: NextRequest) {
   // per Promise.allSettled.
   for (const c of connections) {
     try {
+      // Fill MISSING member events for upcoming bookings.
       await bulkSyncMemberBookings(c.membership_id);
+      // Re-push EXISTING member events that have DRIFTED from the DB (the gap
+      // bulkSync doesn't cover — it only creates, never updates).
+      const rec = await reconcileMemberCalendarEvents(c.membership_id);
+      drifted += rec.patched;
       // Self-heal: remove ghost events whose booking was deleted (e.g. a
       // series reschedule that regenerated occurrences under new IDs).
       const sweep = await sweepMemberCalendarOrphans(c.membership_id, {
@@ -118,7 +125,7 @@ export async function GET(request: NextRequest) {
   }
 
   console.log(
-    `[cron/member-calendar-reconcile] orgs=${orgs.size} connections=${connections.length} synced=${synced} failed=${failed} orphansDeleted=${orphansDeleted}`,
+    `[cron/member-calendar-reconcile] orgs=${orgs.size} connections=${connections.length} synced=${synced} failed=${failed} drifted_repatched=${drifted} orphansDeleted=${orphansDeleted}`,
   );
 
   return NextResponse.json({
@@ -126,6 +133,7 @@ export async function GET(request: NextRequest) {
     connections_scanned: connections.length,
     synced,
     failed,
+    drifted_repatched: drifted,
     orphans_deleted: orphansDeleted,
     errors: errors.slice(0, 50), // cap response size
   });

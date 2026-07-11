@@ -148,15 +148,9 @@ async function refreshAccessToken(
 
   if (!res.ok) {
     const body = await res.text();
-    // Mark the connection as error so the admin sees it needs re-auth
-    const admin = createSupabaseAdminClient();
-    await admin
-      .from("integration_connections")
-      .update({
-        status: "error",
-        last_error: `Token refresh failed: ${res.status}`,
-      })
-      .eq("id", connectionId);
+    // Flag the connection AND alert the org's admins (once) that it needs
+    // reconnecting — otherwise sync silently stops with no one the wiser.
+    await markConnectionError(connectionId, `Token refresh failed: ${res.status}`);
     throw new Error(`Google token refresh failed: ${res.status} ${body}`);
   }
 
@@ -179,9 +173,91 @@ async function refreshAccessToken(
   return newAccessToken;
 }
 
+/**
+ * Flip a connection active→error and — once, on that transition — alert the
+ * org's admins so they know to reconnect. The `.eq(status,'active')` guard makes
+ * the update a no-op (and the alert silent) if it was already flagged, so a
+ * repeatedly-failing connection can't spam notifications.
+ */
+async function markConnectionError(
+  connectionId: string,
+  reason: string,
+): Promise<void> {
+  const admin = createSupabaseAdminClient();
+  const { data } = (await admin
+    .from("integration_connections")
+    .update({ status: "error", last_error: reason.slice(0, 300) })
+    .eq("id", connectionId)
+    .eq("status", "active")
+    .select("organization_id, membership_id")
+    .maybeSingle()) as unknown as {
+    data: { organization_id: string; membership_id: string | null } | null;
+  };
+  if (!data) return; // wasn't active → already flagged, don't re-alert
+
+  try {
+    let whose = "Your Google Calendar";
+    if (data.membership_id) {
+      const { data: m } = (await admin
+        .from("memberships")
+        .select("display_name, profile:profiles ( full_name )")
+        .eq("id", data.membership_id)
+        .maybeSingle()) as unknown as {
+        data: {
+          display_name: string | null;
+          profile: { full_name: string | null } | null;
+        } | null;
+      };
+      const name = m?.display_name ?? m?.profile?.full_name ?? "A team member";
+      whose = `${name}'s Google Calendar`;
+    }
+    const { notify } = await import("@/lib/notify");
+    await notify({
+      audience: "org-admins",
+      organizationId: data.organization_id,
+      type: "calendar_disconnected",
+      title: "Google Calendar disconnected",
+      body: `${whose} stopped syncing and needs reconnecting — booking changes won't reach Google until it's reconnected in Settings → Integrations.`,
+      href: "/app/settings/integrations",
+    });
+  } catch (err) {
+    console.error("[gcal] disconnect alert failed:", err);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Core: get a valid access token for an org or member
 // ---------------------------------------------------------------------------
+
+/**
+ * Short-lived in-process cache of resolved connections, so bulk paths (which
+ * call getConnection once per booking) don't re-query + re-decrypt — and, when
+ * the token is expired, don't fire a refresh-storm of concurrent calls. Safe:
+ * tokens live ~1h and are refreshed at <60s to expiry, so a 30s cache never
+ * serves a token that's about to die (and only successful resolutions are
+ * cached). In serverless the win is within a single warm invocation.
+ */
+type ResolvedConnection = { id: string; access_token: string } & Record<
+  string,
+  unknown
+>;
+const _tokenCache = new Map<
+  string,
+  { conn: ResolvedConnection; until: number }
+>();
+const TOKEN_CACHE_MS = 30_000;
+
+function cachedConn(key: string): ResolvedConnection | null {
+  const hit = _tokenCache.get(key);
+  if (hit && Date.now() < hit.until) return hit.conn;
+  if (hit) _tokenCache.delete(key);
+  return null;
+}
+
+function cacheConn(key: string, conn: ResolvedConnection): ResolvedConnection {
+  _tokenCache.set(key, { conn, until: Date.now() + TOKEN_CACHE_MS });
+  return conn;
+}
 
 /**
  * Get an active org-level Google Calendar connection. Returns null if
@@ -193,6 +269,10 @@ async function refreshAccessToken(
 async function getConnection(
   organizationId: string,
 ): Promise<(ConnectionRow & { access_token: string }) | null> {
+  const cacheKey = `org:${organizationId}`;
+  const cached = cachedConn(cacheKey);
+  if (cached) return cached as ConnectionRow & { access_token: string };
+
   const admin = createSupabaseAdminClient();
   const { data } = (await admin
     .from("integration_connections")
@@ -211,16 +291,25 @@ async function getConnection(
     new Date(data.token_expires_at).getTime() < Date.now() + 60_000;
 
   let accessToken: string;
-  if (isExpired && data.refresh_token_ciphertext) {
-    accessToken = await refreshAccessToken(
-      data.id,
-      data.refresh_token_ciphertext,
-    );
+  if (isExpired) {
+    if (!data.refresh_token_ciphertext) {
+      // Expired with nothing to refresh from → a dead connection. Flag it and
+      // return null instead of handing back a token that 401s on every call.
+      await markConnectionError(
+        data.id,
+        "Access token expired and no refresh token on file",
+      );
+      return null;
+    }
+    accessToken = await refreshAccessToken(data.id, data.refresh_token_ciphertext);
   } else {
     accessToken = decryptSecret(data.access_token_ciphertext)!;
   }
 
-  return { ...data, access_token: accessToken };
+  return cacheConn(cacheKey, {
+    ...data,
+    access_token: accessToken,
+  }) as ConnectionRow & { access_token: string };
 }
 
 // ---------------------------------------------------------------------------
@@ -1197,6 +1286,10 @@ type MemberConnectionRow = ConnectionRow; // same shape, different lookup
 async function getMemberConnection(
   membershipId: string,
 ): Promise<(MemberConnectionRow & { access_token: string }) | null> {
+  const cacheKey = `mem:${membershipId}`;
+  const cached = cachedConn(cacheKey);
+  if (cached) return cached as MemberConnectionRow & { access_token: string };
+
   const admin = createSupabaseAdminClient();
   const { data } = (await admin
     .from("integration_connections")
@@ -1213,13 +1306,23 @@ async function getMemberConnection(
     new Date(data.token_expires_at).getTime() < Date.now() + 60_000;
 
   let accessToken: string;
-  if (isExpired && data.refresh_token_ciphertext) {
+  if (isExpired) {
+    if (!data.refresh_token_ciphertext) {
+      await markConnectionError(
+        data.id,
+        "Access token expired and no refresh token on file",
+      );
+      return null;
+    }
     accessToken = await refreshAccessToken(data.id, data.refresh_token_ciphertext);
   } else {
     accessToken = decryptSecret(data.access_token_ciphertext)!;
   }
 
-  return { ...data, access_token: accessToken };
+  return cacheConn(cacheKey, {
+    ...data,
+    access_token: accessToken,
+  }) as MemberConnectionRow & { access_token: string };
 }
 
 /**
@@ -1732,6 +1835,125 @@ export async function bulkSyncMemberBookings(
       }),
     );
   }
+}
+
+/**
+ * Self-healing MEMBER-calendar reconcile — the per-cleaner analog of
+ * reconcileOrgCalendarEvents. bulkSyncMemberBookings only CREATES missing member
+ * events; a member event that has DRIFTED (stale after an edit whose push failed,
+ * or after the cleaner's token died then reconnected) is never re-pushed. This
+ * re-PATCHes every existing member-event mapping for the member's upcoming
+ * (≤45-day) non-cancelled bookings to match the DB, segment/division-adjusted.
+ * Sequential ~6 writes/sec + one backoff retry; updateMemberCalendarEvent
+ * self-heals to a fresh event on 404/410.
+ */
+export async function reconcileMemberCalendarEvents(
+  membershipId: string,
+): Promise<{ patched: number; failed: number }> {
+  const conn = await getMemberConnection(membershipId);
+  if (!conn) return { patched: 0, failed: 0 };
+
+  const admin = createSupabaseAdminClient();
+  const since = new Date();
+  since.setUTCHours(0, 0, 0, 0);
+  const until = new Date(since.getTime() + 45 * 24 * 60 * 60 * 1000);
+
+  type MB = {
+    id: string;
+    scheduled_at: string;
+    duration_minutes: number;
+    service_type: string;
+    address: string | null;
+    notes: string | null;
+    status: string;
+    client: { name: string } | null;
+  };
+
+  // Existing member-event mappings joined to their (upcoming, in-window) booking.
+  const { data: rows } = (await admin
+    .from("booking_member_calendar_events")
+    .select(
+      `booking:bookings!inner (
+         id, scheduled_at, duration_minutes, service_type, address, notes, status,
+         client:clients ( name )
+       )`,
+    )
+    .eq("membership_id", membershipId)
+    .gte("booking.scheduled_at", since.toISOString())
+    .lte("booking.scheduled_at", until.toISOString())
+    .neq("booking.status", "cancelled")
+    .limit(300)) as unknown as {
+    data: Array<{ booking: MB | null }> | null;
+  };
+
+  const list = (rows ?? [])
+    .map((r) => r.booking)
+    .filter((b): b is MB => b != null);
+  if (list.length === 0) return { patched: 0, failed: 0 };
+
+  // Per-member segment metadata (split-segment window vs team-divided full job).
+  const { data: segs } = (await admin
+    .from("booking_assignees")
+    .select("booking_id, split_start_offset_minutes, split_duration_minutes")
+    .eq("membership_id", membershipId)
+    .in(
+      "booking_id",
+      list.map((b) => b.id),
+    )) as unknown as {
+    data: Array<{
+      booking_id: string;
+      split_start_offset_minutes: number | null;
+      split_duration_minutes: number | null;
+    }> | null;
+  };
+  const segByBooking = new Map((segs ?? []).map((s) => [s.booking_id, s]));
+
+  let patched = 0;
+  let failed = 0;
+
+  for (const b of list) {
+    const seg = segByBooking.get(b.id);
+    let scheduled_at = b.scheduled_at;
+    let duration_minutes = b.duration_minutes;
+    if (
+      seg?.split_start_offset_minutes != null &&
+      seg.split_duration_minutes != null
+    ) {
+      scheduled_at = new Date(
+        new Date(b.scheduled_at).getTime() +
+          seg.split_start_offset_minutes * 60_000,
+      ).toISOString();
+      duration_minutes = seg.split_duration_minutes;
+    } else {
+      const div = await resolveTeamDivision(b.id, b.duration_minutes);
+      duration_minutes = div.effectiveMinutes;
+    }
+
+    const payload = {
+      id: b.id,
+      scheduled_at,
+      duration_minutes,
+      service_type: b.service_type,
+      address: b.address,
+      notes: b.notes,
+      client_name: b.client?.name,
+    };
+    let ok = await updateMemberCalendarEvent(membershipId, payload).catch(
+      () => false,
+    );
+    if (!ok) {
+      await new Promise((r) => setTimeout(r, 800));
+      ok = await updateMemberCalendarEvent(membershipId, payload).catch(
+        () => false,
+      );
+    }
+    if (ok) patched++;
+    else failed++;
+
+    await new Promise((r) => setTimeout(r, 170)); // ~6 writes/sec
+  }
+
+  return { patched, failed };
 }
 
 /**
