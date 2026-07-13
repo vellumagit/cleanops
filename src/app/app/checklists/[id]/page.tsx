@@ -6,6 +6,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
 import { TemplateEditor } from "../template-editor";
+import { TemplateClientAssign } from "../template-client-assign";
 
 export const metadata = { title: "Edit checklist template" };
 
@@ -14,7 +15,7 @@ export default async function EditChecklistTemplatePage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  await requireMembership(["owner", "admin", "manager"]);
+  const membership = await requireMembership(["owner", "admin", "manager"]);
   const { id } = await params;
   const supabase = await createSupabaseServerClient();
 
@@ -50,6 +51,27 @@ export default async function EditChecklistTemplatePage({
 
   if (!tpl) notFound();
 
+  // Clients for the assign control (+ which already use this template).
+  const { data: clientRows } = (await supabase
+    .from("clients")
+    .select("id, name, default_checklist_template_id")
+    .eq("organization_id", membership.organization_id)
+    .is("archived_at" as never, null as never)
+    .order("name", { ascending: true })) as unknown as {
+    data: Array<{
+      id: string;
+      name: string;
+      default_checklist_template_id: string | null;
+    }> | null;
+  };
+  const clients = clientRows ?? [];
+  const assignedClients = clients
+    .filter((c) => c.default_checklist_template_id === id)
+    .map((c) => ({ id: c.id, name: c.name }));
+  const unassignedClients = clients
+    .filter((c) => c.default_checklist_template_id !== id)
+    .map((c) => ({ id: c.id, name: c.name }));
+
   const initialItems = (items ?? []).map((it) => ({
     key: it.id,
     title: it.title,
@@ -81,6 +103,12 @@ export default async function EditChecklistTemplatePage({
           initialItems={initialItems}
         />
       </div>
+
+      <TemplateClientAssign
+        templateId={tpl.id}
+        assigned={assignedClients}
+        unassigned={unassignedClients}
+      />
     </PageShell>
   );
 }

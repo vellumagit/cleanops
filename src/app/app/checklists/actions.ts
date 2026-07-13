@@ -245,6 +245,76 @@ export async function attachTemplateToBookingAction(
 }
 
 /**
+ * Make this template a CLIENT's default checklist. Every NEW booking for that
+ * client then auto-gets the checklist (via the apply_client_checklist trigger),
+ * and this backfills the client's already-scheduled upcoming bookings too — so
+ * it shows on all of their jobs, existing and future.
+ */
+export async function assignChecklistToClientAction(
+  formData: FormData,
+): Promise<Result> {
+  const { membership, supabase } = await getActionContext();
+  if (!["owner", "admin", "manager"].includes(membership.role)) {
+    return { ok: false, error: "Not authorized." };
+  }
+  const template_id = String(formData.get("template_id") ?? "").trim();
+  const client_id = String(formData.get("client_id") ?? "").trim();
+  if (!template_id || !client_id) {
+    return { ok: false, error: "Pick a client to assign." };
+  }
+
+  const { error } = (await supabase
+    .from("clients")
+    .update({ default_checklist_template_id: template_id } as never)
+    .eq("id", client_id)
+    .eq("organization_id", membership.organization_id)) as unknown as {
+    error: { message: string } | null;
+  };
+  if (error) return { ok: false, error: error.message };
+
+  // Backfill upcoming bookings that don't already have a checklist.
+  await supabase.rpc("backfill_client_checklist" as never, {
+    p_client: client_id,
+    p_template: template_id,
+  } as never);
+
+  revalidatePath(`/app/checklists/${template_id}`);
+  revalidatePath(`/app/clients/${client_id}`);
+  return { ok: true };
+}
+
+/**
+ * Remove this template as a client's default checklist. Only clears the link if
+ * it currently points at THIS template (so it can't clobber a different
+ * assignment), and leaves already-attached booking checklists untouched.
+ */
+export async function unassignChecklistFromClientAction(
+  formData: FormData,
+): Promise<Result> {
+  const { membership, supabase } = await getActionContext();
+  if (!["owner", "admin", "manager"].includes(membership.role)) {
+    return { ok: false, error: "Not authorized." };
+  }
+  const template_id = String(formData.get("template_id") ?? "").trim();
+  const client_id = String(formData.get("client_id") ?? "").trim();
+  if (!client_id) return { ok: false, error: "Missing client." };
+
+  const { error } = (await supabase
+    .from("clients")
+    .update({ default_checklist_template_id: null } as never)
+    .eq("id", client_id)
+    .eq("organization_id", membership.organization_id)
+    .eq("default_checklist_template_id" as never, template_id as never)) as unknown as {
+    error: { message: string } | null;
+  };
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath(`/app/checklists/${template_id}`);
+  revalidatePath(`/app/clients/${client_id}`);
+  return { ok: true };
+}
+
+/**
  * Toggle a single checklist item's checked state. Used by both the admin
  * side and the field app. Setting checked=true stamps checked_at + _by;
  * setting false clears both.
