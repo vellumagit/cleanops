@@ -17,6 +17,7 @@ import {
   Shield,
   Sliders,
   Sparkles,
+  User,
   Users,
   Webhook,
   Inbox,
@@ -213,6 +214,13 @@ const SECTIONS: Section[] = [
         title: "Your data",
         description:
           "Export everything your org owns. Schedule permanent deletion with a 30-day grace window.",
+      },
+      {
+        href: "/app/profile",
+        icon: User,
+        title: "Your profile",
+        description:
+          "Set your own name and phone — how you appear across Sollos (on bookings, the schedule, and to your team) instead of your email.",
       },
       {
         href: "/app/profile/security",
