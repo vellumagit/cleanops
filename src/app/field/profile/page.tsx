@@ -5,6 +5,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { FieldHeader } from "@/components/field-shell";
 import { ProfileForm } from "./profile-form";
+import { CalendarScopeForm } from "./calendar-scope-form";
 import { PtoRequestForm } from "./pto-request-form";
 import { PushToggle } from "@/components/push-prompt";
 import { formatDateTime } from "@/lib/format";
@@ -25,6 +26,18 @@ export default async function FieldProfilePage() {
     .select("full_name, phone")
     .eq("id", membership.profile_id)
     .maybeSingle();
+
+  // Personal calendar scope + highlight color (managers can mirror the whole org).
+  const { data: calPrefs } = (await supabase
+    .from("memberships")
+    .select("calendar_scope, calendar_color")
+    .eq("id", membership.id)
+    .maybeSingle()) as unknown as {
+    data: { calendar_scope: string | null; calendar_color: string | null } | null;
+  };
+  const calScope = calPrefs?.calendar_scope ?? "mine";
+  const calColor = calPrefs?.calendar_color ?? "6";
+  const isManagerPlus = ["owner", "admin", "manager"].includes(membership.role);
 
   // PTO history (most recent 5)
   const admin = createSupabaseAdminClient();
@@ -234,6 +247,18 @@ export default async function FieldProfilePage() {
             </form>
           )}
         </div>
+
+      {/* Calendar view (managers can mirror the whole org, with their jobs highlighted) */}
+      {isManagerPlus && gcalConn && (
+        <div className="mt-5 rounded-xl border border-border bg-card p-5">
+          <h2 className="mb-1 text-sm font-semibold">Calendar view</h2>
+          <p className="mb-4 text-xs text-muted-foreground">
+            Show only your own jobs, or the whole team&apos;s schedule with your
+            jobs highlighted in your color.
+          </p>
+          <CalendarScopeForm scope={calScope} color={calColor} />
+        </div>
+      )}
 
       {/* Location & privacy */}
       <div className="mt-5 rounded-xl border border-border bg-card p-5">

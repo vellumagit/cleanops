@@ -2,6 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { cookies } from "next/headers";
 import {
   getActionContext,
@@ -50,6 +51,55 @@ export async function updateProfileAction(
   revalidatePath("/field");
   revalidatePath("/app");
   return { values: raw };
+}
+
+// ---------------------------------------------------------------------------
+// Personal Google Calendar scope + highlight color
+// ---------------------------------------------------------------------------
+
+export type CalendarScopeState = { ok?: boolean; error?: string };
+const VALID_COLOR_IDS = new Set(["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11"]);
+
+/**
+ * Set whether the member's personal Google Calendar shows only their own jobs
+ * ('mine') or the whole org ('all', managers+ only), plus the color that
+ * highlights their own jobs in the 'all' view. Re-syncs their calendar in the
+ * background so the change takes effect right away.
+ */
+export async function updateCalendarScopeAction(
+  _prev: CalendarScopeState,
+  formData: FormData,
+): Promise<CalendarScopeState> {
+  const { membership } = await getActionContext();
+
+  let scope = String(formData.get("calendar_scope") ?? "mine");
+  if (scope !== "all" && scope !== "mine") scope = "mine";
+  const canAll = ["owner", "admin", "manager"].includes(membership.role);
+  if (scope === "all" && !canAll) {
+    return { error: "Only managers can show all organization jobs." };
+  }
+  let color = String(formData.get("calendar_color") ?? "6");
+  if (!VALID_COLOR_IDS.has(color)) color = "6";
+
+  const admin = createSupabaseAdminClient();
+  const { error } = (await admin
+    .from("memberships")
+    .update({ calendar_scope: scope, calendar_color: color } as never)
+    .eq("id", membership.id)) as unknown as { error: { message: string } | null };
+  if (error) return { error: error.message };
+
+  // Apply to their calendar in the background so the save returns immediately.
+  after(async () => {
+    try {
+      const { reconcileMemberCalendarEvents } = await import("@/lib/google-calendar");
+      await reconcileMemberCalendarEvents(membership.id);
+    } catch (err) {
+      console.error("[gcal] calendar-scope reconcile failed:", err);
+    }
+  });
+
+  revalidatePath("/field/profile");
+  return { ok: true };
 }
 
 // ---------------------------------------------------------------------------

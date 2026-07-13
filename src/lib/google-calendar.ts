@@ -32,6 +32,8 @@ type CalendarEvent = {
   summary: string;
   description?: string;
   location?: string;
+  /** Google Calendar event colorId (1-11); omitted = calendar default. */
+  colorId?: string;
   start: { dateTime: string; timeZone?: string };
   end: { dateTime: string; timeZone?: string };
 };
@@ -1354,6 +1356,13 @@ type BookingForMemberEvent = {
   address: string | null;
   notes: string | null;
   client_name?: string;
+  /** Google colorId to highlight the event (used for own jobs on an 'all'
+   *  scope calendar). Undefined = the calendar's default color. */
+  colorId?: string;
+  /** For a job NOT assigned to the calendar owner (shown on an 'all' scope
+   *  calendar), who IS on it — appended to the title so a manager can see
+   *  coverage at a glance. */
+  assignee_name?: string;
 };
 
 function buildMemberEventPayload(
@@ -1364,16 +1373,19 @@ function buildMemberEventPayload(
   const summary = [
     booking.service_type ? `${booking.service_type} clean` : "Cleaning",
     booking.client_name ? `— ${booking.client_name}` : "",
+    booking.assignee_name ? `· ${booking.assignee_name}` : "",
   ]
     .filter(Boolean)
     .join(" ");
   const descParts: string[] = [];
+  if (booking.assignee_name) descParts.push(`Assigned to: ${booking.assignee_name}`);
   if (booking.notes) descParts.push(`Notes: ${booking.notes}`);
   descParts.push(`\nManaged by Sollos — /field/jobs/${booking.id}`);
   return {
     summary,
     description: descParts.join("\n"),
     location: booking.address ?? undefined,
+    ...(booking.colorId ? { colorId: booking.colorId } : {}),
     start: { dateTime: start.toISOString() },
     end: { dateTime: end.toISOString() },
   };
@@ -1551,14 +1563,36 @@ export async function deleteMemberCalendarEvent(
 // ---------------------------------------------------------------------------
 
 /**
- * Sync personal-calendar events for all currently-assigned members.
+ * Active members whose personal calendar mirrors the WHOLE org ('all' scope),
+ * mapped to the color that highlights their OWN jobs. Empty for orgs with no
+ * such members (the common case), so it adds nothing to the normal path.
+ */
+async function allScopeMemberColors(
+  admin: ReturnType<typeof createSupabaseAdminClient>,
+  organizationId: string,
+): Promise<Map<string, string>> {
+  const { data } = (await admin
+    .from("memberships")
+    .select("id, calendar_color")
+    .eq("organization_id", organizationId)
+    .eq("status", "active")
+    .eq("calendar_scope" as never, "all" as never)) as unknown as {
+    data: Array<{ id: string; calendar_color: string | null }> | null;
+  };
+  return new Map((data ?? []).map((m) => [m.id, m.calendar_color || "6"]));
+}
+
+/**
+ * Sync personal-calendar events for a booking.
  *
- * Idempotent — safe to call on every booking create/update:
- *  • Assignees WITH a connection:  create or update their event
- *  • Previous assignees no longer in the list:  delete their event
+ * Targets = the booking's assignees (their own job) PLUS any 'all'-scope
+ * members (managers mirroring the whole org). Assignees get their own segment/
+ * divided event; 'all'-scope members get the full job. A member's OWN job on an
+ * 'all' calendar is stamped with their highlight color. Members who are neither
+ * an assignee nor 'all'-scope get their stale event deleted.
  *
- * Fire-and-forget: individual failures are swallowed so booking saves
- * complete even when GCal is unreachable.
+ * Idempotent + fire-and-forget: individual failures are swallowed so booking
+ * saves complete even when GCal is unreachable.
  */
 export async function syncMemberCalendarEvents(
   bookingId: string,
@@ -1567,7 +1601,6 @@ export async function syncMemberCalendarEvents(
 ): Promise<void> {
   const admin = createSupabaseAdminClient();
 
-  // 1. All existing member event rows for this booking.
   const { data: existingRows } = (await admin
     .from("booking_member_calendar_events")
     .select("membership_id, google_calendar_event_id")
@@ -1578,8 +1611,6 @@ export async function syncMemberCalendarEvents(
   const existingSet = new Set((existingRows ?? []).map((r) => r.membership_id));
   const assigneeSet = new Set(assigneeIds);
 
-  // Fetch segment metadata for all assignees on this booking so split
-  // employees get a calendar event for their own segment, not the full job.
   const { data: segmentRows } = (await admin
     .from("booking_assignees")
     .select("membership_id, split_start_offset_minutes, split_duration_minutes")
@@ -1591,35 +1622,56 @@ export async function syncMemberCalendarEvents(
       split_duration_minutes: number | null;
     }> | null;
   };
-
   const segmentByMember = new Map(
     (segmentRows ?? []).map((r) => [r.membership_id, r]),
   );
 
-  // Team-job division (resolved once). For a member NOT on a split segment,
-  // "divide hours evenly" shortens their event to duration/crew; when off,
-  // effectiveMinutes == the full duration, so this is a no-op.
   const teamDiv = await resolveTeamDivision(bookingId, booking.duration_minutes);
 
-  // Build a per-member adjusted booking payload (segment-specific for split
-  // employees, divided/full booking for regular team employees).
-  function adjustedBooking(mid: string): BookingForMemberEvent {
+  // 'all'-scope members (managers mirroring the whole org) + their highlight color.
+  const { data: bRow } = (await admin
+    .from("bookings")
+    .select("organization_id")
+    .eq("id", bookingId)
+    .maybeSingle()) as unknown as { data: { organization_id: string } | null };
+  const colorByMember = bRow
+    ? await allScopeMemberColors(admin, bRow.organization_id)
+    : new Map<string, string>();
+
+  // Assignee's own event: their segment (split) or the divided job, highlighted
+  // if they're an 'all'-scope member (own job stands out on their all-calendar).
+  function ownBooking(mid: string): BookingForMemberEvent {
     const seg = segmentByMember.get(mid);
-    if (seg?.split_start_offset_minutes != null && seg.split_duration_minutes != null) {
-      return {
-        ...booking,
-        scheduled_at: new Date(
-          new Date(booking.scheduled_at).getTime() + seg.split_start_offset_minutes * 60_000,
-        ).toISOString(),
-        duration_minutes: seg.split_duration_minutes,
-      };
-    }
-    return { ...booking, duration_minutes: teamDiv.effectiveMinutes };
+    const base =
+      seg?.split_start_offset_minutes != null && seg.split_duration_minutes != null
+        ? {
+            ...booking,
+            scheduled_at: new Date(
+              new Date(booking.scheduled_at).getTime() +
+                seg.split_start_offset_minutes * 60_000,
+            ).toISOString(),
+            duration_minutes: seg.split_duration_minutes,
+          }
+        : { ...booking, duration_minutes: teamDiv.effectiveMinutes };
+    const color = colorByMember.get(mid); // set only for 'all'-scope members
+    return color ? { ...base, colorId: color } : base;
   }
 
-  // 2. Upsert events for all current assignees who have a personal connection.
-  const upsertTasks = assigneeIds.map(async (mid) => {
-    const payload = adjustedBooking(mid);
+  // A job NOT assigned to an 'all'-scope member: the full (divided) booking,
+  // default color — it's on their calendar for visibility, not highlighted.
+  const nonOwn: BookingForMemberEvent = {
+    ...booking,
+    duration_minutes: teamDiv.effectiveMinutes,
+  };
+
+  // Everyone who should have an event: assignees ∪ 'all'-scope members.
+  const targetMembers = new Set<string>([
+    ...assigneeIds,
+    ...colorByMember.keys(),
+  ]);
+
+  const upsertTasks = [...targetMembers].map(async (mid) => {
+    const payload = assigneeSet.has(mid) ? ownBooking(mid) : nonOwn;
     if (existingSet.has(mid)) {
       await updateMemberCalendarEvent(mid, payload).catch(() => {});
     } else {
@@ -1627,9 +1679,9 @@ export async function syncMemberCalendarEvents(
     }
   });
 
-  // 3. Delete events for members who were removed from the booking.
+  // Delete events for members who are NEITHER an assignee NOR 'all'-scope.
   const deleteTasks = (existingRows ?? [])
-    .filter((r) => !assigneeSet.has(r.membership_id))
+    .filter((r) => !targetMembers.has(r.membership_id))
     .map((r) => deleteMemberCalendarEvent(r.membership_id, bookingId).catch(() => {}));
 
   await Promise.allSettled([...upsertTasks, ...deleteTasks]);
@@ -1838,25 +1890,44 @@ export async function bulkSyncMemberBookings(
 }
 
 /**
- * Self-healing MEMBER-calendar reconcile — the per-cleaner analog of
- * reconcileOrgCalendarEvents. bulkSyncMemberBookings only CREATES missing member
- * events; a member event that has DRIFTED (stale after an edit whose push failed,
- * or after the cleaner's token died then reconnected) is never re-pushed. This
- * re-PATCHes every existing member-event mapping for the member's upcoming
- * (≤45-day) non-cancelled bookings to match the DB, segment/division-adjusted.
- * Sequential ~6 writes/sec + one backoff retry; updateMemberCalendarEvent
- * self-heals to a fresh event on 404/410.
+ * Self-healing, SCOPE-AWARE member-calendar reconcile.
+ *
+ * Brings a member's personal calendar to exactly match what they should see:
+ *   • scope 'mine' → only their assigned upcoming (≤45d) jobs.
+ *   • scope 'all'  → EVERY upcoming org booking; their own jobs highlighted with
+ *                    their color, everyone else's in the default color.
+ * Creates missing events, re-pushes drifted ones, and DELETES stale ones (e.g.
+ * after switching 'all'→'mine', or after an unassignment). Sequential ~6
+ * writes/sec + one backoff retry; updateMemberCalendarEvent self-heals on
+ * 404/410. Runs on the setting toggle and nightly.
  */
 export async function reconcileMemberCalendarEvents(
   membershipId: string,
-): Promise<{ patched: number; failed: number }> {
+): Promise<{ patched: number; failed: number; removed: number }> {
   const conn = await getMemberConnection(membershipId);
-  if (!conn) return { patched: 0, failed: 0 };
+  if (!conn) return { patched: 0, failed: 0, removed: 0 };
 
   const admin = createSupabaseAdminClient();
   const since = new Date();
   since.setUTCHours(0, 0, 0, 0);
   const until = new Date(since.getTime() + 45 * 24 * 60 * 60 * 1000);
+  const sinceIso = since.toISOString();
+  const untilIso = until.toISOString();
+
+  const { data: memb } = (await admin
+    .from("memberships")
+    .select("organization_id, calendar_scope, calendar_color")
+    .eq("id", membershipId)
+    .maybeSingle()) as unknown as {
+    data: {
+      organization_id: string;
+      calendar_scope: string | null;
+      calendar_color: string | null;
+    } | null;
+  };
+  if (!memb) return { patched: 0, failed: 0, removed: 0 };
+  const scopeAll = memb.calendar_scope === "all";
+  const color = memb.calendar_color || "6";
 
   type MB = {
     id: string;
@@ -1869,37 +1940,55 @@ export async function reconcileMemberCalendarEvents(
     client: { name: string } | null;
   };
 
-  // Existing member-event mappings joined to their (upcoming, in-window) booking.
-  const { data: rows } = (await admin
-    .from("booking_member_calendar_events")
-    .select(
-      `booking:bookings!inner (
-         id, scheduled_at, duration_minutes, service_type, address, notes, status,
-         client:clients ( name )
-       )`,
-    )
-    .eq("membership_id", membershipId)
-    .gte("booking.scheduled_at", since.toISOString())
-    .lte("booking.scheduled_at", until.toISOString())
-    .neq("booking.status", "cancelled")
-    .limit(300)) as unknown as {
-    data: Array<{ booking: MB | null }> | null;
-  };
+  // Target booking set for this scope.
+  let targets: MB[];
+  if (scopeAll) {
+    const { data } = (await admin
+      .from("bookings")
+      .select("id, scheduled_at, duration_minutes, service_type, address, notes, status, client:clients ( name )")
+      .eq("organization_id", memb.organization_id)
+      .gte("scheduled_at", sinceIso)
+      .lte("scheduled_at", untilIso)
+      .neq("status", "cancelled")
+      .order("scheduled_at", { ascending: true })
+      .limit(500)) as unknown as { data: MB[] | null };
+    targets = data ?? [];
+  } else {
+    const { data } = (await admin
+      .from("booking_member_calendar_events")
+      .select(
+        `booking:bookings!inner ( id, scheduled_at, duration_minutes, service_type, address, notes, status, client:clients ( name ) )`,
+      )
+      .eq("membership_id", membershipId)
+      .gte("booking.scheduled_at", sinceIso)
+      .lte("booking.scheduled_at", untilIso)
+      .neq("booking.status", "cancelled")
+      .limit(300)) as unknown as { data: Array<{ booking: MB | null }> | null };
+    // Also include assigned bookings that don't yet have an event (create-missing).
+    const { data: assigned } = (await admin
+      .from("booking_assignees")
+      .select(
+        `booking:bookings!inner ( id, scheduled_at, duration_minutes, service_type, address, notes, status, client:clients ( name ) )`,
+      )
+      .eq("membership_id", membershipId)
+      .gte("booking.scheduled_at", sinceIso)
+      .lte("booking.scheduled_at", untilIso)
+      .neq("booking.status", "cancelled")
+      .limit(300)) as unknown as { data: Array<{ booking: MB | null }> | null };
+    const byId = new Map<string, MB>();
+    for (const r of [...(data ?? []), ...(assigned ?? [])]) {
+      if (r.booking) byId.set(r.booking.id, r.booking);
+    }
+    targets = [...byId.values()];
+  }
 
-  const list = (rows ?? [])
-    .map((r) => r.booking)
-    .filter((b): b is MB => b != null);
-  if (list.length === 0) return { patched: 0, failed: 0 };
-
-  // Per-member segment metadata (split-segment window vs team-divided full job).
+  // Which target bookings are THIS member's own jobs (+ their split segment).
+  const targetIds = targets.map((b) => b.id);
   const { data: segs } = (await admin
     .from("booking_assignees")
     .select("booking_id, split_start_offset_minutes, split_duration_minutes")
     .eq("membership_id", membershipId)
-    .in(
-      "booking_id",
-      list.map((b) => b.id),
-    )) as unknown as {
+    .in("booking_id", targetIds.length ? targetIds : ["00000000-0000-0000-0000-000000000000"])) as unknown as {
     data: Array<{
       booking_id: string;
       split_start_offset_minutes: number | null;
@@ -1908,20 +1997,30 @@ export async function reconcileMemberCalendarEvents(
   };
   const segByBooking = new Map((segs ?? []).map((s) => [s.booking_id, s]));
 
+  // Existing in-window mappings → to detect which are already synced + which are
+  // now stale (present but not in target, e.g. after 'all'→'mine').
+  const { data: existingRows } = (await admin
+    .from("booking_member_calendar_events")
+    .select(`booking_id, booking:bookings!inner ( scheduled_at )`)
+    .eq("membership_id", membershipId)
+    .gte("booking.scheduled_at", sinceIso)
+    .lte("booking.scheduled_at", untilIso)) as unknown as {
+    data: Array<{ booking_id: string }> | null;
+  };
+  const existingIds = new Set((existingRows ?? []).map((r) => r.booking_id));
+  const targetSet = new Set(targetIds);
+
   let patched = 0;
   let failed = 0;
 
-  for (const b of list) {
+  for (const b of targets) {
+    const own = !scopeAll || segByBooking.has(b.id);
     const seg = segByBooking.get(b.id);
     let scheduled_at = b.scheduled_at;
     let duration_minutes = b.duration_minutes;
-    if (
-      seg?.split_start_offset_minutes != null &&
-      seg.split_duration_minutes != null
-    ) {
+    if (own && seg?.split_start_offset_minutes != null && seg.split_duration_minutes != null) {
       scheduled_at = new Date(
-        new Date(b.scheduled_at).getTime() +
-          seg.split_start_offset_minutes * 60_000,
+        new Date(b.scheduled_at).getTime() + seg.split_start_offset_minutes * 60_000,
       ).toISOString();
       duration_minutes = seg.split_duration_minutes;
     } else {
@@ -1929,7 +2028,7 @@ export async function reconcileMemberCalendarEvents(
       duration_minutes = div.effectiveMinutes;
     }
 
-    const payload = {
+    const payload: BookingForMemberEvent = {
       id: b.id,
       scheduled_at,
       duration_minutes,
@@ -1937,23 +2036,33 @@ export async function reconcileMemberCalendarEvents(
       address: b.address,
       notes: b.notes,
       client_name: b.client?.name,
+      ...(scopeAll && own ? { colorId: color } : {}),
     };
-    let ok = await updateMemberCalendarEvent(membershipId, payload).catch(
-      () => false,
-    );
+
+    const run = () =>
+      existingIds.has(b.id)
+        ? updateMemberCalendarEvent(membershipId, payload).catch(() => false)
+        : createMemberCalendarEvent(membershipId, payload)
+            .then((id) => id !== null)
+            .catch(() => false);
+    let ok = await run();
     if (!ok) {
       await new Promise((r) => setTimeout(r, 800));
-      ok = await updateMemberCalendarEvent(membershipId, payload).catch(
-        () => false,
-      );
+      ok = await run();
     }
     if (ok) patched++;
     else failed++;
-
     await new Promise((r) => setTimeout(r, 170)); // ~6 writes/sec
   }
 
-  return { patched, failed };
+  // Delete events for in-window bookings that are no longer in the target set.
+  const toRemove = [...existingIds].filter((id) => !targetSet.has(id));
+  for (const id of toRemove) {
+    await deleteMemberCalendarEvent(membershipId, id).catch(() => {});
+    await new Promise((r) => setTimeout(r, 170));
+  }
+
+  return { patched, failed, removed: toRemove.length };
 }
 
 /**
