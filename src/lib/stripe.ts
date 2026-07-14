@@ -140,6 +140,35 @@ export async function createCheckoutSession(args: {
     email: args.email,
   });
 
+  // Only grant the REMAINING trial at checkout. The org already got a local
+  // 14-day trial clock the moment it was created (trial_started_at, enforced in
+  // subscription.ts). Passing a flat trial_period_days: 14 here handed anyone
+  // who subscribed after their local trial a second free 14 days — up to 28
+  // days free. Carry over whatever days are left, and if the trial is already
+  // spent, subscribe with no trial (charge immediately).
+  const TRIAL_DAYS = 14;
+  const admin = createSupabaseAdminClient();
+  const { data: orgRow } = await admin
+    .from("organizations")
+    .select("trial_started_at")
+    .eq("id", args.organizationId)
+    .maybeSingle();
+  const trialStartedAt =
+    (orgRow as { trial_started_at: string | null } | null)?.trial_started_at ??
+    null;
+
+  let trialPeriodDays: number | undefined = TRIAL_DAYS;
+  if (trialStartedAt) {
+    const msLeft =
+      new Date(trialStartedAt).getTime() +
+      TRIAL_DAYS * 24 * 60 * 60 * 1000 -
+      Date.now();
+    const daysLeft = Math.ceil(msLeft / (24 * 60 * 60 * 1000));
+    // Stripe requires trial_period_days >= 1; 0 or less → no trial.
+    trialPeriodDays =
+      daysLeft >= 1 ? Math.min(daysLeft, TRIAL_DAYS) : undefined;
+  }
+
   const stripe = getStripe();
   const session = await stripe.checkout.sessions.create({
     mode: "subscription",
@@ -149,7 +178,7 @@ export async function createCheckoutSession(args: {
     cancel_url: args.cancelUrl,
     allow_promotion_codes: true,
     subscription_data: {
-      trial_period_days: 14,
+      ...(trialPeriodDays ? { trial_period_days: trialPeriodDays } : {}),
       metadata: { organization_id: args.organizationId },
     },
     metadata: { organization_id: args.organizationId },
