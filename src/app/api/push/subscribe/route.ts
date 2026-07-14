@@ -10,14 +10,17 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export async function POST(request: NextRequest) {
   try {
-    const { subscription, membershipId, organizationId } = await request.json();
+    // organizationId in the body is intentionally ignored — we derive the org
+    // from the verified membership row instead (see below). Trusting the body
+    // value let a user with a valid membership in one org bind their device to
+    // a DIFFERENT org and receive that org's org-wide push notifications.
+    const { subscription, membershipId } = await request.json();
 
     if (
       !subscription?.endpoint ||
       !subscription?.keys?.p256dh ||
       !subscription?.keys?.auth ||
-      !membershipId ||
-      !organizationId
+      !membershipId
     ) {
       return NextResponse.json(
         { error: "Missing subscription data" },
@@ -36,13 +39,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Verify the membership exists AND belongs to the authenticated user.
-    // The original check only confirmed the membership row existed, which
-    // allowed any authenticated user to register a subscription for any
-    // other user's membership by supplying their membershipId in the body.
+    // Verify the membership exists AND belongs to the authenticated user,
+    // and pull its organization_id — the subscription is bound to THAT org,
+    // never to a client-supplied one. The original check only confirmed the
+    // membership row existed, which allowed any authenticated user to register
+    // a subscription for any other user's membership by supplying their
+    // membershipId in the body.
     const { data: membership } = await supabase
       .from("memberships")
-      .select("id")
+      .select("id, organization_id")
       .eq("id", membershipId)
       .eq("profile_id", user.id)
       .maybeSingle();
@@ -56,7 +61,8 @@ export async function POST(request: NextRequest) {
       .from("push_subscriptions" as never)
       .upsert(
         {
-          organization_id: organizationId,
+          organization_id: (membership as { organization_id: string })
+            .organization_id,
           membership_id: membershipId,
           endpoint: subscription.endpoint,
           keys_p256dh: subscription.keys.p256dh,
