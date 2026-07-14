@@ -66,6 +66,7 @@ export default async function TimesheetsPage({
           employee_id,
           created_manually,
           pay_rate_cents_snapshot,
+          work_category,
           employee:memberships!time_entries_employee_id_fkey (
             id,
             display_name,
@@ -95,6 +96,7 @@ export default async function TimesheetsPage({
           employee_id: string;
           created_manually: boolean | null;
           pay_rate_cents_snapshot: number | null;
+          work_category: string | null;
           employee: {
             id: string;
             display_name: string | null;
@@ -265,6 +267,7 @@ export default async function TimesheetsPage({
       is_open: isOpen,
       // Booking details
       booking_id: e.booking?.id ?? null,
+      work_category: e.work_category ?? null,
       client_name: e.booking?.client?.name ?? null,
       service_type: e.booking?.service_type ?? null,
       scheduled_at: scheduledAt,

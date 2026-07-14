@@ -42,6 +42,8 @@ type EmpSummary = {
   id: string;
   name: string;
   totalMinutes: number;
+  jobMinutes: number; // clocked against a booking (cleaning)
+  otherMinutes: number; // off-job (manager / admin / etc.)
   shiftCount: number;
   openShift: boolean;
   earnedCents: number;
@@ -66,6 +68,8 @@ function buildSummaries(
       id: e.employee_id,
       name: e.employee_name,
       totalMinutes: 0,
+      jobMinutes: 0,
+      otherMinutes: 0,
       shiftCount: 0,
       openShift: false,
       earnedCents: 0,
@@ -78,6 +82,8 @@ function buildSummaries(
       ptoHours: 0,
     };
     existing.totalMinutes += e.actual_minutes;
+    if (e.booking_id) existing.jobMinutes += e.actual_minutes;
+    else existing.otherMinutes += e.actual_minutes;
     existing.shiftCount += 1;
     existing.earnedCents += e.earned_cents;
     if (e.is_open) existing.openShift = true;
@@ -98,6 +104,19 @@ function buildSummaries(
   }
 
   return Array.from(map.values()).sort((a, b) => b.totalMinutes - a.totalMinutes);
+}
+
+const CATEGORY_LABELS: Record<string, string> = {
+  manager: "Manager / admin",
+  admin: "Admin",
+  training: "Training",
+  travel: "Travel",
+  supplies: "Supplies / errand",
+  other: "Other work",
+};
+/** Label for an off-job entry (no booking): its category, else a fallback. */
+function categoryLabel(cat: string | null): string {
+  return cat ? (CATEGORY_LABELS[cat] ?? "Off-job") : "Off-job";
 }
 
 function PunctualityBadge({
@@ -667,6 +686,14 @@ export function TimesheetsView({
                       <span>
                         {emp.shiftCount} shift{emp.shiftCount !== 1 ? "s" : ""}
                       </span>
+                      {emp.otherMinutes > 0 && (
+                        <span>
+                          {Math.round((emp.jobMinutes / 60) * 10) / 10}h jobs ·{" "}
+                          <span className="text-violet-600 dark:text-violet-300">
+                            {Math.round((emp.otherMinutes / 60) * 10) / 10}h other
+                          </span>
+                        </span>
+                      )}
                       <span>{formatCurrencyCents(emp.earnedCents)}</span>
                       {emp.ptoHours > 0 && (
                         <span className="text-amber-600 dark:text-amber-400">
@@ -811,7 +838,7 @@ export function TimesheetsView({
                                   : "—"}
                               </td>
                               <td className="px-4 py-2.5 hidden sm:table-cell text-muted-foreground">
-                                {r.client_name ?? "—"}
+                                {r.client_name ?? categoryLabel(r.work_category)}
                               </td>
                               <td className="px-4 py-2.5 hidden md:table-cell">
                                 <PunctualityBadge
@@ -960,7 +987,7 @@ export function TimesheetsView({
                         : "—"}
                     </td>
                     <td className="px-4 py-2.5 hidden sm:table-cell text-muted-foreground">
-                      {r.client_name ?? "—"}
+                      {r.client_name ?? categoryLabel(r.work_category)}
                     </td>
                     <td className="px-4 py-2.5 hidden md:table-cell">
                       <PunctualityBadge

@@ -23,6 +23,10 @@ export async function clockInAction(
 ): Promise<ClockResult> {
   const lat = parseCoord(formData.get("lat"));
   const lng = parseCoord(formData.get("lng"));
+  // What this off-job shift is for (manager/admin/training/travel/supplies/other).
+  const rawCategory = String(formData.get("work_category") ?? "").trim();
+  const ALLOWED = new Set(["manager", "admin", "training", "travel", "supplies", "other"]);
+  const workCategory = ALLOWED.has(rawCategory) ? rawCategory : null;
 
   const { membership, supabase } = await getActionContext();
 
@@ -67,6 +71,7 @@ export async function clockInAction(
     clock_in_lat: lat,
     clock_in_lng: lng,
     pay_rate_cents_snapshot: rateRow?.pay_rate_cents ?? null,
+    work_category: workCategory,
   } as never);
   if (error) {
     // Postgres unique_violation — partial index rejected a concurrent

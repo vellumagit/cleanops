@@ -12,6 +12,8 @@ export type TimesheetEntry = {
   is_manual: boolean;
   // Booking details
   booking_id: string | null;
+  /** Category for an off-job (no booking) clock-in: manager/admin/training/etc. */
+  work_category: string | null;
   client_name: string | null;
   service_type: string | null;
   scheduled_at: string | null;

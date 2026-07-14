@@ -1,6 +1,6 @@
 "use client";
 
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Clock as ClockIcon, LogIn, LogOut, MapPin } from "lucide-react";
@@ -8,6 +8,16 @@ import { Button } from "@/components/ui/button";
 import { clockInAction, clockOutAction } from "./actions";
 
 type Coords = { lat: number | null; lng: number | null };
+
+// Categories for an off-job clock-in (not tied to a booking). Start a job from
+// its page to log cleaning time instead.
+const WORK_CATEGORIES = [
+  { key: "manager", label: "Manager / admin" },
+  { key: "training", label: "Training" },
+  { key: "travel", label: "Travel" },
+  { key: "supplies", label: "Supplies / errand" },
+  { key: "other", label: "Other" },
+];
 
 async function getCoords(): Promise<Coords> {
   if (typeof window === "undefined" || !("geolocation" in navigator)) {
@@ -23,10 +33,11 @@ async function getCoords(): Promise<Coords> {
   });
 }
 
-function buildFormData(coords: Coords) {
+function buildFormData(coords: Coords, category?: string) {
   const fd = new FormData();
   if (coords.lat != null) fd.set("lat", String(coords.lat));
   if (coords.lng != null) fd.set("lng", String(coords.lng));
+  if (category) fd.set("work_category", category);
   return fd;
 }
 
@@ -41,11 +52,12 @@ export function ClockCard({
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+  const [category, setCategory] = useState("manager");
 
   function handleIn() {
     startTransition(async () => {
       const coords = await getCoords();
-      const result = await clockInAction(buildFormData(coords));
+      const result = await clockInAction(buildFormData(coords, category));
       if (result.ok) {
         toast.success("Clocked in");
         router.refresh();
@@ -100,6 +112,33 @@ export function ClockCard({
           )}
         </div>
       </div>
+
+      {!isClockedIn && (
+        <div className="mt-5">
+          <div className="mb-2 text-xs font-medium text-muted-foreground">
+            What are you working on?{" "}
+            <span className="font-normal">
+              (for cleaning a job, start it from the job page instead)
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {WORK_CATEGORIES.map((c) => (
+              <button
+                key={c.key}
+                type="button"
+                onClick={() => setCategory(c.key)}
+                className={
+                  category === c.key
+                    ? "rounded-full bg-foreground px-3 py-1.5 text-xs font-medium text-background"
+                    : "rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted"
+                }
+              >
+                {c.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="mt-5">
         {isClockedIn ? (
