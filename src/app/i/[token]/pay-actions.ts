@@ -69,18 +69,20 @@ export async function startSquareCheckoutAction(formData: FormData) {
   }
 
   // Charge the outstanding balance, not the full invoice — a client who
-  // already paid part shouldn't be re-charged the whole amount.
+  // already paid part shouldn't be re-charged the whole amount. Balance is
+  // NET of refunds so a refunded invoice reopens for collection at the right
+  // remaining amount instead of reading as already settled.
   const { data: paidRows } = (await admin
-    .from("invoice_payments")
-    .select("amount_cents")
-    .eq("invoice_id", invoice.id)) as unknown as {
-    data: Array<{ amount_cents: number }> | null;
+    .from("invoice_payments" as never)
+    .select("amount_cents, refunded_cents")
+    .eq("invoice_id" as never, invoice.id as never)) as unknown as {
+    data: Array<{ amount_cents: number; refunded_cents: number | null }> | null;
   };
-  const paidCents = (paidRows ?? []).reduce(
-    (s, p) => s + (p.amount_cents ?? 0),
+  const netPaidCents = (paidRows ?? []).reduce(
+    (s, p) => s + (p.amount_cents ?? 0) - (p.refunded_cents ?? 0),
     0,
   );
-  const balanceCents = Math.max(0, invoice.amount_cents - paidCents);
+  const balanceCents = Math.max(0, invoice.amount_cents - netPaidCents);
   if (balanceCents <= 0) {
     redirect(`/i/${token}?pay_error=already_settled`);
   }

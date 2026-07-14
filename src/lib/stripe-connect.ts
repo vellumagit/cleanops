@@ -248,15 +248,21 @@ export async function createInvoiceCheckoutSession(args: {
   // amount. Including the balance in the idempotency key below also makes
   // an edited invoice mint a fresh session instead of the stale old-price
   // one.
-  const { data: paidRows } = await admin
-    .from("invoice_payments")
-    .select("amount_cents")
-    .eq("invoice_id", invoice.id);
-  const paidCents = ((paidRows ?? []) as Array<{ amount_cents: number }>).reduce(
-    (s, p) => s + (p.amount_cents ?? 0),
+  //
+  // Balance is NET of refunds: a refund raises the outstanding balance back
+  // up, so a refunded (or partially-refunded) invoice reopens for collection
+  // at the right amount instead of reading as already settled.
+  const { data: paidRows } = (await admin
+    .from("invoice_payments" as never)
+    .select("amount_cents, refunded_cents")
+    .eq("invoice_id" as never, invoice.id as never)) as unknown as {
+    data: Array<{ amount_cents: number; refunded_cents: number | null }> | null;
+  };
+  const netPaidCents = (paidRows ?? []).reduce(
+    (s, p) => s + (p.amount_cents ?? 0) - (p.refunded_cents ?? 0),
     0,
   );
-  const balanceCents = Math.max(0, invoice.amount_cents - paidCents);
+  const balanceCents = Math.max(0, invoice.amount_cents - netPaidCents);
   if (balanceCents <= 0) return null;
 
   const { data: org } = await admin
