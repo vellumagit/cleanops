@@ -47,6 +47,25 @@ function getSquareEnv(): "production" | "sandbox" {
   return raw === "production" ? "production" : "sandbox";
 }
 
+/**
+ * Fail loud if we're about to move real money through Square's SANDBOX by
+ * accident. `getSquareEnv()` defaults to "sandbox" when SQUARE_ENVIRONMENT is
+ * unset/misspelled — harmless for local dev, but in a production deployment it
+ * means customers "pay" on sandbox links that never settle real funds. We only
+ * assert on the money paths (OAuth token exchange + payment-link creation), not
+ * on UI rendering, so a misconfigured prod still renders the Settings page.
+ */
+function assertSquareEnvForMoneyPath(): void {
+  const isProdDeploy =
+    process.env.VERCEL_ENV === "production" ||
+    (!process.env.VERCEL_ENV && process.env.NODE_ENV === "production");
+  if (isProdDeploy && getSquareEnv() !== "production") {
+    throw new Error(
+      "Square is in sandbox mode in a production deployment. Set SQUARE_ENVIRONMENT=production before accepting live payments.",
+    );
+  }
+}
+
 /** Base URL for Square's REST API (connect.squareup.com for prod). */
 export function squareApiBase(): string {
   return getSquareEnv() === "production"
@@ -185,6 +204,7 @@ type SquareTokenResponse = {
 export async function exchangeCodeForTokens(
   code: string,
 ): Promise<SquareTokenResponse> {
+  assertSquareEnvForMoneyPath();
   const appId = process.env.SQUARE_APPLICATION_ID;
   const appSecret = process.env.SQUARE_APPLICATION_SECRET;
   if (!appId || !appSecret) {
@@ -506,19 +526,22 @@ export async function createInvoiceCheckoutLink(args: {
   organizationId: string;
   invoiceId: string;
   amountCents: number;
-  currency?: string; // default USD
+  currency?: string; // ISO code; defaults to CAD (the product default currency)
   orgName: string;
   invoiceNumber: string;
   buyerEmail?: string | null;
   successUrl: string;
 }): Promise<{ url: string; id: string } | null> {
+  assertSquareEnvForMoneyPath();
   const accessToken = await getValidAccessToken(args.organizationId);
   if (!accessToken) return null;
 
   const conn = await loadConnection(args.organizationId);
   if (!conn?.locationId) return null;
 
-  const currency = (args.currency ?? "USD").toUpperCase();
+  // Default to CAD (the product default) rather than USD — a missing currency
+  // must not silently charge a CAD org's customer in US dollars.
+  const currency = (args.currency ?? "CAD").toUpperCase();
 
   const body = {
     // Scoped to (org, invoice) so repeated calls produce the same link.

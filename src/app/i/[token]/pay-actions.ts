@@ -5,6 +5,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
 import { createInvoiceCheckoutLink } from "@/lib/square";
 import { createInvoiceCheckoutSession } from "@/lib/stripe-connect";
+import { getOrgCurrency } from "@/lib/org-currency";
 
 /**
  * Public server action: mint a Square hosted-checkout URL for the invoice
@@ -94,6 +95,7 @@ export async function startSquareCheckoutAction(formData: FormData) {
       organizationId: invoice.organization_id,
       invoiceId: invoice.id,
       amountCents: balanceCents,
+      currency: await getOrgCurrency(invoice.organization_id),
       orgName: invoice.organization?.name ?? "Invoice",
       invoiceNumber:
         invoice.number ?? invoice.id.slice(0, 8).toUpperCase(),

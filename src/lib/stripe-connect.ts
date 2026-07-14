@@ -262,7 +262,7 @@ export async function createInvoiceCheckoutSession(args: {
   const { data: org } = await admin
     .from("organizations")
     .select(
-      "id, name, stripe_account_id, stripe_charges_enabled, stripe_application_fee_bps",
+      "id, name, stripe_account_id, stripe_charges_enabled, stripe_application_fee_bps, currency_code",
     )
     .eq("id", invoice.organization_id)
     .maybeSingle();
@@ -273,6 +273,7 @@ export async function createInvoiceCheckoutSession(args: {
     stripe_account_id: string | null;
     stripe_charges_enabled: boolean;
     stripe_application_fee_bps: number;
+    currency_code: string | null;
   } | null;
 
   if (!orgRow?.stripe_account_id || !orgRow.stripe_charges_enabled) {
@@ -291,6 +292,11 @@ export async function createInvoiceCheckoutSession(args: {
     Math.round((balanceCents * orgRow.stripe_application_fee_bps) / 10000),
   );
 
+  // Charge in the org's own currency — not a hardcoded USD. A CAD org billing
+  // a CAD invoice must collect CAD, or the customer is over/under-charged and
+  // the books won't reconcile. Stripe wants a lowercase ISO code.
+  const currency = orgRow.currency_code === "USD" ? "usd" : "cad";
+
   const stripe = getStripe();
   const session = await stripe.checkout.sessions.create(
     {
@@ -299,7 +305,7 @@ export async function createInvoiceCheckoutSession(args: {
       line_items: [
         {
           price_data: {
-            currency: "usd",
+            currency,
             unit_amount: balanceCents,
             product_data: {
               name: `Invoice from ${orgRow.name}`,

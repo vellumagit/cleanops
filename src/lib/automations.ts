@@ -5213,6 +5213,42 @@ export async function autoGenerateRecurringInvoices(): Promise<{
       issuedAt.getTime() + series.due_days * 24 * 60 * 60 * 1000,
     );
 
+    // Compute the next run date based on cadence.
+    const current = new Date(series.next_run_at);
+    const next = new Date(current);
+    switch (series.cadence) {
+      case "weekly":
+        next.setUTCDate(current.getUTCDate() + 7);
+        break;
+      case "biweekly":
+        next.setUTCDate(current.getUTCDate() + 14);
+        break;
+      case "monthly":
+        next.setUTCMonth(current.getUTCMonth() + 1);
+        break;
+      case "quarterly":
+        next.setUTCMonth(current.getUTCMonth() + 3);
+        break;
+    }
+
+    // CLAIM the run BEFORE creating the invoice. Advancing next_run_at is a
+    // conditional update guarded on its current value, so two concurrent runs
+    // (or a retry of a run that crashed after inserting the invoice) can't both
+    // generate an invoice for the same period — exactly one wins the claim and
+    // the loser gets 0 rows back. The previous order (insert, THEN advance)
+    // meant a crash in between re-generated the invoice on the next tick.
+    const { data: claimed } = (await db
+      .from("invoice_series")
+      .update({ next_run_at: next.toISOString() })
+      .eq("id", series.id)
+      .eq("next_run_at", series.next_run_at)
+      .select("id")) as unknown as { data: Array<{ id: string }> | null };
+
+    if (!claimed || claimed.length === 0) {
+      // Another concurrent run already claimed this period.
+      continue;
+    }
+
     // Let the DB trigger assign the invoice number — it uses the
     // INV-YYYY-XXXX format consistently across all invoice creation
     // paths. The previous code computed a count-based "INV-0001"
@@ -5242,31 +5278,22 @@ export async function autoGenerateRecurringInvoices(): Promise<{
         `[auto] recurring invoice failed for series ${series.id}:`,
         error?.message,
       );
+      // Roll the claim back so this period retries next tick rather than being
+      // silently skipped. Guarded on our advanced value so we don't clobber a
+      // newer claim.
+      await db
+        .from("invoice_series")
+        .update({ next_run_at: series.next_run_at })
+        .eq("id", series.id)
+        .eq("next_run_at", next.toISOString());
       continue;
     }
 
-    // Compute next run based on cadence.
-    const current = new Date(series.next_run_at);
-    const next = new Date(current);
-    switch (series.cadence) {
-      case "weekly":
-        next.setUTCDate(current.getUTCDate() + 7);
-        break;
-      case "biweekly":
-        next.setUTCDate(current.getUTCDate() + 14);
-        break;
-      case "monthly":
-        next.setUTCMonth(current.getUTCMonth() + 1);
-        break;
-      case "quarterly":
-        next.setUTCMonth(current.getUTCMonth() + 3);
-        break;
-    }
-
+    // Link the generated invoice back to the series (claim already advanced
+    // next_run_at above).
     await db
       .from("invoice_series")
       .update({
-        next_run_at: next.toISOString(),
         last_generated_at: nowIso,
         last_invoice_id: inserted.id,
       })

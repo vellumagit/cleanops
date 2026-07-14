@@ -209,6 +209,16 @@ async function generateClientInvoice(
   dueDate.setUTCDate(dueDate.getUTCDate() + 14);
   const dueDateStr = dueDate.toISOString().split("T")[0];
 
+  // Deterministic idempotency key for this (client, period). The unique index
+  // invoices_client_billing_period_uidx makes a second insert for the same key
+  // fail with 23505 — so if a prior run crashed AFTER this insert but BEFORE
+  // stamping bookings (Vercel timeout mid-loop), the retry skips here instead
+  // of billing the client a second time.
+  const periodKey =
+    cadence === "monthly"
+      ? `monthly:${cutoff.slice(0, 7)}` // e.g. "monthly:2026-07"
+      : `biweekly:${cutoff}`; //           e.g. "biweekly:2026-07-15"
+
   // ── Create invoice ───────────────────────────────────────────────────────
   const { data: invoice, error: invErr } = (await db
     .from("invoices")
@@ -217,6 +227,7 @@ async function generateClientInvoice(
       client_id: client.id,
       status: "draft",
       amount_cents: tax.totalCents,
+      billing_period_key: periodKey,
       ...(org.default_tax_rate_bps && org.default_tax_rate_bps > 0
         ? {
             tax_rate_bps: org.default_tax_rate_bps,
@@ -230,8 +241,17 @@ async function generateClientInvoice(
     .select("id, number")
     .single()) as unknown as {
     data: InvoiceRow | null;
-    error: { message: string } | null;
+    error: { message: string; code?: string } | null;
   };
+
+  if (invErr?.code === "23505") {
+    // This client was already billed for this period by an earlier (possibly
+    // crashed) run. Do NOT create a second invoice.
+    console.log(
+      `[billing-cycle] client ${client.id} already billed for ${periodKey} — skipping duplicate`,
+    );
+    return null;
+  }
 
   if (invErr || !invoice) {
     console.error(
@@ -294,10 +314,15 @@ async function generateClientInvoice(
   // For itemized: stamp only completed (we only fetched those above).
   const bookingIdsToStamp = bookings.map((b) => b.id);
 
+  // Only stamp bookings still unbilled — a concurrent run that already linked
+  // them to its own invoice must not be overwritten. Combined with the
+  // billing_period_key guard above, this makes the whole generate step safe to
+  // retry without double-billing.
   const { error: stampErr } = await db
     .from("bookings")
     .update({ billing_invoice_id: invoice.id } as never)
-    .in("id", bookingIdsToStamp);
+    .in("id", bookingIdsToStamp)
+    .is("billing_invoice_id", null);
 
   if (stampErr) {
     console.error(
