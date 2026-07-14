@@ -7,7 +7,6 @@ import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
 import { StatusBadge } from "@/components/status-badge";
 import {
-  isQuickBooksConfigured,
   isStripeConnectConfigured,
   isSquareConfigured,
   isGoogleCalendarConfigured,
@@ -26,7 +25,7 @@ import { StripeDisconnectButton } from "./stripe-connect-actions";
 
 export const metadata = { title: "Integrations" };
 
-type ProviderKey = "stripe" | "square" | "quickbooks" | "google_calendar" | "sage";
+type ProviderKey = "stripe" | "square" | "google_calendar" | "sage";
 
 type ProviderCard = {
   key: ProviderKey;
@@ -114,15 +113,6 @@ export default async function IntegrationsPage() {
   ];
 
   const accountingCards: ProviderCard[] = [
-    {
-      key: "quickbooks",
-      name: "QuickBooks Online",
-      blurb:
-        "Sync invoices + customers into QuickBooks so your bookkeeper isn't doing double entry.",
-      platformReady: isQuickBooksConfigured(),
-      accentClass: "from-lime-500/10 to-green-500/10",
-      category: "accounting",
-    },
     {
       key: "sage",
       name: "Sage Accounting",
@@ -367,12 +357,8 @@ export default async function IntegrationsPage() {
               )
             ) : (
               <p className="text-[11px] italic text-muted-foreground">
-                We&apos;re finishing the{" "}
-                {card.name === "QuickBooks Online"
-                  ? "Intuit"
-                  : card.name}{" "}
-                app registration. This will light up automatically
-                once it&apos;s approved.
+                We&apos;re finishing the {card.name} app registration. This
+                will light up automatically once it&apos;s approved.
               </p>
             )}
           </div>
