@@ -13,9 +13,9 @@
  * analytics / log data doesn't reveal the unsub capability.
  */
 
-import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
 import { RateLimitedPage } from "@/components/rate-limited-page";
+import { unsubscribeGbpByToken } from "@/lib/gbp-unsubscribe";
 
 export const metadata = { title: "Unsubscribed" };
 
@@ -34,50 +34,10 @@ export default async function GbpUnsubscribePage({
     return <RateLimitedPage retryAfterSeconds={rl.retryAfterSeconds} />;
   }
 
-  let orgName: string | null = null;
-  let success = false;
-  let alreadyUnsubscribed = false;
-
-  if (token && token.length >= 8 && token.length <= 64) {
-    const admin = createSupabaseAdminClient();
-    const { data: client } = (await admin
-      .from("clients")
-      .select(
-        "id, gbp_unsubscribed_at, gbp_review_state, organization:organizations ( name )",
-      )
-      .eq("gbp_unsubscribe_token" as never, token as never)
-      .maybeSingle()) as unknown as {
-      data: {
-        id: string;
-        gbp_unsubscribed_at: string | null;
-        gbp_review_state: string;
-        organization: { name: string } | null;
-      } | null;
-    };
-
-    if (client) {
-      orgName = client.organization?.name ?? null;
-      if (client.gbp_unsubscribed_at) {
-        alreadyUnsubscribed = true;
-        success = true;
-      } else {
-        // Idempotent: setting state to opted_out from any active state
-        // stops the cron from picking them up. We leave clicked/reviewed
-        // alone since those are already terminal — no point downgrading.
-        const shouldFlipState = ["never_asked", "pending"].includes(
-          client.gbp_review_state,
-        );
-        await admin
-          .from("clients")
-          .update({
-            gbp_unsubscribed_at: new Date().toISOString(),
-            ...(shouldFlipState ? { gbp_review_state: "opted_out" } : {}),
-          } as never)
-          .eq("id", client.id);
-        success = true;
-      }
-    }
-  }
+  const result = await unsubscribeGbpByToken(token);
+  const success = result.ok;
+  const alreadyUnsubscribed = result.already;
+  const orgName = result.orgName;
 
   return (
     <div className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-6 py-12 text-center">

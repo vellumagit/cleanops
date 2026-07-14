@@ -84,6 +84,14 @@ export type SendEmailArgs = {
    * is a non-issue.
    */
   attachments?: EmailAttachment[];
+  /**
+   * One-click unsubscribe URL for commercial/bulk emails. When set, we emit
+   * RFC 8058 List-Unsubscribe + List-Unsubscribe-Post headers, which Gmail and
+   * Yahoo require from bulk senders (Feb 2024) and which materially improve
+   * inbox placement. Should point at a POST-capable endpoint (e.g.
+   * /api/u/g/<token>). Omit for purely transactional mail.
+   */
+  unsubscribeUrl?: string;
 };
 
 /**
@@ -160,6 +168,17 @@ export async function sendEmailDetailed(
       ...(args.text ? { text: args.text } : {}),
       ...(args.replyTo
         ? { replyTo: formatAddress(args.replyTo, args.replyToName) }
+        : {}),
+      // RFC 8058 one-click unsubscribe — required by Gmail/Yahoo bulk-sender
+      // rules and a strong deliverability signal. Only on emails that carry an
+      // unsubscribe URL (commercial/bulk); transactional mail omits it.
+      ...(args.unsubscribeUrl
+        ? {
+            headers: {
+              "List-Unsubscribe": `<${args.unsubscribeUrl}>`,
+              "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+            },
+          }
         : {}),
       // Map our internal attachment shape into Resend's wire format.
       // Buffer.content gets sent as-is; Resend handles the encoding.

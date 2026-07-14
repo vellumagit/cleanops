@@ -2175,6 +2175,7 @@ export async function sendGbpReviewRequests(): Promise<{
         to: client.email!,
         toName: client.name ?? undefined,
         ...template,
+        unsubscribeUrl: `${siteUrl}/api/u/g/${unsubToken}`,
       });
 
       if (ok) {
@@ -2314,6 +2315,7 @@ export async function sendGbpReviewRequests(): Promise<{
         to: c.email,
         toName: c.name ?? undefined,
         ...template,
+        unsubscribeUrl: `${siteUrl}/api/u/g/${c.gbp_unsubscribe_token}`,
       });
 
       if (ok) {
