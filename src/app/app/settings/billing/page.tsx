@@ -135,6 +135,7 @@ export default async function BillingPage() {
   const enabled = isStripeEnabled();
   const inTrial =
     subscription?.trial_ends_at &&
+    // eslint-disable-next-line react-hooks/purity -- server component: renders once on the server, no hydration to drift
     new Date(subscription.trial_ends_at).getTime() > Date.now();
 
   return (

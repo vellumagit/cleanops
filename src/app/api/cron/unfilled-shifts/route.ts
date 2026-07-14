@@ -73,8 +73,13 @@ export async function GET(request: Request) {
     return Response.json({ created: 0, skipped: bookingIds.length });
   }
 
-  // Create notifications
-  const rows = toNotify.map((b) => {
+  // Notify org management (owner/admin/manager) — those are the people who
+  // staff shifts. Route through notify() rather than inserting notification
+  // rows directly: notify() also fires a push (the raw insert reached only the
+  // in-app bell, never the phone) and applies the correct recipient/RLS
+  // scoping.
+  const { notify } = await import("@/lib/notify");
+  for (const b of toNotify) {
     const clientName =
       (b.client as unknown as { name: string } | null)?.name ?? "a client";
     const when = new Date(b.scheduled_at).toLocaleString("en-US", {
@@ -84,23 +89,15 @@ export async function GET(request: Request) {
       minute: "2-digit",
     });
 
-    return {
-      organization_id: b.organization_id,
-      type: "unfilled_shift" as const,
-      title: `Unfilled shift in < 24h`,
+    await notify({
+      organizationId: b.organization_id,
+      audience: "org-management",
+      type: "unfilled_shift",
+      title: "Unfilled shift in < 24h",
       body: `${b.service_type ?? "Cleaning"} for ${clientName} at ${when} has no one assigned.`,
       href: `/app/bookings/${b.id}`,
-    };
-  });
-
-  const { error: insertError } = await admin
-    .from("notifications" as never)
-    .insert(rows as never);
-
-  if (insertError) {
-    console.error("[cron/unfilled-shifts] insert error:", insertError.message);
-    return Response.json({ error: insertError.message }, { status: 500 });
+    });
   }
 
-  return Response.json({ created: rows.length });
+  return Response.json({ created: toNotify.length });
 }

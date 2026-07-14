@@ -1,6 +1,6 @@
 "use client";
 
-import { useTransition } from "react";
+import { useTransition, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Mail, CheckCircle2, Clock } from "lucide-react";
 import { toast } from "sonner";
@@ -31,6 +31,14 @@ export function PortalInviteButton({
 }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
+  // Resolve "now" after mount so the expiry comparison doesn't call Date.now()
+  // during render (impure → server/client hydration drift). Until mounted we
+  // treat the invite as not-expired, matching the server render.
+  const [nowMs, setNowMs] = useState<number | null>(null);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot: resolve the client clock after mount to avoid hydration drift
+    setNowMs(Date.now());
+  }, []);
 
   // Already claimed — show a static badge, no action needed.
   if (hasPortalAccess) {
@@ -62,9 +70,11 @@ export function PortalInviteButton({
 
   // Pending invite — show amber state + resend button.
   if (portalInvitedAt) {
-    const expired =
+    const expired = Boolean(
       portalInviteExpiresAt &&
-      new Date(portalInviteExpiresAt).getTime() < Date.now();
+        nowMs !== null &&
+        new Date(portalInviteExpiresAt).getTime() < nowMs,
+    );
     return (
       <button
         type="button"

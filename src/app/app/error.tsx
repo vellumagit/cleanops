@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import * as Sentry from "@sentry/nextjs";
 import { AlertTriangle, RotateCcw } from "lucide-react";
 
 /**
@@ -16,7 +17,9 @@ export default function AppError({
   reset: () => void;
 }) {
   useEffect(() => {
-    // Log to console in dev; Sentry / external reporter can hook here later
+    // Report to Sentry so client-side render crashes are actually visible,
+    // then log for local dev.
+    Sentry.captureException(error);
     console.error("[AppError]", error);
   }, [error]);
 

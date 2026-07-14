@@ -75,11 +75,15 @@ export function PwaInstallBanner() {
   const [inSafari, setInSafari] = useState(false);
   const [dismissed, setDismissed] = useState(true);
 
-  // Resolve client-only state after mount (safe: no SSR mismatch).
+  // Resolve client-only state after mount (safe: no SSR mismatch). These read
+  // browser-only APIs (localStorage, UA) that can't run during SSR, so the
+  // mount-effect setState is the correct pattern here, not a cascade bug.
   useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect */
     setDismissed(initialDismissed());
     setShowIOS(isIOS());
     setInSafari(isSafari());
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, []);
 
   useEffect(() => {

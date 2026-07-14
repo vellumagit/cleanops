@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useState } from "react";
 import { Send, AlertTriangle } from "lucide-react";
 import { SubmitButton } from "@/components/submit-button";
 import { FormError } from "@/components/form-field";
@@ -31,11 +31,16 @@ export function ResendInvoiceButton({ invoiceId }: { invoiceId: string }) {
   );
   const [confirming, setConfirming] = useState(false);
 
-  // Drop the warning once the send completes successfully or errors —
-  // either way the armed state is stale.
-  useEffect(() => {
-    if (state.ok || state.error) setConfirming(false);
-  }, [state.ok, state.error]);
+  // Drop the armed "confirm" state once a send settles (ok or error) — the
+  // warning is stale either way. Done during render with the store-previous-
+  // value pattern instead of an effect, since a synchronous setState inside an
+  // effect can trigger a cascading re-render.
+  const settled = Boolean(state.ok || state.error);
+  const [prevSettled, setPrevSettled] = useState(false);
+  if (settled !== prevSettled) {
+    setPrevSettled(settled);
+    if (settled) setConfirming(false);
+  }
 
   if (!confirming) {
     return (

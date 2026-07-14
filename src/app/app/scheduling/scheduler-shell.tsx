@@ -65,6 +65,7 @@ export function SchedulerShell({
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw) as Partial<SchedulerFiltersState>;
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- SSR-safe by design: render with defaults, rehydrate from localStorage post-mount
         setFilters({ ...DEFAULT_FILTERS, ...parsed });
       }
     } catch {

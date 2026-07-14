@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import * as Sentry from "@sentry/nextjs";
 import { AlertTriangle, RotateCcw } from "lucide-react";
 
 /**
@@ -15,6 +16,7 @@ export default function FieldError({
   reset: () => void;
 }) {
   useEffect(() => {
+    Sentry.captureException(error);
     console.error("[FieldError]", error);
   }, [error]);
 

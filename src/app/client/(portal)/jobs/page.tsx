@@ -59,6 +59,7 @@ export default async function ClientJobsPage() {
     if (r.booking_id) reviewedBookingIds.set(r.booking_id, r.rating);
   }
 
+  // eslint-disable-next-line react-hooks/purity -- server component: renders once on the server, no hydration to drift
   const nowMs = Date.now();
   const upcoming = (jobs ?? []).filter(
     (j) => new Date(j.scheduled_at).getTime() >= nowMs,
