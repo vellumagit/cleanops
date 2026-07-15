@@ -32,8 +32,9 @@ export default function TermsPage() {
           {/* Intro */}
           <p>
             These terms of service (&ldquo;Terms&rdquo;) govern your use of
-            Sollos 3, a software-as-a-service product operated by Sollos 3
-            (&ldquo;we&rdquo;, &ldquo;us&rdquo;, &ldquo;our&rdquo;). By
+            Sollos 3, a software-as-a-service product operated by Velluma
+            (&ldquo;we&rdquo;, &ldquo;us&rdquo;, &ldquo;our&rdquo;), located at
+            330 Avro Ave, Pointe-Claire, QC H9R 5W5, Canada. By
             creating an account or using the service, you agree to be bound by
             these Terms. If you do not agree, do not use the service.
           </p>

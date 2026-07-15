@@ -20,6 +20,13 @@ const DEFAULT_BRAND = "#6366f1";
 const SITE_URL =
   process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
 
+/**
+ * Physical mailing address of the operating entity, shown in every email
+ * footer. CAN-SPAM (US) and CASL (Canada) both require a valid postal address
+ * in commercial messages; the platform (Velluma) is the sender of record.
+ */
+const MAILING_ADDRESS = "Velluma · 330 Avro Ave, Pointe-Claire, QC H9R 5W5, Canada";
+
 type LayoutOptions = {
   /** Per-org brand color (hex, with or without leading #) */
   brandColor?: string;
@@ -101,6 +108,9 @@ function layout(body: string, options: LayoutOptions = {}) {
             </p>
             <p style="margin:6px 0 0;font-size:11px;line-height:1.5;color:#a1a1aa;text-align:center;">
               Operations software for cleaning companies
+            </p>
+            <p style="margin:6px 0 0;font-size:11px;line-height:1.5;color:#a1a1aa;text-align:center;">
+              ${MAILING_ADDRESS}
             </p>
           </td>
         </tr>

@@ -31,8 +31,9 @@ export default function PrivacyPage() {
         <div className="mt-8 space-y-8 text-sm leading-7 text-foreground">
           {/* Intro */}
           <p>
-            Sollos 3 (&ldquo;we&rdquo;, &ldquo;us&rdquo;, &ldquo;our&rdquo;)
-            provides operations software for cleaning companies. This privacy
+            Sollos 3, operated by Velluma (&ldquo;we&rdquo;, &ldquo;us&rdquo;,
+            &ldquo;our&rdquo;), provides operations software for cleaning
+            companies. This privacy
             policy describes what personal information we collect, how we use it,
             and the choices you have. We treat customer data as a liability — we
             collect the minimum needed to run the product and nothing more.
@@ -404,6 +405,9 @@ export default function PrivacyPage() {
                 >
                   privacy@sollos3.com
                 </a>
+              </li>
+              <li>
+                Mail: Velluma, 330 Avro Ave, Pointe-Claire, QC H9R 5W5, Canada
               </li>
               <li>
                 Website:{" "}
