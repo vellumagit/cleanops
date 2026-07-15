@@ -7,6 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "cron:check": "tsx scripts/validate-cron-schedules.ts",
     "seed": "tsx --env-file=.env.local scripts/seed.ts",
     "wipe": "tsx --env-file=.env.local scripts/wipe.ts",
@@ -57,7 +59,8 @@
     "supabase": "^2.85.0",
     "tailwindcss": "^4",
     "tsx": "^4.21.0",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.10"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

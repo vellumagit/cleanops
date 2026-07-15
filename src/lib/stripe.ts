@@ -17,6 +17,7 @@
 import "server-only";
 import Stripe from "stripe";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { remainingTrialDays } from "@/lib/trial";
 
 export function isStripeEnabled(): boolean {
   return process.env.STRIPE_ENABLED === "true";
@@ -146,7 +147,6 @@ export async function createCheckoutSession(args: {
   // who subscribed after their local trial a second free 14 days — up to 28
   // days free. Carry over whatever days are left, and if the trial is already
   // spent, subscribe with no trial (charge immediately).
-  const TRIAL_DAYS = 14;
   const admin = createSupabaseAdminClient();
   const { data: orgRow } = await admin
     .from("organizations")
@@ -157,17 +157,10 @@ export async function createCheckoutSession(args: {
     (orgRow as { trial_started_at: string | null } | null)?.trial_started_at ??
     null;
 
-  let trialPeriodDays: number | undefined = TRIAL_DAYS;
-  if (trialStartedAt) {
-    const msLeft =
-      new Date(trialStartedAt).getTime() +
-      TRIAL_DAYS * 24 * 60 * 60 * 1000 -
-      Date.now();
-    const daysLeft = Math.ceil(msLeft / (24 * 60 * 60 * 1000));
-    // Stripe requires trial_period_days >= 1; 0 or less → no trial.
-    trialPeriodDays =
-      daysLeft >= 1 ? Math.min(daysLeft, TRIAL_DAYS) : undefined;
-  }
+  // Stripe requires trial_period_days >= 1; 0 days left → no trial.
+  const daysLeft = remainingTrialDays(trialStartedAt, Date.now());
+  const trialPeriodDays: number | undefined =
+    daysLeft >= 1 ? daysLeft : undefined;
 
   const stripe = getStripe();
   const session = await stripe.checkout.sessions.create({

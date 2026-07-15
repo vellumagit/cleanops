@@ -35,6 +35,7 @@ import { randomBytes } from "node:crypto";
 import Stripe from "stripe";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getStripe, isStripeConnectEnabled } from "@/lib/stripe";
+import { outstandingBalanceCents } from "@/lib/invoice-balance";
 
 /**
  * Generate a one-time CSRF state and persist it.
@@ -258,11 +259,7 @@ export async function createInvoiceCheckoutSession(args: {
     .eq("invoice_id" as never, invoice.id as never)) as unknown as {
     data: Array<{ amount_cents: number; refunded_cents: number | null }> | null;
   };
-  const netPaidCents = (paidRows ?? []).reduce(
-    (s, p) => s + (p.amount_cents ?? 0) - (p.refunded_cents ?? 0),
-    0,
-  );
-  const balanceCents = Math.max(0, invoice.amount_cents - netPaidCents);
+  const balanceCents = outstandingBalanceCents(invoice.amount_cents, paidRows);
   if (balanceCents <= 0) return null;
 
   const { data: org } = await admin

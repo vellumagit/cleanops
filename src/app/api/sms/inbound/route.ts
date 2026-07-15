@@ -23,30 +23,16 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
-import { createHmac, timingSafeEqual } from "node:crypto";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { rateLimitByIp } from "@/lib/rate-limit-helpers";
+import {
+  classifyInboundSms,
+  phoneKey,
+  verifyTwilioSignature,
+} from "@/lib/sms-inbound";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-const STOP_KEYWORDS = new Set([
-  "STOP",
-  "STOPALL",
-  "UNSUBSCRIBE",
-  "CANCEL",
-  "END",
-  "QUIT",
-  "OPTOUT",
-  "REVOKE",
-]);
-const START_KEYWORDS = new Set(["START", "YES", "UNSTOP", "OPTIN"]);
-const HELP_KEYWORDS = new Set(["HELP", "INFO"]);
-
-/** Last 10 digits, so "+15551234567" / "(555) 123-4567" / "5551234567" match. */
-function phoneKey(raw: string | null | undefined): string {
-  return (raw ?? "").replace(/\D/g, "").slice(-10);
-}
 
 /** TwiML XML response with a single message (or empty when body is null). */
 function twiml(message: string | null): NextResponse {
@@ -60,41 +46,6 @@ function twiml(message: string | null): NextResponse {
     status: 200,
     headers: { "Content-Type": "text/xml" },
   });
-}
-
-/**
- * Validate Twilio's X-Twilio-Signature. Twilio signs the exact configured
- * webhook URL with the POST params (sorted by key, name+value concatenated),
- * HMAC-SHA1 with the auth token, base64. We test against the URL we configured
- * (appBaseUrl) and the request's own host, so a base-URL change doesn't lock us
- * out.
- */
-function verifyTwilioSignature(
-  candidateUrls: string[],
-  params: URLSearchParams,
-  signature: string | null,
-  authToken: string,
-): boolean {
-  if (!signature) return false;
-
-  const sortedConcat = [...params.entries()]
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    .reduce((acc, [k, v]) => acc + k + v, "");
-
-  const provided = Buffer.from(signature);
-  for (const url of candidateUrls) {
-    const expected = createHmac("sha1", authToken)
-      .update(Buffer.from(url + sortedConcat, "utf-8"))
-      .digest("base64");
-    const expectedBuf = Buffer.from(expected);
-    if (
-      expectedBuf.length === provided.length &&
-      timingSafeEqual(expectedBuf, provided)
-    ) {
-      return true;
-    }
-  }
-  return false;
 }
 
 function appBaseUrl(): string {
@@ -128,12 +79,12 @@ export async function POST(req: NextRequest) {
   ];
 
   if (
-    !verifyTwilioSignature(
+    !verifyTwilioSignature({
       candidateUrls,
       params,
-      req.headers.get("x-twilio-signature"),
+      signature: req.headers.get("x-twilio-signature"),
       authToken,
-    )
+    })
   ) {
     console.warn("[sms/inbound] signature verification failed");
     return NextResponse.json({ error: "Bad signature" }, { status: 403 });
@@ -142,11 +93,11 @@ export async function POST(req: NextRequest) {
   const from = params.get("From");
   const to = params.get("To");
   const body = (params.get("Body") ?? "").trim();
-  const firstWord = body.split(/\s+/)[0]?.toUpperCase() ?? "";
-
-  const isStop = STOP_KEYWORDS.has(firstWord);
-  const isStart = START_KEYWORDS.has(firstWord);
-  const isHelp = HELP_KEYWORDS.has(firstWord);
+  const firstWord = body.split(/\s+/)[0]?.toUpperCase() ?? ""; // for logging
+  const intent = classifyInboundSms(body);
+  const isStop = intent === "stop";
+  const isStart = intent === "start";
+  const isHelp = intent === "help";
 
   // Nothing actionable (a real reply / question) — ack with no auto-reply.
   if (!isStop && !isStart && !isHelp) {

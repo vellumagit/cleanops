@@ -6,6 +6,7 @@ import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
 import { createInvoiceCheckoutLink } from "@/lib/square";
 import { createInvoiceCheckoutSession } from "@/lib/stripe-connect";
 import { getOrgCurrency } from "@/lib/org-currency";
+import { outstandingBalanceCents } from "@/lib/invoice-balance";
 
 /**
  * Public server action: mint a Square hosted-checkout URL for the invoice
@@ -78,11 +79,7 @@ export async function startSquareCheckoutAction(formData: FormData) {
     .eq("invoice_id" as never, invoice.id as never)) as unknown as {
     data: Array<{ amount_cents: number; refunded_cents: number | null }> | null;
   };
-  const netPaidCents = (paidRows ?? []).reduce(
-    (s, p) => s + (p.amount_cents ?? 0) - (p.refunded_cents ?? 0),
-    0,
-  );
-  const balanceCents = Math.max(0, invoice.amount_cents - netPaidCents);
+  const balanceCents = outstandingBalanceCents(invoice.amount_cents, paidRows);
   if (balanceCents <= 0) {
     redirect(`/i/${token}?pay_error=already_settled`);
   }

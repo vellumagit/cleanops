@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getOrgCurrency } from "@/lib/org-currency";
+import { netPaidCents, outstandingBalanceCents } from "@/lib/invoice-balance";
 import { formatCurrencyCents, formatDate } from "@/lib/format";
 import { humanizePaymentMethod } from "@/lib/validators/invoice-payment";
 import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
@@ -153,11 +154,8 @@ export default async function PublicInvoicePage({
   // Net of refunds — a refunded payment raises the balance back up, so a
   // refunded invoice shows the correct amount still owed (and matches the pay
   // link, which reopens for the same balance).
-  const paidCents = payments.reduce(
-    (sum, p) => sum + (p.amount_cents ?? 0) - (p.refunded_cents ?? 0),
-    0,
-  );
-  const balanceCents = Math.max(0, invoice.amount_cents - paidCents);
+  const paidCents = netPaidCents(payments);
+  const balanceCents = outstandingBalanceCents(invoice.amount_cents, payments);
   const isVoid = !!invoice.voided_at;
   const isPaid = invoice.status === "paid" || balanceCents === 0;
   // Transparently decrypt the org's default payment_instructions

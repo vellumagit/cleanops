@@ -4,6 +4,7 @@ import { ArrowLeft, Pencil, Ban, ExternalLink, Star } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { netPaidCents, outstandingBalanceCents } from "@/lib/invoice-balance";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { StripePaymentLinkButton } from "./stripe-payment-link-button";
 import { SendInvoiceButton } from "./send-invoice-button";
@@ -157,12 +158,11 @@ export default async function InvoiceDetailPage({
 
   const status = invoice.status as InvoiceStatus;
   // Net of refunds so the balance due reflects money returned to the client.
-  const paidCents =
-    invoice.payments?.reduce(
-      (sum, p) => sum + (p.amount_cents ?? 0) - (p.refunded_cents ?? 0),
-      0,
-    ) ?? 0;
-  const balanceCents = Math.max(0, invoice.amount_cents - paidCents);
+  const paidCents = netPaidCents(invoice.payments);
+  const balanceCents = outstandingBalanceCents(
+    invoice.amount_cents,
+    invoice.payments,
+  );
   const isVoid = !!invoice.voided_at;
   const lineItems = [...(invoice.line_items ?? [])].sort(
     (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0),

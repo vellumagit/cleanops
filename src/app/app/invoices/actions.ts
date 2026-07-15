@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
 import { logAuditEvent } from "@/lib/audit";
+import { netPaidCents } from "@/lib/invoice-balance";
 import { InvoiceSchema } from "@/lib/validators/invoices";
 import { autoInvoiceOnJobComplete } from "@/lib/automations";
 import {
@@ -321,13 +322,7 @@ export async function recordInvoicePaymentAction(
   // Check if the invoice is now fully paid (trigger recomputes status async,
   // so we check the amounts ourselves)
   const totalPaid =
-    (invoice.payments?.reduce(
-      (
-        sum: number,
-        p: { amount_cents: number; refunded_cents: number | null },
-      ) => sum + (p.amount_cents ?? 0) - (p.refunded_cents ?? 0),
-      0,
-    ) ?? 0) + parsed.data.amount_dollars; // amount_dollars is actually cents (schema-transformed)
+    netPaidCents(invoice.payments) + parsed.data.amount_dollars; // amount_dollars is actually cents (schema-transformed)
   if (totalPaid >= invoice.amount_cents) {
     autoOnInvoicePaid(invoice.id);
   }
