@@ -269,7 +269,7 @@ export async function recordInvoicePaymentAction(
   // anyway, but fetching first lets us return a clean error.
   const { data: invoice, error: invErr } = await supabase
     .from("invoices")
-    .select("id, organization_id, amount_cents, voided_at, payments:invoice_payments ( amount_cents )")
+    .select("id, organization_id, amount_cents, voided_at, payments:invoice_payments ( amount_cents, refunded_cents )")
     .eq("id", invoiceId)
     .maybeSingle();
   if (invErr || !invoice) {
@@ -322,7 +322,10 @@ export async function recordInvoicePaymentAction(
   // so we check the amounts ourselves)
   const totalPaid =
     (invoice.payments?.reduce(
-      (sum: number, p: { amount_cents: number }) => sum + (p.amount_cents ?? 0),
+      (
+        sum: number,
+        p: { amount_cents: number; refunded_cents: number | null },
+      ) => sum + (p.amount_cents ?? 0) - (p.refunded_cents ?? 0),
       0,
     ) ?? 0) + parsed.data.amount_dollars; // amount_dollars is actually cents (schema-transformed)
   if (totalPaid >= invoice.amount_cents) {

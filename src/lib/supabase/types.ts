@@ -2090,6 +2090,7 @@ export type Database = {
           received_at: string
           recorded_by: string | null
           reference: string | null
+          refunded_cents: number
         }
         Insert: {
           amount_cents: number
@@ -2105,6 +2106,7 @@ export type Database = {
           received_at?: string
           recorded_by?: string | null
           reference?: string | null
+          refunded_cents?: number
         }
         Update: {
           amount_cents?: number
@@ -2120,6 +2122,7 @@ export type Database = {
           received_at?: string
           recorded_by?: string | null
           reference?: string | null
+          refunded_cents?: number
         }
         Relationships: [
           {
@@ -2235,6 +2238,7 @@ export type Database = {
         Row: {
           amount_cents: number
           archived_at: string | null
+          billing_period_key: string | null
           booking_id: string | null
           client_id: string
           created_at: string
@@ -2268,6 +2272,7 @@ export type Database = {
         Insert: {
           amount_cents?: number
           archived_at?: string | null
+          billing_period_key?: string | null
           booking_id?: string | null
           client_id: string
           created_at?: string
@@ -2301,6 +2306,7 @@ export type Database = {
         Update: {
           amount_cents?: number
           archived_at?: string | null
+          billing_period_key?: string | null
           booking_id?: string | null
           client_id?: string
           created_at?: string

@@ -86,7 +86,7 @@ export default async function InvoiceDetailPage({
         booking:bookings!booking_id ( id, scheduled_at, service_type ),
         line_items:invoice_line_items ( id, label, quantity, unit_price_cents, sort_order ),
         payments:invoice_payments (
-          id, amount_cents, method, reference, received_at, notes,
+          id, amount_cents, refunded_cents, method, reference, received_at, notes,
           provider, provider_payment_id
         )
       `,
@@ -156,8 +156,12 @@ export default async function InvoiceDetailPage({
     autoSendData?.auto_send_state === "scheduled" && Boolean(autoSendData?.auto_send_at);
 
   const status = invoice.status as InvoiceStatus;
+  // Net of refunds so the balance due reflects money returned to the client.
   const paidCents =
-    invoice.payments?.reduce((sum, p) => sum + (p.amount_cents ?? 0), 0) ?? 0;
+    invoice.payments?.reduce(
+      (sum, p) => sum + (p.amount_cents ?? 0) - (p.refunded_cents ?? 0),
+      0,
+    ) ?? 0;
   const balanceCents = Math.max(0, invoice.amount_cents - paidCents);
   const isVoid = !!invoice.voided_at;
   const lineItems = [...(invoice.line_items ?? [])].sort(

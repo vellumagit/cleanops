@@ -80,15 +80,22 @@ export default async function ClientStatementPage({
     const invoiceIds = invoices.map((inv) => inv.id);
     const paymentsResult = await (supabase
       .from("invoice_payments" as never)
-      .select("invoice_id, amount_cents")
+      .select("invoice_id, amount_cents, refunded_cents")
       .in("invoice_id" as never, invoiceIds as never)) as unknown as {
-      data: Array<{ invoice_id: string; amount_cents: number }> | null;
+      data: Array<{
+        invoice_id: string;
+        amount_cents: number;
+        refunded_cents: number | null;
+      }> | null;
       error: unknown;
     };
     for (const p of paymentsResult.data ?? []) {
+      // Net of refunds so each row's balance reflects money returned.
       paidByInvoice.set(
         p.invoice_id,
-        (paidByInvoice.get(p.invoice_id) ?? 0) + p.amount_cents,
+        (paidByInvoice.get(p.invoice_id) ?? 0) +
+          p.amount_cents -
+          (p.refunded_cents ?? 0),
       );
     }
   }

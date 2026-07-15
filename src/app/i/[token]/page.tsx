@@ -65,7 +65,7 @@ export default async function PublicInvoicePage({
           id, label, quantity, unit_price_cents, sort_order
         ),
         payments:invoice_payments (
-          id, amount_cents, method, received_at, provider
+          id, amount_cents, refunded_cents, method, received_at, provider
         )
       `,
     )
@@ -150,7 +150,13 @@ export default async function PublicInvoicePage({
     (a, b) =>
       new Date(b.received_at).getTime() - new Date(a.received_at).getTime(),
   );
-  const paidCents = payments.reduce((sum, p) => sum + (p.amount_cents ?? 0), 0);
+  // Net of refunds — a refunded payment raises the balance back up, so a
+  // refunded invoice shows the correct amount still owed (and matches the pay
+  // link, which reopens for the same balance).
+  const paidCents = payments.reduce(
+    (sum, p) => sum + (p.amount_cents ?? 0) - (p.refunded_cents ?? 0),
+    0,
+  );
   const balanceCents = Math.max(0, invoice.amount_cents - paidCents);
   const isVoid = !!invoice.voided_at;
   const isPaid = invoice.status === "paid" || balanceCents === 0;
