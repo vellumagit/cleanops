@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { encryptSecret } from "@/lib/crypto";
-import { exchangeSageCodeForTokens } from "@/lib/sage";
+import { exchangeSageCodeForTokens, consumeSageOAuthState } from "@/lib/sage";
 import { getEnv } from "@/lib/env";
 
 /**
@@ -44,16 +44,29 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(`${env.NEXT_PUBLIC_SITE_URL}/login`);
   }
 
+  // Consume the single-use state token → (org, membership). Rejects a forged or
+  // expired callback that wasn't initiated by our connect flow.
+  let stateData: { organizationId: string; membershipId: string };
+  try {
+    stateData = await consumeSageOAuthState(state);
+  } catch {
+    return NextResponse.redirect(
+      `${redirectBase}?sage_error=${encodeURIComponent("Invalid or expired session — please try again")}`,
+    );
+  }
+
+  // Defense in depth: the membership named by the state must still belong to
+  // the signed-in user and be an active owner/admin of the same org.
   const { data: membership } = await supabase
     .from("memberships")
     .select("id, organization_id, role")
-    .eq("id", state)
+    .eq("id", stateData.membershipId)
     .eq("profile_id", user.id)
     .in("role", ["owner", "admin"])
     .eq("status", "active")
     .maybeSingle();
 
-  if (!membership) {
+  if (!membership || membership.organization_id !== stateData.organizationId) {
     return NextResponse.redirect(
       `${redirectBase}?sage_error=${encodeURIComponent("Invalid session — please try again")}`,
     );

@@ -16,6 +16,7 @@
  */
 
 import "server-only";
+import { randomBytes } from "node:crypto";
 import { getEnv } from "@/lib/env";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -42,6 +43,62 @@ export function buildSageOAuthUrl(state: string): string {
     state,
   });
   return `${SAGE_AUTH_URL}?${params.toString()}`;
+}
+
+/**
+ * Mint a single-use CSRF state token for the Sage OAuth handshake, tied to
+ * (org, membership) with a 10-minute TTL. Mirrors the Stripe/Square flows —
+ * the previous code passed the (stable) membership id as the state, a weaker
+ * guard. Persisted in sage_oauth_states; consumed once at callback.
+ */
+export async function issueSageOAuthState(args: {
+  organizationId: string;
+  membershipId: string;
+}): Promise<string> {
+  const state = randomBytes(32).toString("base64url");
+  const admin = createSupabaseAdminClient();
+  await admin.from("sage_oauth_states" as never).insert({
+    state,
+    organization_id: args.organizationId,
+    membership_id: args.membershipId,
+  } as never);
+  return state;
+}
+
+/**
+ * Consume a Sage OAuth state token — returns the associated (org, membership)
+ * and deletes the row so it can't be replayed. Throws on unknown/expired state.
+ */
+export async function consumeSageOAuthState(
+  state: string,
+): Promise<{ organizationId: string; membershipId: string }> {
+  const admin = createSupabaseAdminClient();
+  const { data } = (await admin
+    .from("sage_oauth_states" as never)
+    .select("organization_id, membership_id, expires_at")
+    .eq("state" as never, state as never)
+    .maybeSingle()) as unknown as {
+    data: {
+      organization_id: string;
+      membership_id: string;
+      expires_at: string;
+    } | null;
+  };
+
+  if (!data) throw new Error("Unknown OAuth state");
+  if (new Date(data.expires_at) < new Date()) {
+    throw new Error("OAuth state expired");
+  }
+
+  await admin
+    .from("sage_oauth_states" as never)
+    .delete()
+    .eq("state" as never, state as never);
+
+  return {
+    organizationId: data.organization_id,
+    membershipId: data.membership_id,
+  };
 }
 
 /**
@@ -146,6 +203,7 @@ type SageConnection = {
   refresh_token_ciphertext: string;
   token_expires_at: string;
   status: string;
+  metadata: Record<string, unknown> | null;
 };
 
 /**
@@ -162,13 +220,118 @@ export async function getSageConnection(
   const { data } = (await admin
     .from("integration_connections" as never)
     .select(
-      "id, organization_id, access_token_ciphertext, refresh_token_ciphertext, token_expires_at, status",
+      "id, organization_id, access_token_ciphertext, refresh_token_ciphertext, token_expires_at, status, metadata",
     )
     .eq("organization_id" as never, organizationId as never)
     .eq("provider" as never, "sage" as never)
     .eq("status" as never, "active" as never)
     .maybeSingle()) as unknown as { data: SageConnection | null };
   return data ?? null;
+}
+
+/**
+ * Read → merge → write a patch into integration_connections.metadata. Used to
+ * cache Sage lookups (sales ledger account, tax-rate ids) so we don't refetch
+ * them on every invoice sync.
+ */
+async function mergeConnectionMetadata(
+  connectionId: string,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  const admin = createSupabaseAdminClient();
+  const { data } = (await admin
+    .from("integration_connections" as never)
+    .select("metadata")
+    .eq("id" as never, connectionId as never)
+    .maybeSingle()) as unknown as {
+    data: { metadata: Record<string, unknown> | null } | null;
+  };
+  const merged = { ...(data?.metadata ?? {}), ...patch };
+  await admin
+    .from("integration_connections" as never)
+    .update({ metadata: merged } as never)
+    .eq("id" as never, connectionId as never);
+}
+
+type SageLedgerAccount = {
+  id: string;
+  displayed_as?: string | null;
+  nominal_code?: string | null;
+  visible_in_sales?: boolean | null;
+  ledger_account_type?: { displayed_as?: string | null } | null;
+};
+
+/**
+ * Resolve the org's SALES ledger account id — Sage requires one on every
+ * sales-invoice line for its double-entry books. Cached on the connection
+ * metadata after the first lookup. Returns null if Sage exposes no
+ * sales-suitable account (the caller then aborts the sync with a clear log).
+ */
+async function getSalesLedgerAccountId(
+  conn: SageConnection,
+): Promise<string | null> {
+  const cached = (conn.metadata ?? {})["sales_ledger_account_id"];
+  if (typeof cached === "string" && cached) return cached;
+
+  const resp = await sageFetch<{ $items?: SageLedgerAccount[] }>(
+    conn.organization_id,
+    "/ledger_accounts?items_per_page=200&attributes=all",
+  );
+  const items = resp.$items ?? [];
+  const looksLikeSales = (a: SageLedgerAccount) =>
+    /sale|revenue|income/i.test(a.displayed_as ?? "") ||
+    /sale|revenue|income/i.test(a.ledger_account_type?.displayed_as ?? "");
+  const chosen =
+    items.find((a) => a.nominal_code === "4000") ??
+    items.find((a) => a.visible_in_sales === true && looksLikeSales(a)) ??
+    items.find((a) => a.visible_in_sales === true) ??
+    items.find(looksLikeSales) ??
+    null;
+
+  if (chosen?.id) {
+    await mergeConnectionMetadata(conn.id, {
+      sales_ledger_account_id: chosen.id,
+    });
+    return chosen.id;
+  }
+  return null;
+}
+
+type SageTaxRate = {
+  id: string;
+  percentage?: number | null;
+  displayed_as?: string | null;
+};
+
+/**
+ * Resolve the Sage tax_rate_id whose percentage matches the Sollos rate (bps),
+ * so the synced invoice total includes tax and reconciles with Sollos. Cached
+ * per-rate on the connection metadata. Returns null when tax is zero or no Sage
+ * rate matches (caller then syncs without tax and logs a warning).
+ */
+async function getTaxRateIdForBps(
+  conn: SageConnection,
+  bps: number | null | undefined,
+): Promise<string | null> {
+  if (!bps || bps <= 0) return null;
+  const pct = bps / 100;
+  const cacheKey = `tax_rate_id_${bps}`;
+  const cached = (conn.metadata ?? {})[cacheKey];
+  if (typeof cached === "string" && cached) return cached;
+
+  const resp = await sageFetch<{ $items?: SageTaxRate[] }>(
+    conn.organization_id,
+    "/tax_rates?items_per_page=200",
+  );
+  const match = (resp.$items ?? []).find(
+    (t) =>
+      typeof t.percentage === "number" && Math.abs(t.percentage - pct) < 0.001,
+  );
+  if (match?.id) {
+    await mergeConnectionMetadata(conn.id, { [cacheKey]: match.id });
+    return match.id;
+  }
+  return null;
 }
 
 /**
@@ -482,6 +645,26 @@ export async function pushInvoiceToSage(
     new Date(Date.now() + 14 * 86400_000).toISOString().slice(0, 10);
 
   try {
+    // Sage requires a sales ledger account on every invoice line. Resolve (and
+    // cache) the org's; abort with a clear log if Sage has none configured.
+    const ledgerAccountId = await getSalesLedgerAccountId(conn);
+    if (!ledgerAccountId) {
+      console.error(
+        `[sage] pushInvoiceToSage: no sales ledger account found in Sage for org ${invoice.organization_id} — invoice ${invoiceId} not synced`,
+      );
+      return null;
+    }
+
+    // Map the Sollos tax rate to a Sage tax_rate_id so the synced invoice total
+    // INCLUDES tax and reconciles with Sollos. If Sage has no matching rate,
+    // sync without tax and warn (totals will understate until one is set up).
+    const taxRateId = await getTaxRateIdForBps(conn, invoice.tax_rate_bps);
+    if (invoice.tax_rate_bps && invoice.tax_rate_bps > 0 && !taxRateId) {
+      console.warn(
+        `[sage] pushInvoiceToSage: no Sage tax rate matches ${invoice.tax_rate_bps} bps for org ${invoice.organization_id} — syncing invoice ${invoiceId} WITHOUT tax. Configure a matching tax rate in Sage.`,
+      );
+    }
+
     const result = await sageFetch<SageSalesInvoice>(
       invoice.organization_id,
       "/sales_invoices",
@@ -493,16 +676,12 @@ export async function pushInvoiceToSage(
             date: invoiceDate,
             due_date: dueDate,
             reference: invoice.number ?? undefined,
-            // Line totals without Sage-side tax ledgers — we've already
-            // calculated tax in Sollos. Sage accepts invoice_lines with
-            // pre-tax unit_price; Sage tax setup would add on top but
-            // we omit the tax_rate_id so Sage treats these as tax-free
-            // on its end (tax is reflected in the Sollos total).
             invoice_lines: sageLines.map((l) => ({
               description: l.description,
               quantity: l.quantity,
               unit_price: l.unit_price,
-              ledger_account_id: undefined, // owner's Sage default
+              ledger_account_id: ledgerAccountId,
+              ...(taxRateId ? { tax_rate_id: taxRateId } : {}),
             })),
           },
         }),
