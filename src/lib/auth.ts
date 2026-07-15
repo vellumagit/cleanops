@@ -140,7 +140,14 @@ export async function requireMembership(
   const membership = await getCurrentMembership();
 
   if (!membership) {
-    redirect("/login");
+    // Distinguish "not signed in" from "signed in but has no ACTIVE membership"
+    // (access removed, membership disabled, or invite not yet accepted). The
+    // latter used to bounce to /login — which loops (they CAN sign in, they
+    // just have no active org) and, when hit from a server action, surfaced as
+    // the generic error boundary instead of a clear message. Send them to a
+    // dedicated "no access" screen instead.
+    const userId = await getCurrentUserId();
+    redirect(userId ? "/no-access" : "/login");
   }
 
   if (allowed && !allowed.includes(membership.role)) {
