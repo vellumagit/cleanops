@@ -10,6 +10,10 @@ import { redirectAfterSetup } from "@/lib/setup-return";
 import { normalizePhone } from "@/lib/phone";
 import { notify } from "@/lib/notify";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import {
+  updateCalendarEvent,
+  syncMemberCalendarEvents,
+} from "@/lib/google-calendar";
 
 /**
  * Generate a URL-safe token for the GBP redirect / unsubscribe links.
@@ -258,6 +262,72 @@ export async function updateClientAction(
       sms_opted_in: smsOptedIn,
     },
   });
+
+  // If the client's NAME changed, the client's name is baked into every
+  // booking's Google Calendar event title ("{service} — {name}"), so those
+  // events still show the old name until re-synced. Re-push the calendar events
+  // for this client's upcoming bookings with the new name. Awaited (a server
+  // action's un-awaited work can be cut off after the redirect); best-effort
+  // per booking — the reconcile crons self-heal anything that slips through.
+  if (previous && previous.name !== parsed.data.name) {
+    const now = new Date().toISOString();
+    const { data: upcoming } = (await supabase
+      .from("bookings")
+      .select(
+        "id, google_calendar_event_id, scheduled_at, duration_minutes, service_type, address, notes",
+      )
+      .eq("client_id", id)
+      .eq("organization_id", membership.organization_id)
+      .in("status", ["confirmed", "in_progress"])
+      .gte("scheduled_at", now)) as unknown as {
+      data: Array<{
+        id: string;
+        google_calendar_event_id: string | null;
+        scheduled_at: string;
+        duration_minutes: number;
+        service_type: string;
+        address: string | null;
+        notes: string | null;
+      }> | null;
+    };
+
+    await Promise.all(
+      (upcoming ?? []).map(async (b) => {
+        const bookingObj = {
+          id: b.id,
+          scheduled_at: b.scheduled_at,
+          duration_minutes: b.duration_minutes,
+          service_type: b.service_type,
+          address: b.address,
+          notes: b.notes,
+          client_name: parsed.data.name,
+        };
+        // Org calendar event.
+        if (b.google_calendar_event_id) {
+          await updateCalendarEvent(membership.organization_id, {
+            ...bookingObj,
+            google_calendar_event_id: b.google_calendar_event_id,
+          }).catch((e) =>
+            console.error("[gcal] client-rename org resync failed:", e),
+          );
+        }
+        // Each assigned member's personal calendar.
+        const { data: assignees } = (await supabase
+          .from("booking_assignees")
+          .select("membership_id")
+          .eq("booking_id", b.id)) as unknown as {
+          data: Array<{ membership_id: string }> | null;
+        };
+        await syncMemberCalendarEvents(
+          b.id,
+          (assignees ?? []).map((a) => a.membership_id),
+          bookingObj,
+        ).catch((e) =>
+          console.error("[gcal/member] client-rename resync failed:", e),
+        );
+      }),
+    );
+  }
 
   // Fire-and-forget: notify only when a referrer is newly added or swapped.
   const newReferrerId = parsed.data.referred_by_client_id ?? null;
