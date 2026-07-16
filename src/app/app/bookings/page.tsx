@@ -153,6 +153,53 @@ export default async function BookingsPage({
     }
   }
 
+  // Subcontractor coverage — for bookings with no member assigned, surface who
+  // claimed the shift offer (subcontractors can't occupy the member assigned
+  // slot, so those bookings would otherwise read "Unassigned").
+  const coverageMap = new Map<string, string>();
+  const uncoveredIds = (data ?? []).filter((b) => !b.assigned).map((b) => b.id);
+  if (uncoveredIds.length > 0) {
+    const { data: filledOffers } = (await supabase
+      .from("job_offers")
+      .select("booking_id, filled_contact_id")
+      .in("booking_id", uncoveredIds)
+      .eq("status", "filled")) as unknown as {
+      data: Array<{
+        booking_id: string | null;
+        filled_contact_id: string | null;
+      }> | null;
+    };
+    const contactIds = [
+      ...new Set(
+        (filledOffers ?? [])
+          .map((o) => o.filled_contact_id)
+          .filter((v): v is string => Boolean(v)),
+      ),
+    ];
+    const nameById = new Map<string, string>();
+    if (contactIds.length > 0) {
+      const { data: contacts } = (await supabase
+        .from("freelancer_contacts")
+        .select("id, full_name")
+        .in("id", contactIds)) as unknown as {
+        data: Array<{ id: string; full_name: string | null }> | null;
+      };
+      for (const c of contacts ?? []) {
+        if (c.full_name) nameById.set(c.id, c.full_name);
+      }
+    }
+    for (const o of filledOffers ?? []) {
+      if (
+        o.booking_id &&
+        o.filled_contact_id &&
+        nameById.has(o.filled_contact_id) &&
+        !coverageMap.has(o.booking_id)
+      ) {
+        coverageMap.set(o.booking_id, nameById.get(o.filled_contact_id)!);
+      }
+    }
+  }
+
   const rows: BookingRow[] = (data ?? []).map((b) => ({
     id: b.id,
     scheduled_at: b.scheduled_at,
@@ -163,6 +210,7 @@ export default async function BookingsPage({
     total_cents: b.total_cents,
     client_name: b.client?.name ?? "—",
     assigned_name: b.assigned ? memberDisplayName(b.assigned) : null,
+    covered_by_name: b.assigned ? null : (coverageMap.get(b.id) ?? null),
     assigned_to: b.assigned_to,
     additional_assignee_ids: additionalByBooking.get(b.id) ?? [],
     segment_count: segmentCountByBooking.get(b.id) ?? 0,

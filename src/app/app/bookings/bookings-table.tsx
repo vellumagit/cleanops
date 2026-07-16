@@ -50,6 +50,10 @@ export type BookingRow = {
   total_cents: number;
   client_name: string;
   assigned_name: string | null;
+  /** Name of the subcontractor covering this booking (a claimed shift offer),
+   *  when no member is assigned. Kept separate from assigned_name so it doesn't
+   *  pollute the member assignee filter. */
+  covered_by_name: string | null;
   /** Primary assignee membership id — feeds the Assign dialog's
    *  pre-filled radio so opening it shows the current state. */
   assigned_to: string | null;
@@ -571,6 +575,11 @@ function TableView({
                       <span className="text-muted-foreground">
                         {r.assigned_name}
                       </span>
+                    ) : r.covered_by_name ? (
+                      <span className="text-muted-foreground">
+                        {r.covered_by_name}
+                        <span className="ml-1 text-xs">(subcontractor)</span>
+                      </span>
                     ) : (
                       <AssignedCell row={r} canEdit={canEdit} />
                     )}
@@ -727,6 +736,13 @@ function CardsView({
                     <User className="h-3 w-3 shrink-0" />
                     {r.assigned_name ? (
                       <span>{r.assigned_name}</span>
+                    ) : r.covered_by_name ? (
+                      <span>
+                        {r.covered_by_name}{" "}
+                        <span className="text-xs text-muted-foreground">
+                          (subcontractor)
+                        </span>
+                      </span>
                     ) : (
                       <span className="text-amber-500 font-medium">
                         Unassigned
