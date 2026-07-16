@@ -959,11 +959,9 @@ export function BookingForm({
             <FormSelect
               id="status"
               name="status"
-              defaultValue={v.status ?? defaults?.status ?? "pending"}
+              defaultValue={v.status ?? defaults?.status ?? "confirmed"}
             >
-              <option value="pending">Pending</option>
               <option value="confirmed">Confirmed</option>
-              <option value="en_route">En route</option>
               <option value="in_progress">In progress</option>
               <option value="completed">Completed</option>
               <option value="cancelled">Cancelled</option>

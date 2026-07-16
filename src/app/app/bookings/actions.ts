@@ -44,7 +44,7 @@ function readFormValues(formData: FormData) {
     scheduled_at: String(formData.get("scheduled_at") ?? ""),
     duration_minutes: String(formData.get("duration_minutes") ?? ""),
     service_type: String(formData.get("service_type") ?? "standard"),
-    status: String(formData.get("status") ?? "pending"),
+    status: String(formData.get("status") ?? "confirmed"),
     total_cents: String(formData.get("total_cents") ?? ""),
     hourly_rate_cents: String(formData.get("hourly_rate_cents") ?? ""),
     address: String(formData.get("address") ?? ""),
@@ -1880,7 +1880,7 @@ export async function duplicateBookingAction(id: string) {
       service_type: source.service_type as ServiceTypeEnum,
       service_type_id: source.service_type_id,
       service_type_label: source.service_type_label,
-      status: "pending" as const,
+      status: "confirmed" as const,
       total_cents: source.total_cents,
       hourly_rate_cents: source.hourly_rate_cents ?? null,
       address: source.address ?? null,
@@ -2009,6 +2009,109 @@ export async function markBookingCompleteAction(id: string) {
   revalidatePath("/app/bookings");
   revalidatePath(`/app/bookings/${id}`);
   redirect(`/app/bookings/${id}`);
+}
+
+// ─── Quick status set (bookings-list dropdown) ────────────────────────────────
+
+/**
+ * Forward-only transitions offered by the list dropdown. completed + cancelled
+ * are terminal (no entry) — reverting a completed booking isn't offered here.
+ */
+const STATUS_DROPDOWN_TRANSITIONS: Record<string, readonly string[]> = {
+  confirmed: ["in_progress", "completed", "cancelled"],
+  in_progress: ["completed", "cancelled"],
+};
+
+/**
+ * Set a booking's status straight from the list. Enforces the forward+cancel
+ * state machine and runs the SAME side-effects as the dedicated paths:
+ * → completed auto-invoices; → cancelled cleans up the calendar events.
+ */
+export async function setBookingStatusAction(
+  formData: FormData,
+): Promise<{ ok: boolean; error?: string }> {
+  const id = String(formData.get("id") ?? "").trim();
+  const target = String(formData.get("status") ?? "").trim();
+  if (!id) return { ok: false, error: "Missing booking." };
+  if (!["confirmed", "in_progress", "completed", "cancelled"].includes(target)) {
+    return { ok: false, error: "Invalid status." };
+  }
+
+  const { membership, supabase } = await getActionContext();
+  if (!["owner", "admin", "manager"].includes(membership.role)) {
+    return { ok: false, error: "Not authorized." };
+  }
+
+  const { data: booking } = (await supabase
+    .from("bookings")
+    .select(
+      "id, status, google_calendar_event_id, scheduled_at, duration_minutes, service_type, address, notes, client:clients ( name )",
+    )
+    .eq("id", id)
+    .eq("organization_id", membership.organization_id)
+    .maybeSingle()) as unknown as {
+    data: {
+      status: string;
+      google_calendar_event_id: string | null;
+      scheduled_at: string;
+      duration_minutes: number;
+      service_type: string;
+      address: string | null;
+      notes: string | null;
+      client: { name: string } | null;
+    } | null;
+  };
+  if (!booking) return { ok: false, error: "Booking not found." };
+
+  if (booking.status === target) return { ok: true };
+  const allowed = STATUS_DROPDOWN_TRANSITIONS[booking.status] ?? [];
+  if (!allowed.includes(target)) {
+    return {
+      ok: false,
+      error: `Can't change a ${booking.status.replace("_", " ")} booking to ${target.replace("_", " ")} here.`,
+    };
+  }
+
+  const { error } = await supabase
+    .from("bookings")
+    .update({
+      status: target as "confirmed" | "in_progress" | "completed" | "cancelled",
+    })
+    .eq("id", id)
+    .eq("organization_id", membership.organization_id);
+  if (error) return { ok: false, error: error.message };
+
+  if (target === "completed") {
+    await autoInvoiceOnJobComplete(id);
+  } else if (target === "cancelled") {
+    // Calendar hygiene — mirror the edit-form cancellation cleanup so a
+    // cancelled job doesn't linger on anyone's Google Calendar.
+    if (booking.google_calendar_event_id) {
+      await deleteCalendarEvent(
+        membership.organization_id,
+        booking.google_calendar_event_id,
+      ).catch((e) => console.error("[gcal] status-cancel cleanup failed:", e));
+      await supabase
+        .from("bookings")
+        .update({ google_calendar_event_id: null })
+        .eq("id", id);
+    }
+    await syncMemberCalendarEvents(id, [], {
+      id,
+      scheduled_at: booking.scheduled_at,
+      duration_minutes: booking.duration_minutes,
+      service_type: booking.service_type,
+      address: booking.address ?? null,
+      notes: booking.notes ?? null,
+      client_name: booking.client?.name ?? "",
+    }).catch((e) =>
+      console.error("[gcal/member] status-cancel cleanup failed:", e),
+    );
+  }
+
+  revalidatePath("/app/bookings");
+  revalidatePath(`/app/bookings/${id}`);
+  return { ok: true };
 }
 
 export async function deleteBookingAction(formData: FormData) {

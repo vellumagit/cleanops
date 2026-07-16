@@ -173,7 +173,7 @@ export async function POST(request: NextRequest) {
       service_type: serviceCols.service_type,
       service_type_id: serviceCols.service_type_id,
       service_type_label: serviceCols.service_type_label,
-      status: (body.status as string) ?? "pending",
+      status: (body.status as string) ?? "confirmed",
       total_cents: (body.total_cents as number) ?? 0,
       hourly_rate_cents: (body.hourly_rate_cents as number) ?? null,
       address: (body.address as string) ?? null,

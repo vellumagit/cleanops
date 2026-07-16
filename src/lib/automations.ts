@@ -684,7 +684,7 @@ export async function autoBookingOnEstimateApproval(estimateId: string) {
       scheduled_at: tomorrow.toISOString(),
       duration_minutes: 120,
       service_type: serviceType,
-      status: "pending",
+      status: "confirmed",
       total_cents: estimate.total_cents,
       notes: estimate.service_description ?? "",
     }).select("id").single() as unknown as Promise<{
@@ -5088,7 +5088,10 @@ export async function autoCompletePastBookings(): Promise<{ completed: number }>
       .from("bookings")
       .update({ status: "completed" })
       .eq("organization_id", org.id)
-      .in("status", ["pending", "confirmed"])
+      // Auto-complete past-due jobs that are still confirmed OR in progress
+      // (e.g. a subcontractor whose time is up, or someone who forgot to
+      // clock out). Completed/cancelled are terminal and untouched.
+      .in("status", ["confirmed", "in_progress"])
       .lt("scheduled_at", cutoff)
       .select("id") as unknown as {
       data: Array<{ id: string }> | null;

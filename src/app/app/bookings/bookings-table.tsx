@@ -15,11 +15,7 @@ import {
   X,
   ChevronDown,
 } from "lucide-react";
-import {
-  StatusBadge,
-  bookingStatusTone,
-  formatBookingStatus,
-} from "@/components/status-badge";
+import { BookingStatusDropdown } from "./booking-status-dropdown";
 import {
   formatCurrencyCents,
   formatDateTime,
@@ -92,12 +88,7 @@ type DateFilter = (typeof DATE_FILTERS)[number]["key"];
 function matchesTab(row: BookingRow, tab: StatusTab): boolean {
   if (tab === "all") return true;
   if (tab === "upcoming")
-    return (
-      (row.status === "pending" ||
-        row.status === "confirmed" ||
-        row.status === "en_route") &&
-      new Date(row.scheduled_at) >= new Date()
-    );
+    return row.status === "confirmed" && new Date(row.scheduled_at) >= new Date();
   return row.status === tab;
 }
 
@@ -602,9 +593,11 @@ function TableView({
                   </div>
                 </td>
                 <td className="px-3 py-2.5">
-                  <StatusBadge tone={bookingStatusTone(r.status)}>
-                    {formatBookingStatus(r.status)}
-                  </StatusBadge>
+                  <BookingStatusDropdown
+                    bookingId={r.id}
+                    status={r.status}
+                    canEdit={canEdit}
+                  />
                 </td>
                 <td className="px-3 py-2.5 text-right tabular-nums font-medium">
                   {formatCurrencyCents(r.total_cents)}
@@ -708,9 +701,11 @@ function CardsView({
                       {r.service_type_label ?? humanizeEnum(r.service_type)}
                     </span>
                   </div>
-                  <StatusBadge tone={bookingStatusTone(r.status)}>
-                    {formatBookingStatus(r.status)}
-                  </StatusBadge>
+                  <BookingStatusDropdown
+                    bookingId={r.id}
+                    status={r.status}
+                    canEdit={canEdit}
+                  />
                 </div>
 
                 <div className="grid gap-1 text-xs text-muted-foreground">
