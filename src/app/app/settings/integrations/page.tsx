@@ -11,6 +11,7 @@ import {
   isSquareConfigured,
   isGoogleCalendarConfigured,
   isSageConfigured,
+  isQuickBooksConfigured,
 } from "@/lib/env";
 import { formatDateTime } from "@/lib/format";
 import {
@@ -21,11 +22,20 @@ import {
   connectSageAction,
   disconnectSageAction,
 } from "./sage-actions";
+import {
+  connectQuickBooksAction,
+  disconnectQuickBooksAction,
+} from "./quickbooks-actions";
 import { StripeDisconnectButton } from "./stripe-connect-actions";
 
 export const metadata = { title: "Integrations" };
 
-type ProviderKey = "stripe" | "square" | "google_calendar" | "sage";
+type ProviderKey =
+  | "stripe"
+  | "square"
+  | "google_calendar"
+  | "sage"
+  | "quickbooks";
 
 type ProviderCard = {
   key: ProviderKey;
@@ -114,6 +124,15 @@ export default async function IntegrationsPage() {
 
   const accountingCards: ProviderCard[] = [
     {
+      key: "quickbooks",
+      name: "QuickBooks Online",
+      blurb:
+        "Sync invoices + customers into QuickBooks so your bookkeeper isn't doing double entry.",
+      platformReady: isQuickBooksConfigured(),
+      accentClass: "from-green-500/10 to-emerald-500/10",
+      category: "accounting",
+    },
+    {
       key: "sage",
       name: "Sage Accounting",
       blurb:
@@ -141,7 +160,21 @@ export default async function IntegrationsPage() {
     const isSquare = card.key === "square";
     const isGcal = card.key === "google_calendar";
     const isSage = card.key === "sage";
-    const hasLiveOAuth = isGcal || isSage || isStripe || isSquare;
+    const isQuickBooks = card.key === "quickbooks";
+    const hasLiveOAuth =
+      isGcal || isSage || isQuickBooks || isStripe || isSquare;
+
+    // Server-action pair for the generic OAuth providers (gcal / sage / qbo).
+    const connectAction = isGcal
+      ? connectGoogleCalendarAction
+      : isQuickBooks
+        ? connectQuickBooksAction
+        : connectSageAction;
+    const disconnectAction = isGcal
+      ? disconnectGoogleCalendarAction
+      : isQuickBooks
+        ? disconnectQuickBooksAction
+        : disconnectSageAction;
 
     // Stripe state lives on organizations, not integration_connections
     const stripeConnected = Boolean(stripeInfo?.stripe_account_id);
@@ -300,7 +333,7 @@ export default async function IntegrationsPage() {
                         </button>
                       </form>
                     )}
-                    <form action={isGcal ? disconnectGoogleCalendarAction : disconnectSageAction}>
+                    <form action={disconnectAction}>
                       <button
                         type="submit"
                         className="inline-flex w-full items-center justify-center gap-1 rounded-md border border-border bg-background px-3 py-2 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
@@ -337,7 +370,7 @@ export default async function IntegrationsPage() {
                   Connect {card.name}
                 </Link>
               ) : hasLiveOAuth ? (
-                <form action={isGcal ? connectGoogleCalendarAction : connectSageAction}>
+                <form action={connectAction}>
                   <button
                     type="submit"
                     className="inline-flex w-full items-center justify-center rounded-md bg-foreground px-3 py-2 text-xs font-medium text-background hover:bg-foreground/90 transition-colors"

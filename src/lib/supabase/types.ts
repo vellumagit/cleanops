@@ -2251,6 +2251,7 @@ export type Database = {
           payment_instructions: string | null
           public_token: string | null
           public_token_expires_at: string | null
+          quickbooks_invoice_id: string | null
           review_token: string | null
           sage_invoice_id: string | null
           sent_at: string | null
@@ -2285,6 +2286,7 @@ export type Database = {
           payment_instructions?: string | null
           public_token?: string | null
           public_token_expires_at?: string | null
+          quickbooks_invoice_id?: string | null
           review_token?: string | null
           sage_invoice_id?: string | null
           sent_at?: string | null
@@ -2319,6 +2321,7 @@ export type Database = {
           payment_instructions?: string | null
           public_token?: string | null
           public_token_expires_at?: string | null
+          quickbooks_invoice_id?: string | null
           review_token?: string | null
           sage_invoice_id?: string | null
           sent_at?: string | null

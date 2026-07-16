@@ -12,6 +12,7 @@ import { HoldAutoSendButton } from "./hold-auto-send-button";
 import { AutoSendNotice } from "./auto-send-notice";
 import { ResendInvoiceButton } from "./resend-invoice-button";
 import { SyncSageButton } from "./sync-sage-button";
+import { SyncQuickBooksButton } from "./sync-quickbooks-button";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
 import {
@@ -118,6 +119,24 @@ export default async function InvoiceDetailPage({
     data: { sage_invoice_id: string | null } | null;
   };
   const sageSynced = Boolean(sageInvRow?.sage_invoice_id);
+
+  // Same for QuickBooks — show its Sync button only when connected.
+  const { data: qbConn } = (await admin
+    .from("integration_connections" as never)
+    .select("id")
+    .eq("organization_id" as never, membership.organization_id as never)
+    .eq("provider" as never, "quickbooks" as never)
+    .eq("status" as never, "active" as never)
+    .maybeSingle()) as unknown as { data: { id: string } | null };
+  const qbConnected = Boolean(qbConn);
+  const { data: qbInvRow } = (await admin
+    .from("invoices")
+    .select("quickbooks_invoice_id")
+    .eq("id", id)
+    .maybeSingle()) as unknown as {
+    data: { quickbooks_invoice_id: string | null } | null;
+  };
+  const qbSynced = Boolean(qbInvRow?.quickbooks_invoice_id);
 
   // Fetch tax columns separately (not yet in generated types).
   const { data: taxData } = (await supabase
@@ -266,6 +285,12 @@ export default async function InvoiceDetailPage({
                 <SyncSageButton
                   invoiceId={invoice.id}
                   alreadySynced={sageSynced}
+                />
+              )}
+              {qbConnected && !isVoid && (
+                <SyncQuickBooksButton
+                  invoiceId={invoice.id}
+                  alreadySynced={qbSynced}
                 />
               )}
               {invoice.public_token && (

@@ -18,6 +18,7 @@ import { canCreateData } from "@/lib/subscription";
 import { redirectAfterSetup } from "@/lib/setup-return";
 import { computeTax, parseTaxRate } from "@/lib/invoice-tax";
 import { pushInvoiceToSage } from "@/lib/sage";
+import { pushInvoiceToQuickBooks } from "@/lib/quickbooks";
 import {
   deliverInvoiceEmailCore,
   type SendInvoiceState,
@@ -561,6 +562,10 @@ export async function sendInvoiceAction(
   pushInvoiceToSage(id).catch((err) =>
     console.error("[sage] background sync on send failed:", err),
   );
+  // Same for QuickBooks — no-ops when the org hasn't connected it.
+  pushInvoiceToQuickBooks(id).catch((err) =>
+    console.error("[qbo] background sync on send failed:", err),
+  );
 
   revalidatePath(`/app/invoices/${id}`);
   revalidatePath("/app/invoices");
@@ -666,6 +671,40 @@ export async function syncInvoiceToSageAction(
 
   revalidatePath(`/app/invoices/${id}`);
   return { ok: true, sageInvoiceId: result };
+}
+
+/**
+ * Manual QuickBooks sync for an invoice — the retry path when the background
+ * push on send didn't stick. Idempotent via invoices.quickbooks_invoice_id.
+ */
+export type SyncQuickBooksState = {
+  error?: string;
+  ok?: boolean;
+  qbInvoiceId?: string;
+};
+
+export async function syncInvoiceToQuickBooksAction(
+  _prev: SyncQuickBooksState,
+  formData: FormData,
+): Promise<SyncQuickBooksState> {
+  const id = String(formData.get("id") ?? "");
+  if (!id) return { error: "Missing invoice id." };
+
+  const { membership } = await getActionContext();
+  if (!["owner", "admin", "manager"].includes(membership.role)) {
+    return { error: "Only owners, admins, or managers can push to QuickBooks." };
+  }
+
+  const result = await pushInvoiceToQuickBooks(id);
+  if (!result) {
+    return {
+      error:
+        "Couldn't push to QuickBooks. Check Vercel logs for [qbo] entries — most common causes are an expired connection, or QuickBooks having no Service item to hang the invoice line on.",
+    };
+  }
+
+  revalidatePath(`/app/invoices/${id}`);
+  return { ok: true, qbInvoiceId: result };
 }
 
 /**

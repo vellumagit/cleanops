@@ -16,6 +16,7 @@ import { invoiceSentEmail } from "@/lib/email-templates";
 import { formatCurrencyCents } from "@/lib/format";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { pushInvoiceToSage } from "@/lib/sage";
+import { pushInvoiceToQuickBooks } from "@/lib/quickbooks";
 
 export type SendInvoiceState = {
   error?: string;
@@ -281,6 +282,9 @@ export async function markInvoiceSentSystem(
     if (!error) {
       pushInvoiceToSage(invoiceId).catch((err) =>
         console.error("[invoice-send] Sage sync on auto-send failed:", err),
+      );
+      pushInvoiceToQuickBooks(invoiceId).catch((err) =>
+        console.error("[invoice-send] QuickBooks sync on auto-send failed:", err),
       );
       return { ok: true, messageId: delivered.messageId };
     }
