@@ -405,7 +405,7 @@ export default async function BookingDetailPage({
                     <span>
                       {coveringFreelancerNames.join(", ")}{" "}
                       <span className="font-normal text-muted-foreground">
-                        (freelancer)
+                        (subcontractor)
                       </span>
                     </span>
                   ) : (
@@ -519,7 +519,7 @@ export default async function BookingDetailPage({
           {canEdit && (
             <div className="rounded-lg border border-border bg-card">
               <div className="flex items-center justify-between border-b border-border px-6 py-3">
-                <p className="sollos-label">Freelancer offers</p>
+                <p className="sollos-label">Subcontractor offers</p>
                 <Link
                   href={`/app/bookings/${booking.id}/offer`}
                   className="text-xs font-medium text-primary underline-offset-4 hover:underline"

@@ -261,7 +261,7 @@ export default async function Home() {
           <div>
             <div className="sollos-kicker mb-3 inline-flex items-center gap-1.5 rounded-full border border-border bg-white px-3 py-1 text-xs font-medium text-muted-foreground shadow-sm">
               <UserPlus className="h-3 w-3 text-indigo-500" />
-              Freelancer bench
+              Subcontractor bench
             </div>
             <h2 className="text-2xl font-bold tracking-tight sm:text-3xl">
               Someone called out? Fill the shift in minutes.
@@ -274,7 +274,7 @@ export default async function Home() {
             </p>
             <ul className="mt-5 space-y-2.5">
               {[
-                "One tap to claim — no app download for your freelancers",
+                "One tap to claim — no app download for your subcontractors",
                 "Fill one spot or ten — broadcast as many positions as you need",
                 "See who claimed what, live — no guessing who's coming",
                 "No double-bookings — the system locks it in the moment someone claims",
@@ -466,7 +466,7 @@ export default async function Home() {
                 "Unlimited clients and jobs",
                 "Unlimited invoices",
                 "Team chat and clock-in",
-                "Freelancer bench SMS",
+                "Subcontractor bench SMS",
                 "Google Calendar sync",
                 "Email support",
               ].map((item) => (
@@ -782,7 +782,7 @@ const FEATURES = [
   {
     icon: Users,
     title: "Your team, organized",
-    body: "Add your cleaners, set what they can see, and track their hours automatically. Need last-minute coverage? Text your freelancer backup list in one tap.",
+    body: "Add your cleaners, set what they can see, and track their hours automatically. Need last-minute coverage? Text your subcontractor backup list in one tap.",
   },
   {
     icon: CreditCard,
@@ -847,7 +847,7 @@ const STEPS = [
 const PAIN_POINTS = [
   {
     before: "Cleaner texts you at 7am they can't make a 9am job",
-    after: "Broadcast the open shift to your freelancer bench. Filled in minutes.",
+    after: "Broadcast the open shift to your subcontractor bench. Filled in minutes.",
   },
   {
     before: "Three different sticky notes for one client's specifics",

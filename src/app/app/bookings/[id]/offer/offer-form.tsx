@@ -96,7 +96,7 @@ export function JobOfferForm({ bookingId, contacts, booking }: Props) {
           htmlFor="pay_dollars"
           required
           error={state.errors?.pay_dollars}
-          hint="Flat amount per freelancer."
+          hint="Flat amount per subcontractor."
         >
           <Input
             id="pay_dollars"
@@ -114,7 +114,7 @@ export function JobOfferForm({ bookingId, contacts, booking }: Props) {
           htmlFor="positions_needed"
           required
           error={state.errors?.positions_needed}
-          hint="How many freelancers needed."
+          hint="How many subcontractors needed."
         >
           <Input
             id="positions_needed"
@@ -237,7 +237,7 @@ export function JobOfferForm({ bookingId, contacts, booking }: Props) {
           Cancel
         </Link>
         <SubmitButton pendingLabel="Broadcasting…">
-          Send to {selected.size} freelancer{selected.size === 1 ? "" : "s"}
+          Send to {selected.size} subcontractor{selected.size === 1 ? "" : "s"}
         </SubmitButton>
       </div>
     </form>

@@ -55,7 +55,7 @@ const SAFEGUARDS: Item[] = [
   {
     icon: Gauge,
     title: "Rate limiting on every public surface",
-    body: "Public token URLs (invoices, reviews, freelancer claims, team invites) and auth endpoints are rate-limited per IP to defeat brute-force token enumeration and credential stuffing. A distributed Upstash Redis limiter covers every serverless instance.",
+    body: "Public token URLs (invoices, reviews, subcontractor claims, team invites) and auth endpoints are rate-limited per IP to defeat brute-force token enumeration and credential stuffing. A distributed Upstash Redis limiter covers every serverless instance.",
   },
   {
     icon: FileLock,

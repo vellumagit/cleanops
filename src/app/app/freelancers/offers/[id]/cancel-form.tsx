@@ -10,7 +10,7 @@ export function CancelOfferForm({ id }: { id: string }) {
       onSubmit={(e) => {
         if (
           !window.confirm(
-            "Cancel this offer? Freelancers who still have the link will see a cancelled state.",
+            "Cancel this offer? Subcontractors who still have the link will see a cancelled state.",
           )
         ) {
           e.preventDefault();

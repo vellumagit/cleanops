@@ -50,14 +50,14 @@ export default async function JobOffersPage() {
   return (
     <PageShell
       title="Job offers"
-      description="Every shift you have broadcast to the freelancer bench."
+      description="Every shift you have broadcast to the subcontractor bench."
     >
       {rows.length === 0 ? (
         <div className="sollos-card flex flex-col items-center justify-center border-dashed px-6 py-20 text-center">
           <p className="text-sm font-semibold">No offers yet</p>
           <p className="mt-1 max-w-md text-xs text-muted-foreground">
             Open any booking and use the &ldquo;Send to bench&rdquo; button to
-            broadcast it to your freelancers.
+            broadcast it to your subcontractors.
           </p>
         </div>
       ) : (

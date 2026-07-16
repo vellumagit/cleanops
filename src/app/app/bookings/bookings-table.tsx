@@ -786,7 +786,7 @@ function AssignedCell({
           href={`/app/bookings/${row.id}/offer`}
           onClick={(e) => e.stopPropagation()}
           className="inline-flex items-center gap-1 rounded-md bg-amber-500 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-amber-600 transition-colors"
-          title="Send to freelancer bench"
+          title="Send to subcontractor bench"
         >
           <Users className="h-3 w-3" />
           Bench

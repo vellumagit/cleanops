@@ -48,7 +48,7 @@ const PLANS: PlanDef[] = [
       "Unlimited clients and jobs",
       "Unlimited invoices",
       "Team chat and clock-in",
-      "Freelancer bench SMS",
+      "Subcontractor bench SMS",
       "Google Calendar sync",
       "Email support",
     ],

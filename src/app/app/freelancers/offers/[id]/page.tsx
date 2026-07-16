@@ -200,8 +200,8 @@ export default async function JobOfferDetailPage({
                 Dispatches ({dispatches?.length ?? 0})
               </p>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                One row per freelancer who received this offer. Click the
-                claim link below to preview what the freelancer sees when
+                One row per subcontractor who received this offer. Click the
+                claim link below to preview what the subcontractor sees when
                 they tap their text message.
               </p>
             </div>
@@ -273,20 +273,20 @@ export default async function JobOfferDetailPage({
             <p className="sollos-label">How claiming works</p>
             <ol className="mt-3 space-y-2 text-xs text-muted-foreground">
               <li>
-                1. Each freelancer received a unique link with an entropy
+                1. Each subcontractor received a unique link with an entropy
                 token.
               </li>
               <li>
                 2. {positionsNeeded > 1
-                  ? `Up to ${positionsNeeded} freelancers can claim a spot. The offer stays open until all positions are filled.`
+                  ? `Up to ${positionsNeeded} subcontractors can claim a spot. The offer stays open until all positions are filled.`
                   : <>The first to tap <Copy className="inline h-3 w-3" /> and claim wins — the offer state flips to <code className="font-mono text-[11px]">filled</code> atomically.</>}
               </li>
               <li>
-                3. Freelancers who tap after all spots are taken see a
+                3. Subcontractors who tap after all spots are taken see a
                 &ldquo;sorry, already filled&rdquo; page.
               </li>
               <li>
-                4. Freelancers who claim see the full address and client
+                4. Subcontractors who claim see the full address and client
                 details on their claim page.
               </li>
             </ol>

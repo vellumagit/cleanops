@@ -50,7 +50,7 @@ export default function PrivacyPage() {
               </li>
               <li>
                 <strong>Operational data</strong> — clients, bookings, invoices,
-                estimates, employees, freelancer contacts, chat messages,
+                estimates, employees, subcontractor contacts, chat messages,
                 timesheets, and other records you enter into the product.
               </li>
               <li>
@@ -87,7 +87,7 @@ export default function PrivacyPage() {
                 confirmations, invoice delivery).
               </li>
               <li>
-                Send SMS notifications to freelancer contacts when a shift offer
+                Send SMS notifications to subcontractor contacts when a shift offer
                 is broadcast (via Twilio, when enabled by the organization
                 admin).
               </li>
@@ -237,7 +237,7 @@ export default function PrivacyPage() {
                   </tr>
                   <tr>
                     <td className="py-2 pr-4 font-medium">Twilio</td>
-                    <td className="py-2 pr-4">SMS delivery (freelancer bench)</td>
+                    <td className="py-2 pr-4">SMS delivery (subcontractor bench)</td>
                     <td className="py-2">Phone numbers, message content</td>
                   </tr>
                   <tr>

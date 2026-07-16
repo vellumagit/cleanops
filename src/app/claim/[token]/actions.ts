@@ -207,7 +207,7 @@ export async function claimOfferAction(token: string): Promise<ClaimResult> {
     } | null;
     const orgName =
       (orgRes.data as { name?: string } | null)?.name ?? "Sollos";
-    const freelancerName = contact?.full_name ?? "A freelancer";
+    const freelancerName = contact?.full_name ?? "A subcontractor";
 
     // Notify org management — this is what makes the claim "reflect" for the
     // owner/managers, with a link straight to the booking.

@@ -81,16 +81,16 @@ export function FreelancersTable({
       data={rows}
       columns={columns}
       getRowId={(r) => r.id}
-      searchPlaceholder="Search freelancers by name, phone, or email…"
+      searchPlaceholder="Search subcontractors by name, phone, or email…"
       onRowClick={
         canEdit
           ? (r) => router.push(`/app/freelancers/${r.id}/edit`)
           : undefined
       }
       emptyState={{
-        title: "No freelancers yet",
+        title: "No subcontractors yet",
         description:
-          "Add your first freelancer to the bench with the New freelancer button.",
+          "Add your first subcontractor to the bench with the New subcontractor button.",
       }}
     />
   );

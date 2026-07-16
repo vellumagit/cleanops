@@ -6,7 +6,7 @@ import { FreelancerForm } from "../../freelancer-form";
 import { DeleteFreelancerForm } from "./delete-form";
 import { formatDateTime } from "@/lib/format";
 
-export const metadata = { title: "Edit freelancer" };
+export const metadata = { title: "Edit subcontractor" };
 
 export default async function EditFreelancerPage({
   params,
@@ -39,7 +39,7 @@ export default async function EditFreelancerPage({
     .limit(15);
 
   return (
-    <PageShell title="Edit freelancer">
+    <PageShell title="Edit subcontractor">
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="space-y-6">
           <div className="rounded-lg border border-border bg-card p-6">
@@ -60,7 +60,7 @@ export default async function EditFreelancerPage({
               Danger zone
             </h2>
             <p className="mt-1 text-xs text-muted-foreground">
-              Removing a freelancer detaches them from the bench but keeps
+              Removing a subcontractor detaches them from the bench but keeps
               their offer history intact.
             </p>
             <div className="mt-4">
@@ -92,7 +92,7 @@ export default async function EditFreelancerPage({
             <p className="sollos-label">Recent offers</p>
             {!dispatches || dispatches.length === 0 ? (
               <p className="mt-3 text-xs text-muted-foreground">
-                This freelancer hasn&rsquo;t been offered a shift yet.
+                This subcontractor hasn&rsquo;t been offered a shift yet.
               </p>
             ) : (
               <ul className="mt-3 space-y-2 text-xs">

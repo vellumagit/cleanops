@@ -99,7 +99,7 @@ export default function PricingPage() {
                 "Unlimited clients and jobs",
                 "Unlimited invoices",
                 "Team chat and clock-in",
-                "Freelancer bench SMS",
+                "Subcontractor bench SMS",
                 "Google Calendar sync",
                 "Email support",
               ].map((item) => (
@@ -358,7 +358,7 @@ const COMPARISON_ROWS: Array<{
   { feature: "Invoicing and payments", starter: true, growth: true, enterprise: true },
   { feature: "Team chat", starter: true, growth: true, enterprise: true },
   { feature: "Clock-in and timesheets", starter: true, growth: true, enterprise: true },
-  { feature: "Freelancer bench SMS", starter: true, growth: true, enterprise: true },
+  { feature: "Subcontractor bench SMS", starter: true, growth: true, enterprise: true },
   { feature: "Google Calendar sync", starter: true, growth: true, enterprise: true },
   { feature: "Client records and history", starter: true, growth: true, enterprise: true },
   { feature: "Estimates and quotes", starter: true, growth: true, enterprise: true },
@@ -390,7 +390,7 @@ const FAQS = [
   },
   {
     q: "What counts as an employee?",
-    a: "Anyone on your team who has a login to Sollos — owners, managers, and cleaners. Freelancers on your freelancer bench do NOT count as employees, since they don't have Sollos logins.",
+    a: "Anyone on your team who has a login to Sollos — owners, managers, and cleaners. Subcontractors on your subcontractor bench do NOT count as employees, since they don't have Sollos logins.",
   },
   {
     q: "What if I have more than 25 employees?",

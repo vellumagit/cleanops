@@ -350,7 +350,7 @@ function LostRaceState() {
     <div className="space-y-3 text-center">
       <h1 className="text-xl font-bold tracking-tight">Already claimed</h1>
       <p className="text-sm text-muted-foreground">
-        Another freelancer grabbed this shift before you. Thanks for
+        Another subcontractor grabbed this shift before you. Thanks for
         checking — we&apos;ll send the next one your way.
       </p>
     </div>

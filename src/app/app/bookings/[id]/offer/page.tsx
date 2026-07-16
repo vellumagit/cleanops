@@ -53,7 +53,7 @@ export default async function NewJobOfferPage({
   return (
     <PageShell
       title="Send to bench"
-      description={`Broadcast this shift to your freelancer bench via SMS.`}
+      description={`Broadcast this shift to your subcontractor bench via SMS.`}
       actions={
         <Link
           href={`/app/bookings/${booking.id}`}

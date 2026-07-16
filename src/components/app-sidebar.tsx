@@ -96,7 +96,7 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/app/employees", label: "Employees", icon: UserRound, roles: ["owner", "admin"] },
       { href: "/app/applicants", label: "Applicants", icon: ClipboardList, roles: ["owner", "admin"] },
       { href: "/app/timesheets", label: "Timesheets", icon: Clock, roles: ["owner", "admin", "manager"] },
-      { href: "/app/freelancers", label: "Freelancer bench", icon: UserPlus, roles: ["owner", "admin"] },
+      { href: "/app/freelancers", label: "Subcontractor bench", icon: UserPlus, roles: ["owner", "admin"] },
       { href: "/app/reviews", label: "Reviews", icon: Star },
       { href: "/app/bonuses", label: "Bonuses", icon: Award },
       { href: "/app/training", label: "Training", icon: GraduationCap },

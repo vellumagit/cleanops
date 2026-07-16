@@ -10,7 +10,7 @@ export function DeleteFreelancerForm({ id }: { id: string }) {
       onSubmit={(e) => {
         if (
           !window.confirm(
-            "Remove this freelancer from the bench? Their offer history is preserved.",
+            "Remove this subcontractor from the bench? Their offer history is preserved.",
           )
         ) {
           e.preventDefault();

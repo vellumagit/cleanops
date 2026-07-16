@@ -84,7 +84,7 @@ export default function OpengraphImage() {
               maxWidth: 900,
             }}
           >
-            Bookings, scheduling, invoicing, team chat, and a freelancer
+            Bookings, scheduling, invoicing, team chat, and a subcontractor
             bench — in one place.
           </div>
         </div>

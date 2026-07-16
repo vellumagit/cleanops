@@ -41,7 +41,7 @@ export const metadata: Metadata = {
     template: "%s · Sollos 3",
   },
   description:
-    "Bookings, scheduling, invoicing, team chat, on-call freelancer bench, and field tools — all in one place. Built for cleaning businesses.",
+    "Bookings, scheduling, invoicing, team chat, on-call subcontractor bench, and field tools — all in one place. Built for cleaning businesses.",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
@@ -56,7 +56,7 @@ export const metadata: Metadata = {
     siteName: "Sollos 3",
     title: "Sollos 3 — Operations software for cleaning companies",
     description:
-      "Bookings, scheduling, invoicing, team chat, on-call freelancer bench, and field tools — all in one place.",
+      "Bookings, scheduling, invoicing, team chat, on-call subcontractor bench, and field tools — all in one place.",
     url: SITE_URL,
     // OG image auto-generated from src/app/opengraph-image.tsx
   },
@@ -64,7 +64,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Sollos 3 — Operations software for cleaning companies",
     description:
-      "Bookings, scheduling, invoicing, team chat, on-call freelancer bench, and field tools — all in one place.",
+      "Bookings, scheduling, invoicing, team chat, on-call subcontractor bench, and field tools — all in one place.",
     // Twitter image auto-generated from opengraph-image.tsx fallback
   },
   other: {
