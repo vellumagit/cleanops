@@ -31,6 +31,7 @@ import {
 } from "@/lib/format";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { PortalInviteButton } from "./portal-invite-button";
+import { SmsOptInButton } from "./sms-opt-in-button";
 import {
   markGbpReviewedAction,
   optOutGbpAction,
@@ -59,7 +60,7 @@ export default async function ClientDetailPage({
   ] = await Promise.all([
     supabase
       .from("clients")
-      .select("id, name, email, phone, address, notes, preferred_contact, balance_cents, created_at, profile_id, portal_invited_at, portal_accepted_at, portal_invite_expires_at, referred_by_client_id, gbp_review_state, gbp_first_asked_at, gbp_last_asked_at, gbp_clicked_at, gbp_reminders_sent, gbp_unsubscribed_at")
+      .select("id, name, email, phone, address, notes, preferred_contact, balance_cents, created_at, profile_id, portal_invited_at, portal_accepted_at, portal_invite_expires_at, referred_by_client_id, gbp_review_state, gbp_first_asked_at, gbp_last_asked_at, gbp_clicked_at, gbp_reminders_sent, gbp_unsubscribed_at, sms_opted_in, sms_opt_in_requested_at")
       .eq("id", id)
       .maybeSingle() as unknown as Promise<{
       data: {
@@ -83,6 +84,8 @@ export default async function ClientDetailPage({
         gbp_clicked_at: string | null;
         gbp_reminders_sent: number;
         gbp_unsubscribed_at: string | null;
+        sms_opted_in: boolean;
+        sms_opt_in_requested_at: string | null;
       } | null;
       error: { message: string } | null;
     }>,
@@ -260,6 +263,14 @@ export default async function ClientDetailPage({
                   </a>
                 </p>
               )}
+              <div className="pt-0.5">
+                <SmsOptInButton
+                  clientId={client.id}
+                  hasPhone={Boolean(client.phone)}
+                  optedIn={client.sms_opted_in}
+                  requestedAt={client.sms_opt_in_requested_at}
+                />
+              </div>
               {client.address && (
                 <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
                   <MapPin className="h-3.5 w-3.5 shrink-0" />

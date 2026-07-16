@@ -179,7 +179,8 @@ export async function POST(req: NextRequest) {
       `${orgRow.name}: You're unsubscribed and won't receive more messages. Reply START to resubscribe.`,
     );
   }
-  return twiml(
-    `${orgRow.name}: You're resubscribed. Reply STOP to unsubscribe.`,
-  );
+  // START / YES → opt-in confirmation with the standard rate + HELP/STOP
+  // disclosures (this doubles as the double opt-in confirmation).
+  const { composeSmsOptInConfirmation } = await import("@/lib/twilio");
+  return twiml(composeSmsOptInConfirmation({ orgName: orgRow.name }));
 }

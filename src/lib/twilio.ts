@@ -282,3 +282,21 @@ export function composeBookingReminderSms(args: {
   // TCPA / A2P 10DLC opt-out disclosure (see composeBookingConfirmationSms).
   return `${args.orgName}: Reminder — your ${service} is ${when}.${cta} Reply STOP to opt out.`;
 }
+
+/**
+ * Double opt-in REQUEST — the one-time consent ask sent to a client who gave
+ * the business their number but hasn't confirmed texts. Includes the carrier-
+ * required disclosures (business name, message frequency, rates, HELP/STOP).
+ * The client grants consent by replying YES.
+ */
+export function composeSmsOptInRequest(args: { orgName: string }): string {
+  return `${args.orgName}: Reply YES to get appointment reminders & updates by text. Msg freq varies. Msg & data rates may apply. Reply HELP for help, STOP to cancel.`;
+}
+
+/**
+ * Sent back automatically when a client replies YES — confirms the
+ * subscription with the standard rate + HELP/STOP disclosures.
+ */
+export function composeSmsOptInConfirmation(args: { orgName: string }): string {
+  return `${args.orgName}: You're subscribed to appointment updates. Msg & data rates may apply. Reply HELP for help, STOP to cancel.`;
+}

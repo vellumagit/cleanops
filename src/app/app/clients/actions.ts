@@ -481,3 +481,78 @@ export async function forceResendGbpAction(formData: FormData) {
   const id = String(formData.get("id") ?? "");
   if (id) await setGbpState(id, "force_resend");
 }
+
+/**
+ * Send a double opt-in SMS request to a client — the compliant consent flow.
+ * The client must reply YES (handled by /api/sms/inbound, which flips
+ * sms_opted_in true) to actually opt in. This only sends the ask and stamps the
+ * pending state; it does NOT itself grant consent.
+ */
+export async function requestSmsOptInAction(
+  formData: FormData,
+): Promise<{ ok: boolean; error?: string }> {
+  const clientId = String(formData.get("client_id") ?? "").trim();
+  if (!clientId) return { ok: false, error: "Missing client." };
+
+  const { membership, supabase } = await getActionContext();
+  if (!["owner", "admin", "manager"].includes(membership.role)) {
+    return { ok: false, error: "Not authorized." };
+  }
+
+  const { data: client } = (await supabase
+    .from("clients")
+    .select("id, name, phone, sms_opted_in")
+    .eq("id", clientId)
+    .eq("organization_id", membership.organization_id)
+    .maybeSingle()) as unknown as {
+    data: {
+      id: string;
+      name: string;
+      phone: string | null;
+      sms_opted_in: boolean;
+    } | null;
+  };
+  if (!client) return { ok: false, error: "Client not found." };
+  if (!client.phone) {
+    return { ok: false, error: "Add a phone number to this client first." };
+  }
+  if (client.sms_opted_in) {
+    return { ok: false, error: "This client has already opted in to texts." };
+  }
+
+  const { data: org } = await supabase
+    .from("organizations")
+    .select("name")
+    .eq("id", membership.organization_id)
+    .maybeSingle();
+
+  const { composeSmsOptInRequest } = await import("@/lib/twilio");
+  const { sendOrgSms } = await import("@/lib/sms");
+  const res = await sendOrgSms(membership.organization_id, {
+    to: client.phone,
+    body: composeSmsOptInRequest({
+      orgName: (org as { name?: string } | null)?.name ?? "Sollos",
+    }),
+    automationKey: "sms_opt_in_request",
+  });
+
+  if (!res.ok) {
+    return { ok: false, error: "Couldn't send the request — check the phone number." };
+  }
+  if (res.status !== "sent") {
+    return {
+      ok: false,
+      error:
+        "SMS isn't active for your org yet — enable SMS in Settings, and make sure it isn't paused.",
+    };
+  }
+
+  const admin = createSupabaseAdminClient();
+  await admin
+    .from("clients")
+    .update({ sms_opt_in_requested_at: new Date().toISOString() } as never)
+    .eq("id", clientId);
+
+  revalidatePath(`/app/clients/${clientId}`);
+  return { ok: true };
+}
