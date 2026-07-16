@@ -148,6 +148,16 @@ export default async function BookingDetailPage({
     }
   }
 
+  // Names of freelancers covering this booking (filled offers). A booking with
+  // no assigned member but a claimed offer is staffed by a freelancer — surface
+  // that instead of a misleading "Unassigned".
+  const coveringFreelancerNames = (
+    (offers ?? []) as Array<{ status: string; filled_contact_id?: string | null }>
+  )
+    .filter((o) => o.status === "filled" && o.filled_contact_id)
+    .map((o) => filledNames.get(o.filled_contact_id as string))
+    .filter((v): v is string => Boolean(v));
+
   const bookingStatus = booking.status as BookingStatus;
 
   // Does this completed booking already have an invoice? If not AND
@@ -391,6 +401,13 @@ export default async function BookingDetailPage({
                 <dd className="mt-0.5 font-medium text-foreground">
                   {booking.assigned ? (
                     memberDisplayName(booking.assigned)
+                  ) : coveringFreelancerNames.length > 0 ? (
+                    <span>
+                      {coveringFreelancerNames.join(", ")}{" "}
+                      <span className="font-normal text-muted-foreground">
+                        (freelancer)
+                      </span>
+                    </span>
                   ) : (
                     <span className="text-muted-foreground">Unassigned</span>
                   )}
