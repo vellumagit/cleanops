@@ -122,13 +122,31 @@ export default async function BookingDetailPage({
         .from("job_offers")
         .select(
           `
-            id, status, pay_cents, created_at, filled_at,
+            id, status, pay_cents, created_at, filled_at, filled_contact_id,
             dispatches:job_offer_dispatches ( id )
           `,
         )
         .eq("booking_id", id)
         .order("created_at", { ascending: false })
     : { data: null };
+
+  // Resolve names for filled offers so the booking shows WHO is covering it
+  // (freelancers aren't members, so they can't fill the assigned-crew slot).
+  const filledContactIds = ((offers ?? []) as Array<{ filled_contact_id?: string | null }>)
+    .map((o) => o.filled_contact_id)
+    .filter((v): v is string => Boolean(v));
+  const filledNames = new Map<string, string>();
+  if (filledContactIds.length > 0) {
+    const { data: fc } = (await supabase
+      .from("freelancer_contacts")
+      .select("id, full_name")
+      .in("id", filledContactIds)) as unknown as {
+      data: Array<{ id: string; full_name: string | null }> | null;
+    };
+    for (const c of fc ?? []) {
+      if (c.full_name) filledNames.set(c.id, c.full_name);
+    }
+  }
 
   const bookingStatus = booking.status as BookingStatus;
 
@@ -518,6 +536,21 @@ export default async function BookingDetailPage({
                         <p className="text-xs text-muted-foreground">
                           {formatDateTime(o.created_at, tz)}
                         </p>
+                        {o.status === "filled" &&
+                          (o as { filled_contact_id?: string | null })
+                            .filled_contact_id &&
+                          filledNames.get(
+                            (o as { filled_contact_id: string })
+                              .filled_contact_id,
+                          ) && (
+                            <p className="mt-0.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                              Covered by{" "}
+                              {filledNames.get(
+                                (o as { filled_contact_id: string })
+                                  .filled_contact_id,
+                              )}
+                            </p>
+                          )}
                       </div>
                       <StatusBadge tone={offerTone(o.status as OfferStatus)}>
                         {humanizeEnum(o.status)}

@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { formatDateTime, humanizeEnum } from "@/lib/format";
 
 /**
  * Claim a shift offer via the unique token sent to one freelancer.
@@ -166,6 +167,89 @@ export async function claimOfferAction(token: string): Promise<ClaimResult> {
       via: "public_claim_link",
     } as never,
   });
+
+  // 6. Round it out: alert the org that the shift was claimed, and text the
+  //    freelancer their confirmed details. Best-effort — a notification or SMS
+  //    hiccup must never fail the claim itself.
+  try {
+    const [contactRes, bookingRes, orgRes] = await Promise.all([
+      admin
+        .from("freelancer_contacts")
+        .select("full_name, phone")
+        .eq("id", dispatch.contact_id)
+        .maybeSingle(),
+      offer.booking_id
+        ? admin
+            .from("bookings")
+            .select(
+              "id, service_type, scheduled_at, address, client:clients ( name )",
+            )
+            .eq("id", offer.booking_id)
+            .maybeSingle()
+        : Promise.resolve({ data: null }),
+      admin
+        .from("organizations")
+        .select("name")
+        .eq("id", dispatch.organization_id)
+        .maybeSingle(),
+    ]);
+
+    const contact = contactRes.data as {
+      full_name: string | null;
+      phone: string | null;
+    } | null;
+    const bookingRow = bookingRes.data as {
+      id: string;
+      service_type: string;
+      scheduled_at: string;
+      address: string | null;
+      client: { name: string | null } | null;
+    } | null;
+    const orgName =
+      (orgRes.data as { name?: string } | null)?.name ?? "Sollos";
+    const freelancerName = contact?.full_name ?? "A freelancer";
+
+    // Notify org management — this is what makes the claim "reflect" for the
+    // owner/managers, with a link straight to the booking.
+    const { notify } = await import("@/lib/notify");
+    const svc = bookingRow ? humanizeEnum(bookingRow.service_type) : "shift";
+    const when = bookingRow ? ` on ${formatDateTime(bookingRow.scheduled_at)}` : "";
+    await notify({
+      organizationId: dispatch.organization_id,
+      audience: "org-management",
+      type: "shift_claimed",
+      title: "Shift claimed",
+      body: `${freelancerName} claimed the ${svc} shift${when}.`,
+      href: offer.booking_id
+        ? `/app/bookings/${offer.booking_id}`
+        : `/app/freelancers/offers/${offer.id}`,
+    });
+
+    // Confirmation text to the freelancer with the essentials + a link back to
+    // the full details page (address, map, client phone).
+    if (contact?.phone && bookingRow) {
+      const { sendOrgSms } = await import("@/lib/sms");
+      const { composeShiftClaimedConfirmationSms } = await import("@/lib/twilio");
+      const { getOrgTimezone } = await import("@/lib/org-timezone");
+      const base =
+        process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+      const body = composeShiftClaimedConfirmationSms({
+        orgName,
+        serviceType: bookingRow.service_type,
+        scheduledAt: bookingRow.scheduled_at,
+        clientName: bookingRow.client?.name ?? null,
+        claimUrl: `${base}/claim/${token}`,
+        tz: await getOrgTimezone(dispatch.organization_id),
+      });
+      await sendOrgSms(dispatch.organization_id, {
+        to: contact.phone,
+        body,
+        automationKey: "freelancer_offer_sms",
+      });
+    }
+  } catch (roundoutErr) {
+    console.error("[claim] post-claim notify/SMS failed:", roundoutErr);
+  }
 
   revalidatePath(`/app/freelancers/offers/${offer.id}`);
   if (offer.booking_id) {

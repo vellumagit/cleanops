@@ -284,6 +284,34 @@ export function composeBookingReminderSms(args: {
 }
 
 /**
+ * Confirmation SMS to a freelancer right after they claim a shift — gives them
+ * the essentials in their texts (not just the ephemeral claim page) plus a link
+ * back to the full details (address, map, client phone). B2B/transactional
+ * (independent contractor responding to their own action), so no opt-out line.
+ */
+export function composeShiftClaimedConfirmationSms(args: {
+  orgName: string;
+  serviceType: string;
+  scheduledAt: string;
+  clientName: string | null;
+  claimUrl: string;
+  /** IANA org timezone — without it the server (UTC) tz leaks into the time. */
+  tz?: string;
+}): string {
+  const when = new Date(args.scheduledAt).toLocaleString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: args.tz,
+  });
+  const service = args.serviceType.replace(/_/g, " ");
+  const client = args.clientName ? ` Client: ${args.clientName}.` : "";
+  return `${args.orgName}: You're confirmed — ${service} ${when}.${client} Address & full details: ${args.claimUrl}`;
+}
+
+/**
  * Double opt-in REQUEST — the one-time consent ask sent to a client who gave
  * the business their number but hasn't confirmed texts. Includes the carrier-
  * required disclosures (business name, message frequency, rates, HELP/STOP).
