@@ -240,15 +240,16 @@ export function composeBookingConfirmationSms(args: {
     minute: "2-digit",
     timeZone: args.tz,
   });
-  const service = args.serviceType.replace(/_/g, " ");
   const cta = args.contactPhone
     ? ` Questions? ${args.contactPhone}`
     : "";
+  // Use "cleaning" rather than the raw service-type slug (e.g. "standard"),
+  // which reads awkwardly on its own.
   // TCPA / A2P 10DLC: client-facing marketing & transactional SMS
   // requires opt-out disclosure on initial-contact messages. Twilio's
   // Advanced Opt-Out auto-handles STOP keywords; the text reminder
   // here is still required for carrier review.
-  return `${args.orgName}: Your ${service} is confirmed for ${when}.${cta} Reply STOP to opt out.`;
+  return `${args.orgName}: Your cleaning is confirmed for ${when}.${cta} Reply STOP to opt out.`;
 }
 
 /**
@@ -275,12 +276,12 @@ export function composeBookingReminderSms(args: {
     minute: "2-digit",
     timeZone: args.tz,
   });
-  const service = args.serviceType.replace(/_/g, " ");
   const cta = args.contactPhone
     ? ` Questions? ${args.contactPhone}`
     : "";
+  // "cleaning" rather than the raw service-type slug (see composeBookingConfirmationSms).
   // TCPA / A2P 10DLC opt-out disclosure (see composeBookingConfirmationSms).
-  return `${args.orgName}: Reminder — your ${service} is ${when}.${cta} Reply STOP to opt out.`;
+  return `${args.orgName}: Reminder — your cleaning is ${when}.${cta} Reply STOP to opt out.`;
 }
 
 /**
