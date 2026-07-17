@@ -851,7 +851,7 @@ export async function sendBookingConfirmation(bookingId: string) {
       .from("bookings")
       .select(`
         id, organization_id, scheduled_at, duration_minutes, service_type, service_type_label, address,
-        confirmation_email_sent_at,
+        confirmation_email_sent_at, confirmation_sms_sent_at,
         client:clients ( name, email, phone )
       `)
       .eq("id", bookingId)
@@ -865,6 +865,7 @@ export async function sendBookingConfirmation(bookingId: string) {
         service_type_label: string | null;
         address: string | null;
         confirmation_email_sent_at: string | null;
+        confirmation_sms_sent_at: string | null;
         client: {
           name: string | null;
           email: string | null;
@@ -873,20 +874,17 @@ export async function sendBookingConfirmation(bookingId: string) {
       } | null;
     };
 
-    if (!booking || !booking.client?.email) return;
+    if (!booking) return;
 
-    // Dedup: if we already sent this confirmation (e.g. server retry or
-    // double-submit), skip rather than emailing the client twice.
-    if (booking.confirmation_email_sent_at) {
-      console.log(`[auto] Booking confirmation already sent for ${bookingId}, skipping`);
-      return;
-    }
+    const hasEmail = Boolean(booking.client?.email);
+    const hasPhone = Boolean(booking.client?.phone);
+    // Need at least one channel. (Previously returned unless the client had an
+    // EMAIL, which silently dropped the confirmation text for phone-only
+    // clients.)
+    if (!hasEmail && !hasPhone) return;
+    if (!booking.client) return; // narrow for TS (hasEmail/hasPhone imply set)
 
-    if (!(await isAutomationEnabled(booking.organization_id, "booking_confirmation_email"))) {
-      console.log(`[auto] Booking confirmation paused for org ${booking.organization_id}`);
-      return;
-    }
-
+    // Org info — needed by BOTH channels (fetched once, up front).
     const { data: org } = await db
       .from("organizations")
       .select("name, brand_color, logo_url, contact_phone, timezone")
@@ -901,66 +899,72 @@ export async function sendBookingConfirmation(bookingId: string) {
       } | null;
     };
 
-    const dateTime = new Date(booking.scheduled_at).toLocaleString("en-US", {
-      weekday: "long",
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-      timeZone: org?.timezone ?? "America/Edmonton",
-    });
+    // ── EMAIL channel — gated by the booking_confirmation_email toggle and its
+    //    own dedup stamp. ──
+    if (
+      hasEmail &&
+      !booking.confirmation_email_sent_at &&
+      (await isAutomationEnabled(booking.organization_id, "booking_confirmation_email"))
+    ) {
+      const dateTime = new Date(booking.scheduled_at).toLocaleString("en-US", {
+        weekday: "long",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        timeZone: org?.timezone ?? "America/Edmonton",
+      });
 
-    // When the team divides the hours, tell the client when the crew will
-    // finish (the visit is shorter with more cleaners).
-    const { resolveTeamDivision, crewFinishNote } = await import(
-      "@/lib/crew-hours"
-    );
-    const division = await resolveTeamDivision(
-      booking.id,
-      booking.duration_minutes,
-    );
-    const crewNote = crewFinishNote(
-      division,
-      booking.scheduled_at,
-      org?.timezone ?? "America/Edmonton",
-    );
+      // When the team divides the hours, tell the client when the crew will
+      // finish (the visit is shorter with more cleaners).
+      const { resolveTeamDivision, crewFinishNote } = await import(
+        "@/lib/crew-hours"
+      );
+      const division = await resolveTeamDivision(
+        booking.id,
+        booking.duration_minutes,
+      );
+      const crewNote = crewFinishNote(
+        division,
+        booking.scheduled_at,
+        org?.timezone ?? "America/Edmonton",
+      );
 
-    const template = bookingConfirmationEmail({
-      clientName: booking.client.name ?? "there",
-      orgName: org?.name ?? "your service provider",
-      serviceName: booking.service_type_label ?? humanize(booking.service_type),
-      dateTime,
-      crewNote,
-      address: booking.address ?? "(address to be confirmed)",
-      brandColor: org?.brand_color ?? undefined,
-      logoUrl: org?.logo_url ?? undefined,
-    });
+      const template = bookingConfirmationEmail({
+        clientName: booking.client.name ?? "there",
+        orgName: org?.name ?? "your service provider",
+        serviceName: booking.service_type_label ?? humanize(booking.service_type),
+        dateTime,
+        crewNote,
+        address: booking.address ?? "(address to be confirmed)",
+        brandColor: org?.brand_color ?? undefined,
+        logoUrl: org?.logo_url ?? undefined,
+      });
 
-    const sent = await sendOrgEmail(booking.organization_id, {
-      to: booking.client.email,
-      toName: booking.client.name ?? undefined,
-      ...template,
-    });
-
-    // Stamp only on success so a Resend failure lets the caller retry.
-    if (sent) {
-      await db
-        .from("bookings")
-        .update({ confirmation_email_sent_at: new Date().toISOString() })
-        .eq("id", booking.id);
+      const sent = await sendOrgEmail(booking.organization_id, {
+        to: booking.client.email!,
+        toName: booking.client.name ?? undefined,
+        ...template,
+      });
+      if (sent) {
+        await db
+          .from("bookings")
+          .update({ confirmation_email_sent_at: new Date().toISOString() })
+          .eq("id", booking.id);
+        console.log(`[auto] Booking confirmation email sent to ${booking.client.email}`);
+      }
     }
 
-    console.log(`[auto] Booking confirmation sent to ${booking.client.email}`);
-
-    // Fire-and-forget SMS alongside the confirmation email. SMS arrives
-    // on the client's lock screen immediately; email carries full details.
-    // Routed through sendOrgSms so the platform kill switch and the
-    // per-org booking_confirmation_sms toggle gate it properly.
-    try {
-      const { sendOrgSms } = await import("@/lib/sms");
-      const { composeBookingConfirmationSms } = await import("@/lib/twilio");
-      const { getOrgTimezone } = await import("@/lib/org-timezone");
-      if (booking.client.phone) {
+    // ── SMS channel — INDEPENDENT of email. sendOrgSms applies its own gates
+    //    (booking_confirmation_sms toggle, client opt-in, cap, CLIENT_SMS_PAUSED,
+    //    TWILIO_ENABLED). Previously this was trapped behind the email path, so
+    //    an org that enabled only the SMS toggle (email toggle is default-OFF)
+    //    never got a confirmation text. Dedup on its own stamp. ──
+    if (hasPhone && !booking.confirmation_sms_sent_at) {
+      try {
+        const { sendOrgSms } = await import("@/lib/sms");
+        const { composeBookingConfirmationSms } = await import("@/lib/twilio");
+        const { getOrgTimezone } = await import("@/lib/org-timezone");
         const orgTz = await getOrgTimezone(booking.organization_id);
         const smsBody = composeBookingConfirmationSms({
           orgName: org?.name ?? "Sollos",
@@ -969,16 +973,20 @@ export async function sendBookingConfirmation(bookingId: string) {
           contactPhone: org?.contact_phone ?? null,
           tz: orgTz,
         });
-        sendOrgSms(booking.organization_id, {
-          to: booking.client.phone,
+        const smsRes = await sendOrgSms(booking.organization_id, {
+          to: booking.client.phone!,
           body: smsBody,
           automationKey: "booking_confirmation_sms",
-        }).catch((err) =>
-          console.error("[auto] sendBookingConfirmation SMS failed:", err),
-        );
+        });
+        if (smsRes.ok && smsRes.status === "sent") {
+          await db
+            .from("bookings")
+            .update({ confirmation_sms_sent_at: new Date().toISOString() } as never)
+            .eq("id", booking.id);
+        }
+      } catch (smsErr) {
+        console.error("[auto] sendBookingConfirmation SMS path errored:", smsErr);
       }
-    } catch (smsErr) {
-      console.error("[auto] sendBookingConfirmation SMS path errored:", smsErr);
     }
   } catch (err) {
     console.error("[auto] sendBookingConfirmation failed:", err);
