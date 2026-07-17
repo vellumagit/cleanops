@@ -2483,7 +2483,17 @@ export async function sendUpcomingBookingReminders(): Promise<{
   >();
 
   for (const booking of candidates) {
-    if (!booking.client?.email) {
+    const hasEmail = Boolean(booking.client?.email);
+    const hasPhone = Boolean(booking.client?.phone);
+    // Need at least one reachable channel. (Previously required an email, which
+    // silently dropped SMS-only clients — and their reminder text with it.)
+    if (!hasEmail && !hasPhone) {
+      skipped += 1;
+      continue;
+    }
+    // Narrow client to non-null for the rest of the loop (hasEmail/hasPhone
+    // already imply it's set, but TS can't infer that from the booleans).
+    if (!booking.client) {
       skipped += 1;
       continue;
     }
@@ -2514,11 +2524,9 @@ export async function sendUpcomingBookingReminders(): Promise<{
       skipped += 1;
       continue;
     }
-    if (!cached.enabled) {
-      console.log(`[auto] Booking reminder paused for org ${booking.organization_id}`);
-      skipped += 1;
-      continue;
-    }
+    // NOTE: cached.enabled is the EMAIL toggle (booking_reminder_client_email).
+    // It now gates ONLY the email channel below — not the whole booking — so an
+    // org that wants SMS-only reminders still gets them.
 
     const dateTime = new Date(booking.scheduled_at).toLocaleString("en-US", {
       weekday: "long",
@@ -2553,68 +2561,76 @@ export async function sendUpcomingBookingReminders(): Promise<{
       logoUrl: cached.logo_url ?? undefined,
     });
 
-    const ok = await sendOrgEmail(booking.organization_id, {
-      to: booking.client.email,
-      toName: booking.client.name ?? undefined,
-      ...template,
-    });
+    // Two INDEPENDENT channels. Previously the SMS was nested inside the
+    // email-success branch, so a paused/failed/absent email silently killed
+    // the reminder text even when SMS + opt-in were ready. Now each channel
+    // stands on its own gates and we stamp if EITHER one delivers.
+    let anySent = false;
 
-    if (ok) {
-      await db
-        .from("bookings")
-        .update({ client_reminder_sent_at: new Date().toISOString() })
-        .eq("id", booking.id);
-      sent += 1;
-      console.log(
-        `[auto] Booking reminder sent for booking ${booking.id} to ${booking.client.email}`,
-      );
+    // ── Email channel — gated by the email toggle (cached.enabled). ──
+    if (hasEmail && cached.enabled) {
+      const emailOk = await sendOrgEmail(booking.organization_id, {
+        to: booking.client.email!,
+        toName: booking.client.name ?? undefined,
+        ...template,
+      });
+      if (emailOk) {
+        anySent = true;
+      } else {
+        console.log(
+          `[auto] Booking reminder email not sent for ${booking.id} (paused/unconfigured/rejected)`,
+        );
+      }
+    }
 
-      // Fire-and-forget SMS alongside the email reminder. The email
-      // carries the address and full details; the text is the nudge
-      // that actually gets noticed on the client's lock screen.
-      // Routed through sendOrgSms — respects CLIENT_SMS_PAUSED,
-      // booking_reminder_client_sms toggle, and TWILIO_ENABLED.
+    // ── SMS channel — INDEPENDENT of email. sendOrgSms applies its own gates
+    //    (booking_reminder_client_sms toggle, client opt-in, cap,
+    //    CLIENT_SMS_PAUSED, TWILIO_ENABLED). ──
+    if (hasPhone) {
       try {
         const { sendOrgSms } = await import("@/lib/sms");
         const { composeBookingReminderSms } = await import("@/lib/twilio");
         const { getOrgTimezone } = await import("@/lib/org-timezone");
-        if (booking.client?.phone) {
-          const { data: orgContact } = (await db
-            .from("organizations")
-            .select("contact_phone")
-            .eq("id", booking.organization_id)
-            .maybeSingle()) as unknown as {
-            data: { contact_phone: string | null } | null;
-          };
-          const orgTz = await getOrgTimezone(booking.organization_id);
-          const smsBody = composeBookingReminderSms({
-            orgName: cached.name,
-            serviceType: booking.service_type,
-            scheduledAt: booking.scheduled_at,
-            contactPhone: orgContact?.contact_phone ?? null,
-            tz: orgTz,
-          });
-          sendOrgSms(booking.organization_id, {
-            to: booking.client.phone,
-            body: smsBody,
-            automationKey: "booking_reminder_client_sms",
-          }).catch((err) =>
-            console.error(
-              "[auto] sendUpcomingBookingReminders SMS failed:",
-              err,
-            ),
-          );
-        }
+        const { data: orgContact } = (await db
+          .from("organizations")
+          .select("contact_phone")
+          .eq("id", booking.organization_id)
+          .maybeSingle()) as unknown as {
+          data: { contact_phone: string | null } | null;
+        };
+        const orgTz = await getOrgTimezone(booking.organization_id);
+        const smsBody = composeBookingReminderSms({
+          orgName: cached.name,
+          serviceType: booking.service_type,
+          scheduledAt: booking.scheduled_at,
+          contactPhone: orgContact?.contact_phone ?? null,
+          tz: orgTz,
+        });
+        const smsRes = await sendOrgSms(booking.organization_id, {
+          to: booking.client.phone!,
+          body: smsBody,
+          automationKey: "booking_reminder_client_sms",
+        });
+        if (smsRes.ok && smsRes.status === "sent") anySent = true;
       } catch (smsErr) {
         console.error(
           "[auto] sendUpcomingBookingReminders SMS path errored:",
           smsErr,
         );
       }
+    }
+
+    // Stamp only if at least one channel actually delivered — so a fully-gated
+    // booking retries next tick instead of being marked reminded, and a booking
+    // isn't reminded twice once one channel lands.
+    if (anySent) {
+      await db
+        .from("bookings")
+        .update({ client_reminder_sent_at: new Date().toISOString() })
+        .eq("id", booking.id);
+      sent += 1;
+      console.log(`[auto] Booking reminder delivered for booking ${booking.id}`);
     } else {
-      // sendOrgEmail returned false — either the kill switch is on, email
-      // isn't configured, or Resend rejected. Don't stamp — we'll retry
-      // on the next cron tick.
       skipped += 1;
     }
   }
