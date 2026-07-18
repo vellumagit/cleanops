@@ -77,8 +77,15 @@ export async function GET(request: NextRequest) {
     tokens = await exchangeCodeForTokens(code);
   } catch (err) {
     console.error("[square] code exchange failed:", err);
+    // Surface the real reason (Square's error_description or our env guard
+    // message) so the banner is actionable instead of an opaque code. Safe to
+    // show — owner/admin only, and it carries no secrets.
+    const detail =
+      err instanceof Error && err.message
+        ? err.message
+        : "token_exchange_failed";
     return NextResponse.redirect(
-      `${settingsUrl}?square_error=${encodeURIComponent("token_exchange_failed")}`,
+      `${settingsUrl}?square_error=${encodeURIComponent(detail.slice(0, 220))}`,
     );
   }
 
