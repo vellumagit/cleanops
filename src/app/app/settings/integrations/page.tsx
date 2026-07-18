@@ -56,8 +56,29 @@ type ProviderCard = {
  *   2. "Not connected" — env vars exist but no active connection
  *   3. "Connected" — active row in integration_connections
  */
-export default async function IntegrationsPage() {
+export default async function IntegrationsPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const membership = await requireMembership(["owner", "admin"]);
+
+  // OAuth round-trips (Square/Sage) redirect back here with a result flag.
+  // Surface it so a failed connect isn't silent (previously nothing showed,
+  // so a failure looked identical to success).
+  const sp = await searchParams;
+  const str = (k: string) => (typeof sp[k] === "string" ? (sp[k] as string) : null);
+  const oauthConnected = str("square_connected")
+    ? "Square"
+    : str("sage_connected")
+      ? "Sage"
+      : null;
+  const oauthError = str("square_error")
+    ? { provider: "Square", code: str("square_error")! }
+    : str("sage_error")
+      ? { provider: "Sage", code: str("sage_error")! }
+      : null;
+
   const supabase = await createSupabaseServerClient();
 
   // Only fetch active connections — disconnected rows are kept for audit but
@@ -415,6 +436,18 @@ export default async function IntegrationsPage() {
       }
     >
       <div className="space-y-8">
+        {oauthConnected && (
+          <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-700 dark:text-emerald-200">
+            {oauthConnected} connected successfully.
+          </div>
+        )}
+        {oauthError && (
+          <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-700 dark:text-red-200">
+            Couldn&apos;t connect {oauthError.provider}:{" "}
+            <span className="font-mono">{oauthError.code}</span>. Please try
+            again — if it keeps failing, this code tells us why.
+          </div>
+        )}
         {/* Payment processors */}
         <div>
           <div className="mb-3 flex items-center gap-2">
