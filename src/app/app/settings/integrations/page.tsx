@@ -322,6 +322,7 @@ export default async function IntegrationsPage({
                     {stripeNeedsAction && (
                       <Link
                         href="/api/integrations/stripe/connect"
+                        prefetch={false}
                         className="mt-3 inline-flex w-full items-center justify-center rounded-md bg-foreground px-3 py-2 text-xs font-medium text-background hover:bg-foreground/90 transition-colors"
                       >
                         Continue onboarding
@@ -379,6 +380,7 @@ export default async function IntegrationsPage({
               isStripe ? (
                 <Link
                   href="/api/integrations/stripe/connect"
+                  prefetch={false}
                   className="inline-flex w-full items-center justify-center rounded-md bg-foreground px-3 py-2 text-xs font-medium text-background hover:bg-foreground/90 transition-colors"
                 >
                   Connect {card.name}
@@ -386,6 +388,7 @@ export default async function IntegrationsPage({
               ) : isSquare ? (
                 <Link
                   href="/api/integrations/square/connect"
+                  prefetch={false}
                   className="inline-flex w-full items-center justify-center rounded-md bg-foreground px-3 py-2 text-xs font-medium text-background hover:bg-foreground/90 transition-colors"
                 >
                   Connect {card.name}
