@@ -99,15 +99,22 @@ export async function GET(request: NextRequest) {
     fetchPrimaryLocation(tokens.access_token).catch(() => null),
   ]);
 
-  await saveConnection({
-    organizationId: stateData.organizationId,
-    membershipId: stateData.membershipId,
-    merchantId: tokens.merchant_id,
-    accessToken: tokens.access_token,
-    refreshToken: tokens.refresh_token,
-    expiresAt: tokens.expires_at,
-    locationId,
-  });
+  try {
+    await saveConnection({
+      organizationId: stateData.organizationId,
+      membershipId: stateData.membershipId,
+      merchantId: tokens.merchant_id,
+      accessToken: tokens.access_token,
+      refreshToken: tokens.refresh_token,
+      expiresAt: tokens.expires_at,
+      locationId,
+    });
+  } catch (err) {
+    console.error("[square] saveConnection failed:", err);
+    return NextResponse.redirect(
+      `${settingsUrl}?square_error=${encodeURIComponent("Could not save the connection — please try again")}`,
+    );
+  }
 
   return NextResponse.redirect(`${settingsUrl}?square_connected=1`);
 }

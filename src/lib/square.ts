@@ -339,30 +339,40 @@ export async function saveConnection(args: {
 }): Promise<void> {
   const admin = createSupabaseAdminClient();
 
-  // Upsert by (organization_id, provider). Any prior disconnected row gets
-  // overwritten with active status.
+  // Retire any existing ACTIVE Square connection first, then insert the new
+  // one. We deliberately do NOT use upsert onConflict here: the unique indexes
+  // on integration_connections (organization_id, provider) are PARTIAL
+  // (`where status='active'`), so `ON CONFLICT (organization_id, provider)`
+  // matches no full constraint and Postgres rejects it. That error was
+  // previously unchecked, so a failed save looked like a successful connect
+  // (banner said "connected" but nothing persisted). Mirror the Sage callback:
+  // disconnect-then-insert, and check the insert error.
   await admin
     .from("integration_connections")
-    .upsert(
-      {
-        organization_id: args.organizationId,
-        provider: "square",
-        external_account_id: args.merchantId,
-        external_account_label: null,
-        access_token_ciphertext: encryptSecret(args.accessToken),
-        refresh_token_ciphertext: encryptSecret(args.refreshToken),
-        token_expires_at: args.expiresAt,
-        scope: SCOPES.replace(/\+/g, " "),
-        status: "active",
-        last_error: null,
-        metadata: args.locationId
-          ? { location_id: args.locationId }
-          : {},
-        connected_by: args.membershipId,
-        connected_at: new Date().toISOString(),
-      },
-      { onConflict: "organization_id,provider" },
-    );
+    .update({ status: "disconnected" })
+    .eq("organization_id", args.organizationId)
+    .eq("provider", "square")
+    .eq("status", "active");
+
+  const { error } = await admin.from("integration_connections").insert({
+    organization_id: args.organizationId,
+    provider: "square",
+    external_account_id: args.merchantId,
+    external_account_label: null,
+    access_token_ciphertext: encryptSecret(args.accessToken),
+    refresh_token_ciphertext: encryptSecret(args.refreshToken),
+    token_expires_at: args.expiresAt,
+    scope: SCOPES.replace(/\+/g, " "),
+    status: "active",
+    last_error: null,
+    metadata: args.locationId ? { location_id: args.locationId } : {},
+    connected_by: args.membershipId,
+    connected_at: new Date().toISOString(),
+  });
+
+  if (error) {
+    throw new Error(`Failed to save Square connection: ${error.message}`);
+  }
 }
 
 /**
