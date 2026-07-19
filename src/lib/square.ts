@@ -196,7 +196,22 @@ type SquareTokenResponse = {
   short_lived: boolean;
   error?: string;
   error_description?: string;
+  // Square returns OAuth errors in ITS standard shape, not the OAuth2 one.
+  errors?: Array<{ category?: string; code?: string; detail?: string }>;
 };
+
+/** Pull a human reason out of a failed Square token response (both formats). */
+function squareTokenError(json: SquareTokenResponse, status: number): string {
+  const sq = json.errors?.[0];
+  return (
+    json.error_description ??
+    json.error ??
+    sq?.detail ??
+    sq?.code ??
+    sq?.category ??
+    `HTTP ${status}, no error detail`
+  );
+}
 
 /**
  * Exchange an authorization code for tokens. Returns the full set.
@@ -228,7 +243,7 @@ export async function exchangeCodeForTokens(
   const json = (await res.json()) as SquareTokenResponse;
   if (!res.ok || !json.access_token) {
     throw new Error(
-      `Square token exchange failed: ${json.error_description ?? json.error ?? "unknown"}`,
+      `Square token exchange failed: ${squareTokenError(json, res.status)}`,
     );
   }
   return json;
@@ -264,7 +279,7 @@ export async function refreshAccessToken(
   const json = (await res.json()) as SquareTokenResponse;
   if (!res.ok || !json.access_token) {
     throw new Error(
-      `Square token refresh failed: ${json.error_description ?? json.error ?? "unknown"}`,
+      `Square token refresh failed: ${squareTokenError(json, res.status)}`,
     );
   }
   return json;
