@@ -218,6 +218,7 @@ function squareTokenError(json: SquareTokenResponse, status: number): string {
  */
 export async function exchangeCodeForTokens(
   code: string,
+  redirectUri: string,
 ): Promise<SquareTokenResponse> {
   assertSquareEnvForMoneyPath();
   const appId = process.env.SQUARE_APPLICATION_ID;
@@ -237,6 +238,9 @@ export async function exchangeCodeForTokens(
       client_secret: appSecret,
       code,
       grant_type: "authorization_code",
+      // Square requires redirect_uri on the token exchange, and it must match
+      // the redirect_uri used in the authorize request exactly.
+      redirect_uri: redirectUri,
     }),
   });
 

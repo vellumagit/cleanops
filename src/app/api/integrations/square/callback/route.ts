@@ -72,9 +72,12 @@ export async function GET(request: NextRequest) {
   }
 
   // Exchange + fetch merchant metadata + primary location.
+  // Must EXACTLY match the redirect_uri used by the connect route's authorize
+  // request (same NEXT_PUBLIC_SITE_URL basis), or Square rejects the exchange.
+  const redirectUri = `${siteUrl}/api/integrations/square/callback`;
   let tokens: Awaited<ReturnType<typeof exchangeCodeForTokens>>;
   try {
-    tokens = await exchangeCodeForTokens(code);
+    tokens = await exchangeCodeForTokens(code, redirectUri);
   } catch (err) {
     console.error("[square] code exchange failed:", err);
     // Surface the real reason (Square's error_description or our env guard
