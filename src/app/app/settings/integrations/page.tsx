@@ -214,13 +214,12 @@ export default async function IntegrationsPage({
     return (
       <li
         key={card.key}
-        className="relative overflow-hidden rounded-lg border border-border bg-card p-5"
+        className="flex flex-col overflow-hidden rounded-lg border border-border bg-card"
       >
-        <div
-          className={`absolute inset-x-0 top-0 h-20 bg-gradient-to-br ${card.accentClass}`}
-          aria-hidden
-        />
-        <div className="relative">
+        {/* Colored header zone — a real block that hugs the title row, so the
+            colour ends exactly where the header does and nothing straddles the
+            colour/white boundary. */}
+        <div className={`bg-gradient-to-br ${card.accentClass} px-5 pb-4 pt-5`}>
           <div className="flex items-start justify-between gap-3">
             <h3 className="text-base font-semibold tracking-tight">
               {isGcal && (
@@ -239,12 +238,16 @@ export default async function IntegrationsPage({
               <StatusBadge tone="amber">Coming soon</StatusBadge>
             )}
           </div>
+        </div>
 
-          <p className="mt-2 min-h-[3.5rem] text-xs text-muted-foreground">
+        {/* White body — blurb + actions. flex-1 + mt-auto pins the action row to
+            the bottom so cards with different content still line up. */}
+        <div className="flex flex-1 flex-col px-5 pb-5 pt-4">
+          <p className="min-h-[3.5rem] text-xs text-muted-foreground">
             {card.blurb}
           </p>
 
-          <div className="mt-4 border-t border-border pt-4">
+          <div className="mt-auto border-t border-border pt-4">
             {isConnected ? (
               <>
                 <dl className="space-y-1 text-[11px]">
@@ -488,7 +491,7 @@ export default async function IntegrationsPage({
             <CalendarDays className="h-4 w-4 text-muted-foreground" />
             <h2 className="text-sm font-semibold">Productivity</h2>
           </div>
-          <ul className="grid gap-4 md:grid-cols-3">
+          <ul className="grid gap-4 md:grid-cols-2">
             {productivityCards.map(renderCard)}
           </ul>
         </div>
