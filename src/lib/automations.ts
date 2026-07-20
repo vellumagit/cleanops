@@ -2441,8 +2441,14 @@ export async function sendUpcomingBookingReminders(): Promise<{
   const { bookingReminderEmail } = await import("@/lib/email-templates");
 
   const now = Date.now();
-  const windowStart = new Date(now + 18 * 60 * 60 * 1000).toISOString();
-  const windowEnd = new Date(now + 30 * 60 * 60 * 1000).toISOString();
+  // The reminder cron runs once daily. With the old 18–30h window (only 12h
+  // wide) any booking scheduled for the evening fell into the gap between two
+  // consecutive daily runs and got NO reminder at all. To tile without gaps at
+  // a daily cadence the window must be ≥24h wide; 6–32h (26h) reminds every
+  // booking exactly once — the dedup on client_reminder_sent_at absorbs the
+  // small overlap between runs.
+  const windowStart = new Date(now + 6 * 60 * 60 * 1000).toISOString();
+  const windowEnd = new Date(now + 32 * 60 * 60 * 1000).toISOString();
 
   const { data: candidates } = await db
     .from("bookings")
@@ -5129,6 +5135,23 @@ export async function autoCompletePastBookings(): Promise<{ completed: number }>
     if (data && data.length > 0) {
       completed += data.length;
       console.log(`[auto] Auto-completed ${data.length} past booking(s) for org ${org.id}`);
+
+      // Parity with the manual "mark complete" path: draft the per-job invoice
+      // for each booking we just auto-completed. Without this, jobs the cron
+      // completes were silently never billed. Non-forced, so it still respects
+      // the org's auto_invoice_on_job_complete toggle AND the client's billing
+      // cadence (monthly/biweekly clients are billed by the billing-cycle cron
+      // instead, so autoInvoiceOnJobComplete no-ops for them).
+      for (const b of data) {
+        try {
+          await autoInvoiceOnJobComplete(b.id);
+        } catch (err) {
+          console.error(
+            `[auto] auto-invoice after auto-complete failed for booking ${b.id}:`,
+            err,
+          );
+        }
+      }
     }
   }
   return { completed };

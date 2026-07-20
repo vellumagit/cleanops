@@ -648,6 +648,119 @@ export async function deleteCalendarEvent(
   return true;
 }
 
+/**
+ * Prune orphaned ORG-level calendar events: Sollos-managed events on the org's
+ * calendar whose id is referenced by NO current booking. These accumulate when
+ * booking rows disappear without their event being cleaned — a direct DB
+ * delete, or the org purge (purgeOrgData wipes rows but a lost token can strand
+ * the events). Events still referenced by a booking are never touched.
+ *
+ * Shared by the one-shot admin tool (/api/admin/gcal-prune-orphans) and the
+ * weekly safety-net cron (/api/cron/gcal-prune). Idempotent + resumable: `cap`
+ * bounds deletions per call; re-run until `remaining` is 0.
+ *
+ * skipWhenNoValid: SHARED-CALENDAR SAFETY. listManagedEventIds sees every
+ * managed event on the calendar and cannot tell which org authored it. If two
+ * orgs point at the SAME Google account (e.g. a test setup) and this org has
+ * ZERO booking-linked events, every managed event looks like an orphan — so
+ * pruning would delete the OTHER org's live events. The blanket cron passes
+ * skipWhenNoValid=true to refuse that case; the manual admin tool leaves it
+ * false so an operator can still deliberately clean a wound-down org.
+ */
+export async function pruneOrgCalendarOrphans(
+  organizationId: string,
+  opts?: { dryRun?: boolean; cap?: number; skipWhenNoValid?: boolean },
+): Promise<{
+  managed: number;
+  valid: number;
+  orphans: number;
+  deleted: number;
+  remaining: number;
+  skipped: boolean;
+  errors: string[];
+}> {
+  const dryRun = opts?.dryRun ?? false;
+  const cap = Math.min(Math.max(opts?.cap ?? 100, 1), 300);
+
+  const admin = createSupabaseAdminClient();
+  const now = new Date().toISOString();
+  // 3-year horizon so far-future managed events are also considered.
+  const timeMax = new Date(
+    Date.now() + 1095 * 24 * 60 * 60 * 1000,
+  ).toISOString();
+
+  // Valid ids = every event id referenced by ANY booking (no date filter, so a
+  // still-running booking that started earlier today can't be mis-flagged).
+  const validIds = new Set<string>();
+  for (let from = 0; ; from += 1000) {
+    const { data } = (await admin
+      .from("bookings")
+      .select("google_calendar_event_id")
+      .eq("organization_id", organizationId)
+      .not("google_calendar_event_id", "is", null)
+      .range(from, from + 999)) as unknown as {
+      data: Array<{ google_calendar_event_id: string | null }> | null;
+    };
+    const rows = data ?? [];
+    for (const r of rows) {
+      if (r.google_calendar_event_id) validIds.add(r.google_calendar_event_id);
+    }
+    if (rows.length < 1000) break;
+  }
+
+  // Refuse to prune an empty org on a possibly-shared calendar (see doc above).
+  // Check BEFORE the Google list call — saves quota and removes all risk.
+  if (opts?.skipWhenNoValid && validIds.size === 0) {
+    return {
+      managed: 0,
+      valid: 0,
+      orphans: 0,
+      deleted: 0,
+      remaining: 0,
+      skipped: true,
+      errors: [],
+    };
+  }
+
+  const managed = await listManagedEventIds(organizationId, now, timeMax);
+  const orphans = managed.filter((id) => !validIds.has(id));
+
+  if (dryRun) {
+    return {
+      managed: managed.length,
+      valid: validIds.size,
+      orphans: orphans.length,
+      deleted: 0,
+      remaining: orphans.length,
+      skipped: false,
+      errors: [],
+    };
+  }
+
+  // Delete orphans, throttled to stay well under Google's rate limit.
+  let deleted = 0;
+  const errors: string[] = [];
+  for (const id of orphans.slice(0, cap)) {
+    try {
+      await deleteCalendarEvent(organizationId, id);
+      deleted++;
+    } catch (err) {
+      errors.push(`${id}: ${String(err)}`);
+    }
+    await new Promise((r) => setTimeout(r, 150));
+  }
+
+  return {
+    managed: managed.length,
+    valid: validIds.size,
+    orphans: orphans.length,
+    deleted,
+    remaining: orphans.length - deleted,
+    skipped: false,
+    errors,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Pull: list events from Google Calendar
 // ---------------------------------------------------------------------------

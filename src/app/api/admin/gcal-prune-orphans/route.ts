@@ -23,11 +23,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import {
-  listManagedEventIds,
-  deleteCalendarEvent,
-} from "@/lib/google-calendar";
+import { pruneOrgCalendarOrphans } from "@/lib/google-calendar";
 
 export const maxDuration = 60;
 
@@ -56,77 +52,34 @@ export async function GET(request: NextRequest) {
     300,
   );
 
-  const admin = createSupabaseAdminClient();
-  const now = new Date().toISOString();
-  // 3-year horizon so far-future managed events are also considered.
-  const timeMax = new Date(
-    Date.now() + 1095 * 24 * 60 * 60 * 1000,
-  ).toISOString();
-
-  // Valid event ids = every event id referenced by ANY booking (no date
-  // filter). An in-progress booking that started earlier today is listed by
-  // Google (its event hasn't ended) but has scheduled_at < now — filtering
-  // valid ids by `>= now` mis-flagged those live events as orphans and
-  // deleted them. Protecting every referenced id, regardless of date, makes
-  // a valid event impossible to delete. Paginated so the set is complete.
-  const validIds = new Set<string>();
-  for (let from = 0; ; from += 1000) {
-    const { data } = (await admin
-      .from("bookings")
-      .select("google_calendar_event_id")
-      .eq("organization_id", orgId)
-      .not("google_calendar_event_id", "is", null)
-      .range(from, from + 999)) as unknown as {
-      data: Array<{ google_calendar_event_id: string | null }> | null;
-    };
-    const rows = data ?? [];
-    for (const r of rows) {
-      if (r.google_calendar_event_id) validIds.add(r.google_calendar_event_id);
-    }
-    if (rows.length < 1000) break;
-  }
-
-  // All Sollos-managed events on the calendar in the window.
-  const managed = await listManagedEventIds(orgId, now, timeMax);
-  const orphans = managed.filter((id) => !validIds.has(id));
+  // Manual tool: skipWhenNoValid is left false so an operator can deliberately
+  // clean a wound-down org (0 bookings). The blanket weekly cron sets it true.
+  const result = await pruneOrgCalendarOrphans(orgId, { dryRun, cap });
 
   if (dryRun) {
     return NextResponse.json({
       ok: true,
       dry_run: true,
       org_id: orgId,
-      managed_events: managed.length,
-      valid_events: validIds.size,
-      orphans_found: orphans.length,
+      managed_events: result.managed,
+      valid_events: result.valid,
+      orphans_found: result.orphans,
     });
   }
 
-  // Delete orphans, throttled to stay well under Google's rate limit.
-  let deleted = 0;
-  const errors: string[] = [];
-  for (const id of orphans.slice(0, cap)) {
-    try {
-      await deleteCalendarEvent(orgId, id);
-      deleted++;
-    } catch (err) {
-      errors.push(`${id}: ${String(err)}`);
-    }
-    await new Promise((r) => setTimeout(r, 150));
-  }
-
   return NextResponse.json({
-    ok: errors.length === 0,
+    ok: result.errors.length === 0,
     dry_run: false,
     org_id: orgId,
-    managed_events: managed.length,
-    valid_events: validIds.size,
-    orphans_found: orphans.length,
-    deleted,
-    remaining: orphans.length - deleted,
-    errors: errors.slice(0, 10),
+    managed_events: result.managed,
+    valid_events: result.valid,
+    orphans_found: result.orphans,
+    deleted: result.deleted,
+    remaining: result.remaining,
+    errors: result.errors.slice(0, 10),
     hint:
-      orphans.length > cap
-        ? `Deleted ${deleted} of ${orphans.length} — run again to continue.`
+      result.orphans > cap
+        ? `Deleted ${result.deleted} of ${result.orphans} — run again to continue.`
         : undefined,
   });
 }

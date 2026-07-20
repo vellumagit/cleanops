@@ -232,6 +232,88 @@ export async function purgeOrgData(
   const db = createSupabaseAdminClient();
   const tableCounts: Record<string, number> = {};
 
+  // Clean Google Calendar events BEFORE wiping any rows. Deleting the booking
+  // rows (below) and the integration_connections token strands every event as
+  // an orphan on the (possibly shared) calendar with no way left to reach it —
+  // this is exactly why deleted orgs left ghosts behind. Precise (only THIS
+  // org's own events, by stored id — no cross-tenant risk), best-effort, and
+  // bounded so a huge org can't blow the cron's time budget. The weekly
+  // gcal-prune cron is the backstop for anything left, but only while the org
+  // still has a connection, so we do the bulk of the work here.
+  try {
+    const CAL_CLEAN_CAP = 500;
+    const { data: orgEvents } = (await db
+      .from("bookings")
+      .select("google_calendar_event_id")
+      .eq("organization_id", orgId)
+      .not("google_calendar_event_id", "is", null)
+      .limit(CAL_CLEAN_CAP)) as unknown as {
+      data: Array<{ google_calendar_event_id: string | null }> | null;
+    };
+    const orgEventIds = (orgEvents ?? [])
+      .map((r) => r.google_calendar_event_id)
+      .filter((id): id is string => Boolean(id));
+    if (orgEventIds.length > 0) {
+      const { deleteCalendarEvent } = await import("@/lib/google-calendar");
+      let cleaned = 0;
+      for (const evId of orgEventIds) {
+        try {
+          await deleteCalendarEvent(orgId, evId);
+          cleaned++;
+        } catch {
+          /* best-effort — a stranded event is not worth aborting the purge */
+        }
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      console.log(
+        `[tenant-purge] cleaned ${cleaned}/${orgEventIds.length} org calendar event(s) for org ${orgId}`,
+      );
+    }
+
+    // This mapping table has no organization_id — it's org-scoped only through
+    // its booking. Filter via an inner join on the parent booking's org.
+    const { data: memberEvents } = (await db
+      .from("booking_member_calendar_events")
+      .select("membership_id, google_calendar_event_id, bookings!inner(organization_id)")
+      .eq("bookings.organization_id" as never, orgId as never)
+      .not("google_calendar_event_id", "is", null)
+      .limit(CAL_CLEAN_CAP)) as unknown as {
+      data: Array<{
+        membership_id: string;
+        google_calendar_event_id: string | null;
+      }> | null;
+    };
+    const memberRows = (memberEvents ?? []).filter(
+      (m) => m.google_calendar_event_id,
+    );
+    if (memberRows.length > 0) {
+      const { deleteMemberCalendarEventById } = await import(
+        "@/lib/google-calendar"
+      );
+      let cleaned = 0;
+      for (const m of memberRows) {
+        try {
+          await deleteMemberCalendarEventById(
+            m.membership_id,
+            m.google_calendar_event_id!,
+          );
+          cleaned++;
+        } catch {
+          /* best-effort */
+        }
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      console.log(
+        `[tenant-purge] cleaned ${cleaned}/${memberRows.length} member calendar event(s) for org ${orgId}`,
+      );
+    }
+  } catch (err) {
+    console.error(
+      `[tenant-purge] calendar cleanup failed for org ${orgId}:`,
+      err,
+    );
+  }
+
   // Delete in an order that respects FK constraints. The schema uses ON
   // DELETE CASCADE almost everywhere, so the dependency graph is loose,
   // but we still delete children before parents to avoid any accidental
