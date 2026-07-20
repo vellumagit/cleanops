@@ -27,6 +27,7 @@ import {
   disconnectQuickBooksAction,
 } from "./quickbooks-actions";
 import { StripeDisconnectButton } from "./stripe-connect-actions";
+import { IntegrationRequestForm } from "./integration-request-form";
 
 export const metadata = { title: "Integrations" };
 
@@ -495,6 +496,8 @@ export default async function IntegrationsPage({
             {productivityCards.map(renderCard)}
           </ul>
         </div>
+
+        <IntegrationRequestForm />
       </div>
     </PageShell>
   );
