@@ -1558,6 +1558,84 @@ export async function deleteMemberCalendarEvent(
   return true;
 }
 
+/**
+ * List the ids of Sollos-managed events on a MEMBER's calendar in a window,
+ * identified by the "Managed by Sollos" marker in the description. The member
+ * equivalent of listManagedEventIds — used to find orphans on a member's own
+ * calendar (events whose booking was deleted, cascading away the
+ * booking_member_calendar_events mapping and stranding the Google event).
+ *
+ * Paginated + fail-loud: a truncated list must NEVER be treated as "these
+ * events are gone", or the caller would delete live events.
+ */
+export async function listMemberManagedEventIds(
+  membershipId: string,
+  timeMin: string,
+  timeMax: string,
+): Promise<string[]> {
+  const conn = await getMemberConnection(membershipId);
+  if (!conn) return [];
+  const calendarId = (conn.metadata?.calendar_id as string) || "primary";
+  const ids: string[] = [];
+  let pageToken: string | undefined;
+  do {
+    const params = new URLSearchParams({
+      timeMin,
+      timeMax,
+      singleEvents: "true",
+      orderBy: "startTime",
+      maxResults: "2500",
+    });
+    if (pageToken) params.set("pageToken", pageToken);
+    const res = await gcalFetch(
+      conn.access_token,
+      `/calendars/${encodeURIComponent(calendarId)}/events?${params.toString()}`,
+    );
+    if (!res.ok) {
+      const body = await res.text();
+      console.error(
+        "[gcal/member] listMemberManagedEventIds failed:",
+        res.status,
+        body,
+      );
+      throw new Error(`listMemberManagedEventIds failed: HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const item of (data.items ?? []) as any[]) {
+      if (
+        item.status !== "cancelled" &&
+        (item.description ?? "").includes("Managed by Sollos")
+      ) {
+        ids.push(item.id as string);
+      }
+    }
+    pageToken = data.nextPageToken as string | undefined;
+  } while (pageToken);
+  return ids;
+}
+
+/**
+ * Delete a single event by id directly on a member's calendar — for orphan
+ * cleanup where there is NO booking_member_calendar_events mapping to look up
+ * (deleteMemberCalendarEvent resolves the event via the mapping, which is gone
+ * once the booking was deleted). 404/410 counts as success (already gone).
+ */
+export async function deleteMemberCalendarEventById(
+  membershipId: string,
+  eventId: string,
+): Promise<boolean> {
+  const conn = await getMemberConnection(membershipId);
+  if (!conn) return false;
+  const calendarId = (conn.metadata?.calendar_id as string) || "primary";
+  const res = await gcalFetch(
+    conn.access_token,
+    `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
+    { method: "DELETE" },
+  );
+  return res.ok || res.status === 404 || res.status === 410;
+}
+
 // ---------------------------------------------------------------------------
 // Sync: called after every booking assignee change
 // ---------------------------------------------------------------------------
