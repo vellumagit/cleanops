@@ -13,6 +13,7 @@ import {
   MapPin,
   User,
   X,
+  SlidersHorizontal,
   ChevronDown,
 } from "lucide-react";
 import { BookingStatusDropdown } from "./booking-status-dropdown";
@@ -65,64 +66,36 @@ export type BookingRow = {
 
 type ViewMode = "table" | "cards";
 
-const STATUS_TABS = [
-  { key: "all", label: "All" },
+// Primary navigation is time-based ("when"), which is how you actually think
+// about a schedule. Status / service / assignee / client are secondary filters,
+// tucked behind the Filters button.
+const TIME_TABS = [
   { key: "upcoming", label: "Upcoming" },
+  { key: "today", label: "Today" },
+  { key: "past", label: "Past" },
+  { key: "all", label: "All" },
+] as const;
+
+type TimeTab = (typeof TIME_TABS)[number]["key"];
+
+const STATUS_OPTIONS = [
+  { key: "all", label: "All statuses" },
+  { key: "confirmed", label: "Confirmed" },
   { key: "in_progress", label: "In progress" },
   { key: "completed", label: "Completed" },
   { key: "cancelled", label: "Cancelled" },
 ] as const;
 
-type StatusTab = (typeof STATUS_TABS)[number]["key"];
-
-const DATE_FILTERS = [
-  { key: "all", label: "Any date" },
-  { key: "today", label: "Today" },
-  { key: "week", label: "This week" },
-  { key: "month", label: "This month" },
-  { key: "past30", label: "Past 30 days" },
-] as const;
-
-type DateFilter = (typeof DATE_FILTERS)[number]["key"];
-
-function matchesTab(row: BookingRow, tab: StatusTab): boolean {
+function matchesTimeTab(row: BookingRow, tab: TimeTab): boolean {
   if (tab === "all") return true;
-  if (tab === "upcoming")
-    return row.status === "confirmed" && new Date(row.scheduled_at) >= new Date();
-  return row.status === tab;
-}
-
-function matchesDate(row: BookingRow, filter: DateFilter): boolean {
-  if (filter === "all") return true;
   const d = new Date(row.scheduled_at);
   const now = new Date();
   const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const endOfDay = new Date(startOfDay);
   endOfDay.setDate(endOfDay.getDate() + 1);
-
-  if (filter === "today") {
-    return d >= startOfDay && d < endOfDay;
-  }
-  if (filter === "week") {
-    const dayOfWeek = now.getDay(); // 0=Sun
-    const startOfWeek = new Date(startOfDay);
-    startOfWeek.setDate(startOfWeek.getDate() - dayOfWeek);
-    const endOfWeek = new Date(startOfWeek);
-    endOfWeek.setDate(endOfWeek.getDate() + 7);
-    return d >= startOfWeek && d < endOfWeek;
-  }
-  if (filter === "month") {
-    return (
-      d.getFullYear() === now.getFullYear() &&
-      d.getMonth() === now.getMonth()
-    );
-  }
-  if (filter === "past30") {
-    const cutoff = new Date(now);
-    cutoff.setDate(cutoff.getDate() - 30);
-    return d >= cutoff && d <= now;
-  }
-  return true;
+  if (tab === "today") return d >= startOfDay && d < endOfDay;
+  if (tab === "upcoming") return d >= startOfDay; // today + everything future
+  return d < startOfDay; // past
 }
 
 export function BookingsTable({
@@ -138,14 +111,15 @@ export function BookingsTable({
 }) {
   const router = useRouter();
   const [view, setView] = useState<ViewMode>("table");
-  // Open on the actionable pipeline (future confirmed jobs), not the entire
-  // all-time history — otherwise the list dumps up to 1000 rows on load.
-  const [tab, setTab] = useState<StatusTab>("upcoming");
+  // Open on the actionable pipeline (today + future), not all-time history —
+  // otherwise the list dumps up to 1000 rows on load.
+  const [tab, setTab] = useState<TimeTab>("upcoming");
   const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
   const [serviceFilter, setServiceFilter] = useState<string>("all");
   const [assigneeFilter, setAssigneeFilter] = useState<string>("all");
   const [clientFilter, setClientFilter] = useState<string>("all");
-  const [dateFilter, setDateFilter] = useState<DateFilter>("all");
+  const [showFilters, setShowFilters] = useState(false);
 
   // Derive unique values for dropdown filters.
   // Filter by the displayed label so a user typing "Window cleaning"
@@ -177,12 +151,14 @@ export function BookingsTable({
   // Filter pipeline
   const filtered = useMemo(() => {
     let result = rows;
-    // When a search query is active, bypass the tab filter so completed /
-    // cancelled bookings are always findable regardless of which tab is open.
+    // When a search query is active, bypass the time tab so any booking is
+    // findable regardless of which tab is open.
     if (!query.trim()) {
-      result = result.filter((r) => matchesTab(r, tab));
+      result = result.filter((r) => matchesTimeTab(r, tab));
     }
-    result = result.filter((r) => matchesDate(r, dateFilter));
+    if (statusFilter !== "all") {
+      result = result.filter((r) => r.status === statusFilter);
+    }
 
     if (query.trim()) {
       const needle = query.trim().toLowerCase();
@@ -212,36 +188,36 @@ export function BookingsTable({
     }
 
     return result;
-  }, [rows, tab, dateFilter, query, serviceFilter, assigneeFilter, clientFilter]);
+  }, [rows, tab, statusFilter, query, serviceFilter, assigneeFilter, clientFilter]);
 
-  // Tab counts (pre-date/filter, just status)
+  // Tab counts by time window.
   const tabCounts = useMemo(() => {
     const counts: Record<string, number> = {};
-    for (const t of STATUS_TABS) {
-      counts[t.key] = rows.filter((r) => matchesTab(r, t.key)).length;
+    for (const t of TIME_TABS) {
+      counts[t.key] = rows.filter((r) => matchesTimeTab(r, t.key)).length;
     }
     return counts;
   }, [rows]);
 
   const activeFilterCount =
+    (statusFilter !== "all" ? 1 : 0) +
     (serviceFilter !== "all" ? 1 : 0) +
     (assigneeFilter !== "all" ? 1 : 0) +
-    (clientFilter !== "all" ? 1 : 0) +
-    (dateFilter !== "all" ? 1 : 0);
+    (clientFilter !== "all" ? 1 : 0);
 
   function clearFilters() {
+    setStatusFilter("all");
     setServiceFilter("all");
     setAssigneeFilter("all");
     setClientFilter("all");
-    setDateFilter("all");
     setQuery("");
   }
 
   return (
     <div className="space-y-3">
-      {/* ── Status tabs ────────────────────────────────────────────────── */}
+      {/* ── Time tabs ──────────────────────────────────────────────────── */}
       <div className="flex items-center gap-1 overflow-x-auto rounded-lg bg-muted p-1 w-fit">
-        {STATUS_TABS.map((t) => (
+        {TIME_TABS.map((t) => (
           <button
             key={t.key}
             type="button"
@@ -268,9 +244,8 @@ export function BookingsTable({
         ))}
       </div>
 
-      {/* ── Filters row (always visible) ───────────────────────────────── */}
-      <div className="flex flex-wrap items-end gap-2 rounded-lg border border-border bg-card p-3">
-        {/* Search */}
+      {/* ── Search + Filters toggle + view (always visible) ────────────── */}
+      <div className="flex flex-wrap items-center gap-2">
         <div className="relative min-w-[200px] flex-1">
           <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -281,56 +256,86 @@ export function BookingsTable({
           />
         </div>
 
-        {/* Date quick-select */}
-        <FilterSelect
-          label="Date"
-          value={dateFilter}
-          onChange={(v) => setDateFilter(v as DateFilter)}
+        <button
+          type="button"
+          onClick={() => setShowFilters((s) => !s)}
+          className={cn(
+            "inline-flex h-8 items-center gap-1.5 rounded-md border border-input px-2.5 text-xs font-medium transition-colors",
+            showFilters || activeFilterCount > 0
+              ? "bg-muted text-foreground"
+              : "text-muted-foreground hover:bg-muted hover:text-foreground",
+          )}
         >
-          {DATE_FILTERS.map((d) => (
-            <option key={d.key} value={d.key}>{d.label}</option>
-          ))}
-        </FilterSelect>
+          <SlidersHorizontal className="h-3.5 w-3.5" />
+          Filters
+          {activeFilterCount > 0 && (
+            <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-foreground px-1 text-[10px] font-semibold text-background">
+              {activeFilterCount}
+            </span>
+          )}
+        </button>
 
-        {/* Client */}
-        <FilterSelect
-          label="Client"
-          value={clientFilter}
-          onChange={setClientFilter}
-        >
-          <option value="all">All clients</option>
-          {clients.map((c) => (
-            <option key={c} value={c}>{c}</option>
-          ))}
-        </FilterSelect>
+        <div className="flex rounded-md border border-border bg-muted/40">
+          <button
+            type="button"
+            onClick={() => setView("table")}
+            className={cn(
+              "flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors rounded-l-md",
+              view === "table"
+                ? "bg-foreground text-background"
+                : "text-muted-foreground hover:bg-muted hover:text-foreground",
+            )}
+            title="Table view"
+          >
+            <LayoutList className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setView("cards")}
+            className={cn(
+              "flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors rounded-r-md",
+              view === "cards"
+                ? "bg-foreground text-background"
+                : "text-muted-foreground hover:bg-muted hover:text-foreground",
+            )}
+            title="Card view"
+          >
+            <LayoutGrid className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </div>
 
-        {/* Service */}
-        <FilterSelect
-          label="Service"
-          value={serviceFilter}
-          onChange={setServiceFilter}
-        >
-          <option value="all">All services</option>
-          {services.map((s) => (
-            <option key={s} value={s}>{humanizeEnum(s)}</option>
-          ))}
-        </FilterSelect>
+      {/* ── Collapsible who/what filters ───────────────────────────────── */}
+      {showFilters && (
+        <div className="flex flex-wrap items-end gap-2 rounded-lg border border-border bg-card p-3">
+          <FilterSelect label="Status" value={statusFilter} onChange={setStatusFilter}>
+            {STATUS_OPTIONS.map((s) => (
+              <option key={s.key} value={s.key}>{s.label}</option>
+            ))}
+          </FilterSelect>
 
-        {/* Assignee */}
-        <FilterSelect
-          label="Assignee"
-          value={assigneeFilter}
-          onChange={setAssigneeFilter}
-        >
-          <option value="all">All assignees</option>
-          <option value="unassigned">Unassigned</option>
-          {assignees.map((a) => (
-            <option key={a} value={a}>{a}</option>
-          ))}
-        </FilterSelect>
+          <FilterSelect label="Client" value={clientFilter} onChange={setClientFilter}>
+            <option value="all">All clients</option>
+            {clients.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </FilterSelect>
 
-        {/* Clear + view toggle */}
-        <div className="flex items-center gap-2 ml-auto">
+          <FilterSelect label="Service" value={serviceFilter} onChange={setServiceFilter}>
+            <option value="all">All services</option>
+            {services.map((s) => (
+              <option key={s} value={s}>{humanizeEnum(s)}</option>
+            ))}
+          </FilterSelect>
+
+          <FilterSelect label="Assignee" value={assigneeFilter} onChange={setAssigneeFilter}>
+            <option value="all">All assignees</option>
+            <option value="unassigned">Unassigned</option>
+            {assignees.map((a) => (
+              <option key={a} value={a}>{a}</option>
+            ))}
+          </FilterSelect>
+
           {(activeFilterCount > 0 || query) && (
             <button
               type="button"
@@ -341,37 +346,8 @@ export function BookingsTable({
               Clear {activeFilterCount > 0 ? `(${activeFilterCount})` : ""}
             </button>
           )}
-
-          <div className="flex rounded-md border border-border bg-muted/40">
-            <button
-              type="button"
-              onClick={() => setView("table")}
-              className={cn(
-                "flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors rounded-l-md",
-                view === "table"
-                  ? "bg-foreground text-background"
-                  : "text-muted-foreground hover:bg-muted hover:text-foreground",
-              )}
-              title="Table view"
-            >
-              <LayoutList className="h-3.5 w-3.5" />
-            </button>
-            <button
-              type="button"
-              onClick={() => setView("cards")}
-              className={cn(
-                "flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium transition-colors rounded-r-md",
-                view === "cards"
-                  ? "bg-foreground text-background"
-                  : "text-muted-foreground hover:bg-muted hover:text-foreground",
-              )}
-              title="Card view"
-            >
-              <LayoutGrid className="h-3.5 w-3.5" />
-            </button>
-          </div>
         </div>
-      </div>
+      )}
 
       {/* ── Results ────────────────────────────────────────────────────── */}
       {rows.length === 0 ? (
