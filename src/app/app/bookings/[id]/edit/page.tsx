@@ -173,6 +173,8 @@ export default async function EditBookingPage({
               id={booking.id}
               seriesId={booking.series_id}
               scheduledAt={booking.scheduled_at}
+              // eslint-disable-next-line react-hooks/purity -- server component: renders once on the server, no hydration to drift
+              isPast={new Date(booking.scheduled_at).getTime() < Date.now()}
             />
           </div>
         </div>

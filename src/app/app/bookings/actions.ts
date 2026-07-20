@@ -2147,7 +2147,14 @@ export async function deleteBookingAction(formData: FormData) {
   // .eq("organization_id", ...).
   if (cascade && existing?.series_id) {
     const admin = createSupabaseAdminClient();
-    const fromTs = existing.scheduled_at; // this occurrence and everything after
+    // Lower bound for the cascade delete: this occurrence and everything after
+    // it — but NEVER earlier than now. Past/completed visits are historical
+    // records and are protected from deletion everywhere in the app. If the
+    // booking being deleted is itself in the past, the clamp means only its
+    // FUTURE siblings are removed and the past ones (including this one) stay.
+    const nowIso = new Date().toISOString();
+    const fromTs =
+      existing.scheduled_at > nowIso ? existing.scheduled_at : nowIso;
 
     // Collect the Google Calendar event ids for the occurrences we're about to
     // delete (this one + future) so we can unsync them after the row delete.
@@ -2224,6 +2231,14 @@ export async function deleteBookingAction(formData: FormData) {
       ),
     ]);
   } else {
+    // PROTECT PAST VISITS: never delete a booking dated in the past. They're
+    // the client's history (and may be unbilled). A past booking reaching this
+    // path is either a stale form or a direct POST — no-op and send them back
+    // to the booking rather than destroying a record.
+    if (existing && existing.scheduled_at < new Date().toISOString()) {
+      redirect(`/app/bookings/${id}`);
+    }
+
     // Single-booking delete. CRITICAL: clean up personal calendar events
     // BEFORE deleting the booking row. booking_member_calendar_events has
     // ON DELETE CASCADE on booking_id — if the booking row goes first,
@@ -2285,6 +2300,13 @@ export async function skipBookingOccurrenceAction(formData: FormData) {
   };
 
   if (!booking || !booking.series_id) return;
+
+  // PROTECT PAST VISITS: "skip" deletes the occurrence row, so refuse it for a
+  // past date. Skipping only makes sense for an upcoming visit (holiday, client
+  // away); a past occurrence already happened and is a kept record.
+  if (booking.scheduled_at < new Date().toISOString()) {
+    redirect(`/app/bookings/${id}`);
+  }
 
   // Key the skip on the occurrence's ORG-LOCAL calendar date — that's what
   // recurrence.isSkipped compares against (it reads the local Y/M/D of the

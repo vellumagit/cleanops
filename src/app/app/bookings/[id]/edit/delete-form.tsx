@@ -11,10 +11,13 @@ export function DeleteBookingForm({
   id,
   seriesId,
   scheduledAt,
+  isPast,
 }: {
   id: string;
   seriesId: string | null;
   scheduledAt: string;
+  /** Computed on the server — past visits are undeletable (see below). */
+  isPast: boolean;
 }) {
   const [cascade, setCascade] = useState(false);
   const isRecurring = Boolean(seriesId);
@@ -24,6 +27,19 @@ export function DeleteBookingForm({
     day: "numeric",
     year: "numeric",
   });
+
+  // Past visits are historical records — the app never deletes them. Show a
+  // protective note instead of the delete/skip controls.
+  if (isPast) {
+    return (
+      <div className="rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground leading-relaxed">
+        This visit is in the past, so it&rsquo;s kept as part of your records and
+        can&rsquo;t be deleted. To stop an ongoing recurring client, open an
+        upcoming visit and choose &ldquo;Delete this + future&rdquo; — past
+        visits always stay.
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
