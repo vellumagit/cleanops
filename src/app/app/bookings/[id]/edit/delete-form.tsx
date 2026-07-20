@@ -32,7 +32,7 @@ export function DeleteBookingForm({
         action={deleteBookingAction}
         onSubmit={(e) => {
           const msg = cascade
-            ? "Delete this booking AND the entire recurring series, including every future occurrence? This cannot be undone."
+            ? "Delete this booking and every FUTURE occurrence in the series? Past visits are kept. This cannot be undone."
             : "Delete this booking? This cannot be undone.";
           if (!window.confirm(msg)) e.preventDefault();
         }}
@@ -49,14 +49,14 @@ export function DeleteBookingForm({
               className="mt-0.5 h-4 w-4 rounded border-input"
             />
             <span>
-              Also delete the entire recurring series (every future occurrence
-              will be removed).
+              Also remove the rest of the series — this booking and every
+              future occurrence. Past visits are kept.
             </span>
           </label>
         )}
 
         <SubmitButton variant="destructive" pendingLabel="Deleting…">
-          {cascade ? "Delete booking + series" : "Delete booking"}
+          {cascade ? "Delete this + future" : "Delete booking"}
         </SubmitButton>
       </form>
 

@@ -2120,37 +2120,43 @@ export async function deleteBookingAction(formData: FormData) {
   const cascade = String(formData.get("cascade_series") ?? "") === "true";
   const { membership, supabase } = await getActionContext();
 
-  // Fetch the Google Calendar event ID + series_id before deleting
+  // Fetch the Google Calendar event ID + series_id + this occurrence's time
+  // before deleting. scheduled_at bounds the cascade so we never touch PAST
+  // occurrences (see below).
   const { data: existing } = (await supabase
     .from("bookings")
-    .select("google_calendar_event_id, series_id")
+    .select("google_calendar_event_id, series_id, scheduled_at")
     .eq("id", id)
     .maybeSingle()) as unknown as {
     data: {
       google_calendar_event_id: string | null;
       series_id: string | null;
+      scheduled_at: string;
     } | null;
   };
 
-  // Cascade: delete every booking in this series first, then the series row.
-  // We already verified the booking belongs to the user's org via the RLS-
-  // bound fetch above. Use the admin client for the bulk delete because
-  // RLS on bookings can silently drop bulk-DELETE rows when the filter
-  // column (series_id) isn't in the policy's predicate shape — we still
-  // enforce org isolation via an explicit .eq("organization_id", ...).
+  // Cascade: remove THIS occurrence and every FUTURE one in the series, but
+  // KEEP past/completed visits — they're the client's history and may be
+  // unbilled. (The UI only ever promises "every future occurrence"; a prior
+  // version deleted the whole series including past visits, which silently
+  // wiped completed jobs — the bug this scoping fixes.) We already verified
+  // the booking belongs to the user's org via the RLS-bound fetch above. Use
+  // the admin client for the bulk delete because RLS on bookings can silently
+  // drop bulk-DELETE rows when the filter column (series_id) isn't in the
+  // policy's predicate shape — we still enforce org isolation with an explicit
+  // .eq("organization_id", ...).
   if (cascade && existing?.series_id) {
     const admin = createSupabaseAdminClient();
+    const fromTs = existing.scheduled_at; // this occurrence and everything after
 
-    // Collect every Google Calendar event id in the series so we can
-    // unsync them after the row delete.
+    // Collect the Google Calendar event ids for the occurrences we're about to
+    // delete (this one + future) so we can unsync them after the row delete.
     const { data: siblings } = (await admin
       .from("bookings")
       .select("id, google_calendar_event_id")
       .eq("series_id", existing.series_id)
-      .eq(
-        "organization_id",
-        membership.organization_id,
-      )) as unknown as {
+      .eq("organization_id", membership.organization_id)
+      .gte("scheduled_at", fromTs)) as unknown as {
       data: Array<{ id: string; google_calendar_event_id: string | null }> | null;
     };
 
@@ -2158,7 +2164,8 @@ export async function deleteBookingAction(formData: FormData) {
       .from("bookings")
       .delete({ count: "exact" })
       .eq("series_id", existing.series_id)
-      .eq("organization_id", membership.organization_id);
+      .eq("organization_id", membership.organization_id)
+      .gte("scheduled_at", fromTs);
     if (delBookingsErr) {
       console.error(
         "[cascade-delete] bulk booking delete failed:",
@@ -2167,21 +2174,24 @@ export async function deleteBookingAction(formData: FormData) {
       throw delBookingsErr;
     }
     console.log(
-      `[cascade-delete] removed ${delBookingsCount ?? 0} bookings from series ${existing.series_id}`,
+      `[cascade-delete] removed ${delBookingsCount ?? 0} current+future booking(s) from series ${existing.series_id} (past visits kept)`,
     );
 
-    const { error: delSeriesErr } = (await admin
+    // DEACTIVATE the series rather than deleting its row — any surviving past
+    // occurrences still reference series_id, and deactivating stops the nightly
+    // extend cron from regenerating future dates.
+    const { error: deactivateErr } = (await admin
       .from("booking_series")
-      .delete()
+      .update({ active: false })
       .eq("id", existing.series_id)
       .eq(
         "organization_id",
         membership.organization_id,
       )) as unknown as { error: { message: string } | null };
-    if (delSeriesErr) {
+    if (deactivateErr) {
       console.error(
-        "[cascade-delete] series row delete failed:",
-        delSeriesErr.message,
+        "[cascade-delete] series deactivate failed:",
+        deactivateErr.message,
       );
     }
 
