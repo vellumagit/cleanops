@@ -138,7 +138,9 @@ export function BookingsTable({
 }) {
   const router = useRouter();
   const [view, setView] = useState<ViewMode>("table");
-  const [tab, setTab] = useState<StatusTab>("all");
+  // Open on the actionable pipeline (future confirmed jobs), not the entire
+  // all-time history — otherwise the list dumps up to 1000 rows on load.
+  const [tab, setTab] = useState<StatusTab>("upcoming");
   const [query, setQuery] = useState("");
   const [serviceFilter, setServiceFilter] = useState<string>("all");
   const [assigneeFilter, setAssigneeFilter] = useState<string>("all");
