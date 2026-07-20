@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { randomBytes } from "crypto";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
+import { canCreateData } from "@/lib/subscription";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { ContractSchema } from "@/lib/validators/contracts";
 import { sendOrgEmailDetailed, isClientEmailPaused } from "@/lib/email";
@@ -52,6 +53,11 @@ export async function createContractAction(
   if (!parsed.ok) return { errors: parsed.errors, values: raw };
 
   const { membership, supabase } = await getActionContext();
+
+  if (!(await canCreateData(membership.organization_id))) {
+    return { errors: { _form: "Your subscription has expired. Subscribe to create new contracts." }, values: raw };
+  }
+
   const extras = readContractServiceExtras(formData);
   // Server-side gate: submit-button disable doesn't catch Enter-key
   // submission. Without a real service_type_id the contract would

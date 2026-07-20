@@ -1,6 +1,8 @@
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getSubscriptionInfo } from "@/lib/subscription";
+import { isStripeEnabled } from "@/lib/stripe";
+import { TrialEndedWall } from "@/components/trial-ended-wall";
 import { AppSidebar } from "@/components/app-sidebar";
 import { BrandProvider } from "@/components/brand-provider";
 import { PushPrompt } from "@/components/push-prompt";
@@ -22,6 +24,21 @@ export default async function AppLayout({
 
   const supabase = await createSupabaseServerClient();
   const subscriptionInfo = await getSubscriptionInfo(membership.organization_id);
+
+  // Hard wall: an expired org (trial elapsed, or past-due grace run out) gets
+  // the subscribe screen INSTEAD of the app — the single chokepoint every
+  // /app route passes through. Only enforced when Stripe billing is actually
+  // live, so a non-Stripe environment can never accidentally lock everyone
+  // out. Overridden (free_forever/comp) and legacy orgs never reach here.
+  if (isStripeEnabled() && subscriptionInfo.gate === "expired") {
+    return (
+      <TrialEndedWall
+        info={subscriptionInfo}
+        role={membership.role}
+        orgName={membership.organization_name}
+      />
+    );
+  }
 
   // Compute today's boundaries in the org's timezone
   const now = new Date();

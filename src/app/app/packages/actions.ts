@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
+import { canCreateData } from "@/lib/subscription";
 import { PackageSchema } from "@/lib/validators/packages";
 
 type Field = keyof typeof PackageSchema.shape;
@@ -28,6 +29,11 @@ export async function createPackageAction(
   if (!parsed.ok) return { errors: parsed.errors, values: raw };
 
   const { membership, supabase } = await getActionContext();
+
+  if (!(await canCreateData(membership.organization_id))) {
+    return { errors: { _form: "Your subscription has expired. Subscribe to create new packages." }, values: raw };
+  }
+
   const { error } = await supabase.from("packages").insert({
     organization_id: membership.organization_id,
     name: parsed.data.name,

@@ -25,6 +25,42 @@ export function TrialBanner({
   // No banner needed: paid, overridden, or legacy org with permanent access
   if (info.gate === "overridden") return null;
   if (info.gate === "none") return null;
+
+  // Past-due grace — the renewal charge failed and a 7-day clock is running
+  // before the org gets walled. Show an urgent "update your card" banner.
+  if (info.status === "past_due" && info.graceDaysLeft !== null) {
+    const days = info.graceDaysLeft;
+    return (
+      <div className="border-b border-red-500/30 bg-red-500/10 px-4 py-2.5 text-xs text-red-700 dark:text-red-200">
+        <div className="mx-auto flex max-w-screen-xl items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            <p>
+              <strong>
+                {days <= 0
+                  ? "Payment failed — access will be suspended today."
+                  : days === 1
+                    ? "Payment failed — 1 day to update your card."
+                    : `Payment failed — ${days} days to update your card.`}
+              </strong>{" "}
+              {canManageBilling
+                ? "Update your payment method to avoid suspension."
+                : "Ask your workspace owner to update the payment method."}
+            </p>
+          </div>
+          {canManageBilling && (
+            <Link
+              href="/app/settings/billing"
+              className="shrink-0 rounded-md bg-red-600 px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-red-700"
+            >
+              Update card
+            </Link>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   if (info.gate === "active" && info.trialDaysLeft === null) return null;
 
   // Active trial — show countdown

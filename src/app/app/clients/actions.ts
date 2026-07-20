@@ -4,6 +4,7 @@ import { randomBytes } from "crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
+import { canCreateData } from "@/lib/subscription";
 import { logAuditEvent } from "@/lib/audit";
 import { ClientSchema } from "@/lib/validators/clients";
 import { redirectAfterSetup } from "@/lib/setup-return";
@@ -100,6 +101,10 @@ export async function createClientAction(
   if (!parsed.ok) return { errors: parsed.errors, values: raw };
 
   const { membership, supabase } = await getActionContext();
+
+  if (!(await canCreateData(membership.organization_id))) {
+    return { errors: { _form: "Your subscription has expired. Subscribe to add new clients." }, values: raw };
+  }
 
   // Checkbox sends "on" when checked, nothing when unchecked.
   const smsOptedIn = formData.get("sms_opted_in") === "on";
