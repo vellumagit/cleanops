@@ -30,6 +30,7 @@ import {
   phoneKey,
   verifyTwilioSignature,
 } from "@/lib/sms-inbound";
+import { maskPhone } from "@/lib/log-redact";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -116,7 +117,7 @@ export async function POST(req: NextRequest) {
   };
 
   if (!orgRow) {
-    console.warn(`[sms/inbound] no org for To=${to}; keyword=${firstWord}`);
+    console.warn(`[sms/inbound] no org for To=${maskPhone(to)}; keyword=${firstWord}`);
     // Still answer HELP generically; can't map opt-out without an org.
     return isHelp
       ? twiml("For help, contact the business that messaged you. Reply STOP to unsubscribe.")
@@ -163,13 +164,42 @@ export async function POST(req: NextRequest) {
         console.error(`[sms/inbound] opt-${isStop ? "out" : "in"} update failed:`, error.message);
       } else {
         console.log(
-          `[sms/inbound] ${isStop ? "opted out" : "opted in"} ${matchIds.length} client(s) in org ${orgRow.id} (From=${from})`,
+          `[sms/inbound] ${isStop ? "opted out" : "opted in"} ${matchIds.length} client(s) in org ${orgRow.id} (From=${maskPhone(from)})`,
         );
       }
     } else {
       console.warn(
-        `[sms/inbound] ${firstWord} from ${from} matched no client in org ${orgRow.id}`,
+        `[sms/inbound] ${firstWord} from ${maskPhone(from)} matched no client in org ${orgRow.id}`,
       );
+    }
+
+    // Also honor the opt-out for the SUBCONTRACTOR BENCH (freelancer_contacts).
+    // The same phone may be a bench contact, and STOP must stop the shift-offer
+    // broadcasts too — not just client messages. TCPA/CTIA applies to both.
+    const { data: benchRows } = (await admin
+      .from("freelancer_contacts")
+      .select("id, phone")
+      .eq("organization_id", orgRow.id)) as unknown as {
+      data: Array<{ id: string; phone: string | null }> | null;
+    };
+    const benchIds = (benchRows ?? [])
+      .filter((c) => phoneKey(c.phone) === fromKey)
+      .map((c) => c.id);
+    if (benchIds.length > 0) {
+      const { error: benchErr } = await (admin
+        .from("freelancer_contacts")
+        .update({
+          sms_opted_out_at: isStop ? new Date().toISOString() : null,
+        } as never)
+        .in("id", benchIds) as unknown as Promise<{
+        error: { message: string } | null;
+      }>);
+      if (benchErr) {
+        console.error(
+          `[sms/inbound] bench opt-${isStop ? "out" : "in"} update failed:`,
+          benchErr.message,
+        );
+      }
     }
   }
 

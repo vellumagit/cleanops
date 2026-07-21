@@ -31,6 +31,7 @@
 
 import "server-only";
 import { isE164 } from "@/lib/phone";
+import { maskPhone } from "@/lib/log-redact";
 
 export type SmsSendResult =
   | { ok: true; sid: string | null; status: "sent" | "skipped_disabled"; segments: number }
@@ -79,8 +80,10 @@ export async function sendSms(
   const segments = smsSegments(body);
 
   if (!isTwilioEnabled()) {
+    // Never log the message body — it contains client name + address — nor the
+    // full number. Length + segment count is enough for debugging.
     console.log(
-      `[twilio:disabled] would send to ${to}: ${body.slice(0, 200)}`,
+      `[twilio:disabled] would send to ${maskPhone(to)} (${body.length} chars, ${segments} seg)`,
     );
     return { ok: true, sid: null, status: "skipped_disabled", segments };
   }
@@ -89,7 +92,7 @@ export async function sendSms(
   // would return a 400 anyway, but this gives us a cleaner log message
   // and avoids burning an API call on obviously wrong input.
   if (!isE164(to)) {
-    console.error(`[twilio] sendSms: "${to}" is not a valid E.164 number — skipping`);
+    console.error(`[twilio] sendSms: ${maskPhone(to)} is not a valid E.164 number — skipping`);
     return { ok: false, error: `Invalid phone number (expected E.164 format): ${to}` };
   }
 

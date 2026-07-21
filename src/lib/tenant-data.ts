@@ -100,6 +100,8 @@ export type ExportBundle = {
   organization: Record<string, unknown> | null;
   tables: Record<string, unknown[]>;
   counts: Record<string, number>;
+  /** bucket → time-limited signed download URLs for the org's stored files. */
+  storage_files?: Record<string, string[]>;
 };
 
 /**
@@ -139,11 +141,63 @@ export async function exportOrgData(orgId: string): Promise<ExportBundle> {
     counts[tableName] = data?.length ?? 0;
   }
 
+  // Storage files (job photos, contract/estimate PDFs, org logo). Data
+  // portability (GDPR Art. 20) covers user-provided files, not just DB rows.
+  // We can't inline MBs of binary in JSON, so include 7-day signed download
+  // URLs. Best-effort per bucket — a listing error never fails the export.
+  const storage_files: Record<string, string[]> = {};
+  const exportBuckets = [
+    "org-assets",
+    "contract-docs",
+    "estimate-pdfs",
+    "job-photos",
+  ];
+  async function listStoragePaths(bucket: string, prefix: string): Promise<string[]> {
+    const out: string[] = [];
+    let offset = 0;
+    const PAGE = 1000;
+    for (;;) {
+      const { data: listed, error } = await db.storage
+        .from(bucket)
+        .list(prefix, { limit: PAGE, offset });
+      if (error || !listed || listed.length === 0) break;
+      for (const entry of listed) {
+        const path = `${prefix}/${entry.name}`;
+        // Folders come back with a null id — recurse one level into them.
+        if (!entry.id) {
+          out.push(...(await listStoragePaths(bucket, path)));
+        } else {
+          out.push(path);
+        }
+      }
+      if (listed.length < PAGE) break;
+      offset += PAGE;
+      if (offset >= 100_000) break;
+    }
+    return out;
+  }
+  for (const bucket of exportBuckets) {
+    try {
+      const paths = await listStoragePaths(bucket, orgId);
+      if (paths.length === 0) continue;
+      const { data: signed } = await db.storage
+        .from(bucket)
+        .createSignedUrls(paths, 60 * 60 * 24 * 7);
+      const urls = (signed ?? [])
+        .map((s) => s.signedUrl)
+        .filter((u): u is string => Boolean(u));
+      if (urls.length > 0) storage_files[bucket] = urls;
+    } catch (err) {
+      console.error(`[tenant-export] storage ${bucket} failed:`, err);
+    }
+  }
+
   return {
     exported_at: new Date().toISOString(),
     organization: org as Record<string, unknown> | null,
     tables,
     counts,
+    storage_files,
   };
 }
 
@@ -228,9 +282,31 @@ export async function cancelOrgDeletion(orgId: string): Promise<void> {
  */
 export async function purgeOrgData(
   orgId: string,
-): Promise<{ tables: Record<string, number>; storageFilesRemoved: number }> {
+): Promise<{
+  tables: Record<string, number>;
+  storageFilesRemoved: number;
+  authUsersDeleted: number;
+}> {
   const db = createSupabaseAdminClient();
   const tableCounts: Record<string, number> = {};
+
+  // Capture member identities BEFORE their membership rows are deleted below.
+  // After the purge we erase the auth users whose ONLY membership was in this
+  // org — otherwise their login identity + email lingers in Supabase Auth after
+  // a "permanent" deletion (right-to-erasure gap).
+  const { data: memberRows } = (await db
+    .from("memberships")
+    .select("profile_id")
+    .eq("organization_id", orgId)) as unknown as {
+    data: Array<{ profile_id: string | null }> | null;
+  };
+  const memberProfileIds = [
+    ...new Set(
+      (memberRows ?? [])
+        .map((m) => m.profile_id)
+        .filter((p): p is string => Boolean(p)),
+    ),
+  ];
 
   // Clean Google Calendar events BEFORE wiping any rows. Deleting the booking
   // rows (below) and the integration_connections token strands every event as
@@ -506,7 +582,40 @@ export async function purgeOrgData(
     } as never)
     .eq("id", orgId);
 
-  return { tables: tableCounts, storageFilesRemoved };
+  // Right-to-erasure: remove auth identities whose LAST membership was in this
+  // org. A person can belong to multiple orgs, so only delete those with no
+  // remaining membership anywhere. Best-effort — a lingering auth row is not
+  // worth failing the whole purge over.
+  let authUsersDeleted = 0;
+  for (const profileId of memberProfileIds) {
+    try {
+      const { count } = await db
+        .from("memberships")
+        .select("id", { count: "exact", head: true })
+        .eq("profile_id", profileId);
+      if ((count ?? 0) > 0) continue; // still a member elsewhere — keep them
+      const { error: authErr } = await db.auth.admin.deleteUser(profileId);
+      if (authErr) {
+        console.error(
+          `[tenant-purge] auth user delete failed for ${profileId}:`,
+          authErr.message,
+        );
+        continue;
+      }
+      authUsersDeleted++;
+      // Best-effort profile-row removal in case the auth cascade doesn't reach it.
+      await db.from("profiles").delete().eq("id" as never, profileId as never);
+    } catch (err) {
+      console.error(`[tenant-purge] auth cleanup error for ${profileId}:`, err);
+    }
+  }
+  if (authUsersDeleted > 0) {
+    console.log(
+      `[tenant-purge] erased ${authUsersDeleted} orphaned auth identity(ies) for org ${orgId}`,
+    );
+  }
+
+  return { tables: tableCounts, storageFilesRemoved, authUsersDeleted };
 }
 
 /**

@@ -6,6 +6,7 @@
 
 import "server-only";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { maskEmail } from "@/lib/log-redact";
 import { sendPushToMembership, sendPushToOrgAdmins } from "@/lib/push";
 import { notify } from "@/lib/notify";
 import type { CurrencyCode } from "@/lib/format";
@@ -951,7 +952,7 @@ export async function sendBookingConfirmation(bookingId: string) {
           .from("bookings")
           .update({ confirmation_email_sent_at: new Date().toISOString() })
           .eq("id", booking.id);
-        console.log(`[auto] Booking confirmation email sent to ${booking.client.email}`);
+        console.log(`[auto] Booking confirmation email sent to ${maskEmail(booking.client.email)}`);
       }
     }
 
@@ -1109,7 +1110,7 @@ export async function sendBookingRescheduled(
         .eq("id", booking.id);
     }
 
-    console.log(`[auto] Booking rescheduled email sent to ${booking.client.email}`);
+    console.log(`[auto] Booking rescheduled email sent to ${maskEmail(booking.client.email)}`);
   } catch (err) {
     console.error("[auto] sendBookingRescheduled failed:", err);
   }
@@ -1269,7 +1270,7 @@ export async function sendBookingCancelledToClient(bookingId: string) {
         .eq("id", booking.id);
     }
 
-    console.log(`[auto] Booking cancelled email sent to ${booking.client.email}`);
+    console.log(`[auto] Booking cancelled email sent to ${maskEmail(booking.client.email)}`);
   } catch (err) {
     console.error("[auto] sendBookingCancelledToClient failed:", err);
   }
@@ -1420,7 +1421,7 @@ export async function sendRebookingPrompts(): Promise<{
         .update({ last_rebook_prompt_at: new Date().toISOString() })
         .eq("id", client.id);
       sent += 1;
-      console.log(`[auto] Rebooking prompt sent to ${client.email}`);
+      console.log(`[auto] Rebooking prompt sent to ${maskEmail(client.email)}`);
     }
   }
 
@@ -1696,7 +1697,7 @@ export async function sendOverdueReminders(): Promise<{
         .update({ overdue_reminder_sent_at: new Date().toISOString() })
         .eq("id", inv.id);
       sent += 1;
-      console.log(`[auto] Overdue reminder sent for invoice ${inv.id} to ${inv.client.email}`);
+      console.log(`[auto] Overdue reminder sent for invoice ${inv.id} to ${maskEmail(inv.client.email)}`);
     } else {
       skipped += 1;
     }
@@ -4714,7 +4715,7 @@ export async function notifyPtoStatus(ptoRequestId: string): Promise<void> {
       toName: recipient.fullName ?? undefined,
       ...template,
     });
-    console.log(`[auto] PTO ${req.status} email sent to ${recipient.email}`);
+    console.log(`[auto] PTO ${req.status} email sent to ${maskEmail(recipient.email)}`);
   } catch (err) {
     console.error("[auto] notifyPtoStatus failed:", err);
   }
@@ -4878,7 +4879,7 @@ export async function notifyTrainingAssigned(
       toName: recipient.fullName ?? undefined,
       ...template,
     });
-    console.log(`[auto] Training assigned email sent to ${recipient.email}`);
+    console.log(`[auto] Training assigned email sent to ${maskEmail(recipient.email)}`);
   } catch (err) {
     console.error("[auto] notifyTrainingAssigned failed:", err);
   }

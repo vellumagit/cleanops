@@ -32,15 +32,38 @@ const ALGORITHM = "aes-256-gcm";
 const KEY_LENGTH = 32; // 256 bits
 const IV_LENGTH = 12; // GCM standard
 
-let cachedKey: Buffer | null = null;
+let cachedKeys: Buffer[] | null = null;
+
+/** Decode + validate a single base64 (or "base64:"-prefixed) 32-byte key. */
+function parseKey(raw: string, label: string): Buffer {
+  const b64 = raw.startsWith("base64:") ? raw.slice("base64:".length) : raw;
+  let key: Buffer;
+  try {
+    key = Buffer.from(b64, "base64");
+  } catch {
+    throw new Error(`${label} is not valid base64`);
+  }
+  if (key.length !== KEY_LENGTH) {
+    throw new Error(
+      `${label} must decode to ${KEY_LENGTH} bytes, got ${key.length}`,
+    );
+  }
+  return key;
+}
 
 /**
- * Load the encryption key from env. Throws loudly if missing or malformed
- * so misconfiguration fails fast at the first encrypt/decrypt call rather
- * than silently producing broken ciphertext.
+ * Load the encryption keys. `keys[0]` is the PRIMARY — used for all new
+ * encryption. Any keys listed in `INTEGRATION_ENCRYPTION_KEY_PREVIOUS`
+ * (comma-separated) are accepted for DECRYPTION only. This is what makes key
+ * rotation possible: set PREVIOUS to the old key and KEY to a fresh one, and
+ * existing ciphertext keeps decrypting while a re-encrypt pass migrates it —
+ * no big-bang cutover, and no permanent lock-out if you need to roll the key.
+ *
+ * Throws loudly if the primary is missing or malformed so misconfiguration
+ * fails fast rather than silently producing broken ciphertext.
  */
-function getKey(): Buffer {
-  if (cachedKey) return cachedKey;
+function getKeys(): Buffer[] {
+  if (cachedKeys) return cachedKeys;
 
   const raw = process.env.INTEGRATION_ENCRYPTION_KEY;
   if (!raw) {
@@ -50,21 +73,17 @@ function getKey(): Buffer {
     );
   }
 
-  // Accept both "base64:..." and bare base64 for flexibility.
-  const b64 = raw.startsWith("base64:") ? raw.slice("base64:".length) : raw;
-  let key: Buffer;
-  try {
-    key = Buffer.from(b64, "base64");
-  } catch {
-    throw new Error("INTEGRATION_ENCRYPTION_KEY is not valid base64");
+  const keys = [parseKey(raw, "INTEGRATION_ENCRYPTION_KEY")];
+
+  const previous = process.env.INTEGRATION_ENCRYPTION_KEY_PREVIOUS;
+  if (previous) {
+    for (const part of previous.split(",").map((s) => s.trim()).filter(Boolean)) {
+      keys.push(parseKey(part, "INTEGRATION_ENCRYPTION_KEY_PREVIOUS"));
+    }
   }
-  if (key.length !== KEY_LENGTH) {
-    throw new Error(
-      `INTEGRATION_ENCRYPTION_KEY must decode to ${KEY_LENGTH} bytes, got ${key.length}`,
-    );
-  }
-  cachedKey = key;
-  return key;
+
+  cachedKeys = keys;
+  return keys;
 }
 
 /**
@@ -74,7 +93,7 @@ function getKey(): Buffer {
 export function encryptSecret(plaintext: string | null | undefined): string | null {
   if (plaintext == null || plaintext === "") return null;
 
-  const key = getKey();
+  const key = getKeys()[0]; // always encrypt with the primary key
   const iv = randomBytes(IV_LENGTH);
   const cipher = createCipheriv(ALGORITHM, key, iv);
   const encrypted = Buffer.concat([
@@ -109,15 +128,28 @@ export function decryptSecret(ciphertext: string | null | undefined): string | n
     throw new Error(`Unsupported ciphertext version: ${version}`);
   }
 
-  const key = getKey();
   const iv = Buffer.from(ivB64, "base64");
   const authTag = Buffer.from(tagB64, "base64");
   const data = Buffer.from(dataB64, "base64");
 
-  const decipher = createDecipheriv(ALGORITHM, key, iv);
-  decipher.setAuthTag(authTag);
-  const decrypted = Buffer.concat([decipher.update(data), decipher.final()]);
-  return decrypted.toString("utf8");
+  // Try each configured key (primary first, then any previous keys). GCM's
+  // auth-tag check throws on the wrong key, so a successful decrypt is proof
+  // of the right one. This is what lets a rotation decrypt old + new ciphertext.
+  const keys = getKeys();
+  let lastErr: unknown;
+  for (const key of keys) {
+    try {
+      const decipher = createDecipheriv(ALGORITHM, key, iv);
+      decipher.setAuthTag(authTag);
+      const decrypted = Buffer.concat([decipher.update(data), decipher.final()]);
+      return decrypted.toString("utf8");
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr instanceof Error
+    ? lastErr
+    : new Error("Decryption failed under all configured keys");
 }
 
 /**

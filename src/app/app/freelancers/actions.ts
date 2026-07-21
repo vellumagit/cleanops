@@ -235,20 +235,57 @@ export async function createJobOfferAction(
     return { errors: { _form: "Booking not found" }, values: raw };
   }
 
-  // Sanity-check the contacts are ours + active.
-  const { data: contacts, error: contactsErr } = await supabase
-    .from("freelancer_contacts")
-    .select("id, full_name, phone, active")
-    .in("id", contactIds);
+  // Sanity-check the contacts are ours + active + not opted out of SMS.
+  type BenchContact = {
+    id: string;
+    full_name: string;
+    phone: string;
+    active: boolean;
+    sms_opted_out_at: string | null;
+  };
+  // Select including the opt-out column. If the migration hasn't landed yet the
+  // column is absent — fall back to the base columns so dispatch keeps working
+  // (opt-out just isn't enforced until the migration runs). Order-independent.
+  let contacts: BenchContact[] | null = null;
+  let contactsErr: { message: string } | null = null;
+  {
+    const withOptOut = (await supabase
+      .from("freelancer_contacts")
+      .select("id, full_name, phone, active, sms_opted_out_at")
+      .in("id", contactIds)) as unknown as {
+      data: BenchContact[] | null;
+      error: { message: string } | null;
+    };
+    if (withOptOut.error) {
+      const base = (await supabase
+        .from("freelancer_contacts")
+        .select("id, full_name, phone, active")
+        .in("id", contactIds)) as unknown as {
+        data: Array<Omit<BenchContact, "sms_opted_out_at">> | null;
+        error: { message: string } | null;
+      };
+      contacts = (base.data ?? []).map((c) => ({ ...c, sms_opted_out_at: null }));
+      contactsErr = base.error;
+    } else {
+      contacts = withOptOut.data;
+    }
+  }
 
   if (contactsErr || !contacts || contacts.length === 0) {
     return { errors: { _form: "No contacts matched" }, values: raw };
   }
 
-  const activeContacts = contacts.filter((c) => c.active);
+  // `active` = on the bench; `sms_opted_out_at` = replied STOP. Opted-out
+  // contacts are excluded unconditionally — re-texting them violates their
+  // carrier opt-out (TCPA/CTIA), regardless of bench status.
+  const activeContacts = contacts.filter(
+    (c) => c.active && !c.sms_opted_out_at,
+  );
   if (activeContacts.length === 0) {
     return {
-      errors: { contact_ids: "All selected contacts are inactive" },
+      errors: {
+        contact_ids: "All selected contacts are inactive or have opted out of SMS.",
+      },
       values: raw,
     };
   }
