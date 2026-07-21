@@ -373,6 +373,22 @@ export async function updateMemberAction(
     };
   }
 
+  // PRIVILEGE-ESCALATION GUARD: only an OWNER may create or modify owners.
+  // Without this an admin could promote themselves (or anyone) to owner, or
+  // demote/edit an existing owner — the write below uses the service-role
+  // client, so RLS does not backstop it. Blocks both directions: assigning the
+  // owner role, and touching a member who is currently an owner.
+  if (
+    membership.role !== "owner" &&
+    (parsed.data.role === "owner" || before.role === "owner")
+  ) {
+    return {
+      errors: {
+        _form: "Only an owner can assign or change the owner role.",
+      },
+    };
+  }
+
   // Build the memberships update payload (public-ish fields only).
   //
   // For shadow members, display_name is their canonical name.

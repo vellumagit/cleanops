@@ -17,23 +17,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { reconcileOrgCalendarEvents } from "@/lib/google-calendar";
+import { requireCronAuth } from "@/lib/cron-auth";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
-  const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret || cronSecret.length < 16) {
-    return NextResponse.json({ error: "CRON_SECRET not configured" }, { status: 503 });
-  }
-  const url = new URL(request.url);
-  const secretParam = url.searchParams.get("secret");
-  const authHeader = request.headers.get("authorization");
-  if (secretParam !== cronSecret && authHeader !== `Bearer ${cronSecret}`) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  // Auth: header-only (Vercel cron sends the Bearer header).
+  const unauthorized = requireCronAuth(request);
+  if (unauthorized) return unauthorized;
 
+  const url = new URL(request.url);
   const admin = createSupabaseAdminClient();
   const singleOrg = url.searchParams.get("org_id");
 

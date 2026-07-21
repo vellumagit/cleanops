@@ -24,24 +24,16 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { pruneOrgCalendarOrphans } from "@/lib/google-calendar";
+import { requireCronAuth } from "@/lib/cron-auth";
 
 export const maxDuration = 60;
 
 export async function GET(request: NextRequest) {
-  const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret || cronSecret.length < 16) {
-    return NextResponse.json(
-      { error: "CRON_SECRET not configured" },
-      { status: 503 },
-    );
-  }
-  const url = new URL(request.url);
-  const secretParam = url.searchParams.get("secret");
-  const authHeader = request.headers.get("authorization");
-  if (secretParam !== cronSecret && authHeader !== `Bearer ${cronSecret}`) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  // Auth: header-only (query-param secret removed to keep it out of logs).
+  const unauthorized = requireCronAuth(request);
+  if (unauthorized) return unauthorized;
 
+  const url = new URL(request.url);
   const orgId = url.searchParams.get("org_id");
   if (!orgId) {
     return NextResponse.json({ error: "Missing org_id" }, { status: 400 });

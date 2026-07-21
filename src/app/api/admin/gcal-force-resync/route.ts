@@ -20,26 +20,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { bulkSyncUpcomingBookings } from "@/lib/google-calendar";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
+import { requireCronAuth } from "@/lib/cron-auth";
 
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const CALENDAR_API = "https://www.googleapis.com/calendar/v3";
 
 export async function GET(request: NextRequest) {
-  // ── Auth ──────────────────────────────────────────────────────────────────
-  const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret || cronSecret.length < 16) {
-    return NextResponse.json({ error: "CRON_SECRET not configured" }, { status: 503 });
-  }
+  // ── Auth (header-only; query-param secret removed to keep it out of logs) ──
+  const unauthorized = requireCronAuth(request);
+  if (unauthorized) return unauthorized;
 
   const url = new URL(request.url);
-  const secretParam = url.searchParams.get("secret");
-  const authHeader = request.headers.get("authorization");
-  const authorized =
-    secretParam === cronSecret || authHeader === `Bearer ${cronSecret}`;
-
-  if (!authorized) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
 
   // ── Org ID ────────────────────────────────────────────────────────────────
   const orgId = url.searchParams.get("org_id");

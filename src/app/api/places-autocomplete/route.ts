@@ -7,10 +7,23 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { getCurrentUserId } from "@/lib/auth";
+import { rateLimitByIp } from "@/lib/rate-limit-helpers";
 
 const PLACES_URL = "https://places.googleapis.com/v1/places:autocomplete";
 
 export async function GET(request: NextRequest) {
+  // Require a signed-in user — this proxy spends GOOGLE_PLACES_API_KEY, so it
+  // must not be an open endpoint anyone on the internet can drive up billing on.
+  const userId = await getCurrentUserId();
+  if (!userId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  // Cap per-IP request volume as defence-in-depth against a compromised session
+  // scripting the proxy. 60/min is generous for interactive address typing.
+  const limited = await rateLimitByIp(request, "places-autocomplete", 60, 60_000);
+  if (limited) return limited;
+
   const q = request.nextUrl.searchParams.get("q") ?? "";
   if (q.trim().length < 3) {
     return NextResponse.json({ suggestions: [] });

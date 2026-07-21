@@ -14,7 +14,36 @@ export type BrandingFormState = {
 };
 
 const MAX_FILE_SIZE = 2 * 1024 * 1024; // 2 MB
-const ALLOWED_TYPES = ["image/png", "image/jpeg", "image/webp", "image/svg+xml"];
+// NOTE: SVG is deliberately excluded. It's served from a PUBLIC bucket URL, and
+// an SVG can carry <script> that executes when opened — a stored-XSS payload
+// hosted under our storage origin. Raster formats only.
+const ALLOWED_TYPES = ["image/png", "image/jpeg", "image/webp"];
+
+/**
+ * Confirm the file's real bytes match the raster format it claims — a browser
+ * `file.type` is attacker-controlled, so `evil.svg`/`evil.html` renamed to
+ * `.png` would otherwise be accepted and served publicly.
+ */
+async function isRealRasterImage(file: File, claimed: string): Promise<boolean> {
+  const head = new Uint8Array(await file.slice(0, 12).arrayBuffer());
+  if (head.length < 12) return false;
+  const u32 = (i: number) =>
+    (head[i] << 24) | (head[i + 1] << 16) | (head[i + 2] << 8) | head[i + 3];
+  switch (claimed) {
+    case "image/jpeg":
+      return head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff;
+    case "image/png":
+      return (
+        head[0] === 0x89 && head[1] === 0x50 && head[2] === 0x4e &&
+        head[3] === 0x47 && head[4] === 0x0d && head[5] === 0x0a &&
+        head[6] === 0x1a && head[7] === 0x0a
+      );
+    case "image/webp":
+      return u32(0) === 0x52494646 && u32(8) === 0x57454250; // "RIFF"…"WEBP"
+    default:
+      return false;
+  }
+}
 
 export async function saveBrandingAction(
   _prev: BrandingFormState,
@@ -68,10 +97,15 @@ export async function saveBrandingAction(
   // Handle logo upload
   if (logoFile && logoFile.size > 0) {
     if (!ALLOWED_TYPES.includes(logoFile.type)) {
-      return { errors: { logo: "Logo must be a PNG, JPEG, WebP, or SVG file." } };
+      return { errors: { logo: "Logo must be a PNG, JPEG, or WebP file." } };
     }
     if (logoFile.size > MAX_FILE_SIZE) {
       return { errors: { logo: "Logo must be under 2 MB." } };
+    }
+    // Verify the bytes actually match the claimed raster type — never trust
+    // the browser-supplied MIME on a file we serve from a public URL.
+    if (!(await isRealRasterImage(logoFile, logoFile.type))) {
+      return { errors: { logo: "That file isn't a valid PNG, JPEG, or WebP image." } };
     }
 
     const ext = logoFile.name.split(".").pop()?.toLowerCase() ?? "png";
