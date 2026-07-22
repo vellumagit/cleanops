@@ -288,6 +288,10 @@ export async function autoInvoiceOnJobComplete(
       .from("invoices")
       .select("id, number")
       .eq("booking_id", booking.id)
+      // VOIDED invoices don't count — that work is billable again. The
+      // line-item check below already excluded them; this one didn't, so a
+      // voided per-job invoice permanently blocked re-invoicing the booking.
+      .is("voided_at", null)
       .limit(1)
       .maybeSingle()) as unknown as {
       data: { id: string; number: string | null } | null;
@@ -332,8 +336,29 @@ export async function autoInvoiceOnJobComplete(
     }
 
     const subtotalCents = booking.total_cents ?? 0;
+
+    // Nothing to bill. A booking with no price (price never filled in, or a
+    // non-billable visit like a walkthrough/consultation) must NOT silently
+    // auto-generate a $0 invoice — with auto-send enabled that emails the
+    // client a $0 bill. `force` still allows a deliberate manual $0 invoice.
+    if (!options?.force && subtotalCents <= 0) {
+      const reason =
+        "This booking has no price set, so there's nothing to invoice. Add a price, then generate the invoice.";
+      console.log(
+        `[auto] autoInvoiceOnJobComplete: booking ${bookingId} has no price — skipping auto-invoice`,
+      );
+      return { ok: false, reason };
+    }
+
+    // Net 14 from the INVOICE date, not the booking date. Basing the due date
+    // on scheduled_at meant a back-dated completion (e.g. the nightly
+    // auto-complete cron clearing a backlog of old jobs) produced an invoice
+    // whose due date was already in the past — instantly overdue, and the
+    // overdue-reminder cron would chase the client the same day.
     const scheduledDate = new Date(booking.scheduled_at);
-    const dueDate = new Date(scheduledDate);
+    const issuedDate = new Date();
+    const dueBase = scheduledDate > issuedDate ? scheduledDate : issuedDate;
+    const dueDate = new Date(dueBase);
     dueDate.setDate(dueDate.getDate() + 14); // Net 14
 
     // Core insert uses ONLY the long-standing invoice columns. Tax +
