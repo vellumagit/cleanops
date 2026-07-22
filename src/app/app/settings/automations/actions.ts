@@ -50,6 +50,8 @@ export type AutomationKey =
   | "booking_confirmation_sms"
   | "booking_reminder_client_sms"
   | "booking_assignment_sms"
+  | "booking_rescheduled_sms"
+  | "booking_cancelled_sms"
   // Feed
   | "system_feed_events"
   // Feed FEATURE visibility — when off (default), the /app/feed and
@@ -103,6 +105,8 @@ const VALID_AUTOMATION_KEYS = new Set<AutomationKey>([
   "booking_confirmation_sms",
   "booking_reminder_client_sms",
   "booking_assignment_sms",
+  "booking_rescheduled_sms",
+  "booking_cancelled_sms",
   "system_feed_events",
   "feed_visible",
   "divide_crew_hours",

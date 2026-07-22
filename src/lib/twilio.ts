@@ -256,6 +256,55 @@ export function composeBookingConfirmationSms(args: {
 }
 
 /**
+ * Booking RESCHEDULED — tells the client the new time. Sent INSTEAD of the
+ * rescheduled email when the client has opted in to SMS (channel preference,
+ * not duplicate notices — see sendBookingRescheduled).
+ *
+ * "Svit Company: Your cleaning has been moved to Fri Apr 24, 2:00 PM.
+ *  Questions? (555) 123-4567 Reply STOP to opt out."
+ */
+export function composeBookingRescheduledSms(args: {
+  orgName: string;
+  scheduledAt: string;
+  contactPhone?: string | null;
+  /** IANA org timezone — without it the server's UTC clock leaks into the time. */
+  tz?: string;
+}): string {
+  const when = new Date(args.scheduledAt).toLocaleString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: args.tz,
+  });
+  const cta = args.contactPhone ? ` Questions? ${args.contactPhone}` : "";
+  return `${args.orgName}: Your cleaning has been moved to ${when}.${cta} Reply STOP to opt out.`;
+}
+
+/**
+ * Booking CANCELLED — tells the client their visit is off. Sent INSTEAD of the
+ * cancellation email when the client has opted in to SMS.
+ */
+export function composeBookingCancelledSms(args: {
+  orgName: string;
+  scheduledAt: string;
+  contactPhone?: string | null;
+  tz?: string;
+}): string {
+  const when = new Date(args.scheduledAt).toLocaleString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: args.tz,
+  });
+  const cta = args.contactPhone ? ` Questions? ${args.contactPhone}` : "";
+  return `${args.orgName}: Your cleaning on ${when} has been cancelled.${cta} Reply STOP to opt out.`;
+}
+
+/**
  * 24-hour heads-up SMS to a client before their booking. Keep it
  * short + warm — unlike a job assignment, the client didn't opt into
  * noisy texting.

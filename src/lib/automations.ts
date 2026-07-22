@@ -6,7 +6,7 @@
 
 import "server-only";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { maskEmail } from "@/lib/log-redact";
+import { maskEmail, maskPhone } from "@/lib/log-redact";
 import { sendPushToMembership, sendPushToOrgAdmins } from "@/lib/push";
 import { notify } from "@/lib/notify";
 import type { CurrencyCode } from "@/lib/format";
@@ -1011,7 +1011,7 @@ export async function sendBookingRescheduled(
       .from("bookings")
       .select(`
         id, organization_id, scheduled_at, service_type, service_type_label, address, assigned_to,
-        client:clients ( name, email )
+        client:clients ( name, email, phone )
       `)
       .eq("id", bookingId)
       .maybeSingle()) as unknown as {
@@ -1023,7 +1023,11 @@ export async function sendBookingRescheduled(
         service_type_label: string | null;
         address: string | null;
         assigned_to: string | null;
-        client: { name: string | null; email: string | null } | null;
+        client: {
+          name: string | null;
+          email: string | null;
+          phone: string | null;
+        } | null;
       } | null;
     };
 
@@ -1036,7 +1040,7 @@ export async function sendBookingRescheduled(
     // local wall-clock, not Vercel's UTC clock (which turned noon into "6 PM").
     const { data: org } = await db
       .from("organizations")
-      .select("name, brand_color, logo_url, timezone")
+      .select("name, brand_color, logo_url, timezone, contact_phone")
       .eq("id", booking.organization_id)
       .maybeSingle() as unknown as {
       data: {
@@ -1044,6 +1048,7 @@ export async function sendBookingRescheduled(
         brand_color: string | null;
         logo_url: string | null;
         timezone: string | null;
+        contact_phone: string | null;
       } | null;
     };
     const tz = org?.timezone ?? "America/Edmonton";
@@ -1069,7 +1074,51 @@ export async function sendBookingRescheduled(
       });
     }
 
-    if (!booking.client?.email) return;
+    if (!booking.client) return;
+
+    // ── Client notice: CHANNEL PREFERENCE, not duplicates ──
+    // Text the client if they've opted in to SMS; otherwise email them. This
+    // previously bailed out entirely when the client had no email, so
+    // SMS-only clients were never told their booking moved.
+    //
+    // sendOrgSms enforces its own gates (booking_rescheduled_sms toggle, client
+    // opt-in, CLIENT_SMS_PAUSED, TWILIO_ENABLED, spend cap). A client who isn't
+    // opted in simply doesn't send, and we fall through to the email below —
+    // so the email path keeps working exactly as before for everyone else.
+    let smsSent = false;
+    if (booking.client.phone) {
+      try {
+        const { sendOrgSms } = await import("@/lib/sms");
+        const { composeBookingRescheduledSms } = await import("@/lib/twilio");
+        const smsRes = await sendOrgSms(booking.organization_id, {
+          to: booking.client.phone,
+          body: composeBookingRescheduledSms({
+            orgName: org?.name ?? "Sollos",
+            scheduledAt: booking.scheduled_at,
+            contactPhone: org?.contact_phone ?? null,
+            tz,
+          }),
+          automationKey: "booking_rescheduled_sms",
+        });
+        smsSent = smsRes.ok && smsRes.status === "sent";
+      } catch (smsErr) {
+        console.error("[auto] sendBookingRescheduled SMS path errored:", smsErr);
+      }
+    }
+
+    if (smsSent) {
+      await db
+        .from("bookings")
+        .update({ rescheduled_email_sent_at: new Date().toISOString() })
+        .eq("id", booking.id);
+      console.log(
+        `[auto] Booking rescheduled TEXT sent to ${maskPhone(booking.client.phone)} (email skipped — client prefers SMS)`,
+      );
+      return;
+    }
+
+    // ── Email fallback (client not reachable/opted-in by SMS) ──
+    if (!booking.client.email) return;
 
     if (!(await isAutomationEnabled(booking.organization_id, "booking_rescheduled_email"))) {
       console.log(`[auto] Booking rescheduled email paused for org ${booking.organization_id}`);
@@ -1196,7 +1245,7 @@ export async function sendBookingCancelledToClient(bookingId: string) {
       .select(`
         id, organization_id, scheduled_at, service_type, service_type_label, address,
         cancelled_email_sent_at,
-        client:clients ( name, email )
+        client:clients ( name, email, phone )
       `)
       .eq("id", bookingId)
       .maybeSingle() as unknown as {
@@ -1208,26 +1257,27 @@ export async function sendBookingCancelledToClient(bookingId: string) {
         service_type_label: string | null;
         address: string | null;
         cancelled_email_sent_at: string | null;
-        client: { name: string | null; email: string | null } | null;
+        client: {
+          name: string | null;
+          email: string | null;
+          phone: string | null;
+        } | null;
       } | null;
     };
 
-    if (!booking || !booking.client?.email) return;
+    if (!booking || !booking.client) return;
 
-    // Dedup: cancellation email should only go out once.
+    // Dedup: the client gets ONE cancellation notice, by whichever channel.
+    // (Column name predates the SMS channel — it now marks "cancellation notice
+    // sent", text or email, since the two are mutually exclusive below.)
     if (booking.cancelled_email_sent_at) {
-      console.log(`[auto] Cancellation email already sent for ${bookingId}, skipping`);
-      return;
-    }
-
-    if (!(await isAutomationEnabled(booking.organization_id, "booking_cancelled_email"))) {
-      console.log(`[auto] Booking cancelled email paused for org ${booking.organization_id}`);
+      console.log(`[auto] Cancellation notice already sent for ${bookingId}, skipping`);
       return;
     }
 
     const { data: org } = await db
       .from("organizations")
-      .select("name, brand_color, logo_url, timezone")
+      .select("name, brand_color, logo_url, timezone, contact_phone")
       .eq("id", booking.organization_id)
       .maybeSingle() as unknown as {
       data: {
@@ -1235,8 +1285,53 @@ export async function sendBookingCancelledToClient(bookingId: string) {
         brand_color: string | null;
         logo_url: string | null;
         timezone: string | null;
+        contact_phone: string | null;
       } | null;
     };
+
+    // ── Client notice: CHANNEL PREFERENCE, not duplicates ──
+    // Text opted-in clients, email everyone else. Previously this returned
+    // early when the client had no email, so an SMS-only client was never told
+    // their visit was cancelled — the worst one to miss.
+    let smsSent = false;
+    if (booking.client.phone) {
+      try {
+        const { sendOrgSms } = await import("@/lib/sms");
+        const { composeBookingCancelledSms } = await import("@/lib/twilio");
+        const smsRes = await sendOrgSms(booking.organization_id, {
+          to: booking.client.phone,
+          body: composeBookingCancelledSms({
+            orgName: org?.name ?? "Sollos",
+            scheduledAt: booking.scheduled_at,
+            contactPhone: org?.contact_phone ?? null,
+            tz: org?.timezone ?? "America/Edmonton",
+          }),
+          automationKey: "booking_cancelled_sms",
+        });
+        smsSent = smsRes.ok && smsRes.status === "sent";
+      } catch (smsErr) {
+        console.error("[auto] sendBookingCancelledToClient SMS path errored:", smsErr);
+      }
+    }
+
+    if (smsSent) {
+      await db
+        .from("bookings")
+        .update({ cancelled_email_sent_at: new Date().toISOString() })
+        .eq("id", booking.id);
+      console.log(
+        `[auto] Booking cancelled TEXT sent to ${maskPhone(booking.client.phone)} (email skipped — client prefers SMS)`,
+      );
+      return;
+    }
+
+    // ── Email fallback (client not reachable/opted-in by SMS) ──
+    if (!booking.client.email) return;
+
+    if (!(await isAutomationEnabled(booking.organization_id, "booking_cancelled_email"))) {
+      console.log(`[auto] Booking cancelled email paused for org ${booking.organization_id}`);
+      return;
+    }
 
     const dateTime = new Date(booking.scheduled_at).toLocaleString("en-US", {
       weekday: "long",

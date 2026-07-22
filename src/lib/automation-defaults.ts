@@ -44,6 +44,11 @@ export const DEFAULT_OFF: ReadonlySet<string> = new Set([
   "booking_confirmation_sms",
   "booking_reminder_client_sms",
   "booking_assignment_sms",
+  // Reschedule/cancel texts. When ON, an opted-in client gets the TEXT instead
+  // of the email (channel preference, not both). Default OFF like every other
+  // SMS automation, so the email keeps going out until the owner opts in.
+  "booking_rescheduled_sms",
+  "booking_cancelled_sms",
 
   // Scheduling preference (internal, not client-facing): auto-divide team-job
   // hours across the crew in the field app. Opt-in — off until the owner

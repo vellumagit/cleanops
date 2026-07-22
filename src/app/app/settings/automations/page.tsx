@@ -156,6 +156,20 @@ const CATEGORIES: Category[] = [
         trigger: "Daily cron, ~18:00 UTC",
       },
       {
+        key: "booking_rescheduled_sms" as AutomationKey,
+        title: "Booking rescheduled text",
+        description:
+          "Texts the client the new time when a booking moves. Replaces the rescheduled EMAIL for clients who've opted in to texts — they get one notice, not both. Clients who haven't opted in still get the email.",
+        trigger: "Booking → Rescheduled",
+      },
+      {
+        key: "booking_cancelled_sms" as AutomationKey,
+        title: "Booking cancelled text",
+        description:
+          "Texts the client when their visit is cancelled. Replaces the cancellation EMAIL for opted-in clients — one notice, not both. Everyone else still gets the email.",
+        trigger: "Booking → Cancelled",
+      },
+      {
         key: "booking_assignment_sms" as AutomationKey,
         title: "Job assignment text to employee",
         description:
