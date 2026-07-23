@@ -25,25 +25,20 @@ export type ClientNotifyDecision = ResolvedChannels & {
   clientName: string | null;
 };
 
-type MinimalDb = {
-  from: (table: string) => {
-    select: (cols: string) => {
-      eq: (
-        col: string,
-        val: string,
-      ) => { maybeSingle: () => Promise<{ data: unknown }> };
-    };
-  };
-};
-
 /**
  * Resolve notification channels for a client + category.
+ *
+ * `db` is the Supabase admin client. It's typed loosely (matching this repo's
+ * `as unknown as` convention) because contact_preference/contact_overrides
+ * aren't in the generated types yet, and the full client type is too deep to
+ * instantiate here. Results are cast explicitly below.
  *
  * Pass an `orgDefaultCache` (a Map you keep for the batch) so a cron that
  * touches many clients in the same org only fetches the org default once.
  */
 export async function resolveClientNotify(
-  db: MinimalDb,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  db: any,
   args: {
     organizationId: string;
     clientId: string | null;

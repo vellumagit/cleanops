@@ -7,6 +7,7 @@
 import "server-only";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { maskEmail, maskPhone } from "@/lib/log-redact";
+import { resolveClientNotify } from "@/lib/notification-gate";
 import { sendPushToMembership, sendPushToOrgAdmins } from "@/lib/push";
 import { notify } from "@/lib/notify";
 import type { CurrencyCode } from "@/lib/format";
@@ -876,7 +877,7 @@ export async function sendBookingConfirmation(bookingId: string) {
     const { data: booking } = await db
       .from("bookings")
       .select(`
-        id, organization_id, scheduled_at, duration_minutes, service_type, service_type_label, address,
+        id, organization_id, client_id, scheduled_at, duration_minutes, service_type, service_type_label, address,
         confirmation_email_sent_at, confirmation_sms_sent_at,
         client:clients ( name, email, phone )
       `)
@@ -885,6 +886,7 @@ export async function sendBookingConfirmation(bookingId: string) {
       data: {
         id: string;
         organization_id: string;
+        client_id: string | null;
         scheduled_at: string;
         duration_minutes: number;
         service_type: string;
@@ -925,10 +927,21 @@ export async function sendBookingConfirmation(bookingId: string) {
       } | null;
     };
 
-    // ── EMAIL channel — gated by the booking_confirmation_email toggle and its
-    //    own dedup stamp. ──
+    // Per-client channel preference for BOOKING messages (org default / custom
+    // override / do-not-contact + SMS consent). Layered UNDER the per-channel
+    // automation toggles below — the toggle says "is this automation on for the
+    // org", this says "may we reach THIS client, on which channel".
+    const decision = await resolveClientNotify(db, {
+      organizationId: booking.organization_id,
+      clientId: booking.client_id,
+      category: "booking",
+    });
+
+    // ── EMAIL channel — gated by the booking_confirmation_email toggle, the
+    //    client's channel preference, and its own dedup stamp. ──
     if (
       hasEmail &&
+      decision.email &&
       !booking.confirmation_email_sent_at &&
       (await isAutomationEnabled(booking.organization_id, "booking_confirmation_email"))
     ) {
@@ -986,7 +999,7 @@ export async function sendBookingConfirmation(bookingId: string) {
     //    TWILIO_ENABLED). Previously this was trapped behind the email path, so
     //    an org that enabled only the SMS toggle (email toggle is default-OFF)
     //    never got a confirmation text. Dedup on its own stamp. ──
-    if (hasPhone && !booking.confirmation_sms_sent_at) {
+    if (hasPhone && decision.sms && !booking.confirmation_sms_sent_at) {
       try {
         const { sendOrgSms } = await import("@/lib/sms");
         const { composeBookingConfirmationSms } = await import("@/lib/twilio");
@@ -1035,7 +1048,7 @@ export async function sendBookingRescheduled(
     const { data: booking } = (await db
       .from("bookings")
       .select(`
-        id, organization_id, scheduled_at, service_type, service_type_label, address, assigned_to,
+        id, organization_id, client_id, scheduled_at, service_type, service_type_label, address, assigned_to,
         client:clients ( name, email, phone )
       `)
       .eq("id", bookingId)
@@ -1043,6 +1056,7 @@ export async function sendBookingRescheduled(
       data: {
         id: string;
         organization_id: string;
+        client_id: string | null;
         scheduled_at: string;
         service_type: string;
         service_type_label: string | null;
@@ -1101,21 +1115,23 @@ export async function sendBookingRescheduled(
 
     if (!booking.client) return;
 
-    // ── Client notice: CHANNEL PREFERENCE, not duplicates ──
-    // Text the client if they've opted in to SMS; otherwise email them. This
-    // previously bailed out entirely when the client had no email, so
-    // SMS-only clients were never told their booking moved.
-    //
-    // sendOrgSms enforces its own gates (booking_rescheduled_sms toggle, client
-    // opt-in, CLIENT_SMS_PAUSED, TWILIO_ENABLED, spend cap). A client who isn't
-    // opted in simply doesn't send, and we fall through to the email below —
-    // so the email path keeps working exactly as before for everyone else.
-    let smsSent = false;
-    if (booking.client.phone) {
+    // ── Client notice: per-client channel preference (booking category) ──
+    // The client's setting (org default / custom / do-not-contact + SMS
+    // consent) decides email vs text vs both vs nothing. No cross-channel
+    // fallback — if they chose SMS and aren't opted in, we stay silent.
+    const decision = await resolveClientNotify(db, {
+      organizationId: booking.organization_id,
+      clientId: booking.client_id,
+      category: "booking",
+    });
+
+    // SMS channel. sendOrgSms also enforces the booking_rescheduled_sms toggle,
+    // opt-in, cap, and TWILIO_ENABLED.
+    if (decision.sms && booking.client.phone) {
       try {
         const { sendOrgSms } = await import("@/lib/sms");
         const { composeBookingRescheduledSms } = await import("@/lib/twilio");
-        const smsRes = await sendOrgSms(booking.organization_id, {
+        await sendOrgSms(booking.organization_id, {
           to: booking.client.phone,
           body: composeBookingRescheduledSms({
             orgName: org?.name ?? "Sollos",
@@ -1125,28 +1141,21 @@ export async function sendBookingRescheduled(
           }),
           automationKey: "booking_rescheduled_sms",
         });
-        smsSent = smsRes.ok && smsRes.status === "sent";
+        console.log(
+          `[auto] Booking rescheduled text sent to ${maskPhone(booking.client.phone)}`,
+        );
       } catch (smsErr) {
         console.error("[auto] sendBookingRescheduled SMS path errored:", smsErr);
       }
     }
 
-    if (smsSent) {
-      await db
-        .from("bookings")
-        .update({ rescheduled_email_sent_at: new Date().toISOString() })
-        .eq("id", booking.id);
-      console.log(
-        `[auto] Booking rescheduled TEXT sent to ${maskPhone(booking.client.phone)} (email skipped — client prefers SMS)`,
-      );
-      return;
-    }
-
-    // ── Email fallback (client not reachable/opted-in by SMS) ──
-    if (!booking.client.email) return;
-
-    if (!(await isAutomationEnabled(booking.organization_id, "booking_rescheduled_email"))) {
-      console.log(`[auto] Booking rescheduled email paused for org ${booking.organization_id}`);
+    // Email channel — independent (a "both" client gets both). Gated by the
+    // client preference AND the booking_rescheduled_email toggle.
+    if (
+      !decision.email ||
+      !booking.client.email ||
+      !(await isAutomationEnabled(booking.organization_id, "booking_rescheduled_email"))
+    ) {
       return;
     }
 
@@ -1268,7 +1277,7 @@ export async function sendBookingCancelledToClient(bookingId: string) {
     const { data: booking } = await db
       .from("bookings")
       .select(`
-        id, organization_id, scheduled_at, service_type, service_type_label, address,
+        id, organization_id, client_id, scheduled_at, service_type, service_type_label, address,
         cancelled_email_sent_at,
         client:clients ( name, email, phone )
       `)
@@ -1277,6 +1286,7 @@ export async function sendBookingCancelledToClient(bookingId: string) {
       data: {
         id: string;
         organization_id: string;
+        client_id: string | null;
         scheduled_at: string;
         service_type: string;
         service_type_label: string | null;
@@ -1314,12 +1324,21 @@ export async function sendBookingCancelledToClient(bookingId: string) {
       } | null;
     };
 
-    // ── Client notice: CHANNEL PREFERENCE, not duplicates ──
-    // Text opted-in clients, email everyone else. Previously this returned
-    // early when the client had no email, so an SMS-only client was never told
-    // their visit was cancelled — the worst one to miss.
-    let smsSent = false;
-    if (booking.client.phone) {
+    // ── Client notice: per-client channel preference (booking category) ──
+    // The client's setting decides email vs text vs both vs nothing. No
+    // cross-channel fallback. A "do not contact" client gets no cancellation
+    // notice by their own choice — the crew push above is the operational
+    // safety net so no one shows up to a cancelled job.
+    const decision = await resolveClientNotify(db, {
+      organizationId: booking.organization_id,
+      clientId: booking.client_id,
+      category: "booking",
+    });
+
+    let anySent = false;
+
+    // SMS channel. sendOrgSms also enforces the sms toggle / opt-in / cap.
+    if (decision.sms && booking.client.phone) {
       try {
         const { sendOrgSms } = await import("@/lib/sms");
         const { composeBookingCancelledSms } = await import("@/lib/twilio");
@@ -1333,64 +1352,63 @@ export async function sendBookingCancelledToClient(bookingId: string) {
           }),
           automationKey: "booking_cancelled_sms",
         });
-        smsSent = smsRes.ok && smsRes.status === "sent";
+        if (smsRes.ok && smsRes.status === "sent") {
+          anySent = true;
+          console.log(
+            `[auto] Booking cancelled text sent to ${maskPhone(booking.client.phone)}`,
+          );
+        }
       } catch (smsErr) {
         console.error("[auto] sendBookingCancelledToClient SMS path errored:", smsErr);
       }
     }
 
-    if (smsSent) {
+    // Email channel — independent (a "both" client gets both). Gated by the
+    // client preference AND the booking_cancelled_email toggle.
+    if (
+      decision.email &&
+      booking.client.email &&
+      (await isAutomationEnabled(booking.organization_id, "booking_cancelled_email"))
+    ) {
+      const dateTime = new Date(booking.scheduled_at).toLocaleString("en-US", {
+        weekday: "long",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        timeZone: org?.timezone ?? "America/Edmonton",
+      });
+
+      const template = bookingCancelledEmail({
+        clientName: booking.client.name ?? "there",
+        orgName: org?.name ?? "your service provider",
+        serviceName: booking.service_type_label ?? humanize(booking.service_type),
+        dateTime,
+        address: booking.address ?? "(address on file)",
+        brandColor: org?.brand_color ?? undefined,
+        logoUrl: org?.logo_url ?? undefined,
+      });
+
+      const sent = await sendOrgEmail(booking.organization_id, {
+        to: booking.client.email,
+        toName: booking.client.name ?? undefined,
+        ...template,
+      });
+      if (sent) {
+        anySent = true;
+        console.log(
+          `[auto] Booking cancelled email sent to ${maskEmail(booking.client.email)}`,
+        );
+      }
+    }
+
+    // Dedup stamp — mark the cancellation notice sent once either channel lands.
+    if (anySent) {
       await db
         .from("bookings")
         .update({ cancelled_email_sent_at: new Date().toISOString() })
         .eq("id", booking.id);
-      console.log(
-        `[auto] Booking cancelled TEXT sent to ${maskPhone(booking.client.phone)} (email skipped — client prefers SMS)`,
-      );
-      return;
     }
-
-    // ── Email fallback (client not reachable/opted-in by SMS) ──
-    if (!booking.client.email) return;
-
-    if (!(await isAutomationEnabled(booking.organization_id, "booking_cancelled_email"))) {
-      console.log(`[auto] Booking cancelled email paused for org ${booking.organization_id}`);
-      return;
-    }
-
-    const dateTime = new Date(booking.scheduled_at).toLocaleString("en-US", {
-      weekday: "long",
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-      timeZone: org?.timezone ?? "America/Edmonton",
-    });
-
-    const template = bookingCancelledEmail({
-      clientName: booking.client.name ?? "there",
-      orgName: org?.name ?? "your service provider",
-      serviceName: booking.service_type_label ?? humanize(booking.service_type),
-      dateTime,
-      address: booking.address ?? "(address on file)",
-      brandColor: org?.brand_color ?? undefined,
-      logoUrl: org?.logo_url ?? undefined,
-    });
-
-    const sent = await sendOrgEmail(booking.organization_id, {
-      to: booking.client.email,
-      toName: booking.client.name ?? undefined,
-      ...template,
-    });
-
-    if (sent) {
-      await db
-        .from("bookings")
-        .update({ cancelled_email_sent_at: new Date().toISOString() })
-        .eq("id", booking.id);
-    }
-
-    console.log(`[auto] Booking cancelled email sent to ${maskEmail(booking.client.email)}`);
   } catch (err) {
     console.error("[auto] sendBookingCancelledToClient failed:", err);
   }
@@ -2574,7 +2592,7 @@ export async function sendUpcomingBookingReminders(): Promise<{
   const { data: candidates } = await db
     .from("bookings")
     .select(`
-      id, organization_id, scheduled_at, duration_minutes, service_type, service_type_label, address,
+      id, organization_id, client_id, scheduled_at, duration_minutes, service_type, service_type_label, address,
       client:clients ( name, email, phone )
     `)
     .is("client_reminder_sent_at", null)
@@ -2584,6 +2602,7 @@ export async function sendUpcomingBookingReminders(): Promise<{
     data: Array<{
       id: string;
       organization_id: string;
+      client_id: string | null;
       scheduled_at: string;
       duration_minutes: number;
       service_type: string;
@@ -2615,6 +2634,11 @@ export async function sendUpcomingBookingReminders(): Promise<{
       timezone: string | null;
       enabled: boolean;
     } | null
+  >();
+  // Cache the org default across the batch so we fetch it once per org.
+  const orgDefaultCache = new Map<
+    string,
+    import("@/lib/notification-preferences").OrgContactDefault
   >();
 
   for (const booking of candidates) {
@@ -2663,6 +2687,14 @@ export async function sendUpcomingBookingReminders(): Promise<{
     // It now gates ONLY the email channel below — not the whole booking — so an
     // org that wants SMS-only reminders still gets them.
 
+    // Per-client channel preference (booking category). Layered under the toggle.
+    const decision = await resolveClientNotify(db, {
+      organizationId: booking.organization_id,
+      clientId: booking.client_id,
+      category: "booking",
+      orgDefaultCache,
+    });
+
     const dateTime = new Date(booking.scheduled_at).toLocaleString("en-US", {
       weekday: "long",
       month: "short",
@@ -2702,8 +2734,8 @@ export async function sendUpcomingBookingReminders(): Promise<{
     // stands on its own gates and we stamp if EITHER one delivers.
     let anySent = false;
 
-    // ── Email channel — gated by the email toggle (cached.enabled). ──
-    if (hasEmail && cached.enabled) {
+    // ── Email channel — gated by the email toggle AND the client preference. ──
+    if (hasEmail && cached.enabled && decision.email) {
       const emailOk = await sendOrgEmail(booking.organization_id, {
         to: booking.client.email!,
         toName: booking.client.name ?? undefined,
@@ -2720,8 +2752,8 @@ export async function sendUpcomingBookingReminders(): Promise<{
 
     // ── SMS channel — INDEPENDENT of email. sendOrgSms applies its own gates
     //    (booking_reminder_client_sms toggle, client opt-in, cap,
-    //    CLIENT_SMS_PAUSED, TWILIO_ENABLED). ──
-    if (hasPhone) {
+    //    CLIENT_SMS_PAUSED, TWILIO_ENABLED). Plus the client preference. ──
+    if (hasPhone && decision.sms) {
       try {
         const { sendOrgSms } = await import("@/lib/sms");
         const { composeBookingReminderSms } = await import("@/lib/twilio");
