@@ -19,6 +19,13 @@
  * Adding a key here quietly flips every existing org that hasn't
  * explicitly set this automation. Document the change loudly.
  */
+/**
+ * HISTORICAL. Automations are now opt-in across the board (see
+ * resolveAutomationEnabled), so this set no longer decides anything at runtime.
+ * It's retained because migration 20260723010000 froze exactly these keys to
+ * `false` when grandfathering existing orgs — keep it as the record of what the
+ * old defaults were.
+ */
 export const DEFAULT_OFF: ReadonlySet<string> = new Set([
   // Sent to the client when a booking is created. Owners often create
   // draft/test bookings while onboarding before their client list is
@@ -61,10 +68,18 @@ export const DEFAULT_OFF: ReadonlySet<string> = new Set([
  * and the settings UI (src/app/app/settings/automations/page.tsx) so
  * they always agree on "is this on right now?"
  *
- * Precedence:
- *   1. Explicit setting in organizations.automation_settings wins.
- *   2. Absent setting → DEFAULT_OFF membership decides: off if in the
- *      set, on otherwise.
+ * AUTOMATIONS ARE OPT-IN. A key with no explicit setting is OFF. A fresh org
+ * therefore does nothing until the owner turns on the master switch and picks
+ * the automations they want — no surprise emails/texts to a client list that's
+ * still being imported, and no background money actions they didn't ask for.
+ *
+ * Existing orgs were grandfathered by migration 20260723010000, which wrote an
+ * explicit true/false for every key they hadn't set — explicit always wins, so
+ * their behaviour was unchanged by this flip.
+ *
+ * NOTE: this resolver only answers "is this key on?". The org-level master
+ * switch (organizations.automations_enabled) is checked separately by
+ * isAutomationEnabled() in automations.ts and overrides everything here.
  */
 export function resolveAutomationEnabled(
   settings:
@@ -73,13 +88,14 @@ export function resolveAutomationEnabled(
     | undefined,
   key: string,
 ): boolean {
-  const explicit = settings?.[key]?.enabled;
-  if (explicit === true) return true;
-  if (explicit === false) return false;
-  return !DEFAULT_OFF.has(key);
+  return settings?.[key]?.enabled === true;
 }
 
-/** Does this key default to OFF when no explicit setting exists? */
-export function isDefaultOff(key: string): boolean {
-  return DEFAULT_OFF.has(key);
+/**
+ * Everything defaults off now. Kept as a function (rather than deleting the
+ * concept) so the settings UI can keep labelling defaults without every call
+ * site changing.
+ */
+export function isDefaultOff(_key: string): boolean {
+  return true;
 }

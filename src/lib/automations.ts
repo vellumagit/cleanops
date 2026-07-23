@@ -23,14 +23,16 @@ const admin = () => createSupabaseAdminClient();
 /**
  * Check whether a named automation is enabled for an org.
  *
- * Precedence follows resolveAutomationEnabled (lib/automation-defaults.ts):
- *   - explicit setting in organizations.automation_settings wins
- *   - absent setting → per-key default (most on, a handful off like
- *     booking_confirmation_email)
+ * Precedence:
+ *   1. MASTER SWITCH — organizations.automations_enabled. When false, NOTHING
+ *      fires, whatever the per-key settings say. New orgs start false, so a
+ *      fresh account is completely silent until the owner opts in.
+ *   2. Per-key setting in organizations.automation_settings. Automations are
+ *      opt-in: a key with no explicit setting is OFF.
  *
- * On DB read failure we fall through to the default resolver with a
- * null settings map, so default-off keys stay off and we never
- * surprise-enable on a transient DB hiccup.
+ * On DB read failure we fail CLOSED (return false) rather than falling back to
+ * a default — under an opt-in policy, a transient DB hiccup must never
+ * surprise-send on behalf of an org that never enabled anything.
  */
 async function isAutomationEnabled(
   organizationId: string,
@@ -39,7 +41,7 @@ async function isAutomationEnabled(
   try {
     const { data } = (await admin()
       .from("organizations")
-      .select("automation_settings")
+      .select("automation_settings, automations_enabled")
       .eq("id", organizationId)
       .maybeSingle()) as unknown as {
       data: {
@@ -47,17 +49,21 @@ async function isAutomationEnabled(
           string,
           { enabled?: boolean } | null
         > | null;
+        automations_enabled: boolean | null;
       } | null;
     };
+    if (!data) return false;
+    // Master switch off → hard stop.
+    if (data.automations_enabled !== true) return false;
     return resolveAutomationEnabled(
-      (data?.automation_settings as Record<
+      (data.automation_settings as Record<
         string,
         { enabled?: boolean } | undefined
       > | null) ?? null,
       key,
     );
   } catch {
-    return resolveAutomationEnabled(null, key);
+    return false;
   }
 }
 

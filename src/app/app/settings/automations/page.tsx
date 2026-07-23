@@ -22,6 +22,7 @@ import {
 import {
   toggleAutomationAction,
   setOrgContactDefaultAction,
+  toggleAutomationsMasterAction,
   type AutomationKey,
 } from "./actions";
 
@@ -405,17 +406,22 @@ export default async function AutomationsPage() {
 
   const { data: org } = (await admin
     .from("organizations")
-    .select("automation_settings, default_contact_preference")
+    .select("automation_settings, default_contact_preference, automations_enabled")
     .eq("id", membership.organization_id)
     .maybeSingle()) as unknown as {
     data: {
       automation_settings: Record<string, { enabled: boolean }>;
       default_contact_preference: string | null;
+      automations_enabled: boolean | null;
     } | null;
   };
 
   const settings = org?.automation_settings ?? {};
   const contactDefault = org?.default_contact_preference ?? "email";
+  const masterOn = org?.automations_enabled === true;
+  const enabledCount = Object.values(settings).filter(
+    (v) => (v as { enabled?: boolean })?.enabled === true,
+  ).length;
 
   function isEnabled(key: AutomationKey): boolean {
     // Shared resolver — explicit setting wins, otherwise the per-key
@@ -441,12 +447,56 @@ export default async function AutomationsPage() {
         </Link>
       }
     >
+      {/* MASTER SWITCH — the single "everything stops" control. Automations are
+          opt-in, so a new org sits here until the owner turns this on and picks
+          what should run. */}
+      <div
+        className={`mb-6 rounded-lg border p-4 ${
+          masterOn
+            ? "border-emerald-500/40 bg-emerald-500/5"
+            : "border-amber-500/50 bg-amber-500/10"
+        }`}
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex items-start gap-2">
+            <Zap
+              className={`mt-0.5 h-4 w-4 shrink-0 ${
+                masterOn ? "text-emerald-600" : "text-amber-600"
+              }`}
+            />
+            <div>
+              <p className="text-sm font-medium">
+                {masterOn ? "Automations are on" : "Automations are off"}
+              </p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {masterOn
+                  ? `Nothing runs unless you switch it on below. ${enabledCount} turned on so far.`
+                  : "Nothing runs at all — no emails, texts, invoices, or reminders. Turn this on, then choose exactly which automations you want."}
+              </p>
+            </div>
+          </div>
+          <form action={toggleAutomationsMasterAction}>
+            <input
+              type="hidden"
+              name="enabled"
+              value={masterOn ? "false" : "true"}
+            />
+            <button
+              type="submit"
+              className="rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium hover:bg-muted"
+            >
+              {masterOn ? "Turn all off" : "Turn automations on"}
+            </button>
+          </form>
+        </div>
+      </div>
+
       <div className="mb-6 rounded-lg border border-blue-500/30 bg-blue-500/5 p-4 text-sm text-muted-foreground">
         <div className="flex items-start gap-2">
           <Zap className="mt-0.5 h-4 w-4 shrink-0 text-blue-500" />
           <p>
-            Automations run silently in the background. They never block primary
-            actions — if one fails, it fails quietly.
+            Every automation is off until you turn it on. Set them for the whole
+            org here, then fine-tune per client on each client&apos;s page.
           </p>
         </div>
       </div>
@@ -491,7 +541,9 @@ export default async function AutomationsPage() {
         </p>
       </div>
 
-      <div className="space-y-10">
+      <div
+        className={`space-y-10 ${masterOn ? "" : "pointer-events-none opacity-50"}`}
+      >
         {CATEGORIES.map((category) => {
           const Icon = category.icon;
           return (

@@ -113,6 +113,26 @@ const VALID_AUTOMATION_KEYS = new Set<AutomationKey>([
 ]);
 
 /**
+ * Master switch. When off, NO automation fires for the org regardless of the
+ * per-key toggles — the single "stop everything" control. New orgs start off.
+ */
+export async function toggleAutomationsMasterAction(formData: FormData) {
+  const { membership } = await getActionContext();
+  if (!["owner", "admin"].includes(membership.role)) return;
+
+  const enabled = formData.get("enabled") === "true";
+
+  const admin = createSupabaseAdminClient();
+  await admin
+    .from("organizations")
+    .update({ automations_enabled: enabled } as never)
+    .eq("id", membership.organization_id);
+
+  revalidatePath("/app/settings/automations", "page");
+  revalidatePath("/app", "layout");
+}
+
+/**
  * Set the org's house default for automated client messages. Clients on
  * contact_preference='inherit' (the default) follow this; per-client settings
  * override it. Setting this to 'none' is the "silence everyone, then switch on
