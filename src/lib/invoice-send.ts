@@ -11,6 +11,7 @@
 
 import "server-only";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { resolveClientNotify } from "@/lib/notification-gate";
 import { sendOrgEmailDetailed, isEmailConfigured } from "@/lib/email";
 import { invoiceSentEmail } from "@/lib/email-templates";
 import { formatCurrencyCents } from "@/lib/format";
@@ -326,7 +327,9 @@ export async function runInvoiceAutoSend(): Promise<{
 
   const { data: due } = (await db
     .from("invoices")
-    .select("id, organization_id, amount_cents, number, status, auto_send_state")
+    .select(
+      "id, organization_id, client_id, amount_cents, number, status, auto_send_state",
+    )
     .eq("auto_send_state" as never, "scheduled" as never)
     .lte("auto_send_at" as never, nowIso as never)
     .eq("status", "draft")
@@ -335,6 +338,7 @@ export async function runInvoiceAutoSend(): Promise<{
     data: Array<{
       id: string;
       organization_id: string;
+      client_id: string | null;
       amount_cents: number;
       number: string | null;
       status: string;
@@ -346,6 +350,11 @@ export async function runInvoiceAutoSend(): Promise<{
   let sent = 0;
   let skipped = 0;
   let held = 0;
+  // One org-default lookup per org across the whole batch.
+  const orgDefaultCache = new Map<
+    string,
+    import("@/lib/notification-preferences").OrgContactDefault
+  >();
 
   // Which of these orgs STILL have auto-send enabled? An org that disabled it
   // after an invoice was scheduled should not have it sent. (The settings
@@ -376,6 +385,25 @@ export async function runInvoiceAutoSend(): Promise<{
     if ((inv.amount_cents ?? 0) <= 0) {
       await setAutoSendState(db, inv.id, "skipped");
       skipped++;
+      continue;
+    }
+
+    // Respect the client's notification preference (billing category). A client
+    // set to do-not-contact — or whose billing channel is off/text-only — must
+    // not be auto-emailed an invoice. Terminal "skipped" so it isn't retried
+    // nightly; the owner can still send it by hand from the invoice page.
+    const decision = await resolveClientNotify(db, {
+      organizationId: inv.organization_id,
+      clientId: inv.client_id,
+      category: "billing",
+      orgDefaultCache,
+    });
+    if (!decision.email) {
+      await setAutoSendState(db, inv.id, "skipped");
+      skipped++;
+      console.log(
+        `[invoice-auto-send] invoice ${inv.id} skipped — client notification preference (${decision.reason})`,
+      );
       continue;
     }
 

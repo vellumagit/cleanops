@@ -1473,9 +1473,23 @@ export async function sendRebookingPrompts(): Promise<{
     enabled: boolean;
   };
   const orgCache = new Map<string, OrgInfo | null>();
+  const orgDefaultCache = new Map<
+    string,
+    import("@/lib/notification-preferences").OrgContactDefault
+  >();
 
   for (const client of candidates) {
     if (!client.email) continue;
+
+    // Client notification preference (growth category) — rebooking nudges are
+    // marketing-ish, so a do-not-contact or growth-off client never gets one.
+    const decision = await resolveClientNotify(db, {
+      organizationId: client.organization_id,
+      clientId: client.id,
+      category: "growth",
+      orgDefaultCache,
+    });
+    if (!decision.email) continue;
 
     // Check most recent completed booking for this client.
     const { data: lastCompleted } = await db
@@ -1592,7 +1606,7 @@ export async function sendStaleEstimateFollowups(): Promise<{
   const { data: candidates } = await db
     .from("estimates")
     .select(
-      `id, organization_id, total_cents, sent_at, public_token,
+      `id, organization_id, client_id, total_cents, sent_at, public_token,
        client_followup_7d_sent_at, client_followup_14d_sent_at,
        client:clients ( name, email )`,
     )
@@ -1602,6 +1616,7 @@ export async function sendStaleEstimateFollowups(): Promise<{
     data: Array<{
       id: string;
       organization_id: string;
+      client_id: string | null;
       total_cents: number;
       sent_at: string;
       public_token: string | null;
@@ -1629,9 +1644,22 @@ export async function sendStaleEstimateFollowups(): Promise<{
     currency: "CAD" | "USD";
   };
   const orgCache = new Map<string, OrgInfo | null>();
+  const orgDefaultCache = new Map<
+    string,
+    import("@/lib/notification-preferences").OrgContactDefault
+  >();
 
   for (const est of candidates) {
     if (!est.client?.email || !est.public_token) continue;
+
+    // Client notification preference (growth category).
+    const decision = await resolveClientNotify(db, {
+      organizationId: est.organization_id,
+      clientId: est.client_id,
+      category: "growth",
+      orgDefaultCache,
+    });
+    if (!decision.email) continue;
 
     const isPast14 = est.sent_at <= fourteenDaysAgo;
     const stage: "day7" | "day14" = isPast14 ? "day14" : "day7";
@@ -1731,7 +1759,7 @@ export async function sendOverdueReminders(): Promise<{
   const { data: candidates } = await db
     .from("invoices")
     .select(`
-      id, number, organization_id, amount_cents, due_date, public_token,
+      id, number, organization_id, client_id, amount_cents, due_date, public_token,
       overdue_reminder_sent_at,
       client:clients ( name, email )
     `)
@@ -1742,6 +1770,7 @@ export async function sendOverdueReminders(): Promise<{
       id: string;
       number: string | null;
       organization_id: string;
+      client_id: string | null;
       amount_cents: number;
       due_date: string | null;
       public_token: string | null;
@@ -1765,9 +1794,26 @@ export async function sendOverdueReminders(): Promise<{
   >();
 
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+  const orgDefaultCache = new Map<
+    string,
+    import("@/lib/notification-preferences").OrgContactDefault
+  >();
 
   for (const inv of candidates) {
     if (!inv.client?.email || !inv.due_date) {
+      skipped += 1;
+      continue;
+    }
+
+    // Client notification preference (billing category) — a do-not-contact or
+    // billing-off client is never chased about an overdue invoice.
+    const decision = await resolveClientNotify(db, {
+      organizationId: inv.organization_id,
+      clientId: inv.client_id,
+      category: "billing",
+      orgDefaultCache,
+    });
+    if (!decision.email) {
       skipped += 1;
       continue;
     }
@@ -1975,8 +2021,25 @@ export async function sendBookingReviewRequests(): Promise<{
 
   const now = Date.now();
 
+  const orgDefaultCache = new Map<
+    string,
+    import("@/lib/notification-preferences").OrgContactDefault
+  >();
+
   for (const booking of candidates) {
     if (!booking.client?.email) {
+      skipped += 1;
+      continue;
+    }
+
+    // Client notification preference (growth category).
+    const decision = await resolveClientNotify(db, {
+      organizationId: booking.organization_id,
+      clientId: booking.client.id,
+      category: "growth",
+      orgDefaultCache,
+    });
+    if (!decision.email) {
       skipped += 1;
       continue;
     }
@@ -2257,10 +2320,27 @@ export async function sendGbpReviewRequests(): Promise<{
     Array.from(new Set(Array.from(byClient.values()).map((r) => r.organization_id))),
   );
 
+  const orgDefaultCache = new Map<
+    string,
+    import("@/lib/notification-preferences").OrgContactDefault
+  >();
+
   for (const row of byClient.values()) {
     const client = row.client!;
     const org = orgCache.get(row.organization_id);
     if (!org || !org.enabled || !org.google_review_url) {
+      skipped += 1;
+      continue;
+    }
+
+    // Client notification preference (growth category).
+    const askDecision = await resolveClientNotify(db, {
+      organizationId: row.organization_id,
+      clientId: client.id,
+      category: "growth",
+      orgDefaultCache,
+    });
+    if (!askDecision.email) {
       skipped += 1;
       continue;
     }
@@ -2393,6 +2473,19 @@ export async function sendGbpReviewRequests(): Promise<{
     if (!c.email || !c.gbp_redirect_token || !c.gbp_unsubscribe_token) {
       // Should not happen for state=pending — tokens are minted at
       // initial-ask time — but be defensive against partial rows.
+      skipped += 1;
+      continue;
+    }
+
+    // Client notification preference (growth category) — honour a client who
+    // was switched to do-not-contact after the initial ask.
+    const remDecision = await resolveClientNotify(db, {
+      organizationId: c.organization_id,
+      clientId: c.id,
+      category: "growth",
+      orgDefaultCache,
+    });
+    if (!remDecision.email) {
       skipped += 1;
       continue;
     }
@@ -3119,6 +3212,21 @@ export async function autoOnInvoicePaid(invoiceId: string) {
       return;
     }
 
+    // This function sends TWO different things, so each is gated on its own
+    // category: the receipt is billing, the review request is growth. A client
+    // can want invoices but no review asks (or vice versa).
+    const billingDecision = await resolveClientNotify(db, {
+      organizationId: invoice.organization_id,
+      clientId: invoice.client.id,
+      category: "billing",
+    });
+    const growthDecision = await resolveClientNotify(db, {
+      organizationId: invoice.organization_id,
+      clientId: invoice.client.id,
+      category: "growth",
+    });
+    if (!billingDecision.email && !growthDecision.email) return;
+
     const { data: orgData } = await db
       .from("organizations")
       .select("name, brand_color, logo_url, timezone")
@@ -3151,7 +3259,7 @@ export async function autoOnInvoicePaid(invoiceId: string) {
       logoUrl,
     });
 
-    await sendOrgEmail(invoice.organization_id, {
+    if (billingDecision.email) await sendOrgEmail(invoice.organization_id, {
       to: invoice.client.email,
       toName: invoice.client.name ?? undefined,
       ...receiptTemplate,
@@ -3190,7 +3298,7 @@ export async function autoOnInvoicePaid(invoiceId: string) {
     // because the process terminates when the function returns. Back-to-back
     // Resend calls land in separate email threads in Gmail/Outlook anyway
     // (different Message-IDs), so there's no deliverability reason to delay.
-    await sendOrgEmail(invoice.organization_id, {
+    if (growthDecision.email) await sendOrgEmail(invoice.organization_id, {
       to: invoice.client.email!,
       toName: invoice.client.name ?? undefined,
       ...reviewTemplate,
