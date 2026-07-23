@@ -57,7 +57,43 @@ export const ClientSchema = z.object({
   notes: optionalText.refine(noCardNumber, {
     message: CARD_DETECTED_MESSAGE,
   }),
-  preferred_contact: PreferredContactEnum,
+  /**
+   * Superseded by contact_preference below (it was never read by any send
+   * path). Optional now so the form can stop submitting it; the column is
+   * still written with a default until it's dropped.
+   */
+  preferred_contact: PreferredContactEnum.optional().default("email"),
+  /** inherit | custom | do_not_contact — see lib/notification-preferences.ts */
+  contact_preference: z
+    .enum(["inherit", "custom", "do_not_contact"])
+    .optional()
+    .default("inherit"),
+  /**
+   * JSON from the notification control: { booking|billing|growth :
+   * off|email|sms|both|inherit }. Parsed + whitelisted here so a hand-crafted
+   * POST can't write arbitrary JSON into the column.
+   */
+  contact_overrides: z
+    .string()
+    .optional()
+    .transform((s) => {
+      if (!s || !s.trim()) return {};
+      let raw: unknown;
+      try {
+        raw = JSON.parse(s);
+      } catch {
+        return {};
+      }
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+      const categories = ["booking", "billing", "growth"] as const;
+      const channels = ["off", "email", "sms", "both", "inherit"];
+      const out: Record<string, string> = {};
+      for (const cat of categories) {
+        const v = (raw as Record<string, unknown>)[cat];
+        if (typeof v === "string" && channels.includes(v)) out[cat] = v;
+      }
+      return out;
+    }),
   /** Membership id of the cleaner to auto-assign on new bookings for
    *  this client. Blank / omitted → no preference. */
   preferred_cleaner_id: optionalMembershipId,

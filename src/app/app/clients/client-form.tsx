@@ -14,6 +14,11 @@ import {
   updateClientAction,
   type ClientFormState,
 } from "./actions";
+import { NotificationPreferenceField } from "./notification-preference-field";
+import type {
+  ContactOverrides,
+  OrgContactDefault,
+} from "@/lib/notification-preferences";
 
 const empty: ClientFormState = {};
 
@@ -26,6 +31,8 @@ type Defaults = {
   preferred_contact?: string;
   preferred_cleaner_id?: string | null;
   sms_opted_in?: boolean | null;
+  contact_preference?: string | null;
+  contact_overrides?: ContactOverrides | null;
   /** When true on create, pre-marks this client's gbp_review_state =
    *  'reviewed' so the Google review cron never asks them. Use when
    *  the customer already left you a Google review before being
@@ -44,10 +51,13 @@ export function ClientForm({
   defaults,
   cleaners = [],
   referralClients = [],
+  orgContactDefault = "email",
 }: {
   mode: "create" | "edit";
   id?: string;
   defaults?: Defaults;
+  /** The org's house default, shown + used by the notification control. */
+  orgContactDefault?: OrgContactDefault;
   /** Active memberships for the "Preferred cleaner" dropdown. Passing
    *  an empty array hides the dropdown — useful for orgs that haven't
    *  added any employees yet (setup-first-client flow). */
@@ -172,21 +182,15 @@ export function ClientForm({
         />
       </FormField>
 
-      <FormField
-        label="Preferred contact"
-        htmlFor="preferred_contact"
-        error={state.errors?.preferred_contact}
-      >
-        <FormSelect
-          id="preferred_contact"
-          name="preferred_contact"
-          defaultValue={v.preferred_contact ?? "email"}
-        >
-          <option value="email">Email</option>
-          <option value="phone">Phone</option>
-          <option value="sms">SMS</option>
-        </FormSelect>
-      </FormField>
+      {/* Replaces the old "Preferred contact" select, which was decorative —
+          no send path ever read it. This one actually routes messages. */}
+      <NotificationPreferenceField
+        defaultPreference={v.contact_preference}
+        defaultOverrides={v.contact_overrides}
+        orgDefault={orgContactDefault}
+        hasEmail={Boolean(v.email)}
+        smsOptedIn={Boolean(v.sms_opted_in)}
+      />
 
       {cleaners.length > 0 && (
         <FormField

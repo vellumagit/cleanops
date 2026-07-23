@@ -112,6 +112,31 @@ const VALID_AUTOMATION_KEYS = new Set<AutomationKey>([
   "divide_crew_hours",
 ]);
 
+/**
+ * Set the org's house default for automated client messages. Clients on
+ * contact_preference='inherit' (the default) follow this; per-client settings
+ * override it. Setting this to 'none' is the "silence everyone, then switch on
+ * the few I want" flow.
+ */
+export async function setOrgContactDefaultAction(formData: FormData) {
+  const { membership } = await getActionContext();
+  if (!["owner", "admin"].includes(membership.role)) return;
+
+  const value = String(formData.get("default_contact_preference") ?? "");
+  if (!["email", "sms", "both", "none"].includes(value)) {
+    console.warn(`[automations] invalid contact default rejected: "${value}"`);
+    return;
+  }
+
+  const admin = createSupabaseAdminClient();
+  await admin
+    .from("organizations")
+    .update({ default_contact_preference: value } as never)
+    .eq("id", membership.organization_id);
+
+  revalidatePath("/app/settings/automations", "page");
+}
+
 export async function toggleAutomationAction(formData: FormData) {
   const { membership } = await getActionContext();
   if (!["owner", "admin"].includes(membership.role)) return;

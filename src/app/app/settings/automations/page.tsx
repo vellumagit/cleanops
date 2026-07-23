@@ -19,7 +19,11 @@ import {
   resolveAutomationEnabled,
   isDefaultOff,
 } from "@/lib/automation-defaults";
-import { toggleAutomationAction, type AutomationKey } from "./actions";
+import {
+  toggleAutomationAction,
+  setOrgContactDefaultAction,
+  type AutomationKey,
+} from "./actions";
 
 export const metadata = { title: "Automations" };
 
@@ -401,13 +405,17 @@ export default async function AutomationsPage() {
 
   const { data: org } = (await admin
     .from("organizations")
-    .select("automation_settings")
+    .select("automation_settings, default_contact_preference")
     .eq("id", membership.organization_id)
     .maybeSingle()) as unknown as {
-    data: { automation_settings: Record<string, { enabled: boolean }> } | null;
+    data: {
+      automation_settings: Record<string, { enabled: boolean }>;
+      default_contact_preference: string | null;
+    } | null;
   };
 
   const settings = org?.automation_settings ?? {};
+  const contactDefault = org?.default_contact_preference ?? "email";
 
   function isEnabled(key: AutomationKey): boolean {
     // Shared resolver — explicit setting wins, otherwise the per-key
@@ -441,6 +449,46 @@ export default async function AutomationsPage() {
             actions — if one fails, it fails quietly.
           </p>
         </div>
+      </div>
+
+      {/* House default for client messages. Per-client settings override it —
+          set this to "No notifications" to silence everyone, then switch on
+          just the clients you want. */}
+      <div className="mb-8 rounded-lg border border-border bg-card p-4">
+        <p className="text-sm font-medium">Default client notifications</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          What a client gets unless their own setting says otherwise. Change it
+          per client on the client&apos;s page.
+        </p>
+        <form action={setOrgContactDefaultAction} className="mt-3 flex flex-wrap items-center gap-2">
+          {[
+            { value: "email", label: "Email only" },
+            { value: "sms", label: "Text only" },
+            { value: "both", label: "Email + text" },
+            { value: "none", label: "No notifications" },
+          ].map((opt) => {
+            const active = contactDefault === opt.value;
+            return (
+              <button
+                key={opt.value}
+                type="submit"
+                name="default_contact_preference"
+                value={opt.value}
+                className={`rounded-md border px-3 py-1.5 text-xs transition-colors ${
+                  active
+                    ? "border-foreground bg-muted font-medium text-foreground"
+                    : "border-border text-muted-foreground hover:bg-muted/50"
+                }`}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+        </form>
+        <p className="mt-2 text-[11px] text-muted-foreground">
+          Texts only reach clients who have opted in to SMS, regardless of this
+          setting.
+        </p>
       </div>
 
       <div className="space-y-10">
