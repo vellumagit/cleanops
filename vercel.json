@@ -160,6 +160,10 @@
     {
       "path": "/api/cron/gcal-prune",
       "schedule": "15 5 * * 1"
+    },
+    {
+      "path": "/api/cron/product-changelog",
+      "schedule": "0 16 * * 2"
     }
   ]
 }

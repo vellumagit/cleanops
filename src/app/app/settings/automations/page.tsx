@@ -297,6 +297,13 @@ const CATEGORIES: Category[] = [
           "1st-of-month recap of the prior month: revenue, job counts, rating, top clients by revenue, top performer, and new clients added.",
         trigger: "1st of each month at 09:00 UTC",
       },
+      {
+        key: "product_changelog_email" as AutomationKey,
+        title: "Sollos product updates",
+        description:
+          "Emails you a short summary of what's new in Sollos when we ship meaningful changes. Sent at most weekly, and nothing goes out on a quiet week. Each owner can unsubscribe from their own copy without changing this setting.",
+        trigger: "Weekly, only when there's something to report",
+      },
     ],
   },
   {

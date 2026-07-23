@@ -61,7 +61,8 @@ export type AutomationKey =
   // Scheduling: when ON, every team job (2+ cleaners working together)
   // automatically shows each cleaner their share of the hours (duration ÷
   // crew) in the field app — no per-booking checkbox needed. Default OFF.
-  | "divide_crew_hours";
+  | "divide_crew_hours"
+  | "product_changelog_email";
 
 /**
  * Runtime allowlist derived from the AutomationKey union. Keeps the type
@@ -110,6 +111,7 @@ const VALID_AUTOMATION_KEYS = new Set<AutomationKey>([
   "system_feed_events",
   "feed_visible",
   "divide_crew_hours",
+  "product_changelog_email",
 ]);
 
 /**
