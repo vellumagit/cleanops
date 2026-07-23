@@ -44,13 +44,17 @@ export default async function SetupPage() {
         .eq("organization_id", membership.organization_id),
       supabase
         .from("organizations")
-        .select("default_payment_instructions, logo_url, brand_color")
+        .select(
+          "default_payment_instructions, logo_url, brand_color, automations_enabled, automation_settings",
+        )
         .eq("id", membership.organization_id)
         .maybeSingle() as unknown as {
         data: {
           default_payment_instructions: string | null;
           logo_url: string | null;
           brand_color: string | null;
+          automations_enabled: boolean | null;
+          automation_settings: Record<string, { enabled?: boolean }> | null;
         } | null;
       },
       supabase
@@ -64,10 +68,20 @@ export default async function SetupPage() {
     .select("id", { count: "exact", head: true })
     .eq("organization_id", membership.organization_id);
 
+  // Automations are opt-in, so this step is "done" once the owner has made a
+  // deliberate choice — either flipping the master switch on, or touching any
+  // individual toggle. An owner who genuinely wants everything off still
+  // completes the step by turning the master on and leaving items off.
+  const automationSettings = orgSettings.data?.automation_settings ?? {};
+  const hasAutomations =
+    orgSettings.data?.automations_enabled === true ||
+    Object.keys(automationSettings).length > 0;
+
   const steps = {
     hasClient: (clients.count ?? 0) > 0,
     hasBooking: (bookings.count ?? 0) > 0,
     hasTeam: (members.count ?? 0) > 1 || (inviteCount ?? 0) > 0,
+    hasAutomations,
     hasBranding: !!(orgSettings.data?.logo_url || orgSettings.data?.brand_color),
     hasPaymentInstructions: !!orgSettings.data?.default_payment_instructions,
     hasInvoice: (invoices.count ?? 0) > 0,

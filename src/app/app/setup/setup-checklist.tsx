@@ -8,6 +8,7 @@ import {
   Banknote,
   Palette,
   Receipt,
+  Zap,
   Check,
   ArrowRight,
   Sparkles,
@@ -22,6 +23,7 @@ type Steps = {
   hasClient: boolean;
   hasBooking: boolean;
   hasTeam: boolean;
+  hasAutomations: boolean;
   hasBranding: boolean;
   hasPaymentInstructions: boolean;
   hasInvoice: boolean;
@@ -102,6 +104,26 @@ const ESSENTIAL_STEPS: StepDef[] = [
     cta: "Send invite",
     time: "1 min",
     icon: UserPlus,
+    color: {
+      icon: "text-amber-500",
+      iconBg: "bg-amber-500/10",
+      doneBg: "bg-amber-50 dark:bg-amber-950/20",
+      doneBorder: "border-amber-200 dark:border-amber-900/40",
+      doneText: "text-amber-700 dark:text-amber-400",
+      bar: "bg-amber-500",
+      number: "text-amber-500",
+      numberBorder: "border-amber-200 dark:border-amber-800",
+    },
+  },
+  {
+    key: "hasAutomations",
+    title: "Choose what Sollos sends for you",
+    description:
+      "Nothing is sent until you say so — no confirmations, reminders, or invoices. Pick whether clients hear from you by email or text, then switch on the automations you want. You can fine-tune it per client later.",
+    href: "/app/settings/automations?from=setup",
+    cta: "Set up automations",
+    time: "2 min",
+    icon: Zap,
     color: {
       icon: "text-amber-500",
       iconBg: "bg-amber-500/10",
