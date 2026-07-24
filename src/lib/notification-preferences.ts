@@ -153,5 +153,4 @@ export const AUTOMATION_CATEGORY: Record<string, NotificationCategory> = {
   review_request_after_completion: "growth",
   gbp_review_request: "growth",
   estimate_followup_email: "growth",
-  estimate_sent_email: "growth",
 };

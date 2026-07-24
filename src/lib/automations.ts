@@ -2911,8 +2911,12 @@ export async function sendUpcomingBookingReminders(): Promise<{
 // present, then emails the client with a link to /e/<token>. Idempotent:
 // re-sending bumps client_email_sent_at but keeps the existing token.
 //
-// Gated by the platform kill switch (via sendOrgEmail) and by the per-org
-// `estimate_sent_email` toggle.
+// Gated ONLY by the platform kill switch (via sendOrgEmail). Deliberately NOT
+// behind an automation toggle: this is the owner clicking "Send to client" —
+// a manual act, not an automation. It used to be gated by an
+// `estimate_sent_email` toggle, which under the opt-in-everything policy meant
+// a fresh org couldn't send estimates at all until they found and enabled a
+// toggle for a button they'd already clicked. Removed.
 // ─────────────────────────────────────────────────────────────────
 
 export async function sendEstimateToClient(
@@ -2955,17 +2959,6 @@ export async function sendEstimateToClient(
     if (!estimate) return { ok: false, publicToken: null, error: "Estimate not found" };
     if (!estimate.client?.email) {
       return { ok: false, publicToken: null, error: "Client has no email on file" };
-    }
-
-    if (!(await isAutomationEnabled(estimate.organization_id, "estimate_sent_email"))) {
-      console.log(
-        `[auto] Estimate send paused for org ${estimate.organization_id}`,
-      );
-      return {
-        ok: false,
-        publicToken: null,
-        error: "Estimate emails are paused for this organization",
-      };
     }
 
     // Lazily mint a public token + 30-day expiry on first send.

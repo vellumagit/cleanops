@@ -10,7 +10,6 @@ export type AutomationKey =
   | "booking_confirmation_email"
   | "booking_rescheduled_email"
   | "booking_reminder_client_email"
-  | "estimate_sent_email"
   | "invoice_paid_receipt"
   | "invoice_overdue_reminder"
   | "review_submitted_notify"
@@ -76,7 +75,6 @@ const VALID_AUTOMATION_KEYS = new Set<AutomationKey>([
   "booking_confirmation_email",
   "booking_rescheduled_email",
   "booking_reminder_client_email",
-  "estimate_sent_email",
   "invoice_paid_receipt",
   "invoice_overdue_reminder",
   "review_submitted_notify",
@@ -136,7 +134,6 @@ const PRESET_ESSENTIALS: AutomationKey[] = [
 
 const PRESET_FULL_SERVICE: AutomationKey[] = [
   ...PRESET_ESSENTIALS,
-  "estimate_sent_email",
   "estimate_followup_email",
   "review_request_after_completion",
   "gbp_review_request",

@@ -54,16 +54,9 @@ const STAGES: Stage[] = [
   {
     id: "winning",
     label: "Winning the work",
-    outcome: "Estimates go out, get followed up, and expire on their own.",
+    outcome: "Sent estimates get followed up, and stale ones expire on their own.",
     icon: FileText,
     automations: [
-      {
-        key: "estimate_sent_email",
-        title: "Send estimate to client",
-        description:
-          "Controls the 'Send to client' button on estimates. When off, clicking Send returns an error instead of emailing.",
-        trigger: "Estimate → Send clicked",
-      },
       {
         key: "estimate_followup_email",
         title: "Estimate follow-up",
