@@ -1,7 +1,7 @@
 /**
  * Cron: task remind_at push notifications.
  *
- * Runs every 5 minutes (or as frequently as the Vercel cron config allows).
+ * Runs hourly (vercel.json), so a reminder fires at most ~1h after remind_at.
  * Finds tasks whose remind_at has passed, have not been reminded yet, and
  * have not been completed, then fires a push notification via sendTaskReminder.
  *

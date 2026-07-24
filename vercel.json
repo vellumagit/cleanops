@@ -35,7 +35,7 @@
     },
     {
       "path": "/api/cron/upcoming-jobs",
-      "schedule": "0 7 * * *"
+      "schedule": "5 * * * *"
     },
     {
       "path": "/api/cron/stale-estimates",
@@ -83,7 +83,7 @@
     },
     {
       "path": "/api/cron/employee-daily-schedule",
-      "schedule": "0 6 * * *"
+      "schedule": "0 12 * * *"
     },
     {
       "path": "/api/cron/employee-weekly-schedule",
@@ -143,7 +143,7 @@
     },
     {
       "path": "/api/cron/task-reminders",
-      "schedule": "0 8 * * *"
+      "schedule": "0 * * * *"
     },
     {
       "path": "/api/cron/member-calendar-reconcile",

@@ -67,6 +67,12 @@ async function isAutomationEnabled(
   }
 }
 
+/**
+ * Public alias for route handlers (e.g. the unfilled-shifts cron) that need
+ * the same master-switch + per-key gate the in-lib automations use.
+ */
+export const isAutomationEnabledForOrg = isAutomationEnabled;
+
 // ─────────────────────────────────────────────────────────────────
 // Helper: fetch all owner/admin recipients for an org
 //
@@ -92,8 +98,12 @@ async function getMembershipRecipient(
   const db = admin();
   const { data: m } = await db
     .from("memberships")
-    .select("profile_id, organization_id")
+    .select("profile_id, organization_id, status")
     .eq("id", membershipId)
+    // Deactivated members must not keep receiving schedules, overtime
+    // warnings, payroll receipts, PTO or cert emails (audit T9) — they often
+    // remain referenced by booking_assignees / payroll_items rows.
+    .eq("status", "active")
     .maybeSingle() as unknown as {
     data: { profile_id: string; organization_id: string } | null;
   };
@@ -563,8 +573,23 @@ export async function notifyUpcomingJobs() {
 
     if (!jobs || jobs.length === 0) return 0;
 
+    // Opt-in gate (audit T2 — this push was ungated). Checked per org since
+    // one run spans orgs.
+    const gateCache = new Map<string, boolean>();
+    const gatedJobs = [];
+    for (const j of jobs) {
+      const orgId = j.organization_id as string;
+      let on = gateCache.get(orgId);
+      if (on === undefined) {
+        on = await isAutomationEnabled(orgId, "job_starting_soon_push");
+        gateCache.set(orgId, on);
+      }
+      if (on) gatedJobs.push(j);
+    }
+    if (gatedJobs.length === 0) return 0;
+
     // Pre-fetch org timezones so notification times display in local time.
-    const orgIds = [...new Set(jobs.map((j) => j.organization_id as string))];
+    const orgIds = [...new Set(gatedJobs.map((j) => j.organization_id as string))];
     const { data: orgRows } = (await db
       .from("organizations")
       .select("id, timezone")
@@ -590,7 +615,7 @@ export async function notifyUpcomingJobs() {
       (existingNotifs ?? []).map((n) => (n.href ?? "").split("/").pop()),
     );
 
-    const rows = jobs
+    const rows = gatedJobs
       .filter((j) => !alreadyNotified.has(j.id))
       .map((j) => {
         const clientName = (j.client as unknown as { name: string } | null)?.name ?? "a client";
@@ -853,6 +878,11 @@ export async function alertStaleEstimates() {
     let notified = 0;
     await Promise.allSettled(
       [...byOrg.entries()].map(async ([orgId, ests]) => {
+        // Opt-in gate (audit T7 — this alert was ungated and fired for orgs
+        // with the master switch off).
+        if (!(await isAutomationEnabled(orgId, "stale_estimate_alert"))) {
+          return;
+        }
         const details = ests.map((e) => {
           const clientName =
             (e.client as unknown as { name: string } | null)?.name ?? "a client";
@@ -2996,7 +3026,15 @@ export async function sendUpcomingBookingReminders(): Promise<{
 
 export async function sendEstimateToClient(
   estimateId: string,
-  opts: { manualSend?: boolean } = {},
+  opts: {
+    manualSend?: boolean;
+    /**
+     * Caller's org id. REQUIRED for user-initiated sends: this function uses
+     * the service-role client, so without this scope any authenticated member
+     * of any org could force-send another org's estimate by UUID (audit G2).
+     */
+    organizationId?: string;
+  } = {},
 ): Promise<{
   ok: boolean;
   publicToken: string | null;
@@ -3010,14 +3048,18 @@ export async function sendEstimateToClient(
     const { getOrgCurrency } = await import("@/lib/org-currency");
     const { generateClaimToken } = await import("@/lib/claim-token");
 
-    const { data: estimate } = await db
+    let estimateQuery = db
       .from("estimates")
       .select(`
         id, organization_id, service_description, total_cents,
         status, public_token, expires_at,
         client:clients ( name, email )
       `)
-      .eq("id", estimateId)
+      .eq("id", estimateId);
+    if (opts.organizationId) {
+      estimateQuery = estimateQuery.eq("organization_id", opts.organizationId);
+    }
+    const { data: estimate } = await estimateQuery
       .maybeSingle() as unknown as {
       data: {
         id: string;
@@ -5362,7 +5404,10 @@ export async function autoExpireStaleEstimates(): Promise<{ expired: number }> {
 
   for (const org of orgs ?? []) {
     if (!(await isAutomationEnabled(org.id, "auto_expire_stale_estimates"))) continue;
-    const days = org.stale_estimate_expire_days ?? 30;
+    // NULL = explicitly blanked in Settings → Thresholds = disabled
+    // (audit T5 — defaults are backfilled by migration 20260726010000).
+    if (org.stale_estimate_expire_days == null) continue;
+    const days = org.stale_estimate_expire_days;
     if (days < 1) continue;
 
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
@@ -5404,7 +5449,8 @@ export async function autoVoidOldInvoices(): Promise<{ voided: number }> {
 
   for (const org of orgs ?? []) {
     if (!(await isAutomationEnabled(org.id, "auto_void_overdue_invoices"))) continue;
-    const days = org.invoice_void_days ?? 90;
+    if (org.invoice_void_days == null) continue; // blank = disabled (T5)
+    const days = org.invoice_void_days;
     if (days < 30) continue;
 
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
@@ -5455,7 +5501,8 @@ export async function autoCompletePastBookings(): Promise<{ completed: number }>
 
   for (const org of orgs ?? []) {
     if (!(await isAutomationEnabled(org.id, "auto_complete_past_bookings"))) continue;
-    const hours = org.booking_auto_complete_hours ?? 24;
+    if (org.booking_auto_complete_hours == null) continue; // blank = disabled (T5)
+    const hours = org.booking_auto_complete_hours;
     if (hours < 1) continue;
 
     const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
@@ -5521,7 +5568,8 @@ export async function autoArchiveOldRecords(): Promise<{
 
   for (const org of orgs ?? []) {
     if (!(await isAutomationEnabled(org.id, "auto_archive_old_records"))) continue;
-    const days = org.archive_after_days ?? 730;
+    if (org.archive_after_days == null) continue; // blank = disabled (T5)
+    const days = org.archive_after_days;
     if (days < 180) continue;
 
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();

@@ -73,13 +73,36 @@ export async function GET(request: Request) {
     return Response.json({ created: 0, skipped: bookingIds.length });
   }
 
+  // Per-org gates + timezone (audit T8): this alert was ungated (fired for
+  // orgs with automations off) and rendered shift times in UTC, so admins saw
+  // "at 4:00 AM" for a 9 PM job. Gate on the same key as the sibling
+  // unassigned-booking alert — they cover the same condition, so one toggle
+  // governs both alert streams.
+  const orgIds = [...new Set(toNotify.map((b) => b.organization_id))];
+  const { data: orgRows } = (await admin
+    .from("organizations")
+    .select("id, timezone")
+    .in("id", orgIds)) as unknown as {
+    data: Array<{ id: string; timezone: string | null }> | null;
+  };
+  const orgTz = new Map(
+    (orgRows ?? []).map((o) => [o.id, o.timezone ?? "America/Edmonton"]),
+  );
+  const { isAutomationEnabledForOrg } = await import("@/lib/automations");
+  const gate = new Map<string, boolean>();
+  for (const id of orgIds) {
+    gate.set(id, await isAutomationEnabledForOrg(id, "unassigned_booking_alert"));
+  }
+
   // Notify org management (owner/admin/manager) — those are the people who
   // staff shifts. Route through notify() rather than inserting notification
   // rows directly: notify() also fires a push (the raw insert reached only the
   // in-app bell, never the phone) and applies the correct recipient/RLS
   // scoping.
   const { notify } = await import("@/lib/notify");
+  let created = 0;
   for (const b of toNotify) {
+    if (!gate.get(b.organization_id)) continue;
     const clientName =
       (b.client as unknown as { name: string } | null)?.name ?? "a client";
     const when = new Date(b.scheduled_at).toLocaleString("en-US", {
@@ -87,6 +110,7 @@ export async function GET(request: Request) {
       day: "numeric",
       hour: "numeric",
       minute: "2-digit",
+      timeZone: orgTz.get(b.organization_id) ?? "America/Edmonton",
     });
 
     await notify({
@@ -97,7 +121,8 @@ export async function GET(request: Request) {
       body: `${b.service_type ?? "Cleaning"} for ${clientName} at ${when} has no one assigned.`,
       href: `/app/bookings/${b.id}`,
     });
+    created += 1;
   }
 
-  return Response.json({ created: toNotify.length });
+  return Response.json({ created });
 }

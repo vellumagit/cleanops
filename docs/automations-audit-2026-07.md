@@ -29,12 +29,12 @@ keys dead post-flip, SMS master-switch hole, CLIENT_FACING_SMS_KEYS gaps.
 | B5 | Reschedule never clears `client_reminder_sent_at` → a moved booking is never re-reminded for its new date. | bookings/actions.ts:1068-1086, scheduling/actions.ts:195 | FIXED (Tranche 2) |
 | M1 | Double-billing cluster: (a) billing-cycle line items don't set `booking_id`; (b) force-generate paths never check `bookings.billing_invoice_id`; (c) billing-cycle crash between invoice insert and booking stamp double-bills next period (23505 branch doesn't stamp); (d) manual invoice creation never stamps `billing_invoice_id`. | billing-cycle:294-301,247-254; automations.ts:294-343; invoices/actions.ts:77-96,846-913 | FIXED (Tranche 1) |
 | G1 | Internal review requests flood recurring clients on enable: per-booking dedup only, no per-client cap — 4 completed bookings in 30d window = 4 emails in one run. | automations.ts:1963-1984 | OPEN |
-| T1 | Employee daily-schedule cron (06:00 UTC) = 23:00 previous day in MST — employees get "today's" schedule for the day that just ended, all winter. | vercel.json:86, automations.ts:4552 | OPEN |
-| T2 | notifyUpcomingJobs is dead: 1-hour lookahead on a once-daily cron — only jobs at ~1 AM Edmonton can match. Also ungated. | automations.ts:517 | OPEN |
-| T3 | Task reminders documented "every 5 min", scheduled once daily 08:00 UTC (2 AM Edmonton) — up to 24h late. Ungated (bypasses master switch). | vercel.json:146 | OPEN |
+| T1 | Employee daily-schedule cron (06:00 UTC) = 23:00 previous day in MST — employees get "today's" schedule for the day that just ended, all winter. | vercel.json:86, automations.ts:4552 | FIXED (Tranche 3) |
+| T2 | notifyUpcomingJobs is dead: 1-hour lookahead on a once-daily cron — only jobs at ~1 AM Edmonton can match. Also ungated. | automations.ts:517 | FIXED (Tranche 3) |
+| T3 | Task reminders documented "every 5 min", scheduled once daily 08:00 UTC (2 AM Edmonton) — up to 24h late. Ungated (bypasses master switch). | vercel.json:146 | FIXED (Tranche 3) |
 | T4 | Review bonuses re-award every week (real money): rolling period dates never match the exact-date dedup, so a qualifying employee is paid again each Monday. | automations.ts:3624-3656 | FIXED (Tranche 1) |
-| T5 | "Blank = disable" thresholds don't disable — all four hygiene crons `?? default`, so blanking the field still expires/voids/completes/archives at defaults. | automations.ts:5285,5327,5372,5438; thresholds/form.tsx:111 | OPEN |
-| G2 | Cross-org authz: sendEstimateAction never scopes the estimate to the caller's org — any authenticated member of any org can force-send another org's estimate by UUID. | estimates/actions.ts:231-247, automations.ts:2938-2946 | OPEN |
+| T5 | "Blank = disable" thresholds don't disable — all four hygiene crons `?? default`, so blanking the field still expires/voids/completes/archives at defaults. | automations.ts:5285,5327,5372,5438; thresholds/form.tsx:111 | FIXED (Tranche 3) |
+| G2 | Cross-org authz: sendEstimateAction never scopes the estimate to the caller's org — any authenticated member of any org can force-send another org's estimate by UUID. | estimates/actions.ts:231-247, automations.ts:2938-2946 | FIXED (Tranche 3) |
 
 ## MEDIUM
 
@@ -58,9 +58,9 @@ keys dead post-flip, SMS master-switch hole, CLIENT_FACING_SMS_KEYS gaps.
 | G5 | Estimate resend bumps sent_at but never extends expires_at — public page can say "expired" while followups still link to it. | automations.ts:3054-3063 vs 2967-2977 | OPEN |
 | G6 | Rebooking prompts: no recency ceiling (will email clients last served 2 years ago, monthly, forever) + unbounded cross-org scan doing per-client work before the org gate + CTA is a mailto to noreply@ + no unsubscribe (CASL). | automations.ts:1450-1564, email-templates.ts:1677-1714 | OPEN |
 | T6 | Dead code: autoAssignTraining (never called) and postSystemFeedEvent (never called — the system_feed_events toggle is wired to nothing). | automations.ts:620,849 | OPEN |
-| T7 | alertStaleEstimates ungated (no key, no master switch). | automations.ts:750-838 | OPEN |
-| T8 | unfilled-shifts cron: ungated, formats times in UTC (admins see wrong hours), overlaps the gated unassigned_booking_alert. | api/cron/unfilled-shifts:85-90 | OPEN |
-| T9 | Deactivated members still receive schedules/overtime/payroll/PTO/cert emails (getMembershipRecipient never filters status). | automations.ts:89-128 | OPEN |
+| T7 | alertStaleEstimates ungated (no key, no master switch). | automations.ts:750-838 | FIXED (Tranche 3) |
+| T8 | unfilled-shifts cron: ungated, formats times in UTC (admins see wrong hours), overlaps the gated unassigned_booking_alert. | api/cron/unfilled-shifts:85-90 | FIXED (Tranche 3) |
+| T9 | Deactivated members still receive schedules/overtime/payroll/PTO/cert emails (getMembershipRecipient never filters status). | automations.ts:89-128 | FIXED (Tranche 3) |
 
 ## LOW (tracked, fix opportunistically)
 

@@ -236,12 +236,18 @@ export async function sendEstimateAction(
   if (!id) return { error: "Missing estimate id" };
 
   // Membership check — anyone who can view/edit estimates can send them.
-  await getActionContext();
+  // The membership's org id also SCOPES the send: sendEstimateToClient uses
+  // the service-role client, so without it any member of any org could
+  // force-send another org's estimate by UUID (audit G2).
+  const { membership } = await getActionContext();
 
   // manualSend:true tells the automation to bypass the platform
   // CLIENT_EMAILS_PAUSED kill switch — an owner clicking "Send" is
   // operational, not automated, and shouldn't be silently dropped.
-  const result = await sendEstimateToClient(id, { manualSend: true });
+  const result = await sendEstimateToClient(id, {
+    manualSend: true,
+    organizationId: membership.organization_id,
+  });
   if (!result.ok) {
     return { error: result.error ?? "Could not send estimate" };
   }

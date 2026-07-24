@@ -72,6 +72,13 @@ const STAGES: Stage[] = [
         trigger: "Estimate → Approved",
       },
       {
+        key: "stale_estimate_alert",
+        title: "Stale-estimate alert to you",
+        description:
+          "Pings owners/admins (in-app + one aggregate push) when an estimate has sat in Sent for 7+ days with no decision, so follow-up doesn't slip.",
+        trigger: "Daily scan at 09:00 UTC",
+      },
+      {
         key: "auto_expire_stale_estimates",
         title: "Auto-expire stale estimates",
         description:
@@ -263,6 +270,13 @@ const STAGES: Stage[] = [
     icon: Users,
     bundlePreset: "team_office",
     automations: [
+      {
+        key: "job_starting_soon_push",
+        title: "Job starting soon push to employee",
+        description:
+          "Pushes the assigned cleaner shortly before a job's start time — a last-line 'you're up' nudge on top of the daily schedule email.",
+        trigger: "Hourly scan",
+      },
       {
         key: "employee_daily_schedule",
         title: "Employee daily schedule",
