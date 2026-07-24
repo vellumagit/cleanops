@@ -107,7 +107,7 @@ export function NotificationPreferenceField({
   }
 
   return (
-    <div className="rounded-lg border border-border bg-card p-4">
+    <div id="notifications" className="scroll-mt-24 rounded-lg border border-border bg-card p-4">
       <input type="hidden" name="contact_preference" value={mode} />
       <input
         type="hidden"

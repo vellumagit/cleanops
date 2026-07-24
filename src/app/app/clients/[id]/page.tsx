@@ -31,6 +31,8 @@ import {
 } from "@/lib/format";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { PortalInviteButton } from "./portal-invite-button";
+import { ClientNotificationsCard } from "./notifications-card";
+import { fetchOrgContactDefault } from "../org-contact-default";
 import { SmsOptInButton } from "./sms-opt-in-button";
 import {
   markGbpReviewedAction,
@@ -60,7 +62,7 @@ export default async function ClientDetailPage({
   ] = await Promise.all([
     supabase
       .from("clients")
-      .select("id, name, email, phone, address, notes, preferred_contact, balance_cents, created_at, profile_id, portal_invited_at, portal_accepted_at, portal_invite_expires_at, referred_by_client_id, gbp_review_state, gbp_first_asked_at, gbp_last_asked_at, gbp_clicked_at, gbp_reminders_sent, gbp_unsubscribed_at, sms_opted_in, sms_opt_in_requested_at")
+      .select("id, name, email, phone, address, notes, preferred_contact, contact_preference, contact_overrides, balance_cents, created_at, profile_id, portal_invited_at, portal_accepted_at, portal_invite_expires_at, referred_by_client_id, gbp_review_state, gbp_first_asked_at, gbp_last_asked_at, gbp_clicked_at, gbp_reminders_sent, gbp_unsubscribed_at, sms_opted_in, sms_opt_in_requested_at")
       .eq("id", id)
       .maybeSingle() as unknown as Promise<{
       data: {
@@ -85,6 +87,8 @@ export default async function ClientDetailPage({
         gbp_reminders_sent: number;
         gbp_unsubscribed_at: string | null;
         sms_opted_in: boolean;
+        contact_preference: string | null;
+        contact_overrides: Record<string, string> | null;
         sms_opt_in_requested_at: string | null;
       } | null;
       error: { message: string } | null;
@@ -184,6 +188,10 @@ export default async function ClientDetailPage({
   };
   const gbpPreconditionsMet =
     !!client.email && !!orgGbp?.google_review_url;
+
+  const orgContactDefault = await fetchOrgContactDefault(
+    membership.organization_id,
+  );
 
   return (
     <PageShell
@@ -326,6 +334,18 @@ export default async function ClientDetailPage({
         </div>
 
         {/* ── Stats row ── */}
+        <ClientNotificationsCard
+          clientId={client.id}
+          canEdit={canEdit}
+          orgDefault={orgContactDefault}
+          contactPreference={client.contact_preference}
+          contactOverrides={
+            client.contact_overrides as import("@/lib/notification-preferences").ContactOverrides | null
+          }
+          hasEmail={Boolean(client.email)}
+          smsOptedIn={client.sms_opted_in}
+        />
+
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {[
             { label: "Bookings", value: bookings.length, icon: Calendar, href: `/app/bookings?client=${id}` },

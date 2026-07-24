@@ -115,6 +115,109 @@ const VALID_AUTOMATION_KEYS = new Set<AutomationKey>([
 ]);
 
 /**
+ * One-click starting bundles. Each preset writes `enabled: true` for its keys
+ * (merging over whatever's already set — it never turns anything OFF) and
+ * flips the master switch on. Opt-in is preserved: the owner clicked the
+ * bundle, that's the opt-in.
+ *
+ * Key sets live SERVER-SIDE so a crafted POST can't enable arbitrary keys —
+ * the form only submits a preset name.
+ */
+const PRESET_ESSENTIALS: AutomationKey[] = [
+  "booking_confirmation_email",
+  "booking_rescheduled_email",
+  "booking_cancelled_email",
+  "booking_reminder_client_email",
+  "booking_assignment_notify",
+  "auto_invoice_on_job_complete",
+  "invoice_overdue_reminder",
+  "invoice_paid_receipt",
+];
+
+const PRESET_FULL_SERVICE: AutomationKey[] = [
+  ...PRESET_ESSENTIALS,
+  "estimate_sent_email",
+  "estimate_followup_email",
+  "review_request_after_completion",
+  "gbp_review_request",
+  "rebooking_prompt_email",
+  "weekly_ops_digest",
+  "monthly_ops_digest",
+  "employee_daily_schedule",
+  "employee_weekly_schedule",
+  "auto_complete_past_bookings",
+  "unassigned_booking_alert",
+];
+
+/**
+ * The "Team & back office" stage bundle. Deliberately EXCLUDES
+ * auto_void_overdue_invoices (changes money state — deserves its own decision)
+ * and the pure feature preferences (feed, crew-hours divide, product updates).
+ */
+const PRESET_TEAM_OFFICE: AutomationKey[] = [
+  "booking_assignment_notify",
+  "employee_daily_schedule",
+  "employee_weekly_schedule",
+  "overtime_warning",
+  "pto_status_notify",
+  "payroll_paid_receipt",
+  "training_assigned_notify",
+  "certification_expiry_reminder",
+  "review_submitted_notify",
+  "low_review_alert",
+  "stripe_payout_alert",
+  "weekly_ops_digest",
+  "monthly_ops_digest",
+  "auto_expire_stale_estimates",
+  "auto_archive_old_records",
+  "auto_recurring_invoices",
+  "auto_complete_past_bookings",
+];
+
+const PRESETS: Record<string, AutomationKey[]> = {
+  essentials: PRESET_ESSENTIALS,
+  full_service: PRESET_FULL_SERVICE,
+  team_office: PRESET_TEAM_OFFICE,
+  // "custom" = enable the master switch only; the owner picks below.
+  custom: [],
+};
+
+export async function applyAutomationPresetAction(formData: FormData) {
+  const { membership } = await getActionContext();
+  if (!["owner", "admin"].includes(membership.role)) return;
+
+  const presetName = String(formData.get("preset") ?? "");
+  const keys = PRESETS[presetName];
+  if (!keys) {
+    console.warn(`[automations] unknown preset rejected: "${presetName}"`);
+    return;
+  }
+
+  const admin = createSupabaseAdminClient();
+  const { data: org } = (await admin
+    .from("organizations")
+    .select("automation_settings")
+    .eq("id", membership.organization_id)
+    .maybeSingle()) as unknown as {
+    data: { automation_settings: Record<string, { enabled: boolean }> } | null;
+  };
+
+  const merged = { ...(org?.automation_settings ?? {}) };
+  for (const key of keys) merged[key] = { enabled: true };
+
+  await admin
+    .from("organizations")
+    .update({
+      automation_settings: merged,
+      automations_enabled: true,
+    } as never)
+    .eq("id", membership.organization_id);
+
+  revalidatePath("/app/settings/automations", "page");
+  revalidatePath("/app", "layout");
+}
+
+/**
  * Master switch. When off, NO automation fires for the org regardless of the
  * per-key toggles — the single "stop everything" control. New orgs start off.
  */

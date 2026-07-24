@@ -6,6 +6,7 @@ import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
 import { ArchivedToggle } from "@/components/archived-toggle";
 import { ClientsTable, type ClientRow } from "./clients-table";
+import { fetchOrgContactDefault } from "./org-contact-default";
 
 export const metadata = { title: "Clients" };
 
@@ -27,7 +28,7 @@ export default async function ClientsPage({
   let query = supabase
     .from("clients")
     .select(
-      "id, name, email, phone, address, balance_cents, preferred_contact, created_at",
+      "id, name, email, phone, address, balance_cents, preferred_contact, contact_preference, sms_opted_in, created_at",
     );
   query = showArchived
     ? query.not("archived_at" as never, "is" as never, null as never)
@@ -39,7 +40,12 @@ export default async function ClientsPage({
 
   if (error) throw error;
 
-  const rows: ClientRow[] = data ?? [];
+  // contact_preference/sms_opted_in aren't in the generated types yet — cast
+  // (same convention as the other new columns).
+  const rows = (data ?? []) as unknown as ClientRow[];
+  const orgContactDefault = await fetchOrgContactDefault(
+    membership.organization_id,
+  );
 
   return (
     <PageShell
@@ -76,7 +82,11 @@ export default async function ClientsPage({
         </div>
       }
     >
-      <ClientsTable rows={rows} canEdit={canEdit && !showArchived} />
+      <ClientsTable
+        rows={rows}
+        canEdit={canEdit && !showArchived}
+        orgContactDefault={orgContactDefault}
+      />
     </PageShell>
   );
 }

@@ -2,10 +2,10 @@
 
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { CalendarPlus } from "lucide-react";
+import { CalendarPlus, Mail, MessageSquare, Ban, Settings2 } from "lucide-react";
 import { DataTable, type DataTableColumn } from "@/components/data-table";
 import { StatusBadge } from "@/components/status-badge";
-import { formatCurrencyCents, humanizeEnum } from "@/lib/format";
+import { formatCurrencyCents } from "@/lib/format";
 
 export type ClientRow = {
   id: string;
@@ -15,15 +15,28 @@ export type ClientRow = {
   address: string | null;
   balance_cents: number;
   preferred_contact: string;
+  contact_preference: string | null;
+  sms_opted_in: boolean | null;
   created_at: string;
+};
+
+const DEFAULT_LABEL: Record<string, string> = {
+  email: "Email",
+  sms: "Text",
+  both: "Email + text",
+  none: "Silent",
 };
 
 export function ClientsTable({
   rows,
-  canEdit,
+  // Reserved for row-level edit affordances; currently unused.
+  canEdit: _canEdit,
+  orgContactDefault = "email",
 }: {
   rows: ClientRow[];
   canEdit: boolean;
+  /** The org's house default — shown for clients that follow it. */
+  orgContactDefault?: string;
 }) {
   const router = useRouter();
   const columns: DataTableColumn<ClientRow>[] = [
@@ -52,13 +65,51 @@ export function ClientsTable({
       searchValue: (r) => r.phone,
     },
     {
-      key: "preferred_contact",
-      header: "Prefers",
-      render: (r) => (
-        <StatusBadge tone="neutral">
-          {humanizeEnum(r.preferred_contact)}
-        </StatusBadge>
-      ),
+      // At-a-glance notification state so "who's silent / who's custom" is
+      // scannable across the whole list without opening each client.
+      key: "notifications",
+      header: "Notifications",
+      render: (r) => {
+        const pref = r.contact_preference ?? "inherit";
+        if (pref === "do_not_contact") {
+          return (
+            <StatusBadge tone="red">
+              <Ban className="mr-1 h-3 w-3" />
+              No contact
+            </StatusBadge>
+          );
+        }
+        if (pref === "custom") {
+          return (
+            <StatusBadge tone="blue">
+              <Settings2 className="mr-1 h-3 w-3" />
+              Custom
+            </StatusBadge>
+          );
+        }
+        // Follows the org default — show what that actually means, with a
+        // subtle marker when texts are wanted but the client isn't opted in.
+        const wantsSms =
+          orgContactDefault === "sms" || orgContactDefault === "both";
+        const smsBlocked = wantsSms && !r.sms_opted_in;
+        return (
+          <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+            {orgContactDefault === "none" ? (
+              <Ban className="h-3 w-3" />
+            ) : orgContactDefault === "sms" ? (
+              <MessageSquare className="h-3 w-3" />
+            ) : (
+              <Mail className="h-3 w-3" />
+            )}
+            {DEFAULT_LABEL[orgContactDefault] ?? "Email"}
+            {smsBlocked && (
+              <span title="Texts selected but this client hasn't opted in to SMS">
+                ⚠
+              </span>
+            )}
+          </span>
+        );
+      },
     },
     {
       key: "balance",
