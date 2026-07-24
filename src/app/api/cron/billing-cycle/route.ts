@@ -236,7 +236,11 @@ async function generateClientInvoice(
           }
         : {}),
       due_date: dueDateStr,
-      ...(invoiceNotes ? { notes: invoiceNotes } : {}),
+      // NOTE: `notes` is deliberately NOT in this insert. It used to be — and
+      // because invoices.notes didn't exist yet, PostgREST rejected the whole
+      // insert (PGRST204) on every flat-rate run, so flat-rate clients were
+      // never invoiced (audit C2). Notes are applied as a best-effort update
+      // below so a missing column can never take down invoice creation again.
     } as never)
     .select("id, number")
     .single()) as unknown as {
@@ -246,9 +250,36 @@ async function generateClientInvoice(
 
   if (invErr?.code === "23505") {
     // This client was already billed for this period by an earlier (possibly
-    // crashed) run. Do NOT create a second invoice.
+    // crashed) run. Do NOT create a second invoice — but DO finish that run's
+    // job: if it died between the invoice insert and the booking stamp, these
+    // bookings are still unstamped and would be swept into NEXT period's
+    // invoice too (double bill, audit M1c). Stamp them to the existing
+    // invoice, guarded on still-null so a concurrent run is never clobbered.
+    const { data: existingInv } = (await db
+      .from("invoices")
+      .select("id")
+      .eq("client_id", client.id)
+      .eq("billing_period_key" as never, periodKey as never)
+      .is("voided_at", null)
+      .maybeSingle()) as unknown as { data: { id: string } | null };
+    if (existingInv) {
+      const { error: lateStampErr } = await db
+        .from("bookings")
+        .update({ billing_invoice_id: existingInv.id } as never)
+        .in(
+          "id",
+          bookings.map((b) => b.id),
+        )
+        .is("billing_invoice_id", null);
+      if (lateStampErr) {
+        console.error(
+          `[billing-cycle] late stamp failed for invoice ${existingInv.id}:`,
+          lateStampErr.message,
+        );
+      }
+    }
     console.log(
-      `[billing-cycle] client ${client.id} already billed for ${periodKey} — skipping duplicate`,
+      `[billing-cycle] client ${client.id} already billed for ${periodKey} — skipped duplicate, reconciled stamps`,
     );
     return null;
   }
@@ -259,6 +290,21 @@ async function generateClientInvoice(
       invErr?.message,
     );
     return null;
+  }
+
+  // Notes — separate best-effort step (see comment on the insert above).
+  if (invoiceNotes) {
+    try {
+      await db
+        .from("invoices")
+        .update({ notes: invoiceNotes } as never)
+        .eq("id", invoice.id);
+    } catch (notesErr) {
+      console.error(
+        `[billing-cycle] notes update failed for invoice ${invoice.id} (invoice still created):`,
+        notesErr,
+      );
+    }
   }
 
   // ── Create line items ────────────────────────────────────────────────────
@@ -294,6 +340,10 @@ async function generateClientInvoice(
       const { error: liErr } = await db.from("invoice_line_items").insert({
         organization_id: org.id,
         invoice_id: invoice.id,
+        // booking_id links the line to its job — without it the force-generate
+        // dedup (which checks invoice_line_items.booking_id) can't see that
+        // this work is already billed and would double-invoice it (audit M1a).
+        booking_id: b.id,
         label,
         quantity: 1,
         unit_price_cents: b.total_cents ?? 0,

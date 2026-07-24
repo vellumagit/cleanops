@@ -213,7 +213,7 @@ export async function autoInvoiceOnJobComplete(
     const { data: booking } = (await db
       .from("bookings")
       .select(
-        "id, organization_id, client_id, total_cents, service_type, service_type_label, address, duration_minutes, scheduled_at",
+        "id, organization_id, client_id, total_cents, service_type, service_type_label, address, duration_minutes, scheduled_at, billing_invoice_id",
       )
       .eq("id", bookingId)
       .maybeSingle()) as unknown as {
@@ -227,6 +227,7 @@ export async function autoInvoiceOnJobComplete(
         address: string | null;
         duration_minutes: number;
         scheduled_at: string;
+        billing_invoice_id: string | null;
       } | null;
     };
 
@@ -313,6 +314,27 @@ export async function autoInvoiceOnJobComplete(
         invoiceId: existing.id,
         number: existing.number,
       };
+    }
+
+    // Consolidated-billing stamp: a booking already swept onto a period
+    // invoice carries billing_invoice_id. Older consolidated invoices didn't
+    // set line-item booking_ids, so without this check the force path
+    // double-billed stamped work (audit M1b). Voided stamps don't count —
+    // the void action clears them, but stale pre-fix stamps may linger.
+    if (booking.billing_invoice_id) {
+      const { data: stampedInv } = (await db
+        .from("invoices")
+        .select("id, number, voided_at")
+        .eq("id", booking.billing_invoice_id)
+        .maybeSingle()) as unknown as {
+        data: { id: string; number: string | null; voided_at: string | null } | null;
+      };
+      if (stampedInv && !stampedInv.voided_at) {
+        console.log(
+          `[auto] autoInvoiceOnJobComplete: booking ${bookingId} already on consolidated invoice ${stampedInv.id}`,
+        );
+        return { ok: true, invoiceId: stampedInv.id, number: stampedInv.number };
+      }
     }
 
     // Also treat a booking already billed on a consolidated "period" invoice
@@ -1756,6 +1778,29 @@ export async function sendOverdueReminders(): Promise<{
   const { invoiceOverdueReminderEmail } = await import("@/lib/email-templates");
   const { formatCurrencyCents } = await import("@/lib/format");
   const { getOrgCurrency } = await import("@/lib/org-currency");
+
+  // FIRST: flip past-due `sent` invoices to `overdue`. Nothing else in the
+  // system does this on due-date passage — the payment-ledger trigger only
+  // recomputes status when a payment row changes, so an invoice the client
+  // simply never pays stayed `sent` forever and neither this reminder nor
+  // auto-void ever saw it (audit C3). UTC date compare: a few hours of
+  // boundary skew vs org-local is acceptable for "overdue".
+  try {
+    const todayUtc = new Date().toISOString().slice(0, 10);
+    const { data: flipped } = (await db
+      .from("invoices")
+      .update({ status: "overdue" })
+      .eq("status", "sent")
+      .lt("due_date", todayUtc)
+      .is("paid_at", null)
+      .is("voided_at", null)
+      .select("id")) as unknown as { data: Array<{ id: string }> | null };
+    if (flipped && flipped.length > 0) {
+      console.log(`[auto] flipped ${flipped.length} invoice(s) sent → overdue`);
+    }
+  } catch (flipErr) {
+    console.error("[auto] sent→overdue flip failed:", flipErr);
+  }
 
   // Find every overdue, unpaid invoice whose last reminder is either null
   // or older than 7 days. Uses the partial index from migration
@@ -3647,13 +3692,18 @@ export async function autoComputeReviewBonuses(): Promise<number> {
         byEmployee.set(rv.employee_id, b);
       }
 
-      // Dedupe — don't re-award for the same period
+      // Dedupe by OVERLAP, not exact period dates. The period is a rolling
+      // [now - period_days, now] window whose dates change every run, so an
+      // exact-date match never hit and a qualifying employee was re-awarded
+      // the same bonus every single cron run — real money weekly (audit T4).
+      // Any existing review bonus whose period_end falls on/after this
+      // window's start overlaps it (period_end is always <= award time).
       const { data: existing } = await db
         .from("bonuses")
         .select("employee_id")
         .eq("organization_id", r.organization_id)
-        .eq("period_start", periodStartDate)
-        .eq("period_end", periodEndDate);
+        .eq("bonus_type", "review")
+        .gte("period_end", periodStartDate);
       const alreadyAwarded = new Set(
         (existing ?? []).map((b) => b.employee_id),
       );
@@ -5331,12 +5381,18 @@ export async function autoVoidOldInvoices(): Promise<{ voided: number }> {
       .toISOString()
       .slice(0, 10); // date
 
+    // voided_at is the system-wide source of truth for "void" (the payment
+    // trigger, webhooks, and every dedup query key on it). Setting only the
+    // status meant any later ledger event silently resurrected the "void"
+    // back to sent/overdue, and payments could still be recorded against it
+    // (audit P3).
     const { data, error } = await db
       .from("invoices")
-      .update({ status: "void" })
+      .update({ status: "void", voided_at: new Date().toISOString() })
       .eq("organization_id", org.id)
       .eq("status", "overdue")
       .is("paid_at", null)
+      .is("voided_at", null)
       .lt("due_date", cutoff)
       .select("id") as unknown as {
       data: Array<{ id: string }> | null;
@@ -5567,6 +5623,12 @@ export async function autoGenerateRecurringInvoices(): Promise<{
     // (no year, racy) which then collided with the trigger's format
     // for every other invoice in the org, producing inconsistent UX
     // in exports + the bookings list.
+    // Core insert uses ONLY long-standing invoice columns. The previous
+    // version passed `line_items` and `notes` directly — neither column
+    // existed on `invoices`, so PostgREST rejected EVERY insert (PGRST204)
+    // and this automation never generated a single invoice (audit C1).
+    // Line items live in invoice_line_items; notes are applied as a
+    // separate best-effort update below.
     const { data: inserted, error } = await db
       .from("invoices")
       .insert({
@@ -5576,8 +5638,6 @@ export async function autoGenerateRecurringInvoices(): Promise<{
         status: "draft",
         amount_cents: series.amount_cents,
         due_date: dueDate.toISOString().slice(0, 10),
-        line_items: series.line_items,
-        notes: series.notes,
       })
       .select("id")
       .single() as unknown as {
@@ -5601,6 +5661,81 @@ export async function autoGenerateRecurringInvoices(): Promise<{
       continue;
     }
 
+    // Notes — separate best-effort step so a not-yet-migrated `notes`
+    // column can't take down the whole path (same pattern as the tax step
+    // in autoInvoiceOnJobComplete).
+    if (series.notes) {
+      try {
+        await db
+          .from("invoices")
+          .update({ notes: series.notes } as never)
+          .eq("id", inserted.id);
+      } catch (notesErr) {
+        console.error(
+          `[auto] recurring invoice ${inserted.id}: notes update failed (invoice still created):`,
+          notesErr,
+        );
+      }
+    }
+
+    // Line items — write the series' configured items into the real
+    // invoice_line_items table. Tolerant of loose shapes (the series form
+    // accepts raw JSON): anything unusable degrades to a single line for
+    // the full amount so the invoice is never blank.
+    try {
+      const rawItems = Array.isArray(series.line_items)
+        ? (series.line_items as Array<Record<string, unknown>>)
+        : [];
+      const items = rawItems
+        .filter((it) => it && typeof it === "object")
+        .map((it, i) => ({
+          organization_id: series.organization_id,
+          invoice_id: inserted.id,
+          label:
+            typeof it.label === "string" && it.label.trim()
+              ? it.label.trim().slice(0, 300)
+              : series.name,
+          quantity:
+            typeof it.quantity === "number" && it.quantity > 0
+              ? it.quantity
+              : 1,
+          unit_price_cents:
+            typeof it.unit_price_cents === "number" && it.unit_price_cents >= 0
+              ? Math.round(it.unit_price_cents)
+              : 0,
+          sort_order: i,
+        }));
+
+      const rows =
+        items.length > 0
+          ? items
+          : [
+              {
+                organization_id: series.organization_id,
+                invoice_id: inserted.id,
+                label: series.name,
+                quantity: 1,
+                unit_price_cents: series.amount_cents,
+                sort_order: 0,
+              },
+            ];
+
+      const { error: liErr } = await db
+        .from("invoice_line_items")
+        .insert(rows as never);
+      if (liErr) {
+        console.error(
+          `[auto] recurring invoice ${inserted.id}: line item insert failed (invoice still created):`,
+          liErr.message,
+        );
+      }
+    } catch (liErr) {
+      console.error(
+        `[auto] recurring invoice ${inserted.id}: line item step threw:`,
+        liErr,
+      );
+    }
+
     // Link the generated invoice back to the series (claim already advanced
     // next_run_at above).
     await db
@@ -5610,6 +5745,21 @@ export async function autoGenerateRecurringInvoices(): Promise<{
         last_invoice_id: inserted.id,
       })
       .eq("id", series.id);
+
+    // Schedule auto-send if the org opted in — recurring drafts previously
+    // sat unsent forever while per-job and consolidated invoices auto-sent
+    // (audit M7).
+    try {
+      const { scheduleAutoSendIfEnabled } = await import("@/lib/invoice-send");
+      await scheduleAutoSendIfEnabled(inserted.id, series.organization_id, {
+        consolidated: true,
+      });
+    } catch (scheduleErr) {
+      console.error(
+        `[auto] recurring invoice ${inserted.id}: auto-send schedule failed (still drafted):`,
+        scheduleErr,
+      );
+    }
 
     generated += 1;
     console.log(

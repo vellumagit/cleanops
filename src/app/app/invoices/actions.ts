@@ -98,6 +98,25 @@ export async function createInvoiceAction(
   if (error || !inserted)
     return { errors: { _form: error?.message ?? "Insert failed" }, values: raw };
 
+  // Stamp the booking as billed. Without this, a biweekly/monthly client's
+  // booking manually invoiced here was invoiced AGAIN by the consolidated
+  // billing-cycle cron, which only skips bookings with billing_invoice_id set
+  // (audit M1d). Guarded on still-null so we never overwrite an existing link.
+  if (parsed.data.booking_id) {
+    const { error: stampErr } = await supabase
+      .from("bookings")
+      .update({ billing_invoice_id: inserted.id } as never)
+      .eq("id", parsed.data.booking_id)
+      .eq("organization_id", membership.organization_id)
+      .is("billing_invoice_id" as never, null as never);
+    if (stampErr) {
+      console.error(
+        `[invoices] billing_invoice_id stamp failed (invoice still created):`,
+        stampErr.message,
+      );
+    }
+  }
+
   await logAuditEvent({
     membership,
     action: "create",
@@ -734,6 +753,22 @@ export async function voidInvoiceAction(formData: FormData) {
     .update({ voided_at: new Date().toISOString(), status: "void" })
     .eq("id", id);
   if (error) throw error;
+
+  // Un-stamp any bookings billed on this invoice — voided work is billable
+  // again. Without this (plus the now-partial period-key index), a voided
+  // consolidated invoice left its bookings stamped and its period key
+  // occupied, so the billing cron could never re-bill the period (audit P4).
+  const { error: unstampErr } = await supabase
+    .from("bookings")
+    .update({ billing_invoice_id: null } as never)
+    .eq("billing_invoice_id" as never, id as never)
+    .eq("organization_id", membership.organization_id);
+  if (unstampErr) {
+    console.error(
+      `[invoices] void un-stamp failed for invoice ${id}:`,
+      unstampErr.message,
+    );
+  }
 
   await logAuditEvent({
     membership,
