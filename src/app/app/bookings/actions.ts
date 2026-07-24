@@ -1484,6 +1484,15 @@ export async function updateBookingAction(
     new Date(existing.scheduled_at).getTime() !==
       new Date(parsed.data.scheduled_at).getTime()
   ) {
+    // Re-arm the day-before reminder for the NEW date. The reminder is
+    // "at most once ever" via client_reminder_sent_at — without clearing it,
+    // a booking that was already reminded and then moved out weeks never got
+    // a reminder for its new date (audit B5).
+    await supabase
+      .from("bookings")
+      .update({ client_reminder_sent_at: null })
+      .eq("id", id)
+      .eq("organization_id", membership.organization_id);
     sendBookingRescheduled(id, existing.scheduled_at);
   }
 
@@ -2107,6 +2116,18 @@ export async function setBookingStatusAction(
     }).catch((e) =>
       console.error("[gcal/member] status-cancel cleanup failed:", e),
     );
+
+    // Cancellation notices — the crew push and client notice previously only
+    // fired from the edit-form path, so cancelling via this quick dropdown
+    // sent NOTHING: the cleaner still drove out, the client was never told
+    // (audit B2). Mirrors the edit-form calls; both are internally gated and
+    // deduped.
+    notifyBookingCancelledToEmployee(id).catch((e) =>
+      console.error("[auto] status-cancel employee push failed:", e),
+    );
+    sendBookingCancelledToClient(id).catch((e) =>
+      console.error("[auto] status-cancel client notice failed:", e),
+    );
   }
 
   revalidatePath("/app/bookings");
@@ -2397,12 +2418,16 @@ export async function cancelSeriesAction(formData: FormData) {
   // booking.status.
   const { data: affected } = (await supabase
     .from("bookings")
-    .select("id, google_calendar_event_id")
+    .select("id, google_calendar_event_id, scheduled_at")
     .eq("series_id", seriesId)
     .eq("organization_id", membership.organization_id)
     .in("status", ["pending", "confirmed"])
     .gte("scheduled_at", now)) as unknown as {
-    data: Array<{ id: string; google_calendar_event_id: string | null }> | null;
+    data: Array<{
+      id: string;
+      google_calendar_event_id: string | null;
+      scheduled_at: string;
+    }> | null;
   };
 
   // Flip status to cancelled.
@@ -2453,6 +2478,25 @@ export async function cancelSeriesAction(formData: FormData) {
         affected.map((r) => r.id),
       )
       .eq("organization_id", membership.organization_id);
+
+    // Notices — series cancel previously sent NOTHING for any occurrence
+    // (audit B3): cleaners' only signal was a vanished calendar event.
+    // Push every affected occurrence's crew; tell the client ONCE, about the
+    // nearest upcoming visit (per-booking dedup would otherwise allow N
+    // emails for what the client sees as one decision).
+    for (const r of affected) {
+      notifyBookingCancelledToEmployee(r.id).catch((e) =>
+        console.error("[auto] series-cancel employee push failed:", e),
+      );
+    }
+    const nearest = [...affected].sort((a, b) =>
+      a.scheduled_at.localeCompare(b.scheduled_at),
+    )[0];
+    if (nearest) {
+      sendBookingCancelledToClient(nearest.id).catch((e) =>
+        console.error("[auto] series-cancel client notice failed:", e),
+      );
+    }
   }
 
   revalidatePath("/app/bookings");

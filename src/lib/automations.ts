@@ -714,6 +714,18 @@ export async function autoBookingOnEstimateApproval(estimateId: string) {
 
     if (!estimate) return;
 
+    // Opt-in gate. This was completely ungated (audit B4) — orgs with the
+    // master switch OFF still got a booking auto-created on estimate approval,
+    // violating the opt-in policy.
+    if (
+      !(await isAutomationEnabled(
+        estimate.organization_id,
+        "auto_booking_on_estimate_approval",
+      ))
+    ) {
+      return;
+    }
+
     // Check if a booking already exists linked to this estimate via proper FK
     const { data: existing } = await db
       .from("bookings")
@@ -727,22 +739,40 @@ export async function autoBookingOnEstimateApproval(estimateId: string) {
     // Infer service_type from the estimate's description
     const serviceType = inferServiceType(estimate.service_description);
 
-    // Create a pending booking — manager still needs to set date/time/assignment
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    tomorrow.setHours(9, 0, 0, 0);
+    // Placeholder slot: tomorrow 9 AM in the ORG's timezone. The previous
+    // version used server-local setHours(9) = 09:00 UTC = 3 AM Edmonton, and
+    // inserted it as `confirmed` — which the day-before reminder cron then
+    // announced to the client as a real 3 AM visit (audit B4).
+    const { getOrgTimezone } = await import("@/lib/org-timezone");
+    const orgTz = await getOrgTimezone(estimate.organization_id);
+    const tomorrowLocalDate = new Intl.DateTimeFormat("en-CA", {
+      timeZone: orgTz,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date(Date.now() + 24 * 60 * 60 * 1000));
+    const { localInputToUtcIso } = await import("@/lib/validators/common");
+    const placeholderIso = localInputToUtcIso(
+      `${tomorrowLocalDate}T09:00`,
+      orgTz,
+    );
 
     const { data: newBooking } = (await (db.from("bookings").insert({
       organization_id: estimate.organization_id,
       client_id: estimate.client_id,
       estimate_id: estimateId,
-      scheduled_at: tomorrow.toISOString(),
+      scheduled_at: placeholderIso,
       duration_minutes: 120,
       service_type: serviceType,
-      status: "confirmed",
+      // pending: the manager still has to pick the real date/time. Also
+      // pre-stamp the client reminder so the day-before cron can never
+      // announce this placeholder to the client — the real reschedule
+      // clears the stamp and re-arms it for the actual date.
+      status: "pending",
+      client_reminder_sent_at: new Date().toISOString(),
       total_cents: estimate.total_cents,
       notes: estimate.service_description ?? "",
-    }).select("id").single() as unknown as Promise<{
+    } as never).select("id").single() as unknown as Promise<{
       data: { id: string } | null;
     }>));
 

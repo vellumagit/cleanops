@@ -22,11 +22,11 @@ keys dead post-flip, SMS master-switch hole, CLIENT_FACING_SMS_KEYS gaps.
 
 | # | Finding | Where | Status |
 |---|---------|-------|--------|
-| B1 | Drag-drop scheduler reschedule notifies NO ONE (no client notice, no crew push). Highest-traffic reschedule path. | scheduling/actions.ts:58-276 | OPEN |
-| B2 | Quick status-dropdown cancel sends no cancellation notices (edit-form path is wired; dropdown isn't, despite docstring claiming parity). | bookings/actions.ts:2086-2110 | OPEN |
-| B3 | Series cancel: zero notices for any occurrence (no crew pushes, no client notice). | bookings/actions.ts:2379-2461 | OPEN |
-| B4 | Estimate-approval auto-booking: UNGATED (violates opt-in policy), inserts `confirmed` at tomorrow 09:00 UTC = 3 AM Edmonton, which the reminder cron then announces to the client as a real visit. Flagged independently by two audits. | automations.ts:683-744 | OPEN |
-| B5 | Reschedule never clears `client_reminder_sent_at` → a moved booking is never re-reminded for its new date. | bookings/actions.ts:1068-1086, scheduling/actions.ts:195 | OPEN |
+| B1 | Drag-drop scheduler reschedule notifies NO ONE (no client notice, no crew push). Highest-traffic reschedule path. | scheduling/actions.ts:58-276 | FIXED (Tranche 2) |
+| B2 | Quick status-dropdown cancel sends no cancellation notices (edit-form path is wired; dropdown isn't, despite docstring claiming parity). | bookings/actions.ts:2086-2110 | FIXED (Tranche 2) |
+| B3 | Series cancel: zero notices for any occurrence (no crew pushes, no client notice). | bookings/actions.ts:2379-2461 | FIXED (Tranche 2) |
+| B4 | Estimate-approval auto-booking: UNGATED (violates opt-in policy), inserts `confirmed` at tomorrow 09:00 UTC = 3 AM Edmonton, which the reminder cron then announces to the client as a real visit. Flagged independently by two audits. | automations.ts:683-744 | FIXED (Tranche 2) |
+| B5 | Reschedule never clears `client_reminder_sent_at` → a moved booking is never re-reminded for its new date. | bookings/actions.ts:1068-1086, scheduling/actions.ts:195 | FIXED (Tranche 2) |
 | M1 | Double-billing cluster: (a) billing-cycle line items don't set `booking_id`; (b) force-generate paths never check `bookings.billing_invoice_id`; (c) billing-cycle crash between invoice insert and booking stamp double-bills next period (23505 branch doesn't stamp); (d) manual invoice creation never stamps `billing_invoice_id`. | billing-cycle:294-301,247-254; automations.ts:294-343; invoices/actions.ts:77-96,846-913 | FIXED (Tranche 1) |
 | G1 | Internal review requests flood recurring clients on enable: per-booking dedup only, no per-client cap — 4 completed bookings in 30d window = 4 emails in one run. | automations.ts:1963-1984 | OPEN |
 | T1 | Employee daily-schedule cron (06:00 UTC) = 23:00 previous day in MST — employees get "today's" schedule for the day that just ended, all winter. | vercel.json:86, automations.ts:4552 | OPEN |

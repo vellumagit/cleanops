@@ -65,6 +65,13 @@ const STAGES: Stage[] = [
         trigger: "Daily scan at 09:30 UTC",
       },
       {
+        key: "auto_booking_on_estimate_approval",
+        title: "Draft a booking when an estimate is approved",
+        description:
+          "When you mark an estimate approved, creates a PENDING placeholder booking linked to it (tomorrow 9 AM, unassigned) so scheduling the job can't be forgotten. You still pick the real date, time, and cleaner. No client messages are sent for the placeholder.",
+        trigger: "Estimate → Approved",
+      },
+      {
         key: "auto_expire_stale_estimates",
         title: "Auto-expire stale estimates",
         description:

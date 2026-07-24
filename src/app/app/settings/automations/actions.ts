@@ -27,6 +27,7 @@ export type AutomationKey =
   | "training_assigned_notify"
   | "certification_expiry_reminder"
   | "auto_expire_stale_estimates"
+  | "auto_booking_on_estimate_approval"
   | "auto_void_overdue_invoices"
   | "auto_complete_past_bookings"
   | "auto_archive_old_records"
@@ -92,6 +93,7 @@ const VALID_AUTOMATION_KEYS = new Set<AutomationKey>([
   "training_assigned_notify",
   "certification_expiry_reminder",
   "auto_expire_stale_estimates",
+  "auto_booking_on_estimate_approval",
   "auto_void_overdue_invoices",
   "auto_complete_past_bookings",
   "auto_archive_old_records",

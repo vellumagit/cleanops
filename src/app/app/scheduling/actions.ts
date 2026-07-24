@@ -3,7 +3,10 @@
 import { revalidatePath } from "next/cache";
 import { getActionContext } from "@/lib/actions";
 import { getOrgTimezone } from "@/lib/org-timezone";
-import { notifyBookingAssignment } from "@/lib/automations";
+import {
+  notifyBookingAssignment,
+  sendBookingRescheduled,
+} from "@/lib/automations";
 
 export type RescheduleResult =
   | { ok: true }
@@ -199,11 +202,31 @@ export async function rescheduleBookingAction(
     bookingUpdate.assigned_to = assignedTo;
   }
 
+  // Did the actual INSTANT move? (A drag within the same slot can be a pure
+  // reassignment.) Drives the reminder re-arm + rescheduled notices below.
+  const instantChanged =
+    new Date(current.scheduled_at).getTime() !== next.getTime();
+  if (instantChanged) {
+    // Re-arm the day-before reminder for the new date (audit B5).
+    bookingUpdate.client_reminder_sent_at = null;
+  }
+
   const { error: updateError } = await supabase
     .from("bookings")
     .update(bookingUpdate)
     .eq("id", id);
   if (updateError) return { ok: false, error: updateError.message };
+
+  // Rescheduled notices — drag-drop is the highest-traffic reschedule path
+  // and previously notified NO ONE (audit B1): the client showed up on the
+  // old time, the crew's only signal was a moved calendar event. Same call
+  // the edit form makes; it emails/texts the client per their notification
+  // preference and pushes the assigned employee, all internally gated.
+  if (instantChanged) {
+    sendBookingRescheduled(id, current.scheduled_at).catch((e) =>
+      console.error("[scheduler] rescheduled notice failed:", e),
+    );
+  }
 
   // Sync booking_assignees so all_assignee_ids in the scheduler grid
   // reflects only the new primary. Without this, stale secondary-crew
