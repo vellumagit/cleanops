@@ -148,7 +148,27 @@ export async function getOrgSmsContext(
 const CLIENT_FACING_SMS_KEYS = new Set([
   "booking_confirmation_sms",
   "booking_reminder_client_sms",
+  "booking_rescheduled_sms",
+  "booking_cancelled_sms",
 ]);
+
+/**
+ * Keys for OWNER-INITIATED sends — the owner clicked a button for this
+ * specific message (bench shift offer, SMS opt-in request) — plus the
+ * transactional replies in that flow (claim confirmations). These are NOT
+ * automations, so they skip the automation-toggle and master-switch gates,
+ * exactly like the manual "Send invoice/estimate" buttons skip email toggles.
+ * Platform kill switch, org sms_enabled, and the spend cap still apply.
+ *
+ * Post-opt-in-flip this matters doubly: these keys have no UI toggle, so
+ * gating them on resolveAutomationEnabled (absent key = OFF) silently killed
+ * bench offers and opt-in requests for every org.
+ *
+ * NOTE: sms_opt_in_request is deliberately NOT in CLIENT_FACING_SMS_KEYS —
+ * it's the consent request itself, so it cannot require prior consent. CTIA
+ * permits a single opt-in invitation to an existing customer relationship.
+ */
+const MANUAL_SMS_KEYS = new Set(["freelancer_offer_sms", "sms_opt_in_request"]);
 
 /**
  * Send an SMS on behalf of an org, passing through four gates:
@@ -207,7 +227,7 @@ export async function sendOrgSms(
     const { data } = (await admin
       .from("organizations")
       .select(
-        "sms_enabled, sms_from_number, sms_overage_cap_cents, sms_overage_item_id, billing_override, automation_settings",
+        "sms_enabled, sms_from_number, sms_overage_cap_cents, sms_overage_item_id, billing_override, automation_settings, automations_enabled",
       )
       .eq("id", orgId)
       .maybeSingle()) as unknown as { data: OrgSmsConfig | null };
@@ -222,9 +242,20 @@ export async function sendOrgSms(
   // Master switch: org hasn't turned SMS on. Silent skip, no ledger.
   if (!org || !org.sms_enabled) return skipped;
 
-  // Per-org automation toggle (explicit setting wins, then default).
-  if (!resolveAutomationEnabled(org.automation_settings ?? {}, args.automationKey)) {
-    return skipped;
+  // Automation gates — SKIPPED for manual (owner-clicked) sends. For
+  // automation keys, BOTH the org automations master switch and the per-key
+  // toggle must be on. The master-switch check was previously missing here,
+  // so "Turn all off" stopped emails but SMS automations kept sending.
+  if (!MANUAL_SMS_KEYS.has(args.automationKey)) {
+    const masterOn =
+      (org as unknown as { automations_enabled?: boolean | null })
+        .automations_enabled === true;
+    if (!masterOn) return skipped;
+    if (
+      !resolveAutomationEnabled(org.automation_settings ?? {}, args.automationKey)
+    ) {
+      return skipped;
+    }
   }
 
   // Gate 3: SMS opt-in (TCPA/CASL) — client-facing automations only. Also
