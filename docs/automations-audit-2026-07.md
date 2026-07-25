@@ -28,7 +28,7 @@ keys dead post-flip, SMS master-switch hole, CLIENT_FACING_SMS_KEYS gaps.
 | B4 | Estimate-approval auto-booking: UNGATED (violates opt-in policy), inserts `confirmed` at tomorrow 09:00 UTC = 3 AM Edmonton, which the reminder cron then announces to the client as a real visit. Flagged independently by two audits. | automations.ts:683-744 | FIXED (Tranche 2) |
 | B5 | Reschedule never clears `client_reminder_sent_at` → a moved booking is never re-reminded for its new date. | bookings/actions.ts:1068-1086, scheduling/actions.ts:195 | FIXED (Tranche 2) |
 | M1 | Double-billing cluster: (a) billing-cycle line items don't set `booking_id`; (b) force-generate paths never check `bookings.billing_invoice_id`; (c) billing-cycle crash between invoice insert and booking stamp double-bills next period (23505 branch doesn't stamp); (d) manual invoice creation never stamps `billing_invoice_id`. | billing-cycle:294-301,247-254; automations.ts:294-343; invoices/actions.ts:77-96,846-913 | FIXED (Tranche 1) |
-| G1 | Internal review requests flood recurring clients on enable: per-booking dedup only, no per-client cap — 4 completed bookings in 30d window = 4 emails in one run. | automations.ts:1963-1984 | OPEN |
+| G1 | Internal review requests flood recurring clients on enable: per-booking dedup only, no per-client cap — 4 completed bookings in 30d window = 4 emails in one run. | automations.ts:1963-1984 | FIXED (Tranche 5) |
 | T1 | Employee daily-schedule cron (06:00 UTC) = 23:00 previous day in MST — employees get "today's" schedule for the day that just ended, all winter. | vercel.json:86, automations.ts:4552 | FIXED (Tranche 3) |
 | T2 | notifyUpcomingJobs is dead: 1-hour lookahead on a once-daily cron — only jobs at ~1 AM Edmonton can match. Also ungated. | automations.ts:517 | FIXED (Tranche 3) |
 | T3 | Task reminders documented "every 5 min", scheduled once daily 08:00 UTC (2 AM Edmonton) — up to 24h late. Ungated (bypasses master switch). | vercel.json:146 | FIXED (Tranche 3) |
@@ -49,7 +49,7 @@ keys dead post-flip, SMS master-switch hole, CLIENT_FACING_SMS_KEYS gaps.
 | P7 | autoOnInvoicePaid re-fires receipt+review on any later payment row once total ≥ amount (no receipt_sent_at stamp). | invoices/actions.ts:325-329 | FIXED (Tranche 4) |
 | P8 | Re-enabling auto-send leaves previously "held" invoices held forever. | settings/invoicing/actions.ts:43-51 | FIXED (Tranche 4) |
 | P9 | Recurring-series invoices were never scheduled for auto-send (fixed alongside C1). | automations.ts | FIXED (Tranche 1) |
-| B6 | Series "this and future" schedule change: future occurrences deleted+regenerated silently; at most one occurrence's change is announced. | bookings/actions.ts:1264-1417 | OPEN |
+| B6 | Series "this and future" schedule change: future occurrences deleted+regenerated silently; at most one occurrence's change is announced. | bookings/actions.ts:1264-1417 | FIXED (Tranche 5) |
 | B7 | CLIENT_SMS_PAUSED blocks EMPLOYEE assignment texts, contradicting its documented client-only contract. | sms.ts:87-89 vs 212-218 | FIXED (Tranche 4) |
 | B8 | Recurring-booking creation + convert-to-recurring notify no one (no assignment push for the cleaner). | bookings/actions.ts:702-940,1659 | FIXED (Tranche 4) |
 | B9 | resolveClientNotify swallows DB errors as "no reachable channel", unlogged; org-default fetch fails OPEN to email while client fetch fails CLOSED — inconsistent. | notification-gate.ts:60-91 | FIXED (Tranche 4) |
@@ -63,6 +63,12 @@ keys dead post-flip, SMS master-switch hole, CLIENT_FACING_SMS_KEYS gaps.
 | T9 | Deactivated members still receive schedules/overtime/payroll/PTO/cert emails (getMembershipRecipient never filters status). | automations.ts:89-128 | FIXED (Tranche 3) |
 
 ## LOW (tracked, fix opportunistically)
+
+Fixed in Tranche 5: reminder-cron N+1 + per-booking crash isolation,
+duplicate-booking pending+reminder-stamp, estimate first-send token race,
+review-candidate ordering, crew fan-out on reschedule/cancel pushes, stale doc
+comments. Remaining lows below are accepted as-is for now (tiny races /
+cosmetic boundaries).
 
 - Reminder cron: contact_phone N+1 (org cache has it), no per-booking try/catch (one throw aborts the batch tail), template work done before gating. (automations.ts:2855-2887)
 - "Confirmation" email fires for `pending` bookings at creation; never on pending→confirmed. Semantics decision. (bookings/actions.ts:608)

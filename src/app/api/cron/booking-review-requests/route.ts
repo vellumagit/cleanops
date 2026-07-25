@@ -1,7 +1,7 @@
 /**
  * Cron: post-completion review request email to the client.
  *
- * Runs daily at 10:00 UTC. Finds bookings completed 20+ hours ago that
+ * Runs daily at 10:00 UTC. Finds bookings completed jobs inside the review window (30-min floor + per-org delay, 30-day lookback) that
  * haven't been review-requested yet and emails the client a /review/<token>
  * link. After a ≥4 star submission the review page shows a Google CTA using
  * organizations.google_review_url (set in Settings → Branding).

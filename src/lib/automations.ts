@@ -1093,25 +1093,43 @@ export async function sendBookingRescheduled(
     };
     const tz = org?.timezone ?? "America/Edmonton";
 
-    // Push the assigned employee first — the field app banner needs to
-    // update even if the client email is paused or blocked.
-    if (booking.assigned_to) {
-      const when = new Date(booking.scheduled_at).toLocaleString("en-US", {
-        weekday: "short",
-        month: "short",
-        day: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
-        timeZone: tz,
-      });
-      await notify({
-        audience: "membership",
-        membershipId: booking.assigned_to,
-        organizationId: booking.organization_id,
-        title: "Booking rescheduled",
-        body: `${serviceDisplayName} moved to ${when}`,
-        href: `/field/jobs/${bookingId}`,
-      });
+    // Push the crew first — the field app banner needs to update even if the
+    // client email is paused or blocked. Fans out to EVERY assignee
+    // (booking_assignees), not just the primary — secondary crew previously
+    // showed up at the old time (audit L13).
+    {
+      const { data: crewRows } = (await db
+        .from("booking_assignees")
+        .select("membership_id")
+        .eq("booking_id", bookingId)) as unknown as {
+        data: Array<{ membership_id: string }> | null;
+      };
+      const crew = new Set<string>(
+        (crewRows ?? []).map((r) => r.membership_id),
+      );
+      if (booking.assigned_to) crew.add(booking.assigned_to);
+      if (crew.size > 0) {
+        const when = new Date(booking.scheduled_at).toLocaleString("en-US", {
+          weekday: "short",
+          month: "short",
+          day: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+          timeZone: tz,
+        });
+        await Promise.allSettled(
+          Array.from(crew).map((membershipId) =>
+            notify({
+              audience: "membership",
+              membershipId,
+              organizationId: booking.organization_id,
+              title: "Booking rescheduled",
+              body: `${serviceDisplayName} moved to ${when}`,
+              href: `/field/jobs/${bookingId}`,
+            }),
+          ),
+        );
+      }
     }
 
     if (!booking.client) return;
@@ -1204,8 +1222,8 @@ export async function sendBookingRescheduled(
 // 7f. Push the assigned employee when a booking is cancelled
 //
 // Prevents the "employee shows up for a job that was cancelled" failure
-// mode. Fires in-app notification + push. Admin-facing push only —
-// client-facing cancellation email is a separate future feature.
+// mode. Fires in-app notification + push to the full crew. The client-facing
+// cancellation notice is 7g (sendBookingCancelledToClient).
 // ─────────────────────────────────────────────────────────────────
 
 export async function notifyBookingCancelledToEmployee(bookingId: string) {
@@ -1229,7 +1247,22 @@ export async function notifyBookingCancelledToEmployee(bookingId: string) {
       } | null;
     };
 
-    if (!booking || !booking.assigned_to) return;
+    if (!booking) return;
+
+    // Full crew, not just the primary — a secondary assignee driving to a
+    // cancelled job is exactly the failure this push exists to prevent
+    // (audit L13).
+    const { data: cancelCrewRows } = (await db
+      .from("booking_assignees")
+      .select("membership_id")
+      .eq("booking_id", bookingId)) as unknown as {
+      data: Array<{ membership_id: string }> | null;
+    };
+    const cancelCrew = new Set<string>(
+      (cancelCrewRows ?? []).map((r) => r.membership_id),
+    );
+    if (booking.assigned_to) cancelCrew.add(booking.assigned_to);
+    if (cancelCrew.size === 0) return;
 
     const { data: orgTzRow } = await db
       .from("organizations")
@@ -1250,14 +1283,18 @@ export async function notifyBookingCancelledToEmployee(bookingId: string) {
     const title = "Job cancelled";
     const body = `${serviceDisplay} for ${booking.client?.name ?? "a client"} on ${when} was cancelled. You don't need to go.`;
 
-    await notify({
-      audience: "membership",
-      membershipId: booking.assigned_to,
-      organizationId: booking.organization_id,
-      title,
-      body,
-      href: `/field/jobs`,
-    });
+    await Promise.allSettled(
+      Array.from(cancelCrew).map((membershipId) =>
+        notify({
+          audience: "membership",
+          membershipId,
+          organizationId: booking.organization_id,
+          title,
+          body,
+          href: `/field/jobs`,
+        }),
+      ),
+    );
 
     console.log(`[auto] Cancellation push sent for booking ${bookingId}`);
   } catch (err) {
@@ -1303,9 +1340,9 @@ export async function sendBookingCancelledToClient(bookingId: string) {
 
     if (!booking || !booking.client) return;
 
-    // Dedup: the client gets ONE cancellation notice, by whichever channel.
-    // (Column name predates the SMS channel — it now marks "cancellation notice
-    // sent", text or email, since the two are mutually exclusive below.)
+    // Dedup: the cancellation notice fires ONCE per booking. (Column name
+    // predates the SMS channel — it marks "notice sent" whichever channel(s)
+    // delivered; a both-preference client gets text + email in that one pass.)
     if (booking.cancelled_email_sent_at) {
       console.log(`[auto] Cancellation notice already sent for ${bookingId}, skipping`);
       return;
@@ -2064,6 +2101,8 @@ export async function sendBookingReviewRequests(): Promise<{
     .is("review_request_sent_at", null)
     .gte("scheduled_at", earliestCutoff)
     .lte("scheduled_at", latestCutoff)
+    // Deterministic under backlog — oldest first so catch-up drains in order.
+    .order("scheduled_at", { ascending: true })
     .limit(200) as unknown as {
     data: Array<{
       id: string;
@@ -2092,6 +2131,42 @@ export async function sendBookingReviewRequests(): Promise<{
     return { considered, sent, skipped };
   }
 
+  // PER-CLIENT CAP (audit G1). Dedup was per-BOOKING only, so a weekly client
+  // with 4 completed jobs in the window got 4 "how did we do?" emails in one
+  // run — and enabling the toggle on an org with recent history flooded every
+  // recurring client at once. Two rules:
+  //   1. At most ONE ask per client per run — their most recent qualifying job.
+  //   2. Skip clients already asked in the last 30 days (any booking of theirs
+  //      with a review_request_sent_at inside the window).
+  const bestPerClient = new Map<string, (typeof candidates)[number]>();
+  for (const b of candidates) {
+    if (!b.client?.id) continue;
+    const prev = bestPerClient.get(b.client.id);
+    if (!prev || b.scheduled_at > prev.scheduled_at) {
+      bestPerClient.set(b.client.id, b);
+    }
+  }
+  const recentlyAskedClients = new Set<string>();
+  {
+    const clientIds = Array.from(bestPerClient.keys());
+    if (clientIds.length > 0) {
+      const { data: asked } = (await db
+        .from("bookings")
+        .select("client_id")
+        .in("client_id", clientIds)
+        .gte("review_request_sent_at", earliestCutoff)) as unknown as {
+        data: Array<{ client_id: string | null }> | null;
+      };
+      for (const r of asked ?? []) {
+        if (r.client_id) recentlyAskedClients.add(r.client_id);
+      }
+    }
+  }
+  const perClientCandidates = Array.from(bestPerClient.values()).filter(
+    (b) => !recentlyAskedClients.has(b.client!.id),
+  );
+  skipped += candidates.length - perClientCandidates.length;
+
   // Cache org settings + branding across the batch.
   const orgCache = new Map<
     string,
@@ -2115,7 +2190,7 @@ export async function sendBookingReviewRequests(): Promise<{
     import("@/lib/notification-preferences").OrgContactDefault
   >();
 
-  for (const booking of candidates) {
+  for (const booking of perClientCandidates) {
     if (!booking.client?.email) {
       skipped += 1;
       continue;
@@ -2814,6 +2889,7 @@ export async function sendUpcomingBookingReminders(): Promise<{
       brand_color: string | null;
       logo_url: string | null;
       timezone: string | null;
+      contact_phone: string | null;
       enabled: boolean;
     } | null
   >();
@@ -2824,163 +2900,169 @@ export async function sendUpcomingBookingReminders(): Promise<{
   >();
 
   for (const booking of candidates) {
-    const hasEmail = Boolean(booking.client?.email);
-    const hasPhone = Boolean(booking.client?.phone);
-    // Need at least one reachable channel. (Previously required an email, which
-    // silently dropped SMS-only clients — and their reminder text with it.)
-    if (!hasEmail && !hasPhone) {
-      skipped += 1;
-      continue;
-    }
-    // Narrow client to non-null for the rest of the loop (hasEmail/hasPhone
-    // already imply it's set, but TS can't infer that from the booleans).
-    if (!booking.client) {
-      skipped += 1;
-      continue;
-    }
-
-    let cached = orgCache.get(booking.organization_id);
-    if (cached === undefined) {
-      const enabled = await isAutomationEnabled(
-        booking.organization_id,
-        "booking_reminder_client_email",
-      );
-      const { data: orgData } = await db
-        .from("organizations")
-        .select("name, brand_color, logo_url, timezone")
-        .eq("id", booking.organization_id)
-        .maybeSingle() as unknown as {
-        data: {
-          name: string;
-          brand_color: string | null;
-          logo_url: string | null;
-          timezone: string | null;
-        } | null;
-      };
-      cached = orgData ? { ...orgData, enabled } : null;
-      orgCache.set(booking.organization_id, cached);
-    }
-
-    if (!cached) {
-      skipped += 1;
-      continue;
-    }
-    // NOTE: cached.enabled is the EMAIL toggle (booking_reminder_client_email).
-    // It now gates ONLY the email channel below — not the whole booking — so an
-    // org that wants SMS-only reminders still gets them.
-
-    // Per-client channel preference (booking category). Layered under the toggle.
-    const decision = await resolveClientNotify(db, {
-      organizationId: booking.organization_id,
-      clientId: booking.client_id,
-      category: "booking",
-      orgDefaultCache,
-    });
-
-    const dateTime = new Date(booking.scheduled_at).toLocaleString("en-US", {
-      weekday: "long",
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-      timeZone: cached.timezone ?? "America/Edmonton",
-    });
-
-    const { resolveTeamDivision, crewFinishNote } = await import(
-      "@/lib/crew-hours"
-    );
-    const division = await resolveTeamDivision(
-      booking.id,
-      booking.duration_minutes,
-    );
-    const crewNote = crewFinishNote(
-      division,
-      booking.scheduled_at,
-      cached.timezone ?? "America/Edmonton",
-    );
-
-    const template = bookingReminderEmail({
-      clientName: booking.client.name ?? "there",
-      orgName: cached.name,
-      serviceName: booking.service_type_label ?? humanize(booking.service_type),
-      dateTime,
-      crewNote,
-      address: booking.address ?? "(address on file)",
-      brandColor: cached.brand_color ?? undefined,
-      logoUrl: cached.logo_url ?? undefined,
-    });
-
-    // Two INDEPENDENT channels. Previously the SMS was nested inside the
-    // email-success branch, so a paused/failed/absent email silently killed
-    // the reminder text even when SMS + opt-in were ready. Now each channel
-    // stands on its own gates and we stamp if EITHER one delivers.
-    let anySent = false;
-
-    // ── Email channel — gated by the email toggle AND the client preference. ──
-    if (hasEmail && cached.enabled && decision.email) {
-      const emailOk = await sendOrgEmail(booking.organization_id, {
-        to: booking.client.email!,
-        toName: booking.client.name ?? undefined,
-        ...template,
-      });
-      if (emailOk) {
-        anySent = true;
-      } else {
-        console.log(
-          `[auto] Booking reminder email not sent for ${booking.id} (paused/unconfigured/rejected)`,
-        );
+    // Isolate each booking — one thrown error must not abort the rest of
+    // the batch (a lost tail can age out of the reminder window by the
+    // next run and never be reminded).
+    try {
+      const hasEmail = Boolean(booking.client?.email);
+      const hasPhone = Boolean(booking.client?.phone);
+      // Need at least one reachable channel. (Previously required an email, which
+      // silently dropped SMS-only clients — and their reminder text with it.)
+      if (!hasEmail && !hasPhone) {
+        skipped += 1;
+        continue;
       }
-    }
+      // Narrow client to non-null for the rest of the loop (hasEmail/hasPhone
+      // already imply it's set, but TS can't infer that from the booleans).
+      if (!booking.client) {
+        skipped += 1;
+        continue;
+      }
 
-    // ── SMS channel — INDEPENDENT of email. sendOrgSms applies its own gates
-    //    (booking_reminder_client_sms toggle, client opt-in, cap,
-    //    CLIENT_SMS_PAUSED, TWILIO_ENABLED). Plus the client preference. ──
-    if (hasPhone && decision.sms) {
-      try {
-        const { sendOrgSms } = await import("@/lib/sms");
-        const { composeBookingReminderSms } = await import("@/lib/twilio");
-        const { getOrgTimezone } = await import("@/lib/org-timezone");
-        const { data: orgContact } = (await db
+      let cached = orgCache.get(booking.organization_id);
+      if (cached === undefined) {
+        const enabled = await isAutomationEnabled(
+          booking.organization_id,
+          "booking_reminder_client_email",
+        );
+        const { data: orgData } = await db
           .from("organizations")
-          .select("contact_phone")
+          .select("name, brand_color, logo_url, timezone, contact_phone")
           .eq("id", booking.organization_id)
-          .maybeSingle()) as unknown as {
-          data: { contact_phone: string | null } | null;
+          .maybeSingle() as unknown as {
+          data: {
+            name: string;
+            brand_color: string | null;
+            logo_url: string | null;
+            timezone: string | null;
+            contact_phone: string | null;
+          } | null;
         };
-        const orgTz = await getOrgTimezone(booking.organization_id);
-        const smsBody = composeBookingReminderSms({
-          orgName: cached.name,
-          serviceType: booking.service_type,
-          scheduledAt: booking.scheduled_at,
-          contactPhone: orgContact?.contact_phone ?? null,
-          tz: orgTz,
-        });
-        const smsRes = await sendOrgSms(booking.organization_id, {
-          to: booking.client.phone!,
-          body: smsBody,
-          automationKey: "booking_reminder_client_sms",
-        });
-        if (smsRes.ok && smsRes.status === "sent") anySent = true;
-      } catch (smsErr) {
-        console.error(
-          "[auto] sendUpcomingBookingReminders SMS path errored:",
-          smsErr,
-        );
+        cached = orgData ? { ...orgData, enabled } : null;
+        orgCache.set(booking.organization_id, cached);
       }
-    }
 
-    // Stamp only if at least one channel actually delivered — so a fully-gated
-    // booking retries next tick instead of being marked reminded, and a booking
-    // isn't reminded twice once one channel lands.
-    if (anySent) {
-      await db
-        .from("bookings")
-        .update({ client_reminder_sent_at: new Date().toISOString() })
-        .eq("id", booking.id);
-      sent += 1;
-      console.log(`[auto] Booking reminder delivered for booking ${booking.id}`);
-    } else {
+      if (!cached) {
+        skipped += 1;
+        continue;
+      }
+      // NOTE: cached.enabled is the EMAIL toggle (booking_reminder_client_email).
+      // It now gates ONLY the email channel below — not the whole booking — so an
+      // org that wants SMS-only reminders still gets them.
+
+      // Per-client channel preference (booking category). Layered under the toggle.
+      const decision = await resolveClientNotify(db, {
+        organizationId: booking.organization_id,
+        clientId: booking.client_id,
+        category: "booking",
+        orgDefaultCache,
+      });
+
+      const dateTime = new Date(booking.scheduled_at).toLocaleString("en-US", {
+        weekday: "long",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        timeZone: cached.timezone ?? "America/Edmonton",
+      });
+
+      const { resolveTeamDivision, crewFinishNote } = await import(
+        "@/lib/crew-hours"
+      );
+      const division = await resolveTeamDivision(
+        booking.id,
+        booking.duration_minutes,
+      );
+      const crewNote = crewFinishNote(
+        division,
+        booking.scheduled_at,
+        cached.timezone ?? "America/Edmonton",
+      );
+
+      const template = bookingReminderEmail({
+        clientName: booking.client.name ?? "there",
+        orgName: cached.name,
+        serviceName: booking.service_type_label ?? humanize(booking.service_type),
+        dateTime,
+        crewNote,
+        address: booking.address ?? "(address on file)",
+        brandColor: cached.brand_color ?? undefined,
+        logoUrl: cached.logo_url ?? undefined,
+      });
+
+      // Two INDEPENDENT channels. Previously the SMS was nested inside the
+      // email-success branch, so a paused/failed/absent email silently killed
+      // the reminder text even when SMS + opt-in were ready. Now each channel
+      // stands on its own gates and we stamp if EITHER one delivers.
+      let anySent = false;
+
+      // ── Email channel — gated by the email toggle AND the client preference. ──
+      if (hasEmail && cached.enabled && decision.email) {
+        const emailOk = await sendOrgEmail(booking.organization_id, {
+          to: booking.client.email!,
+          toName: booking.client.name ?? undefined,
+          ...template,
+        });
+        if (emailOk) {
+          anySent = true;
+        } else {
+          console.log(
+            `[auto] Booking reminder email not sent for ${booking.id} (paused/unconfigured/rejected)`,
+          );
+        }
+      }
+
+      // ── SMS channel — INDEPENDENT of email. sendOrgSms applies its own gates
+      //    (booking_reminder_client_sms toggle, client opt-in, cap,
+      //    CLIENT_SMS_PAUSED, TWILIO_ENABLED). Plus the client preference. ──
+      if (hasPhone && decision.sms) {
+        try {
+          const { sendOrgSms } = await import("@/lib/sms");
+          const { composeBookingReminderSms } = await import("@/lib/twilio");
+          const { getOrgTimezone } = await import("@/lib/org-timezone");
+          const orgTz = await getOrgTimezone(booking.organization_id);
+          const smsBody = composeBookingReminderSms({
+            orgName: cached.name,
+            serviceType: booking.service_type,
+            scheduledAt: booking.scheduled_at,
+            // From the org cache — this used to be a fresh query per booking.
+            contactPhone: cached.contact_phone ?? null,
+            tz: orgTz,
+          });
+          const smsRes = await sendOrgSms(booking.organization_id, {
+            to: booking.client.phone!,
+            body: smsBody,
+            automationKey: "booking_reminder_client_sms",
+          });
+          if (smsRes.ok && smsRes.status === "sent") anySent = true;
+        } catch (smsErr) {
+          console.error(
+            "[auto] sendUpcomingBookingReminders SMS path errored:",
+            smsErr,
+          );
+        }
+      }
+
+      // Stamp only if at least one channel actually delivered — so a fully-gated
+      // booking retries next tick instead of being marked reminded, and a booking
+      // isn't reminded twice once one channel lands.
+      if (anySent) {
+        await db
+          .from("bookings")
+          .update({ client_reminder_sent_at: new Date().toISOString() })
+          .eq("id", booking.id);
+        sent += 1;
+        console.log(`[auto] Booking reminder delivered for booking ${booking.id}`);
+      } else {
+        skipped += 1;
+      }
+    } catch (bookingErr) {
       skipped += 1;
+      console.error(
+        `[auto] reminder failed for booking ${booking.id} — continuing batch:`,
+        bookingErr,
+      );
     }
   }
 
@@ -3056,19 +3138,35 @@ export async function sendEstimateToClient(
       return { ok: false, publicToken: null, error: "Client has no email on file" };
     }
 
-    // Lazily mint a public token + 30-day expiry on first send.
+    // Lazily mint a public token + 30-day expiry on first send. Conditional
+    // on still-null so two admins clicking Send simultaneously can't each mint
+    // a token with last-write-wins — the loser's email would carry a dead /e/
+    // link. Zero rows back = someone else won; re-read and use theirs.
     let publicToken = estimate.public_token;
     let expiresAt = estimate.expires_at;
     if (!publicToken) {
       publicToken = generateClaimToken();
       expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-      await db
+      const { data: minted } = (await db
         .from("estimates")
         .update({
           public_token: publicToken,
           expires_at: expiresAt,
         })
-        .eq("id", estimateId);
+        .eq("id", estimateId)
+        .is("public_token", null)
+        .select("id")) as unknown as { data: Array<{ id: string }> | null };
+      if (!minted || minted.length === 0) {
+        const { data: winner } = (await db
+          .from("estimates")
+          .select("public_token, expires_at")
+          .eq("id", estimateId)
+          .maybeSingle()) as unknown as {
+          data: { public_token: string | null; expires_at: string | null } | null;
+        };
+        publicToken = winner?.public_token ?? publicToken;
+        expiresAt = winner?.expires_at ?? expiresAt;
+      }
     }
 
     const { data: orgData } = await db

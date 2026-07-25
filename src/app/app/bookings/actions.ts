@@ -1289,16 +1289,18 @@ export async function updateBookingAction(
         // their old times and the reschedule never shows up on the calendar.
         const { data: staleSiblings } = (await admin
           .from("bookings")
-          .select("id, google_calendar_event_id")
+          .select("id, google_calendar_event_id, scheduled_at")
           .eq("series_id", seriesId)
           .eq("organization_id", membership.organization_id)
           .neq("id", id)
           .gte("scheduled_at", seriesScheduledAt)
           // Match the delete below — leave live in_progress/en_route jobs alone.
-          .in("status", ["pending", "confirmed"])) as unknown as {
+          .in("status", ["pending", "confirmed"])
+          .order("scheduled_at", { ascending: true })) as unknown as {
           data: Array<{
             id: string;
             google_calendar_event_id: string | null;
+            scheduled_at: string;
           }> | null;
         };
         for (const sib of staleSiblings ?? []) {
@@ -1440,6 +1442,22 @@ export async function updateBookingAction(
           console.log(
             `[series-reschedule] regenerated ${occurrences.length} bookings in series ${seriesId}`,
           );
+
+          // Audit B6: if the edited occurrence's own time did NOT change, the
+          // reschedule notice further down never fires — the client's future
+          // visits all silently moved. Announce ONE representative move: the
+          // first regenerated occurrence (new time) vs the first deleted
+          // sibling (old time). sendBookingRescheduled applies the client's
+          // notification preference + org toggles internally.
+          const editedTimeUnchanged =
+            existing?.scheduled_at &&
+            new Date(existing.scheduled_at).getTime() ===
+              new Date(parsed.data.scheduled_at).getTime();
+          const firstNew = regenRows[0];
+          const firstOldAt = (staleSiblings ?? [])[0]?.scheduled_at ?? null;
+          if (editedTimeUnchanged && firstNew && firstOldAt) {
+            sendBookingRescheduled(firstNew.id, firstOldAt);
+          }
         }
       }
     } else {
@@ -1915,7 +1933,13 @@ export async function duplicateBookingAction(id: string) {
       service_type: source.service_type as ServiceTypeEnum,
       service_type_id: source.service_type_id,
       service_type_label: source.service_type_label,
-      status: "confirmed" as const,
+      // PENDING, matching the docstring — the copy lands at the SOURCE's date
+      // and the owner is expected to edit it. "confirmed" made it look live and
+      // the reminder cron would announce a duplicate visit at the same slot if
+      // the owner walked away mid-edit. The reminder pre-stamp is belt and
+      // braces; rescheduling clears it, so the real date reminds normally.
+      status: "pending" as const,
+      client_reminder_sent_at: new Date().toISOString(),
       total_cents: source.total_cents,
       hourly_rate_cents: source.hourly_rate_cents ?? null,
       address: source.address ?? null,
