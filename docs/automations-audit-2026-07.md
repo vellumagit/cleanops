@@ -40,24 +40,24 @@ keys dead post-flip, SMS master-switch hole, CLIENT_FACING_SMS_KEYS gaps.
 
 | # | Finding | Where | Status |
 |---|---------|-------|--------|
-| P1 | Invoice auto-send + consolidated billing-cycle generation sit entirely OUTSIDE the automations master switch (own org columns + separate settings page). "Master off = nothing fires" is false for them. POLICY DECISION needed: gate them or document as billing settings. | invoice-send.ts:222-374, billing-cycle (no gate) | OPEN |
-| P2 | Stripe/Square-paid invoices never trigger autoOnInvoicePaid — receipts/review asks only fire for manually recorded payments. Flagged by two audits. | integrations/stripe/webhook:187-235, invoices/actions.ts:328 | OPEN |
+| P1 | Invoice auto-send + consolidated billing-cycle generation sit entirely OUTSIDE the automations master switch (own org columns + separate settings page). "Master off = nothing fires" is false for them. POLICY DECISION needed: gate them or document as billing settings. | invoice-send.ts:222-374, billing-cycle (no gate) | FIXED (Tranche 4) |
+| P2 | Stripe/Square-paid invoices never trigger autoOnInvoicePaid — receipts/review asks only fire for manually recorded payments. Flagged by two audits. | integrations/stripe/webhook:187-235, invoices/actions.ts:328 | FIXED (Tranche 4) |
 | P3 | autoVoidOldInvoices sets status without `voided_at` — any later ledger event resurrects the "void"; payments can still be recorded against it. | automations.ts:5334-5341 | FIXED (Tranche 1) |
 | P4 | Voiding a consolidated invoice never un-stamps bookings and the period-key unique index isn't partial on voided — the period can never be re-billed. | invoices/actions.ts:714-749, money_hardening:147 | FIXED (Tranche 1) |
-| P5 | Monthly consolidated invoice line reads the WRONG month ("Services — July" for June work). | billing-cycle:90-92 | OPEN |
-| P6 | Recurring/monthly `setUTCMonth` month-end drift: series anchored day 29-31 slips (Jan 31 → Mar 3), skipping a billing month. Flagged by two audits. | automations.ts:5538-5543 | OPEN |
-| P7 | autoOnInvoicePaid re-fires receipt+review on any later payment row once total ≥ amount (no receipt_sent_at stamp). | invoices/actions.ts:325-329 | OPEN |
-| P8 | Re-enabling auto-send leaves previously "held" invoices held forever. | settings/invoicing/actions.ts:43-51 | OPEN |
+| P5 | Monthly consolidated invoice line reads the WRONG month ("Services — July" for June work). | billing-cycle:90-92 | FIXED (Tranche 4) |
+| P6 | Recurring/monthly `setUTCMonth` month-end drift: series anchored day 29-31 slips (Jan 31 → Mar 3), skipping a billing month. Flagged by two audits. | automations.ts:5538-5543 | FIXED (Tranche 4) |
+| P7 | autoOnInvoicePaid re-fires receipt+review on any later payment row once total ≥ amount (no receipt_sent_at stamp). | invoices/actions.ts:325-329 | FIXED (Tranche 4) |
+| P8 | Re-enabling auto-send leaves previously "held" invoices held forever. | settings/invoicing/actions.ts:43-51 | FIXED (Tranche 4) |
 | P9 | Recurring-series invoices were never scheduled for auto-send (fixed alongside C1). | automations.ts | FIXED (Tranche 1) |
 | B6 | Series "this and future" schedule change: future occurrences deleted+regenerated silently; at most one occurrence's change is announced. | bookings/actions.ts:1264-1417 | OPEN |
-| B7 | CLIENT_SMS_PAUSED blocks EMPLOYEE assignment texts, contradicting its documented client-only contract. | sms.ts:87-89 vs 212-218 | OPEN |
-| B8 | Recurring-booking creation + convert-to-recurring notify no one (no assignment push for the cleaner). | bookings/actions.ts:702-940,1659 | OPEN |
-| B9 | resolveClientNotify swallows DB errors as "no reachable channel", unlogged; org-default fetch fails OPEN to email while client fetch fails CLOSED — inconsistent. | notification-gate.ts:60-91 | OPEN |
-| G3 | Stale-estimate followups have no CAS claim — decided_at race can email "still thinking it over?" right after approval; overlapping runs can double-send. | automations.ts:1658-1739 | OPEN |
-| G4 | Day-14 followup copy says "expires in the next few days"; actual expiry is day 30. | email-templates.ts:1732-1761 | OPEN |
-| G5 | Estimate resend bumps sent_at but never extends expires_at — public page can say "expired" while followups still link to it. | automations.ts:3054-3063 vs 2967-2977 | OPEN |
-| G6 | Rebooking prompts: no recency ceiling (will email clients last served 2 years ago, monthly, forever) + unbounded cross-org scan doing per-client work before the org gate + CTA is a mailto to noreply@ + no unsubscribe (CASL). | automations.ts:1450-1564, email-templates.ts:1677-1714 | OPEN |
-| T6 | Dead code: autoAssignTraining (never called) and postSystemFeedEvent (never called — the system_feed_events toggle is wired to nothing). | automations.ts:620,849 | OPEN |
+| B7 | CLIENT_SMS_PAUSED blocks EMPLOYEE assignment texts, contradicting its documented client-only contract. | sms.ts:87-89 vs 212-218 | FIXED (Tranche 4) |
+| B8 | Recurring-booking creation + convert-to-recurring notify no one (no assignment push for the cleaner). | bookings/actions.ts:702-940,1659 | FIXED (Tranche 4) |
+| B9 | resolveClientNotify swallows DB errors as "no reachable channel", unlogged; org-default fetch fails OPEN to email while client fetch fails CLOSED — inconsistent. | notification-gate.ts:60-91 | FIXED (Tranche 4) |
+| G3 | Stale-estimate followups have no CAS claim — decided_at race can email "still thinking it over?" right after approval; overlapping runs can double-send. | automations.ts:1658-1739 | FIXED (Tranche 4) |
+| G4 | Day-14 followup copy says "expires in the next few days"; actual expiry is day 30. | email-templates.ts:1732-1761 | FIXED (Tranche 4) |
+| G5 | Estimate resend bumps sent_at but never extends expires_at — public page can say "expired" while followups still link to it. | automations.ts:3054-3063 vs 2967-2977 | FIXED (Tranche 4) |
+| G6 | Rebooking prompts: no recency ceiling (will email clients last served 2 years ago, monthly, forever) + unbounded cross-org scan doing per-client work before the org gate + CTA is a mailto to noreply@ + no unsubscribe (CASL). | automations.ts:1450-1564, email-templates.ts:1677-1714 | FIXED (Tranche 4) |
+| T6 | Dead code: autoAssignTraining (never called) and postSystemFeedEvent (never called — the system_feed_events toggle is wired to nothing). | automations.ts:620,849 | FIXED (Tranche 4) |
 | T7 | alertStaleEstimates ungated (no key, no master switch). | automations.ts:750-838 | FIXED (Tranche 3) |
 | T8 | unfilled-shifts cron: ungated, formats times in UTC (admins see wrong hours), overlaps the gated unassigned_booking_alert. | api/cron/unfilled-shifts:85-90 | FIXED (Tranche 3) |
 | T9 | Deactivated members still receive schedules/overtime/payroll/PTO/cert emails (getMembershipRecipient never filters status). | automations.ts:89-128 | FIXED (Tranche 3) |

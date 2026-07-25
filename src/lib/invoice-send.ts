@@ -359,17 +359,28 @@ export async function runInvoiceAutoSend(): Promise<{
   // Which of these orgs STILL have auto-send enabled? An org that disabled it
   // after an invoice was scheduled should not have it sent. (The settings
   // action also stands these down on disable; this is the send-time backstop.)
+  //
+  // POLICY (audit P1): the automations MASTER SWITCH also gates the SEND.
+  // Drafting invoices stays a billing setting (drafts are harmless and the
+  // money must still be tracked), but "Turn all off" must stop Sollos from
+  // EMAILING clients — an owner who flipped the big switch expects silence.
   const orgIds = [...new Set(rows.map((r) => r.organization_id))];
   const enabledOrgs = new Set<string>();
   if (orgIds.length > 0) {
     const { data: orgRows } = (await db
       .from("organizations")
-      .select("id, invoice_auto_send_enabled")
+      .select("id, invoice_auto_send_enabled, automations_enabled")
       .in("id", orgIds)) as unknown as {
-      data: Array<{ id: string; invoice_auto_send_enabled: boolean }> | null;
+      data: Array<{
+        id: string;
+        invoice_auto_send_enabled: boolean;
+        automations_enabled: boolean | null;
+      }> | null;
     };
     for (const o of orgRows ?? []) {
-      if (o.invoice_auto_send_enabled) enabledOrgs.add(o.id);
+      if (o.invoice_auto_send_enabled && o.automations_enabled === true) {
+        enabledOrgs.add(o.id);
+      }
     }
   }
 

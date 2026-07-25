@@ -925,6 +925,32 @@ export async function createRecurringBookingAction(
     });
   }
 
+  // Tell the assigned cleaner about the new series — one push for the FIRST
+  // occurrence (N pushes would be spam; the calendar sync carries the rest).
+  // Recurring creation previously notified no one (audit B8), unlike
+  // single-booking create.
+  const firstOccurrence = insertedBookings?.[0];
+  if (parsed.data.assigned_to && firstOccurrence) {
+    const { data: clientRow } = (await supabase
+      .from("clients")
+      .select("name")
+      .eq("id", parsed.data.client_id)
+      .maybeSingle()) as unknown as { data: { name: string | null } | null };
+    notifyBookingAssignment(
+      membership.organization_id,
+      firstOccurrence.id,
+      parsed.data.assigned_to,
+      {
+        clientName: clientRow?.name ?? "A client",
+        scheduledAt: firstOccurrence.scheduled_at,
+        serviceType: parsed.data.service_type,
+        address: parsed.data.address ?? null,
+      },
+    ).catch((e) =>
+      console.error("[auto] recurring-create assignment notify failed:", e),
+    );
+  }
+
   revalidatePath("/app/bookings");
   revalidatePath("/app/calendar");
   revalidatePath("/app");

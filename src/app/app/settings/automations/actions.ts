@@ -55,7 +55,6 @@ export type AutomationKey =
   | "booking_rescheduled_sms"
   | "booking_cancelled_sms"
   // Feed
-  | "system_feed_events"
   // Feed FEATURE visibility — when off (default), the /app/feed and
   // /field/feed routes 404 and the sidebar links are hidden. system_
   // feed_events only matters when this is on.
@@ -112,7 +111,6 @@ const VALID_AUTOMATION_KEYS = new Set<AutomationKey>([
   "booking_assignment_sms",
   "booking_rescheduled_sms",
   "booking_cancelled_sms",
-  "system_feed_events",
   "feed_visible",
   "divide_crew_hours",
   "product_changelog_email",

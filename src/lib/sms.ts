@@ -209,8 +209,15 @@ export async function sendOrgSms(
     segments: 0,
   };
 
-  // Gate 1: platform kill switch
-  if (isClientSmsPaused()) {
+  // Gate 1: platform kill switch — CLIENT-facing sends only, honouring its
+  // own documented contract. It used to block every key, so pausing client
+  // SMS during an incident also silenced employee assignment texts and bench
+  // shift offers (audit B7). Employee/bench keys pass through; they have
+  // their own gates below.
+  const isClientFacing =
+    CLIENT_FACING_SMS_KEYS.has(args.automationKey) ||
+    args.automationKey === "sms_opt_in_request";
+  if (isClientFacing && isClientSmsPaused()) {
     console.log(
       `[sms] platform paused (CLIENT_SMS_PAUSED) — skipping ${args.automationKey} for org ${orgId}`,
     );

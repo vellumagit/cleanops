@@ -663,67 +663,6 @@ export async function notifyUpcomingJobs() {
 // ─────────────────────────────────────────────────────────────────
 // 3. Auto-assign training modules to new team members
 // ─────────────────────────────────────────────────────────────────
-
-export async function autoAssignTraining(
-  organizationId: string,
-  membershipId: string,
-) {
-  try {
-    const db = admin();
-
-    // Get all published training modules for this org
-    const { data: modules } = await (db
-      .from("training_modules")
-      .select("id")
-      .eq("organization_id", organizationId)
-      .eq("status", "published") as unknown as Promise<{
-      data: Array<{ id: string }> | null;
-    }>);
-
-    if (!modules || modules.length === 0) return;
-
-    // Check which ones are already assigned
-    const { data: existing } = await db
-      .from("training_assignments")
-      .select("module_id")
-      .eq("employee_id", membershipId)
-      .limit(500);
-
-    const assignedIds = new Set((existing ?? []).map((a) => a.module_id));
-    const toAssign = modules.filter((m) => !assignedIds.has(m.id));
-
-    if (toAssign.length === 0) return;
-
-    const rows = toAssign.map((m) => ({
-      organization_id: organizationId,
-      employee_id: membershipId,
-      module_id: m.id,
-      completed_step_ids: [],
-    }));
-
-    // Insert + return ids so we can fire a per-assignment email for each.
-    const { data: inserted } = await (db
-      .from("training_assignments")
-      .insert(rows)
-      .select("id") as unknown as Promise<{
-      data: Array<{ id: string }> | null;
-    }>);
-
-    console.log(
-      `[auto] Assigned ${toAssign.length} training modules to new member ${membershipId}`,
-    );
-
-    // Fire-and-forget email per assignment. Gated by the
-    // training_assigned_notify toggle inside notifyTrainingAssigned.
-    for (const row of inserted ?? []) {
-      notifyTrainingAssigned(row.id).catch(() => {});
-    }
-  } catch (err) {
-    console.error("[auto] autoAssignTraining failed:", err);
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────
 // 4. Auto-create booking when estimate is approved
 // ─────────────────────────────────────────────────────────────────
 
@@ -926,32 +865,6 @@ export async function alertStaleEstimates() {
 
 // ─────────────────────────────────────────────────────────────────
 // 6. Post system events to the feed
-// ─────────────────────────────────────────────────────────────────
-
-export async function postSystemFeedEvent(
-  organizationId: string,
-  /** The membership that "authored" the event — usually the actor */
-  authorMembershipId: string,
-  message: string,
-) {
-  try {
-    const db = admin();
-
-    // Respect the org's "system_feed_events" automation toggle.
-    // Default is OFF — auto-posts only appear if the org explicitly enables it.
-    const enabled = await isAutomationEnabled(organizationId, "system_feed_events");
-    if (!enabled) return;
-
-    await (db.from("feed_posts").insert({
-      organization_id: organizationId,
-      author_id: authorMembershipId,
-      body: message,
-    }) as unknown as Promise<unknown>);
-  } catch (err) {
-    console.error("[auto] postSystemFeedEvent failed:", err);
-  }
-}
-
 // ─────────────────────────────────────────────────────────────────
 // 7a. Send booking confirmation email to client on booking creation
 // ─────────────────────────────────────────────────────────────────
@@ -1520,22 +1433,59 @@ export async function sendRebookingPrompts(): Promise<{
   const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
   const nowIso = new Date(now).toISOString();
 
-  // Find clients with:
-  //   - at least one completed booking >= 14 days ago
-  //   - no future booking scheduled (pending/confirmed)
-  //   - last_rebook_prompt_at is NULL or older than 30 days
-  //   - an email on file
-  //
-  // Two queries: fetch candidate clients (by dedup + email), then filter in
-  // memory by checking their last completed booking + future bookings.
-  // PostgREST can't express this cleanly in one shot.
+  // GATE FIRST (audit G6): resolve which orgs opted in BEFORE scanning
+  // clients. Under opt-in most orgs are off, and the old shape scanned every
+  // client row in the database daily and ran 3 queries each before checking
+  // the org toggle.
+  const { data: orgRows } = (await db
+    .from("organizations")
+    .select(
+      "id, name, brand_color, logo_url, sender_email, automations_enabled, automation_settings",
+    )
+    .is("deleted_at", null)) as unknown as {
+    data: Array<{
+      id: string;
+      name: string;
+      brand_color: string | null;
+      logo_url: string | null;
+      sender_email: string | null;
+      automations_enabled: boolean | null;
+      automation_settings: Record<string, { enabled?: boolean }> | null;
+    }> | null;
+  };
+  const { resolveAutomationEnabled } = await import("@/lib/automation-defaults");
+  const enabledOrgs = new Map<
+    string,
+    {
+      name: string;
+      brand_color: string | null;
+      logo_url: string | null;
+      sender_email: string | null;
+    }
+  >();
+  for (const o of orgRows ?? []) {
+    if (o.automations_enabled !== true) continue;
+    if (!resolveAutomationEnabled(o.automation_settings, "rebooking_prompt_email"))
+      continue;
+    enabledOrgs.set(o.id, o);
+  }
+  if (enabledOrgs.size === 0) return { considered: 0, sent: 0 };
+
+  // RECENCY CEILING (audit G6): never prompt someone whose last service is
+  // older than this — "it's been 730 days since your last clean" is not a
+  // nudge, it's a cold email to a lapsed contact, and it repeated monthly
+  // forever. 14d..180d is the actionable window.
+  const ceilingIso = new Date(now - 180 * 24 * 60 * 60 * 1000).toISOString();
+
   const { data: candidates } = await db
     .from("clients")
     .select("id, organization_id, name, email, last_rebook_prompt_at")
+    .in("organization_id", Array.from(enabledOrgs.keys()))
     .not("email", "is", null)
     .or(
       `last_rebook_prompt_at.is.null,last_rebook_prompt_at.lt.${thirtyDaysAgo}`,
-    ) as unknown as {
+    )
+    .limit(500) as unknown as {
     data: Array<{
       id: string;
       organization_id: string;
@@ -1552,32 +1502,17 @@ export async function sendRebookingPrompts(): Promise<{
   let sent = 0;
   const considered = candidates.length;
 
-  // Cache org lookups + toggle check.
-  type OrgInfo = {
-    name: string;
-    brand_color: string | null;
-    logo_url: string | null;
-    sender_email: string | null;
-    enabled: boolean;
-  };
-  const orgCache = new Map<string, OrgInfo | null>();
   const orgDefaultCache = new Map<
     string,
     import("@/lib/notification-preferences").OrgContactDefault
   >();
+  // Reply-to fallback per org: sender_email, else the first owner/admin's
+  // real address — the CTA is a mailto, and pointing it at noreply@ was a
+  // dead end for the client (audit L1).
+  const replyToCache = new Map<string, string>();
 
   for (const client of candidates) {
     if (!client.email) continue;
-
-    // Client notification preference (growth category) — rebooking nudges are
-    // marketing-ish, so a do-not-contact or growth-off client never gets one.
-    const decision = await resolveClientNotify(db, {
-      organizationId: client.organization_id,
-      clientId: client.id,
-      category: "growth",
-      orgDefaultCache,
-    });
-    if (!decision.email) continue;
 
     // Check most recent completed booking for this client.
     const { data: lastCompleted } = await db
@@ -1591,10 +1526,11 @@ export async function sendRebookingPrompts(): Promise<{
       data: { scheduled_at: string } | null;
     };
 
-    // Must have a completed booking and it must be 14+ days old.
+    // Window: completed 14+ days ago, but not lapsed beyond the ceiling.
     if (!lastCompleted || lastCompleted.scheduled_at > fourteenDaysAgo) {
       continue;
     }
+    if (lastCompleted.scheduled_at < ceilingIso) continue;
 
     // Must have NO future booking.
     const { count: futureCount } = await db
@@ -1606,38 +1542,61 @@ export async function sendRebookingPrompts(): Promise<{
 
     if ((futureCount ?? 0) > 0) continue;
 
-    // Per-org gate + info.
-    let org = orgCache.get(client.organization_id);
-    if (org === undefined) {
-      const enabled = await isAutomationEnabled(
-        client.organization_id,
-        "rebooking_prompt_email",
-      );
-      const { data: orgData } = await db
-        .from("organizations")
-        .select("name, brand_color, logo_url, sender_email")
-        .eq("id", client.organization_id)
-        .maybeSingle() as unknown as {
-        data: {
-          name: string;
-          brand_color: string | null;
-          logo_url: string | null;
-          sender_email: string | null;
-        } | null;
-      };
-      org = orgData ? { ...orgData, enabled } : null;
-      orgCache.set(client.organization_id, org);
-    }
+    // Client notification preference (growth category) — rebooking nudges are
+    // marketing-ish, so a do-not-contact or growth-off client never gets one.
+    const decision = await resolveClientNotify(db, {
+      organizationId: client.organization_id,
+      clientId: client.id,
+      category: "growth",
+      orgDefaultCache,
+    });
+    if (!decision.email) continue;
 
-    if (!org || !org.enabled) continue;
+    const org = enabledOrgs.get(client.organization_id);
+    if (!org) continue;
 
     const daysSince = Math.round(
       (now - new Date(lastCompleted.scheduled_at).getTime()) /
         (24 * 60 * 60 * 1000),
     );
 
-    const replyTo =
-      org.sender_email ?? process.env.EMAIL_FROM ?? "noreply@sollos3.com";
+    let replyTo = replyToCache.get(client.organization_id);
+    if (!replyTo) {
+      replyTo = org.sender_email ?? "";
+      if (!replyTo) {
+        const admins = await getOrgAdminRecipients(client.organization_id);
+        replyTo = admins[0]?.email ?? process.env.EMAIL_FROM ?? "noreply@sollos3.com";
+      }
+      replyToCache.set(client.organization_id, replyTo);
+    }
+
+    // Marketing unsubscribe (CASL, audit L2): reuse the client's GBP
+    // unsubscribe token as the general marketing token — mint lazily.
+    let unsubToken: string | null = null;
+    try {
+      const { data: tokRow } = (await db
+        .from("clients")
+        .select("gbp_unsubscribe_token")
+        .eq("id", client.id)
+        .maybeSingle()) as unknown as {
+        data: { gbp_unsubscribe_token: string | null } | null;
+      };
+      unsubToken = tokRow?.gbp_unsubscribe_token ?? null;
+      if (!unsubToken) {
+        const { generateClaimToken } = await import("@/lib/claim-token");
+        unsubToken = generateClaimToken(24);
+        await db
+          .from("clients")
+          .update({ gbp_unsubscribe_token: unsubToken } as never)
+          .eq("id", client.id);
+      }
+    } catch {
+      unsubToken = null; // best-effort — email still goes out without the link
+    }
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+    const unsubscribeUrl = unsubToken
+      ? `${siteUrl}/api/u/m/${unsubToken}`
+      : undefined;
 
     const template = rebookingPromptEmail({
       clientName: client.name ?? "there",
@@ -1647,12 +1606,14 @@ export async function sendRebookingPrompts(): Promise<{
       replyToAddress: replyTo,
       brandColor: org.brand_color ?? undefined,
       logoUrl: org.logo_url ?? undefined,
+      unsubscribeUrl,
     });
 
     const ok = await sendOrgEmail(client.organization_id, {
       to: client.email,
       toName: client.name ?? undefined,
       ...template,
+      ...(unsubscribeUrl ? { unsubscribeUrl } : {}),
     });
 
     if (ok) {
@@ -1786,6 +1747,26 @@ export async function sendStaleEstimateFollowups(): Promise<{
     }
     if (!org || !org.enabled) continue;
 
+    // CLAIM-FIRST CAS (audit G3): stamp the stage before sending, guarded on
+    // "still sent, still undecided, stage not yet stamped". Zero rows means a
+    // concurrent run beat us OR the owner/client decided while this batch was
+    // in flight — either way, don't email "still thinking it over?" to someone
+    // who just approved. Rolled back if the send fails so the stage retries.
+    const stamp = new Date().toISOString();
+    const stampCol =
+      stage === "day14"
+        ? "client_followup_14d_sent_at"
+        : "client_followup_7d_sent_at";
+    const { data: claimed } = (await db
+      .from("estimates")
+      .update({ [stampCol]: stamp })
+      .eq("id", est.id)
+      .eq("status", "sent")
+      .is("decided_at", null)
+      .is(stampCol, null)
+      .select("id")) as unknown as { data: Array<{ id: string }> | null };
+    if (!claimed || claimed.length === 0) continue;
+
     const template = estimateFollowupEmail({
       clientName: est.client.name ?? "there",
       orgName: org.name,
@@ -1803,21 +1784,18 @@ export async function sendStaleEstimateFollowups(): Promise<{
     });
 
     if (ok) {
-      const stamp = new Date().toISOString();
-      const update =
-        stage === "day14"
-          ? { client_followup_14d_sent_at: stamp }
-          : { client_followup_7d_sent_at: stamp };
-      await db
-        .from("estimates")
-        .update(update)
-        .eq("id", est.id);
-
       if (stage === "day14") sent14d += 1;
       else sent7d += 1;
       console.log(
-        `[auto] Estimate ${stage} follow-up sent for ${est.id} to ${est.client.email}`,
+        `[auto] Estimate ${stage} follow-up sent for ${est.id} to ${maskEmail(est.client.email)}`,
       );
+    } else {
+      // Send failed — release the claim so this stage retries next run.
+      await db
+        .from("estimates")
+        .update({ [stampCol]: null })
+        .eq("id", est.id)
+        .eq(stampCol, stamp);
     }
   }
 
@@ -3173,6 +3151,14 @@ export async function sendEstimateToClient(
         .update({
           client_email_sent_at: new Date().toISOString(),
           sent_at: new Date().toISOString(),
+          // Resending restarts the clock, so the public link must live at
+          // least as long as the follow-up track that references it —
+          // previously sent_at was bumped but expires_at wasn't, so the
+          // "view before it expires" email could link to a page already
+          // showing "expired" (audit G5).
+          expires_at: new Date(
+            Date.now() + 30 * 24 * 60 * 60 * 1000,
+          ).toISOString(),
           // Bump to "sent" for draft estimates. Don't downgrade
           // approved/declined if the admin re-sends.
           ...(estimate.status === "draft" ? { status: "sent" } : {}),
@@ -3342,6 +3328,35 @@ export async function autoOnInvoicePaid(invoiceId: string) {
       category: "growth",
     });
     if (!billingDecision.email && !growthDecision.email) return;
+
+    // CAS-claim the send. This now fires from payment webhooks as well as the
+    // manual mark-paid action, and a later correcting payment row also re-ran
+    // it (audit P2/P7) — the claim makes the receipt+review bundle at-most-once
+    // per invoice regardless of how many callers race. Zero rows = someone
+    // else already claimed it. Tolerant of the column not existing yet
+    // (pre-migration deploys proceed unclaimed rather than going silent).
+    try {
+      const { data: claimed, error: claimErr } = (await db
+        .from("invoices")
+        .update({ receipt_sent_at: new Date().toISOString() } as never)
+        .eq("id", invoiceId)
+        .is("receipt_sent_at" as never, null as never)
+        .select("id")) as unknown as {
+        data: Array<{ id: string }> | null;
+        error: { message: string } | null;
+      };
+      if (!claimErr && (!claimed || claimed.length === 0)) {
+        console.log(
+          `[auto] autoOnInvoicePaid: invoice ${invoiceId} already handled — skipping`,
+        );
+        return;
+      }
+    } catch (claimEx) {
+      console.error(
+        "[auto] autoOnInvoicePaid claim step threw (proceeding unclaimed):",
+        claimEx,
+      );
+    }
 
     const { data: orgData } = await db
       .from("organizations")
@@ -5659,9 +5674,27 @@ export async function autoGenerateRecurringInvoices(): Promise<{
       issuedAt.getTime() + series.due_days * 24 * 60 * 60 * 1000,
     );
 
-    // Compute the next run date based on cadence.
+    // Compute the next run date based on cadence. Month adds are CLAMPED to
+    // the target month's last day — naive setUTCMonth on Jan 31 lands on
+    // "Feb 31" = Mar 3, permanently drifting the series off its anchor day
+    // and skipping a whole billing month (audit P6).
+    const addMonthsClamped = (from: Date, months: number): Date => {
+      const y = from.getUTCFullYear();
+      const m = from.getUTCMonth() + months;
+      const lastDayOfTarget = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+      return new Date(
+        Date.UTC(
+          y,
+          m,
+          Math.min(from.getUTCDate(), lastDayOfTarget),
+          from.getUTCHours(),
+          from.getUTCMinutes(),
+          from.getUTCSeconds(),
+        ),
+      );
+    };
     const current = new Date(series.next_run_at);
-    const next = new Date(current);
+    let next = new Date(current);
     switch (series.cadence) {
       case "weekly":
         next.setUTCDate(current.getUTCDate() + 7);
@@ -5670,10 +5703,10 @@ export async function autoGenerateRecurringInvoices(): Promise<{
         next.setUTCDate(current.getUTCDate() + 14);
         break;
       case "monthly":
-        next.setUTCMonth(current.getUTCMonth() + 1);
+        next = addMonthsClamped(current, 1);
         break;
       case "quarterly":
-        next.setUTCMonth(current.getUTCMonth() + 3);
+        next = addMonthsClamped(current, 3);
         break;
     }
 

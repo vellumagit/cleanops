@@ -88,7 +88,15 @@ function periodLabel(runDate: Date, cadence: "biweekly" | "monthly"): string {
   });
 
   if (cadence === "monthly") {
-    return `${monthName} ${year}`;
+    // The monthly run on the 1st bills the PREVIOUS month's work — label it
+    // that way. It used to say the run month ("Services — July" for June's
+    // jobs), which is wrong on a client-facing money document (audit P5).
+    const prev = new Date(Date.UTC(year, runDate.getUTCMonth() - 1, 1));
+    const prevName = prev.toLocaleString("en-US", {
+      month: "long",
+      timeZone: "UTC",
+    });
+    return `${prevName} ${prev.getUTCFullYear()}`;
   }
 
   // biweekly: 1st run covers 16th–last of previous month, 15th run covers 1st–14th

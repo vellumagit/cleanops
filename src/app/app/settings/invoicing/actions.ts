@@ -49,6 +49,20 @@ export async function saveInvoiceAutoSendAction(
       .update({ auto_send_state: "held", auto_send_at: null } as never)
       .eq("organization_id", membership.organization_id)
       .eq("auto_send_state" as never, "scheduled" as never) as unknown as Promise<unknown>);
+  } else {
+    // Turning it back ON re-arms previously-held DRAFTS — they were only held
+    // because the org disabled auto-send, and before this they stayed held
+    // forever (audit P8). Rescheduled with the configured delay from NOW so
+    // the owner gets the same review window as any fresh draft.
+    const sendAt = new Date(
+      Date.now() + delayHours * 60 * 60 * 1000,
+    ).toISOString();
+    await (admin
+      .from("invoices")
+      .update({ auto_send_state: "scheduled", auto_send_at: sendAt } as never)
+      .eq("organization_id", membership.organization_id)
+      .eq("auto_send_state" as never, "held" as never)
+      .eq("status", "draft") as unknown as Promise<unknown>);
   }
 
   await logAuditEvent({

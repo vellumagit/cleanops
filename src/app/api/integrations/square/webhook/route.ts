@@ -227,4 +227,23 @@ async function recordCompletedPayment(
     provider: "square",
     provider_payment_id: args.paymentId,
   } as never);
+
+  // Receipt + review request when this payment completed the invoice — same
+  // wiring as the Stripe Connect webhook (audit P2). Idempotent via the
+  // CAS claim on invoices.receipt_sent_at inside autoOnInvoicePaid.
+  try {
+    const { data: after } = (await admin
+      .from("invoices")
+      .select("paid_at")
+      .eq("id", invoice.id)
+      .maybeSingle()) as unknown as { data: { paid_at: string | null } | null };
+    if (after?.paid_at) {
+      const { autoOnInvoicePaid } = await import("@/lib/automations");
+      autoOnInvoicePaid(invoice.id).catch((err) =>
+        console.error("[square-webhook] autoOnInvoicePaid failed:", err),
+      );
+    }
+  } catch (err) {
+    console.error("[square-webhook] paid-check failed:", err);
+  }
 }

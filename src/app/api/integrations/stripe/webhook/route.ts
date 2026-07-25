@@ -94,6 +94,28 @@ async function recordStripeInvoicePayment(
     provider_payment_id: args.piId,
     provider_fee_cents: args.feeCents,
   } as never) as unknown as Promise<unknown>);
+
+  // If that payment completed the invoice (the ledger trigger flips paid_at),
+  // fire the receipt + review-request bundle. Online payers previously never
+  // got receipts — autoOnInvoicePaid only ran from the manual mark-paid action
+  // (audit P2). Safe against retries/duplicates: it CAS-claims
+  // invoices.receipt_sent_at internally, and it's gated by the org toggle +
+  // per-client preferences.
+  try {
+    const { data: after } = (await admin
+      .from("invoices")
+      .select("paid_at")
+      .eq("id", invoice.id)
+      .maybeSingle()) as unknown as { data: { paid_at: string | null } | null };
+    if (after?.paid_at) {
+      const { autoOnInvoicePaid } = await import("@/lib/automations");
+      autoOnInvoicePaid(invoice.id).catch((err) =>
+        console.error("[stripe-connect] autoOnInvoicePaid failed:", err),
+      );
+    }
+  } catch (err) {
+    console.error("[stripe-connect] paid-check failed:", err);
+  }
 }
 
 export async function POST(req: NextRequest) {

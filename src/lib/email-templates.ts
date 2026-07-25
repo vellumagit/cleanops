@@ -1682,6 +1682,8 @@ export function rebookingPromptEmail(args: {
   replyToAddress: string;
   brandColor?: string;
   logoUrl?: string;
+  /** One-click marketing unsubscribe link (CASL) — rendered in the footer. */
+  unsubscribeUrl?: string;
 }) {
   const subject = `Ready for your next clean? — ${args.orgName}`;
   const html = layout(
@@ -1698,8 +1700,11 @@ export function rebookingPromptEmail(args: {
     </p>
     ${button("Book My Next Clean", `mailto:${args.replyToAddress}?subject=${encodeURIComponent("Ready to book my next clean")}`, args.brandColor ? `#${args.brandColor.replace(/^#/, "")}` : DEFAULT_BRAND)}
     <p style="margin:0;font-size:12px;line-height:1.5;color:#a1a1aa;">
-      Not ready yet? No rush — we&rsquo;ll reach out again later. If you&rsquo;d
-      prefer no reminders, let us know and we&rsquo;ll stop.
+      Not ready yet? No rush — we&rsquo;ll reach out again later.${
+        args.unsubscribeUrl
+          ? ` <a href="${args.unsubscribeUrl}" style="color:#a1a1aa;text-decoration:underline;">Stop these reminders</a>.`
+          : " If you&rsquo;d prefer no reminders, let us know and we&rsquo;ll stop."
+      }
     </p>
     `,
     {
@@ -1729,13 +1734,13 @@ export function estimateFollowupEmail(args: {
   const is7d = args.stage === "day7";
   const subject = is7d
     ? `Any questions on your estimate? — ${args.orgName}`
-    : `Last chance — your estimate expires soon`;
+    : `Your estimate expires in about two weeks`;
   const headline = is7d
     ? "Still thinking it over?"
     : "Your estimate expires soon";
   const body = is7d
     ? "Just checking in on the estimate we sent last week. If you have any questions or want to tweak the scope, reply to this email and we&rsquo;ll sort it out."
-    : "The estimate we sent a couple weeks ago will auto-expire in the next few days. If you&rsquo;d still like to move forward, now&rsquo;s the time.";
+    : "The estimate we sent a couple weeks ago will expire about two weeks from now. If you&rsquo;d still like to move forward, now&rsquo;s the time.";
 
   const html = layout(
     `
@@ -1758,7 +1763,7 @@ export function estimateFollowupEmail(args: {
       logoUrl: args.logoUrl,
       preheader: is7d
         ? "Any questions on your estimate?"
-        : "Your estimate expires in a few days",
+        : "Your estimate expires in about two weeks",
     },
   );
   const text = `${headline} — ${args.orgName}\n\nHi ${args.clientName}, ${body.replace(/&rsquo;/g, "'")}\n\nAmount: ${args.amountFormatted}\nView: ${args.publicUrl}`;

@@ -61,17 +61,28 @@ export async function resolveClientNotify(
 
   let orgDefault = args.orgDefaultCache?.get(args.organizationId);
   if (orgDefault === undefined) {
-    const { data: org } = (await db
+    const { data: org, error: orgErr } = (await db
       .from("organizations")
       .select("default_contact_preference")
       .eq("id", args.organizationId)
-      .maybeSingle()) as { data: { default_contact_preference?: string } | null };
+      .maybeSingle()) as {
+      data: { default_contact_preference?: string } | null;
+      error: { message: string } | null;
+    };
+    if (orgErr) {
+      // Fail toward the safe default (email) but say so — a silent fallback
+      // here is indistinguishable from a configured "email" org (audit B9).
+      console.error(
+        `[notify-gate] org default lookup failed for ${args.organizationId} (falling back to email):`,
+        orgErr.message,
+      );
+    }
     orgDefault = (org?.default_contact_preference ??
       "email") as OrgContactDefault;
     args.orgDefaultCache?.set(args.organizationId, orgDefault);
   }
 
-  const { data: client } = (await db
+  const { data: client, error: clientErr } = (await db
     .from("clients")
     .select(
       "name, email, phone, sms_opted_in, contact_preference, contact_overrides",
@@ -86,8 +97,18 @@ export async function resolveClientNotify(
       contact_preference: string | null;
       contact_overrides: ContactOverrides | null;
     } | null;
+    error: { message: string } | null;
   };
 
+  if (clientErr) {
+    // A transient DB error must not read as "client has no channels" without
+    // a trace — for one-shot triggers the notice is permanently lost, and
+    // this log line is the only way to know why (audit B9).
+    console.error(
+      `[notify-gate] client lookup failed for ${args.clientId} (suppressing send):`,
+      clientErr.message,
+    );
+  }
   if (!client) return nothing("no_reachable_channel");
 
   const resolved = resolveClientChannels({

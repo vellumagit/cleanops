@@ -376,13 +376,6 @@ const STAGES: Stage[] = [
         trigger: "Feed feature toggle",
       },
       {
-        key: "system_feed_events",
-        title: "Auto-post system events to feed",
-        description:
-          "Automatically posts activity to the team feed when bookings are created, updated, or completed. Only matters when the feed itself is visible.",
-        trigger: "Booking events",
-      },
-      {
         key: "divide_crew_hours",
         title: "Divide team-job hours across the crew",
         description:
