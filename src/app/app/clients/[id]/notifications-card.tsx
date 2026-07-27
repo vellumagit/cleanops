@@ -47,10 +47,13 @@ export function ClientNotificationsCard({
   contactOverrides,
   hasEmail,
   smsOptedIn,
+  perClientMode = false,
 }: {
   clientId: string;
   canEdit: boolean;
   orgDefault: OrgContactDefault;
+  /** Org is in per-client routing mode — copy changes accordingly. */
+  perClientMode?: boolean;
   contactPreference: string | null;
   contactOverrides: ContactOverrides | null;
   hasEmail: boolean;
@@ -84,8 +87,12 @@ export function ClientNotificationsCard({
             {isDnc
               ? "Do not contact"
               : pref === "custom"
-                ? "Custom"
-                : "Follows org default"}
+                ? perClientMode
+                  ? "Configured"
+                  : "Custom"
+                : perClientMode
+                  ? "Not configured — no messages"
+                  : "Follows org default"}
           </span>
         </div>
         {canEdit && (
@@ -136,14 +143,30 @@ export function ClientNotificationsCard({
       )}
 
       <p className="mt-3 text-[11px] text-muted-foreground">
-        Org-wide rules live in{" "}
-        <Link
-          href="/app/settings/automations"
-          className="underline underline-offset-2 hover:text-foreground"
-        >
-          Settings → Automations
-        </Link>
-        . This card is what this client actually gets.
+        {perClientMode ? (
+          <>
+            Your business is in per-client mode — manage every client at once
+            in{" "}
+            <Link
+              href="/app/settings/automations"
+              className="underline underline-offset-2 hover:text-foreground"
+            >
+              Settings → Automations
+            </Link>
+            .
+          </>
+        ) : (
+          <>
+            Org-wide rules live in{" "}
+            <Link
+              href="/app/settings/automations"
+              className="underline underline-offset-2 hover:text-foreground"
+            >
+              Settings → Automations
+            </Link>
+            . This card is what this client actually gets.
+          </>
+        )}
       </p>
     </div>
   );

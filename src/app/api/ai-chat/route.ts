@@ -47,11 +47,18 @@ them any other way):
   One-click presets ("The essentials" = 8 core automations, "Full service" =
   19) turn on a sensible bundle; individual toggles fine-tune. Presets only
   ever turn things ON.
+- ROUTING MODE (the "choose your route" card in Settings → Automations):
+  "All clients" (simple, the default) — client-facing automations you enable
+  apply to every client, with per-client exceptions on each client's page.
+  "Per client" (full control) — client messages are configured client by
+  client in a manager list inside Settings → Automations (also linked from
+  each client's profile); an unconfigured client receives NOTHING, and the
+  org-wide client-facing toggles are hidden/ignored in this mode. Team,
+  back-office, and housekeeping automations stay org-level in both modes.
 - Client messages then pass two more gates: the client's own notification
-  setting (on each client's page: follow the org default, custom per category
-  — booking / billing / reviews — or do-not-contact), and for texts, the
-  client's SMS opt-in (double opt-in; STOP always wins). Texts never send
-  without opt-in.
+  setting (follow the org default, custom per category — booking / billing /
+  reviews — or do-not-contact), and for texts, the client's SMS opt-in
+  (double opt-in; STOP always wins). Texts never send without opt-in.
 - Invoice AUTO-SEND timing (the delay before a drafted invoice emails itself)
   lives in Settings → Invoicing, not Automations. Consolidated
   biweekly/monthly billing is driven by each client's billing cadence on their

@@ -15,14 +15,22 @@ import { requireMembership } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { PageShell } from "@/components/page-shell";
 import { SubmitButton } from "@/components/submit-button";
-import { resolveAutomationEnabled } from "@/lib/automation-defaults";
+import {
+  resolveAutomationEnabled,
+  CLIENT_FACING_AUTOMATION_KEYS,
+} from "@/lib/automation-defaults";
 import {
   toggleAutomationAction,
   setOrgContactDefaultAction,
   toggleAutomationsMasterAction,
   applyAutomationPresetAction,
+  setAutomationModeAction,
   type AutomationKey,
 } from "./actions";
+import {
+  ClientAutomationMatrix,
+  type MatrixClientRow,
+} from "./client-matrix";
 
 export const metadata = { title: "Automations" };
 
@@ -423,19 +431,39 @@ export default async function AutomationsPage() {
 
   const { data: org } = (await admin
     .from("organizations")
-    .select("automation_settings, default_contact_preference, automations_enabled")
+    .select(
+      "automation_settings, default_contact_preference, automations_enabled, automation_mode",
+    )
     .eq("id", membership.organization_id)
     .maybeSingle()) as unknown as {
     data: {
       automation_settings: Record<string, { enabled: boolean }>;
       default_contact_preference: string | null;
       automations_enabled: boolean | null;
+      automation_mode: string | null;
     } | null;
   };
 
   const settings = org?.automation_settings ?? {};
   const contactDefault = org?.default_contact_preference ?? "email";
   const masterOn = org?.automations_enabled === true;
+  const perClientMode = org?.automation_mode === "per_client";
+
+  // Per-client mode: load the client list for the manager. Active clients
+  // only; the matrix is the authority surface in this mode.
+  let matrixClients: MatrixClientRow[] = [];
+  if (perClientMode) {
+    const { data: clientRows } = (await admin
+      .from("clients")
+      .select(
+        "id, name, email, phone, sms_opted_in, contact_preference, contact_overrides",
+      )
+      .eq("organization_id", membership.organization_id)
+      .is("archived_at", null)
+      .order("name", { ascending: true })
+      .limit(500)) as unknown as { data: MatrixClientRow[] | null };
+    matrixClients = clientRows ?? [];
+  }
   const enabledCount = Object.values(settings).filter(
     (v) => (v as { enabled?: boolean })?.enabled === true,
   ).length;
@@ -524,7 +552,64 @@ export default async function AutomationsPage() {
         </span>
       </div>
 
-      {/* PRESETS — the first decision is one click, not thirty-nine. */}
+      {/* ROUTE CHOOSER — the "choose your route" master decision. */}
+      <div className="mb-6 rounded-lg border border-border bg-card p-4">
+        <p className="text-sm font-medium">How are client messages managed?</p>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <form action={setAutomationModeAction}>
+            <input type="hidden" name="mode" value="all_clients" />
+            <button
+              type="submit"
+              className={`w-full rounded-xl border p-4 text-left transition-colors ${
+                !perClientMode
+                  ? "border-foreground bg-muted/60"
+                  : "border-border hover:bg-muted/40"
+              }`}
+            >
+              <p className="text-sm font-medium">
+                All clients {!perClientMode && "· current"}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Simple. What you turn on below applies to every client. Set
+                exceptions on individual clients when someone wants different.
+              </p>
+            </button>
+          </form>
+          <form action={setAutomationModeAction}>
+            <input type="hidden" name="mode" value="per_client" />
+            <button
+              type="submit"
+              className={`w-full rounded-xl border p-4 text-left transition-colors ${
+                perClientMode
+                  ? "border-foreground bg-muted/60"
+                  : "border-border hover:bg-muted/40"
+              }`}
+            >
+              <p className="text-sm font-medium">
+                Per client {perClientMode && "· current"}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Full control. Client messages are configured client by client
+                in the manager below — nothing sends to a client until you
+                switch it on for them. The org-wide client toggles step aside.
+              </p>
+            </button>
+          </form>
+        </div>
+      </div>
+
+      {/* PER-CLIENT MANAGER — the authority surface in per-client mode. */}
+      {perClientMode && (
+        <div className={`mb-8 ${masterOn ? "" : "pointer-events-none opacity-50"}`}>
+          <ClientAutomationMatrix rows={matrixClients} />
+        </div>
+      )}
+
+      {/* PRESETS — the first decision is one click, not thirty-nine.
+          All-clients mode only: in per-client mode the client-facing keys
+          they set are ignored, so offering them would be the exact redundancy
+          the mode exists to remove. */}
+      {!perClientMode && (
       <div className="mb-6">
         <p className="mb-2 text-xs font-medium text-muted-foreground">
           Start from a preset — fine-tune anything after. Presets only turn
@@ -561,8 +646,11 @@ export default async function AutomationsPage() {
           ))}
         </div>
       </div>
+      )}
 
-      {/* HOUSE DEFAULT for client messages */}
+      {/* HOUSE DEFAULT for client messages — the all-clients route's delivery
+          default. Hidden in per-client mode (each client picks channels). */}
+      {!perClientMode && (
       <div className="mb-8 rounded-lg border border-border bg-card p-4">
         <p className="text-sm font-medium">Default client notifications</p>
         <p className="mt-1 text-xs text-muted-foreground">
@@ -603,14 +691,44 @@ export default async function AutomationsPage() {
         </p>
       </div>
 
+      )}
+
       {/* THE JOURNEY — every automation, in the order a job actually happens. */}
       <div
         className={`space-y-3 ${masterOn ? "" : "pointer-events-none opacity-50"}`}
       >
         {STAGES.map((stage) => {
           const Icon = stage.icon;
-          const total = stage.automations.length;
-          const onCount = stage.automations.filter((a) =>
+          // Per-client mode: client-facing toggles are managed in the matrix
+          // above — hiding them here removes the redundant second authority.
+          const visibleAutomations = perClientMode
+            ? stage.automations.filter(
+                (a) => !CLIENT_FACING_AUTOMATION_KEYS.has(a.key),
+              )
+            : stage.automations;
+          const hiddenCount = stage.automations.length - visibleAutomations.length;
+          if (visibleAutomations.length === 0) {
+            return (
+              <div
+                key={stage.id}
+                className="flex items-center gap-3 rounded-xl border border-dashed border-border bg-muted/20 p-4"
+              >
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-muted">
+                  <Icon className="h-4 w-4 text-muted-foreground" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-muted-foreground">
+                    {stage.label}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Client messages — managed per client above.
+                  </p>
+                </div>
+              </div>
+            );
+          }
+          const total = visibleAutomations.length;
+          const onCount = visibleAutomations.filter((a) =>
             isEnabled(a.key),
           ).length;
           return (
@@ -667,8 +785,15 @@ export default async function AutomationsPage() {
                     </SubmitButton>
                   </form>
                 )}
+                {hiddenCount > 0 && (
+                  <p className="mb-3 rounded-md border border-dashed border-border bg-muted/30 px-3 py-2 text-[11px] text-muted-foreground">
+                    {hiddenCount} client message{hiddenCount === 1 ? "" : "s"}{" "}
+                    from this stage {hiddenCount === 1 ? "is" : "are"} managed
+                    per client above.
+                  </p>
+                )}
                 <ul className="space-y-3">
-                  {stage.automations.map((a) => {
+                  {visibleAutomations.map((a) => {
                     const on = isEnabled(a.key);
                     return (
                       <li

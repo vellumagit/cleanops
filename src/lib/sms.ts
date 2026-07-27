@@ -234,7 +234,7 @@ export async function sendOrgSms(
     const { data } = (await admin
       .from("organizations")
       .select(
-        "sms_enabled, sms_from_number, sms_overage_cap_cents, sms_overage_item_id, billing_override, automation_settings, automations_enabled",
+        "sms_enabled, sms_from_number, sms_overage_cap_cents, sms_overage_item_id, billing_override, automation_settings, automations_enabled, automation_mode",
       )
       .eq("id", orgId)
       .maybeSingle()) as unknown as { data: OrgSmsConfig | null };
@@ -254,11 +254,20 @@ export async function sendOrgSms(
   // toggle must be on. The master-switch check was previously missing here,
   // so "Turn all off" stopped emails but SMS automations kept sending.
   if (!MANUAL_SMS_KEYS.has(args.automationKey)) {
-    const masterOn =
-      (org as unknown as { automations_enabled?: boolean | null })
-        .automations_enabled === true;
-    if (!masterOn) return skipped;
+    const orgFlags = org as unknown as {
+      automations_enabled?: boolean | null;
+      automation_mode?: string | null;
+    };
+    if (orgFlags.automations_enabled !== true) return skipped;
+    // Per-client routing mode: the org toggle for CLIENT-FACING keys is not
+    // an authority — the caller already resolved the client's own settings
+    // (and the opt-in gate below still applies). Employee keys keep the
+    // org toggle in both modes.
+    const skipPerKey =
+      orgFlags.automation_mode === "per_client" &&
+      CLIENT_FACING_SMS_KEYS.has(args.automationKey);
     if (
+      !skipPerKey &&
       !resolveAutomationEnabled(org.automation_settings ?? {}, args.automationKey)
     ) {
       return skipped;

@@ -99,3 +99,37 @@ export function resolveAutomationEnabled(
 export function isDefaultOff(_key: string): boolean {
   return true;
 }
+
+/**
+ * Automation keys whose recipient is the org's CLIENT. These are the keys the
+ * routing mode governs:
+ *
+ *   - all_clients mode: the org toggle turns the automation on for everyone;
+ *     per-client settings are exceptions.
+ *   - per_client mode: the org toggle is IGNORED (no redundant second
+ *     authority) — each client's own configuration decides, and an
+ *     unconfigured client gets nothing.
+ *
+ * Team, back-office, owner-alert, and housekeeping keys are deliberately NOT
+ * here — they aren't per-client concepts and stay org-level in both modes.
+ */
+export const CLIENT_FACING_AUTOMATION_KEYS: ReadonlySet<string> = new Set([
+  "booking_confirmation_email",
+  "booking_confirmation_sms",
+  "booking_rescheduled_email",
+  "booking_rescheduled_sms",
+  "booking_cancelled_email",
+  "booking_cancelled_sms",
+  "booking_reminder_client_email",
+  "booking_reminder_client_sms",
+  "invoice_overdue_reminder",
+  "invoice_paid_receipt",
+  "review_request_after_completion",
+  "gbp_review_request",
+  "rebooking_prompt_email",
+  "estimate_followup_email",
+]);
+
+export function isClientFacingAutomation(key: string): boolean {
+  return CLIENT_FACING_AUTOMATION_KEYS.has(key);
+}

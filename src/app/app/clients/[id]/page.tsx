@@ -32,7 +32,7 @@ import {
 import { getOrgCurrency } from "@/lib/org-currency";
 import { PortalInviteButton } from "./portal-invite-button";
 import { ClientNotificationsCard } from "./notifications-card";
-import { fetchOrgContactDefault } from "../org-contact-default";
+import { fetchOrgNotificationContext } from "../org-contact-default";
 import { SmsOptInButton } from "./sms-opt-in-button";
 import {
   markGbpReviewedAction,
@@ -189,9 +189,8 @@ export default async function ClientDetailPage({
   const gbpPreconditionsMet =
     !!client.email && !!orgGbp?.google_review_url;
 
-  const orgContactDefault = await fetchOrgContactDefault(
-    membership.organization_id,
-  );
+  const { orgDefault: orgContactDefault, perClientMode } =
+    await fetchOrgNotificationContext(membership.organization_id);
 
   return (
     <PageShell
@@ -338,6 +337,7 @@ export default async function ClientDetailPage({
           clientId={client.id}
           canEdit={canEdit}
           orgDefault={orgContactDefault}
+          perClientMode={perClientMode}
           contactPreference={client.contact_preference}
           contactOverrides={
             client.contact_overrides as import("@/lib/notification-preferences").ContactOverrides | null

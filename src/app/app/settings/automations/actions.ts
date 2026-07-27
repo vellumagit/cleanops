@@ -219,6 +219,70 @@ export async function applyAutomationPresetAction(formData: FormData) {
 }
 
 /**
+ * Routing mode — the "choose your route" switch.
+ *   all_clients: enabled client-facing automations reach every client;
+ *                per-client settings act as exceptions. (Simple.)
+ *   per_client:  client-facing sends are configured client by client in the
+ *                manager below; the org-level client-facing toggles are
+ *                ignored so there's no redundant second authority.
+ */
+export async function setAutomationModeAction(formData: FormData) {
+  const { membership } = await getActionContext();
+  if (!["owner", "admin"].includes(membership.role)) return;
+
+  const mode = String(formData.get("mode") ?? "");
+  if (!["all_clients", "per_client"].includes(mode)) {
+    console.warn(`[automations] invalid mode rejected: "${mode}"`);
+    return;
+  }
+
+  const admin = createSupabaseAdminClient();
+  await admin
+    .from("organizations")
+    .update({ automation_mode: mode } as never)
+    .eq("id", membership.organization_id);
+
+  revalidatePath("/app/settings/automations", "page");
+  revalidatePath("/app/clients", "page");
+}
+
+/**
+ * Lightweight per-client notification save for the per-client manager rows
+ * (the full client form has its own path). Org-scoped; whitelists every value
+ * so a crafted POST can't write arbitrary JSON.
+ */
+export async function setClientNotificationPrefsAction(formData: FormData) {
+  const { membership } = await getActionContext();
+  if (!["owner", "admin"].includes(membership.role)) return;
+
+  const clientId = String(formData.get("client_id") ?? "");
+  const preference = String(formData.get("contact_preference") ?? "inherit");
+  if (!clientId) return;
+  if (!["inherit", "custom", "do_not_contact"].includes(preference)) return;
+
+  const overrides: Record<string, string> = {};
+  const channels = ["off", "email", "sms", "both", "inherit"];
+  for (const cat of ["booking", "billing", "growth"] as const) {
+    const v = String(formData.get(`override_${cat}`) ?? "");
+    if (channels.includes(v)) overrides[cat] = v;
+  }
+
+  const admin = createSupabaseAdminClient();
+  await admin
+    .from("clients")
+    .update({
+      contact_preference: preference,
+      contact_overrides: overrides,
+    } as never)
+    .eq("id", clientId)
+    .eq("organization_id", membership.organization_id);
+
+  revalidatePath("/app/settings/automations", "page");
+  revalidatePath(`/app/clients/${clientId}`, "page");
+  revalidatePath("/app/clients", "page");
+}
+
+/**
  * Master switch. When off, NO automation fires for the org regardless of the
  * per-key toggles — the single "stop everything" control. New orgs start off.
  */
