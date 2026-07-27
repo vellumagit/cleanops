@@ -116,6 +116,41 @@ describe("resolveClientChannels — custom per-category overrides", () => {
   });
 });
 
+describe("resolveClientChannels — advanced per-message mutes", () => {
+  const base_: ResolveInput = {
+    ...base,
+    clientPref: "custom",
+    overrides: { booking: "email", muted_events: ["reminder"] },
+    hasEmail: true,
+    smsOptedIn: false,
+  };
+  it("mutes only the muted event", () => {
+    expect(
+      resolveClientChannels({ ...base_, category: "booking", event: "reminder" }),
+    ).toEqual({ email: false, sms: false, reason: "muted_by_client" });
+  });
+  it("sibling events in the same category still send", () => {
+    expect(
+      resolveClientChannels({ ...base_, category: "booking", event: "confirmation" }),
+    ).toMatchObject({ email: true, reason: "ok" });
+  });
+  it("no event supplied → mutes cannot apply", () => {
+    expect(
+      resolveClientChannels({ ...base_, category: "booking" }),
+    ).toMatchObject({ email: true, reason: "ok" });
+  });
+  it("do_not_contact still wins over everything", () => {
+    expect(
+      resolveClientChannels({
+        ...base_,
+        clientPref: "do_not_contact",
+        category: "booking",
+        event: "confirmation",
+      }),
+    ).toMatchObject({ reason: "do_not_contact" });
+  });
+});
+
 describe("summarizeClientChannels — the 'what sends' preview", () => {
   it("returns a resolution for all three categories", () => {
     const s = summarizeClientChannels({

@@ -407,6 +407,7 @@ export async function runInvoiceAutoSend(): Promise<{
       organizationId: inv.organization_id,
       clientId: inv.client_id,
       category: "billing",
+      event: "invoice_send",
       orgDefaultCache,
     });
     if (!decision.email) {

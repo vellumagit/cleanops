@@ -2,16 +2,25 @@
 
 import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
-import { Ban, Search } from "lucide-react";
+import { Ban, ChevronDown, Search } from "lucide-react";
+import {
+  NOTIFICATION_EVENTS,
+  type NotificationEvent,
+} from "@/lib/notification-preferences";
 import { setClientNotificationPrefsAction } from "./actions";
 
 /**
- * PER-CLIENT MODE manager — the primary surface for Route B. One row per
- * client with the three category channels + a "no contact" switch, saving on
- * change. Linked from each client's profile card for quick access.
+ * PER-CLIENT MODE manager — Route B's authority surface.
  *
- * Unconfigured (inherit) clients receive NOTHING in this mode, so the empty
- * state of a row is honest: "No messages".
+ * Collapsed rows read as one-line summaries; expanding a client reveals:
+ *   1. Quick setup — one-tap presets for that client
+ *   2. The three category channel pickers
+ *   3. "Advanced automations" — an explicit per-client disclosure that
+ *      reveals per-message mutes (category picks the channel; a mute turns
+ *      off just that one message for just that client)
+ *
+ * Everything saves on change into clients.contact_overrides (whitelisted
+ * server-side). Unconfigured clients receive NOTHING in this mode.
  */
 
 export type MatrixClientRow = {
@@ -21,13 +30,13 @@ export type MatrixClientRow = {
   phone: string | null;
   sms_opted_in: boolean | null;
   contact_preference: string | null;
-  contact_overrides: Record<string, string> | null;
+  contact_overrides: Record<string, unknown> | null;
 };
 
 const CATEGORIES = [
-  { key: "booking", label: "Booking" },
+  { key: "booking", label: "Booking updates" },
   { key: "billing", label: "Billing" },
-  { key: "growth", label: "Reviews" },
+  { key: "growth", label: "Reviews & rebooking" },
 ] as const;
 
 const CHANNELS = [
@@ -37,23 +46,42 @@ const CHANNELS = [
   { key: "both", label: "Both" },
 ] as const;
 
+const CHANNEL_LABEL: Record<string, string> = {
+  off: "Off",
+  email: "Email",
+  sms: "Text",
+  both: "Email + text",
+};
+
 type RowState = {
   preference: string;
   overrides: Record<string, string>;
+  muted: NotificationEvent[];
+  advanced: boolean;
 };
+
+function parseRow(r: MatrixClientRow): RowState {
+  const ov = (r.contact_overrides ?? {}) as Record<string, unknown>;
+  return {
+    preference: r.contact_preference ?? "inherit",
+    overrides: Object.fromEntries(
+      CATEGORIES.map((c) => [
+        c.key,
+        typeof ov[c.key] === "string" ? (ov[c.key] as string) : "off",
+      ]),
+    ),
+    muted: Array.isArray(ov.muted_events)
+      ? (ov.muted_events as NotificationEvent[])
+      : [],
+    advanced: ov.advanced === true,
+  };
+}
 
 export function ClientAutomationMatrix({ rows }: { rows: MatrixClientRow[] }) {
   const [query, setQuery] = useState("");
+  const [openId, setOpenId] = useState<string | null>(null);
   const [state, setState] = useState<Record<string, RowState>>(() =>
-    Object.fromEntries(
-      rows.map((r) => [
-        r.id,
-        {
-          preference: r.contact_preference ?? "inherit",
-          overrides: r.contact_overrides ?? {},
-        },
-      ]),
-    ),
+    Object.fromEntries(rows.map((r) => [r.id, parseRow(r)])),
   );
   const [pending, startTransition] = useTransition();
 
@@ -75,33 +103,42 @@ export function ClientAutomationMatrix({ rows }: { rows: MatrixClientRow[] }) {
     for (const c of CATEGORIES) {
       fd.set(`override_${c.key}`, next.overrides[c.key] ?? "off");
     }
+    fd.set("muted_events", JSON.stringify(next.muted));
+    fd.set("advanced", next.advanced ? "true" : "false");
     startTransition(() => {
       setClientNotificationPrefsAction(fd);
     });
   }
 
-  function setChannel(clientId: string, cat: string, channel: string) {
-    const cur = state[clientId] ?? { preference: "inherit", overrides: {} };
-    save(clientId, {
-      preference: "custom",
-      overrides: { ...cur.overrides, [cat]: channel },
-    });
+  function summaryFor(r: MatrixClientRow): {
+    text: string;
+    tone: "muted" | "normal" | "danger";
+  } {
+    const s = state[r.id] ?? parseRow(r);
+    if (s.preference === "do_not_contact") {
+      return { text: "No contact", tone: "danger" };
+    }
+    const anyOn =
+      s.preference === "custom" &&
+      CATEGORIES.some(
+        (c) => s.overrides[c.key] && s.overrides[c.key] !== "off",
+      );
+    if (!anyOn) return { text: "Not configured — no messages", tone: "muted" };
+    const parts = CATEGORIES.map(
+      (c) => `${c.label.split(" ")[0]}: ${CHANNEL_LABEL[s.overrides[c.key] ?? "off"]}`,
+    );
+    const mutes = s.muted.length > 0 ? ` · ${s.muted.length} muted` : "";
+    return { text: parts.join(" · ") + mutes, tone: "normal" };
   }
 
-  function toggleDnc(clientId: string) {
-    const cur = state[clientId] ?? { preference: "inherit", overrides: {} };
-    save(clientId, {
-      preference: cur.preference === "do_not_contact" ? "custom" : "do_not_contact",
-      overrides: cur.overrides,
-    });
-  }
-
-  const configured = Object.values(state).filter(
-    (s) =>
+  const configured = rows.filter((r) => {
+    const s = state[r.id] ?? parseRow(r);
+    return (
       s.preference === "do_not_contact" ||
       (s.preference === "custom" &&
-        Object.values(s.overrides).some((v) => v !== "off" && v !== "inherit")),
-  ).length;
+        CATEGORIES.some((c) => s.overrides[c.key] && s.overrides[c.key] !== "off"))
+    );
+  }).length;
 
   return (
     <div className="rounded-xl border border-border bg-card">
@@ -109,7 +146,7 @@ export function ClientAutomationMatrix({ rows }: { rows: MatrixClientRow[] }) {
         <div>
           <p className="text-sm font-semibold">Client-by-client messages</p>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            In per-client mode this list is the authority: a client receives
+            This list is the authority in per-client mode: a client receives
             only what you switch on here. {configured} of {rows.length}{" "}
             configured — the rest get nothing.
           </p>
@@ -127,85 +164,295 @@ export function ClientAutomationMatrix({ rows }: { rows: MatrixClientRow[] }) {
 
       <ul className="divide-y divide-border">
         {filtered.map((r) => {
-          const s = state[r.id] ?? { preference: "inherit", overrides: {} };
+          const s = state[r.id] ?? parseRow(r);
+          const isOpen = openId === r.id;
           const isDnc = s.preference === "do_not_contact";
+          const summary = summaryFor(r);
           return (
-            <li key={r.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
-              <div className="min-w-0 flex-1 basis-48">
-                <Link
-                  href={`/app/clients/${r.id}`}
-                  className="truncate text-sm font-medium hover:underline underline-offset-2"
-                >
-                  {r.name}
-                </Link>
-                <p className="truncate text-[11px] text-muted-foreground">
-                  {r.email ?? "no email"}
-                  {r.phone
-                    ? r.sms_opted_in
-                      ? " · texts ok"
-                      : " · not opted in to texts"
-                    : ""}
-                </p>
-              </div>
-
-              {!isDnc &&
-                CATEGORIES.map((c) => {
-                  const current = s.overrides[c.key] ?? "off";
-                  return (
-                    <div key={c.key} className="flex items-center gap-1.5">
-                      <span className="hidden text-[10px] uppercase tracking-wide text-muted-foreground sm:inline">
-                        {c.label}
-                      </span>
-                      <div className="flex overflow-hidden rounded-md border border-border">
-                        {CHANNELS.map((ch) => {
-                          const active = current === ch.key;
-                          const smsDead =
-                            (ch.key === "sms" || ch.key === "both") &&
-                            !r.sms_opted_in;
-                          return (
-                            <button
-                              key={ch.key}
-                              type="button"
-                              disabled={pending}
-                              title={
-                                smsDead
-                                  ? "Client hasn't opted in to SMS — texts won't send until they do"
-                                  : undefined
-                              }
-                              onClick={() => setChannel(r.id, c.key, ch.key)}
-                              className={`border-l border-border px-2 py-1 text-[10px] first:border-l-0 transition-colors ${
-                                active
-                                  ? "bg-foreground font-medium text-background"
-                                  : "text-muted-foreground hover:bg-muted"
-                              } ${smsDead && !active ? "opacity-50" : ""}`}
-                            >
-                              {ch.label}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  );
-                })}
-
-              {isDnc && (
-                <span className="flex items-center gap-1.5 rounded-full bg-red-500/10 px-2.5 py-1 text-[11px] font-medium text-red-700 dark:text-red-400">
-                  <Ban className="h-3 w-3" /> No contact
-                </span>
-              )}
-
+            <li key={r.id}>
+              {/* Collapsed row — a readable sentence, not a wall of buttons. */}
               <button
                 type="button"
-                disabled={pending}
-                onClick={() => toggleDnc(r.id)}
-                className={`shrink-0 rounded-md border px-2 py-1 text-[10px] transition-colors ${
-                  isDnc
-                    ? "border-border text-muted-foreground hover:bg-muted"
-                    : "border-red-500/40 text-red-700 hover:bg-red-500/10 dark:text-red-400"
-                }`}
+                onClick={() => setOpenId(isOpen ? null : r.id)}
+                className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-muted/40"
               >
-                {isDnc ? "Allow contact" : "Do not contact"}
+                <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                  {r.name}
+                </span>
+                <span
+                  className={`hidden truncate text-xs sm:block ${
+                    summary.tone === "danger"
+                      ? "text-red-600 dark:text-red-400"
+                      : summary.tone === "muted"
+                        ? "text-muted-foreground"
+                        : "text-muted-foreground"
+                  }`}
+                >
+                  {summary.text}
+                </span>
+                <ChevronDown
+                  className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${
+                    isOpen ? "rotate-180" : ""
+                  }`}
+                />
               </button>
+
+              {isOpen && (
+                <div className="space-y-4 border-t border-border bg-muted/20 px-4 py-4">
+                  <p className="text-[11px] text-muted-foreground">
+                    <Link
+                      href={`/app/clients/${r.id}`}
+                      className="underline underline-offset-2 hover:text-foreground"
+                    >
+                      Open profile
+                    </Link>
+                    {" · "}
+                    {r.email ?? "no email"}
+                    {r.phone
+                      ? r.sms_opted_in
+                        ? " · texts ok"
+                        : " · not opted in to texts"
+                      : " · no phone"}
+                  </p>
+
+                  {/* 1 · Quick setup */}
+                  <div>
+                    <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                      Quick setup
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {[
+                        {
+                          label: "Everything",
+                          apply: () =>
+                            save(r.id, {
+                              ...s,
+                              preference: "custom",
+                              overrides: {
+                                booking: "email",
+                                billing: "email",
+                                growth: "email",
+                              },
+                              muted: [],
+                            }),
+                        },
+                        {
+                          label: "Essentials only",
+                          apply: () =>
+                            save(r.id, {
+                              ...s,
+                              preference: "custom",
+                              overrides: {
+                                booking: "email",
+                                billing: "email",
+                                growth: "off",
+                              },
+                              muted: [],
+                            }),
+                        },
+                        {
+                          label: "Nothing",
+                          apply: () =>
+                            save(r.id, {
+                              ...s,
+                              preference: "custom",
+                              overrides: {
+                                booking: "off",
+                                billing: "off",
+                                growth: "off",
+                              },
+                              muted: [],
+                            }),
+                        },
+                      ].map((q) => (
+                        <button
+                          key={q.label}
+                          type="button"
+                          disabled={pending || isDnc}
+                          onClick={q.apply}
+                          className="rounded-full border border-border bg-background px-3 py-1 text-[11px] hover:bg-muted disabled:opacity-50"
+                        >
+                          {q.label}
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        disabled={pending}
+                        onClick={() =>
+                          save(r.id, {
+                            ...s,
+                            preference: isDnc ? "custom" : "do_not_contact",
+                          })
+                        }
+                        className={`rounded-full border px-3 py-1 text-[11px] ${
+                          isDnc
+                            ? "border-border bg-background text-muted-foreground hover:bg-muted"
+                            : "border-red-500/40 text-red-700 hover:bg-red-500/10 dark:text-red-400"
+                        }`}
+                      >
+                        {isDnc ? "Allow contact again" : "Do not contact"}
+                      </button>
+                    </div>
+                  </div>
+
+                  {!isDnc && (
+                    <>
+                      {/* 2 · Category channels */}
+                      <div>
+                        <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                          How they hear from you
+                        </p>
+                        <div className="space-y-2">
+                          {CATEGORIES.map((c) => {
+                            const current = s.overrides[c.key] ?? "off";
+                            return (
+                              <div
+                                key={c.key}
+                                className="flex flex-wrap items-center justify-between gap-2"
+                              >
+                                <span className="text-xs font-medium">
+                                  {c.label}
+                                </span>
+                                <div className="flex overflow-hidden rounded-md border border-border">
+                                  {CHANNELS.map((ch) => {
+                                    const active = current === ch.key;
+                                    const smsDead =
+                                      (ch.key === "sms" || ch.key === "both") &&
+                                      !r.sms_opted_in;
+                                    return (
+                                      <button
+                                        key={ch.key}
+                                        type="button"
+                                        disabled={pending}
+                                        title={
+                                          smsDead
+                                            ? "Client hasn't opted in to SMS — texts won't send until they do"
+                                            : undefined
+                                        }
+                                        onClick={() =>
+                                          save(r.id, {
+                                            ...s,
+                                            preference: "custom",
+                                            overrides: {
+                                              ...s.overrides,
+                                              [c.key]: ch.key,
+                                            },
+                                          })
+                                        }
+                                        className={`border-l border-border px-2.5 py-1 text-[11px] first:border-l-0 transition-colors ${
+                                          active
+                                            ? "bg-foreground font-medium text-background"
+                                            : "text-muted-foreground hover:bg-muted"
+                                        } ${smsDead && !active ? "opacity-50" : ""}`}
+                                      >
+                                        {ch.label}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* 3 · Advanced automations — explicit per-client disclosure */}
+                      <div className="border-t border-border pt-3">
+                        <label className="flex cursor-pointer items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={s.advanced}
+                            disabled={pending}
+                            onChange={() =>
+                              save(r.id, {
+                                ...s,
+                                advanced: !s.advanced,
+                                // Turning advanced OFF clears the mutes — no
+                                // invisible state left behind.
+                                muted: s.advanced ? [] : s.muted,
+                              })
+                            }
+                            className="h-3.5 w-3.5 rounded border-input"
+                          />
+                          <span className="text-xs font-medium">
+                            Advanced automations
+                          </span>
+                          <span className="text-[11px] text-muted-foreground">
+                            fine-tune individual messages for {r.name.split(" ")[0]}
+                          </span>
+                        </label>
+
+                        {s.advanced && (
+                          <div className="mt-2.5 grid gap-x-6 gap-y-1 sm:grid-cols-2">
+                            {NOTIFICATION_EVENTS.map((ev) => {
+                              const categoryChannel =
+                                s.overrides[ev.category] ?? "off";
+                              const categoryOff = categoryChannel === "off";
+                              const isMuted = s.muted.includes(ev.id);
+                              return (
+                                <button
+                                  key={ev.id}
+                                  type="button"
+                                  disabled={pending || categoryOff}
+                                  onClick={() =>
+                                    save(r.id, {
+                                      ...s,
+                                      muted: isMuted
+                                        ? s.muted.filter((m) => m !== ev.id)
+                                        : [...s.muted, ev.id],
+                                    })
+                                  }
+                                  title={
+                                    categoryOff
+                                      ? "The whole category is off for this client"
+                                      : isMuted
+                                        ? "Muted for this client — click to restore"
+                                        : "On via category — click to mute just this message"
+                                  }
+                                  className="flex items-center justify-between rounded px-1.5 py-1 text-left text-[11px] hover:bg-muted disabled:cursor-default disabled:hover:bg-transparent"
+                                >
+                                  <span
+                                    className={
+                                      categoryOff || isMuted
+                                        ? "text-muted-foreground"
+                                        : ""
+                                    }
+                                  >
+                                    {ev.label}
+                                  </span>
+                                  <span
+                                    className={`font-medium ${
+                                      categoryOff
+                                        ? "text-muted-foreground/60"
+                                        : isMuted
+                                          ? "text-muted-foreground"
+                                          : "text-emerald-600 dark:text-emerald-400"
+                                    }`}
+                                  >
+                                    {categoryOff
+                                      ? "Off via category"
+                                      : isMuted
+                                        ? "Muted"
+                                        : "On"}
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
+
+                  {isDnc && (
+                    <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <Ban className="h-3.5 w-3.5 text-red-500" />
+                      No automated messages of any kind. You can still email or
+                      text them manually.
+                    </p>
+                  )}
+                </div>
+              )}
             </li>
           );
         })}

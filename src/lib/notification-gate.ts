@@ -2,6 +2,7 @@ import "server-only";
 import {
   resolveClientChannels,
   type NotificationCategory,
+  type NotificationEvent,
   type ResolvedChannels,
   type OrgContactDefault,
   type ClientContactPreference,
@@ -43,6 +44,8 @@ export async function resolveClientNotify(
     organizationId: string;
     clientId: string | null;
     category: NotificationCategory;
+    /** Specific message - lets a client's advanced mutes apply. */
+    event?: NotificationEvent;
     orgDefaultCache?: Map<string, OrgContactDefault>;
   },
 ): Promise<ClientNotifyDecision> {
@@ -125,6 +128,7 @@ export async function resolveClientNotify(
       "inherit") as ClientContactPreference,
     overrides: (client.contact_overrides ?? {}) as ContactOverrides,
     category: args.category,
+    event: args.event,
     hasEmail: Boolean(client.email),
     smsOptedIn: Boolean(client.sms_opted_in),
   });

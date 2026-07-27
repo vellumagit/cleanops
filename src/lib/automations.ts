@@ -950,6 +950,7 @@ export async function sendBookingConfirmation(bookingId: string) {
       organizationId: booking.organization_id,
       clientId: booking.client_id,
       category: "booking",
+      event: "confirmation",
     });
 
     // ── EMAIL channel — gated by the booking_confirmation_email toggle, the
@@ -1156,6 +1157,7 @@ export async function sendBookingRescheduled(
       organizationId: booking.organization_id,
       clientId: booking.client_id,
       category: "booking",
+      event: "rescheduled",
     });
 
     // SMS channel. sendOrgSms also enforces the booking_rescheduled_sms toggle,
@@ -1385,6 +1387,7 @@ export async function sendBookingCancelledToClient(bookingId: string) {
       organizationId: booking.organization_id,
       clientId: booking.client_id,
       category: "booking",
+      event: "cancelled",
     });
 
     let anySent = false;
@@ -1604,6 +1607,7 @@ export async function sendRebookingPrompts(): Promise<{
       organizationId: client.organization_id,
       clientId: client.id,
       category: "growth",
+      event: "rebooking_prompt",
       orgDefaultCache,
     });
     if (!decision.email) continue;
@@ -1762,6 +1766,7 @@ export async function sendStaleEstimateFollowups(): Promise<{
       organizationId: est.organization_id,
       clientId: est.client_id,
       category: "growth",
+      event: "estimate_followup",
       orgDefaultCache,
     });
     if (!decision.email) continue;
@@ -1956,6 +1961,7 @@ export async function sendOverdueReminders(): Promise<{
       organizationId: inv.organization_id,
       clientId: inv.client_id,
       category: "billing",
+      event: "overdue_reminder",
       orgDefaultCache,
     });
     if (!decision.email) {
@@ -2220,6 +2226,7 @@ export async function sendBookingReviewRequests(): Promise<{
       organizationId: booking.organization_id,
       clientId: booking.client.id,
       category: "growth",
+      event: "review_request",
       orgDefaultCache,
     });
     if (!decision.email) {
@@ -2521,6 +2528,7 @@ export async function sendGbpReviewRequests(): Promise<{
       organizationId: row.organization_id,
       clientId: client.id,
       category: "growth",
+      event: "gbp_review_request",
       orgDefaultCache,
     });
     if (!askDecision.email) {
@@ -2666,6 +2674,7 @@ export async function sendGbpReviewRequests(): Promise<{
       organizationId: c.organization_id,
       clientId: c.id,
       category: "growth",
+      event: "gbp_review_request",
       orgDefaultCache,
     });
     if (!remDecision.email) {
@@ -2974,6 +2983,7 @@ export async function sendUpcomingBookingReminders(): Promise<{
         organizationId: booking.organization_id,
         clientId: booking.client_id,
         category: "booking",
+        event: "reminder",
         orgDefaultCache,
       });
 
@@ -3438,11 +3448,13 @@ export async function autoOnInvoicePaid(invoiceId: string) {
       organizationId: invoice.organization_id,
       clientId: invoice.client.id,
       category: "billing",
+      event: "payment_receipt",
     });
     const growthDecision = await resolveClientNotify(db, {
       organizationId: invoice.organization_id,
       clientId: invoice.client.id,
       category: "growth",
+      event: "review_request",
     });
     if (!billingDecision.email && !growthDecision.email) return;
 

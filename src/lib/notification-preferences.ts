@@ -31,13 +31,61 @@ export type NotificationCategory = "booking" | "billing" | "growth";
 
 export type ContactOverrides = Partial<
   Record<NotificationCategory, CategoryChannel>
->;
+> & {
+  /**
+   * ADVANCED (per-client): individual messages muted on top of the category
+   * channels. The category picks the channel; a mute turns off just that one
+   * message for just this client. Lives in the same JSONB as the category
+   * overrides — additive, no migration.
+   */
+  muted_events?: NotificationEvent[];
+  /** UI flag: this client's advanced section is revealed in the manager. */
+  advanced?: boolean;
+};
+
+/**
+ * The individual client-facing messages the advanced panel can mute.
+ * Each automation key maps to exactly one event (email + SMS variants of the
+ * same moment share an event — muting "reminder" mutes both channels).
+ */
+export type NotificationEvent =
+  | "confirmation"
+  | "reminder"
+  | "rescheduled"
+  | "cancelled"
+  | "invoice_send"
+  | "overdue_reminder"
+  | "payment_receipt"
+  | "review_request"
+  | "gbp_review_request"
+  | "rebooking_prompt"
+  | "estimate_followup";
+
+export const NOTIFICATION_EVENTS: ReadonlyArray<{
+  id: NotificationEvent;
+  label: string;
+  category: NotificationCategory;
+}> = [
+  { id: "confirmation", label: "Booking confirmation", category: "booking" },
+  { id: "reminder", label: "24-hour reminder", category: "booking" },
+  { id: "rescheduled", label: "Reschedule notice", category: "booking" },
+  { id: "cancelled", label: "Cancellation notice", category: "booking" },
+  { id: "invoice_send", label: "Invoice delivery", category: "billing" },
+  { id: "overdue_reminder", label: "Overdue reminders", category: "billing" },
+  { id: "payment_receipt", label: "Receipt on payment", category: "billing" },
+  { id: "review_request", label: "Review request", category: "growth" },
+  { id: "gbp_review_request", label: "Google review ask", category: "growth" },
+  { id: "rebooking_prompt", label: "Rebooking nudge", category: "growth" },
+  { id: "estimate_followup", label: "Estimate follow-up", category: "growth" },
+];
 
 export type ResolveInput = {
   orgDefault: OrgContactDefault;
   clientPref: ClientContactPreference;
   overrides: ContactOverrides;
   category: NotificationCategory;
+  /** The specific message being sent — enables per-client advanced mutes. */
+  event?: NotificationEvent;
   /** Client has a usable email on file. */
   hasEmail: boolean;
   /** Client has actually opted in to SMS (the consent gate, not a preference). */
@@ -54,6 +102,7 @@ export type ResolvedChannels = {
   reason:
     | "ok"
     | "do_not_contact"
+    | "muted_by_client"
     | "category_off"
     | "sms_not_opted_in"
     | "no_email_address"
@@ -78,6 +127,16 @@ export function resolveClientChannels(input: ResolveInput): ResolvedChannels {
   // 1. Do not contact wins over everything (automated).
   if (clientPref === "do_not_contact") {
     return { email: false, sms: false, reason: "do_not_contact" };
+  }
+
+  // 1b. ADVANCED per-message mute — turns off just this one message for this
+  // client, whatever the category channels say.
+  if (
+    input.event &&
+    Array.isArray(overrides.muted_events) &&
+    overrides.muted_events.includes(input.event)
+  ) {
+    return { email: false, sms: false, reason: "muted_by_client" };
   }
 
   // 2. What channel does the client WANT for this category?

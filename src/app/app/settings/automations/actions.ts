@@ -260,11 +260,34 @@ export async function setClientNotificationPrefsAction(formData: FormData) {
   if (!clientId) return;
   if (!["inherit", "custom", "do_not_contact"].includes(preference)) return;
 
-  const overrides: Record<string, string> = {};
+  const overrides: Record<string, unknown> = {};
   const channels = ["off", "email", "sms", "both", "inherit"];
   for (const cat of ["booking", "billing", "growth"] as const) {
     const v = String(formData.get(`override_${cat}`) ?? "");
     if (channels.includes(v)) overrides[cat] = v;
+  }
+
+  // Advanced per-message mutes (JSON array of event ids) + disclosure flag,
+  // both whitelisted server-side.
+  const VALID_EVENTS = new Set([
+    "confirmation", "reminder", "rescheduled", "cancelled",
+    "invoice_send", "overdue_reminder", "payment_receipt",
+    "review_request", "gbp_review_request", "rebooking_prompt",
+    "estimate_followup",
+  ]);
+  try {
+    const rawMuted = JSON.parse(String(formData.get("muted_events") ?? "[]"));
+    if (Array.isArray(rawMuted)) {
+      const muted = rawMuted.filter(
+        (e): e is string => typeof e === "string" && VALID_EVENTS.has(e),
+      );
+      if (muted.length > 0) overrides.muted_events = muted;
+    }
+  } catch {
+    // malformed JSON → no mutes
+  }
+  if (String(formData.get("advanced") ?? "") === "true") {
+    overrides.advanced = true;
   }
 
   const admin = createSupabaseAdminClient();

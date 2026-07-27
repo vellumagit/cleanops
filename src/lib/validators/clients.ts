@@ -87,10 +87,28 @@ export const ClientSchema = z.object({
       if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
       const categories = ["booking", "billing", "growth"] as const;
       const channels = ["off", "email", "sms", "both", "inherit"];
-      const out: Record<string, string> = {};
+      const events = [
+        "confirmation", "reminder", "rescheduled", "cancelled",
+        "invoice_send", "overdue_reminder", "payment_receipt",
+        "review_request", "gbp_review_request", "rebooking_prompt",
+        "estimate_followup",
+      ];
+      const out: Record<string, unknown> = {};
       for (const cat of categories) {
         const v = (raw as Record<string, unknown>)[cat];
         if (typeof v === "string" && channels.includes(v)) out[cat] = v;
+      }
+      // Advanced per-message mutes + the disclosure flag — whitelisted so a
+      // crafted POST can't smuggle arbitrary JSON into the column.
+      const rawMuted = (raw as Record<string, unknown>).muted_events;
+      if (Array.isArray(rawMuted)) {
+        const muted = rawMuted.filter(
+          (e): e is string => typeof e === "string" && events.includes(e),
+        );
+        if (muted.length > 0) out.muted_events = muted;
+      }
+      if ((raw as Record<string, unknown>).advanced === true) {
+        out.advanced = true;
       }
       return out;
     }),
