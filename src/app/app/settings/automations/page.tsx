@@ -552,49 +552,92 @@ export default async function AutomationsPage() {
         </span>
       </div>
 
-      {/* ROUTE CHOOSER — the "choose your route" master decision. */}
+      {/* ROUTE CHOOSER — the "choose your route" master decision. A literal
+          switch: left = all clients (simple), right = per client (control). */}
       <div className="mb-6 rounded-lg border border-border bg-card p-4">
         <p className="text-sm font-medium">How are client messages managed?</p>
-        <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          <form action={setAutomationModeAction}>
-            <input type="hidden" name="mode" value="all_clients" />
-            <button
-              type="submit"
-              className={`w-full rounded-xl border p-4 text-left transition-colors ${
+
+        <form action={setAutomationModeAction} className="mt-3">
+          <input
+            type="hidden"
+            name="mode"
+            value={perClientMode ? "all_clients" : "per_client"}
+          />
+          <button
+            type="submit"
+            className="group mx-auto flex items-center gap-4"
+            aria-label={
+              perClientMode
+                ? "Switch to all-clients mode"
+                : "Switch to per-client mode"
+            }
+          >
+            <span
+              className={`text-sm transition-colors ${
                 !perClientMode
-                  ? "border-foreground bg-muted/60"
-                  : "border-border hover:bg-muted/40"
+                  ? "font-semibold text-foreground"
+                  : "text-muted-foreground"
               }`}
             >
-              <p className="text-sm font-medium">
-                All clients {!perClientMode && "· current"}
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Simple. What you turn on below applies to every client. Set
-                exceptions on individual clients when someone wants different.
-              </p>
-            </button>
-          </form>
-          <form action={setAutomationModeAction}>
-            <input type="hidden" name="mode" value="per_client" />
-            <button
-              type="submit"
-              className={`w-full rounded-xl border p-4 text-left transition-colors ${
+              All clients
+            </span>
+            <span
+              className={`relative inline-flex h-7 w-14 shrink-0 items-center rounded-full border transition-colors ${
                 perClientMode
-                  ? "border-foreground bg-muted/60"
-                  : "border-border hover:bg-muted/40"
+                  ? "border-blue-500/50 bg-blue-500/80"
+                  : "border-border bg-muted"
               }`}
             >
-              <p className="text-sm font-medium">
-                Per client {perClientMode && "· current"}
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Full control. Client messages are configured client by client
-                in the manager below — nothing sends to a client until you
-                switch it on for them. The org-wide client toggles step aside.
-              </p>
-            </button>
-          </form>
+              <span
+                className={`absolute h-5 w-5 rounded-full bg-background shadow transition-all ${
+                  perClientMode ? "left-8" : "left-1"
+                }`}
+              />
+            </span>
+            <span
+              className={`text-sm transition-colors ${
+                perClientMode
+                  ? "font-semibold text-foreground"
+                  : "text-muted-foreground"
+              }`}
+            >
+              Per client
+            </span>
+          </button>
+        </form>
+
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <div
+            className={`flex min-h-[116px] flex-col rounded-xl border p-4 ${
+              !perClientMode
+                ? "border-foreground bg-muted/60"
+                : "border-border opacity-60"
+            }`}
+          >
+            <p className="text-sm font-medium">
+              All clients {!perClientMode && "· active"}
+            </p>
+            <p className="mt-1 flex-1 text-xs text-muted-foreground">
+              Simple. What you turn on below applies to every client. Set
+              exceptions on individual clients when someone wants different.
+            </p>
+          </div>
+          <div
+            className={`flex min-h-[116px] flex-col rounded-xl border p-4 ${
+              perClientMode
+                ? "border-foreground bg-muted/60"
+                : "border-border opacity-60"
+            }`}
+          >
+            <p className="text-sm font-medium">
+              Per client {perClientMode && "· active"}
+            </p>
+            <p className="mt-1 flex-1 text-xs text-muted-foreground">
+              Full control. Client messages are configured client by client in
+              the manager below — nothing sends until you switch it on for
+              them. Org-wide client toggles step aside.
+            </p>
+          </div>
         </div>
       </div>
 
