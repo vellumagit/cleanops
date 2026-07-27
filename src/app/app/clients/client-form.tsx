@@ -52,12 +52,15 @@ export function ClientForm({
   cleaners = [],
   referralClients = [],
   orgContactDefault = "email",
+  orgSmsEnabled = true,
 }: {
   mode: "create" | "edit";
   id?: string;
   defaults?: Defaults;
   /** The org's house default, shown + used by the notification control. */
   orgContactDefault?: OrgContactDefault;
+  /** organizations.sms_enabled — with it off, texts silently skip. */
+  orgSmsEnabled?: boolean;
   /** Active memberships for the "Preferred cleaner" dropdown. Passing
    *  an empty array hides the dropdown — useful for orgs that haven't
    *  added any employees yet (setup-first-client flow). */
@@ -190,6 +193,7 @@ export function ClientForm({
         orgDefault={orgContactDefault}
         hasEmail={Boolean(v.email)}
         smsOptedIn={Boolean(v.sms_opted_in)}
+        smsEnabled={orgSmsEnabled}
       />
 
       {cleaners.length > 0 && (

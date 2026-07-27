@@ -3,11 +3,15 @@
 import { useState } from "react";
 import {
   summarizeClientChannels,
+  summarizeActualChannels,
+  CATEGORY_CHANNELS,
+  type ActualChannels,
   type CategoryChannel,
   type ClientContactPreference,
   type ContactOverrides,
   type NotificationCategory,
   type OrgContactDefault,
+  type ResolvedChannels,
 } from "@/lib/notification-preferences";
 
 /**
@@ -53,12 +57,23 @@ const ORG_DEFAULT_LABEL: Record<OrgContactDefault, string> = {
   none: "No notifications",
 };
 
-function describe(r: { email: boolean; sms: boolean; reason: string }): string {
-  if (r.email && r.sms) return "email + text";
-  if (r.email) return "email";
-  if (r.sms) return "text";
-  if (r.reason === "sms_not_opted_in") return "nothing (not opted in to texts)";
-  if (r.reason === "no_email_address") return "nothing (no email on file)";
+function describe(
+  actual: ActualChannels,
+  raw: ResolvedChannels,
+  category: NotificationCategory,
+): string {
+  if (actual.email && actual.sms) return "email + text";
+  if (actual.email) return "email";
+  if (actual.sms) return "text";
+  if (actual.reason === "channel_not_available") {
+    return raw.sms && !CATEGORY_CHANNELS[category].sms
+      ? "nothing (these are email-only)"
+      : "nothing (texting isn't set up)";
+  }
+  if (actual.reason === "sms_not_opted_in")
+    return "nothing (not opted in to texts)";
+  if (actual.reason === "no_email_address")
+    return "nothing (no email on file)";
   return "nothing";
 }
 
@@ -68,12 +83,15 @@ export function NotificationPreferenceField({
   orgDefault,
   hasEmail,
   smsOptedIn,
+  smsEnabled = true,
 }: {
   defaultPreference?: string | null;
   defaultOverrides?: ContactOverrides | null;
   orgDefault: OrgContactDefault;
   hasEmail: boolean;
   smsOptedIn: boolean;
+  /** organizations.sms_enabled — with it off, every text silently skips. */
+  smsEnabled?: boolean;
 }) {
   const [mode, setMode] = useState<ClientContactPreference>(
     (defaultPreference as ClientContactPreference) ?? "inherit",
@@ -82,25 +100,42 @@ export function NotificationPreferenceField({
     defaultOverrides ?? {},
   );
 
-  const preview = summarizeClientChannels({
+  const resolveInput = {
     orgDefault,
     clientPref: mode,
     overrides,
     hasEmail,
     smsOptedIn,
+  };
+  // raw = what the client is willing to receive; preview = what actually
+  // sends once channel capability and the org SMS switch are applied.
+  const rawPreview = summarizeClientChannels(resolveInput);
+  const preview = summarizeActualChannels(resolveInput, {
+    smsAvailable: smsEnabled,
   });
 
-  // Warn when a chosen channel can't actually deliver — the owner picked Text
-  // for someone who never opted in, which would silently send nothing.
+  // Warn when a chosen channel can't actually deliver — silence should never
+  // be a surprise. Effective channel per category = custom override, else the
+  // org default.
+  const effectiveChannel = (cat: NotificationCategory): string => {
+    const ch = mode === "custom" ? (overrides[cat] ?? "inherit") : "inherit";
+    return ch === "inherit" ? orgDefault : ch;
+  };
+  const textWanted = (cat: NotificationCategory) =>
+    ["sms", "both"].includes(effectiveChannel(cat));
+
   const wantsSmsWithoutConsent =
+    smsEnabled &&
     !smsOptedIn &&
     mode !== "do_not_contact" &&
-    CATEGORIES.some((c) => {
-      const ch =
-        mode === "custom" ? (overrides[c.key] ?? "inherit") : "inherit";
-      const eff = ch === "inherit" ? orgDefault : ch;
-      return eff === "sms" || eff === "both";
-    });
+    CATEGORIES.some((c) => CATEGORY_CHANNELS[c.key].sms && textWanted(c.key));
+  const smsNotSetUp =
+    !smsEnabled &&
+    mode !== "do_not_contact" &&
+    CATEGORIES.some((c) => CATEGORY_CHANNELS[c.key].sms && textWanted(c.key));
+  const emailOnlyWithText =
+    mode !== "do_not_contact" &&
+    CATEGORIES.some((c) => !CATEGORY_CHANNELS[c.key].sms && textWanted(c.key));
 
   function setCategory(cat: NotificationCategory, ch: CategoryChannel) {
     setOverrides((prev) => ({ ...prev, [cat]: ch }));
@@ -165,16 +200,33 @@ export function NotificationPreferenceField({
                     const active =
                       current === ch.key ||
                       (current === "inherit" && ch.key === "off" && false);
+                    const wantsSms = ch.key === "sms" || ch.key === "both";
+                    const wantsEmail = ch.key === "email" || ch.key === "both";
+                    // Same dead-segment honesty as the per-client manager:
+                    // no text version > org SMS off > no consent > no email.
+                    const deadReason =
+                      wantsSms && !CATEGORY_CHANNELS[c.key].sms
+                        ? ch.key === "sms"
+                          ? "These messages are email-only — no text versions exist"
+                          : "These messages are email-only — “Both” sends just the email"
+                        : wantsSms && !smsEnabled
+                          ? "Texting isn't turned on for your business yet"
+                          : wantsSms && !smsOptedIn
+                            ? "Client hasn't opted in to SMS — texts won't send until they do"
+                            : wantsEmail && !hasEmail
+                              ? "No email on file"
+                              : null;
                     return (
                       <button
                         key={ch.key}
                         type="button"
+                        title={deadReason ?? undefined}
                         onClick={() => setCategory(c.key, ch.key)}
                         className={`border-l border-border px-2.5 py-1.5 text-[11px] first:border-l-0 transition-colors ${
                           active
                             ? "bg-foreground font-medium text-background"
                             : "text-muted-foreground hover:bg-muted"
-                        }`}
+                        } ${deadReason && !active ? "opacity-50" : ""}`}
                       >
                         {ch.label}
                       </button>
@@ -196,6 +248,18 @@ export function NotificationPreferenceField({
           text will send. Send them an opt-in request from the client page first.
         </p>
       )}
+      {smsNotSetUp && (
+        <p className="mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-700 dark:text-amber-300">
+          Texting isn&apos;t turned on for your business yet — text choices stay
+          silent until you set it up.
+        </p>
+      )}
+      {emailOnlyWithText && (
+        <p className="mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-700 dark:text-amber-300">
+          Billing and review messages are email-only — &ldquo;Text&rdquo; there
+          sends nothing, and &ldquo;Both&rdquo; sends just the email.
+        </p>
+      )}
 
       <div className="mt-3 border-t border-border pt-2.5 text-[11px] text-muted-foreground">
         {mode === "do_not_contact" ? (
@@ -210,7 +274,7 @@ export function NotificationPreferenceField({
                 {i > 0 ? " · " : ""}
                 {c.label.toLowerCase()}:{" "}
                 <strong className="font-medium text-foreground">
-                  {describe(preview[c.key])}
+                  {describe(preview[c.key], rawPreview[c.key], c.key)}
                 </strong>
               </span>
             ))}

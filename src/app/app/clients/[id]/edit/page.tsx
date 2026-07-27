@@ -4,7 +4,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
 import { ClientForm } from "../../client-form";
 import { fetchClientFormCleaners, fetchReferralClients } from "../../options";
-import { fetchOrgContactDefault } from "../../org-contact-default";
+import { fetchOrgNotificationContext } from "../../org-contact-default";
 import { DeleteClientForm } from "./delete-form";
 import { PortalInviteCard } from "./portal-invite-card";
 
@@ -53,7 +53,7 @@ export default async function EditClientPage({
     fetchClientFormCleaners(),
     fetchReferralClients(id),
   ]);
-  const orgContactDefault = await fetchOrgContactDefault(
+  const orgCtx = await fetchOrgNotificationContext(
     membership.organization_id,
   );
   const { data: client, error } = clientResult;
@@ -70,7 +70,8 @@ export default async function EditClientPage({
             id={client.id}
             cleaners={cleaners}
             referralClients={referralClients}
-            orgContactDefault={orgContactDefault}
+            orgContactDefault={orgCtx.orgDefault}
+            orgSmsEnabled={orgCtx.smsEnabled}
             defaults={{
               name: client.name,
               email: client.email,

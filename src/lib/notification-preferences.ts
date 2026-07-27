@@ -65,19 +65,47 @@ export const NOTIFICATION_EVENTS: ReadonlyArray<{
   id: NotificationEvent;
   label: string;
   category: NotificationCategory;
+  /**
+   * Channels this message actually EXISTS on. Booking moments have email +
+   * SMS variants; every billing and growth message is email-only (they carry
+   * links, line items, or branded layouts a text can't). The preference
+   * resolver doesn't know this — it answers "what is this client willing to
+   * receive?" — so honest UI must intersect its answer with this capability
+   * or it will claim a text is coming for a message that has no text form.
+   */
+  channels: ReadonlyArray<"email" | "sms">;
 }> = [
-  { id: "confirmation", label: "Booking confirmation", category: "booking" },
-  { id: "reminder", label: "24-hour reminder", category: "booking" },
-  { id: "rescheduled", label: "Reschedule notice", category: "booking" },
-  { id: "cancelled", label: "Cancellation notice", category: "booking" },
-  { id: "invoice_send", label: "Invoice delivery", category: "billing" },
-  { id: "overdue_reminder", label: "Overdue reminders", category: "billing" },
-  { id: "payment_receipt", label: "Receipt on payment", category: "billing" },
-  { id: "review_request", label: "Review request", category: "growth" },
-  { id: "gbp_review_request", label: "Google review ask", category: "growth" },
-  { id: "rebooking_prompt", label: "Rebooking nudge", category: "growth" },
-  { id: "estimate_followup", label: "Estimate follow-up", category: "growth" },
+  { id: "confirmation", label: "Booking confirmation", category: "booking", channels: ["email", "sms"] },
+  { id: "reminder", label: "24-hour reminder", category: "booking", channels: ["email", "sms"] },
+  { id: "rescheduled", label: "Reschedule notice", category: "booking", channels: ["email", "sms"] },
+  { id: "cancelled", label: "Cancellation notice", category: "booking", channels: ["email", "sms"] },
+  { id: "invoice_send", label: "Invoice delivery", category: "billing", channels: ["email"] },
+  { id: "overdue_reminder", label: "Overdue reminders", category: "billing", channels: ["email"] },
+  { id: "payment_receipt", label: "Receipt on payment", category: "billing", channels: ["email"] },
+  { id: "review_request", label: "Review request", category: "growth", channels: ["email"] },
+  { id: "gbp_review_request", label: "Google review ask", category: "growth", channels: ["email"] },
+  { id: "rebooking_prompt", label: "Rebooking nudge", category: "growth", channels: ["email"] },
+  { id: "estimate_followup", label: "Estimate follow-up", category: "growth", channels: ["email"] },
 ];
+
+/**
+ * Which channels a CATEGORY can reach at all — the union of its events'
+ * channels. booking: email+sms; billing and growth: email only.
+ */
+export const CATEGORY_CHANNELS: Record<
+  NotificationCategory,
+  { email: boolean; sms: boolean }
+> = (() => {
+  const out = {
+    booking: { email: false, sms: false },
+    billing: { email: false, sms: false },
+    growth: { email: false, sms: false },
+  };
+  for (const ev of NOTIFICATION_EVENTS) {
+    for (const ch of ev.channels) out[ev.category][ch] = true;
+  }
+  return out;
+})();
 
 export type ResolveInput = {
   orgDefault: OrgContactDefault;
@@ -188,6 +216,62 @@ export function summarizeClientChannels(
   const out = {} as Record<NotificationCategory, ResolvedChannels>;
   for (const category of categories) {
     out[category] = resolveClientChannels({ ...input, category });
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Capability-aware resolution — what will ACTUALLY go out
+// ---------------------------------------------------------------------------
+// resolveClientChannels answers "what is this client willing to receive?".
+// Two more gates decide what really sends, and every UI surface must apply
+// them or it lies:
+//   1. Channel capability — billing and growth messages exist only as email
+//      (CATEGORY_CHANNELS); a "Text" preference there selects silence.
+//   2. The org's own SMS master switch (organizations.sms_enabled) — the
+//      engine (sendOrgSms) silently skips every text while it's off.
+// Engine send-sites don't need this wrapper (each site IS one channel and
+// already checks its own gates); these exist so display surfaces all tell
+// the same truth.
+
+export type ActualChannels = {
+  email: boolean;
+  sms: boolean;
+  /** resolver reason, or "channel_not_available" when the client's chosen
+   *  channel is willing-but-nonexistent (e.g. Text on an email-only
+   *  category, or texts while the org's SMS is off). */
+  reason: ResolvedChannels["reason"] | "channel_not_available";
+};
+
+export function actualClientChannels(
+  input: ResolveInput,
+  opts?: {
+    /** Org can send texts at all (organizations.sms_enabled). Default true. */
+    smsAvailable?: boolean;
+  },
+): ActualChannels {
+  const res = resolveClientChannels(input);
+  const cap = CATEGORY_CHANNELS[input.category];
+  const smsAvailable = opts?.smsAvailable !== false;
+  const email = res.email && cap.email;
+  const sms = res.sms && cap.sms && smsAvailable;
+  if (email || sms) return { email, sms, reason: "ok" };
+  // Nothing deliverable. If the resolver WOULD have sent something, the
+  // block is capability, not preference — name it distinctly.
+  if (res.email || res.sms) {
+    return { email: false, sms: false, reason: "channel_not_available" };
+  }
+  return { email: false, sms: false, reason: res.reason };
+}
+
+export function summarizeActualChannels(
+  input: Omit<ResolveInput, "category">,
+  opts?: { smsAvailable?: boolean },
+): Record<NotificationCategory, ActualChannels> {
+  const categories: NotificationCategory[] = ["booking", "billing", "growth"];
+  const out = {} as Record<NotificationCategory, ActualChannels>;
+  for (const category of categories) {
+    out[category] = actualClientChannels({ ...input, category }, opts);
   }
   return out;
 }

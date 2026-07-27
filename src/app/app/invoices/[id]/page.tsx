@@ -1,11 +1,24 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, Pencil, Ban, ExternalLink, Star } from "lucide-react";
+import {
+  ArrowLeft,
+  Pencil,
+  Ban,
+  ExternalLink,
+  Star,
+  TriangleAlert,
+} from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { netPaidCents, outstandingBalanceCents } from "@/lib/invoice-balance";
 import { getOrgCurrency } from "@/lib/org-currency";
+import { fetchOrgNotificationContext } from "@/app/app/clients/org-contact-default";
+import {
+  invoiceDeliveryNote,
+  type DeliveryNoteClient,
+  type InvoiceDeliveryNote,
+} from "@/lib/invoice-delivery-note";
 import { StripePaymentLinkButton } from "./stripe-payment-link-button";
 import { SendInvoiceButton } from "./send-invoice-button";
 import { HoldAutoSendButton } from "./hold-auto-send-button";
@@ -175,6 +188,33 @@ export default async function InvoiceDetailPage({
   const autoSendScheduled =
     autoSendData?.auto_send_state === "scheduled" && Boolean(autoSendData?.auto_send_at);
 
+  // Auto-send gave up on this draft ("skipped"/"held") — recompute the
+  // owner-readable reason against the client's current settings.
+  let delivery: InvoiceDeliveryNote | null = null;
+  if (
+    autoSendData?.auto_send_state === "skipped" ||
+    autoSendData?.auto_send_state === "held"
+  ) {
+    let noteClient: DeliveryNoteClient | null = null;
+    if (invoice.client?.id) {
+      const { data: prefRow } = (await admin
+        .from("clients")
+        .select("email, contact_preference, contact_overrides, sms_opted_in")
+        .eq("id", invoice.client.id)
+        .maybeSingle()) as unknown as { data: DeliveryNoteClient | null };
+      noteClient = prefRow;
+    }
+    const ctx = await fetchOrgNotificationContext(membership.organization_id);
+    delivery = invoiceDeliveryNote({
+      autoSendState: autoSendData.auto_send_state,
+      status: invoice.status,
+      amountCents: invoice.amount_cents,
+      client: noteClient,
+      orgDefault: ctx.orgDefault,
+      perClientMode: ctx.perClientMode,
+    });
+  }
+
   const status = invoice.status as InvoiceStatus;
   // Net of refunds so the balance due reflects money returned to the client.
   const paidCents = netPaidCents(invoice.payments);
@@ -266,6 +306,18 @@ export default async function InvoiceDetailPage({
 
             {status === "draft" && !isVoid && autoSendScheduled && (
               <AutoSendNotice iso={autoSendData!.auto_send_at!} />
+            )}
+
+            {status === "draft" && !isVoid && delivery?.kind === "skipped" && (
+              <p className="mt-4 flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
+                <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <span>{delivery.note}</span>
+              </p>
+            )}
+            {status === "draft" && !isVoid && delivery?.kind === "held" && (
+              <p className="mt-4 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                {delivery.note}
+              </p>
             )}
 
             <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-border pt-4">

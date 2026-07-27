@@ -1,8 +1,10 @@
 import Link from "next/link";
-import { Plus, CalendarRange } from "lucide-react";
+import { Plus, CalendarRange, TriangleAlert } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getOrgCurrency } from "@/lib/org-currency";
+import { fetchOrgNotificationContext } from "@/app/app/clients/org-contact-default";
+import { invoiceDeliveryNote } from "@/lib/invoice-delivery-note";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
 import { ArchivedToggle } from "@/components/archived-toggle";
@@ -34,19 +36,46 @@ export default async function InvoicesPage({
         sent_at,
         paid_at,
         created_at,
-        client:clients ( name )
-      `,
+        auto_send_state,
+        client:clients ( name, email, contact_preference, contact_overrides, sms_opted_in )
+      ` as never,
     );
 
   query = showArchived
     ? query.not("archived_at" as never, "is" as never, null as never)
     : query.is("archived_at" as never, null as never);
 
-  const { data, error } = await query
+  const { data, error } = (await query
     .order("created_at", { ascending: false })
-    .limit(200);
+    .limit(200)) as unknown as {
+    data: Array<{
+      id: string;
+      status: InvoiceRow["status"];
+      amount_cents: number;
+      due_date: string | null;
+      sent_at: string | null;
+      paid_at: string | null;
+      created_at: string;
+      auto_send_state: string | null;
+      client: {
+        name: string | null;
+        email: string | null;
+        contact_preference: string | null;
+        contact_overrides: Record<string, unknown> | null;
+        sms_opted_in: boolean | null;
+      } | null;
+    }> | null;
+    error: { message: string } | null;
+  };
 
   if (error) throw error;
+
+  // Surface auto-send misses ("skipped"/"held" drafts) with a live-computed
+  // reason — the "silence is never a mystery" rule. Pure function, no extra
+  // queries per row.
+  const { orgDefault, perClientMode } = await fetchOrgNotificationContext(
+    membership.organization_id,
+  );
 
   const rows: InvoiceRow[] = (data ?? []).map((i) => ({
     id: i.id,
@@ -57,7 +86,20 @@ export default async function InvoicesPage({
     paid_at: i.paid_at,
     created_at: i.created_at,
     client_name: i.client?.name ?? "—",
+    delivery: invoiceDeliveryNote({
+      autoSendState: i.auto_send_state,
+      status: i.status,
+      amountCents: i.amount_cents,
+      client: i.client,
+      orgDefault,
+      perClientMode,
+    }),
   }));
+
+  // Skipped = a miss the owner should act on. Held = paused (possibly the
+  // owner's own Hold button) — mentioned, never alarmed.
+  const undelivered = rows.filter((r) => r.delivery?.kind === "skipped").length;
+  const onHold = rows.filter((r) => r.delivery?.kind === "held").length;
 
   return (
     <PageShell
@@ -95,6 +137,24 @@ export default async function InvoicesPage({
         </div>
       }
     >
+      {undelivered > 0 && (
+        <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-800 dark:text-amber-300">
+          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          <div>
+            <p className="font-medium">
+              {undelivered === 1
+                ? "1 invoice couldn't be auto-delivered."
+                : `${undelivered} invoices couldn't be auto-delivered.`}
+            </p>
+            <p className="mt-0.5">
+              Look for the &ldquo;Needs manual delivery&rdquo; tag below —
+              hover it for the reason, open the invoice to send it yourself.
+              {onHold > 0 &&
+                ` (${onHold} more ${onHold === 1 ? "is" : "are"} on hold — that one's deliberate.)`}
+            </p>
+          </div>
+        </div>
+      )}
       <InvoicesTable
         rows={rows}
         canEdit={canEdit && !showArchived}

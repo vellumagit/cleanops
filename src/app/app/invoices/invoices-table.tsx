@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { TriangleAlert } from "lucide-react";
 import { DataTable, type DataTableColumn } from "@/components/data-table";
 import { StatusBadge, invoiceStatusTone } from "@/components/status-badge";
 import {
@@ -26,6 +27,9 @@ export type InvoiceRow = {
   paid_at: string | null;
   created_at: string;
   client_name: string;
+  /** Auto-send outcome for undelivered drafts: skipped = needs the owner
+   *  (amber), held = paused deliberately (neutral). Null = nothing to say. */
+  delivery: { kind: "skipped" | "held"; note: string } | null;
 };
 
 export function InvoicesTable({
@@ -76,9 +80,28 @@ export function InvoicesTable({
       key: "status",
       header: "Status",
       render: (r) => (
-        <StatusBadge tone={invoiceStatusTone(r.status)}>
-          {humanizeEnum(r.status)}
-        </StatusBadge>
+        <div className="flex flex-col items-start gap-1">
+          <StatusBadge tone={invoiceStatusTone(r.status)}>
+            {humanizeEnum(r.status)}
+          </StatusBadge>
+          {r.delivery?.kind === "skipped" && (
+            <span
+              title={r.delivery.note}
+              className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400"
+            >
+              <TriangleAlert className="h-3 w-3" />
+              Needs manual delivery
+            </span>
+          )}
+          {r.delivery?.kind === "held" && (
+            <span
+              title={r.delivery.note}
+              className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
+            >
+              Auto-send paused
+            </span>
+          )}
+        </div>
       ),
     },
     {

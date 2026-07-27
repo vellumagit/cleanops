@@ -2,10 +2,14 @@
 
 import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
-import { Ban, ChevronDown, Search } from "lucide-react";
+import { Ban, ChevronDown, Search, TriangleAlert } from "lucide-react";
 import {
   NOTIFICATION_EVENTS,
+  CATEGORY_CHANNELS,
+  resolveClientChannels,
+  actualClientChannels,
   type NotificationEvent,
+  type ResolveInput,
 } from "@/lib/notification-preferences";
 import { setClientNotificationPrefsAction } from "./actions";
 
@@ -46,13 +50,6 @@ const CHANNELS = [
   { key: "both", label: "Both" },
 ] as const;
 
-const CHANNEL_LABEL: Record<string, string> = {
-  off: "Off",
-  email: "Email",
-  sms: "Text",
-  both: "Email + text",
-};
-
 type RowState = {
   preference: string;
   overrides: Record<string, string>;
@@ -77,7 +74,84 @@ function parseRow(r: MatrixClientRow): RowState {
   };
 }
 
-export function ClientAutomationMatrix({ rows }: { rows: MatrixClientRow[] }) {
+/**
+ * Run the REAL send-time resolver against the draft state, so everything this
+ * panel displays is what will actually happen — not what the switches say.
+ * The matrix only renders in per-client mode, where the org default is a hard
+ * "none" (unconfigured = silent), so orgDefault is fixed here by design.
+ */
+function resolveFor(
+  r: MatrixClientRow,
+  s: RowState,
+  category: (typeof CATEGORIES)[number]["key"],
+  event?: NotificationEvent,
+) {
+  return resolveClientChannels({
+    orgDefault: "none",
+    clientPref: s.preference as ResolveInput["clientPref"],
+    overrides: {
+      ...s.overrides,
+      muted_events: s.muted,
+    } as ResolveInput["overrides"],
+    category,
+    event,
+    hasEmail: Boolean(r.email),
+    smsOptedIn: Boolean(r.sms_opted_in),
+  });
+}
+
+/**
+ * What actually goes out for one category: the resolver's answer intersected
+ * with channel capability (billing and growth are email-only — there are no
+ * text versions of an invoice or review ask) AND the org's own SMS master
+ * switch — the engine silently skips every text while sms_enabled is off.
+ */
+function actualForCategory(
+  r: MatrixClientRow,
+  s: RowState,
+  category: (typeof CATEGORIES)[number]["key"],
+  smsEnabled: boolean,
+): { label: string | null; partial: boolean } {
+  const res = actualClientChannels(
+    {
+      orgDefault: "none",
+      clientPref: s.preference as ResolveInput["clientPref"],
+      overrides: {
+        ...s.overrides,
+        muted_events: s.muted,
+      } as ResolveInput["overrides"],
+      category,
+      hasEmail: Boolean(r.email),
+      smsOptedIn: Boolean(r.sms_opted_in),
+    },
+    { smsAvailable: smsEnabled },
+  );
+  const label =
+    res.email && res.sms
+      ? "Email + text"
+      : res.email
+        ? "Email"
+        : res.sms
+          ? "Text"
+          : null;
+  const desired = s.overrides[category] ?? "off";
+  // partial = something they asked for can't deliver (e.g. "Both" on an
+  // email-only category, or texts without opt-in / org SMS off).
+  const wantsEmail = desired === "email" || desired === "both";
+  const wantsSms = desired === "sms" || desired === "both";
+  const partial =
+    label !== null && ((wantsEmail && !res.email) || (wantsSms && !res.sms));
+  return { label, partial };
+}
+
+export function ClientAutomationMatrix({
+  rows,
+  smsEnabled,
+}: {
+  rows: MatrixClientRow[];
+  /** organizations.sms_enabled — with it off, every text silently skips. */
+  smsEnabled: boolean;
+}) {
   const [query, setQuery] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
   const [state, setState] = useState<Record<string, RowState>>(() =>
@@ -112,7 +186,7 @@ export function ClientAutomationMatrix({ rows }: { rows: MatrixClientRow[] }) {
 
   function summaryFor(r: MatrixClientRow): {
     text: string;
-    tone: "muted" | "normal" | "danger";
+    tone: "muted" | "normal" | "warn" | "danger";
   } {
     const s = state[r.id] ?? parseRow(r);
     if (s.preference === "do_not_contact") {
@@ -124,11 +198,27 @@ export function ClientAutomationMatrix({ rows }: { rows: MatrixClientRow[] }) {
         (c) => s.overrides[c.key] && s.overrides[c.key] !== "off",
       );
     if (!anyOn) return { text: "Not configured — no messages", tone: "muted" };
-    const parts = CATEGORIES.map(
-      (c) => `${c.label.split(" ")[0]}: ${CHANNEL_LABEL[s.overrides[c.key] ?? "off"]}`,
-    );
+    // The summary states what will ACTUALLY send (resolver + channel
+    // capability), not what the switches say — a text-only pick with no
+    // opt-in reads "won't send", never "Text".
+    let blocked = false;
+    const parts = CATEGORIES.map((c) => {
+      const short = c.label.split(" ")[0];
+      const desired = s.overrides[c.key] ?? "off";
+      if (desired === "off") return `${short}: Off`;
+      const actual = actualForCategory(r, s, c.key, smsEnabled);
+      if (!actual.label) {
+        blocked = true;
+        return `${short}: won't send`;
+      }
+      if (actual.partial) blocked = true;
+      return `${short}: ${actual.label}${actual.partial ? " ⚠" : ""}`;
+    });
     const mutes = s.muted.length > 0 ? ` · ${s.muted.length} muted` : "";
-    return { text: parts.join(" · ") + mutes, tone: "normal" };
+    return {
+      text: parts.join(" · ") + mutes,
+      tone: blocked ? "warn" : "normal",
+    };
   }
 
   const configured = rows.filter((r) => {
@@ -183,8 +273,8 @@ export function ClientAutomationMatrix({ rows }: { rows: MatrixClientRow[] }) {
                   className={`hidden truncate text-xs sm:block ${
                     summary.tone === "danger"
                       ? "text-red-600 dark:text-red-400"
-                      : summary.tone === "muted"
-                        ? "text-muted-foreground"
+                      : summary.tone === "warn"
+                        ? "text-amber-700 dark:text-amber-400"
                         : "text-muted-foreground"
                   }`}
                 >
@@ -305,6 +395,7 @@ export function ClientAutomationMatrix({ rows }: { rows: MatrixClientRow[] }) {
                         <div className="space-y-2">
                           {CATEGORIES.map((c) => {
                             const current = s.overrides[c.key] ?? "off";
+                            const cap = CATEGORY_CHANNELS[c.key];
                             return (
                               <div
                                 key={c.key}
@@ -316,19 +407,31 @@ export function ClientAutomationMatrix({ rows }: { rows: MatrixClientRow[] }) {
                                 <div className="flex overflow-hidden rounded-md border border-border">
                                   {CHANNELS.map((ch) => {
                                     const active = current === ch.key;
-                                    const smsDead =
-                                      (ch.key === "sms" || ch.key === "both") &&
-                                      !r.sms_opted_in;
+                                    const wantsSms =
+                                      ch.key === "sms" || ch.key === "both";
+                                    const wantsEmail =
+                                      ch.key === "email" || ch.key === "both";
+                                    // A segment is "dead" when picking it can't
+                                    // fully deliver. Precedence: no text version
+                                    // exists > org SMS off > no consent > no
+                                    // email on file.
+                                    const deadReason = wantsSms && !cap.sms
+                                      ? ch.key === "sms"
+                                        ? "These messages are email-only — no text versions exist"
+                                        : "These messages are email-only — “Both” sends just the email"
+                                      : wantsSms && !smsEnabled
+                                        ? "Texting isn't turned on for your business yet — text choices stay silent until you set it up"
+                                        : wantsSms && !r.sms_opted_in
+                                          ? "Client hasn't opted in to SMS — texts won't send until they do"
+                                          : wantsEmail && !r.email
+                                            ? "No email on file — add one on their profile"
+                                            : null;
                                     return (
                                       <button
                                         key={ch.key}
                                         type="button"
                                         disabled={pending}
-                                        title={
-                                          smsDead
-                                            ? "Client hasn't opted in to SMS — texts won't send until they do"
-                                            : undefined
-                                        }
+                                        title={deadReason ?? undefined}
                                         onClick={() =>
                                           save(r.id, {
                                             ...s,
@@ -343,7 +446,7 @@ export function ClientAutomationMatrix({ rows }: { rows: MatrixClientRow[] }) {
                                           active
                                             ? "bg-foreground font-medium text-background"
                                             : "text-muted-foreground hover:bg-muted"
-                                        } ${smsDead && !active ? "opacity-50" : ""}`}
+                                        } ${deadReason && !active ? "opacity-50" : ""}`}
                                       >
                                         {ch.label}
                                       </button>
@@ -354,6 +457,93 @@ export function ClientAutomationMatrix({ rows }: { rows: MatrixClientRow[] }) {
                             );
                           })}
                         </div>
+
+                        {/* Honesty line — selected channels that can't deliver,
+                            spelled out instead of silently not sending. */}
+                        {(() => {
+                          const warnings: string[] = [];
+                          if (s.preference === "custom") {
+                            const first = r.name.split(" ")[0];
+                            const on = CATEGORIES.filter(
+                              (c) => (s.overrides[c.key] ?? "off") !== "off",
+                            );
+                            const textCapableWithSms = on.some(
+                              (c) =>
+                                CATEGORY_CHANNELS[c.key].sms &&
+                                ["sms", "both"].includes(
+                                  s.overrides[c.key] ?? "off",
+                                ),
+                            );
+                            if (
+                              on.some((c) =>
+                                ["email", "both"].includes(
+                                  s.overrides[c.key] ?? "off",
+                                ),
+                              ) &&
+                              !r.email
+                            ) {
+                              warnings.push(
+                                `No email on file — email messages stay silent until you add one to ${first}'s profile.`,
+                              );
+                            }
+                            if (textCapableWithSms && !smsEnabled) {
+                              warnings.push(
+                                "Texting isn't turned on for your business yet — text choices stay silent until you set it up in Settings.",
+                              );
+                            }
+                            if (
+                              textCapableWithSms &&
+                              smsEnabled &&
+                              !r.sms_opted_in
+                            ) {
+                              warnings.push(
+                                `Texts are selected but ${first} hasn't opted in — texts stay silent until they do.`,
+                              );
+                            }
+                            const emailOnlyOnSms = on.filter(
+                              (c) =>
+                                !CATEGORY_CHANNELS[c.key].sms &&
+                                (s.overrides[c.key] ?? "off") === "sms",
+                            );
+                            if (emailOnlyOnSms.length > 0) {
+                              warnings.push(
+                                `${emailOnlyOnSms
+                                  .map((c) => c.label)
+                                  .join(
+                                    " and ",
+                                  )} messages are email-only — a “Text” setting leaves them silent.`,
+                              );
+                            }
+                            const emailOnlyOnBoth = on.filter(
+                              (c) =>
+                                !CATEGORY_CHANNELS[c.key].sms &&
+                                (s.overrides[c.key] ?? "off") === "both",
+                            );
+                            if (emailOnlyOnBoth.length > 0) {
+                              warnings.push(
+                                `${emailOnlyOnBoth
+                                  .map((c) => c.label)
+                                  .join(
+                                    " and ",
+                                  )} messages are email-only — “Both” sends just the email.`,
+                              );
+                            }
+                          }
+                          if (warnings.length === 0) return null;
+                          return (
+                            <div className="mt-2 space-y-1">
+                              {warnings.map((w) => (
+                                <p
+                                  key={w}
+                                  className="flex items-start gap-1.5 text-[11px] text-amber-700 dark:text-amber-400"
+                                >
+                                  <TriangleAlert className="mt-0.5 h-3 w-3 shrink-0" />
+                                  <span>{w}</span>
+                                </p>
+                              ))}
+                            </div>
+                          );
+                        })()}
                       </div>
 
                       {/* 3 · Advanced automations — explicit per-client disclosure */}
@@ -389,6 +579,36 @@ export function ClientAutomationMatrix({ rows }: { rows: MatrixClientRow[] }) {
                                 s.overrides[ev.category] ?? "off";
                               const categoryOff = categoryChannel === "off";
                               const isMuted = s.muted.includes(ev.id);
+                              // What will ACTUALLY go out for this one message:
+                              // the resolver's answer intersected with the
+                              // channels this message exists on.
+                              const res = resolveFor(r, s, ev.category, ev.id);
+                              const email =
+                                res.email && ev.channels.includes("email");
+                              const sms =
+                                res.sms &&
+                                ev.channels.includes("sms") &&
+                                smsEnabled;
+                              const actual =
+                                email && sms
+                                  ? "Email + text"
+                                  : email
+                                    ? "Email"
+                                    : sms
+                                      ? "Text"
+                                      : null;
+                              const blockedReason =
+                                !categoryOff && !isMuted && !actual
+                                  ? res.sms && !ev.channels.includes("sms")
+                                    ? "This message is email-only — the category is set to Text"
+                                    : res.sms && !smsEnabled
+                                      ? "Texting isn't turned on for your business yet"
+                                      : res.reason === "sms_not_opted_in"
+                                        ? "Client hasn't opted in to texts"
+                                        : res.reason === "no_email_address"
+                                          ? "No email on file"
+                                          : "No usable channel for this client"
+                                  : null;
                               return (
                                 <button
                                   key={ev.id}
@@ -407,7 +627,8 @@ export function ClientAutomationMatrix({ rows }: { rows: MatrixClientRow[] }) {
                                       ? "The whole category is off for this client"
                                       : isMuted
                                         ? "Muted for this client — click to restore"
-                                        : "On via category — click to mute just this message"
+                                        : (blockedReason ??
+                                          "Sends via the category channel — click to mute just this message")
                                   }
                                   className="flex items-center justify-between rounded px-1.5 py-1 text-left text-[11px] hover:bg-muted disabled:cursor-default disabled:hover:bg-transparent"
                                 >
@@ -426,14 +647,16 @@ export function ClientAutomationMatrix({ rows }: { rows: MatrixClientRow[] }) {
                                         ? "text-muted-foreground/60"
                                         : isMuted
                                           ? "text-muted-foreground"
-                                          : "text-emerald-600 dark:text-emerald-400"
+                                          : actual
+                                            ? "text-emerald-600 dark:text-emerald-400"
+                                            : "text-amber-700 dark:text-amber-400"
                                     }`}
                                   >
                                     {categoryOff
                                       ? "Off via category"
                                       : isMuted
                                         ? "Muted"
-                                        : "On"}
+                                        : (actual ?? "Won't send")}
                                   </span>
                                 </button>
                               );

@@ -133,3 +133,41 @@ export const CLIENT_FACING_AUTOMATION_KEYS: ReadonlySet<string> = new Set([
 export function isClientFacingAutomation(key: string): boolean {
   return CLIENT_FACING_AUTOMATION_KEYS.has(key);
 }
+
+/**
+ * Automation keys that never send anything to anyone — they change records
+ * inside Sollos (draft invoices, flip statuses, archive, expire) or toggle a
+ * feature's behavior. Contact preferences NEVER gate these: a do-not-contact
+ * client still gets invoiced and their bookings still auto-complete. DNC
+ * means "we don't talk to you", not "your account stops existing".
+ */
+export const BACKGROUND_AUTOMATION_KEYS: ReadonlySet<string> = new Set([
+  "auto_invoice_on_job_complete",
+  "auto_recurring_invoices",
+  "auto_complete_past_bookings",
+  "auto_void_overdue_invoices",
+  "auto_expire_stale_estimates",
+  "auto_booking_on_estimate_approval",
+  "auto_archive_old_records",
+  "feed_visible",
+  "divide_crew_hours",
+]);
+
+export type AutomationAudience = "client" | "team" | "background";
+
+/**
+ * The three-bucket doctrine, derived — not stored — so a key can never be
+ * mislabeled independently of how the engine actually treats it:
+ *
+ *   client     — messages the org's CLIENT. Governed by the routing mode and
+ *                each client's own preferences (category, mutes, DNC).
+ *   background — does bookkeeping, sends nothing. Org policy only; client
+ *                preferences never apply.
+ *   team       — everything else: messages to the owner, admins, or staff.
+ *                Org toggles only; clients are never involved.
+ */
+export function automationAudience(key: string): AutomationAudience {
+  if (CLIENT_FACING_AUTOMATION_KEYS.has(key)) return "client";
+  if (BACKGROUND_AUTOMATION_KEYS.has(key)) return "background";
+  return "team";
+}

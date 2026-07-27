@@ -10,6 +10,7 @@ import {
   FileText,
   CalendarPlus,
   Sparkles,
+  TriangleAlert,
 } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -18,6 +19,8 @@ import { SubmitButton } from "@/components/submit-button";
 import {
   resolveAutomationEnabled,
   CLIENT_FACING_AUTOMATION_KEYS,
+  automationAudience,
+  type AutomationAudience,
 } from "@/lib/automation-defaults";
 import {
   toggleAutomationAction,
@@ -51,6 +54,46 @@ type Stage = {
   /** Show a one-click "turn all of these on" bundle button (safe stages only). */
   bundlePreset?: string;
 };
+
+/**
+ * The three-kind doctrine, made visible. Every toggle wears one of these so
+ * an owner always knows WHO an automation touches before flipping it:
+ * client message (per-client rules apply), team alert (staff only), or
+ * background (bookkeeping — sends nothing). Derived from the same sets the
+ * engine enforces, so the label can never drift from the behavior.
+ */
+const AUDIENCE_STYLE: Record<
+  AutomationAudience,
+  { label: string; pill: string; dot: string }
+> = {
+  client: {
+    label: "Client message",
+    pill: "bg-sky-500/10 text-sky-700 dark:text-sky-400",
+    dot: "bg-sky-500",
+  },
+  team: {
+    label: "Team alert",
+    pill: "bg-violet-500/10 text-violet-700 dark:text-violet-400",
+    dot: "bg-violet-500",
+  },
+  background: {
+    label: "Background",
+    pill: "bg-muted text-muted-foreground",
+    dot: "bg-muted-foreground/40",
+  },
+};
+
+function AudienceBadge({ audience }: { audience: AutomationAudience }) {
+  const s = AUDIENCE_STYLE[audience];
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-medium ${s.pill}`}
+    >
+      <span aria-hidden className={`h-1.5 w-1.5 rounded-full ${s.dot}`} />
+      {s.label}
+    </span>
+  );
+}
 
 /**
  * Automations organized by the LIFE OF A JOB, not by channel or recipient.
@@ -432,7 +475,7 @@ export default async function AutomationsPage() {
   const { data: org } = (await admin
     .from("organizations")
     .select(
-      "automation_settings, default_contact_preference, automations_enabled, automation_mode",
+      "automation_settings, default_contact_preference, automations_enabled, automation_mode, sms_enabled",
     )
     .eq("id", membership.organization_id)
     .maybeSingle()) as unknown as {
@@ -441,6 +484,7 @@ export default async function AutomationsPage() {
       default_contact_preference: string | null;
       automations_enabled: boolean | null;
       automation_mode: string | null;
+      sms_enabled: boolean | null;
     } | null;
   };
 
@@ -448,6 +492,7 @@ export default async function AutomationsPage() {
   const contactDefault = org?.default_contact_preference ?? "email";
   const masterOn = org?.automations_enabled === true;
   const perClientMode = org?.automation_mode === "per_client";
+  const smsEnabled = org?.sms_enabled === true;
 
   // Per-client mode: load the client list for the manager. Active clients
   // only; the matrix is the authority surface in this mode.
@@ -532,23 +577,35 @@ export default async function AutomationsPage() {
       <div className="mb-6 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/30 px-4 py-3 text-[11px] text-muted-foreground">
         <span className="mr-1">How a client message decides to send:</span>
         <span className="rounded-md border border-border bg-background px-2 py-1 font-medium text-foreground">
-          1 · Automation on below
+          {perClientMode ? "1 · Master switch on" : "1 · Automation on below"}
         </span>
         <span aria-hidden>→</span>
         <span className="rounded-md border border-border bg-background px-2 py-1 font-medium text-foreground">
-          2 · That client&apos;s own setting
+          {perClientMode
+            ? "2 · That client's setting in the manager below"
+            : "2 · That client's own setting"}
         </span>
         <span aria-hidden>→</span>
         <span className="rounded-md border border-border bg-background px-2 py-1 font-medium text-foreground">
           3 · Texts need the client&apos;s opt-in
         </span>
         <span className="basis-full text-[11px]">
-          Org-wide rules live here. Fine-tune any individual person on{" "}
-          <Link href="/app/clients" className="underline underline-offset-2">
-            their client page
-          </Link>
-          . Staff and back-office automations skip steps 2–3 — they never touch
-          clients.
+          {perClientMode ? (
+            <>
+              Client messages are managed client by client in the manager
+              below. Staff and back-office automations skip steps 2–3 — they
+              never touch clients.
+            </>
+          ) : (
+            <>
+              Org-wide rules live here. Fine-tune any individual person on{" "}
+              <Link href="/app/clients" className="underline underline-offset-2">
+                their client page
+              </Link>
+              . Staff and back-office automations skip steps 2–3 — they never
+              touch clients.
+            </>
+          )}
         </span>
       </div>
 
@@ -641,10 +698,45 @@ export default async function AutomationsPage() {
         </div>
       </div>
 
+      {/* THE THREE KINDS — legend for the badge every toggle below wears.
+          Always visible: this is the page's decoder ring. */}
+      <div className="mb-6 rounded-lg border border-border bg-muted/30 px-4 py-3">
+        <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          Three kinds of automation
+        </p>
+        <div className="grid gap-x-6 gap-y-2 sm:grid-cols-3">
+          <div className="flex flex-col items-start gap-1">
+            <AudienceBadge audience="client" />
+            <p className="text-[11px] text-muted-foreground">
+              Goes to your client.{" "}
+              {perClientMode
+                ? "Each client's own settings in the manager above decide."
+                : "What you enable applies to every client; set exceptions on a client's page."}
+            </p>
+          </div>
+          <div className="flex flex-col items-start gap-1">
+            <AudienceBadge audience="team" />
+            <p className="text-[11px] text-muted-foreground">
+              Goes to you or your staff. Clients never see these.
+            </p>
+          </div>
+          <div className="flex flex-col items-start gap-1">
+            <AudienceBadge audience="background" />
+            <p className="text-[11px] text-muted-foreground">
+              Does the bookkeeping — drafts invoices, flips statuses. Sends
+              nothing to anyone, so client preferences never apply.
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* PER-CLIENT MANAGER — the authority surface in per-client mode. */}
       {perClientMode && (
         <div className={`mb-8 ${masterOn ? "" : "pointer-events-none opacity-50"}`}>
-          <ClientAutomationMatrix rows={matrixClients} />
+          <ClientAutomationMatrix
+            rows={matrixClients}
+            smsEnabled={smsEnabled}
+          />
         </div>
       )}
 
@@ -730,8 +822,20 @@ export default async function AutomationsPage() {
         </form>
         <p className="mt-2 text-[11px] text-muted-foreground">
           Texts only reach clients who have opted in to SMS, regardless of this
-          setting.
+          setting. Billing and review messages are email-only — texts exist
+          for booking updates.
         </p>
+        {contactDefault === "sms" && (
+          <p className="mt-2 flex items-start gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-800 dark:text-amber-300">
+            <TriangleAlert className="mt-0.5 h-3 w-3 shrink-0" />
+            <span>
+              With &ldquo;Text only&rdquo; as the default, invoices, receipts,
+              overdue reminders, and review asks never send to clients on the
+              default — those messages only exist as email. Clients with their
+              own email setting are unaffected.
+            </span>
+          </p>
+        )}
       </div>
 
       )}
@@ -849,6 +953,9 @@ export default async function AutomationsPage() {
                               <span className="text-sm font-medium">
                                 {a.title}
                               </span>
+                              <AudienceBadge
+                                audience={automationAudience(a.key)}
+                              />
                               <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
                                 {a.trigger}
                               </span>

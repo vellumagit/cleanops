@@ -2,16 +2,16 @@ import { requireMembership } from "@/lib/auth";
 import { PageShell } from "@/components/page-shell";
 import { ClientForm } from "../client-form";
 import { fetchClientFormCleaners, fetchReferralClients } from "../options";
-import { fetchOrgContactDefault } from "../org-contact-default";
+import { fetchOrgNotificationContext } from "../org-contact-default";
 
 export const metadata = { title: "New client" };
 
 export default async function NewClientPage() {
   const membership = await requireMembership(["owner", "admin", "manager"]);
-  const [cleaners, referralClients, orgContactDefault] = await Promise.all([
+  const [cleaners, referralClients, orgCtx] = await Promise.all([
     fetchClientFormCleaners(),
     fetchReferralClients(),
-    fetchOrgContactDefault(membership.organization_id),
+    fetchOrgNotificationContext(membership.organization_id),
   ]);
   return (
     <PageShell
@@ -23,7 +23,8 @@ export default async function NewClientPage() {
           mode="create"
           cleaners={cleaners}
           referralClients={referralClients}
-          orgContactDefault={orgContactDefault}
+          orgContactDefault={orgCtx.orgDefault}
+          orgSmsEnabled={orgCtx.smsEnabled}
         />
       </div>
     </PageShell>

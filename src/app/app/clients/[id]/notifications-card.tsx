@@ -2,10 +2,13 @@ import Link from "next/link";
 import { Bell, Mail, MessageSquare, Ban, Pencil } from "lucide-react";
 import {
   summarizeClientChannels,
+  summarizeActualChannels,
+  CATEGORY_CHANNELS,
   type ContactOverrides,
   type ClientContactPreference,
   type OrgContactDefault,
   type NotificationCategory,
+  type ActualChannels,
   type ResolvedChannels,
 } from "@/lib/notification-preferences";
 
@@ -25,16 +28,27 @@ const CATEGORY_LABEL: Record<NotificationCategory, string> = {
   growth: "Reviews & rebooking",
 };
 
-function channelText(r: ResolvedChannels): {
+function channelText(
+  actual: ActualChannels,
+  raw: ResolvedChannels,
+  category: NotificationCategory,
+): {
   text: string;
   muted: boolean;
 } {
-  if (r.email && r.sms) return { text: "Email + text", muted: false };
-  if (r.email) return { text: "Email", muted: false };
-  if (r.sms) return { text: "Text", muted: false };
-  if (r.reason === "sms_not_opted_in")
+  if (actual.email && actual.sms) return { text: "Email + text", muted: false };
+  if (actual.email) return { text: "Email", muted: false };
+  if (actual.sms) return { text: "Text", muted: false };
+  if (actual.reason === "channel_not_available") {
+    // The client is willing, but the chosen channel can't deliver: either the
+    // messages only exist as email, or the org hasn't turned texting on.
+    return raw.sms && !CATEGORY_CHANNELS[category].sms
+      ? { text: "Nothing — text chosen, but these only exist as email", muted: true }
+      : { text: "Nothing — texting isn't set up for your business", muted: true };
+  }
+  if (actual.reason === "sms_not_opted_in")
     return { text: "Nothing — texts chosen but not opted in", muted: true };
-  if (r.reason === "no_email_address")
+  if (actual.reason === "no_email_address")
     return { text: "Nothing — no email on file", muted: true };
   return { text: "Nothing", muted: true };
 }
@@ -48,12 +62,15 @@ export function ClientNotificationsCard({
   hasEmail,
   smsOptedIn,
   perClientMode = false,
+  smsEnabled = true,
 }: {
   clientId: string;
   canEdit: boolean;
   orgDefault: OrgContactDefault;
   /** Org is in per-client routing mode — copy changes accordingly. */
   perClientMode?: boolean;
+  /** organizations.sms_enabled — with it off, texts silently skip. */
+  smsEnabled?: boolean;
   contactPreference: string | null;
   contactOverrides: ContactOverrides | null;
   hasEmail: boolean;
@@ -61,12 +78,18 @@ export function ClientNotificationsCard({
 }) {
   const pref = (contactPreference ?? "inherit") as ClientContactPreference;
   const isDnc = pref === "do_not_contact";
-  const summary = summarizeClientChannels({
+  const resolveInput = {
     orgDefault,
     clientPref: pref,
     overrides: contactOverrides ?? {},
     hasEmail,
     smsOptedIn,
+  };
+  // raw = what the client is willing to receive; actual = what really goes
+  // out once channel capability and the org SMS switch are applied.
+  const rawSummary = summarizeClientChannels(resolveInput);
+  const summary = summarizeActualChannels(resolveInput, {
+    smsAvailable: smsEnabled,
   });
 
   return (
@@ -117,7 +140,7 @@ export function ClientNotificationsCard({
           {(Object.keys(CATEGORY_LABEL) as NotificationCategory[]).map(
             (cat) => {
               const r = summary[cat];
-              const { text, muted } = channelText(r);
+              const { text, muted } = channelText(r, rawSummary[cat], cat);
               const IconEl = r.sms && !r.email ? MessageSquare : Mail;
               return (
                 <div

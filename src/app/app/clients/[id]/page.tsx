@@ -189,8 +189,11 @@ export default async function ClientDetailPage({
   const gbpPreconditionsMet =
     !!client.email && !!orgGbp?.google_review_url;
 
-  const { orgDefault: orgContactDefault, perClientMode } =
-    await fetchOrgNotificationContext(membership.organization_id);
+  const {
+    orgDefault: orgContactDefault,
+    perClientMode,
+    smsEnabled: orgSmsEnabled,
+  } = await fetchOrgNotificationContext(membership.organization_id);
 
   return (
     <PageShell
@@ -338,6 +341,7 @@ export default async function ClientDetailPage({
           canEdit={canEdit}
           orgDefault={orgContactDefault}
           perClientMode={perClientMode}
+          smsEnabled={orgSmsEnabled}
           contactPreference={client.contact_preference}
           contactOverrides={
             client.contact_overrides as import("@/lib/notification-preferences").ContactOverrides | null

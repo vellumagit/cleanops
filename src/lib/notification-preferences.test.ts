@@ -2,6 +2,9 @@ import { describe, it, expect } from "vitest";
 import {
   resolveClientChannels,
   summarizeClientChannels,
+  actualClientChannels,
+  CATEGORY_CHANNELS,
+  NOTIFICATION_EVENTS,
   type ResolveInput,
 } from "./notification-preferences";
 
@@ -147,6 +150,59 @@ describe("resolveClientChannels — advanced per-message mutes", () => {
         category: "booking",
         event: "confirmation",
       }),
+    ).toMatchObject({ reason: "do_not_contact" });
+  });
+});
+
+describe("channel capability — which messages exist on which channel", () => {
+  it("every event declares at least email", () => {
+    for (const ev of NOTIFICATION_EVENTS) {
+      expect(ev.channels).toContain("email");
+    }
+  });
+  it("booking reaches both channels; billing and growth are email-only", () => {
+    expect(CATEGORY_CHANNELS.booking).toEqual({ email: true, sms: true });
+    expect(CATEGORY_CHANNELS.billing).toEqual({ email: true, sms: false });
+    expect(CATEGORY_CHANNELS.growth).toEqual({ email: true, sms: false });
+  });
+});
+
+describe("actualClientChannels — capability + org-SMS intersection", () => {
+  const smsClient: ResolveInput = {
+    ...base,
+    clientPref: "custom",
+    smsOptedIn: true,
+    overrides: { booking: "sms", billing: "sms", growth: "both" },
+    category: "booking",
+  };
+  it("booking text passes through untouched", () => {
+    expect(actualClientChannels(smsClient)).toMatchObject({
+      sms: true,
+      email: false,
+      reason: "ok",
+    });
+  });
+  it("billing text → channel_not_available (invoices are email-only)", () => {
+    expect(
+      actualClientChannels({ ...smsClient, category: "billing" }),
+    ).toEqual({ email: false, sms: false, reason: "channel_not_available" });
+  });
+  it("growth 'both' degrades to email only", () => {
+    expect(
+      actualClientChannels({ ...smsClient, category: "growth" }),
+    ).toMatchObject({ email: true, sms: false, reason: "ok" });
+  });
+  it("org SMS off kills booking texts → channel_not_available", () => {
+    expect(
+      actualClientChannels(smsClient, { smsAvailable: false }),
+    ).toEqual({ email: false, sms: false, reason: "channel_not_available" });
+  });
+  it("preference blocks pass through with their original reason", () => {
+    expect(
+      actualClientChannels({ ...smsClient, smsOptedIn: false }),
+    ).toMatchObject({ reason: "sms_not_opted_in" });
+    expect(
+      actualClientChannels({ ...base, clientPref: "do_not_contact" }),
     ).toMatchObject({ reason: "do_not_contact" });
   });
 });

@@ -38,25 +38,33 @@ export async function fetchOrgContactDefault(
  */
 export async function fetchOrgNotificationContext(
   organizationId: string,
-): Promise<{ orgDefault: OrgContactDefault; perClientMode: boolean }> {
+): Promise<{
+  orgDefault: OrgContactDefault;
+  perClientMode: boolean;
+  /** organizations.sms_enabled — texts silently skip while this is off. */
+  smsEnabled: boolean;
+}> {
   const admin = createSupabaseAdminClient();
   const { data } = (await admin
     .from("organizations")
-    .select("default_contact_preference, automation_mode")
+    .select("default_contact_preference, automation_mode, sms_enabled")
     .eq("id", organizationId)
     .maybeSingle()) as unknown as {
     data: {
       default_contact_preference: string | null;
       automation_mode: string | null;
+      sms_enabled: boolean | null;
     } | null;
   };
   const perClientMode = data?.automation_mode === "per_client";
-  if (perClientMode) return { orgDefault: "none", perClientMode };
+  const smsEnabled = data?.sms_enabled === true;
+  if (perClientMode) return { orgDefault: "none", perClientMode, smsEnabled };
   const v = data?.default_contact_preference ?? "email";
   return {
     orgDefault: (["email", "sms", "both", "none"].includes(v)
       ? v
       : "email") as OrgContactDefault,
     perClientMode,
+    smsEnabled,
   };
 }
