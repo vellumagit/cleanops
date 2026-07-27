@@ -256,9 +256,9 @@ const STAGES: Stage[] = [
       },
       {
         key: "gbp_review_request",
-        title: "Google review request — 24h after first job, then monthly",
+        title: "Google review request — 48h after first job, 1 week, then monthly",
         description:
-          "Emails the client a Google review link 24 hours after their FIRST completed booking, then monthly reminders if they haven't clicked. Stops when the client clicks or hits the reminder cap. Requires your Google Review URL in Settings → Branding.",
+          "Emails the client a Google review link 48 hours after their FIRST completed booking. If they haven't clicked: a reminder 1 week later, then monthly until the cap (4 more by default). Stops the moment they click. Requires your Google Review URL in Settings → Branding.",
         trigger: "Daily cron, ~11:00 UTC",
       },
       {

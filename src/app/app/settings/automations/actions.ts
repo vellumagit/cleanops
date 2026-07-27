@@ -39,8 +39,9 @@ export type AutomationKey =
   | "estimate_followup_email"
   // Review requests — default ON (revenue-positive; owners opt out not in)
   | "review_request_after_completion"
-  // Google review ask (separate track from internal review). Default ON.
-  // Fires 24h after a client's FIRST completed booking, then monthly
+  // Google review ask (separate track from internal review).
+  // Fires 48h after a client's FIRST completed booking, reminder at
+  // 1 week, then monthly
   // reminders while the client's gbp_review_state is "pending", capped
   // by organizations.gbp_review_max_reminders.
   | "gbp_review_request"

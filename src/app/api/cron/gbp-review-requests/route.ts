@@ -1,14 +1,18 @@
 /**
- * Cron: Google review request — initial ask + monthly reminders.
+ * Cron: Google review request — initial ask + escalating reminders.
  *
  * Runs daily at ~11:00 UTC. Two phases in one pass:
  *
  *   PHASE A (initial):  Clients whose first completed booking ended
- *                       between 24h–14d ago, state = never_asked.
+ *                       between 48h–14d ago, state = never_asked.
+ *                       Schedules the first reminder 1 week out.
  *   PHASE B (reminder): Clients with state = pending whose
- *                       next_reminder_at has passed; capped at the
- *                       org's gbp_review_max_reminders (default 5)
- *                       before flipping to "lapsed".
+ *                       next_reminder_at has passed; subsequent
+ *                       reminders every gbp_review_reminder_days
+ *                       (default 30), capped at the org's
+ *                       gbp_review_max_reminders (default 5) before
+ *                       flipping to "lapsed".
+ *                       Net default cadence: 48h → +1wk → monthly ×4.
  *
  * Stop signals (any of these = no more email ever):
  *   - Customer clicked the redirect link (/r/g/<token>)

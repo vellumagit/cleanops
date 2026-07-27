@@ -2378,15 +2378,17 @@ export async function sendBookingReviewRequests(): Promise<{
 // Two phases handled in one pass:
 //
 //   PHASE A — Initial ask
-//     Trigger: 24h after the client's FIRST completed booking
+//     Trigger: 48h after the client's FIRST completed booking
 //     Per-client (not per-booking). State moves never_asked → pending.
 //
-//   PHASE B — Monthly reminders
-//     Trigger: every `gbp_review_reminder_days` (default 30) while
-//     state = pending, capped at `gbp_review_max_reminders` total
-//     (default 5). Reminder counter increments each time. When the
-//     cap is hit, state flips to lapsed and the client never receives
-//     another reminder unless the owner manually re-enables.
+//   PHASE B — Escalating reminders
+//     First reminder 7 days after the initial ask, then every
+//     `gbp_review_reminder_days` (default 30) while state = pending,
+//     capped at `gbp_review_max_reminders` total (default 5).
+//     Reminder counter increments each time. When the cap is hit,
+//     state flips to lapsed and the client never receives another
+//     reminder unless the owner manually re-enables.
+//     Default cadence: ask at 48h → +1wk → then monthly ×4 → lapsed.
 //
 // Stop signals (any of these means we never email again):
 //   - Customer clicked the /r/g/<token> link → state = clicked
@@ -2401,6 +2403,10 @@ export async function sendBookingReviewRequests(): Promise<{
 //   4. Client must have an email
 //   5. State machine (never_asked or pending only)
 // ─────────────────────────────────────────────────────────────────
+
+// Gap between the initial ask and the first reminder. Reminders after
+// the first use the org-tunable gbp_review_reminder_days (default 30).
+const GBP_FIRST_REMINDER_DAYS = 7;
 
 export async function sendGbpReviewRequests(): Promise<{
   considered: number;
@@ -2442,16 +2448,18 @@ export async function sendGbpReviewRequests(): Promise<{
   // A client qualifies for the initial ask when:
   //   - gbp_review_state = 'never_asked'
   //   - has email
-  //   - has a completed booking that ended >= 24h ago and <= 14d ago
-  //     (14d ceiling avoids dredging up ancient first-jobs after the
-  //     feature is enabled for the first time — we don't want to spam
-  //     existing customers from 6 months ago)
+  //   - has a completed booking that ended >= 48h ago and <= 14d ago
+  //     (48h gives the experience time to settle so the ask doesn't
+  //     read as a same-day auto-blast; 14d ceiling avoids dredging up
+  //     ancient first-jobs after the feature is enabled for the first
+  //     time — we don't want to spam existing customers from 6 months
+  //     ago)
   //   - org has gbp_review_request automation enabled
   //   - org has google_review_url set
   const earliestFirstJob = new Date(
     now - 14 * 24 * 60 * 60 * 1000,
   ).toISOString();
-  const latestFirstJob = new Date(now - 24 * 60 * 60 * 1000).toISOString();
+  const latestFirstJob = new Date(now - 48 * 60 * 60 * 1000).toISOString();
 
   // Pull qualifying candidate (client, oldest-completed-booking) pairs.
   // We use a bookings query because we need the triggering booking id.
@@ -2544,8 +2552,11 @@ export async function sendGbpReviewRequests(): Promise<{
       const unsubToken =
         client.gbp_unsubscribe_token ?? (await generateClaimToken(24));
 
+      // Escalating cadence: the FIRST reminder lands one week after the
+      // initial ask (strike while the clean is fresh); reminders after
+      // that fall back to the org's monthly interval — see Phase B.
       const nextReminderAt = new Date(
-        now + org.reminder_days * 24 * 60 * 60 * 1000,
+        now + GBP_FIRST_REMINDER_DAYS * 24 * 60 * 60 * 1000,
       ).toISOString();
 
       // Atomic claim with rowcount check. WHERE state = 'never_asked'
