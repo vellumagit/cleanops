@@ -14,7 +14,9 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { resolveClientNotify } from "@/lib/notification-gate";
 import { sendOrgEmailDetailed, isEmailConfigured } from "@/lib/email";
 import { invoiceSentEmail } from "@/lib/email-templates";
-import { formatCurrencyCents } from "@/lib/format";
+import { formatCurrencyCents, DEFAULT_TZ } from "@/lib/format";
+import { isValidIanaTz } from "@/lib/org-timezone";
+import { nextDayAtHourUtc } from "@/lib/wall-clock";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { pushInvoiceToSage } from "@/lib/sage";
 import { pushInvoiceToQuickBooks } from "@/lib/quickbooks";
@@ -211,6 +213,11 @@ export async function deliverInvoiceEmailCore(
  * manual draft (fail-safe: we never accidentally send). `consolidated` marks
  * the biweekly/monthly billing-cycle path, which the org can opt out of
  * separately from per-job drafts.
+ *
+ * Send slot: {invoice_auto_send_hour}:00 org-local time on the calendar day
+ * AFTER the draft is created — a predictable clock time, not a rolling
+ * countdown. The morning review digest (7 AM-ish) fires before it, so the
+ * owner's rhythm is: digest → fix anything wrong → sends go at the set hour.
  */
 export async function scheduleAutoSendIfEnabled(
   invoiceId: string,
@@ -222,22 +229,26 @@ export async function scheduleAutoSendIfEnabled(
     const { data } = (await db
       .from("organizations")
       .select(
-        "invoice_auto_send_enabled, invoice_auto_send_delay_hours, invoice_auto_send_consolidated",
+        "invoice_auto_send_enabled, invoice_auto_send_hour, invoice_auto_send_consolidated, timezone",
       )
       .eq("id", orgId)
       .maybeSingle()) as unknown as {
       data: {
         invoice_auto_send_enabled: boolean;
-        invoice_auto_send_delay_hours: number;
+        invoice_auto_send_hour: number | null;
         invoice_auto_send_consolidated: boolean;
+        timezone: string | null;
       } | null;
     };
 
     if (!data || !data.invoice_auto_send_enabled) return;
     if (opts?.consolidated && !data.invoice_auto_send_consolidated) return;
 
-    const delayHours = Math.max(0, data.invoice_auto_send_delay_hours ?? 24);
-    const at = new Date(Date.now() + delayHours * 3_600_000).toISOString();
+    const at = computeAutoSendAt(
+      new Date(),
+      data.timezone,
+      data.invoice_auto_send_hour,
+    ).toISOString();
 
     await (db
       .from("invoices")
@@ -246,6 +257,17 @@ export async function scheduleAutoSendIfEnabled(
   } catch (err) {
     console.error("[invoice-send] scheduleAutoSendIfEnabled failed:", err);
   }
+}
+
+/** Next-day-at-hour helper shared by scheduling and the re-arm path. */
+export function computeAutoSendAt(
+  from: Date,
+  timezone: string | null,
+  hour: number | null,
+): Date {
+  const tz = timezone && isValidIanaTz(timezone) ? timezone : DEFAULT_TZ;
+  const h = typeof hour === "number" && hour >= 0 && hour <= 23 ? hour : 17;
+  return nextDayAtHourUtc(from, tz, h);
 }
 
 /**

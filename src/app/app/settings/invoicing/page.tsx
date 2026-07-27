@@ -14,14 +14,14 @@ export default async function InvoicingSettingsPage() {
   const { data } = await admin
     .from("organizations")
     .select(
-      "invoice_auto_send_enabled, invoice_auto_send_delay_hours, invoice_auto_send_consolidated",
+      "invoice_auto_send_enabled, invoice_auto_send_hour, invoice_auto_send_consolidated",
     )
     .eq("id", membership.organization_id)
     .maybeSingle();
 
   const org = data as {
     invoice_auto_send_enabled: boolean;
-    invoice_auto_send_delay_hours: number;
+    invoice_auto_send_hour: number | null;
     invoice_auto_send_consolidated: boolean;
   } | null;
 
@@ -43,12 +43,13 @@ export default async function InvoicingSettingsPage() {
         <h2 className="text-sm font-semibold">Auto-send</h2>
         <p className="mb-4 mt-0.5 text-xs text-muted-foreground">
           Invoices are always drafted automatically when a job completes. Turn
-          this on to also send them automatically after a review window — with a
-          hold / send-now escape hatch on every draft.
+          this on to also send them at a set time the next day — with a hold /
+          send-now escape hatch on every draft, and an optional morning digest
+          so you can review before anything goes out.
         </p>
         <InvoicingForm
           enabled={Boolean(org?.invoice_auto_send_enabled)}
-          delayHours={org?.invoice_auto_send_delay_hours ?? 24}
+          sendHour={org?.invoice_auto_send_hour ?? 17}
           consolidated={org?.invoice_auto_send_consolidated ?? true}
         />
       </section>

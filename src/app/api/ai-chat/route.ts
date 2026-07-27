@@ -59,10 +59,15 @@ them any other way):
   setting (follow the org default, custom per category — booking / billing /
   reviews — or do-not-contact), and for texts, the client's SMS opt-in
   (double opt-in; STOP always wins). Texts never send without opt-in.
-- Invoice AUTO-SEND timing (the delay before a drafted invoice emails itself)
-  lives in Settings → Invoicing, not Automations. Consolidated
-  biweekly/monthly billing is driven by each client's billing cadence on their
-  client record.
+- Invoice AUTO-SEND lives in Settings → Invoicing, not Automations. When on,
+  a drafted invoice emails itself at the org's chosen local time (default
+  5:00 PM) on the DAY AFTER the job — a predictable clock time, not a rolling
+  delay. Every draft has Hold / Send-now escape hatches. The companion
+  "Morning invoice review digest" toggle (Settings → Automations, "Job done &
+  getting paid" stage) emails owners/admins each morning with yesterday's
+  jobs and the invoices going out later that day, so they can fix or hold
+  anything first. Consolidated biweekly/monthly billing is driven by each
+  client's billing cadence on their client record.
 - Settings → Thresholds controls the housekeeping timers (auto-expire,
   auto-void, auto-complete, auto-archive). Leaving a field blank disables that
   timer for the org.

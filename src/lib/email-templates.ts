@@ -1947,3 +1947,97 @@ export function contractSignInvitationEmail(args: {
   const text = `Hi ${args.clientName},\n\n${args.orgName} has a service agreement ready for your signature.\n\nService: ${args.serviceDescription || "Cleaning service"}\nAgreed price: ${args.amountFormatted}\nStarts: ${args.startDate}${args.endDate ? `\nEnds: ${args.endDate}` : ""}\n\nReview & sign: ${args.signUrl}\n\nThe link is unique to your contract — please don't forward it. Questions? Reply to this email.`;
   return { subject, html, text };
 }
+
+// ---------------------------------------------------------------------------
+// Admin: Morning invoice review digest (Sollos → owner, daily)
+// ---------------------------------------------------------------------------
+
+export function invoiceReviewDigestEmail(args: {
+  recipientName: string;
+  orgName: string;
+  /** e.g. "Sunday, July 26" — the local day being reviewed. */
+  dayLabel: string;
+  /** Yesterday's completed jobs with their invoice outcome. */
+  jobs: Array<{ clientName: string; timeLabel: string; invoiceLabel: string }>;
+  /** Drafts auto-sending today: who, how much, when. */
+  outgoing: Array<{ clientName: string; amountLabel: string; detail: string }>;
+  /** e.g. "5:00 PM" — the org's send hour, for the headline. */
+  sendTimeLabel: string | null;
+  invoicesUrl: string;
+}) {
+  const outgoingCount = args.outgoing.length;
+  const subject =
+    outgoingCount > 0
+      ? `${outgoingCount} invoice${outgoingCount === 1 ? "" : "s"} go${outgoingCount === 1 ? "es" : ""} out today${args.sendTimeLabel ? ` at ${args.sendTimeLabel}` : ""} — ${args.orgName}`
+      : `Yesterday's jobs at ${args.orgName} — quick review`;
+
+  const jobRows = args.jobs
+    .map(
+      (j) => `
+    <tr>
+      <td style="font-size:13px;color:#18181b;padding:10px 0;border-bottom:1px solid #f4f4f5;vertical-align:top;">
+        <div>${escapeHtml(j.clientName)}</div>
+        <div style="font-size:11px;color:#a1a1aa;margin-top:2px;">${escapeHtml(j.timeLabel)}</div>
+      </td>
+      <td style="font-size:12px;color:#71717a;padding:10px 0;text-align:right;border-bottom:1px solid #f4f4f5;vertical-align:top;">${escapeHtml(j.invoiceLabel)}</td>
+    </tr>`,
+    )
+    .join("");
+
+  const outgoingRows = args.outgoing
+    .map(
+      (o) => `
+    <tr>
+      <td style="font-size:13px;color:#18181b;padding:10px 0;border-bottom:1px solid #f4f4f5;vertical-align:top;">
+        <div>${escapeHtml(o.clientName)}</div>
+        <div style="font-size:11px;color:#a1a1aa;margin-top:2px;">${escapeHtml(o.detail)}</div>
+      </td>
+      <td style="font-size:13px;color:#18181b;padding:10px 0;text-align:right;border-bottom:1px solid #f4f4f5;font-weight:600;vertical-align:top;">${escapeHtml(o.amountLabel)}</td>
+    </tr>`,
+    )
+    .join("");
+
+  const html = layout(
+    `
+    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;letter-spacing:-0.02em;color:#18181b;line-height:1.3;">Morning invoice review</h1>
+    <p style="margin:0 0 4px;font-size:14px;line-height:1.55;color:#52525b;">
+      Hi ${escapeHtml(args.recipientName)} — here's ${escapeHtml(args.dayLabel)} at <strong style="color:#18181b;">${escapeHtml(args.orgName)}</strong>. No action needed: fix or hold anything that looks off, and the rest takes care of itself.
+    </p>
+    ${
+      outgoingCount > 0
+        ? `<p style="margin:16px 0 6px;font-size:13px;font-weight:600;color:#18181b;">Going out today${args.sendTimeLabel ? ` at ${escapeHtml(args.sendTimeLabel)}` : ""}</p>
+          <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-top:1px solid #e4e4e7;">${outgoingRows}</table>`
+        : ""
+    }
+    ${
+      args.jobs.length > 0
+        ? `<p style="margin:20px 0 6px;font-size:13px;font-weight:600;color:#18181b;">Yesterday's completed jobs</p>
+          <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-top:1px solid #e4e4e7;">${jobRows}</table>`
+        : ""
+    }
+    <div style="margin-top:20px;">${button("Review invoices", args.invoicesUrl)}</div>
+    <p style="margin:0;font-size:12px;line-height:1.5;color:#a1a1aa;">
+      You can turn this morning digest off in Settings → Automations.
+    </p>
+    `,
+    {
+      sollosHeader: true,
+      orgName: args.orgName,
+      preheader:
+        outgoingCount > 0
+          ? `${outgoingCount} invoice(s) scheduled today — review before they send`
+          : "Yesterday's completed jobs, reviewed in one glance",
+    },
+  );
+
+  const text = `Morning invoice review — ${args.orgName}\n${args.dayLabel}\n\n${
+    outgoingCount > 0
+      ? `GOING OUT TODAY${args.sendTimeLabel ? ` AT ${args.sendTimeLabel}` : ""}:\n${args.outgoing.map((o) => `- ${o.clientName}: ${o.amountLabel} (${o.detail})`).join("\n")}\n\n`
+      : ""
+  }${
+    args.jobs.length > 0
+      ? `YESTERDAY'S COMPLETED JOBS:\n${args.jobs.map((j) => `- ${j.clientName} (${j.timeLabel}) — ${j.invoiceLabel}`).join("\n")}\n\n`
+      : ""
+  }Review: ${args.invoicesUrl}\n\nNo action needed — hold or edit anything before it sends.`;
+  return { subject, html, text };
+}

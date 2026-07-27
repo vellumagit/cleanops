@@ -6,11 +6,9 @@ import { logAuditEvent } from "@/lib/audit";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 export type InvoicingFormState = {
-  errors?: Partial<Record<"_form" | "delay", string>>;
+  errors?: Partial<Record<"_form" | "hour", string>>;
   success?: boolean;
 };
-
-const ALLOWED_DELAYS = new Set([0, 12, 24, 48, 72]);
 
 export async function saveInvoiceAutoSendAction(
   _prev: InvoicingFormState,
@@ -23,10 +21,10 @@ export async function saveInvoiceAutoSendAction(
 
   const enabled = formData.get("enabled") === "on";
   const consolidated = formData.get("consolidated") === "on";
-  const delayHours = Number(formData.get("delay_hours") ?? 24);
+  const sendHour = Number(formData.get("send_hour") ?? 17);
 
-  if (!Number.isInteger(delayHours) || !ALLOWED_DELAYS.has(delayHours)) {
-    return { errors: { delay: "Choose one of the listed delays." } };
+  if (!Number.isInteger(sendHour) || sendHour < 0 || sendHour > 23) {
+    return { errors: { hour: "Pick a time of day." } };
   }
 
   const admin = createSupabaseAdminClient();
@@ -34,7 +32,7 @@ export async function saveInvoiceAutoSendAction(
     .from("organizations")
     .update({
       invoice_auto_send_enabled: enabled,
-      invoice_auto_send_delay_hours: delayHours,
+      invoice_auto_send_hour: sendHour,
       invoice_auto_send_consolidated: consolidated,
     } as never)
     .eq("id", membership.organization_id);
@@ -52,10 +50,19 @@ export async function saveInvoiceAutoSendAction(
   } else {
     // Turning it back ON re-arms previously-held DRAFTS — they were only held
     // because the org disabled auto-send, and before this they stayed held
-    // forever (audit P8). Rescheduled with the configured delay from NOW so
-    // the owner gets the same review window as any fresh draft.
-    const sendAt = new Date(
-      Date.now() + delayHours * 60 * 60 * 1000,
+    // forever (audit P8). Rescheduled to the next send slot (tomorrow at the
+    // configured hour) so the owner gets the same review window — and the
+    // same morning digest heads-up — as any fresh draft.
+    const { computeAutoSendAt } = await import("@/lib/invoice-send");
+    const { data: orgRow } = (await admin
+      .from("organizations")
+      .select("timezone")
+      .eq("id", membership.organization_id)
+      .maybeSingle()) as unknown as { data: { timezone: string | null } | null };
+    const sendAt = computeAutoSendAt(
+      new Date(),
+      orgRow?.timezone ?? null,
+      sendHour,
     ).toISOString();
     await (admin
       .from("invoices")
@@ -72,7 +79,7 @@ export async function saveInvoiceAutoSendAction(
     entity_id: membership.organization_id,
     after: {
       invoice_auto_send_enabled: enabled,
-      invoice_auto_send_delay_hours: delayHours,
+      invoice_auto_send_hour: sendHour,
       invoice_auto_send_consolidated: consolidated,
     },
   });

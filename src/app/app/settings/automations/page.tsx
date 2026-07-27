@@ -250,8 +250,15 @@ const STAGES: Stage[] = [
         key: "auto_invoice_on_job_complete",
         title: "Auto-draft invoice on job complete",
         description:
-          "Creates a draft invoice for the client automatically when a booking is marked completed. You still need to review and send it.",
+          "Creates a draft invoice for the client automatically when a booking is marked completed. Pair with auto-send (Settings → Invoicing) to also email it at a set time the next day — or review and send each one yourself.",
         trigger: "Booking → Completed",
+      },
+      {
+        key: "invoice_review_digest",
+        title: "Morning invoice review digest",
+        description:
+          "Emails owners/admins each morning with yesterday's completed jobs and any invoices auto-sending later today — your window to fix or hold anything before a client sees it. Silent on days with nothing to report. The companion to auto-send in Settings → Invoicing.",
+        trigger: "Daily, early morning",
       },
       {
         key: "auto_recurring_invoices",

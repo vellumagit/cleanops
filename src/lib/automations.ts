@@ -4284,6 +4284,187 @@ export async function notifyPlatformPaymentFailed(
 // 13. Weekly ops digest — Monday 8:00 UTC
 // ─────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────
+// 13b. Morning invoice review digest — daily, before the send hour
+//
+// The heads-up half of the "silence is consent" invoice flow: every
+// morning the owner/admins get yesterday's completed jobs and the
+// drafts auto-sending later today, so anything wrong gets fixed or
+// held BEFORE it emails a client. No action needed on a clean day.
+//
+// Sends nothing when there were no completed jobs yesterday AND no
+// sends scheduled today — an empty digest trains people to ignore it.
+// ─────────────────────────────────────────────────────────────────
+export async function sendInvoiceReviewDigests(): Promise<{
+  orgsSent: number;
+}> {
+  const db = admin();
+  const { sendEmail } = await import("@/lib/email");
+  const { invoiceReviewDigestEmail } = await import("@/lib/email-templates");
+  const { formatCurrencyCents, DEFAULT_TZ } = await import("@/lib/format");
+  const { getOrgCurrency } = await import("@/lib/org-currency");
+  const { isValidIanaTz } = await import("@/lib/org-timezone");
+  const { zonedDayBoundsUtc, formatHourLabel } = await import(
+    "@/lib/wall-clock"
+  );
+
+  const now = new Date();
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+
+  const { data: orgs } = (await db
+    .from("organizations")
+    .select(
+      "id, name, timezone, invoice_auto_send_enabled, invoice_auto_send_hour",
+    )
+    .is("deleted_at", null)) as unknown as {
+    data: Array<{
+      id: string;
+      name: string;
+      timezone: string | null;
+      invoice_auto_send_enabled: boolean | null;
+      invoice_auto_send_hour: number | null;
+    }> | null;
+  };
+  if (!orgs) return { orgsSent: 0 };
+
+  let orgsSent = 0;
+
+  for (const org of orgs) {
+    if (!(await isAutomationEnabled(org.id, "invoice_review_digest"))) continue;
+
+    const tz =
+      org.timezone && isValidIanaTz(org.timezone) ? org.timezone : DEFAULT_TZ;
+    const yesterday = zonedDayBoundsUtc(now, tz, -1);
+    const today = zonedDayBoundsUtc(now, tz, 0);
+
+    // Yesterday's completed jobs + the drafts queued to send today.
+    const [{ data: doneBookings }, { data: outgoingInvoices }] =
+      await Promise.all([
+        db
+          .from("bookings")
+          .select("id, scheduled_at, client:clients ( name )")
+          .eq("organization_id", org.id)
+          .eq("status", "completed")
+          .gte("scheduled_at", yesterday.start.toISOString())
+          .lt("scheduled_at", yesterday.end.toISOString())
+          .order("scheduled_at", { ascending: true })
+          .limit(50) as unknown as Promise<{
+          data: Array<{
+            id: string;
+            scheduled_at: string;
+            client: { name: string | null } | null;
+          }> | null;
+        }>,
+        db
+          .from("invoices")
+          .select(
+            "id, number, amount_cents, booking_id, client:clients ( name )",
+          )
+          .eq("organization_id", org.id)
+          .eq("status", "draft")
+          .eq("auto_send_state" as never, "scheduled" as never)
+          .gte("auto_send_at" as never, today.start.toISOString() as never)
+          .lt("auto_send_at" as never, today.end.toISOString() as never)
+          .limit(50) as unknown as Promise<{
+          data: Array<{
+            id: string;
+            number: string | null;
+            amount_cents: number;
+            booking_id: string | null;
+            client: { name: string | null } | null;
+          }> | null;
+        }>,
+      ]);
+
+    const jobs = doneBookings ?? [];
+    const outgoing = outgoingInvoices ?? [];
+    if (jobs.length === 0 && outgoing.length === 0) continue;
+
+    const recipients = await getOrgAdminRecipients(org.id);
+    if (recipients.length === 0) continue;
+
+    const currency = await getOrgCurrency(org.id);
+
+    // Per-job invoice outcome, so the jobs list answers "did this bill?".
+    const { data: jobInvoices } = (await db
+      .from("invoices")
+      .select("booking_id, number, amount_cents, status")
+      .eq("organization_id", org.id)
+      .in(
+        "booking_id",
+        jobs.map((b) => b.id),
+      )) as unknown as {
+      data: Array<{
+        booking_id: string | null;
+        number: string | null;
+        amount_cents: number;
+        status: string;
+      }> | null;
+    };
+    const invoiceByBooking = new Map(
+      (jobInvoices ?? [])
+        .filter((i) => i.booking_id)
+        .map((i) => [i.booking_id as string, i]),
+    );
+
+    const dayLabel = yesterday.start.toLocaleDateString("en-US", {
+      timeZone: tz,
+      weekday: "long",
+      month: "long",
+      day: "numeric",
+    });
+    const sendTimeLabel = org.invoice_auto_send_enabled
+      ? formatHourLabel(
+          typeof org.invoice_auto_send_hour === "number"
+            ? org.invoice_auto_send_hour
+            : 17,
+        )
+      : null;
+
+    const jobItems = jobs.map((b) => {
+      const inv = invoiceByBooking.get(b.id);
+      return {
+        clientName: b.client?.name ?? "Client",
+        timeLabel: new Date(b.scheduled_at).toLocaleTimeString("en-US", {
+          timeZone: tz,
+          hour: "numeric",
+          minute: "2-digit",
+        }),
+        invoiceLabel: inv
+          ? `${inv.number ? `#${inv.number} · ` : ""}${formatCurrencyCents(inv.amount_cents, currency)} (${inv.status})`
+          : "No per-job invoice (billed on cycle, or drafting off)",
+      };
+    });
+    const outgoingItems = outgoing.map((i) => ({
+      clientName: i.client?.name ?? "Client",
+      amountLabel: formatCurrencyCents(i.amount_cents, currency),
+      detail: i.number ? `Invoice #${i.number}` : "Draft invoice",
+    }));
+
+    for (const r of recipients) {
+      const template = invoiceReviewDigestEmail({
+        recipientName: r.fullName ?? "there",
+        orgName: org.name,
+        dayLabel,
+        jobs: jobItems,
+        outgoing: outgoingItems,
+        sendTimeLabel,
+        invoicesUrl: `${siteUrl}/app/invoices`,
+      });
+      await sendEmail({
+        to: r.email,
+        toName: r.fullName ?? undefined,
+        ...template,
+      });
+    }
+
+    orgsSent += 1;
+    console.log(`[auto] Invoice review digest sent for org ${org.id}`);
+  }
+
+  return { orgsSent };
+}
+
 export async function sendWeeklyOpsDigests(): Promise<{
   orgsSent: number;
 }> {

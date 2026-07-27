@@ -13,17 +13,16 @@ const empty: InvoicingFormState = {};
 
 export type InvoicingFormProps = {
   enabled: boolean;
-  delayHours: number;
+  sendHour: number;
   consolidated: boolean;
 };
 
-const DELAY_OPTIONS = [
-  { value: 0, label: "As soon as possible" },
-  { value: 12, label: "12 hours" },
-  { value: 24, label: "24 hours" },
-  { value: 48, label: "48 hours" },
-  { value: 72, label: "72 hours" },
-];
+// Every hour of the day — most owners pick a business-hours slot; the
+// morning digest (early AM) fires before any of them.
+const HOUR_OPTIONS = Array.from({ length: 24 }, (_, h) => ({
+  value: h,
+  label: `${h % 12 === 0 ? 12 : h % 12}:00 ${h < 12 ? "AM" : "PM"}`,
+}));
 
 export function InvoicingForm(props: InvoicingFormProps) {
   const [state, formAction] = useActionState(saveInvoiceAutoSendAction, empty);
@@ -49,30 +48,30 @@ export function InvoicingForm(props: InvoicingFormProps) {
         />
         <span className="flex flex-col">
           <span className="text-sm font-medium">
-            Auto-send invoices after a review window
+            Auto-send invoices the day after the job
           </span>
           <span className="text-xs text-muted-foreground">
             A draft is created when a job completes (or on the billing date for
             biweekly/monthly clients). If you don&apos;t change or hold it, it
-            sends itself after the delay below. Off by default.
+            emails itself at the time below on the next day. Off by default.
           </span>
         </span>
       </label>
 
-      {/* Delay */}
+      {/* Send time */}
       <FormField
-        label="Review window"
-        htmlFor="delay_hours"
-        error={state.errors?.delay}
-        hint="How long a fresh draft waits before it auto-sends. Edit it any time during the window — whatever it says when the timer is up is what ships. Sends run once a day, so the actual send is at the next daily pass after the window elapses."
+        label="Send time"
+        htmlFor="send_hour"
+        error={state.errors?.hour}
+        hint="Local time, the day after the job. Edit or hold any draft before then — whatever it says at send time is what ships. Tip: turn on the “Morning invoice review” digest in Settings → Automations to get the day's outgoing invoices in your inbox each morning, hours before they go."
       >
         <select
-          id="delay_hours"
-          name="delay_hours"
-          defaultValue={String(props.delayHours)}
+          id="send_hour"
+          name="send_hour"
+          defaultValue={String(props.sendHour)}
           className="h-9 w-full max-w-xs rounded-md border border-input bg-background px-3 text-sm"
         >
-          {DELAY_OPTIONS.map((o) => (
+          {HOUR_OPTIONS.map((o) => (
             <option key={o.value} value={o.value}>
               {o.label}
             </option>
