@@ -170,14 +170,19 @@ async function refreshQBAccessToken(
 
   const admin = createSupabaseAdminClient();
   if (!res.ok) {
+    // Keep Intuit's correlation id on auth failures too — token-exchange
+    // problems are exactly what their support team gets asked to trace.
+    const tid = res.headers.get("intuit_tid") ?? "none";
     await admin
       .from("integration_connections" as never)
       .update({
         status: "error",
-        last_error: `QBO token refresh failed: ${res.status}`,
+        last_error: `QBO token refresh failed: ${res.status} [intuit_tid=${tid}]`,
       } as never)
       .eq("id" as never, connectionId);
-    throw new Error(`QuickBooks token refresh failed: ${res.status}`);
+    throw new Error(
+      `QuickBooks token refresh failed: ${res.status} [intuit_tid=${tid}]`,
+    );
   }
 
   const data = (await res.json()) as QBTokenResponse;
@@ -301,8 +306,12 @@ async function qbFetch<T>(
     }
   }
   if (!res.ok) {
+    // intuit_tid is Intuit's request correlation id. Capturing it in the
+    // error means their support team can trace one specific failed call
+    // instead of guessing from timestamps.
+    const tid = res.headers.get("intuit_tid") ?? "none";
     throw new Error(
-      `QBO ${init.method ?? "GET"} ${path} → ${res.status}: ${await res.text()}`,
+      `QBO ${init.method ?? "GET"} ${path} → ${res.status} [intuit_tid=${tid}]: ${await res.text()}`,
     );
   }
   return (await res.json()) as T;
