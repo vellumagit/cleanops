@@ -123,6 +123,14 @@ export default function PrivacyPage() {
                 alongside your Sollos 3 bookings, and to create calendar events
                 for confirmed bookings.
               </li>
+              <li>
+                <code className="rounded bg-muted px-1.5 py-0.5 text-xs font-mono">
+                  userinfo.email
+                </code>{" "}
+                — to receive the email address of the Google account you
+                connect, used once at connection time and shown in Settings so
+                you can always see which account the integration is linked to.
+              </li>
             </ul>
             <p className="mt-3">
               <strong>How we use Google Calendar data:</strong>
@@ -147,7 +155,11 @@ export default function PrivacyPage() {
             </p>
             <ul className="mt-2 ml-5 list-disc space-y-1">
               <li>
-                We do not share your Google Calendar data with any third party.
+                We do not sell your Google user data, and we do not share it
+                with any third party for their own purposes. It is processed
+                only by the infrastructure sub-processors listed in Section 5
+                (our database and hosting providers), solely to operate Sollos
+                3 on your behalf.
               </li>
               <li>
                 We do not use your Google Calendar data for advertising,
