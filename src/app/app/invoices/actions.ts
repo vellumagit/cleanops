@@ -715,15 +715,17 @@ export async function syncInvoiceToQuickBooksAction(
   }
 
   const result = await pushInvoiceToQuickBooks(id);
-  if (!result) {
+  if (!result.id) {
+    // QuickBooks' actual reason, not a guess — see pushInvoiceToQuickBooks.
     return {
       error:
-        "Couldn't push to QuickBooks. Check Vercel logs for [qbo] entries — most common causes are an expired connection, or QuickBooks having no Service item to hang the invoice line on.",
+        result.error ??
+        "Couldn't push to QuickBooks. Check the Vercel logs for [qbo] entries.",
     };
   }
 
   revalidatePath(`/app/invoices/${id}`);
-  return { ok: true, qbInvoiceId: result };
+  return { ok: true, qbInvoiceId: result.id };
 }
 
 /**

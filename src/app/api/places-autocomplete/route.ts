@@ -29,10 +29,18 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ suggestions: [] });
   }
 
+  // "unavailable" separates a BROKEN lookup (no key, rejected key, API not
+  // enabled, network fault) from a WORKING lookup that simply matched nothing.
+  // Collapsing both into an empty list is how a deleted API key and a wrong
+  // request field stayed invisible in production for months — the field just
+  // sat there looking like it worked.
+  const unavailable = () =>
+    NextResponse.json({ suggestions: [], unavailable: true });
+
   const apiKey = process.env.GOOGLE_PLACES_API_KEY;
   if (!apiKey) {
     console.error("[places] GOOGLE_PLACES_API_KEY not set");
-    return NextResponse.json({ suggestions: [] });
+    return unavailable();
   }
 
   try {
@@ -61,7 +69,7 @@ export async function GET(request: NextRequest) {
     if (!res.ok) {
       const body = await res.text();
       console.error(`[places] API error ${res.status}: ${body}`);
-      return NextResponse.json({ suggestions: [] });
+      return unavailable();
     }
 
     const data = await res.json();
@@ -79,6 +87,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ suggestions });
   } catch (err) {
     console.error("[places] fetch failed:", err);
-    return NextResponse.json({ suggestions: [] });
+    return unavailable();
   }
 }

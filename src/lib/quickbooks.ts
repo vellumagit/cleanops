@@ -372,6 +372,30 @@ type QBTaxCode = {
  * invoice then syncs without an explicit tax code — QBO applies its default).
  * Cached per-rate on the connection metadata.
  */
+/**
+ * The connected company's country code ("CA", "US", "GB", …), cached on the
+ * connection. Matters because QuickBooks enforces sales tax differently
+ * outside the US: CA/AU/UK companies REQUIRE a TaxCodeRef on every sales line,
+ * so silently omitting one (fine in the US) gets the whole invoice rejected.
+ */
+async function getCompanyCountry(conn: QBConnection): Promise<string | null> {
+  const cached = (conn.metadata ?? {})["company_country"];
+  if (typeof cached === "string" && cached) return cached;
+  try {
+    const info = await qbQuery<{
+      CompanyInfo?: Array<{ Country?: string }>;
+    }>(conn, "SELECT * FROM CompanyInfo");
+    const country = info.CompanyInfo?.[0]?.Country ?? null;
+    if (country) {
+      await mergeConnectionMetadata(conn.id, { company_country: country });
+    }
+    return country;
+  } catch (err) {
+    console.error("[qbo] company country lookup failed:", err);
+    return null;
+  }
+}
+
 async function getTaxCodeRefForBps(
   conn: QBConnection,
   bps: number | null | undefined,
@@ -491,12 +515,17 @@ export async function pushClientToQuickBooks(
 
 /**
  * Push a Sollos invoice into QBO as an Invoice. Ensures the customer is synced
- * first. Idempotent via invoices.quickbooks_invoice_id. Returns the QBO invoice
- * id, or null on failure (logged).
+ * first. Idempotent via invoices.quickbooks_invoice_id.
+ *
+ * Returns { id } on success, or { id: null, error } with the REAL reason on
+ * failure — callers that show a message to a human must use `error` rather
+ * than guessing. (It previously returned bare null, so the UI printed a
+ * speculative "probably a missing Service item" message that sent us chasing
+ * the wrong thing during sandbox testing.)
  */
 export async function pushInvoiceToQuickBooks(
   invoiceId: string,
-): Promise<string | null> {
+): Promise<{ id: string | null; error?: string }> {
   const admin = createSupabaseAdminClient();
   const { data: invoice } = (await admin
     .from("invoices")
@@ -529,31 +558,55 @@ export async function pushInvoiceToQuickBooks(
       }> | null;
     } | null;
   };
-  if (!invoice) return null;
-  if (invoice.quickbooks_invoice_id) return invoice.quickbooks_invoice_id;
+  const fail = (error: string) => {
+    console.error(`[qbo] invoice ${invoiceId}: ${error}`);
+    return { id: null, error };
+  };
+
+  if (!invoice) return fail("Invoice not found.");
+  if (invoice.quickbooks_invoice_id) {
+    return { id: invoice.quickbooks_invoice_id };
+  }
 
   const conn = await getQBConnection(invoice.organization_id);
-  if (!conn) return null;
+  if (!conn) {
+    return fail(
+      "QuickBooks isn't connected. Reconnect it in Settings → Integrations, then try again.",
+    );
+  }
 
   const customerId = await pushClientToQuickBooks(invoice.client_id);
   if (!customerId) {
-    console.error("[qbo] pushInvoiceToQuickBooks: could not sync client, aborting");
-    return null;
+    return fail(
+      "Couldn't create this client as a QuickBooks customer. Check the client has a name, then try again.",
+    );
   }
 
   try {
     const itemRef = await getDefaultItemRef(conn);
     if (!itemRef) {
-      console.error(
-        `[qbo] pushInvoiceToQuickBooks: no Item found in QBO for org ${invoice.organization_id} — invoice ${invoiceId} not synced (create a Service item in QuickBooks)`,
+      return fail(
+        "QuickBooks has no product or service to put on the invoice line. Create one in QuickBooks (Sales → Products & services), then try again.",
       );
-      return null;
     }
 
+    const country = await getCompanyCountry(conn);
+    const isUsCompany = (country ?? "US").toUpperCase() === "US";
     const taxCodeId = await getTaxCodeRefForBps(conn, invoice.tax_rate_bps);
+    const taxPct = (invoice.tax_rate_bps ?? 0) / 100;
+
     if (invoice.tax_rate_bps && invoice.tax_rate_bps > 0 && !taxCodeId) {
+      // Outside the US, QuickBooks requires a tax code on every sales line.
+      // Sending the invoice without one gets it rejected, so fail EARLY with
+      // an instruction the owner can actually act on, rather than letting
+      // QuickBooks return an opaque validation fault.
+      if (!isUsCompany) {
+        return fail(
+          `QuickBooks (${country}) requires a matching sales tax code, and no tax rate of ${taxPct}% exists in your QuickBooks company. Add a ${taxPct}% sales tax rate in QuickBooks (Taxes → Sales tax), then try again — or change this invoice's tax rate to one QuickBooks already has.`,
+        );
+      }
       console.warn(
-        `[qbo] pushInvoiceToQuickBooks: no QBO tax code matches ${invoice.tax_rate_bps} bps for org ${invoice.organization_id} — syncing invoice ${invoiceId} without an explicit tax code`,
+        `[qbo] invoice ${invoiceId}: no QBO tax code matches ${invoice.tax_rate_bps} bps — syncing without an explicit tax code (US company, QBO will apply its default)`,
       );
     }
 
@@ -597,6 +650,16 @@ export async function pushInvoiceToQuickBooks(
           TxnDate: txnDate,
           DueDate: dueDate,
           Line,
+          // Non-US companies (CA/AU/UK) need the tax treatment stated
+          // explicitly. Sollos always computes tax ON TOP of the line
+          // subtotal, which is "TaxExcluded"; with no tax it's NotApplicable.
+          ...(isUsCompany
+            ? {}
+            : {
+                GlobalTaxCalculation: taxCodeId
+                  ? "TaxExcluded"
+                  : "NotApplicable",
+              }),
           ...(invoice.number
             ? { CustomerMemo: { value: `Sollos invoice ${invoice.number}` } }
             : {}),
@@ -611,9 +674,11 @@ export async function pushInvoiceToQuickBooks(
     console.log(
       `[qbo] invoice ${invoiceId} (${invoice.number}) → QBO ${created.Invoice.Id}`,
     );
-    return created.Invoice.Id;
+    return { id: created.Invoice.Id };
   } catch (err) {
-    console.error("[qbo] pushInvoiceToQuickBooks failed:", err);
-    return null;
+    // Surface QuickBooks' own words. qbFetch embeds the status, the response
+    // body, and the intuit_tid, which is exactly what Intuit support asks for.
+    const raw = err instanceof Error ? err.message : String(err);
+    return fail(`QuickBooks rejected the invoice — ${raw}`);
   }
 }

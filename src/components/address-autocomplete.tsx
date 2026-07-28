@@ -15,14 +15,23 @@ type Suggestion = {
   text: string;
 };
 
-async function searchPlaces(query: string): Promise<Suggestion[]> {
-  if (query.trim().length < 3) return [];
-  const res = await fetch(
-    `/api/places-autocomplete?q=${encodeURIComponent(query)}`,
-  );
-  if (!res.ok) return [];
-  const data = await res.json();
-  return data.suggestions ?? [];
+type LookupResult = { suggestions: Suggestion[]; unavailable: boolean };
+
+async function searchPlaces(query: string): Promise<LookupResult> {
+  if (query.trim().length < 3) return { suggestions: [], unavailable: false };
+  try {
+    const res = await fetch(
+      `/api/places-autocomplete?q=${encodeURIComponent(query)}`,
+    );
+    if (!res.ok) return { suggestions: [], unavailable: true };
+    const data = await res.json();
+    return {
+      suggestions: data.suggestions ?? [],
+      unavailable: data.unavailable === true,
+    };
+  } catch {
+    return { suggestions: [], unavailable: true };
+  }
 }
 
 export function AddressAutocomplete({
@@ -47,6 +56,8 @@ export function AddressAutocomplete({
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  /** Lookup is broken (not merely empty) — say so instead of looking dead. */
+  const [unavailable, setUnavailable] = useState(false);
   const [highlightedIdx, setHighlightedIdx] = useState(-1);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -56,11 +67,14 @@ export function AddressAutocomplete({
     debounceRef.current = setTimeout(async () => {
       setLoading(true);
       try {
-        const results = await searchPlaces(q);
+        const { suggestions: results, unavailable: broken } =
+          await searchPlaces(q);
         setSuggestions(results);
+        setUnavailable(broken);
         setOpen(results.length > 0);
       } catch {
         setSuggestions([]);
+        setUnavailable(true);
       } finally {
         setLoading(false);
       }
@@ -95,6 +109,7 @@ export function AddressAutocomplete({
       search(v);
     } else {
       setSuggestions([]);
+      setUnavailable(false);
       setOpen(false);
     }
   }
@@ -173,6 +188,15 @@ export function AddressAutocomplete({
             </li>
           ))}
         </ul>
+      )}
+
+      {/* Lookup is down — say so rather than sitting there looking dead.
+          The typed address still saves normally; only suggestions are lost. */}
+      {unavailable && !loading && (
+        <p className="mt-1 text-[11px] text-muted-foreground">
+          Address lookup is unavailable right now — type the address and it
+          will save normally.
+        </p>
       )}
     </div>
   );
