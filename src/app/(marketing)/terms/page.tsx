@@ -203,12 +203,25 @@ export default function TermsPage() {
 
           {/* 9. Intellectual property */}
           <section>
-            <h2 className="text-base font-semibold">9. Intellectual property</h2>
+            <h2 className="text-base font-semibold">
+              9. Intellectual property and licence to use Sollos 3
+            </h2>
             <p className="mt-3">
               The Sollos 3 service, including its software, design, logos, and
               documentation, is our intellectual property. These Terms do not
               grant you any right to use our branding or trademarks. You retain
               all rights to your data.
+            </p>
+            <p className="mt-3">
+              Subject to these Terms and your payment of any applicable fees, we
+              grant you a limited, non-exclusive, non-transferable,
+              non-sublicensable, revocable licence to access and use Sollos 3
+              for the internal business purposes of your organization, for as
+              long as your account is active. You may not copy, modify, reverse
+              engineer, decompile, resell, sublicense, or create derivative
+              works from the service, nor use it to build a competing product.
+              This licence ends automatically when your account is terminated
+              under Section 10.
             </p>
           </section>
 
