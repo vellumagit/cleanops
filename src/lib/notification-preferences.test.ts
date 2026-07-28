@@ -162,7 +162,7 @@ describe("channel capability — which messages exist on which channel", () => {
   });
   it("booking reaches both channels; billing and growth are email-only", () => {
     expect(CATEGORY_CHANNELS.booking).toEqual({ email: true, sms: true });
-    expect(CATEGORY_CHANNELS.billing).toEqual({ email: true, sms: false });
+    expect(CATEGORY_CHANNELS.billing).toEqual({ email: true, sms: true });
     expect(CATEGORY_CHANNELS.growth).toEqual({ email: true, sms: false });
   });
 });
@@ -182,9 +182,18 @@ describe("actualClientChannels — capability + org-SMS intersection", () => {
       reason: "ok",
     });
   });
-  it("billing text → channel_not_available (invoices are email-only)", () => {
+  it("billing text delivers — billing is a two-channel category", () => {
     expect(
       actualClientChannels({ ...smsClient, category: "billing" }),
+    ).toMatchObject({ email: false, sms: true, reason: "ok" });
+  });
+  it("growth text → channel_not_available (review asks are email-only)", () => {
+    expect(
+      actualClientChannels({
+        ...smsClient,
+        category: "growth",
+        overrides: { growth: "sms" },
+      }),
     ).toEqual({ email: false, sms: false, reason: "channel_not_available" });
   });
   it("growth 'both' degrades to email only", () => {

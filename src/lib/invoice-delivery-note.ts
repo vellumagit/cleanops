@@ -38,8 +38,11 @@ export function invoiceDeliveryNote(params: {
   client: DeliveryNoteClient | null;
   /** The org's house default for client notifications. */
   orgDefault: OrgContactDefault;
+  /** organizations.sms_enabled — billing texts silently skip while off. */
+  smsEnabled: boolean;
 }): InvoiceDeliveryNote | null {
-  const { autoSendState, status, amountCents, client, orgDefault } = params;
+  const { autoSendState, status, amountCents, client, orgDefault, smsEnabled } =
+    params;
 
   // Once the invoice left draft (sent by hand, paid, voided), the miss is moot.
   if (status !== "draft") return null;
@@ -83,16 +86,25 @@ export function invoiceDeliveryNote(params: {
     smsOptedIn: Boolean(client.sms_opted_in),
   });
 
-  // Invoices only exist as email, so res.email is the whole question.
+  // Billing is two-channel: email, or text with the hosted invoice link.
   if (res.email) {
     return skipped(
       "Auto-send skipped this earlier, but the client can receive email now — use Send to deliver it.",
     );
   }
+  if (res.sms) {
+    return smsEnabled
+      ? skipped(
+          "This client is reachable by text now — new invoices auto-send as a text with their payment link. This one was skipped earlier; use Send to email it instead.",
+        )
+      : skipped(
+          "This client is set to text, but texting isn't turned on for your business yet — send it manually, or finish SMS setup so billing texts can go out.",
+        );
+  }
   switch (res.reason) {
     case "do_not_contact":
       return skipped(
-        "This client is set to Do Not Contact, so it was never emailed — deliver it another way.",
+        "This client is set to Do Not Contact, so it was never sent — deliver it another way.",
       );
     case "muted_by_client":
       return skipped(
@@ -101,26 +113,21 @@ export function invoiceDeliveryNote(params: {
     case "category_off":
       if (clientPref === "inherit" && orgDefault === "none") {
         return skipped(
-          "Your default client notifications are set to “No notifications” and this client hasn't been given their own settings, so it was never emailed — send it manually, or configure them in the per-client manager.",
+          "Your default client notifications are set to “No notifications” and this client hasn't been given their own settings, so it was never sent — send it manually, or configure them in the per-client manager.",
         );
       }
       return skipped(
-        "Billing messages are off for this client, so it was never emailed — send it manually.",
+        "Billing messages are off for this client, so it was never sent — send it manually.",
       );
     case "no_email_address":
       return skipped(
         "No email on file for this client — add one to their profile, then send.",
       );
+    case "sms_not_opted_in":
+      return skipped(
+        "This client is set to text-only but hasn't opted in to SMS, so nothing sent — send it manually, or send them an opt-in request from their profile.",
+      );
     default:
-      if (res.sms) {
-        return clientPref === "inherit"
-          ? skipped(
-              "Your default client notifications are “Text only”, and invoices only exist as email — send it manually, or change the default in Settings → Automations.",
-            )
-          : skipped(
-              "This client is set to text-only, and invoices only exist as email — send it manually or switch their billing setting to email.",
-            );
-      }
       return skipped(
         "This client has no reachable channel — send it manually.",
       );

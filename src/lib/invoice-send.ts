@@ -320,6 +320,100 @@ export async function markInvoiceSentSystem(
   };
 }
 
+/**
+ * Deliver an invoice by TEXT with the hosted /i/<token> link. Used by the
+ * auto-send cron for text-only clients (where it IS the delivery — status
+ * flips to sent) and as the best-effort companion for "Both" clients (where
+ * the invoice is already sent and only the nudge goes out).
+ *
+ * Returns "sent" | "skipped" (opt-in / org SMS / Twilio gates — terminal) |
+ * "error" (transient, retry next pass).
+ */
+async function deliverInvoiceSmsSystem(
+  invoiceId: string,
+  phone: string,
+): Promise<"sent" | "skipped" | "error"> {
+  try {
+    const db = createSupabaseAdminClient();
+    const { data: inv } = (await db
+      .from("invoices")
+      .select("id, number, status, sent_at, public_token, amount_cents, organization_id")
+      .eq("id", invoiceId)
+      .maybeSingle()) as unknown as {
+      data: {
+        id: string;
+        number: string | null;
+        status: string;
+        sent_at: string | null;
+        public_token: string | null;
+        amount_cents: number;
+        organization_id: string;
+      } | null;
+    };
+    if (!inv) return "skipped";
+    if (!inv.public_token) {
+      // No hosted link to carry — a text saying "you owe money" with no way
+      // to view or pay is worse than the skip note. Owner sends manually.
+      console.warn(`[invoice-send] SMS delivery for ${invoiceId} skipped — no public token`);
+      return "skipped";
+    }
+
+    const { data: org } = (await db
+      .from("organizations")
+      .select("name")
+      .eq("id", inv.organization_id)
+      .maybeSingle()) as unknown as { data: { name: string } | null };
+    const currency = await getOrgCurrency(inv.organization_id);
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+
+    const { sendOrgSms } = await import("@/lib/sms");
+    const { composeInvoiceSms } = await import("@/lib/twilio");
+    const res = await sendOrgSms(inv.organization_id, {
+      to: phone,
+      body: composeInvoiceSms({
+        orgName: org?.name ?? "Your service provider",
+        invoiceNumber: inv.number ?? inv.id.slice(0, 8).toUpperCase(),
+        amountFormatted: formatCurrencyCents(inv.amount_cents, currency),
+        publicUrl: `${siteUrl}/i/${inv.public_token}`,
+      }),
+      automationKey: "invoice_auto_send",
+    });
+
+    if (!res.ok) return "error";
+    if (res.status !== "sent") return "skipped";
+
+    // The text is out. If this was the delivery (draft), flip the status —
+    // same retry shape as the email path.
+    if (inv.status === "draft") {
+      const sentAt = inv.sent_at ?? new Date().toISOString();
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const { error } = await db
+          .from("invoices")
+          .update({ status: "sent", sent_at: sentAt })
+          .eq("id", invoiceId);
+        if (!error) {
+          pushInvoiceToSage(invoiceId).catch((err) =>
+            console.error("[invoice-send] Sage sync on SMS auto-send failed:", err),
+          );
+          pushInvoiceToQuickBooks(invoiceId).catch((err) =>
+            console.error("[invoice-send] QuickBooks sync on SMS auto-send failed:", err),
+          );
+          break;
+        }
+        if (attempt === 2) {
+          console.error(
+            `[invoice-send] invoice ${invoiceId} texted but status not recorded: ${error.message}`,
+          );
+        }
+      }
+    }
+    return "sent";
+  } catch (err) {
+    console.error("[invoice-send] deliverInvoiceSmsSystem failed:", invoiceId, err);
+    return "error";
+  }
+}
+
 async function setAutoSendState(
   db: ReturnType<typeof createSupabaseAdminClient>,
   invoiceId: string,
@@ -421,10 +515,11 @@ export async function runInvoiceAutoSend(): Promise<{
       continue;
     }
 
-    // Respect the client's notification preference (billing category). A client
-    // set to do-not-contact — or whose billing channel is off/text-only — must
-    // not be auto-emailed an invoice. Terminal "skipped" so it isn't retried
-    // nightly; the owner can still send it by hand from the invoice page.
+    // Respect the client's notification preference (billing category).
+    // Billing is a two-channel category: email, text (opted-in clients with
+    // a phone), or both. A do-not-contact client — or one with no usable
+    // channel — must not be auto-sent anything. Terminal "skipped" so it
+    // isn't retried nightly; the owner can still send it by hand.
     const decision = await resolveClientNotify(db, {
       organizationId: inv.organization_id,
       clientId: inv.client_id,
@@ -432,7 +527,9 @@ export async function runInvoiceAutoSend(): Promise<{
       event: "invoice_send",
       orgDefaultCache,
     });
-    if (!decision.email) {
+    const canEmail = decision.email;
+    const canSms = decision.sms && Boolean(decision.clientPhone);
+    if (!canEmail && !canSms) {
       await setAutoSendState(db, inv.id, "skipped");
       skipped++;
       console.log(
@@ -451,6 +548,42 @@ export async function runInvoiceAutoSend(): Promise<{
       data: { status: string; auto_send_state: string | null } | null;
     };
     if (!fresh || fresh.status !== "draft" || fresh.auto_send_state !== "scheduled") {
+      continue;
+    }
+
+    // Text-only client: deliver by SMS with the hosted invoice link. The
+    // text IS the delivery — status flips to sent exactly like the email
+    // path. If SMS can't go out (no opt-in, org SMS off, Twilio disabled),
+    // that's terminal-skipped: the owner sends by hand, and the invoice
+    // page explains why.
+    if (!canEmail && canSms) {
+      const smsOutcome = await deliverInvoiceSmsSystem(
+        inv.id,
+        decision.clientPhone!,
+      );
+      if (smsOutcome === "sent") {
+        await setAutoSendState(db, inv.id, "sent");
+        const { logSystemAuditEvent } = await import("@/lib/audit");
+        await logSystemAuditEvent({
+          organizationId: inv.organization_id,
+          action: "status_change",
+          entity: "invoice",
+          entity_id: inv.id,
+          after: { status: "sent", auto_sent: true, channel: "sms" },
+        });
+        sent++;
+      } else if (smsOutcome === "skipped") {
+        await setAutoSendState(db, inv.id, "skipped");
+        skipped++;
+        console.log(
+          `[invoice-auto-send] invoice ${inv.id} skipped — SMS channel unavailable (opt-in / org SMS / Twilio)`,
+        );
+      } else {
+        // Transient — leave 'scheduled' for the next hourly pass.
+        console.warn(
+          `[invoice-auto-send] transient SMS failure for ${inv.id}, will retry next pass`,
+        );
+      }
       continue;
     }
 
@@ -473,6 +606,18 @@ export async function runInvoiceAutoSend(): Promise<{
         after: { status: "sent", auto_sent: true },
       });
       sent++;
+      // "Both" clients also get the text — a nudge alongside the invoice of
+      // record. Best-effort: a failed companion text never un-sends the email.
+      if (canSms) {
+        try {
+          await deliverInvoiceSmsSystem(inv.id, decision.clientPhone!);
+        } catch (companionErr) {
+          console.error(
+            `[invoice-auto-send] companion SMS for ${inv.id} errored:`,
+            companionErr,
+          );
+        }
+      }
     } else if (result.permanent) {
       // Won't fix itself (usually a missing client email) → skip + alert owner.
       await setAutoSendState(db, inv.id, "skipped");

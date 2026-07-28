@@ -381,3 +381,34 @@ export function composeSmsOptInRequest(args: { orgName: string }): string {
 export function composeSmsOptInConfirmation(args: { orgName: string }): string {
   return `${args.orgName}: You're subscribed to appointment updates. Msg & data rates may apply. Reply HELP for help, STOP to cancel.`;
 }
+
+/**
+ * Billing texts — transactional money messages, each carrying the hosted
+ * invoice link (/i/<token>) so "view & pay" is one tap. Kept short: SMS
+ * over 160 GSM chars splits into billed segments.
+ */
+export function composeInvoiceSms(args: {
+  orgName: string;
+  invoiceNumber: string;
+  amountFormatted: string;
+  publicUrl: string;
+}): string {
+  return `${args.orgName}: Invoice ${args.invoiceNumber} for ${args.amountFormatted} — view & pay: ${args.publicUrl} Reply STOP to opt out.`;
+}
+
+export function composeOverdueReminderSms(args: {
+  orgName: string;
+  invoiceNumber: string;
+  amountFormatted: string;
+  publicUrl: string;
+}): string {
+  return `${args.orgName}: Reminder — invoice ${args.invoiceNumber} (${args.amountFormatted}) is past due. View & pay: ${args.publicUrl} Reply STOP to opt out.`;
+}
+
+export function composePaymentReceiptSms(args: {
+  orgName: string;
+  invoiceNumber: string;
+  amountFormatted: string;
+}): string {
+  return `${args.orgName}: Payment received — ${args.amountFormatted} for invoice ${args.invoiceNumber}. Thank you! Reply STOP to opt out.`;
+}

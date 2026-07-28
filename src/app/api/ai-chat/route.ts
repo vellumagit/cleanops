@@ -62,9 +62,13 @@ them any other way):
   reviews — or do-not-contact), and for texts, the client's SMS opt-in
   (double opt-in; STOP always wins). Texts never send without opt-in.
 - Invoice AUTO-SEND lives in Settings → Invoicing, not Automations. When on,
-  a drafted invoice emails itself at the org's chosen local time (default
+  a drafted invoice sends itself at the org's chosen local time (default
   5:00 PM) on the DAY AFTER the job — a predictable clock time, not a rolling
-  delay. Every draft has Hold / Send-now escape hatches. The companion
+  delay. Delivery follows the client's billing channel: email, or a text
+  carrying the hosted view-and-pay link for clients set to text (requires
+  their SMS opt-in and the org's SMS being enabled), or both. Overdue
+  reminders and payment receipts likewise go by email and/or text; review
+  asks and rebooking nudges remain email-only. Every draft has Hold / Send-now escape hatches. The companion
   "Morning invoice review digest" toggle (Settings → Automations, "Job done &
   getting paid" stage) emails owners/admins each morning with yesterday's
   jobs and the invoices going out later that day, so they can fix or hold

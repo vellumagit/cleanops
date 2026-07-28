@@ -866,17 +866,18 @@ export default async function AutomationsPage() {
           </form>
           <p className="mt-2 text-[11px] text-muted-foreground">
             Texts only reach clients who have opted in to SMS, regardless of
-            this setting. Billing and review messages are email-only — texts
-            exist for booking updates.
+            this setting. Booking and billing messages can go by text; review
+            &amp; rebooking messages are email-only.
           </p>
           {contactDefault === "sms" && (
             <p className="mt-2 flex items-start gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-800 dark:text-amber-300">
               <TriangleAlert className="mt-0.5 h-3 w-3 shrink-0" />
               <span>
-                With &ldquo;Text only&rdquo; as the default, invoices,
-                receipts, overdue reminders, and review asks never send to
-                clients on the default — those messages only exist as email.
-                Clients with their own email setting are unaffected.
+                With &ldquo;Text only&rdquo; as the default, review asks and
+                rebooking nudges never send to clients on the default — those
+                are email-only. Booking and billing texts only reach clients
+                who have opted in to SMS. Clients with their own email
+                setting are unaffected.
               </span>
             </p>
           )}

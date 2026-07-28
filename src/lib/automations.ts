@@ -1943,13 +1943,14 @@ export async function sendOverdueReminders(): Promise<{
   >();
 
   for (const inv of candidates) {
-    if (!inv.client?.email || !inv.due_date) {
+    if (!inv.due_date) {
       skipped += 1;
       continue;
     }
 
     // Client notification preference (billing category) — a do-not-contact or
-    // billing-off client is never chased about an overdue invoice.
+    // billing-off client is never chased about an overdue invoice. Billing is
+    // a two-channel category: email, text (for opted-in clients), or both.
     const decision = await resolveClientNotify(db, {
       organizationId: inv.organization_id,
       clientId: inv.client_id,
@@ -1957,7 +1958,9 @@ export async function sendOverdueReminders(): Promise<{
       event: "overdue_reminder",
       orgDefaultCache,
     });
-    if (!decision.email) {
+    const canEmail = decision.email && Boolean(inv.client?.email);
+    const canSms = decision.sms && Boolean(decision.clientPhone);
+    if (!canEmail && !canSms) {
       skipped += 1;
       continue;
     }
@@ -1995,37 +1998,67 @@ export async function sendOverdueReminders(): Promise<{
       1,
       Math.floor((Date.now() - dueDate.getTime()) / (24 * 60 * 60 * 1000)),
     );
-
-    const template = invoiceOverdueReminderEmail({
-      clientName: inv.client.name ?? "there",
-      invoiceNumber: inv.number ?? inv.id.slice(0, 8).toUpperCase(),
-      amountFormatted: formatCurrencyCents(inv.amount_cents, cached.currency),
-      dueDate: dueDate.toLocaleDateString("en-US", {
-        month: "short",
-        day: "numeric",
-        year: "numeric",
-      }),
-      daysOverdue,
-      publicUrl: inv.public_token ? `${siteUrl}/i/${inv.public_token}` : siteUrl,
-      orgName: cached.name,
-      brandColor: cached.brand_color ?? undefined,
-      logoUrl: cached.logo_url ?? undefined,
-    });
+    const invoiceNumber = inv.number ?? inv.id.slice(0, 8).toUpperCase();
+    const amountFormatted = formatCurrencyCents(inv.amount_cents, cached.currency);
+    const publicUrl = inv.public_token ? `${siteUrl}/i/${inv.public_token}` : siteUrl;
 
     // Send first, stamp second — if the send throws we'll retry tomorrow.
-    const ok = await sendOrgEmail(inv.organization_id, {
-      to: inv.client.email,
-      toName: inv.client.name ?? undefined,
-      ...template,
-    });
+    let emailOk = false;
+    if (canEmail) {
+      const template = invoiceOverdueReminderEmail({
+        clientName: inv.client!.name ?? "there",
+        invoiceNumber,
+        amountFormatted,
+        dueDate: dueDate.toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        }),
+        daysOverdue,
+        publicUrl,
+        orgName: cached.name,
+        brandColor: cached.brand_color ?? undefined,
+        logoUrl: cached.logo_url ?? undefined,
+      });
+      emailOk = await sendOrgEmail(inv.organization_id, {
+        to: inv.client!.email!,
+        toName: inv.client!.name ?? undefined,
+        ...template,
+      });
+    }
 
-    if (ok) {
+    // SMS channel — independent of email; sendOrgSms applies its own gates
+    // (per-key toggle, opt-in, cap, TWILIO_ENABLED).
+    let smsOk = false;
+    if (canSms) {
+      try {
+        const { sendOrgSms } = await import("@/lib/sms");
+        const { composeOverdueReminderSms } = await import("@/lib/twilio");
+        const smsRes = await sendOrgSms(inv.organization_id, {
+          to: decision.clientPhone!,
+          body: composeOverdueReminderSms({
+            orgName: cached.name,
+            invoiceNumber,
+            amountFormatted,
+            publicUrl,
+          }),
+          automationKey: "invoice_overdue_reminder",
+        });
+        smsOk = smsRes.ok && smsRes.status === "sent";
+      } catch (smsErr) {
+        console.error("[auto] overdue reminder SMS path errored:", inv.id, smsErr);
+      }
+    }
+
+    if (emailOk || smsOk) {
       await db
         .from("invoices")
         .update({ overdue_reminder_sent_at: new Date().toISOString() })
         .eq("id", inv.id);
       sent += 1;
-      console.log(`[auto] Overdue reminder sent for invoice ${inv.id} to ${maskEmail(inv.client.email)}`);
+      console.log(
+        `[auto] Overdue reminder sent for invoice ${inv.id} (${[emailOk && "email", smsOk && "sms"].filter(Boolean).join("+")})`,
+      );
     } else {
       skipped += 1;
     }
@@ -3438,7 +3471,7 @@ export async function autoOnInvoicePaid(invoiceId: string) {
       .eq("id", invoiceId)
       .maybeSingle();
 
-    if (!invoice || !invoice.client?.email) return;
+    if (!invoice || !invoice.client) return;
 
     if (!(await isAutomationEnabled(invoice.organization_id, "invoice_paid_receipt"))) {
       console.log(`[auto] Receipt + review request paused for org ${invoice.organization_id}`);
@@ -3446,8 +3479,9 @@ export async function autoOnInvoicePaid(invoiceId: string) {
     }
 
     // This function sends TWO different things, so each is gated on its own
-    // category: the receipt is billing, the review request is growth. A client
-    // can want invoices but no review asks (or vice versa).
+    // category: the receipt is billing (email and/or text), the review
+    // request is growth (email-only). A client can want invoices but no
+    // review asks (or vice versa).
     const billingDecision = await resolveClientNotify(db, {
       organizationId: invoice.organization_id,
       clientId: invoice.client.id,
@@ -3460,7 +3494,11 @@ export async function autoOnInvoicePaid(invoiceId: string) {
       category: "growth",
       event: "review_request",
     });
-    if (!billingDecision.email && !growthDecision.email) return;
+    const receiptEmail = billingDecision.email && Boolean(invoice.client.email);
+    const receiptSms =
+      billingDecision.sms && Boolean(billingDecision.clientPhone);
+    const reviewEmail = growthDecision.email && Boolean(invoice.client.email);
+    if (!receiptEmail && !receiptSms && !reviewEmail) return;
 
     // CAS-claim the send. This now fires from payment webhooks as well as the
     // manual mark-paid action, and a later correcting payment row also re-ran
@@ -3523,12 +3561,32 @@ export async function autoOnInvoicePaid(invoiceId: string) {
       logoUrl,
     });
 
-    if (billingDecision.email) await sendOrgEmail(invoice.organization_id, {
-      to: invoice.client.email,
+    if (receiptEmail) await sendOrgEmail(invoice.organization_id, {
+      to: invoice.client.email!,
       toName: invoice.client.name ?? undefined,
       ...receiptTemplate,
       pauseExempt: isInvoiceEmailUnpaused(),
     });
+
+    // Receipt by text — independent channel; sendOrgSms applies its own
+    // gates (per-key toggle, opt-in, cap, TWILIO_ENABLED).
+    if (receiptSms) {
+      try {
+        const { sendOrgSms } = await import("@/lib/sms");
+        const { composePaymentReceiptSms } = await import("@/lib/twilio");
+        await sendOrgSms(invoice.organization_id, {
+          to: billingDecision.clientPhone!,
+          body: composePaymentReceiptSms({
+            orgName,
+            invoiceNumber: invoice.number ?? invoiceId.slice(0, 8).toUpperCase(),
+            amountFormatted: formatCurrencyCents(invoice.amount_cents, currency),
+          }),
+          automationKey: "invoice_paid_receipt",
+        });
+      } catch (smsErr) {
+        console.error("[auto] receipt SMS path errored:", invoiceId, smsErr);
+      }
+    }
 
     // B) Auto-generate review token and send review request
     // Check if review_token already exists
@@ -3562,7 +3620,7 @@ export async function autoOnInvoicePaid(invoiceId: string) {
     // because the process terminates when the function returns. Back-to-back
     // Resend calls land in separate email threads in Gmail/Outlook anyway
     // (different Message-IDs), so there's no deliverability reason to delay.
-    if (growthDecision.email) await sendOrgEmail(invoice.organization_id, {
+    if (reviewEmail) await sendOrgEmail(invoice.organization_id, {
       to: invoice.client.email!,
       toName: invoice.client.name ?? undefined,
       ...reviewTemplate,

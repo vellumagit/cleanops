@@ -14,6 +14,7 @@ const base = {
   amountCents: 10000,
   client,
   orgDefault: "none" as const,
+  smsEnabled: true,
 };
 
 describe("invoiceDeliveryNote", () => {
@@ -76,7 +77,7 @@ describe("invoiceDeliveryNote", () => {
     ).toMatch(/Billing messages are off/);
   });
 
-  it("client's own text-only billing → email-only reality spelled out", () => {
+  it("text-only opted-in client is reachable by text — billing texts exist now", () => {
     expect(
       invoiceDeliveryNote({
         ...base,
@@ -86,22 +87,34 @@ describe("invoiceDeliveryNote", () => {
           contact_overrides: { billing: "sms" },
         },
       })?.note,
-    ).toMatch(/only exist as email/);
+    ).toMatch(/reachable by text/);
   });
 
-  it("inherit client under a Text-only house default blames the default, not the client", () => {
+  it("text-only client but org SMS is off → points at SMS setup", () => {
     expect(
       invoiceDeliveryNote({
         ...base,
-        orgDefault: "sms",
+        smsEnabled: false,
         client: {
           ...client,
           sms_opted_in: true,
-          contact_preference: "inherit",
-          contact_overrides: {},
+          contact_overrides: { billing: "sms" },
         },
       })?.note,
-    ).toMatch(/default client notifications/);
+    ).toMatch(/texting isn't turned on/);
+  });
+
+  it("text-only client without SMS opt-in → points at the opt-in request", () => {
+    expect(
+      invoiceDeliveryNote({
+        ...base,
+        client: {
+          ...client,
+          sms_opted_in: false,
+          contact_overrides: { billing: "sms" },
+        },
+      })?.note,
+    ).toMatch(/hasn't opted in/);
   });
 
   it("invoice delivery muted by the client's advanced settings", () => {

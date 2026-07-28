@@ -53,7 +53,8 @@ export function InvoicingForm(props: InvoicingFormProps) {
           <span className="text-xs text-muted-foreground">
             A draft is created when a job completes (or on the billing date for
             biweekly/monthly clients). If you don&apos;t change or hold it, it
-            emails itself at the time below on the next day. Off by default.
+            sends itself at the time below on the next day — by email, or as a
+            text with the payment link for clients set to text. Off by default.
           </span>
         </span>
       </label>

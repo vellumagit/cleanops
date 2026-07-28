@@ -150,7 +150,22 @@ const CLIENT_FACING_SMS_KEYS = new Set([
   "booking_reminder_client_sms",
   "booking_rescheduled_sms",
   "booking_cancelled_sms",
+  // Billing texts — the message type is gated by its (channel-less) org
+  // toggle / the auto-send pipeline; the client's billing category channel
+  // decides email vs text. Opt-in still required, like every client text.
+  "invoice_auto_send",
+  "invoice_overdue_reminder",
+  "invoice_paid_receipt",
 ]);
+
+/**
+ * Keys whose org-level authority lives OUTSIDE automation_settings, so the
+ * per-key resolveAutomationEnabled check must be skipped (absent key = OFF
+ * would silently kill them). invoice_auto_send is gated upstream by
+ * organizations.invoice_auto_send_enabled + the master switch in the cron.
+ * Master switch, opt-in, caps, and platform kill switches still apply here.
+ */
+const EXTERNALLY_GATED_SMS_KEYS = new Set(["invoice_auto_send"]);
 
 /**
  * Keys for OWNER-INITIATED sends — the owner clicked a button for this
@@ -260,8 +275,10 @@ export async function sendOrgSms(
     if (orgFlags.automations_enabled !== true) return skipped;
     // Unified two-flow model: the per-key org toggle always applies (client
     // and employee keys alike). The caller has already resolved the client's
-    // own preferences; the opt-in gate below still applies on top.
+    // own preferences; the opt-in gate below still applies on top. Keys whose
+    // on/off authority lives outside automation_settings skip only this check.
     if (
+      !EXTERNALLY_GATED_SMS_KEYS.has(args.automationKey) &&
       !resolveAutomationEnabled(org.automation_settings ?? {}, args.automationKey)
     ) {
       return skipped;

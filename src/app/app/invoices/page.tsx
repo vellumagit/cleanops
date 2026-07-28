@@ -73,7 +73,7 @@ export default async function InvoicesPage({
   // Surface auto-send misses ("skipped"/"held" drafts) with a live-computed
   // reason — the "silence is never a mystery" rule. Pure function, no extra
   // queries per row.
-  const { orgDefault } = await fetchOrgNotificationContext(
+  const { orgDefault, smsEnabled } = await fetchOrgNotificationContext(
     membership.organization_id,
   );
 
@@ -92,6 +92,7 @@ export default async function InvoicesPage({
       amountCents: i.amount_cents,
       client: i.client,
       orgDefault,
+      smsEnabled,
     }),
   }));
 
