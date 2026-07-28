@@ -291,9 +291,23 @@ export default async function IntegrationsPage({
                         <div className="flex justify-between gap-2 min-w-0">
                           <dt
                             className="text-muted-foreground shrink-0 cursor-help border-b border-dashed border-muted-foreground/40"
-                            title="The Google account used for calendar sync. This is the Gmail/Workspace account you authorised — it's separate from your Sollos login."
+                            title={
+                              isGcal
+                                ? "The Google account used for calendar sync. This is the Gmail/Workspace account you authorised — it's separate from your Sollos login."
+                                : isQuickBooks
+                                  ? "Your QuickBooks company ID (realm ID) — the company this connection writes to. Quote it if you contact Intuit support."
+                                  : isSage
+                                    ? "The Sage account this connection is authorised against."
+                                    : "The external account this connection is authorised against."
+                            }
                           >
-                            Google account
+                            {isGcal
+                              ? "Google account"
+                              : isQuickBooks
+                                ? "QuickBooks company"
+                                : isSage
+                                  ? "Sage account"
+                                  : "Account"}
                           </dt>
                           <dd className="font-mono text-foreground truncate text-right" title={conn.external_account_id}>
                             {conn.external_account_id}
