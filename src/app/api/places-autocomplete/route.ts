@@ -46,8 +46,15 @@ export async function GET(request: NextRequest) {
       },
       body: JSON.stringify({
         input: q,
+        // Country filter. NOTE: this endpoint is Places API (NEW). Its request
+        // fields differ from the legacy Places API — the legacy `types` field
+        // does not exist here and makes the whole call 400 ("Unknown name
+        // types"), which is what silently broke this endpoint from day one.
+        // The new equivalent is `includedPrimaryTypes`; we deliberately omit
+        // it, because address-shaped queries already return address
+        // predictions, and a commercial client's building name is a legitimate
+        // thing to type into an address field.
         includedRegionCodes: ["ca", "us"],
-        types: ["address"],
       }),
     });
 
