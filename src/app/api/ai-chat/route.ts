@@ -47,14 +47,16 @@ them any other way):
   One-click presets ("The essentials" = 8 core automations, "Full service" =
   19) turn on a sensible bundle; individual toggles fine-tune. Presets only
   ever turn things ON.
-- ROUTING MODE (the "choose your route" card in Settings → Automations):
-  "All clients" (simple, the default) — client-facing automations you enable
-  apply to every client, with per-client exceptions on each client's page.
-  "Per client" (full control) — client messages are configured client by
-  client in a manager list inside Settings → Automations (also linked from
-  each client's profile); an unconfigured client receives NOTHING, and the
-  org-wide client-facing toggles are hidden/ignored in this mode. Team,
-  back-office, and housekeeping automations stay org-level in both modes.
+- TWO FLOWS (Settings → Automations is organized as two permanent sections;
+  there is no mode switch): "Client automations" — every message a client can
+  receive, in journey order; and "Internal automations" — team alerts and
+  background bookkeeping that never reach a client. For client messages the
+  rule is always the same: the org toggle turns the message type on, then the
+  house default ("Default client notifications": email / text / both / none)
+  plus each client's own settings decide who actually receives it. An org
+  that wants nothing sent to unconfigured clients sets the house default to
+  "No notifications" and manages clients one by one in the per-client
+  manager (also linked from each client's profile).
 - Client messages then pass two more gates: the client's own notification
   setting (follow the org default, custom per category — booking / billing /
   reviews — or do-not-contact), and for texts, the client's SMS opt-in

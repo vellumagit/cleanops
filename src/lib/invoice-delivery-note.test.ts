@@ -14,7 +14,6 @@ const base = {
   amountCents: 10000,
   client,
   orgDefault: "none" as const,
-  perClientMode: true,
 };
 
 describe("invoiceDeliveryNote", () => {
@@ -54,23 +53,9 @@ describe("invoiceDeliveryNote", () => {
     ).toMatch(/Do Not Contact/);
   });
 
-  it("unconfigured client in per-client mode gets the mode-specific wording", () => {
-    expect(
-      invoiceDeliveryNote({
-        ...base,
-        client: {
-          ...client,
-          contact_preference: "inherit",
-          contact_overrides: {},
-        },
-      })?.note,
-    ).toMatch(/per-client mode/);
-  });
-
-  it("all-clients org whose house default is 'none' does NOT claim per-client mode", () => {
+  it("inherit client under a 'none' house default names the default, not the client", () => {
     const r = invoiceDeliveryNote({
       ...base,
-      perClientMode: false,
       orgDefault: "none",
       client: {
         ...client,
@@ -78,8 +63,8 @@ describe("invoiceDeliveryNote", () => {
         contact_overrides: {},
       },
     });
-    expect(r?.note).not.toMatch(/per-client mode/);
     expect(r?.note).toMatch(/No notifications/);
+    expect(r?.note).toMatch(/per-client manager/);
   });
 
   it("billing off for the client", () => {
@@ -108,7 +93,6 @@ describe("invoiceDeliveryNote", () => {
     expect(
       invoiceDeliveryNote({
         ...base,
-        perClientMode: false,
         orgDefault: "sms",
         client: {
           ...client,

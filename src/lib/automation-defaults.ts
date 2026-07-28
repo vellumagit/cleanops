@@ -101,17 +101,13 @@ export function isDefaultOff(_key: string): boolean {
 }
 
 /**
- * Automation keys whose recipient is the org's CLIENT. These are the keys the
- * routing mode governs:
- *
- *   - all_clients mode: the org toggle turns the automation on for everyone;
- *     per-client settings are exceptions.
- *   - per_client mode: the org toggle is IGNORED (no redundant second
- *     authority) — each client's own configuration decides, and an
- *     unconfigured client gets nothing.
+ * Automation keys whose recipient is the org's CLIENT — the "client flow" on
+ * the automations page. The org toggle turns the message type on; the house
+ * default plus each client's own settings (category channels, mutes, DNC)
+ * decide who actually receives it.
  *
  * Team, back-office, owner-alert, and housekeeping keys are deliberately NOT
- * here — they aren't per-client concepts and stay org-level in both modes.
+ * here — they're the internal flow and never involve a client.
  */
 export const CLIENT_FACING_AUTOMATION_KEYS: ReadonlySet<string> = new Set([
   "booking_confirmation_email",

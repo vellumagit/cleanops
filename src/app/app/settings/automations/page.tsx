@@ -27,7 +27,6 @@ import {
   setOrgContactDefaultAction,
   toggleAutomationsMasterAction,
   applyAutomationPresetAction,
-  setAutomationModeAction,
   type AutomationKey,
 } from "./actions";
 import {
@@ -451,6 +450,26 @@ const STAGES: Stage[] = [
   },
 ];
 
+/**
+ * The two permanent flows, derived from the one STAGES source so the split
+ * can never drift from the engine's own client/internal classification.
+ * Client flow = every automation that messages a client; internal flow =
+ * team alerts + background bookkeeping ("make my org run autonomously").
+ */
+const CLIENT_STAGES: Stage[] = STAGES.map((s) => ({
+  ...s,
+  automations: s.automations.filter((a) =>
+    CLIENT_FACING_AUTOMATION_KEYS.has(a.key),
+  ),
+})).filter((s) => s.automations.length > 0);
+
+const INTERNAL_STAGES: Stage[] = STAGES.map((s) => ({
+  ...s,
+  automations: s.automations.filter(
+    (a) => !CLIENT_FACING_AUTOMATION_KEYS.has(a.key),
+  ),
+})).filter((s) => s.automations.length > 0);
+
 /** The three starting bundles shown at the top. Key sets live in actions.ts. */
 const PRESET_CARDS = [
   {
@@ -482,7 +501,7 @@ export default async function AutomationsPage() {
   const { data: org } = (await admin
     .from("organizations")
     .select(
-      "automation_settings, default_contact_preference, automations_enabled, automation_mode, sms_enabled",
+      "automation_settings, default_contact_preference, automations_enabled, sms_enabled",
     )
     .eq("id", membership.organization_id)
     .maybeSingle()) as unknown as {
@@ -490,7 +509,6 @@ export default async function AutomationsPage() {
       automation_settings: Record<string, { enabled: boolean }>;
       default_contact_preference: string | null;
       automations_enabled: boolean | null;
-      automation_mode: string | null;
       sms_enabled: boolean | null;
     } | null;
   };
@@ -498,24 +516,20 @@ export default async function AutomationsPage() {
   const settings = org?.automation_settings ?? {};
   const contactDefault = org?.default_contact_preference ?? "email";
   const masterOn = org?.automations_enabled === true;
-  const perClientMode = org?.automation_mode === "per_client";
   const smsEnabled = org?.sms_enabled === true;
 
-  // Per-client mode: load the client list for the manager. Active clients
-  // only; the matrix is the authority surface in this mode.
-  let matrixClients: MatrixClientRow[] = [];
-  if (perClientMode) {
-    const { data: clientRows } = (await admin
-      .from("clients")
-      .select(
-        "id, name, email, phone, sms_opted_in, contact_preference, contact_overrides",
-      )
-      .eq("organization_id", membership.organization_id)
-      .is("archived_at", null)
-      .order("name", { ascending: true })
-      .limit(500)) as unknown as { data: MatrixClientRow[] | null };
-    matrixClients = clientRows ?? [];
-  }
+  // Client list for the per-client manager — a permanent fixture of the
+  // client flow (active clients only).
+  const { data: clientRows } = (await admin
+    .from("clients")
+    .select(
+      "id, name, email, phone, sms_opted_in, contact_preference, contact_overrides",
+    )
+    .eq("organization_id", membership.organization_id)
+    .is("archived_at", null)
+    .order("name", { ascending: true })
+    .limit(500)) as unknown as { data: MatrixClientRow[] | null };
+  const matrixClients: MatrixClientRow[] = clientRows ?? [];
   const enabledCount = Object.values(settings).filter(
     (v) => (v as { enabled?: boolean })?.enabled === true,
   ).length;
@@ -523,6 +537,129 @@ export default async function AutomationsPage() {
   function isEnabled(key: AutomationKey): boolean {
     return resolveAutomationEnabled(settings, key);
   }
+
+  const houseDefault = (
+    ["email", "sms", "both", "none"].includes(contactDefault)
+      ? contactDefault
+      : "email"
+  ) as "email" | "sms" | "both" | "none";
+
+  // One accordion renderer serves both flows — the split is data, not markup.
+  const renderStages = (stages: typeof STAGES) => (
+    <div
+      className={`space-y-3 ${masterOn ? "" : "pointer-events-none opacity-50"}`}
+    >
+      {stages.map((stage) => {
+        const Icon = stage.icon;
+        const total = stage.automations.length;
+        const onCount = stage.automations.filter((a) =>
+          isEnabled(a.key),
+        ).length;
+        return (
+          <details
+            key={stage.id}
+            className="group rounded-xl border border-border bg-card"
+          >
+            <summary className="flex cursor-pointer list-none items-center gap-3 p-4 [&::-webkit-details-marker]:hidden">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-muted">
+                <Icon className="h-4 w-4 text-muted-foreground" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold">{stage.label}</p>
+                <p className="truncate text-xs text-muted-foreground">
+                  {stage.outcome}
+                </p>
+              </div>
+              <span
+                className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium ${
+                  onCount === 0
+                    ? "bg-muted text-muted-foreground"
+                    : onCount === total
+                      ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
+                      : "bg-amber-500/15 text-amber-700 dark:text-amber-400"
+                }`}
+              >
+                {onCount === 0 ? "off" : `${onCount} of ${total} on`}
+              </span>
+              <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
+            </summary>
+
+            <div className="border-t border-border p-4">
+              {stage.bundlePreset && (
+                <form
+                  action={applyAutomationPresetAction}
+                  className="mb-3 flex items-center justify-between gap-3 rounded-md border border-border bg-muted/40 px-3 py-2"
+                >
+                  <p className="text-[11px] text-muted-foreground">
+                    These are internal — nothing here emails or texts a
+                    client. (Auto-void stays a separate decision; it changes
+                    invoices.)
+                  </p>
+                  <input
+                    type="hidden"
+                    name="preset"
+                    value={stage.bundlePreset}
+                  />
+                  <SubmitButton
+                    variant="outline"
+                    size="sm"
+                    pendingLabel="Enabling…"
+                  >
+                    Turn all of these on
+                  </SubmitButton>
+                </form>
+              )}
+              <ul className="space-y-3">
+                {stage.automations.map((a) => {
+                  const on = isEnabled(a.key);
+                  return (
+                    <li
+                      key={a.key}
+                      className="rounded-lg border border-border bg-background p-4"
+                    >
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-sm font-medium">
+                              {a.title}
+                            </span>
+                            <AudienceBadge
+                              audience={automationAudience(a.key)}
+                            />
+                            <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                              {a.trigger}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {a.description}
+                          </p>
+                        </div>
+                        <form action={toggleAutomationAction} className="shrink-0">
+                          <input type="hidden" name="key" value={a.key} />
+                          <input
+                            type="hidden"
+                            name="enabled"
+                            value={on ? "false" : "true"}
+                          />
+                          <SubmitButton
+                            variant={on ? "default" : "outline"}
+                            size="sm"
+                            pendingLabel={on ? "Disabling…" : "Enabling…"}
+                          >
+                            {on ? "Enabled" : "Disabled"}
+                          </SubmitButton>
+                        </form>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          </details>
+        );
+      })}
+    </div>
+  );
 
   return (
     <PageShell
@@ -584,175 +721,60 @@ export default async function AutomationsPage() {
       <div className="mb-6 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/30 px-4 py-3 text-[11px] text-muted-foreground">
         <span className="mr-1">How a client message decides to send:</span>
         <span className="rounded-md border border-border bg-background px-2 py-1 font-medium text-foreground">
-          {perClientMode ? "1 · Master switch on" : "1 · Automation on below"}
+          1 · Automation on below
         </span>
         <span aria-hidden>→</span>
         <span className="rounded-md border border-border bg-background px-2 py-1 font-medium text-foreground">
-          {perClientMode
-            ? "2 · That client's setting in the manager below"
-            : "2 · That client's own setting"}
+          2 · That client&apos;s settings
         </span>
         <span aria-hidden>→</span>
         <span className="rounded-md border border-border bg-background px-2 py-1 font-medium text-foreground">
           3 · Texts need the client&apos;s opt-in
         </span>
         <span className="basis-full text-[11px]">
-          {perClientMode ? (
-            <>
-              Client messages are managed client by client in the manager
-              below. Staff and back-office automations skip steps 2–3 — they
-              never touch clients.
-            </>
-          ) : (
-            <>
-              Org-wide rules live here. Fine-tune any individual person on{" "}
-              <Link href="/app/clients" className="underline underline-offset-2">
-                their client page
-              </Link>
-              . Staff and back-office automations skip steps 2–3 — they never
-              touch clients.
-            </>
-          )}
+          Delivery is decided by the house default plus each client&apos;s own
+          settings — in the per-client manager below or on{" "}
+          <Link href="/app/clients" className="underline underline-offset-2">
+            their client page
+          </Link>
+          . Internal automations skip steps 2–3 — they never touch clients.
         </span>
       </div>
 
-      {/* ROUTE CHOOSER — the "choose your route" master decision. A literal
-          switch: left = all clients (simple), right = per client (control). */}
-      <div className="mb-6 rounded-lg border border-border bg-card p-4">
-        <p className="text-sm font-medium">How are client messages managed?</p>
-
-        <form action={setAutomationModeAction} className="mt-3">
-          <input
-            type="hidden"
-            name="mode"
-            value={perClientMode ? "all_clients" : "per_client"}
-          />
-          <button
-            type="submit"
-            className="group mx-auto flex items-center gap-4"
-            aria-label={
-              perClientMode
-                ? "Switch to all-clients mode"
-                : "Switch to per-client mode"
-            }
-          >
-            <span
-              className={`text-sm transition-colors ${
-                !perClientMode
-                  ? "font-semibold text-foreground"
-                  : "text-muted-foreground"
-              }`}
-            >
-              All clients
-            </span>
-            <span
-              className={`relative inline-flex h-7 w-14 shrink-0 items-center rounded-full border transition-colors ${
-                perClientMode
-                  ? "border-blue-500/50 bg-blue-500/80"
-                  : "border-border bg-muted"
-              }`}
-            >
-              <span
-                className={`absolute h-5 w-5 rounded-full bg-background shadow transition-all ${
-                  perClientMode ? "left-8" : "left-1"
-                }`}
-              />
-            </span>
-            <span
-              className={`text-sm transition-colors ${
-                perClientMode
-                  ? "font-semibold text-foreground"
-                  : "text-muted-foreground"
-              }`}
-            >
-              Per client
-            </span>
-          </button>
-        </form>
-
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          <div
-            className={`flex min-h-[116px] flex-col rounded-xl border p-4 ${
-              !perClientMode
-                ? "border-foreground bg-muted/60"
-                : "border-border opacity-60"
-            }`}
-          >
-            <p className="text-sm font-medium">
-              All clients {!perClientMode && "· active"}
-            </p>
-            <p className="mt-1 flex-1 text-xs text-muted-foreground">
-              Simple. What you turn on below applies to every client. Set
-              exceptions on individual clients when someone wants different.
-            </p>
-          </div>
-          <div
-            className={`flex min-h-[116px] flex-col rounded-xl border p-4 ${
-              perClientMode
-                ? "border-foreground bg-muted/60"
-                : "border-border opacity-60"
-            }`}
-          >
-            <p className="text-sm font-medium">
-              Per client {perClientMode && "· active"}
-            </p>
-            <p className="mt-1 flex-1 text-xs text-muted-foreground">
-              Full control. Client messages are configured client by client in
-              the manager below — nothing sends until you switch it on for
-              them. Org-wide client toggles step aside.
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* THE THREE KINDS — legend for the badge every toggle below wears.
-          Always visible: this is the page's decoder ring. */}
+      {/* THE TWO FLOWS + THREE BADGES — the page's decoder ring. */}
       <div className="mb-6 rounded-lg border border-border bg-muted/30 px-4 py-3">
         <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-          Three kinds of automation
+          Two flows, three kinds of automation
         </p>
         <div className="grid gap-x-6 gap-y-2 sm:grid-cols-3">
           <div className="flex flex-col items-start gap-1">
             <AudienceBadge audience="client" />
             <p className="text-[11px] text-muted-foreground">
-              Goes to your client.{" "}
-              {perClientMode
-                ? "Each client's own settings in the manager above decide."
-                : "What you enable applies to every client; set exceptions on a client's page."}
+              The client flow — what your clients hear from you. Turning one
+              on makes the message exist; the house default and each
+              client&apos;s own settings decide who receives it.
             </p>
           </div>
           <div className="flex flex-col items-start gap-1">
             <AudienceBadge audience="team" />
             <p className="text-[11px] text-muted-foreground">
-              Goes to you or your staff. Clients never see these.
+              Internal flow — goes to you or your staff. Clients never see
+              these.
             </p>
           </div>
           <div className="flex flex-col items-start gap-1">
             <AudienceBadge audience="background" />
             <p className="text-[11px] text-muted-foreground">
-              Does the bookkeeping — drafts invoices, flips statuses. Sends
-              nothing to anyone, so client preferences never apply.
+              Internal flow — does the bookkeeping: drafts invoices, flips
+              statuses. Sends nothing to anyone, so client preferences never
+              apply.
             </p>
           </div>
         </div>
       </div>
 
-      {/* PER-CLIENT MANAGER — the authority surface in per-client mode. */}
-      {perClientMode && (
-        <div className={`mb-8 ${masterOn ? "" : "pointer-events-none opacity-50"}`}>
-          <ClientAutomationMatrix
-            rows={matrixClients}
-            smsEnabled={smsEnabled}
-          />
-        </div>
-      )}
-
-      {/* PRESETS — the first decision is one click, not thirty-nine.
-          All-clients mode only: in per-client mode the client-facing keys
-          they set are ignored, so offering them would be the exact redundancy
-          the mode exists to remove. */}
-      {!perClientMode && (
-      <div className="mb-6">
+      {/* PRESETS — the first decision is one click, not thirty-nine. */}
+      <div className="mb-8">
         <p className="mb-2 text-xs font-medium text-muted-foreground">
           Start from a preset — fine-tune anything after. Presets only turn
           things on; they never switch off something you enabled.
@@ -788,214 +810,105 @@ export default async function AutomationsPage() {
           ))}
         </div>
       </div>
-      )}
 
-      {/* HOUSE DEFAULT for client messages — the all-clients route's delivery
-          default. Hidden in per-client mode (each client picks channels). */}
-      {!perClientMode && (
-      <div className="mb-8 rounded-lg border border-border bg-card p-4">
-        <p className="text-sm font-medium">Default client notifications</p>
-        <p className="mt-1 text-xs text-muted-foreground">
-          What a client gets unless their own setting says otherwise. Change it
-          per client on the client&apos;s page.
-        </p>
-        <form
-          action={setOrgContactDefaultAction}
-          className="mt-3 flex flex-wrap items-center gap-2"
-        >
-          {[
-            { value: "email", label: "Email only" },
-            { value: "sms", label: "Text only" },
-            { value: "both", label: "Email + text" },
-            { value: "none", label: "No notifications" },
-          ].map((opt) => {
-            const active = contactDefault === opt.value;
-            return (
-              <button
-                key={opt.value}
-                type="submit"
-                name="default_contact_preference"
-                value={opt.value}
-                className={`rounded-md border px-3 py-1.5 text-xs transition-colors ${
-                  active
-                    ? "border-foreground bg-muted font-medium text-foreground"
-                    : "border-border text-muted-foreground hover:bg-muted/50"
-                }`}
-              >
-                {opt.label}
-              </button>
-            );
-          })}
-        </form>
-        <p className="mt-2 text-[11px] text-muted-foreground">
-          Texts only reach clients who have opted in to SMS, regardless of this
-          setting. Billing and review messages are email-only — texts exist
-          for booking updates.
-        </p>
-        {contactDefault === "sms" && (
-          <p className="mt-2 flex items-start gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-800 dark:text-amber-300">
-            <TriangleAlert className="mt-0.5 h-3 w-3 shrink-0" />
-            <span>
-              With &ldquo;Text only&rdquo; as the default, invoices, receipts,
-              overdue reminders, and review asks never send to clients on the
-              default — those messages only exist as email. Clients with their
-              own email setting are unaffected.
-            </span>
+      {/* ═════════ FLOW 1 · CLIENT AUTOMATIONS ═════════ */}
+      <section className="mb-10">
+        <div className="mb-3 flex items-start gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-sky-500/15">
+            <Users className="h-4 w-4 text-sky-600 dark:text-sky-400" />
+          </div>
+          <div>
+            <h2 className="text-sm font-semibold">Client automations</h2>
+            <p className="text-xs text-muted-foreground">
+              Everything Sollos says to your clients — confirmations,
+              reminders, invoices, review asks. Two dials: turn messages on
+              here, then decide who receives them just below.
+            </p>
+          </div>
+        </div>
+        {renderStages(CLIENT_STAGES)}
+
+        {/* WHO RECEIVES THEM — the delivery dial for the client flow. */}
+        <div className="mt-4 rounded-lg border border-border bg-card p-4">
+          <p className="text-sm font-medium">Default client notifications</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            What a client gets unless their own setting says otherwise. Pick
+            &ldquo;No notifications&rdquo; to keep new clients silent until
+            you configure them one by one in the manager below.
           </p>
-        )}
-      </div>
-
-      )}
-
-      {/* THE JOURNEY — every automation, in the order a job actually happens. */}
-      <div
-        className={`space-y-3 ${masterOn ? "" : "pointer-events-none opacity-50"}`}
-      >
-        {STAGES.map((stage) => {
-          const Icon = stage.icon;
-          // Per-client mode: client-facing toggles are managed in the matrix
-          // above — hiding them here removes the redundant second authority.
-          const visibleAutomations = perClientMode
-            ? stage.automations.filter(
-                (a) => !CLIENT_FACING_AUTOMATION_KEYS.has(a.key),
-              )
-            : stage.automations;
-          const hiddenCount = stage.automations.length - visibleAutomations.length;
-          if (visibleAutomations.length === 0) {
-            return (
-              <div
-                key={stage.id}
-                className="flex items-center gap-3 rounded-xl border border-dashed border-border bg-muted/20 p-4"
-              >
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-muted">
-                  <Icon className="h-4 w-4 text-muted-foreground" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold text-muted-foreground">
-                    {stage.label}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    Client messages — managed per client above.
-                  </p>
-                </div>
-              </div>
-            );
-          }
-          const total = visibleAutomations.length;
-          const onCount = visibleAutomations.filter((a) =>
-            isEnabled(a.key),
-          ).length;
-          return (
-            <details
-              key={stage.id}
-              className="group rounded-xl border border-border bg-card"
-            >
-              <summary className="flex cursor-pointer list-none items-center gap-3 p-4 [&::-webkit-details-marker]:hidden">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-muted">
-                  <Icon className="h-4 w-4 text-muted-foreground" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold">{stage.label}</p>
-                  <p className="truncate text-xs text-muted-foreground">
-                    {stage.outcome}
-                  </p>
-                </div>
-                <span
-                  className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium ${
-                    onCount === 0
-                      ? "bg-muted text-muted-foreground"
-                      : onCount === total
-                        ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
-                        : "bg-amber-500/15 text-amber-700 dark:text-amber-400"
+          <form
+            action={setOrgContactDefaultAction}
+            className="mt-3 flex flex-wrap items-center gap-2"
+          >
+            {[
+              { value: "email", label: "Email only" },
+              { value: "sms", label: "Text only" },
+              { value: "both", label: "Email + text" },
+              { value: "none", label: "No notifications" },
+            ].map((opt) => {
+              const active = contactDefault === opt.value;
+              return (
+                <button
+                  key={opt.value}
+                  type="submit"
+                  name="default_contact_preference"
+                  value={opt.value}
+                  className={`rounded-md border px-3 py-1.5 text-xs transition-colors ${
+                    active
+                      ? "border-foreground bg-muted font-medium text-foreground"
+                      : "border-border text-muted-foreground hover:bg-muted/50"
                   }`}
                 >
-                  {onCount === 0 ? "off" : `${onCount} of ${total} on`}
-                </span>
-                <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
-              </summary>
+                  {opt.label}
+                </button>
+              );
+            })}
+          </form>
+          <p className="mt-2 text-[11px] text-muted-foreground">
+            Texts only reach clients who have opted in to SMS, regardless of
+            this setting. Billing and review messages are email-only — texts
+            exist for booking updates.
+          </p>
+          {contactDefault === "sms" && (
+            <p className="mt-2 flex items-start gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-800 dark:text-amber-300">
+              <TriangleAlert className="mt-0.5 h-3 w-3 shrink-0" />
+              <span>
+                With &ldquo;Text only&rdquo; as the default, invoices,
+                receipts, overdue reminders, and review asks never send to
+                clients on the default — those messages only exist as email.
+                Clients with their own email setting are unaffected.
+              </span>
+            </p>
+          )}
+        </div>
 
-              <div className="border-t border-border p-4">
-                {stage.bundlePreset && (
-                  <form
-                    action={applyAutomationPresetAction}
-                    className="mb-3 flex items-center justify-between gap-3 rounded-md border border-border bg-muted/40 px-3 py-2"
-                  >
-                    <p className="text-[11px] text-muted-foreground">
-                      These are internal — nothing here emails or texts a
-                      client. (Auto-void stays a separate decision; it changes
-                      invoices.)
-                    </p>
-                    <input
-                      type="hidden"
-                      name="preset"
-                      value={stage.bundlePreset}
-                    />
-                    <SubmitButton
-                      variant="outline"
-                      size="sm"
-                      pendingLabel="Enabling…"
-                    >
-                      Turn all of these on
-                    </SubmitButton>
-                  </form>
-                )}
-                {hiddenCount > 0 && (
-                  <p className="mb-3 rounded-md border border-dashed border-border bg-muted/30 px-3 py-2 text-[11px] text-muted-foreground">
-                    {hiddenCount} client message{hiddenCount === 1 ? "" : "s"}{" "}
-                    from this stage {hiddenCount === 1 ? "is" : "are"} managed
-                    per client above.
-                  </p>
-                )}
-                <ul className="space-y-3">
-                  {visibleAutomations.map((a) => {
-                    const on = isEnabled(a.key);
-                    return (
-                      <li
-                        key={a.key}
-                        className="rounded-lg border border-border bg-background p-4"
-                      >
-                        <div className="flex items-start justify-between gap-4">
-                          <div className="min-w-0 flex-1">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className="text-sm font-medium">
-                                {a.title}
-                              </span>
-                              <AudienceBadge
-                                audience={automationAudience(a.key)}
-                              />
-                              <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-                                {a.trigger}
-                              </span>
-                            </div>
-                            <p className="mt-1 text-xs text-muted-foreground">
-                              {a.description}
-                            </p>
-                          </div>
-                          <form action={toggleAutomationAction} className="shrink-0">
-                            <input type="hidden" name="key" value={a.key} />
-                            <input
-                              type="hidden"
-                              name="enabled"
-                              value={on ? "false" : "true"}
-                            />
-                            <SubmitButton
-                              variant={on ? "default" : "outline"}
-                              size="sm"
-                              pendingLabel={on ? "Disabling…" : "Enabling…"}
-                            >
-                              {on ? "Enabled" : "Disabled"}
-                            </SubmitButton>
-                          </form>
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
-            </details>
-          );
-        })}
-      </div>
+        <div
+          className={`mt-4 ${masterOn ? "" : "pointer-events-none opacity-50"}`}
+        >
+          <ClientAutomationMatrix
+            rows={matrixClients}
+            smsEnabled={smsEnabled}
+            orgDefault={houseDefault}
+          />
+        </div>
+      </section>
+
+      {/* ═════════ FLOW 2 · INTERNAL AUTOMATIONS ═════════ */}
+      <section>
+        <div className="mb-3 flex items-start gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-violet-500/15">
+            <Zap className="h-4 w-4 text-violet-600 dark:text-violet-400" />
+          </div>
+          <div>
+            <h2 className="text-sm font-semibold">Internal automations</h2>
+            <p className="text-xs text-muted-foreground">
+              Make the business run itself — team alerts and background
+              bookkeeping. Nothing in this flow ever reaches a client.
+            </p>
+          </div>
+        </div>
+        {renderStages(INTERNAL_STAGES)}
+      </section>
     </PageShell>
   );
 }

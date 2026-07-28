@@ -211,7 +211,6 @@ export default async function InvoiceDetailPage({
       amountCents: invoice.amount_cents,
       client: noteClient,
       orgDefault: ctx.orgDefault,
-      perClientMode: ctx.perClientMode,
     });
   }
 

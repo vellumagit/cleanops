@@ -36,14 +36,10 @@ export function invoiceDeliveryNote(params: {
   status: string;
   amountCents: number;
   client: DeliveryNoteClient | null;
-  /** Mode-collapsed org default: "none" in per-client mode. */
+  /** The org's house default for client notifications. */
   orgDefault: OrgContactDefault;
-  /** Routing mode — copy differs between "not configured (per-client mode)"
-   *  and "your house default is No notifications". */
-  perClientMode: boolean;
 }): InvoiceDeliveryNote | null {
-  const { autoSendState, status, amountCents, client, orgDefault, perClientMode } =
-    params;
+  const { autoSendState, status, amountCents, client, orgDefault } = params;
 
   // Once the invoice left draft (sent by hand, paid, voided), the miss is moot.
   if (status !== "draft") return null;
@@ -103,14 +99,9 @@ export function invoiceDeliveryNote(params: {
         "Invoice delivery is muted for this client — send it manually, or unmute it on their row in the per-client manager.",
       );
     case "category_off":
-      if (clientPref === "inherit" && perClientMode) {
-        return skipped(
-          "This client isn't configured for messages yet (per-client mode), so it was never emailed — send it manually.",
-        );
-      }
       if (clientPref === "inherit" && orgDefault === "none") {
         return skipped(
-          "Your default client notifications are set to “No notifications”, so it was never emailed — send it manually, or change the default in Settings → Automations.",
+          "Your default client notifications are set to “No notifications” and this client hasn't been given their own settings, so it was never emailed — send it manually, or configure them in the per-client manager.",
         );
       }
       return skipped(

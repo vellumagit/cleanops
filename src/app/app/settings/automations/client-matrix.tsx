@@ -74,20 +74,22 @@ function parseRow(r: MatrixClientRow): RowState {
   };
 }
 
+type HouseDefault = "email" | "sms" | "both" | "none";
+
 /**
  * Run the REAL send-time resolver against the draft state, so everything this
  * panel displays is what will actually happen — not what the switches say.
- * The matrix only renders in per-client mode, where the org default is a hard
- * "none" (unconfigured = silent), so orgDefault is fixed here by design.
+ * Inherit clients follow the org's house default, exactly like the engine.
  */
 function resolveFor(
   r: MatrixClientRow,
   s: RowState,
   category: (typeof CATEGORIES)[number]["key"],
+  orgDefault: HouseDefault,
   event?: NotificationEvent,
 ) {
   return resolveClientChannels({
-    orgDefault: "none",
+    orgDefault,
     clientPref: s.preference as ResolveInput["clientPref"],
     overrides: {
       ...s.overrides,
@@ -110,11 +112,12 @@ function actualForCategory(
   r: MatrixClientRow,
   s: RowState,
   category: (typeof CATEGORIES)[number]["key"],
+  orgDefault: HouseDefault,
   smsEnabled: boolean,
 ): { label: string | null; partial: boolean } {
   const res = actualClientChannels(
     {
-      orgDefault: "none",
+      orgDefault,
       clientPref: s.preference as ResolveInput["clientPref"],
       overrides: {
         ...s.overrides,
@@ -134,7 +137,11 @@ function actualForCategory(
         : res.sms
           ? "Text"
           : null;
-  const desired = s.overrides[category] ?? "off";
+  // What they're ASKING for: a custom pick, or the house default for
+  // inherit clients (and for a custom category left on "inherit").
+  const raw =
+    s.preference === "custom" ? (s.overrides[category] ?? "off") : "inherit";
+  const desired = raw === "inherit" ? orgDefault : raw;
   // partial = something they asked for can't deliver (e.g. "Both" on an
   // email-only category, or texts without opt-in / org SMS off).
   const wantsEmail = desired === "email" || desired === "both";
@@ -147,10 +154,13 @@ function actualForCategory(
 export function ClientAutomationMatrix({
   rows,
   smsEnabled,
+  orgDefault,
 }: {
   rows: MatrixClientRow[];
   /** organizations.sms_enabled — with it off, every text silently skips. */
   smsEnabled: boolean;
+  /** The house default — what "inherit" clients receive. */
+  orgDefault: HouseDefault;
 }) {
   const [query, setQuery] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
@@ -192,12 +202,31 @@ export function ClientAutomationMatrix({
     if (s.preference === "do_not_contact") {
       return { text: "No contact", tone: "danger" };
     }
-    const anyOn =
-      s.preference === "custom" &&
-      CATEGORIES.some(
-        (c) => s.overrides[c.key] && s.overrides[c.key] !== "off",
-      );
-    if (!anyOn) return { text: "Not configured — no messages", tone: "muted" };
+    if (s.preference !== "custom") {
+      // Inherit — the house default is the whole story.
+      if (orgDefault === "none") {
+        return { text: "Follows default — no messages", tone: "muted" };
+      }
+      let blocked = false;
+      const parts = CATEGORIES.map((c) => {
+        const short = c.label.split(" ")[0];
+        const actual = actualForCategory(r, s, c.key, orgDefault, smsEnabled);
+        if (!actual.label) {
+          blocked = true;
+          return `${short}: won't send`;
+        }
+        if (actual.partial) blocked = true;
+        return `${short}: ${actual.label}${actual.partial ? " ⚠" : ""}`;
+      });
+      return {
+        text: `Follows default · ${parts.join(" · ")}`,
+        tone: blocked ? "warn" : "muted",
+      };
+    }
+    const anyOn = CATEGORIES.some(
+      (c) => s.overrides[c.key] && s.overrides[c.key] !== "off",
+    );
+    if (!anyOn) return { text: "Custom — all off", tone: "muted" };
     // The summary states what will ACTUALLY send (resolver + channel
     // capability), not what the switches say — a text-only pick with no
     // opt-in reads "won't send", never "Text".
@@ -206,7 +235,7 @@ export function ClientAutomationMatrix({
       const short = c.label.split(" ")[0];
       const desired = s.overrides[c.key] ?? "off";
       if (desired === "off") return `${short}: Off`;
-      const actual = actualForCategory(r, s, c.key, smsEnabled);
+      const actual = actualForCategory(r, s, c.key, orgDefault, smsEnabled);
       if (!actual.label) {
         blocked = true;
         return `${short}: won't send`;
@@ -234,11 +263,11 @@ export function ClientAutomationMatrix({
     <div className="rounded-xl border border-border bg-card">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-4">
         <div>
-          <p className="text-sm font-semibold">Client-by-client messages</p>
+          <p className="text-sm font-semibold">Per-client control</p>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            This list is the authority in per-client mode: a client receives
-            only what you switch on here. {configured} of {rows.length}{" "}
-            configured — the rest get nothing.
+            Fine-tune anyone. Clients without their own settings follow your
+            default above{orgDefault === "none" ? " — currently nothing" : ""}.{" "}
+            {configured} of {rows.length} have their own settings.
           </p>
         </div>
         <div className="relative">
@@ -354,6 +383,16 @@ export function ClientAutomationMatrix({
                               muted: [],
                             }),
                         },
+                        {
+                          label: "Follow default",
+                          apply: () =>
+                            save(r.id, {
+                              ...s,
+                              preference: "inherit",
+                              overrides: {},
+                              muted: [],
+                            }),
+                        },
                       ].map((q) => (
                         <button
                           key={q.label}
@@ -392,6 +431,13 @@ export function ClientAutomationMatrix({
                         <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                           How they hear from you
                         </p>
+                        {s.preference !== "custom" && (
+                          <p className="mb-2 rounded-md border border-dashed border-border bg-muted/30 px-3 py-2 text-[11px] text-muted-foreground">
+                            {orgDefault === "none"
+                              ? "Following your default — currently No notifications, so nothing sends. Pick channels below to give them their own settings."
+                              : "Following your default. Picking a channel below gives them their own settings."}
+                          </p>
+                        )}
                         <div className="space-y-2">
                           {CATEGORIES.map((c) => {
                             const current = s.overrides[c.key] ?? "off";
@@ -582,7 +628,13 @@ export function ClientAutomationMatrix({
                               // What will ACTUALLY go out for this one message:
                               // the resolver's answer intersected with the
                               // channels this message exists on.
-                              const res = resolveFor(r, s, ev.category, ev.id);
+                              const res = resolveFor(
+                                r,
+                                s,
+                                ev.category,
+                                orgDefault,
+                                ev.id,
+                              );
                               const email =
                                 res.email && ev.channels.includes("email");
                               const sms =

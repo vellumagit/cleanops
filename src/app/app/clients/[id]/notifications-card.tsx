@@ -61,14 +61,11 @@ export function ClientNotificationsCard({
   contactOverrides,
   hasEmail,
   smsOptedIn,
-  perClientMode = false,
   smsEnabled = true,
 }: {
   clientId: string;
   canEdit: boolean;
   orgDefault: OrgContactDefault;
-  /** Org is in per-client routing mode — copy changes accordingly. */
-  perClientMode?: boolean;
   /** organizations.sms_enabled — with it off, texts silently skip. */
   smsEnabled?: boolean;
   contactPreference: string | null;
@@ -110,11 +107,9 @@ export function ClientNotificationsCard({
             {isDnc
               ? "Do not contact"
               : pref === "custom"
-                ? perClientMode
-                  ? "Configured"
-                  : "Custom"
-                : perClientMode
-                  ? "Not configured — no messages"
+                ? "Custom"
+                : orgDefault === "none"
+                  ? "Follows default — no messages"
                   : "Follows org default"}
           </span>
         </div>
@@ -166,30 +161,14 @@ export function ClientNotificationsCard({
       )}
 
       <p className="mt-3 text-[11px] text-muted-foreground">
-        {perClientMode ? (
-          <>
-            Your business is in per-client mode — manage every client at once
-            in{" "}
-            <Link
-              href="/app/settings/automations"
-              className="underline underline-offset-2 hover:text-foreground"
-            >
-              Settings → Automations
-            </Link>
-            .
-          </>
-        ) : (
-          <>
-            Org-wide rules live in{" "}
-            <Link
-              href="/app/settings/automations"
-              className="underline underline-offset-2 hover:text-foreground"
-            >
-              Settings → Automations
-            </Link>
-            . This card is what this client actually gets.
-          </>
-        )}
+        Client automations and the per-client manager live in{" "}
+        <Link
+          href="/app/settings/automations"
+          className="underline underline-offset-2 hover:text-foreground"
+        >
+          Settings → Automations
+        </Link>
+        . This card is what this client actually gets.
       </p>
     </div>
   );

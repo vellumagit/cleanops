@@ -44,7 +44,7 @@ async function isAutomationEnabled(
   try {
     const { data } = (await admin()
       .from("organizations")
-      .select("automation_settings, automations_enabled, automation_mode")
+      .select("automation_settings, automations_enabled")
       .eq("id", organizationId)
       .maybeSingle()) as unknown as {
       data: {
@@ -53,22 +53,17 @@ async function isAutomationEnabled(
           { enabled?: boolean } | null
         > | null;
         automations_enabled: boolean | null;
-        automation_mode: string | null;
       } | null;
     };
     if (!data) return false;
     // Master switch off → hard stop.
     if (data.automations_enabled !== true) return false;
-    // PER-CLIENT routing mode: the org-level toggle for CLIENT-FACING keys is
-    // deliberately ignored — each client's own configuration (applied via
-    // resolveClientNotify in the send path) is the single authority, so the
-    // event is allowed through here. Non-client-facing keys are unaffected.
-    if (
-      data.automation_mode === "per_client" &&
-      isClientFacingAutomation(key)
-    ) {
-      return true;
-    }
+    // Unified two-flow model: the org toggle always gates the message type
+    // (client flow AND internal flow alike); each client's own preferences
+    // then gate delivery downstream via resolveClientNotify. The old
+    // per-client routing mode that bypassed org toggles is retired — orgs
+    // that used it were grandfathered by migration (client-facing keys
+    // enabled + house default "none"), so behavior is unchanged.
     return resolveAutomationEnabled(
       (data.automation_settings as Record<
         string,
@@ -1494,7 +1489,7 @@ export async function sendRebookingPrompts(): Promise<{
   const { data: orgRows } = (await db
     .from("organizations")
     .select(
-      "id, name, brand_color, logo_url, sender_email, automations_enabled, automation_settings, automation_mode",
+      "id, name, brand_color, logo_url, sender_email, automations_enabled, automation_settings",
     )
     .is("deleted_at", null)) as unknown as {
     data: Array<{
@@ -1505,7 +1500,6 @@ export async function sendRebookingPrompts(): Promise<{
       sender_email: string | null;
       automations_enabled: boolean | null;
       automation_settings: Record<string, { enabled?: boolean }> | null;
-      automation_mode: string | null;
     }> | null;
   };
   const { resolveAutomationEnabled } = await import("@/lib/automation-defaults");
@@ -1520,12 +1514,11 @@ export async function sendRebookingPrompts(): Promise<{
   >();
   for (const o of orgRows ?? []) {
     if (o.automations_enabled !== true) continue;
-    // Per-client mode: the org toggle is not the authority — clients that
-    // enabled growth messages for themselves gate individually downstream.
-    const eligible =
-      o.automation_mode === "per_client" ||
-      resolveAutomationEnabled(o.automation_settings, "rebooking_prompt_email");
-    if (!eligible) continue;
+    if (
+      !resolveAutomationEnabled(o.automation_settings, "rebooking_prompt_email")
+    ) {
+      continue;
+    }
     enabledOrgs.set(o.id, o);
   }
   if (enabledOrgs.size === 0) return { considered: 0, sent: 0 };

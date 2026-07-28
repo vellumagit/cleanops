@@ -66,12 +66,11 @@ export async function resolveClientNotify(
   if (orgDefault === undefined) {
     const { data: org, error: orgErr } = (await db
       .from("organizations")
-      .select("default_contact_preference, automation_mode")
+      .select("default_contact_preference")
       .eq("id", args.organizationId)
       .maybeSingle()) as {
       data: {
         default_contact_preference?: string;
-        automation_mode?: string | null;
       } | null;
       error: { message: string } | null;
     };
@@ -83,13 +82,10 @@ export async function resolveClientNotify(
         orgErr.message,
       );
     }
-    // PER-CLIENT routing mode: an unconfigured ("inherit") client gets
-    // NOTHING — the client's own settings are the only way a client-facing
-    // message sends. Modelled as an effective org default of "none".
-    orgDefault =
-      org?.automation_mode === "per_client"
-        ? "none"
-        : ((org?.default_contact_preference ?? "email") as OrgContactDefault);
+    // The house default is the whole story for "inherit" clients — orgs that
+    // want unconfigured clients silent set it to "none" (the old per-client
+    // routing mode was grandfathered into exactly that).
+    orgDefault = (org?.default_contact_preference ?? "email") as OrgContactDefault;
     args.orgDefaultCache?.set(args.organizationId, orgDefault);
   }
 

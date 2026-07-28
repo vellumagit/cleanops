@@ -1,70 +1,47 @@
 import "server-only";
+import { cache } from "react";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { OrgContactDefault } from "@/lib/notification-preferences";
 
 /**
- * The org's house default for automated client messages, for the client form's
- * notification control. Read via the admin client because
- * default_contact_preference isn't in the generated types yet.
+ * The org's house default for client notifications — what an "inherit"
+ * client receives. "none" means unconfigured clients get nothing (orgs
+ * migrated from the retired per-client routing mode land here).
+ *
+ * Cached per-request: several cards on one page ask for this.
  */
-export async function fetchOrgContactDefault(
-  organizationId: string,
-): Promise<OrgContactDefault> {
-  const admin = createSupabaseAdminClient();
-  const { data } = (await admin
-    .from("organizations")
-    .select("default_contact_preference, automation_mode")
-    .eq("id", organizationId)
-    .maybeSingle()) as unknown as {
-    data: {
-      default_contact_preference: string | null;
-      automation_mode: string | null;
-    } | null;
-  };
-  // Per-client routing mode: unconfigured clients receive nothing, so every
-  // UI surface (client card, list badges, edit control) should read the
-  // effective default as "none".
-  if (data?.automation_mode === "per_client") return "none";
-  const v = data?.default_contact_preference ?? "email";
-  return (["email", "sms", "both", "none"].includes(v)
-    ? v
-    : "email") as OrgContactDefault;
-}
+export const fetchOrgContactDefault = cache(
+  async (organizationId: string): Promise<OrgContactDefault> => {
+    const ctx = await fetchOrgNotificationContext(organizationId);
+    return ctx.orgDefault;
+  },
+);
 
-/**
- * Default + routing mode together, for surfaces whose copy changes by mode
- * (the client profile card). fetchOrgContactDefault stays for callers that
- * only need the resolved channel default.
- */
-export async function fetchOrgNotificationContext(
-  organizationId: string,
-): Promise<{
-  orgDefault: OrgContactDefault;
-  perClientMode: boolean;
-  /** organizations.sms_enabled — texts silently skip while this is off. */
-  smsEnabled: boolean;
-}> {
-  const admin = createSupabaseAdminClient();
-  const { data } = (await admin
-    .from("organizations")
-    .select("default_contact_preference, automation_mode, sms_enabled")
-    .eq("id", organizationId)
-    .maybeSingle()) as unknown as {
-    data: {
-      default_contact_preference: string | null;
-      automation_mode: string | null;
-      sms_enabled: boolean | null;
-    } | null;
-  };
-  const perClientMode = data?.automation_mode === "per_client";
-  const smsEnabled = data?.sms_enabled === true;
-  if (perClientMode) return { orgDefault: "none", perClientMode, smsEnabled };
-  const v = data?.default_contact_preference ?? "email";
-  return {
-    orgDefault: (["email", "sms", "both", "none"].includes(v)
-      ? v
-      : "email") as OrgContactDefault,
-    perClientMode,
-    smsEnabled,
-  };
-}
+export const fetchOrgNotificationContext = cache(
+  async (
+    organizationId: string,
+  ): Promise<{
+    orgDefault: OrgContactDefault;
+    /** organizations.sms_enabled — texts silently skip while this is off. */
+    smsEnabled: boolean;
+  }> => {
+    const admin = createSupabaseAdminClient();
+    const { data } = (await admin
+      .from("organizations")
+      .select("default_contact_preference, sms_enabled")
+      .eq("id", organizationId)
+      .maybeSingle()) as unknown as {
+      data: {
+        default_contact_preference: string | null;
+        sms_enabled: boolean | null;
+      } | null;
+    };
+    const v = data?.default_contact_preference ?? "email";
+    return {
+      orgDefault: (["email", "sms", "both", "none"].includes(v)
+        ? v
+        : "email") as OrgContactDefault,
+      smsEnabled: data?.sms_enabled === true,
+    };
+  },
+);
