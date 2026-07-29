@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { CheckCircle2 } from "lucide-react";
 import { FormError, FormField } from "@/components/form-field";
 import { SubmitButton } from "@/components/submit-button";
@@ -27,6 +27,16 @@ const HOUR_OPTIONS = Array.from({ length: 24 }, (_, h) => ({
 export function InvoicingForm(props: InvoicingFormProps) {
   const [state, formAction] = useActionState(saveInvoiceAutoSendAction, empty);
 
+  // CONTROLLED, deliberately. These were uncontrolled (defaultValue /
+  // defaultChecked), which React only applies on first mount — so after
+  // useActionState re-rendered the form on save, the inputs snapped back to
+  // the values the page was originally rendered with. Saving 10:00 AM
+  // stored 10 correctly but redisplayed 5:00 PM, which reads exactly like
+  // "my setting didn't save".
+  const [enabled, setEnabled] = useState(props.enabled);
+  const [sendHour, setSendHour] = useState(String(props.sendHour));
+  const [consolidated, setConsolidated] = useState(props.consolidated);
+
   return (
     <form action={formAction} className="max-w-lg space-y-6">
       <FormError message={state.errors?._form} />
@@ -43,7 +53,8 @@ export function InvoicingForm(props: InvoicingFormProps) {
         <input
           type="checkbox"
           name="enabled"
-          defaultChecked={props.enabled}
+          checked={enabled}
+          onChange={(e) => setEnabled(e.target.checked)}
           className="mt-0.5 h-4 w-4"
         />
         <span className="flex flex-col">
@@ -69,7 +80,8 @@ export function InvoicingForm(props: InvoicingFormProps) {
         <select
           id="send_hour"
           name="send_hour"
-          defaultValue={String(props.sendHour)}
+          value={sendHour}
+          onChange={(e) => setSendHour(e.target.value)}
           className="h-9 w-full max-w-xs rounded-md border border-input bg-background px-3 text-sm"
         >
           {HOUR_OPTIONS.map((o) => (
@@ -85,7 +97,8 @@ export function InvoicingForm(props: InvoicingFormProps) {
         <input
           type="checkbox"
           name="consolidated"
-          defaultChecked={props.consolidated}
+          checked={consolidated}
+          onChange={(e) => setConsolidated(e.target.checked)}
           className="mt-0.5 h-4 w-4"
         />
         <span className="flex flex-col">
