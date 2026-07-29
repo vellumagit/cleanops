@@ -24,6 +24,7 @@ import {
   issueOAuthState,
   type OAuthStateOutcome,
 } from "@/lib/oauth-state";
+import { sageRatePercent, type SageTaxRate } from "@/lib/sage-rate";
 
 const SAGE_API_BASE = "https://api.accounting.sage.com/v3.1";
 
@@ -268,11 +269,8 @@ async function getSalesLedgerAccountId(
   return null;
 }
 
-type SageTaxRate = {
-  id: string;
-  percentage?: number | null;
-  displayed_as?: string | null;
-};
+// Percentage parsing lives in @/lib/sage-rate — it's subtle (strings, dated
+// history, attributes=all) and belongs somewhere testable.
 
 /**
  * Resolve the Sage tax_rate_id whose percentage matches the Sollos rate (bps),
@@ -283,26 +281,43 @@ type SageTaxRate = {
 async function getTaxRateIdForBps(
   conn: SageConnection,
   bps: number | null | undefined,
-): Promise<string | null> {
-  if (!bps || bps <= 0) return null;
+  onDate: string,
+): Promise<{ id: string | null; available: string[] }> {
+  if (!bps || bps <= 0) return { id: null, available: [] };
   const pct = bps / 100;
   const cacheKey = `tax_rate_id_${bps}`;
   const cached = (conn.metadata ?? {})[cacheKey];
-  if (typeof cached === "string" && cached) return cached;
+  if (typeof cached === "string" && cached) {
+    return { id: cached, available: [] };
+  }
 
+  // attributes=all is REQUIRED. Without it Sage returns only id/displayed_as
+  // and every comparison below misses. getSalesLedgerAccountId already asked
+  // for it; this call didn't, so no tax rate could ever match — including the
+  // ones that genuinely existed.
   const resp = await sageFetch<{ $items?: SageTaxRate[] }>(
     conn.organization_id,
-    "/tax_rates?items_per_page=200",
+    "/tax_rates?items_per_page=200&attributes=all",
   );
-  const match = (resp.$items ?? []).find(
-    (t) =>
-      typeof t.percentage === "number" && Math.abs(t.percentage - pct) < 0.001,
-  );
+  const items = resp.$items ?? [];
+
+  const match = items.find((t) => {
+    const p = sageRatePercent(t, onDate);
+    return p !== null && Math.abs(p - pct) < 0.001;
+  });
+
   if (match?.id) {
     await mergeConnectionMetadata(conn.id, { [cacheKey]: match.id });
-    return match.id;
+    return { id: match.id, available: [] };
   }
-  return null;
+
+  // Name what Sage DOES have, so a mismatch tells the reader what to go fix
+  // instead of leaving them guessing which rates exist.
+  const available = items.map((t) => {
+    const p = sageRatePercent(t, onDate);
+    return `${t.displayed_as ?? t.id}${p === null ? "" : ` (${p}%)`}`;
+  });
+  return { id: null, available };
 }
 
 type SageAddressRegion = {
@@ -711,7 +726,12 @@ export async function pushInvoiceToSage(
     // Map the Sollos tax rate to a Sage tax_rate_id so the synced invoice total
     // INCLUDES tax and reconciles with Sollos. If Sage has no matching rate,
     // sync without tax and warn (totals will understate until one is set up).
-    const taxRateId = await getTaxRateIdForBps(conn, invoice.tax_rate_bps);
+    const taxRate = await getTaxRateIdForBps(
+      conn,
+      invoice.tax_rate_bps,
+      invoiceDate,
+    );
+    const taxRateId = taxRate.id;
     if (invoice.tax_rate_bps && invoice.tax_rate_bps > 0 && !taxRateId) {
       // This used to warn and sync WITHOUT tax, quietly posting a total lower
       // than the invoice the client actually received. A failed sync is
@@ -719,7 +739,11 @@ export async function pushInvoiceToSage(
       // Sage validates the rate against the region anyway, so the silent path
       // was usually about to be rejected regardless.
       return fail(
-        `Sage has no tax rate matching ${(invoice.tax_rate_bps / 100).toFixed(2)}%. Create one in Sage for the ${taxRegionId} region (Settings → Tax Rates), then try again.`,
+        `Sage has no tax rate matching ${(invoice.tax_rate_bps / 100).toFixed(2)}%. ` +
+          (taxRate.available.length
+            ? `Sage currently has: ${taxRate.available.join(", ")}. `
+            : "") +
+          `Create a matching rate in Sage for the ${taxRegionId} region (Settings → Tax Rates), then try again.`,
       );
     }
 
