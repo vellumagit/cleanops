@@ -22,6 +22,12 @@ import {
   connectSageAction,
   disconnectSageAction,
 } from "./sage-actions";
+import { SageTaxRegionForm } from "./sage-tax-region";
+import {
+  getSageConnection,
+  getSageTaxRegionId,
+  listSageAddressRegions,
+} from "@/lib/sage";
 import {
   connectQuickBooksAction,
   disconnectQuickBooksAction,
@@ -87,7 +93,9 @@ export default async function IntegrationsPage({
   // disconnected row from overwriting the active one in byProvider.
   const { data: rows } = await supabase
     .from("integration_connections")
-    .select("provider, status, external_account_id, connected_at, updated_at")
+    .select(
+      "provider, status, external_account_id, connected_at, updated_at, last_error",
+    )
     .eq("organization_id", membership.organization_id)
     .eq("status", "active");
 
@@ -117,10 +125,41 @@ export default async function IntegrationsPage({
       external_account_id: string | null;
       connected_at: string;
       updated_at: string;
+      last_error: string | null;
     }
   >();
   for (const r of rows ?? []) {
     byProvider.set(r.provider as ProviderKey, r);
+  }
+
+  // Sage rejects any sales invoice that doesn't name a destination region, so
+  // the org has to choose one. Only ask Sage for the list when nothing is set
+  // yet — once it is, we render the saved value and this page costs no Sage
+  // call (and no refresh-token rotation, which Sage charges for every call).
+  let sageRegion: {
+    current: string | null;
+    regions: Array<{ id: string; label: string }>;
+    loadError: string | null;
+  } | null = null;
+
+  if (byProvider.has("sage")) {
+    const sageConn = await getSageConnection(membership.organization_id);
+    const current = sageConn ? getSageTaxRegionId(sageConn) : null;
+    let regions: Array<{ id: string; label: string }> = [];
+    let loadError: string | null = null;
+
+    if (!current) {
+      try {
+        const list = await listSageAddressRegions(membership.organization_id);
+        regions = list.map((r) => ({ id: r.id, label: r.displayed_as ?? r.id }));
+      } catch (err) {
+        loadError =
+          err instanceof Error ? err.message.slice(0, 160) : "unknown error";
+        console.error("[sage] address_regions lookup failed:", err);
+      }
+    }
+
+    sageRegion = { current, regions, loadError };
   }
 
   const paymentCards: ProviderCard[] = [
@@ -323,6 +362,24 @@ export default async function IntegrationsPage({
                     </>
                   )}
                 </dl>
+                {conn?.last_error && (
+                  <div className="mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-[11px] text-amber-700 dark:text-amber-200">
+                    <div className="flex items-start gap-1.5">
+                      <AlertTriangle className="h-3 w-3 flex-shrink-0 mt-0.5" />
+                      <span>
+                        <span className="font-medium">Last sync failed:</span>{" "}
+                        {conn.last_error}
+                      </span>
+                    </div>
+                  </div>
+                )}
+                {isSage && sageRegion && (
+                  <SageTaxRegionForm
+                    regions={sageRegion.regions}
+                    current={sageRegion.current}
+                    loadError={sageRegion.loadError}
+                  />
+                )}
                 {isStripe && stripeNeedsAction && (
                   <div className="mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-[11px] text-amber-700 dark:text-amber-200">
                     <div className="flex items-start gap-1.5">

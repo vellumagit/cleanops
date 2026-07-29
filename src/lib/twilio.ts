@@ -30,7 +30,7 @@
  */
 
 import "server-only";
-import { isE164 } from "@/lib/phone";
+import { isE164, normalizePhone } from "@/lib/phone";
 import { maskPhone } from "@/lib/log-redact";
 
 export type SmsSendResult =
@@ -87,6 +87,13 @@ export async function sendSms(
     );
     return { ok: true, sid: null, status: "skipped_disabled", segments };
   }
+
+  // Re-normalise at the boundary. Numbers were normalised on the way in, but
+  // rows saved before that logic existed (or by an import) can still hold a
+  // malformed value — e.g. "+7802711971", a NA number whose "+" swallowed the
+  // country code. Doing it here repairs legacy data at send time instead of
+  // needing a migration, and is a no-op for already-clean numbers.
+  to = normalizePhone(to);
 
   // Reject malformed numbers before hitting the Twilio API — a bad "To"
   // would return a 400 anyway, but this gives us a cleaner log message

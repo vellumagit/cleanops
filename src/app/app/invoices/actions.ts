@@ -681,15 +681,17 @@ export async function syncInvoiceToSageAction(
   }
 
   const result = await pushInvoiceToSage(id);
-  if (!result) {
+  if (!result.id) {
+    // Sage's actual reason, not a guess — see pushInvoiceToSage.
     return {
       error:
-        "Couldn't push to Sage. Check Vercel logs for the exact error (look for [sage] entries) — most common causes are an expired connection or a missing org/client setup in Sage.",
+        result.error ??
+        "Couldn't push to Sage. Check the Vercel logs for [sage] entries.",
     };
   }
 
   revalidatePath(`/app/invoices/${id}`);
-  return { ok: true, sageInvoiceId: result };
+  return { ok: true, sageInvoiceId: result.id };
 }
 
 /**

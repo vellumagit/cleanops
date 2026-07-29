@@ -4,7 +4,11 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { buildSageOAuthUrl, issueSageOAuthState } from "@/lib/sage";
+import {
+  buildSageOAuthUrl,
+  issueSageOAuthState,
+  setSageTaxRegionId,
+} from "@/lib/sage";
 
 /**
  * Redirect the admin to Sage's OAuth consent screen.
@@ -31,6 +35,34 @@ export async function connectSageAction() {
     url ??
       `/app/settings/integrations?sage_error=${encodeURIComponent("Couldn't start the Sage connection — please try again")}`,
   );
+}
+
+/**
+ * Save the org's Sage tax region (e.g. "CA-ON"). Sage rejects sales invoices
+ * that don't name a destination region, so this is required before any invoice
+ * can sync. Stored on the connection's metadata — no schema change needed.
+ */
+export async function saveSageTaxRegionAction(
+  regionId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const membership = await requireMembership(["owner", "admin"]);
+
+  const region = regionId.trim();
+  if (!region) return { ok: false, error: "Pick a tax region first." };
+  if (region.length > 32) {
+    return { ok: false, error: "That doesn't look like a Sage region id." };
+  }
+
+  const saved = await setSageTaxRegionId(membership.organization_id, region);
+  if (!saved) {
+    return {
+      ok: false,
+      error: "Sage isn't connected — connect it first, then set the region.",
+    };
+  }
+
+  revalidatePath("/app/settings/integrations");
+  return { ok: true };
 }
 
 /**

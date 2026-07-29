@@ -27,8 +27,19 @@ export function normalizePhone(raw: string): string {
   if (!trimmed) return trimmed;
 
   // Rule 2: already has a leading "+" — strip formatting chars only.
+  //
+  // EXCEPT when it leaves exactly 10 digits. A "+" in front of a bare North
+  // American number ("+780 271 1971") yields "+7802711971", which passes
+  // isE164 and is then routed by Twilio as country code +7 (Russia) — the
+  // send fails with no clue why. Observed in production on employee and
+  // bench-offer texts. A complete NA number is 11 digits with its country
+  // code, so 10 digits behind a "+" is a missing +1, not a foreign number.
+  // Tradeoff: a genuine 10-digit foreign number (rare, and outside this
+  // product's Canada/US market) would be mangled — Twilio rejects it either
+  // way, so the failure mode is unchanged for them and fixed for everyone here.
   if (trimmed.startsWith("+")) {
     const digits = trimmed.slice(1).replace(/\D/g, "");
+    if (digits.length === 10) return `+1${digits}`;
     return digits.length >= 7 ? `+${digits}` : trimmed;
   }
 

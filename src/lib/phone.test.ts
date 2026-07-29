@@ -16,6 +16,21 @@ describe("normalizePhone", () => {
     expect(normalizePhone("15551234567")).toBe("+15551234567");
   });
 
+  it("repairs a '+' typed in front of a bare 10-digit NA number", () => {
+    // Regression: "+7802711971" reached Twilio and was routed as country
+    // code +7 (Russia), so the send failed. It passes isE164, so nothing
+    // downstream caught it. A complete NA number is 11 digits with its
+    // country code — 10 behind a "+" means the +1 was swallowed.
+    expect(normalizePhone("+7802711971")).toBe("+17802711971");
+    expect(normalizePhone("+780 271 1971")).toBe("+17802711971");
+    expect(normalizePhone("+(555) 123-4567")).toBe("+15551234567");
+  });
+
+  it("does not touch genuine country codes on full-length numbers", () => {
+    expect(normalizePhone("+447911123456")).toBe("+447911123456"); // UK, 12
+    expect(normalizePhone("+61412345678")).toBe("+61412345678"); // AU, 11
+  });
+
   it("leaves ambiguous input unchanged", () => {
     expect(normalizePhone("12345")).toBe("12345");
     expect(normalizePhone("")).toBe("");

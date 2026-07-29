@@ -305,6 +305,72 @@ async function getTaxRateIdForBps(
   return null;
 }
 
+type SageAddressRegion = {
+  id: string;
+  displayed_as?: string | null;
+  country_id?: string | null;
+};
+
+/**
+ * List the address regions this Sage account accepts (e.g. "CA-ON", "US-KY").
+ *
+ * Sage's US and Canadian editions require a tax_address_region_id on every
+ * sales invoice so they can validate the tax against the sale's destination —
+ * omitting it fails the POST with 422 "tax_address_region_id is required".
+ *
+ * Deliberately not cached: it's read only when an admin opens the picker, and
+ * it throws with Sage's own message so the settings page can explain an empty
+ * list instead of rendering a mysteriously blank dropdown.
+ */
+export async function listSageAddressRegions(
+  organizationId: string,
+): Promise<SageAddressRegion[]> {
+  const resp = await sageFetch<{ $items?: SageAddressRegion[] }>(
+    organizationId,
+    "/address_regions?items_per_page=200",
+  );
+  return resp.$items ?? [];
+}
+
+/** The org's chosen tax address region, or null when it hasn't picked one. */
+export function getSageTaxRegionId(conn: SageConnection): string | null {
+  const v = (conn.metadata ?? {})["tax_address_region_id"];
+  return typeof v === "string" && v ? v : null;
+}
+
+/** Persist the org's tax-region choice onto its Sage connection. */
+export async function setSageTaxRegionId(
+  organizationId: string,
+  regionId: string,
+): Promise<boolean> {
+  const conn = await getSageConnection(organizationId);
+  if (!conn) return false;
+  await mergeConnectionMetadata(conn.id, { tax_address_region_id: regionId });
+  return true;
+}
+
+/**
+ * Record a Sage failure on the connection row so an owner can read it in
+ * Settings → Integrations.
+ *
+ * These errors used to exist only in the server logs, so the UI told people to
+ * "check Vercel logs" — useless to the person who actually hit the problem,
+ * and it cost a CLI token and a log dig to recover a 422 body the app already
+ * had in hand.
+ */
+async function recordSageError(
+  organizationId: string,
+  message: string | null,
+): Promise<void> {
+  const admin = createSupabaseAdminClient();
+  await admin
+    .from("integration_connections" as never)
+    .update({ last_error: message ? message.slice(0, 500) : null } as never)
+    .eq("organization_id" as never, organizationId as never)
+    .eq("provider" as never, "sage")
+    .eq("status" as never, "active");
+}
+
 /**
  * Resolve a usable Sage access token for an org — refreshes
  * automatically if the stored one is expired or close to it.
@@ -514,12 +580,15 @@ type SageSalesInvoice = {
  * re-sending the same Sollos invoice returns the existing id so we
  * don't create a duplicate in the books.
  *
- * Returns the Sage invoice id on success, null on failure (with an
- * error logged to console).
+ * Returns { id } on success, or { id: null, error } carrying Sage's REAL
+ * message on failure — mirroring pushInvoiceToQuickBooks, which learned this
+ * same lesson: a bare null made the UI print a speculative cause and sent us
+ * chasing the wrong thing. The message is also stamped onto the connection's
+ * last_error so it can be read from Settings → Integrations.
  */
 export async function pushInvoiceToSage(
   invoiceId: string,
-): Promise<string | null> {
+): Promise<{ id: string | null; error?: string }> {
   const admin = createSupabaseAdminClient();
 
   // Fetch invoice + line items in one shot.
@@ -561,28 +630,42 @@ export async function pushInvoiceToSage(
   };
 
   if (!invoice) {
-    console.log(`[sage] pushInvoiceToSage: invoice ${invoiceId} not found`);
-    return null;
+    console.error(`[sage] pushInvoiceToSage: invoice ${invoiceId} not found`);
+    return { id: null, error: "Invoice not found." };
   }
   if (invoice.sage_invoice_id) {
-    return invoice.sage_invoice_id;
+    return { id: invoice.sage_invoice_id };
   }
 
-  const conn = await getSageConnection(invoice.organization_id);
+  const orgId = invoice.organization_id;
+  const fail = async (error: string) => {
+    console.error(`[sage] invoice ${invoiceId}: ${error}`);
+    await recordSageError(orgId, error);
+    return { id: null, error };
+  };
+
+  const conn = await getSageConnection(orgId);
   if (!conn) {
-    console.log(
-      `[sage] pushInvoiceToSage: org ${invoice.organization_id} has no active Sage connection`,
+    return fail(
+      "Sage isn't connected. Reconnect it in Settings → Integrations, then try again.",
     );
-    return null;
+  }
+
+  // Sage's US and Canadian editions reject a sales invoice that doesn't say
+  // where the sale is destined — they validate the tax against that region.
+  const taxRegionId = getSageTaxRegionId(conn);
+  if (!taxRegionId) {
+    return fail(
+      "Sage needs a tax region before it will accept invoices. Pick one in Settings → Integrations → Sage Accounting, then try again.",
+    );
   }
 
   // Ensure the client exists in Sage first.
   const sageContactId = await pushClientToSage(invoice.client_id);
   if (!sageContactId) {
-    console.error(
-      "[sage] pushInvoiceToSage: could not sync client, aborting invoice",
+    return fail(
+      "Couldn't create this client as a Sage contact. Check the client has a name, then try again.",
     );
-    return null;
   }
 
   // Build line items. If there are none (rare — auto-invoice always
@@ -620,10 +703,9 @@ export async function pushInvoiceToSage(
     // cache) the org's; abort with a clear log if Sage has none configured.
     const ledgerAccountId = await getSalesLedgerAccountId(conn);
     if (!ledgerAccountId) {
-      console.error(
-        `[sage] pushInvoiceToSage: no sales ledger account found in Sage for org ${invoice.organization_id} — invoice ${invoiceId} not synced`,
+      return fail(
+        "Sage has no sales ledger account to post this invoice to. Create one in Sage (Settings → Chart of Accounts), then try again.",
       );
-      return null;
     }
 
     // Map the Sollos tax rate to a Sage tax_rate_id so the synced invoice total
@@ -631,8 +713,13 @@ export async function pushInvoiceToSage(
     // sync without tax and warn (totals will understate until one is set up).
     const taxRateId = await getTaxRateIdForBps(conn, invoice.tax_rate_bps);
     if (invoice.tax_rate_bps && invoice.tax_rate_bps > 0 && !taxRateId) {
-      console.warn(
-        `[sage] pushInvoiceToSage: no Sage tax rate matches ${invoice.tax_rate_bps} bps for org ${invoice.organization_id} — syncing invoice ${invoiceId} WITHOUT tax. Configure a matching tax rate in Sage.`,
+      // This used to warn and sync WITHOUT tax, quietly posting a total lower
+      // than the invoice the client actually received. A failed sync is
+      // recoverable; a wrong number sitting in someone's books is not — and
+      // Sage validates the rate against the region anyway, so the silent path
+      // was usually about to be rejected regardless.
+      return fail(
+        `Sage has no tax rate matching ${(invoice.tax_rate_bps / 100).toFixed(2)}%. Create one in Sage for the ${taxRegionId} region (Settings → Tax Rates), then try again.`,
       );
     }
 
@@ -647,6 +734,9 @@ export async function pushInvoiceToSage(
             date: invoiceDate,
             due_date: dueDate,
             reference: invoice.number ?? undefined,
+            // Required by Sage US/CA — without it the POST 422s with
+            // "tax_address_region_id is required".
+            tax_address_region_id: taxRegionId,
             invoice_lines: sageLines.map((l) => ({
               description: l.description,
               quantity: l.quantity,
@@ -664,12 +754,16 @@ export async function pushInvoiceToSage(
       .update({ sage_invoice_id: result.id } as never)
       .eq("id", invoiceId);
 
+    // Clear any stale failure now that a sync has gone through.
+    await recordSageError(orgId, null);
+
     console.log(
       `[sage] pushInvoiceToSage: invoice ${invoiceId} (${invoice.number}) → sage ${result.id}`,
     );
-    return result.id;
+    return { id: result.id };
   } catch (err) {
-    console.error("[sage] pushInvoiceToSage failed:", err);
-    return null;
+    return fail(
+      err instanceof Error ? err.message : "Unknown error pushing to Sage.",
+    );
   }
 }
