@@ -239,6 +239,13 @@ const STAGES: Stage[] = [
     icon: Receipt,
     automations: [
       {
+        key: "shift_clock_out_reminder",
+        title: "Forgotten clock-out reminders",
+        description:
+          "Reminds a cleaner who is still clocked in past their job's expected end, then repeats every 30 minutes. Two hours past the end, the shift is capped, flagged for review, and your managers are notified (plus a text to the owner). Hours are never silently reduced — you confirm or correct the flagged shift yourself.",
+        trigger: "Every 30 minutes",
+      },
+      {
         key: "auto_complete_past_bookings",
         title: "Auto-complete past bookings",
         description:

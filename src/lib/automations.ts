@@ -11,10 +11,7 @@ import { resolveClientNotify } from "@/lib/notification-gate";
 import { sendPushToMembership, sendPushToOrgAdmins } from "@/lib/push";
 import { notify } from "@/lib/notify";
 import type { CurrencyCode } from "@/lib/format";
-import {
-  resolveAutomationEnabled,
-  isClientFacingAutomation,
-} from "@/lib/automation-defaults";
+import { resolveAutomationEnabled } from "@/lib/automation-defaults";
 import { localInputToUtcIso } from "@/lib/validators/common";
 import type { Database } from "@/lib/supabase/types";
 
@@ -5357,15 +5354,20 @@ export async function sendOvertimeWarnings(): Promise<{ emailsSent: number }> {
     const threshold = org.overtime_threshold_hours ?? 40;
 
     // Sum hours_worked from time_entries per membership for this week.
+    // NOTE: the column is employee_id. This said membership_id, which does
+    // not exist — PostgREST errored, `data` came back null, every org was
+    // skipped as "no entries", and the cron reported success every Friday.
+    // The overtime warning had therefore never fired for anyone, including
+    // the week containing a 68-hour entry.
     const { data: entries } = await db
       .from("time_entries")
-      .select("membership_id, clock_in_at, clock_out_at")
+      .select("employee_id, clock_in_at, clock_out_at")
       .eq("organization_id", org.id)
       .gte("clock_in_at", startOfWeek.toISOString())
       .lt("clock_in_at", endOfWeek.toISOString())
       .not("clock_out_at", "is", null) as unknown as {
       data: Array<{
-        membership_id: string;
+        employee_id: string;
         clock_in_at: string;
         clock_out_at: string;
       }> | null;
@@ -5380,8 +5382,8 @@ export async function sendOvertimeWarnings(): Promise<{ emailsSent: number }> {
         new Date(e.clock_out_at).getTime() - new Date(e.clock_in_at).getTime();
       const hours = ms / (1000 * 60 * 60);
       hoursByMembership.set(
-        e.membership_id,
-        (hoursByMembership.get(e.membership_id) ?? 0) + hours,
+        e.employee_id,
+        (hoursByMembership.get(e.employee_id) ?? 0) + hours,
       );
     }
 
@@ -5415,6 +5417,199 @@ export async function sendOvertimeWarnings(): Promise<{ emailsSent: number }> {
   }
 
   return { emailsSent };
+}
+
+// ─────────────────────────────────────────────────────────────────
+// 17b. Forgotten clock-out: remind, escalate, then cap (cron, every 30 min)
+//
+// The problem this exists for: an employee clocks in, goes home, and the
+// clock keeps running. Observed live — a 68.45h entry against a 6h job, with
+// three such entries accounting for 25.7% of one org's entire recorded hours.
+//
+// Escalation, all measured from the shift's EXPECTED end:
+//     0 min  → push the employee: "still working? remember to clock out"
+//   +30 min  → repeat, every 30 minutes
+//  +120 min  → cap it. Close at expected-end + 2h, flag needs_review,
+//              notify the manager (or whoever stands in for one), and SMS
+//              the owner.
+//
+// What it deliberately does NOT do: silently rewrite the hours down to the
+// scheduled length. A cleaner who genuinely stayed two extra hours looks
+// identical in the data to one who forgot to tap the button, and shaving
+// real worked time is both wrong and legally dangerous. We cap the runaway,
+// mark it, and let a human say what actually happened.
+// ─────────────────────────────────────────────────────────────────
+
+/** Grace period past the expected end before the shift is capped. */
+const SHIFT_AUTO_CLOSE_GRACE_MIN = 120;
+/** Minimum gap between nags to one employee about one shift. */
+const SHIFT_REMINDER_INTERVAL_MIN = 30;
+/** Expected length for a clock-in with no booking attached. */
+const STANDALONE_SHIFT_MAX_MIN = 12 * 60;
+
+export async function sendShiftClockOutReminders(): Promise<{
+  considered: number;
+  reminded: number;
+  autoClosed: number;
+}> {
+  const db = admin();
+  const { notify } = await import("@/lib/notify");
+  const { resolveTeamDivision } = await import("@/lib/crew-hours");
+  const { resolveResponsiblePhones } = await import("@/lib/org-roles");
+  const { sendOrgSms } = await import("@/lib/sms");
+
+  const now = Date.now();
+  const nowIso = new Date().toISOString();
+
+  const { data: open } = (await db
+    .from("time_entries")
+    .select(
+      `id, organization_id, employee_id, booking_id, clock_in_at,
+       last_reminder_at, reminder_count,
+       booking:bookings ( id, scheduled_at, duration_minutes ),
+       employee:memberships!time_entries_employee_id_fkey ( id, display_name )`,
+    )
+    .is("clock_out_at", null)
+    .limit(500)) as unknown as {
+    data: Array<{
+      id: string;
+      organization_id: string;
+      employee_id: string;
+      booking_id: string | null;
+      clock_in_at: string;
+      last_reminder_at: string | null;
+      reminder_count: number | null;
+      booking: {
+        id: string;
+        scheduled_at: string;
+        duration_minutes: number | null;
+      } | null;
+      employee: { id: string; display_name: string | null } | null;
+    }> | null;
+  };
+
+  const considered = open?.length ?? 0;
+  let reminded = 0;
+  let autoClosed = 0;
+  if (!open || open.length === 0) return { considered, reminded, autoClosed };
+
+  const orgEnabled = new Map<string, boolean>();
+
+  for (const e of open) {
+    try {
+      let enabled = orgEnabled.get(e.organization_id);
+      if (enabled === undefined) {
+        enabled = await isAutomationEnabled(
+          e.organization_id,
+          "shift_clock_out_reminder",
+        );
+        orgEnabled.set(e.organization_id, enabled);
+      }
+      if (!enabled) continue;
+
+      const clockInMs = new Date(e.clock_in_at).getTime();
+
+      // Expected end. For a booked job that's the job's length — divided
+      // across the crew when the org divides team hours, so a 2-person 6h
+      // job expects 3h from each person, matching what the field app shows.
+      // Never earlier than clock-in + that length, so someone who started
+      // late still gets their full window before we start nagging.
+      let expectedEndMs: number;
+      if (e.booking?.duration_minutes) {
+        const div = await resolveTeamDivision(
+          e.booking.id,
+          e.booking.duration_minutes,
+        );
+        const mins = div.effectiveMinutes;
+        expectedEndMs = Math.max(
+          new Date(e.booking.scheduled_at).getTime() + mins * 60_000,
+          clockInMs + mins * 60_000,
+        );
+      } else {
+        expectedEndMs = clockInMs + STANDALONE_SHIFT_MAX_MIN * 60_000;
+      }
+
+      const minutesOver = (now - expectedEndMs) / 60_000;
+      if (minutesOver < 0) continue; // still within the expected window
+
+      const firstName =
+        (e.employee?.display_name ?? "").split(" ")[0] || "Someone";
+      const hoursOpen = ((now - clockInMs) / 3_600_000).toFixed(1);
+
+      // ---- Cap it ----
+      if (minutesOver >= SHIFT_AUTO_CLOSE_GRACE_MIN) {
+        const cappedIso = new Date(
+          expectedEndMs + SHIFT_AUTO_CLOSE_GRACE_MIN * 60_000,
+        ).toISOString();
+
+        // Guard on clock_out_at IS NULL so a human closing the shift in the
+        // same moment always wins — we never overwrite a real punch.
+        const { data: claimed } = (await db
+          .from("time_entries")
+          .update({
+            clock_out_at: cappedIso,
+            auto_closed_at: nowIso,
+            needs_review: true,
+          } as never)
+          .eq("id", e.id)
+          .is("clock_out_at", null)
+          .select("id")) as unknown as { data: Array<{ id: string }> | null };
+        if (!claimed || claimed.length === 0) continue;
+        autoClosed += 1;
+
+        // Whoever is responsible — manager, or the owner standing in when the
+        // org has no manager.
+        await notify({
+          audience: "org-management",
+          organizationId: e.organization_id,
+          type: "shift_auto_closed",
+          title: "A shift was auto-closed",
+          body: `${firstName} was still clocked in ${hoursOpen}h after their job should have ended. We capped it and flagged it for review.`,
+          href: "/app/timesheets",
+        });
+
+        for (const m of await resolveResponsiblePhones(
+          e.organization_id,
+          "owner",
+        )) {
+          await sendOrgSms(e.organization_id, {
+            to: m.phone!,
+            body: `Sollos: ${firstName} never clocked out — still on the clock ${hoursOpen}h after their job ended. We capped the shift and flagged it for review: sollos3.com/app/timesheets`,
+            automationKey: "shift_clock_out_reminder",
+          });
+        }
+        continue;
+      }
+
+      // ---- Nag the employee ----
+      const lastMs = e.last_reminder_at
+        ? new Date(e.last_reminder_at).getTime()
+        : 0;
+      if (now - lastMs < SHIFT_REMINDER_INTERVAL_MIN * 60_000) continue;
+
+      await notify({
+        audience: "membership",
+        organizationId: e.organization_id,
+        membershipId: e.employee_id,
+        type: "clock_out_reminder",
+        title: "Still on the clock?",
+        body: `You've been clocked in for ${hoursOpen}h. If you've finished, tap to clock out.`,
+        href: "/field/clock",
+      });
+      await db
+        .from("time_entries")
+        .update({
+          last_reminder_at: nowIso,
+          reminder_count: (e.reminder_count ?? 0) + 1,
+        } as never)
+        .eq("id", e.id);
+      reminded += 1;
+    } catch (err) {
+      console.error("[auto] shift reminder failed for entry", e.id, err);
+    }
+  }
+
+  return { considered, reminded, autoClosed };
 }
 
 // 18. PTO status notification (event — called from the approve/decline action)

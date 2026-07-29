@@ -37,6 +37,9 @@ export type AutomationKey =
   // Morning heads-up listing yesterday's jobs + today's scheduled invoice
   // sends — the review window companion to Settings → Invoicing auto-send.
   | "invoice_review_digest"
+  // Nudges an employee still clocked in past their job's end, then caps the
+  // shift at +2h and alerts management. Guards against forgotten clock-outs.
+  | "shift_clock_out_reminder"
   | "booking_cancelled_email"
   | "rebooking_prompt_email"
   | "estimate_followup_email"
@@ -106,6 +109,7 @@ const VALID_AUTOMATION_KEYS = new Set<AutomationKey>([
   "auto_archive_old_records",
   "auto_recurring_invoices",
   "invoice_review_digest",
+  "shift_clock_out_reminder",
   "booking_cancelled_email",
   "rebooking_prompt_email",
   "estimate_followup_email",
