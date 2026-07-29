@@ -19,10 +19,14 @@
  */
 
 import "server-only";
-import { randomBytes } from "node:crypto";
 import { getEnv } from "@/lib/env";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import {
+  consumeOAuthState,
+  issueOAuthState,
+  type OAuthStateOutcome,
+} from "@/lib/oauth-state";
 
 const AUTHORIZE_URL = "https://appcenter.intuit.com/connect/oauth2";
 const TOKEN_URL = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer";
@@ -68,48 +72,21 @@ export function buildQuickBooksOAuthUrl(state: string): string {
 }
 
 /** Single-use CSRF state, tied to (org, membership), 10-min TTL. */
-export async function issueQBOAuthState(args: {
+export function issueQBOAuthState(args: {
   organizationId: string;
   membershipId: string;
 }): Promise<string> {
-  const state = randomBytes(32).toString("base64url");
-  const admin = createSupabaseAdminClient();
-  await admin.from("quickbooks_oauth_states" as never).insert({
-    state,
-    organization_id: args.organizationId,
-    membership_id: args.membershipId,
-  } as never);
-  return state;
+  return issueOAuthState("quickbooks_oauth_states", args);
 }
 
-/** Consume a state token → (org, membership); deletes it. Throws if invalid. */
-export async function consumeQBOAuthState(
+/**
+ * Claim a state token. See @/lib/oauth-state for why a replayed callback is a
+ * distinct outcome rather than an error.
+ */
+export function consumeQBOAuthState(
   state: string,
-): Promise<{ organizationId: string; membershipId: string }> {
-  const admin = createSupabaseAdminClient();
-  const { data } = (await admin
-    .from("quickbooks_oauth_states" as never)
-    .select("organization_id, membership_id, expires_at")
-    .eq("state" as never, state as never)
-    .maybeSingle()) as unknown as {
-    data: {
-      organization_id: string;
-      membership_id: string;
-      expires_at: string;
-    } | null;
-  };
-  if (!data) throw new Error("Unknown OAuth state");
-  if (new Date(data.expires_at) < new Date()) {
-    throw new Error("OAuth state expired");
-  }
-  await admin
-    .from("quickbooks_oauth_states" as never)
-    .delete()
-    .eq("state" as never, state as never);
-  return {
-    organizationId: data.organization_id,
-    membershipId: data.membership_id,
-  };
+): Promise<OAuthStateOutcome> {
+  return consumeOAuthState("quickbooks_oauth_states", state);
 }
 
 type QBTokenResponse = {

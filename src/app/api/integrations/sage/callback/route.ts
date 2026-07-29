@@ -2,7 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { encryptSecret } from "@/lib/crypto";
-import { exchangeSageCodeForTokens, consumeSageOAuthState } from "@/lib/sage";
+import {
+  exchangeSageCodeForTokens,
+  consumeSageOAuthState,
+  getSageConnection,
+} from "@/lib/sage";
+import type { OAuthStateOutcome } from "@/lib/oauth-state";
 import { getEnv } from "@/lib/env";
 
 /**
@@ -44,16 +49,32 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(`${env.NEXT_PUBLIC_SITE_URL}/login`);
   }
 
-  // Consume the single-use state token → (org, membership). Rejects a forged or
+  // Claim the single-use state token → (org, membership). Rejects a forged or
   // expired callback that wasn't initiated by our connect flow.
-  let stateData: { organizationId: string; membershipId: string };
+  let stateOutcome: OAuthStateOutcome;
   try {
-    stateData = await consumeSageOAuthState(state);
-  } catch {
+    stateOutcome = await consumeSageOAuthState(state);
+  } catch (err) {
+    // The state lookup itself failed. That's our problem, not a bad callback —
+    // don't tell the user to retry when the retry will fail the same way.
+    console.error("[sage] OAuth state lookup failed:", err);
+    return NextResponse.redirect(
+      `${redirectBase}?sage_error=${encodeURIComponent("Couldn't verify the Sage sign-in — please contact support")}`,
+    );
+  }
+
+  if (stateOutcome.status === "expired") {
+    return NextResponse.redirect(
+      `${redirectBase}?sage_error=${encodeURIComponent("That Sage sign-in took too long — please try again")}`,
+    );
+  }
+  if (stateOutcome.status === "unknown") {
     return NextResponse.redirect(
       `${redirectBase}?sage_error=${encodeURIComponent("Invalid or expired session — please try again")}`,
     );
   }
+
+  const stateData = stateOutcome;
 
   // Defense in depth: the membership named by the state must still belong to
   // the signed-in user and be an active owner/admin of the same org.
@@ -69,6 +90,19 @@ export async function GET(request: NextRequest) {
   if (!membership || membership.organization_id !== stateData.organizationId) {
     return NextResponse.redirect(
       `${redirectBase}?sage_error=${encodeURIComponent("Invalid session — please try again")}`,
+    );
+  }
+
+  // A replayed callback — the browser requested this URL more than once for the
+  // same handshake (prefetch, refresh, back-navigation). The first request
+  // already exchanged the code and stored the tokens; Sage would reject the
+  // code a second time. Report what's actually true instead of an error.
+  if (stateOutcome.status === "replayed") {
+    const existing = await getSageConnection(membership.organization_id);
+    return NextResponse.redirect(
+      existing
+        ? `${redirectBase}?sage_connected=true`
+        : `${redirectBase}?sage_error=${encodeURIComponent("That Sage sign-in was already used — please try again")}`,
     );
   }
 

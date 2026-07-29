@@ -16,10 +16,14 @@
  */
 
 import "server-only";
-import { randomBytes } from "node:crypto";
 import { getEnv } from "@/lib/env";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import {
+  consumeOAuthState,
+  issueOAuthState,
+  type OAuthStateOutcome,
+} from "@/lib/oauth-state";
 
 const SAGE_API_BASE = "https://api.accounting.sage.com/v3.1";
 
@@ -49,56 +53,23 @@ export function buildSageOAuthUrl(state: string): string {
  * Mint a single-use CSRF state token for the Sage OAuth handshake, tied to
  * (org, membership) with a 10-minute TTL. Mirrors the Stripe/Square flows —
  * the previous code passed the (stable) membership id as the state, a weaker
- * guard. Persisted in sage_oauth_states; consumed once at callback.
+ * guard. Persisted in sage_oauth_states; claimed once at callback.
  */
-export async function issueSageOAuthState(args: {
+export function issueSageOAuthState(args: {
   organizationId: string;
   membershipId: string;
 }): Promise<string> {
-  const state = randomBytes(32).toString("base64url");
-  const admin = createSupabaseAdminClient();
-  await admin.from("sage_oauth_states" as never).insert({
-    state,
-    organization_id: args.organizationId,
-    membership_id: args.membershipId,
-  } as never);
-  return state;
+  return issueOAuthState("sage_oauth_states", args);
 }
 
 /**
- * Consume a Sage OAuth state token — returns the associated (org, membership)
- * and deletes the row so it can't be replayed. Throws on unknown/expired state.
+ * Claim a Sage OAuth state token. See @/lib/oauth-state for why a replayed
+ * callback is a distinct outcome rather than an error.
  */
-export async function consumeSageOAuthState(
+export function consumeSageOAuthState(
   state: string,
-): Promise<{ organizationId: string; membershipId: string }> {
-  const admin = createSupabaseAdminClient();
-  const { data } = (await admin
-    .from("sage_oauth_states" as never)
-    .select("organization_id, membership_id, expires_at")
-    .eq("state" as never, state as never)
-    .maybeSingle()) as unknown as {
-    data: {
-      organization_id: string;
-      membership_id: string;
-      expires_at: string;
-    } | null;
-  };
-
-  if (!data) throw new Error("Unknown OAuth state");
-  if (new Date(data.expires_at) < new Date()) {
-    throw new Error("OAuth state expired");
-  }
-
-  await admin
-    .from("sage_oauth_states" as never)
-    .delete()
-    .eq("state" as never, state as never);
-
-  return {
-    organizationId: data.organization_id,
-    membershipId: data.membership_id,
-  };
+): Promise<OAuthStateOutcome> {
+  return consumeOAuthState("sage_oauth_states", state);
 }
 
 /**

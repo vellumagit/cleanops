@@ -11,13 +11,26 @@ import { buildSageOAuthUrl, issueSageOAuthState } from "@/lib/sage";
  */
 export async function connectSageAction() {
   const membership = await requireMembership(["owner", "admin"]);
-  // Single-use random CSRF state (not the membership id) — consumed at callback.
-  const state = await issueSageOAuthState({
-    organizationId: membership.organization_id,
-    membershipId: membership.id,
-  });
-  const url = buildSageOAuthUrl(state);
-  redirect(url);
+
+  // Single-use random CSRF state (not the membership id) — claimed at callback.
+  // If it can't be stored there's no point bouncing the user to Sage: the
+  // callback would fail minutes later with a misleading "invalid session".
+  let url: string | null = null;
+  try {
+    const state = await issueSageOAuthState({
+      organizationId: membership.organization_id,
+      membershipId: membership.id,
+    });
+    url = buildSageOAuthUrl(state);
+  } catch (err) {
+    console.error("[sage] connect: could not issue OAuth state:", err);
+  }
+
+  // redirect() throws NEXT_REDIRECT — must be called outside the try/catch.
+  redirect(
+    url ??
+      `/app/settings/integrations?sage_error=${encodeURIComponent("Couldn't start the Sage connection — please try again")}`,
+  );
 }
 
 /**

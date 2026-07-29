@@ -2,7 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { encryptSecret } from "@/lib/crypto";
-import { exchangeQBCodeForTokens, consumeQBOAuthState } from "@/lib/quickbooks";
+import {
+  exchangeQBCodeForTokens,
+  consumeQBOAuthState,
+  getQBConnection,
+} from "@/lib/quickbooks";
+import type { OAuthStateOutcome } from "@/lib/oauth-state";
 import { getEnv } from "@/lib/env";
 
 /**
@@ -41,14 +46,29 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(`${env.NEXT_PUBLIC_SITE_URL}/login`);
   }
 
-  let stateData: { organizationId: string; membershipId: string };
+  let stateOutcome: OAuthStateOutcome;
   try {
-    stateData = await consumeQBOAuthState(state);
-  } catch {
+    stateOutcome = await consumeQBOAuthState(state);
+  } catch (err) {
+    // The state lookup itself failed — our problem, not a bad callback.
+    console.error("[qbo] OAuth state lookup failed:", err);
+    return NextResponse.redirect(
+      `${redirectBase}?qb_error=${encodeURIComponent("Couldn't verify the QuickBooks sign-in — please contact support")}`,
+    );
+  }
+
+  if (stateOutcome.status === "expired") {
+    return NextResponse.redirect(
+      `${redirectBase}?qb_error=${encodeURIComponent("That QuickBooks sign-in took too long — please try again")}`,
+    );
+  }
+  if (stateOutcome.status === "unknown") {
     return NextResponse.redirect(
       `${redirectBase}?qb_error=${encodeURIComponent("Invalid or expired session — please try again")}`,
     );
   }
+
+  const stateData = stateOutcome;
 
   // Defense in depth: the state's membership must still belong to the signed-in
   // user and be an active owner/admin of that org.
@@ -64,6 +84,17 @@ export async function GET(request: NextRequest) {
   if (!membership || membership.organization_id !== stateData.organizationId) {
     return NextResponse.redirect(
       `${redirectBase}?qb_error=${encodeURIComponent("Invalid session — please try again")}`,
+    );
+  }
+
+  // Replayed callback — the first request already stored the tokens and Intuit
+  // won't honour the code twice. Report the connection's real state.
+  if (stateOutcome.status === "replayed") {
+    const existing = await getQBConnection(membership.organization_id);
+    return NextResponse.redirect(
+      existing
+        ? `${redirectBase}?qb_connected=true`
+        : `${redirectBase}?qb_error=${encodeURIComponent("That QuickBooks sign-in was already used — please try again")}`,
     );
   }
 

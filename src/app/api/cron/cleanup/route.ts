@@ -7,6 +7,7 @@
  *   - Audit log entries older than 7 years (financial/personnel compliance)
  *   - Expired invitation tokens older than 30 days
  *   - Expired push subscriptions (unsubscribed)
+ *   - OAuth handshake state tokens (Sage / QuickBooks) older than 1 day
  *
  * Protected by CRON_SECRET — Vercel passes this in the Authorization header.
  */
@@ -35,6 +36,9 @@ export async function GET(request: Request) {
 
   const thirtyDaysAgo = new Date(now);
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+  const oneDayAgo = new Date(now);
+  oneDayAgo.setDate(oneDayAgo.getDate() - 1);
 
   const results: Record<string, number | string> = {};
 
@@ -91,6 +95,26 @@ export async function GET(request: Request) {
       results.invitations = `error: ${inviteErr.message}`;
     } else {
       results.invitations_deleted = inviteCount ?? 0;
+    }
+
+    // 4. Prune OAuth handshake state tokens. They have a 10-minute TTL but are
+    // retained past consumption so a replayed callback can be recognised as
+    // ours (see @/lib/oauth-state). A day is far longer than any real
+    // handshake, and long enough for a duplicate request to arrive.
+    for (const table of [
+      "sage_oauth_states",
+      "quickbooks_oauth_states",
+    ] as const) {
+      const { count, error } = await admin
+        .from(table as never)
+        .delete({ count: "exact" })
+        .lt("created_at", oneDayAgo.toISOString());
+
+      if (error) {
+        results[table] = `error: ${error.message}`;
+      } else {
+        results[`${table}_deleted`] = count ?? 0;
+      }
     }
 
     return Response.json({ ok: true, cleaned: results });
