@@ -28,6 +28,30 @@ describe("invoiceDeliveryNote", () => {
     expect(invoiceDeliveryNote({ ...base, status: "paid" })).toBeNull();
   });
 
+  it("scheduled draft → kind scheduled, says WHEN it sends", () => {
+    const r = invoiceDeliveryNote({
+      ...base,
+      autoSendState: "scheduled",
+      autoSendAt: "2026-07-30T16:00:00Z",
+      timezone: "America/Edmonton",
+    });
+    expect(r?.kind).toBe("scheduled");
+    // 16:00Z = 10:00 AM MDT — rendered as org wall-clock, not server UTC.
+    expect(r?.note).toMatch(/Sends Thu 10:00 AM/);
+  });
+
+  it("scheduled but already sent → null (nothing to say)", () => {
+    expect(
+      invoiceDeliveryNote({
+        ...base,
+        status: "sent",
+        autoSendState: "scheduled",
+        autoSendAt: "2026-07-30T16:00:00Z",
+        timezone: "America/Edmonton",
+      }),
+    ).toBeNull();
+  });
+
   it("held → kind held, cause-neutral copy (owner's Hold button is one producer)", () => {
     const r = invoiceDeliveryNote({ ...base, autoSendState: "held" });
     expect(r?.kind).toBe("held");

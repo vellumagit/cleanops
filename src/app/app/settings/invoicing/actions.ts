@@ -8,7 +8,21 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 export type InvoicingFormState = {
   errors?: Partial<Record<"_form" | "hour", string>>;
   success?: boolean;
+  /** Existing drafts picked up and queued by turning auto-send on. */
+  queued?: { count: number; sendAtIso: string };
 };
+
+/**
+ * How far back to reach when auto-send is switched on. Drafts created while
+ * it was OFF carry no schedule, so before this they sat inert forever and
+ * the owner had no way to tell them apart from ones that would send.
+ *
+ * Bounded deliberately: an org with months of abandoned drafts would
+ * otherwise mass-mail its entire back catalogue the instant someone flipped
+ * a switch. A week covers "I just set this up" without reaching into
+ * anything the owner has already moved on from.
+ */
+const BACKFILL_WINDOW_DAYS = 7;
 
 export async function saveInvoiceAutoSendAction(
   _prev: InvoicingFormState,
@@ -38,38 +52,63 @@ export async function saveInvoiceAutoSendAction(
     .eq("id", membership.organization_id);
   if (error) return { errors: { _form: error.message } };
 
-  // Turning auto-send OFF must also stand down invoices already queued to send
-  // — otherwise a draft scheduled before the change would still fire. Move them
-  // to 'held' (the owner can still send manually).
-  if (!enabled) {
-    await (admin
-      .from("invoices")
-      .update({ auto_send_state: "held", auto_send_at: null } as never)
-      .eq("organization_id", membership.organization_id)
-      .eq("auto_send_state" as never, "scheduled" as never) as unknown as Promise<unknown>);
-  } else {
-    // Turning it back ON re-arms previously-held DRAFTS — they were only held
-    // because the org disabled auto-send, and before this they stayed held
-    // forever (audit P8). Rescheduled to the next send slot (tomorrow at the
-    // configured hour) so the owner gets the same review window — and the
-    // same morning digest heads-up — as any fresh draft.
+  // Turning auto-send OFF stands down everything queued (→ held, resumable);
+  // turning it ON queues everything waiting — including drafts created while
+  // it was off.
+  let queued: InvoicingFormState["queued"];
+  if (enabled) {
+    // Turning it ON queues everything waiting, at the NEXT send slot
+    // (tomorrow at the configured hour) — never instantly. The owner keeps
+    // the same review window and morning-digest heads-up as any fresh
+    // draft; "flip a switch, a week of invoices blasts out this second"
+    // is the one version of this that could go badly.
     const { computeAutoSendAt } = await import("@/lib/invoice-send");
     const { data: orgRow } = (await admin
       .from("organizations")
       .select("timezone")
       .eq("id", membership.organization_id)
       .maybeSingle()) as unknown as { data: { timezone: string | null } | null };
-    const sendAt = computeAutoSendAt(
-      new Date(),
-      orgRow?.timezone ?? null,
-      sendHour,
-    ).toISOString();
-    await (admin
+    const tz = orgRow?.timezone ?? null;
+    const sendAtIso = computeAutoSendAt(new Date(), tz, sendHour).toISOString();
+
+    // 1. Re-arm previously-held drafts — held only ever means "auto-send was
+    // switched off while these were queued" or the owner's own Hold button,
+    // and before this they stayed held forever (audit P8). No age cutoff:
+    // held drafts were already in the pipeline once.
+    const { data: rearmed } = (await admin
       .from("invoices")
-      .update({ auto_send_state: "scheduled", auto_send_at: sendAt } as never)
+      .update({ auto_send_state: "scheduled", auto_send_at: sendAtIso } as never)
       .eq("organization_id", membership.organization_id)
       .eq("auto_send_state" as never, "held" as never)
-      .eq("status", "draft") as unknown as Promise<unknown>);
+      .eq("status", "draft")
+      .select("id")) as unknown as { data: Array<{ id: string }> | null };
+
+    // 2. Sweep drafts created while auto-send was OFF. Those carry no
+    // schedule at all (state NULL), so they previously sat inert forever,
+    // indistinguishable from drafts that would send. Window-bounded, and $0
+    // drafts are excluded — the cron would only flip them to "skipped",
+    // which reads as an alarm for an invoice that shouldn't email anyway.
+    const cutoffIso = new Date(
+      Date.now() - BACKFILL_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+    ).toISOString();
+    const { data: swept } = (await admin
+      .from("invoices")
+      .update({ auto_send_state: "scheduled", auto_send_at: sendAtIso } as never)
+      .eq("organization_id", membership.organization_id)
+      .is("auto_send_state" as never, null as never)
+      .eq("status", "draft")
+      .gte("created_at", cutoffIso)
+      .gt("amount_cents", 0)
+      .select("id")) as unknown as { data: Array<{ id: string }> | null };
+
+    const count = (rearmed?.length ?? 0) + (swept?.length ?? 0);
+    if (count > 0) queued = { count, sendAtIso };
+  } else {
+    await (admin
+      .from("invoices")
+      .update({ auto_send_state: "held", auto_send_at: null } as never)
+      .eq("organization_id", membership.organization_id)
+      .eq("auto_send_state" as never, "scheduled" as never) as unknown as Promise<unknown>);
   }
 
   await logAuditEvent({
@@ -85,5 +124,5 @@ export async function saveInvoiceAutoSendAction(
   });
 
   revalidatePath("/app/settings/invoicing");
-  return { success: true };
+  return { success: true, queued };
 }

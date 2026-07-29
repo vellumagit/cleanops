@@ -27,7 +27,7 @@ export type DeliveryNoteClient = {
 };
 
 export type InvoiceDeliveryNote = {
-  kind: "skipped" | "held";
+  kind: "skipped" | "held" | "scheduled";
   note: string;
 };
 
@@ -40,12 +40,32 @@ export function invoiceDeliveryNote(params: {
   orgDefault: OrgContactDefault;
   /** organizations.sms_enabled — billing texts silently skip while off. */
   smsEnabled: boolean;
+  /** When a scheduled draft will auto-send (invoices.auto_send_at). */
+  autoSendAt?: string | null;
+  /** Org IANA timezone, for rendering the send time as a wall-clock time. */
+  timezone?: string | null;
 }): InvoiceDeliveryNote | null {
   const { autoSendState, status, amountCents, client, orgDefault, smsEnabled } =
     params;
 
   // Once the invoice left draft (sent by hand, paid, voided), the miss is moot.
   if (status !== "draft") return null;
+
+  // Queued and waiting — say WHEN, so an armed draft is visibly different
+  // from one that will never send (the gap that made enabling auto-send
+  // look like it did nothing).
+  if (autoSendState === "scheduled" && params.autoSendAt) {
+    const when = new Date(params.autoSendAt).toLocaleString("en-US", {
+      weekday: "short",
+      hour: "numeric",
+      minute: "2-digit",
+      ...(params.timezone ? { timeZone: params.timezone } : {}),
+    });
+    return {
+      kind: "scheduled",
+      note: `Sends ${when} — edit or hold it before then if it isn't right.`,
+    };
+  }
 
   if (autoSendState === "held") {
     // Deliberately cause-neutral: "held" is written both by the owner's own

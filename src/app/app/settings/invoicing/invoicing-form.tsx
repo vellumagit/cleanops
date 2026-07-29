@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import { CheckCircle2 } from "lucide-react";
+import { CheckCircle2, Sparkles } from "lucide-react";
 import { FormError, FormField } from "@/components/form-field";
 import { SubmitButton } from "@/components/submit-button";
 import {
@@ -45,6 +45,24 @@ export function InvoicingForm(props: InvoicingFormProps) {
         <div className="flex items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-200">
           <CheckCircle2 className="h-3.5 w-3.5" />
           Saved.
+        </div>
+      )}
+
+      {state.success && state.queued && state.queued.count > 0 && (
+        <div className="flex items-start gap-2 rounded-md border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-xs text-sky-800 dark:text-sky-200">
+          <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>
+            {state.queued.count} draft invoice
+            {state.queued.count === 1 ? "" : "s"} from the last 7 days{" "}
+            {state.queued.count === 1 ? "is" : "are"} now queued — going out{" "}
+            {new Date(state.queued.sendAtIso).toLocaleString("en-US", {
+              weekday: "long",
+              hour: "numeric",
+              minute: "2-digit",
+            })}
+            . Review them on the Invoices page; hold any you don&apos;t want
+            sent.
+          </span>
         </div>
       )}
 

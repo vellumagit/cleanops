@@ -4,6 +4,7 @@ import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { fetchOrgNotificationContext } from "@/app/app/clients/org-contact-default";
+import { getOrgTimezone } from "@/lib/org-timezone";
 import { invoiceDeliveryNote } from "@/lib/invoice-delivery-note";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
@@ -37,6 +38,7 @@ export default async function InvoicesPage({
         paid_at,
         created_at,
         auto_send_state,
+        auto_send_at,
         client:clients ( name, email, contact_preference, contact_overrides, sms_opted_in )
       ` as never,
     );
@@ -57,6 +59,7 @@ export default async function InvoicesPage({
       paid_at: string | null;
       created_at: string;
       auto_send_state: string | null;
+      auto_send_at: string | null;
       client: {
         name: string | null;
         email: string | null;
@@ -76,6 +79,7 @@ export default async function InvoicesPage({
   const { orgDefault, smsEnabled } = await fetchOrgNotificationContext(
     membership.organization_id,
   );
+  const orgTz = await getOrgTimezone(membership.organization_id);
 
   const rows: InvoiceRow[] = (data ?? []).map((i) => ({
     id: i.id,
@@ -88,6 +92,8 @@ export default async function InvoicesPage({
     client_name: i.client?.name ?? "—",
     delivery: invoiceDeliveryNote({
       autoSendState: i.auto_send_state,
+      autoSendAt: i.auto_send_at,
+      timezone: orgTz,
       status: i.status,
       amountCents: i.amount_cents,
       client: i.client,

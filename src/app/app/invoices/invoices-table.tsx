@@ -27,9 +27,10 @@ export type InvoiceRow = {
   paid_at: string | null;
   created_at: string;
   client_name: string;
-  /** Auto-send outcome for undelivered drafts: skipped = needs the owner
-   *  (amber), held = paused deliberately (neutral). Null = nothing to say. */
-  delivery: { kind: "skipped" | "held"; note: string } | null;
+  /** Auto-send outcome for drafts: skipped = needs the owner (amber),
+   *  held = paused deliberately (neutral), scheduled = queued with a send
+   *  time (sky). Null = nothing to say. */
+  delivery: { kind: "skipped" | "held" | "scheduled"; note: string } | null;
 };
 
 export function InvoicesTable({
@@ -99,6 +100,14 @@ export function InvoicesTable({
               className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
             >
               Auto-send paused
+            </span>
+          )}
+          {r.delivery?.kind === "scheduled" && (
+            <span
+              title={r.delivery.note}
+              className="inline-flex items-center gap-1 rounded-full bg-sky-500/10 px-2 py-0.5 text-[10px] font-medium text-sky-700 dark:text-sky-400"
+            >
+              {r.delivery.note.split(" — ")[0]}
             </span>
           )}
         </div>
