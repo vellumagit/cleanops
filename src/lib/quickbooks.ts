@@ -623,18 +623,20 @@ export async function pushInvoiceToQuickBooks(
     const taxCodeId = await getTaxCodeRefForBps(conn, invoice.tax_rate_bps);
     const taxPct = (invoice.tax_rate_bps ?? 0) / 100;
 
+    // A TAXED invoice we cannot map to a QuickBooks tax code must never sync.
+    //
+    // This used to be a hard failure only outside the US, on the assumption
+    // that omitting TaxCodeRef would let QuickBooks apply its own default.
+    // US sandbox testing disproved that: QuickBooks marks every line
+    // "Nontaxable" and books the PRE-TAX total, so the invoice the client was
+    // billed and the invoice in the books silently disagree — $353.86 sent vs
+    // $325.00 recorded in the observed case. A refused sync is recoverable;
+    // a quiet discrepancy in someone's accounting is not.
     if (invoice.tax_rate_bps && invoice.tax_rate_bps > 0 && !taxCodeId) {
-      // Outside the US, QuickBooks requires a tax code on every sales line.
-      // Sending the invoice without one gets it rejected, so fail EARLY with
-      // an instruction the owner can actually act on, rather than letting
-      // QuickBooks return an opaque validation fault.
-      if (!isUsCompany) {
-        return fail(
-          `QuickBooks (${country}) requires a matching sales tax code, and no tax rate of ${taxPct}% exists in your QuickBooks company. Add a ${taxPct}% sales tax rate in QuickBooks (Taxes → Sales tax), then try again — or change this invoice's tax rate to one QuickBooks already has.`,
-        );
-      }
-      console.warn(
-        `[qbo] invoice ${invoiceId}: no QBO tax code matches ${invoice.tax_rate_bps} bps — syncing without an explicit tax code (US company, QBO will apply its default)`,
+      return fail(
+        isUsCompany
+          ? `No sales tax code in QuickBooks matches this invoice's ${taxPct}% rate. Syncing would record the invoice as untaxed, so your books would disagree with what the client was billed. Add a matching ${taxPct}% sales tax rate in QuickBooks (Taxes → Sales tax), then try again — or change this invoice's tax rate to one QuickBooks already has.`
+          : `QuickBooks (${country}) requires a matching sales tax code, and no tax rate of ${taxPct}% exists in your QuickBooks company. Add a ${taxPct}% sales tax rate in QuickBooks (Taxes → Sales tax), then try again — or change this invoice's tax rate to one QuickBooks already has.`,
       );
     }
 
