@@ -1,5 +1,52 @@
 import { describe, it, expect } from "vitest";
-import { sageRatePercent, type SageTaxRate } from "./sage-rate";
+import {
+  allocateLineTax,
+  sageRatePercent,
+  type SageTaxRate,
+} from "./sage-rate";
+
+const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
+
+describe("allocateLineTax", () => {
+  it("puts all the tax on a single line", () => {
+    expect(allocateLineTax([40000], 3200)).toEqual([3200]);
+  });
+
+  it("is all zeros for an untaxed invoice", () => {
+    expect(allocateLineTax([1000, 2000, 3000], 0)).toEqual([0, 0, 0]);
+  });
+
+  it("splits evenly when the lines are equal", () => {
+    expect(allocateLineTax([10000, 10000], 1000)).toEqual([500, 500]);
+  });
+
+  it("allocates proportionally to line size", () => {
+    expect(allocateLineTax([10000, 30000], 4000)).toEqual([1000, 3000]);
+  });
+
+  // The whole point: pennies must not go missing.
+  it("sums EXACTLY to the invoice tax even when it doesn't divide evenly", () => {
+    const lines = [3333, 3333, 3334];
+    const out = allocateLineTax(lines, 1001);
+    expect(sum(out)).toBe(1001);
+  });
+
+  it("stays exact across a range of awkward splits", () => {
+    for (const tax of [1, 7, 99, 1001, 12345]) {
+      for (const lines of [[1, 1, 1], [100, 3, 7], [5000, 1], [7, 11, 13, 17]]) {
+        expect(sum(allocateLineTax(lines, tax))).toBe(tax);
+      }
+    }
+  });
+
+  it("doesn't divide by zero when every line is free", () => {
+    expect(allocateLineTax([0, 0], 0)).toEqual([0, 0]);
+  });
+
+  it("returns nothing for no lines", () => {
+    expect(allocateLineTax([], 500)).toEqual([]);
+  });
+});
 
 const ON = "2026-07-29";
 

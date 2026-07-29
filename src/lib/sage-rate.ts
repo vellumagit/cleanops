@@ -17,6 +17,8 @@
 export type SageTaxRate = {
   id: string;
   displayed_as?: string | null;
+  /** e.g. "NO_TAX" — how Sage labels its explicit zero-rate code. */
+  type?: string | null;
   percentage?: string | number | null;
   percentages?: Array<{
     percentage?: string | number | null;
@@ -24,6 +26,31 @@ export type SageTaxRate = {
     to_date?: string | null;
   }> | null;
 };
+
+/**
+ * Split an invoice-level tax amount across its lines.
+ *
+ * Sollos tracks tax once per invoice; Sage wants a currency_tax_amount on
+ * every line. Allocating proportionally and rounding each line independently
+ * can miss the invoice total by a cent, which is a reconciliation hunt in
+ * someone's books — so the remainder lands on the last line and the parts sum
+ * EXACTLY to the whole, by construction.
+ */
+export function allocateLineTax(
+  lineNetCents: number[],
+  totalTaxCents: number,
+): number[] {
+  if (lineNetCents.length === 0) return [];
+  const netTotal = lineNetCents.reduce((a, b) => a + b, 0);
+  const out = lineNetCents.map((net, i) =>
+    i === lineNetCents.length - 1 || netTotal <= 0
+      ? 0
+      : Math.round((net * totalTaxCents) / netTotal),
+  );
+  out[out.length - 1] =
+    totalTaxCents - out.slice(0, -1).reduce((a, b) => a + b, 0);
+  return out;
+}
 
 /**
  * A Sage rate's percentage on `onDate` (YYYY-MM-DD), as a number — or null

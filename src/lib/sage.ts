@@ -24,7 +24,11 @@ import {
   issueOAuthState,
   type OAuthStateOutcome,
 } from "@/lib/oauth-state";
-import { sageRatePercent, type SageTaxRate } from "@/lib/sage-rate";
+import {
+  allocateLineTax,
+  sageRatePercent,
+  type SageTaxRate,
+} from "@/lib/sage-rate";
 
 const SAGE_API_BASE = "https://api.accounting.sage.com/v3.1";
 
@@ -278,6 +282,38 @@ async function getSalesLedgerAccountId(
  * per-rate on the connection metadata. Returns null when tax is zero or no Sage
  * rate matches (caller then syncs without tax and logs a warning).
  */
+/**
+ * The account's explicit zero-rate tax code (Canada ships `CA_NO_TAX`).
+ *
+ * Sage requires a tax rate on EVERY invoice line, including untaxed ones —
+ * omitting it fails validation on tax_rate_id, tax_rate AND
+ * currency_tax_amount at once, because Sage can't derive any of them without
+ * the rate. So an untaxed invoice still has to name a rate explicitly.
+ */
+async function getNoTaxRateId(
+  conn: SageConnection,
+  onDate: string,
+): Promise<string | null> {
+  const cached = (conn.metadata ?? {})["no_tax_rate_id"];
+  if (typeof cached === "string" && cached) return cached;
+
+  const resp = await sageFetch<{ $items?: SageTaxRate[] }>(
+    conn.organization_id,
+    "/tax_rates?items_per_page=200&attributes=all",
+  );
+  const items = resp.$items ?? [];
+  const chosen =
+    items.find((t) => t.type === "NO_TAX") ??
+    items.find((t) => sageRatePercent(t, onDate) === 0) ??
+    null;
+
+  if (chosen?.id) {
+    await mergeConnectionMetadata(conn.id, { no_tax_rate_id: chosen.id });
+    return chosen.id;
+  }
+  return null;
+}
+
 async function getTaxRateIdForBps(
   conn: SageConnection,
   bps: number | null | undefined,
@@ -696,15 +732,21 @@ export async function pushInvoiceToSage(
       ? rawLines.map((li) => ({
           description: li.label,
           quantity: Number(li.quantity) || 1,
-          unit_price: li.unit_price_cents / 100,
+          unitPriceCents: li.unit_price_cents,
         }))
       : [
           {
             description: "Services",
             quantity: 1,
-            unit_price: preTaxCents / 100,
+            unitPriceCents: preTaxCents,
           },
         ];
+
+  // Sage wants the tax amount ON each line; Sollos stores it once per invoice.
+  const lineTaxCents = allocateLineTax(
+    sageLines.map((l) => Math.round(l.unitPriceCents * l.quantity)),
+    invoice.tax_amount_cents ?? 0,
+  );
 
   const invoiceDate = new Date(invoice.created_at)
     .toISOString()
@@ -731,19 +773,30 @@ export async function pushInvoiceToSage(
       invoice.tax_rate_bps,
       invoiceDate,
     );
+    const isTaxed = Boolean(invoice.tax_rate_bps && invoice.tax_rate_bps > 0);
     const taxRateId = taxRate.id;
-    if (invoice.tax_rate_bps && invoice.tax_rate_bps > 0 && !taxRateId) {
+    if (isTaxed && !taxRateId) {
       // This used to warn and sync WITHOUT tax, quietly posting a total lower
       // than the invoice the client actually received. A failed sync is
       // recoverable; a wrong number sitting in someone's books is not — and
       // Sage validates the rate against the region anyway, so the silent path
       // was usually about to be rejected regardless.
       return fail(
-        `Sage has no tax rate matching ${(invoice.tax_rate_bps / 100).toFixed(2)}%. ` +
+        `Sage has no tax rate matching ${((invoice.tax_rate_bps ?? 0) / 100).toFixed(2)}%. ` +
           (taxRate.available.length
             ? `Sage currently has: ${taxRate.available.join(", ")}. `
             : "") +
           `Create a matching rate in Sage for the ${taxRegionId} region (Settings → Tax Rates), then try again.`,
+      );
+    }
+
+    // Every line needs a rate id — the zero-rate code when there's no tax.
+    const lineTaxRateId = isTaxed
+      ? taxRateId
+      : await getNoTaxRateId(conn, invoiceDate);
+    if (!lineTaxRateId) {
+      return fail(
+        "Sage has no zero-rate tax code to put on an untaxed invoice line. Check Settings → Tax Rates in Sage.",
       );
     }
 
@@ -761,12 +814,14 @@ export async function pushInvoiceToSage(
             // Required by Sage US/CA — without it the POST 422s with
             // "tax_address_region_id is required".
             tax_address_region_id: taxRegionId,
-            invoice_lines: sageLines.map((l) => ({
+            invoice_lines: sageLines.map((l, i) => ({
               description: l.description,
               quantity: l.quantity,
-              unit_price: l.unit_price,
+              unit_price: l.unitPriceCents / 100,
               ledger_account_id: ledgerAccountId,
-              ...(taxRateId ? { tax_rate_id: taxRateId } : {}),
+              // Sage rejects a line missing any of these three, even at 0%.
+              tax_rate_id: lineTaxRateId,
+              currency_tax_amount: lineTaxCents[i] / 100,
             })),
           },
         }),
