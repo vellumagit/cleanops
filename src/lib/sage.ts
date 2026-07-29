@@ -819,8 +819,16 @@ export async function pushInvoiceToSage(
               quantity: l.quantity,
               unit_price: l.unitPriceCents / 100,
               ledger_account_id: ledgerAccountId,
-              // Sage rejects a line missing any of these three, even at 0%.
+              // Sage rejects a line missing any of these, even at 0%.
               tax_rate_id: lineTaxRateId,
+              // tax_amount is the field Sage actually stores. Its 422 names
+              // `currency_tax_amount` — a value it DERIVES from this one — so
+              // sending only that was ignored and it kept reporting the derived
+              // field as missing. Verified against the live API: a line with
+              // tax_rate_id + tax_amount is accepted at 201, and Sage echoes
+              // back tax_amount / base_currency_tax_amount with no
+              // currency_tax_amount field at all.
+              tax_amount: lineTaxCents[i] / 100,
               currency_tax_amount: lineTaxCents[i] / 100,
             })),
           },
