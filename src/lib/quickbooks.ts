@@ -361,6 +361,8 @@ async function getDefaultItemRef(conn: QBConnection): Promise<string | null> {
 
 type QBTaxCode = {
   Id: string;
+  Name?: string;
+  Active?: boolean;
   SalesTaxRateList?: {
     TaxRateDetail?: Array<{ TaxRateRef?: { value?: string } }>;
   };
@@ -406,27 +408,53 @@ async function getTaxCodeRefForBps(
   const cached = (conn.metadata ?? {})[cacheKey];
   if (typeof cached === "string" && cached) return cached;
 
-  // Find a tax RATE whose value matches, then a sales tax CODE that uses it.
+  // Walk CODES first, then total the rates each one references on its SALES
+  // side. The obvious approach — find a TaxRate whose value matches, then find
+  // a code using it — is wrong outside the US: QuickBooks keeps SEPARATE rate
+  // entities for sales and purchases at the same percentage, so "find the 13%
+  // rate" reliably returns the PURCHASE rate (id 11 in a CA company), which no
+  // sales code references, and matching silently fails.
+  //
+  // Totalling the components also handles composite provincial codes, e.g. BC
+  // where 5% GST + 7% PST must add up to a 12% Sollos rate.
   const rates = await qbQuery<{
     TaxRate?: Array<{ Id: string; RateValue?: number }>;
   }>(conn, "SELECT Id, RateValue FROM TaxRate");
-  const rate = (rates.TaxRate ?? []).find(
-    (r) => typeof r.RateValue === "number" && Math.abs(r.RateValue - pct) < 0.001,
-  );
-  if (!rate) return null;
+  const rateById = new Map<string, number>();
+  for (const r of rates.TaxRate ?? []) {
+    if (typeof r.RateValue === "number") {
+      rateById.set(String(r.Id), r.RateValue);
+    }
+  }
 
   const codes = await qbQuery<{ TaxCode?: QBTaxCode[] }>(
     conn,
     "SELECT * FROM TaxCode",
   );
-  const code = (codes.TaxCode ?? []).find((c) =>
-    (c.SalesTaxRateList?.TaxRateDetail ?? []).some(
-      (d) => d.TaxRateRef?.value === rate.Id,
-    ),
-  );
-  if (code?.Id) {
-    await mergeConnectionMetadata(conn.id, { [cacheKey]: code.Id });
-    return code.Id;
+  for (const c of codes.TaxCode ?? []) {
+    if (c.Active === false) continue;
+    const details = c.SalesTaxRateList?.TaxRateDetail ?? [];
+    if (details.length === 0) continue;
+
+    let total = 0;
+    let resolvable = true;
+    for (const d of details) {
+      const v = rateById.get(String(d.TaxRateRef?.value ?? ""));
+      if (typeof v !== "number") {
+        resolvable = false;
+        break;
+      }
+      total += v;
+    }
+    if (!resolvable) continue;
+
+    if (Math.abs(total - pct) < 0.001) {
+      await mergeConnectionMetadata(conn.id, { [cacheKey]: c.Id });
+      console.log(
+        `[qbo] tax ${pct}% → code ${c.Id} ("${c.Name ?? "?"}") for org ${conn.organization_id}`,
+      );
+      return c.Id;
+    }
   }
   return null;
 }
