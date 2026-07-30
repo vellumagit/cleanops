@@ -7,6 +7,7 @@ import {
   FileText,
   Phone,
   Users,
+  StickyNote,
 } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -68,7 +69,7 @@ export default async function FieldJobDetailPage({
         notes,
         assigned_to,
         series_id,
-        client:clients ( name, phone, address )
+        client:clients ( name, phone, address, notes )
       `,
     )
     .eq("id", id)
@@ -398,9 +399,36 @@ export default async function FieldJobDetailPage({
           {booking.notes ? (
             <div className="flex items-start gap-3">
               <FileText className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
-              <p className="whitespace-pre-wrap text-sm text-muted-foreground">
-                {booking.notes}
-              </p>
+              <div className="min-w-0">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  This job
+                </p>
+                <p className="mt-0.5 whitespace-pre-wrap text-sm text-muted-foreground">
+                  {booking.notes}
+                </p>
+              </div>
+            </div>
+          ) : null}
+          {/*
+           * The standing note from the client's profile — buzzer codes, pets,
+           * "move the sofa". It used to live office-side only: the booking
+           * form copied it into the job's own note, but only when someone
+           * actively changed the client dropdown, which the "Book job" button
+           * never does. So access instructions sat where the cleaner couldn't
+           * see them. Read live rather than copied, so editing the profile
+           * updates every job at once.
+           */}
+          {booking.client?.notes ? (
+            <div className="flex items-start gap-3">
+              <StickyNote className="mt-0.5 h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" />
+              <div className="min-w-0">
+                <p className="text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
+                  Client notes
+                </p>
+                <p className="mt-0.5 whitespace-pre-wrap text-sm text-foreground">
+                  {booking.client.notes}
+                </p>
+              </div>
             </div>
           ) : null}
         </dl>

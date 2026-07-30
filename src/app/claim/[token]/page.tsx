@@ -60,7 +60,7 @@ export default async function ClaimPage({
           booking:bookings (
             id, scheduled_at, duration_minutes, service_type,
             address, notes,
-            client:clients ( name, phone )
+            client:clients ( name, phone, notes )
           )
         )
       `,
@@ -189,7 +189,13 @@ type BookingForClaim = {
   service_type: string;
   address: string | null;
   notes: string | null;
-  client: { name: string; phone: string | null } | null;
+  /**
+   * `notes` here is the client's standing profile note — door codes, pets,
+   * "move the sofa". Only GotItState may render it: OpenState goes to every
+   * subcontractor on the bench, most of whom won't win the shift, which is
+   * why that view withholds the street address too.
+   */
+  client: { name: string; phone: string | null; notes: string | null } | null;
 };
 
 function OpenState({
@@ -339,6 +345,19 @@ function GotItState({
         <div className="rounded-md border border-border bg-muted/20 p-3 text-xs text-muted-foreground">
           <p className="sollos-label mb-1">Job notes</p>
           {booking.notes}
+        </div>
+      )}
+
+      {/*
+       * Post-claim only. These are access instructions — buzzer codes, alarm
+       * codes, where the key is — so they're released on the same terms as
+       * the street address: once this person actually has the shift, not to
+       * the whole bench in a broadcast.
+       */}
+      {booking.client?.notes && (
+        <div className="rounded-md border border-amber-300 bg-amber-50/60 p-3 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-200">
+          <p className="sollos-label mb-1">Client notes</p>
+          <span className="whitespace-pre-wrap">{booking.client.notes}</span>
         </div>
       )}
     </div>
