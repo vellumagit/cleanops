@@ -3,9 +3,11 @@
 import { useState, useTransition, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import Link from "next/link";
 import { Clock as ClockIcon, LogIn, LogOut, MapPin } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { clockInAction, clockOutAction } from "./actions";
+import { JobCardComplete } from "../jobs/job-card-complete";
 
 type Coords = { lat: number | null; lng: number | null };
 
@@ -107,10 +109,13 @@ export function ClockCard({
   isClockedIn,
   openSinceIso,
   openBookingLabel,
+  openBookingId,
 }: {
   isClockedIn: boolean;
   openSinceIso: string | null;
   openBookingLabel: string | null;
+  /** Set when the open shift belongs to a job — changes what "done" means. */
+  openBookingId: string | null;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -226,7 +231,38 @@ export function ClockCard({
       )}
 
       <div className="mt-5">
-        {isClockedIn ? (
+        {isClockedIn && openBookingId ? (
+          /*
+           * On a JOB, the right action is finishing the job — not a bare
+           * clock-out. Clocking out here stops the clock but leaves the
+           * booking sitting in "in progress" forever, which is its own
+           * warning on the owner's bookings list. Lead with the job, and
+           * label the fallback honestly rather than offering two buttons
+           * that look equivalent and aren't.
+           */
+          <div className="flex flex-col gap-2">
+            <JobCardComplete bookingId={openBookingId} size="full" />
+            <Button
+              type="button"
+              size="lg"
+              variant="outline"
+              onClick={handleOut}
+              disabled={isPending}
+              className="h-12 w-full text-sm"
+            >
+              <LogOut className="mr-2 h-4 w-4" />
+              {isPending
+                ? "Clocking out…"
+                : "Just stop my clock — job stays open"}
+            </Button>
+            <Link
+              href={`/field/jobs/${openBookingId}`}
+              className="text-center text-xs font-medium text-muted-foreground underline underline-offset-2"
+            >
+              Open job for photos &amp; checklist
+            </Link>
+          </div>
+        ) : isClockedIn ? (
           <Button
             type="button"
             size="lg"

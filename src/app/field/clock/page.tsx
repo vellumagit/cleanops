@@ -44,6 +44,7 @@ export default async function FieldClockPage() {
   ]);
 
   const openBookingLabel = open?.booking?.client?.name ?? null;
+  const openBookingId = open?.booking?.id ?? null;
 
   return (
     <>
@@ -56,6 +57,7 @@ export default async function FieldClockPage() {
         isClockedIn={Boolean(open)}
         openSinceIso={open?.clock_in_at ?? null}
         openBookingLabel={openBookingLabel}
+        openBookingId={openBookingId}
       />
 
       <section className="mt-7">
