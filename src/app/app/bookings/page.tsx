@@ -35,6 +35,7 @@ export default async function BookingsPage({
         service_type_label,
         status,
         total_cents,
+        hourly_rate_cents,
         series_id,
         address,
         assigned_to,
@@ -63,6 +64,7 @@ export default async function BookingsPage({
       service_type_label: string | null;
       status: string;
       total_cents: number;
+      hourly_rate_cents: number | null;
       series_id: string | null;
       address: string | null;
       assigned_to: string | null;
@@ -208,7 +210,9 @@ export default async function BookingsPage({
     service_type_label: b.service_type_label ?? null,
     status: b.status as BookingRow["status"],
     total_cents: b.total_cents,
+    client_id: b.client?.id ?? null,
     client_name: b.client?.name ?? "—",
+    hourly_rate_cents: b.hourly_rate_cents ?? null,
     assigned_name: b.assigned ? memberDisplayName(b.assigned) : null,
     covered_by_name: b.assigned ? null : (coverageMap.get(b.id) ?? null),
     assigned_to: b.assigned_to,

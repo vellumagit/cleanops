@@ -28,6 +28,33 @@ import { Input } from "@/components/ui/input";
 import { AssignCrewButton } from "./assign-crew-button";
 import type { AssignableEmployee } from "./assign-crew-dialog";
 
+import {
+  computeBookingWarnings,
+  type BookingWarning,
+} from "./booking-warnings";
+
+/** Amber chip shown beside the client name when a job looks wrong. */
+function WarningChips({ warnings }: { warnings: BookingWarning[] }) {
+  if (warnings.length === 0) return null;
+  return (
+    <>
+      {warnings.map((w) => (
+        <span
+          key={w.code}
+          title={w.detail}
+          className={
+            w.severity === "high"
+              ? "inline-flex shrink-0 items-center gap-0.5 rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold text-red-700 dark:bg-red-950/40 dark:text-red-300"
+              : "inline-flex shrink-0 items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
+          }
+        >
+          {w.label}
+        </span>
+      ))}
+    </>
+  );
+}
+
 export type BookingRow = {
   id: string;
   scheduled_at: string;
@@ -45,6 +72,10 @@ export type BookingRow = {
     | "completed"
     | "cancelled";
   total_cents: number;
+  /** Optional time-and-materials rate. A $0 job WITH one is priced hourly,
+   *  not mispriced — the warning logic needs both to tell them apart. */
+  hourly_rate_cents: number | null;
+  client_id: string | null;
   client_name: string;
   assigned_name: string | null;
   /** Name of the subcontractor covering this booking (a claimed shift offer),
@@ -189,6 +220,11 @@ export function BookingsTable({
 
     return result;
   }, [rows, tab, statusFilter, query, serviceFilter, assigneeFilter, clientFilter]);
+
+  // Computed over ALL rows, never the filtered subset: a double-booking is
+  // still a double-booking when the conflicting job is filtered off screen.
+  // Free — these rows are already in the browser.
+  const warnings = useMemo(() => computeBookingWarnings(rows), [rows]);
 
   // Tab counts by time window.
   const tabCounts = useMemo(() => {
@@ -382,6 +418,7 @@ export function BookingsTable({
       ) : view === "table" ? (
         <TableView
           rows={filtered}
+          warnings={warnings}
           canEdit={canEdit}
           router={router}
           tz={tz}
@@ -390,6 +427,7 @@ export function BookingsTable({
       ) : (
         <CardsView
           rows={filtered}
+          warnings={warnings}
           canEdit={canEdit}
           router={router}
           tz={tz}
@@ -453,12 +491,14 @@ function FilterSelect({
 
 function TableView({
   rows,
+  warnings,
   canEdit,
   router,
   tz,
   employees,
 }: {
   rows: BookingRow[];
+  warnings: Map<string, BookingWarning[]>;
   canEdit: boolean;
   router: ReturnType<typeof useRouter>;
   tz: string;
@@ -522,6 +562,7 @@ function TableView({
                         <Repeat className="h-2.5 w-2.5" />
                       </span>
                     )}
+                    <WarningChips warnings={warnings.get(r.id) ?? []} />
                     {r.segment_count >= 2 && (
                       <span
                         className="inline-flex items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
@@ -595,12 +636,14 @@ function TableView({
 
 function CardsView({
   rows,
+  warnings,
   canEdit,
   router,
   tz,
   employees,
 }: {
   rows: BookingRow[];
+  warnings: Map<string, BookingWarning[]>;
   canEdit: boolean;
   router: ReturnType<typeof useRouter>;
   tz: string;
@@ -663,6 +706,7 @@ function CardsView({
                       <span className="text-sm font-semibold truncate">
                         {r.client_name}
                       </span>
+                      <WarningChips warnings={warnings.get(r.id) ?? []} />
                       {r.series_id && (
                         <Repeat className="h-3 w-3 shrink-0 text-blue-500" />
                       )}
