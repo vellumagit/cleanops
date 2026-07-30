@@ -35,9 +35,16 @@ export async function saveInvoiceAutoSendAction(
 
   const enabled = formData.get("enabled") === "on";
   const consolidated = formData.get("consolidated") === "on";
-  const sendHour = Number(formData.get("send_hour") ?? 17);
-
-  if (!Number.isInteger(sendHour) || sendHour < 0 || sendHour > 23) {
+  // Parse strictly. Number("") is 0, which passes a 0-23 range check and
+  // silently saves MIDNIGHT — so a select that submits nothing (unmatched
+  // value, hydration hiccup) would quietly move every invoice to 12:00 AM.
+  // Reject anything that isn't plainly a number instead.
+  const rawHour = String(formData.get("send_hour") ?? "").trim();
+  if (!/^\d{1,2}$/.test(rawHour)) {
+    return { errors: { hour: "Pick a time of day." } };
+  }
+  const sendHour = Number(rawHour);
+  if (sendHour < 0 || sendHour > 23) {
     return { errors: { hour: "Pick a time of day." } };
   }
 

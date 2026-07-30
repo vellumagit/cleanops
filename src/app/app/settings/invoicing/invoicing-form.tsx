@@ -37,6 +37,21 @@ export function InvoicingForm(props: InvoicingFormProps) {
   const [sendHour, setSendHour] = useState(String(props.sendHour));
   const [consolidated, setConsolidated] = useState(props.consolidated);
 
+  // Re-seed from the server whenever the SAVED values change — React's
+  // adjust-state-during-render pattern. useState only seeds on mount, so
+  // without this a form still mounted after a save keeps showing whatever
+  // it had, which reads as "my change was ignored". Doing it here rather
+  // than with a `key` on the parent keeps this component mounted, so the
+  // "Saved." confirmation from useActionState survives.
+  const savedSignature = `${props.enabled}|${props.sendHour}|${props.consolidated}`;
+  const [seenSignature, setSeenSignature] = useState(savedSignature);
+  if (savedSignature !== seenSignature) {
+    setSeenSignature(savedSignature);
+    setEnabled(props.enabled);
+    setSendHour(String(props.sendHour));
+    setConsolidated(props.consolidated);
+  }
+
   return (
     <form action={formAction} className="max-w-lg space-y-6">
       <FormError message={state.errors?._form} />
@@ -103,7 +118,10 @@ export function InvoicingForm(props: InvoicingFormProps) {
           className="h-9 w-full max-w-xs rounded-md border border-input bg-background px-3 text-sm"
         >
           {HOUR_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
+            // value as an explicit STRING — the state is a string, and a
+            // number/string mismatch leaves the select matching no option,
+            // which renders as the first entry (12:00 AM) and submits it.
+            <option key={o.value} value={String(o.value)}>
               {o.label}
             </option>
           ))}

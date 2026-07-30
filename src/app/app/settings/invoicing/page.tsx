@@ -54,13 +54,7 @@ export default async function InvoicingSettingsPage() {
           send-now escape hatch on every draft, and an optional morning digest
           so you can review before anything goes out.
         </p>
-        {/* Keyed on the SAVED values so the form remounts whenever they
-            change. The inputs are controlled from useState, which seeds only
-            on mount — without this, a form re-rendered after a save could
-            keep showing pre-save values, which reads as "my change didn't
-            stick" even though the database took it. */}
         <InvoicingForm
-          key={`${Boolean(org?.invoice_auto_send_enabled)}-${org?.invoice_auto_send_hour ?? 17}-${org?.invoice_auto_send_consolidated ?? true}`}
           enabled={Boolean(org?.invoice_auto_send_enabled)}
           sendHour={org?.invoice_auto_send_hour ?? 17}
           consolidated={org?.invoice_auto_send_consolidated ?? true}
