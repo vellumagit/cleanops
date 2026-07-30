@@ -4070,17 +4070,14 @@ export async function sendUnassignedBookingAlerts(): Promise<{
   // split-shift segment employees and additional crew). Without this
   // filter the cron sends false-positive "unassigned!" emails every day
   // for every split-shift booking in the org. Filter them out.
+  // ...and a booking can ALSO be covered by a freelancer who claimed a bench
+  // offer. That never writes bookings.assigned_to (freelancers aren't
+  // memberships, and the column is a FK to memberships), so checking crew
+  // alone still cried "unassigned!" about jobs that were fully staffed.
   const candidateIds = rawCandidates.map((b) => b.id);
-  const { data: assigneeRows } = await db
-    .from("booking_assignees")
-    .select("booking_id")
-    .in("booking_id", candidateIds) as unknown as {
-    data: Array<{ booking_id: string }> | null;
-  };
-  const hasCrew = new Set(
-    (assigneeRows ?? []).map((r) => r.booking_id),
-  );
-  const candidates = rawCandidates.filter((b) => !hasCrew.has(b.id));
+  const { resolveBookingCoverage } = await import("@/lib/booking-coverage");
+  const coverage = await resolveBookingCoverage(candidateIds);
+  const candidates = rawCandidates.filter((b) => !coverage.get(b.id)?.staffed);
 
   if (candidates.length === 0) {
     return { orgsAlerted: 0, bookingsFlagged: 0 };
@@ -6124,16 +6121,76 @@ export async function autoCompletePastBookings(): Promise<{ completed: number }>
 
     const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
 
-    const { data, error } = await db
+    // Find candidates FIRST — we no longer blanket-complete, because a
+    // booking nobody was assigned to is not evidence that work happened.
+    // Auto-completing one drafts an invoice (and, with auto-send on, emails
+    // a client a bill) for a job the system has no record of anyone doing.
+    const { data: candidates, error: findErr } = (await db
+      .from("bookings")
+      .select("id, scheduled_at, client:clients ( name )")
+      .eq("organization_id", org.id)
+      // Confirmed OR in progress; completed/cancelled are terminal.
+      .in("status", ["confirmed", "in_progress"])
+      .lt("scheduled_at", cutoff)
+      .limit(200)) as unknown as {
+      data: Array<{
+        id: string;
+        scheduled_at: string;
+        client: { name: string | null } | null;
+      }> | null;
+      error: { message: string } | null;
+    };
+    if (findErr) {
+      console.error(`[auto] complete bookings failed for org ${org.id}:`, findErr.message);
+      continue;
+    }
+    if (!candidates || candidates.length === 0) continue;
+
+    // Staffed = an assigned employee, a crew member, OR a claimed bench
+    // offer. That last one is why this uses the shared helper: a freelancer
+    // claim can't write bookings.assigned_to, so checking that column alone
+    // reads a covered job as empty.
+    const { resolveBookingCoverage } = await import("@/lib/booking-coverage");
+    const coverage = await resolveBookingCoverage(candidates.map((b) => b.id));
+
+    const staffedIds: string[] = [];
+    const unstaffed: typeof candidates = [];
+    for (const b of candidates) {
+      if (coverage.get(b.id)?.staffed) staffedIds.push(b.id);
+      else unstaffed.push(b);
+    }
+
+    // Unstaffed past jobs are a human problem, not a cron problem. Leave the
+    // status alone and tell whoever can sort it out.
+    if (unstaffed.length > 0) {
+      const names = unstaffed
+        .slice(0, 3)
+        .map((b) => b.client?.name ?? "a client")
+        .join(", ");
+      await notify({
+        audience: "org-management",
+        organizationId: org.id,
+        type: "unstaffed_past_booking",
+        title:
+          unstaffed.length === 1
+            ? "A past job was never staffed"
+            : `${unstaffed.length} past jobs were never staffed`,
+        body: `${names}${unstaffed.length > 3 ? ` and ${unstaffed.length - 3} more` : ""} — nobody was assigned and the time has passed. These were NOT completed or invoiced. Check what happened, then close them out by hand.`,
+        href: "/app/bookings",
+      });
+      console.log(
+        `[auto] ${unstaffed.length} unstaffed past booking(s) left alone for org ${org.id}`,
+      );
+    }
+
+    if (staffedIds.length === 0) continue;
+
+    const { data, error } = (await db
       .from("bookings")
       .update({ status: "completed" })
       .eq("organization_id", org.id)
-      // Auto-complete past-due jobs that are still confirmed OR in progress
-      // (e.g. a subcontractor whose time is up, or someone who forgot to
-      // clock out). Completed/cancelled are terminal and untouched.
-      .in("status", ["confirmed", "in_progress"])
-      .lt("scheduled_at", cutoff)
-      .select("id") as unknown as {
+      .in("id", staffedIds)
+      .select("id")) as unknown as {
       data: Array<{ id: string }> | null;
       error: { message: string } | null;
     };

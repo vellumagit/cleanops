@@ -44,9 +44,24 @@ export async function GET(request: Request) {
     return Response.json({ created: 0 });
   }
 
+  // assigned_to IS NULL is not the same as "nobody is coming". A crew via
+  // booking_assignees, or a freelancer who claimed a bench offer, both leave
+  // that column empty — so without this the cron re-offers shifts that are
+  // already covered, to a bench that has already filled them.
+  const { resolveBookingCoverage } = await import("@/lib/booking-coverage");
+  const coverage = await resolveBookingCoverage(
+    unfilledBookings.map((b) => b.id),
+  );
+  const trulyUnfilled = unfilledBookings.filter(
+    (b) => !coverage.get(b.id)?.staffed,
+  );
+  if (trulyUnfilled.length === 0) {
+    return Response.json({ created: 0 });
+  }
+
   // Check which bookings already have a recent unfilled_shift notification
   // (avoid duplicate alerts within the same 24h window)
-  const bookingIds = unfilledBookings.map((b) => b.id);
+  const bookingIds = trulyUnfilled.map((b) => b.id);
   const cutoff = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
 
   const { data: existingNotifs } = (await admin
@@ -65,7 +80,7 @@ export async function GET(request: Request) {
     }),
   );
 
-  const toNotify = unfilledBookings.filter(
+  const toNotify = trulyUnfilled.filter(
     (b) => !alreadyNotified.has(b.id),
   );
 
