@@ -5609,6 +5609,15 @@ export async function sendShiftClockOutReminders(): Promise<{
         title: "Still on the clock?",
         body: `You've been clocked in for ${hoursOpen}h. If you've finished, tap to clock out.`,
         href: "/field/clock",
+        // Behave like an ongoing shift indicator rather than a one-off ping:
+        // stick in the shade until dismissed, and have each 30-minute update
+        // REPLACE the last one (same tag) without buzzing again. Closest the
+        // web gets to a Spotify-style persistent notification.
+        push: {
+          sticky: true,
+          quiet: (e.reminder_count ?? 0) > 0,
+          tag: `clock-out-${e.id}`,
+        },
       });
 
       // TEXT the cleaner too — this is the whole prevention mechanism, and

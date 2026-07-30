@@ -85,15 +85,25 @@ self.addEventListener("push", (event) => {
     };
   }
 
-  const { title, body, href, icon } = payload;
+  const { title, body, href, icon, sticky, quiet, tag } = payload;
 
   event.waitUntil(
     self.registration.showNotification(title || "Sollos 3", {
       body: body || "",
       icon: icon || "/icon-192.png",
       badge: "/icon-192.png",
-      tag: href || "default",   // Collapse duplicates for the same page
-      renotify: true,
+      // An explicit tag lets a series of updates REPLACE each other rather
+      // than stack — e.g. a clock-out reminder that rewrites itself with the
+      // running total instead of leaving six notifications in the shade.
+      tag: tag || href || "default",
+      // sticky: stay in the shade until deliberately dismissed. This is the
+      // closest the web gets to an ongoing/foreground notification. Android
+      // honours it; iOS ignores it (no requireInteraction support there).
+      requireInteraction: Boolean(sticky),
+      // quiet: update in place without buzzing again. Re-alerting every 30
+      // minutes is how a useful nudge becomes something people mute.
+      silent: Boolean(quiet),
+      renotify: !quiet,
       data: { href: href || "/" },
     }),
   );

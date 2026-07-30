@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Clock as ClockIcon, LogIn, LogOut, MapPin } from "lucide-react";
@@ -18,6 +18,68 @@ const WORK_CATEGORIES = [
   { key: "supplies", label: "Supplies / errand" },
   { key: "other", label: "Other" },
 ];
+
+/** "3h 12m" / "47m" — the number a person needs to notice something is wrong. */
+function formatElapsed(ms: number): string {
+  const totalMin = Math.max(0, Math.floor(ms / 60_000));
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+/**
+ * Live elapsed time since clock-in, ticking every 30s.
+ *
+ * The card used to read "Since 8:04 AM" — no date, no duration. Someone
+ * opening the app on Thursday saw what looked like this morning and tapped
+ * Clock out, which is exactly how a 68-hour shift gets recorded. A running
+ * total makes a stale shift impossible to misread.
+ *
+ * Starts null and fills in on mount: computing a duration during render is
+ * both impure and a hydration mismatch waiting to happen.
+ */
+function useElapsed(sinceIso: string | null): number | null {
+  const [elapsedMs, setElapsedMs] = useState<number | null>(null);
+  useEffect(() => {
+    if (!sinceIso) return;
+    const started = new Date(sinceIso).getTime();
+    const tick = () => setElapsedMs(Date.now() - started);
+    // First tick on a timeout rather than inline: setting state synchronously
+    // inside an effect forces a second render pass before paint, which is
+    // what react-hooks/set-state-in-effect exists to prevent. A 0ms defer
+    // lands in the same frame visually.
+    const first = setTimeout(tick, 0);
+    const id = setInterval(tick, 30_000);
+    return () => {
+      clearTimeout(first);
+      clearInterval(id);
+    };
+  }, [sinceIso]);
+  // Derived, not stored: when the shift ends the prop goes null and the stale
+  // elapsed value must not linger. Cheaper than another state write.
+  return sinceIso ? elapsedMs : null;
+}
+
+/**
+ * Badge the installed-PWA icon with hours on the clock, so the shift is
+ * visible without opening anything. Supported on Android/Chrome and on iOS
+ * 16.4+ for home-screen installs; a silent no-op everywhere else.
+ */
+function useAppBadge(hoursOnClock: number | null) {
+  useEffect(() => {
+    const nav = navigator as Navigator & {
+      setAppBadge?: (n?: number) => Promise<void>;
+      clearAppBadge?: () => Promise<void>;
+    };
+    if (!nav.setAppBadge || !nav.clearAppBadge) return;
+    if (hoursOnClock == null) {
+      nav.clearAppBadge().catch(() => {});
+      return;
+    }
+    // Badge counters render poorly above 2 digits; hours is the useful unit.
+    nav.setAppBadge(Math.max(1, hoursOnClock)).catch(() => {});
+  }, [hoursOnClock]);
+}
 
 async function getCoords(): Promise<Coords> {
   if (typeof window === "undefined" || !("geolocation" in navigator)) {
@@ -53,6 +115,12 @@ export function ClockCard({
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [category, setCategory] = useState("manager");
+
+  const elapsedMs = useElapsed(isClockedIn ? openSinceIso : null);
+  useAppBadge(elapsedMs == null ? null : Math.floor(elapsedMs / 3_600_000));
+  // Past this the shift is almost certainly a forgotten clock-out rather than
+  // a long day — say so on the card instead of waiting for the nightly cap.
+  const looksStale = elapsedMs != null && elapsedMs > 10 * 3_600_000;
 
   function handleIn() {
     startTransition(async () => {
@@ -97,14 +165,31 @@ export function ClockCard({
             {isClockedIn ? "On the clock" : "Off the clock"}
           </p>
           {isClockedIn && openSinceIso ? (
-            <p className="text-sm text-muted-foreground">
-              Since{" "}
-              {new Date(openSinceIso).toLocaleTimeString("en-US", {
-                hour: "numeric",
-                minute: "2-digit",
-              })}
-              {openBookingLabel ? ` · ${openBookingLabel}` : ""}
-            </p>
+            <>
+              <p className="text-sm text-muted-foreground">
+                {/* Elapsed FIRST — it's the number that tells you something is
+                    wrong. The weekday matters just as much: "8:04 AM" alone
+                    reads as this morning even on day three. */}
+                {elapsedMs != null && (
+                  <span className="font-semibold tabular-nums text-foreground">
+                    {formatElapsed(elapsedMs)}
+                  </span>
+                )}
+                {elapsedMs != null ? " · started " : "Started "}
+                {new Date(openSinceIso).toLocaleString("en-US", {
+                  weekday: "short",
+                  hour: "numeric",
+                  minute: "2-digit",
+                })}
+                {openBookingLabel ? ` · ${openBookingLabel}` : ""}
+              </p>
+              {looksStale && (
+                <p className="mt-1 rounded-md bg-amber-500/15 px-2 py-1 text-xs font-medium text-amber-800 dark:text-amber-300">
+                  This shift has been running a long time — if you finished
+                  earlier, clock out and tell your manager the real time.
+                </p>
+              )}
+            </>
           ) : (
             <p className="text-sm text-muted-foreground">
               Tap below to start your shift.

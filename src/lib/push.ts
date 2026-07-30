@@ -31,6 +31,15 @@ interface PushPayload {
   href?: string;
   /** Icon URL — defaults to /icon-192.png */
   icon?: string;
+  /** Stay in the notification shade until dismissed (Android; iOS ignores
+   *  it). The closest the web gets to an ongoing/foreground notification. */
+  sticky?: boolean;
+  /** Update in place without buzzing again — for a recurring nudge that
+   *  rewrites itself rather than re-alerting every cycle. */
+  quiet?: boolean;
+  /** Explicit collapse key. Same tag replaces rather than stacks; defaults
+   *  to href, which groups by destination page. */
+  tag?: string;
 }
 
 /**
@@ -63,6 +72,9 @@ export async function sendPushToMembership(
     body: payload.body ?? "",
     href: payload.href ?? "/",
     icon: payload.icon ?? "/icon-192.png",
+    sticky: payload.sticky ?? false,
+    quiet: payload.quiet ?? false,
+    tag: payload.tag,
   });
 
   let sent = 0;
@@ -162,6 +174,9 @@ export async function sendPushToOrg(
     body: payload.body ?? "",
     href: payload.href ?? "/",
     icon: payload.icon ?? "/icon-192.png",
+    sticky: payload.sticky ?? false,
+    quiet: payload.quiet ?? false,
+    tag: payload.tag,
   });
 
   let sent = 0;

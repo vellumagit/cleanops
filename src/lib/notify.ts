@@ -38,6 +38,10 @@ type NotifyBase = {
   type?: string;
   /** Channels — both on by default. */
   channels?: { inApp?: boolean; push?: boolean };
+  /** Push behaviour. sticky = stays in the shade until dismissed (Android);
+   *  quiet = updates without re-buzzing; tag = explicit collapse key so a
+   *  repeating nudge rewrites itself instead of stacking. */
+  push?: { sticky?: boolean; quiet?: boolean; tag?: string };
 };
 
 export type NotifyInput = NotifyBase &
@@ -70,7 +74,14 @@ export async function notify(input: NotifyInput): Promise<void> {
     const type = input.type ?? "general";
     const doInApp = input.channels?.inApp ?? true;
     const doPush = input.channels?.push ?? true;
-    const push = { title: input.title, body: input.body, href: input.href };
+    const push = {
+      title: input.title,
+      body: input.body,
+      href: input.href,
+      sticky: input.push?.sticky,
+      quiet: input.push?.quiet,
+      tag: input.push?.tag,
+    };
 
     // Resolve recipients (null => a single org-wide row) and the RLS floor.
     let recipientIds: string[] | null;
