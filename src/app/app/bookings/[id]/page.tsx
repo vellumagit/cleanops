@@ -78,7 +78,7 @@ export default async function BookingDetailPage({
         id, scheduled_at, duration_minutes, service_type, service_type_label, status,
         total_cents, hourly_rate_cents, address, notes, created_at,
         estimate_id, series_id,
-        client:clients ( id, name, phone, email, address ),
+        client:clients ( id, name, phone, email, address, notes ),
         package:packages ( id, name ),
         assigned:memberships!bookings_assigned_to_fkey (
           id, display_name, profile:profiles ( full_name )
@@ -100,7 +100,15 @@ export default async function BookingDetailPage({
       notes: string | null;
       created_at: string;
       estimate_id: string | null;
-      client: { id: string; name: string; phone: string | null; email: string | null; address: string | null } | null;
+      client: {
+        id: string;
+        name: string;
+        phone: string | null;
+        email: string | null;
+        address: string | null;
+        /** Standing profile note, read live — not the per-job `notes` above. */
+        notes: string | null;
+      } | null;
       package: { id: string; name: string } | null;
       assigned: {
         id: string;
@@ -473,8 +481,31 @@ export default async function BookingDetailPage({
 
             {booking.notes && (
               <div className="mt-5 rounded-md border border-border bg-muted/20 p-3 text-xs text-muted-foreground">
-                <p className="sollos-label mb-1">Notes</p>
-                {booking.notes}
+                <p className="sollos-label mb-1">This job</p>
+                <span className="whitespace-pre-wrap">{booking.notes}</span>
+              </div>
+            )}
+
+            {/*
+             * The client's standing note, read live off the profile — the
+             * same block the cleaner and the claiming subcontractor see, so
+             * the office knows what got sent out. Editable on the profile,
+             * not here, which is why it links rather than offering a field.
+             */}
+            {booking.client?.notes && (
+              <div className="mt-3 rounded-md border border-amber-300 bg-amber-50/60 p-3 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-200">
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <p className="sollos-label">Client notes</p>
+                  <Link
+                    href={`/app/clients/${booking.client.id}/edit`}
+                    className="shrink-0 font-semibold underline underline-offset-2"
+                  >
+                    Edit
+                  </Link>
+                </div>
+                <span className="whitespace-pre-wrap">
+                  {booking.client.notes}
+                </span>
               </div>
             )}
           </div>
