@@ -4552,7 +4552,7 @@ export async function sendWeeklyOpsDigests(): Promise<{
       { count: cancelledCount },
       { data: reviews },
       { count: overdueCount },
-      { count: unassignedUpcomingCount },
+      { data: unassignedUpcomingRows },
     ] = await Promise.all([
       db.from("invoices").select("amount_cents").eq("organization_id", org.id)
         .gte("paid_at", start.toISOString())
@@ -4580,12 +4580,26 @@ export async function sendWeeklyOpsDigests(): Promise<{
       db.from("invoices").select("id", { count: "exact", head: true })
         .eq("organization_id", org.id).eq("status", "overdue")
         .is("paid_at", null),
-      db.from("bookings").select("id", { count: "exact", head: true })
+      // Rows, not a count — a bench claim never sets assigned_to, so counting
+      // on that column alone reported covered jobs as unstaffed in the digest.
+      db.from("bookings").select("id")
         .eq("organization_id", org.id).is("assigned_to", null)
         .in("status", ["pending", "confirmed"])
         .gte("scheduled_at", now.toISOString())
-        .lte("scheduled_at", new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString()),
+        .lte("scheduled_at", new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString())
+        .limit(200),
     ]);
+
+    // Drop jobs a bench freelancer already claimed — they aren't unstaffed.
+    const { resolveBookingCoverage: coverFor } = await import(
+      "@/lib/booking-coverage"
+    );
+    const upcomingCov = await coverFor(
+      ((unassignedUpcomingRows ?? []) as Array<{ id: string }>).map((b) => b.id),
+    );
+    const unassignedUpcoming = (
+      (unassignedUpcomingRows ?? []) as Array<{ id: string }>
+    ).filter((b) => !upcomingCov.get(b.id)?.staffed).length;
 
     const revenueCents = (paidInvoices ?? []).reduce(
       (acc, r) => acc + r.amount_cents,
@@ -4644,7 +4658,7 @@ export async function sendWeeklyOpsDigests(): Promise<{
         orgName: org.name,
         weekLabel,
         stats,
-        upcomingUnassigned: unassignedUpcomingCount ?? 0,
+        upcomingUnassigned: unassignedUpcoming,
         dashboardUrl: `${siteUrl}/app/reports`,
       });
       await sendEmail({

@@ -34,7 +34,7 @@ export async function CoveragePanel({
   const supabase = await createSupabaseServerClient();
   const nowIso = new Date().toISOString();
 
-  const [{ data: requests }, { count: unfilled }] = await Promise.all([
+  const [{ data: requests }, { data: openBookings }] = await Promise.all([
     supabase
       .from("shift_change_requests" as never)
       .select(
@@ -44,17 +44,25 @@ export async function CoveragePanel({
       .eq("status" as never, "open" as never)
       .order("created_at" as never, { ascending: false } as never)
       .limit(20) as unknown as { data: RequestRow[] | null },
+    // Rows, not a count: assigned_to being NULL does not mean nobody is
+    // coming. A bench freelancer who claimed the shift can't be written to
+    // that column, so a plain count reported covered jobs as unfilled.
     supabase
       .from("bookings")
-      .select("id", { count: "exact", head: true })
+      .select("id")
       .eq("organization_id", organizationId)
       .gte("scheduled_at", nowIso)
       .in("status", ["pending", "confirmed"])
-      .is("assigned_to", null) as unknown as { count: number | null },
+      .is("assigned_to", null)
+      .limit(200) as unknown as { data: Array<{ id: string }> | null },
   ]);
 
   const reqs = requests ?? [];
-  const unfilledCount = unfilled ?? 0;
+  const { resolveBookingCoverage } = await import("@/lib/booking-coverage");
+  const cov = await resolveBookingCoverage((openBookings ?? []).map((b) => b.id));
+  const unfilledCount = (openBookings ?? []).filter(
+    (b) => !cov.get(b.id)?.staffed,
+  ).length;
   if (reqs.length === 0 && unfilledCount === 0) return null;
 
   return (

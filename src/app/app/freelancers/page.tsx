@@ -42,15 +42,26 @@ export default async function FreelancersPage() {
   const rows: FreelancerRow[] = contacts ?? [];
   const twilioOn = isTwilioEnabled();
 
-  const unassignedRows: UnassignedBookingRow[] = (bookings ?? []).map((b) => ({
-    id: b.id,
-    scheduled_at: b.scheduled_at,
-    duration_minutes: b.duration_minutes,
-    service_type: b.service_type,
-    status: b.status as "pending" | "confirmed",
-    total_cents: b.total_cents,
-    client_name: b.client?.name ?? "—",
-  }));
+  // A freelancer who claims an offer CANNOT be written to bookings.assigned_to
+  // — they aren't a membership, and that column is a FK to memberships. So
+  // `.is("assigned_to", null)` above still matches jobs the bench has already
+  // covered, and this panel kept asking you to fill a shift Big Bob had
+  // already accepted, while the bookings list correctly showed it as his.
+  // resolveBookingCoverage is the shared rule: assignee OR crew OR claim.
+  const { resolveBookingCoverage } = await import("@/lib/booking-coverage");
+  const coverage = await resolveBookingCoverage((bookings ?? []).map((b) => b.id));
+
+  const unassignedRows: UnassignedBookingRow[] = (bookings ?? [])
+    .filter((b) => !coverage.get(b.id)?.staffed)
+    .map((b) => ({
+      id: b.id,
+      scheduled_at: b.scheduled_at,
+      duration_minutes: b.duration_minutes,
+      service_type: b.service_type,
+      status: b.status as "pending" | "confirmed",
+      total_cents: b.total_cents,
+      client_name: b.client?.name ?? "—",
+    }));
 
   return (
     <PageShell
