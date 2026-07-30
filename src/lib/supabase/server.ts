@@ -14,11 +14,14 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import type { Database } from "./types";
+import { guardQueries } from "./query-guard";
 
 export async function createSupabaseServerClient() {
   const cookieStore = await cookies();
 
-  return createServerClient<Database>(
+  // See ./query-guard — a failed query must never look like an empty one.
+  return guardQueries(
+    createServerClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
@@ -39,5 +42,6 @@ export async function createSupabaseServerClient() {
         },
       },
     },
+  ),
   );
 }

@@ -21,6 +21,7 @@ import "server-only";
 
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "./types";
+import { guardQueries } from "./query-guard";
 
 export function createSupabaseAdminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -33,10 +34,14 @@ export function createSupabaseAdminClient() {
     throw new Error("SUPABASE_SERVICE_ROLE_KEY is not set");
   }
 
-  return createClient<Database>(url, serviceRoleKey, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-    },
-  });
+  // guardQueries: a failed query logs loudly instead of returning null data
+  // that every call site reads as "no rows". See ./query-guard.
+  return guardQueries(
+    createClient<Database>(url, serviceRoleKey, {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+      },
+    }),
+  );
 }
