@@ -37,29 +37,28 @@ export default async function ClientStatementPage({
 
     supabase
       .from("organizations")
-      .select("name, address, phone, email")
+      .select("name, contact_phone, contact_email")
       .eq("id", membership.organization_id)
       .maybeSingle() as unknown as Promise<{
       data: {
         name: string;
-        address: string | null;
-        phone: string | null;
-        email: string | null;
+        contact_phone: string | null;
+        contact_email: string | null;
       } | null;
       error: unknown;
     }>,
 
     supabase
       .from("invoices")
-      .select("id, number, status, amount_cents, issued_at, due_date")
+      .select("id, number, status, amount_cents, sent_at, due_date")
       .eq("client_id", id)
-      .order("issued_at", { ascending: true }) as unknown as Promise<{
+      .order("sent_at", { ascending: true, nullsFirst: false }) as unknown as Promise<{
       data: Array<{
         id: string;
         number: number;
         status: string;
         amount_cents: number;
-        issued_at: string | null;
+        sent_at: string | null;
         due_date: string | null;
       }> | null;
       error: unknown;
@@ -148,15 +147,16 @@ export default async function ClientStatementPage({
           </div>
           {org && (
             <div className="text-right text-sm">
+              {/* organizations has no `address` column — only contact_phone /
+                  contact_email. The old select named address/phone/email, so
+                  PostgREST errored and `org` came back null: this whole block,
+                  and the invoice list below it, rendered nothing at all. */}
               <p className="font-semibold">{org.name}</p>
-              {org.address && (
-                <p className="text-muted-foreground">{org.address}</p>
+              {org.contact_phone && (
+                <p className="text-muted-foreground">{org.contact_phone}</p>
               )}
-              {org.phone && (
-                <p className="text-muted-foreground">{org.phone}</p>
-              )}
-              {org.email && (
-                <p className="text-muted-foreground">{org.email}</p>
+              {org.contact_email && (
+                <p className="text-muted-foreground">{org.contact_email}</p>
               )}
             </div>
           )}
@@ -249,8 +249,8 @@ export default async function ClientStatementPage({
                       INV-{String(row.number).padStart(3, "0")}
                     </td>
                     <td className="px-4 py-2.5 text-muted-foreground">
-                      {row.issued_at
-                        ? new Date(row.issued_at).toLocaleDateString("en-US", {
+                      {row.sent_at
+                        ? new Date(row.sent_at).toLocaleDateString("en-US", {
                             month: "short",
                             day: "numeric",
                             year: "numeric",

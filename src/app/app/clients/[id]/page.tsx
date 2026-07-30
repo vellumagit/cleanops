@@ -103,9 +103,9 @@ export default async function ClientDetailPage({
 
     supabase
       .from("invoices")
-      .select("id, number, status, amount_cents, due_date, issued_at")
+      .select("id, number, status, amount_cents, due_date, sent_at")
       .eq("client_id", id)
-      .order("issued_at", { ascending: false })
+      .order("sent_at", { ascending: false, nullsFirst: false })
       .limit(10) as unknown as Promise<{
       data: Array<{
         id: string;
@@ -113,7 +113,7 @@ export default async function ClientDetailPage({
         status: string;
         amount_cents: number;
         due_date: string | null;
-        issued_at: string | null;
+        sent_at: string | null;
       }> | null;
       error: unknown;
     }>,

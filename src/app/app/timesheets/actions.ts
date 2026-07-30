@@ -35,7 +35,7 @@ export async function fetchTimeEntryHistoryAction(
   const { data } = (await supabase
     .from("audit_log")
     .select(
-      `id, created_at, action, before, after, actor_membership_id`,
+      `id, created_at, action, before, after, actor_id`,
     )
     .eq("entity", "time_entry")
     .eq("entity_id", entryId)
@@ -48,7 +48,7 @@ export async function fetchTimeEntryHistoryAction(
       action: string;
       before: unknown;
       after: unknown;
-      actor_membership_id: string | null;
+      actor_id: string | null;
     }> | null;
   };
   if (!data || data.length === 0) return [];
@@ -56,7 +56,7 @@ export async function fetchTimeEntryHistoryAction(
   // Resolve actor names in one batch query
   const actorIds = Array.from(
     new Set(
-      data.map((r) => r.actor_membership_id).filter((v): v is string => !!v),
+      data.map((r) => r.actor_id).filter((v): v is string => !!v),
     ),
   );
   const actorNameMap = new Map<string, string>();
@@ -83,8 +83,8 @@ export async function fetchTimeEntryHistoryAction(
     id: r.id,
     created_at: r.created_at,
     action: r.action,
-    actor_name: r.actor_membership_id
-      ? actorNameMap.get(r.actor_membership_id) ?? "Unknown"
+    actor_name: r.actor_id
+      ? actorNameMap.get(r.actor_id) ?? "Unknown"
       : "System",
     before: r.before,
     after: r.after,
