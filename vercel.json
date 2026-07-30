@@ -181,7 +181,7 @@
     },
     {
       "path": "/api/cron/product-changelog",
-      "schedule": "0 16 * * 2"
+      "schedule": "0 15,16 * * 5"
     },
     {
       "path": "/api/cron/invoice-review-digest",
