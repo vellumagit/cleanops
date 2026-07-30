@@ -494,10 +494,14 @@ export async function updateTimeEntryAction(
       booking_id: parsed.booking_id,
       clock_in_at: parsed.start_at,
       clock_out_at: parsed.end_at,
+      // A human just set these hours deliberately — that IS the review, so
+      // clear the flag. Without this needs_review is a write-once latch that
+      // blocks payroll forever even after the entry has been corrected.
+      needs_review: false,
       // Encrypt before write. Read sites use maybeDecryptField; legacy
       // plaintext rows still display correctly until they're next saved.
       notes: encryptField(parsed.notes),
-    })
+    } as never)
     .eq("id", id)
     .eq("organization_id", membership.organization_id);
 
@@ -774,7 +778,7 @@ export async function closeOpenShiftAction(
 
   const { error } = await supabase
     .from("time_entries")
-    .update({ clock_out_at: endUtc })
+    .update({ clock_out_at: endUtc, needs_review: false } as never)
     .eq("id", id)
     .eq("organization_id", membership.organization_id);
   if (error) return { ok: false, error: error.message };

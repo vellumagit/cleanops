@@ -67,6 +67,8 @@ export default async function TimesheetsPage({
           created_manually,
           pay_rate_cents_snapshot,
           work_category,
+          needs_review,
+          auto_closed_at,
           employee:memberships!time_entries_employee_id_fkey (
             id,
             display_name,
@@ -97,6 +99,8 @@ export default async function TimesheetsPage({
           created_manually: boolean | null;
           pay_rate_cents_snapshot: number | null;
           work_category: string | null;
+          needs_review: boolean | null;
+          auto_closed_at: string | null;
           employee: {
             id: string;
             display_name: string | null;
@@ -261,6 +265,8 @@ export default async function TimesheetsPage({
       employee_name: memberDisplayName(e.employee ?? {}),
       notes: maybeDecryptField(e.notes ?? null),
       is_manual: Boolean(e.created_manually),
+      needs_review: Boolean(e.needs_review),
+      auto_closed: Boolean(e.auto_closed_at),
       clock_in_at: e.clock_in_at,
       clock_out_at: e.clock_out_at,
       actual_minutes: actualMinutes,

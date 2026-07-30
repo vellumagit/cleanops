@@ -35,6 +35,28 @@ export async function createPayrollRunAction(
   const fromIso = `${period_start}T00:00:00Z`;
   const toIso = `${period_end}T23:59:59Z`;
 
+  // Refuse to pay hours the system doesn't believe. needs_review is set when
+  // a shift was auto-capped after nobody clocked out — the recorded time is
+  // a ceiling, not an observation. Paying it silently is exactly how invented
+  // hours reach a bank transfer. Block, name the count, and let the owner
+  // confirm or correct them first (editing an entry clears the flag).
+  const { count: unreviewed } = (await supabase
+    .from("time_entries")
+    .select("id", { count: "exact", head: true })
+    .eq("organization_id", membership.organization_id)
+    .is("payroll_run_id", null)
+    .gte("clock_in_at", fromIso)
+    .lte("clock_in_at", toIso)
+    .eq("needs_review" as never, true as never)) as unknown as {
+    count: number | null;
+  };
+  if ((unreviewed ?? 0) > 0) {
+    return {
+      ok: false,
+      error: `${unreviewed} shift${unreviewed === 1 ? "" : "s"} in this period still need${unreviewed === 1 ? "s" : ""} review — nobody clocked out and the system capped the hours. Confirm or correct them on the Timesheets page, then run payroll.`,
+    };
+  }
+
   // Fetch data to compute
   const [{ data: entries }, { data: employees }, { data: bonuses }, { data: ptoRequests }] =
     await Promise.all([

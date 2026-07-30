@@ -18,6 +18,7 @@ import {
   Pencil,
   Trash2,
   Clock,
+  TriangleAlert,
 } from "lucide-react";
 import {
   formatDateTime,
@@ -380,6 +381,37 @@ export function TimesheetsView({
   return (
     <div className="space-y-5">
       {/* ─── Open shifts (forgotten clock-outs) ──────────────── */}
+      {/* Capped shifts still need a human. Auto-closing sets clock_out_at,
+          which drops the entry out of the open-shift banner below — so
+          without this panel the system flagging a bad shift made it LESS
+          visible than leaving it open. */}
+      {(() => {
+        const flagged = filteredEntries.filter((e) => e.needs_review);
+        if (flagged.length === 0) return null;
+        const hrs = flagged.reduce((sum, e) => sum + (e.actual_minutes ?? 0), 0) / 60;
+        return (
+          <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 dark:border-amber-900/40 dark:bg-amber-950/30">
+            <div className="flex items-start gap-3">
+              <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-700 dark:text-amber-300" />
+              <div className="flex-1 space-y-1">
+                <div className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+                  {flagged.length === 1
+                    ? "1 shift needs review"
+                    : `${flagged.length} shifts need review`}{" "}
+                  · {hrs.toFixed(1)}h
+                </div>
+                <p className="text-xs text-amber-900/80 dark:text-amber-300/80">
+                  Nobody clocked out, so the system capped these and stopped
+                  the clock. The hours have NOT been changed — look for the
+                  amber REVIEW tag below, then confirm or correct each one.
+                  Payroll will not run while shifts are awaiting review.
+                </p>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {openShifts.length > 0 && (
         <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 dark:border-amber-900/40 dark:bg-amber-950/30">
           <div className="flex items-start gap-3">
@@ -813,6 +845,18 @@ export function TimesheetsView({
                                       className="rounded-full bg-sky-100 px-1.5 py-0.5 text-[9px] font-semibold text-sky-700 dark:bg-sky-950/40 dark:text-sky-300"
                                     >
                                       M
+                                    </span>
+                                  )}
+                                  {r.needs_review && (
+                                    <span
+                                      title={
+                                        r.auto_closed
+                                          ? "Nobody clocked out — the system capped this shift. Confirm or correct the hours."
+                                          : "Flagged as implausible. Confirm or correct the hours."
+                                      }
+                                      className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold text-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
+                                    >
+                                      REVIEW
                                     </span>
                                   )}
                                 </div>

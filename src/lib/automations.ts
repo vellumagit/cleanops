@@ -5467,7 +5467,9 @@ export async function sendShiftClockOutReminders(): Promise<{
       `id, organization_id, employee_id, booking_id, clock_in_at,
        last_reminder_at, reminder_count,
        booking:bookings ( id, scheduled_at, duration_minutes ),
-       employee:memberships!time_entries_employee_id_fkey ( id, display_name )`,
+       employee:memberships!time_entries_employee_id_fkey (
+         id, display_name, contact_phone, profile:profiles ( full_name, phone )
+       )`,
     )
     .is("clock_out_at", null)
     .limit(500)) as unknown as {
@@ -5484,7 +5486,12 @@ export async function sendShiftClockOutReminders(): Promise<{
         scheduled_at: string;
         duration_minutes: number | null;
       } | null;
-      employee: { id: string; display_name: string | null } | null;
+      employee: {
+        id: string;
+        display_name: string | null;
+        contact_phone: string | null;
+        profile: { full_name: string | null; phone: string | null } | null;
+      } | null;
     }> | null;
   };
 
@@ -5533,8 +5540,18 @@ export async function sendShiftClockOutReminders(): Promise<{
       if (minutesOver < 0) continue; // still within the expected window
 
       const firstName =
-        (e.employee?.display_name ?? "").split(" ")[0] || "Someone";
+        (e.employee?.display_name ?? e.employee?.profile?.full_name ?? "")
+          .split(" ")[0] || "Someone";
+      // TWO different numbers, and conflating them was a real bug: the alert
+      // said "Nh after their job ended" while passing hoursOpen, so a 2-hour
+      // overrun on a 2-hour job reported as 4.0h — always overstated by the
+      // length of the job itself.
       const hoursOpen = ((now - clockInMs) / 3_600_000).toFixed(1);
+      const hoursOver = ((now - expectedEndMs) / 3_600_000).toFixed(1);
+      const employeePhone =
+        e.employee?.contact_phone?.trim() ||
+        e.employee?.profile?.phone?.trim() ||
+        null;
 
       // ---- Cap it ----
       if (minutesOver >= SHIFT_AUTO_CLOSE_GRACE_MIN) {
@@ -5564,7 +5581,7 @@ export async function sendShiftClockOutReminders(): Promise<{
           organizationId: e.organization_id,
           type: "shift_auto_closed",
           title: "A shift was auto-closed",
-          body: `${firstName} was still clocked in ${hoursOpen}h after their job should have ended. We capped it and flagged it for review.`,
+          body: `${firstName} was still clocked in ${hoursOver}h past the end of their job (${hoursOpen}h total). We capped the shift and flagged it for review.`,
           href: "/app/timesheets",
         });
 
@@ -5574,7 +5591,7 @@ export async function sendShiftClockOutReminders(): Promise<{
         )) {
           await sendOrgSms(e.organization_id, {
             to: m.phone!,
-            body: `Sollos: ${firstName} never clocked out — still on the clock ${hoursOpen}h after their job ended. We capped the shift and flagged it for review: sollos3.com/app/timesheets`,
+            body: `Sollos: ${firstName} never clocked out. ${hoursOver}h past their job end (${hoursOpen}h shift). Capped and flagged for review: sollos3.com/app/timesheets`,
             automationKey: "shift_clock_out_reminder",
           });
         }
@@ -5596,6 +5613,24 @@ export async function sendShiftClockOutReminders(): Promise<{
         body: `You've been clocked in for ${hoursOpen}h. If you've finished, tap to clock out.`,
         href: "/field/clock",
       });
+
+      // TEXT the cleaner too — this is the whole prevention mechanism, and
+      // in-app alone does not reach them: the field app has no notification
+      // bell, and web push needs a per-device opt-in most crews never do.
+      // A text is the one channel a person in someone's house will notice.
+      // Not gated on SMS opt-in: staff are employees, not marketing
+      // recipients (same rule as job-assignment texts).
+      if (employeePhone) {
+        try {
+          await sendOrgSms(e.organization_id, {
+            to: employeePhone,
+            body: `Sollos: you've been clocked in ${hoursOpen}h and your job has ended. Tap to clock out: ${process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com"}/field/clock`,
+            automationKey: "shift_clock_out_reminder",
+          });
+        } catch (smsErr) {
+          console.error("[auto] clock-out reminder SMS failed:", e.id, smsErr);
+        }
+      }
       await db
         .from("time_entries")
         .update({

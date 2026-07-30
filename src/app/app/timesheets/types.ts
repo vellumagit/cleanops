@@ -10,6 +10,12 @@ export type TimesheetEntry = {
   notes: string | null;
   /** true when the row came from the Log-hours form (vs live clock-in/out). */
   is_manual: boolean;
+  /** System flagged this shift as implausible — capped by the auto-close
+   *  cron, or far over the scheduled job. Hours are NEVER auto-corrected;
+   *  an owner confirms or fixes them. */
+  needs_review: boolean;
+  /** The auto-close cron wrote this clock-out, not a person. */
+  auto_closed: boolean;
   // Booking details
   booking_id: string | null;
   /** Category for an off-job (no booking) clock-in: manager/admin/training/etc. */
