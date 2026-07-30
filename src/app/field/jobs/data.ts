@@ -13,6 +13,8 @@ export type FieldJob = {
   address: string | null;
   notes: string | null;
   client: { name: string | null; address: string | null } | null;
+  /** The client's standing profile note, read live off the profile. */
+  client_notes: string | null;
   display_address: string | null;
   needs_acceptance: boolean;
   effective_scheduled_at: string;
@@ -78,7 +80,7 @@ export async function fetchMyFieldJobs(
           .from("bookings")
           .select(
             `id, scheduled_at, duration_minutes, status, service_type,
-             address, notes, client:clients ( name, address )`,
+             address, notes, client:clients ( name, address, notes )`,
           )
           .in("id", bookingIds)
           .gte("scheduled_at", since.toISOString())
@@ -184,6 +186,7 @@ export async function fetchMyFieldJobs(
         ? Math.round(b.duration_minutes / crewCount)
         : segDur ?? b.duration_minutes,
       clocked_in_since: clockedInSince.get(b.id) ?? null,
+      client_notes: b.client?.notes ?? null,
     };
   });
   jobs.sort(

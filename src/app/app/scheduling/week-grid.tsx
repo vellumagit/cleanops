@@ -624,6 +624,19 @@ function BookingCard({
             👥 {booking.all_assignee_ids!.length}
           </span>
         )}
+        {/* A card in a 7-column grid has no room for the note itself, so
+            flag that one exists and put the text on hover. The quick-view
+            is one click away for the full thing. */}
+        {(booking.notes || booking.client_notes) && (
+          <span
+            className="inline-flex items-center rounded-full bg-muted px-1.5 py-0.5 text-[9px] font-medium text-muted-foreground"
+            title={[booking.notes, booking.client_notes]
+              .filter(Boolean)
+              .join("\n\n")}
+          >
+            📝
+          </span>
+        )}
       </div>
     </div>
   );

@@ -11,6 +11,8 @@ import {
   Navigation,
   Users,
   Send,
+  FileText,
+  StickyNote,
 } from "lucide-react";
 import {
   Dialog,
@@ -212,6 +214,27 @@ export function BookingQuickView({
           {booking.address && (
             <Row icon={<MapPin className="h-3.5 w-3.5" />} label="Address">
               <span className="whitespace-pre-wrap">{booking.address}</span>
+            </Row>
+          )}
+
+          {/* The scheduler's one roomy surface, so it gets the full note
+              rather than the truncated cue the grids show. */}
+          {booking.notes && (
+            <Row icon={<FileText className="h-3.5 w-3.5" />} label="This job">
+              <span className="whitespace-pre-wrap">{booking.notes}</span>
+            </Row>
+          )}
+
+          {booking.client_notes && (
+            <Row
+              icon={
+                <StickyNote className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
+              }
+              label="Client notes"
+            >
+              <span className="whitespace-pre-wrap text-amber-800 dark:text-amber-300">
+                {booking.client_notes}
+              </span>
             </Row>
           )}
         </dl>

@@ -38,8 +38,9 @@ export default async function BookingsPage({
         hourly_rate_cents,
         series_id,
         address,
+        notes,
         assigned_to,
-        client:clients ( id, name ),
+        client:clients ( id, name, notes ),
         assigned:memberships!bookings_assigned_to_fkey (
           id,
           display_name,
@@ -67,8 +68,9 @@ export default async function BookingsPage({
       hourly_rate_cents: number | null;
       series_id: string | null;
       address: string | null;
+      notes: string | null;
       assigned_to: string | null;
-      client: { id: string; name: string } | null;
+      client: { id: string; name: string; notes: string | null } | null;
       assigned: {
         id: string;
         display_name: string | null;
@@ -220,6 +222,8 @@ export default async function BookingsPage({
     segment_count: segmentCountByBooking.get(b.id) ?? 0,
     series_id: b.series_id ?? null,
     address: b.address ?? null,
+    notes: b.notes ?? null,
+    client_notes: b.client?.notes ?? null,
   }));
 
   // Count active series for this org

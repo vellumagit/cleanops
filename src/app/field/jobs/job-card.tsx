@@ -1,5 +1,11 @@
 import Link from "next/link";
-import { ChevronRight, MapPin, CalendarClock } from "lucide-react";
+import {
+  ChevronRight,
+  MapPin,
+  CalendarClock,
+  FileText,
+  StickyNote,
+} from "lucide-react";
 import { StatusBadge, bookingStatusTone } from "@/components/status-badge";
 import { formatDateTime, formatDurationMinutes, humanizeEnum } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -78,6 +84,26 @@ export function JobCard({ job, tz }: { job: FieldJob; tz: string }) {
           <div className="mt-1.5 flex items-center gap-1.5 text-sm text-muted-foreground">
             <MapPin className="h-3.5 w-3.5 shrink-0" />
             <span className="line-clamp-1">{job.display_address}</span>
+          </div>
+        ) : null}
+        {/*
+         * Both notes, clamped. The list already fetched job.notes and threw
+         * it away — a cleaner had to open the job to learn anything about it.
+         * Clamped rather than full: this is a scan view, and the detail page
+         * is one tap away for the rest.
+         */}
+        {job.notes ? (
+          <div className="mt-1.5 flex items-start gap-1.5 text-sm text-muted-foreground">
+            <FileText className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span className="line-clamp-2 whitespace-pre-wrap">{job.notes}</span>
+          </div>
+        ) : null}
+        {job.client_notes ? (
+          <div className="mt-1.5 flex items-start gap-1.5 text-sm text-amber-700 dark:text-amber-400">
+            <StickyNote className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span className="line-clamp-2 whitespace-pre-wrap">
+              {job.client_notes}
+            </span>
           </div>
         ) : null}
       </div>

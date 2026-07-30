@@ -15,6 +15,7 @@ import {
   X,
   SlidersHorizontal,
   ChevronDown,
+  StickyNote,
 } from "lucide-react";
 import { BookingStatusDropdown } from "./booking-status-dropdown";
 import {
@@ -93,6 +94,8 @@ export type BookingRow = {
   segment_count: number;
   series_id: string | null;
   address: string | null;
+  notes: string | null;
+  client_notes: string | null;
 };
 
 type ViewMode = "table" | "cards";
@@ -572,6 +575,19 @@ function TableView({
                       </span>
                     )}
                   </span>
+                  {/* A 1000-row table can't take a note block, so one
+                      truncated line with the rest on hover. */}
+                  {(r.notes || r.client_notes) && (
+                    <span
+                      className="mt-0.5 block max-w-[22rem] truncate text-xs text-muted-foreground"
+                      title={[r.notes, r.client_notes]
+                        .filter(Boolean)
+                        .join("\n\n")}
+                    >
+                      {r.client_notes ? "📝 " : ""}
+                      {r.notes || r.client_notes}
+                    </span>
+                  )}
                 </td>
                 <td className="px-3 py-2.5 text-muted-foreground hidden sm:table-cell">
                   {r.service_type_label ?? humanizeEnum(r.service_type)}
@@ -766,6 +782,14 @@ function CardsView({
                       </span>
                     )}
                   </div>
+                  {(r.notes || r.client_notes) && (
+                    <div className="flex items-start gap-1.5">
+                      <StickyNote className="mt-0.5 h-3 w-3 shrink-0" />
+                      <span className="line-clamp-2 whitespace-pre-wrap">
+                        {[r.notes, r.client_notes].filter(Boolean).join(" · ")}
+                      </span>
+                    </div>
+                  )}
                 </div>
 
                 <div className="mt-auto flex items-center justify-between gap-2 pt-1 border-t border-border">

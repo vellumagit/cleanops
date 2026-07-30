@@ -626,7 +626,13 @@ function PositionedBooking({
         borderLeftColor: tone,
         zIndex: 2,
       }}
-      title={`${booking.client_name} · ${humanizeEnum(booking.service_type)}`}
+      title={[
+        `${booking.client_name} · ${humanizeEnum(booking.service_type)}`,
+        booking.notes,
+        booking.client_notes,
+      ]
+        .filter(Boolean)
+        .join("\n\n")}
     >
       <div className="flex items-start justify-between gap-1">
         <div className="min-w-0 flex-1">

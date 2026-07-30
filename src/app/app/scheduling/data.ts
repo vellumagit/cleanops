@@ -55,6 +55,10 @@ export type ScheduleBooking = {
   all_assignee_ids: string[];
   client_name: string;
   address: string | null;
+  /** The per-job note. Every scheduler grid + the quick-view read this. */
+  notes: string | null;
+  /** The client's standing profile note, read live off the profile. */
+  client_notes: string | null;
   /** Invoice/quote total in cents for this booking. Used by the
    *  scheduler revenue bar to show projected and earned revenue
    *  for the displayed period. Null when the booking has no
@@ -207,7 +211,8 @@ export async function fetchScheduleWeek(
           address,
           total_cents,
           series_id,
-          client:clients ( name )
+          notes,
+          client:clients ( name, notes )
         `,
       )
       .gte("scheduled_at", weekStart.toISOString())
@@ -329,6 +334,8 @@ export async function fetchScheduleWeek(
       all_assignee_ids: Array.from(all),
       client_name: b.client?.name ?? "—",
       address: b.address,
+      notes: (b as { notes?: string | null }).notes ?? null,
+      client_notes: b.client?.notes ?? null,
       total_cents: (b as { total_cents?: number | null }).total_cents ?? null,
       series_id: (b as { series_id?: string | null }).series_id ?? null,
       assigneeSegments: segmentsByBooking.get(b.id) ?? {},
