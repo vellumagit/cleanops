@@ -135,7 +135,11 @@ export async function sendProductChangelog(options?: {
   const { data: memberRows } = (await db
     .from("memberships")
     .select(
-      "id, organization_id, role, status, contact_email, profile_id, product_updates_unsubscribed_at, product_updates_unsub_token, profile:profiles ( email )",
+      // NOTE: no profile:profiles(email) join — profiles has NO email column.
+      // Emails live on auth.users and are fetched below via the admin API.
+      // Selecting a column that does not exist makes PostgREST error, which
+      // returned zero recipients and made this whole feature a silent no-op.
+      "id, organization_id, role, status, contact_email, profile_id, product_updates_unsubscribed_at, product_updates_unsub_token",
     )
     .eq("role", "owner")
     .eq("status", "active")
@@ -146,9 +150,27 @@ export async function sendProductChangelog(options?: {
       contact_email: string | null;
       product_updates_unsubscribed_at: string | null;
       product_updates_unsub_token: string | null;
-      profile: { email: string | null } | null;
+      profile_id: string | null;
     }> | null;
   };
+
+  /** Auth-user email for a profile. Mirrors getOrgAdminRecipients — the only
+   *  place a member's login email actually lives. */
+  async function authEmail(profileId: string | null): Promise<string | null> {
+    if (!profileId) return null;
+    try {
+      const key = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+      const res = await fetch(
+        `${process.env.NEXT_PUBLIC_SUPABASE_URL}/auth/v1/admin/users/${profileId}`,
+        { headers: { apikey: key, Authorization: `Bearer ${key}` } },
+      );
+      if (!res.ok) return null;
+      const j = (await res.json()) as { email?: string };
+      return j.email ?? null;
+    } catch {
+      return null;
+    }
+  }
 
   const recipients: Recipient[] = [];
   let skipped = 0;
@@ -158,7 +180,7 @@ export async function sendProductChangelog(options?: {
       skipped += 1;
       continue;
     }
-    const email = m.contact_email ?? m.profile?.email ?? null;
+    const email = m.contact_email ?? (await authEmail(m.profile_id));
     if (!email) {
       skipped += 1;
       continue;
