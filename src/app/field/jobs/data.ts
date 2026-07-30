@@ -17,6 +17,11 @@ export type FieldJob = {
   needs_acceptance: boolean;
   effective_scheduled_at: string;
   effective_duration_minutes: number;
+  /**
+   * When THIS member's still-open time entry for this job started, or null if
+   * they aren't on the clock for it. Drives the live counter on the card.
+   */
+  clocked_in_since: string | null;
 };
 
 /** YYYY-MM-DD for an instant in the org's timezone (for day bucketing). */
@@ -86,7 +91,7 @@ export async function fetchMyFieldJobs(
   // (duration ÷ crew), so we need the full crew size per booking and the
   // flag. Both live outside the generated types / this member's own row, so
   // fetch them separately (cast around the untyped column).
-  const [crewRows, flagRows, orgAutoResp] = bookingIds.length
+  const [crewRows, flagRows, orgAutoResp, openEntriesResp] = bookingIds.length
     ? await Promise.all([
         supabase
           .from("booking_assignees" as never)
@@ -112,8 +117,20 @@ export async function fetchMyFieldJobs(
             > | null;
           } | null;
         }>,
+        // This member's open shifts. Scoped to them, not to the crew — the
+        // card answers "how long have I been clocked in", not anyone else.
+        supabase
+          .from("time_entries")
+          .select("booking_id, clock_in_at")
+          .eq("employee_id", membership.id)
+          .is("clock_out_at", null) as unknown as Promise<{
+          data: Array<{
+            booking_id: string | null;
+            clock_in_at: string;
+          }> | null;
+        }>,
       ])
-    : [{ data: [] }, { data: [] }, { data: null }];
+    : [{ data: [] }, { data: [] }, { data: null }, { data: [] }];
   // Org-level default: when on, EVERY team job divides hours automatically.
   const orgDivide = resolveAutomationEnabled(
     orgAutoResp?.data?.automation_settings ?? null,
@@ -129,6 +146,17 @@ export async function fetchMyFieldJobs(
   const divideByBooking = new Map(
     (flagRows.data ?? []).map((r) => [r.id, r.divide_hours_evenly === true]),
   );
+
+  // Earliest open entry wins when a booking somehow has two: the older one is
+  // the one that will look wrong on payroll, so it's the one to surface.
+  const clockedInSince = new Map<string, string>();
+  for (const e of openEntriesResp?.data ?? []) {
+    if (!e.booking_id || !e.clock_in_at) continue;
+    const prev = clockedInSince.get(e.booking_id);
+    if (!prev || e.clock_in_at < prev) {
+      clockedInSince.set(e.booking_id, e.clock_in_at);
+    }
+  }
 
   const jobs: FieldJob[] = (bookingsResp.data ?? []).map((b) => {
     const seg = assigneeByBooking.get(b.id);
@@ -155,6 +183,7 @@ export async function fetchMyFieldJobs(
       effective_duration_minutes: sharesEvenly
         ? Math.round(b.duration_minutes / crewCount)
         : segDur ?? b.duration_minutes,
+      clocked_in_since: clockedInSince.get(b.id) ?? null,
     };
   });
   jobs.sort(

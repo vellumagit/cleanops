@@ -5,6 +5,7 @@ import { formatDateTime, formatDurationMinutes, humanizeEnum } from "@/lib/forma
 import { cn } from "@/lib/utils";
 import type { FieldJob } from "./data";
 import { JobCardComplete } from "./job-card-complete";
+import { JobCardElapsed } from "./job-card-elapsed";
 
 export function JobCard({ job, tz }: { job: FieldJob; tz: string }) {
   const inProgress = job.status === "in_progress";
@@ -58,6 +59,16 @@ export function JobCard({ job, tz }: { job: FieldJob; tz: string }) {
             </StatusBadge>
           )}
         </div>
+        {job.clocked_in_since ? (
+          <div className="mt-1.5">
+            <JobCardElapsed
+              sinceIso={job.clocked_in_since}
+              scheduledStartIso={job.effective_scheduled_at}
+              scheduledMinutes={job.effective_duration_minutes}
+              status={job.status}
+            />
+          </div>
+        ) : null}
         <div className="mt-1.5 text-sm text-muted-foreground">
           {formatDateTime(job.effective_scheduled_at, tz)} ·{" "}
           {formatDurationMinutes(job.effective_duration_minutes)} ·{" "}
