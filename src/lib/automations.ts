@@ -482,10 +482,27 @@ export async function autoInvoiceOnJobComplete(
     // Line items live on a separate table, not as a column on
     // invoices. Insert one starter row describing what was done so
     // the owner sees something when they open the invoice.
+    const { getOrgTimezone: getTzForLine } = await import("@/lib/org-timezone");
+    const { bookingLineLabel } = await import("@/lib/invoice-line-label");
+    const lineTz = await getTzForLine(booking.organization_id);
+
     const { error: liErr } = await db.from("invoice_line_items").insert({
       organization_id: booking.organization_id,
       invoice_id: invoice.id,
-      label: `${booking.service_type_label ?? humanize(booking.service_type)} — ${booking.address ?? "on site"}`,
+      // Carries the job's date, time window and address — this label is the
+      // only description the client ever sees, on both the web invoice and
+      // the PDF.
+      label: bookingLineLabel({
+        serviceLabel:
+          booking.service_type_label ?? humanize(booking.service_type),
+        scheduledAt: booking.scheduled_at,
+        durationMinutes: booking.duration_minutes,
+        address: booking.address,
+        tz: lineTz,
+      }),
+      // Mirrors the billing-cycle path: the line records which job it bills,
+      // so the line-item dedup can see this work is already invoiced.
+      booking_id: booking.id,
       quantity: 1,
       unit_price_cents: subtotalCents,
       sort_order: 0,

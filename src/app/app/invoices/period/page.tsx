@@ -6,8 +6,9 @@ import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { getOrgTimezone } from "@/lib/org-timezone";
+import { bookingLineLabel } from "@/lib/invoice-line-label";
 import { centsToDollarString } from "@/lib/validators/common";
-import { formatDate, humanizeEnum } from "@/lib/format";
+import { humanizeEnum } from "@/lib/format";
 import { fetchInvoiceFormOptions } from "../options";
 import { PeriodInvoiceEditor, type InitialLine } from "./period-invoice-editor";
 
@@ -35,7 +36,9 @@ export default async function PeriodInvoicePage({
     // Candidate bookings for the client in the date range (not cancelled).
     const { data: bookings } = (await supabase
       .from("bookings")
-      .select("id, scheduled_at, service_type, total_cents")
+      .select(
+        "id, scheduled_at, service_type, service_type_label, total_cents, address, duration_minutes",
+      )
       .eq("client_id", client_id as string)
       .gte("scheduled_at", `${from}T00:00:00`)
       .lte("scheduled_at", `${to}T23:59:59.999`)
@@ -46,7 +49,10 @@ export default async function PeriodInvoicePage({
         id: string;
         scheduled_at: string;
         service_type: string;
+        service_type_label: string | null;
         total_cents: number | null;
+        address: string | null;
+        duration_minutes: number | null;
       }> | null;
     };
 
@@ -86,7 +92,16 @@ export default async function PeriodInvoicePage({
     const unbilled = candidates.filter((b) => !billed.has(b.id));
     count = unbilled.length;
     lines = unbilled.map((b) => ({
-      label: `${humanizeEnum(b.service_type)} clean — ${formatDate(b.scheduled_at, tz)}`,
+      // Same helper the two automatic paths use, so a client sees one
+      // consistent line format however the invoice was raised. (The old
+      // string also appended a literal " clean", giving "Deep clean clean".)
+      label: bookingLineLabel({
+        serviceLabel: b.service_type_label ?? humanizeEnum(b.service_type),
+        scheduledAt: b.scheduled_at,
+        durationMinutes: b.duration_minutes ?? null,
+        address: b.address ?? null,
+        tz,
+      }),
       quantity: "1",
       unitPriceDollars:
         b.total_cents != null ? centsToDollarString(b.total_cents) : "",

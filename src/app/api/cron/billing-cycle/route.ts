@@ -66,8 +66,12 @@ type BookingRow = {
   status: string;
   total_cents: number | null;
   service_type: string | null;
+  /** Owner's own name for the service; falls back to humanized service_type. */
+  service_type_label: string | null;
   address: string | null;
   scheduled_at: string;
+  /** Drives the time range on the invoice line. */
+  duration_minutes: number | null;
 };
 
 type InvoiceRow = {
@@ -153,7 +157,9 @@ async function generateClientInvoice(
   // ── Fetch unbilled bookings ──────────────────────────────────────────────
   const { data: bookingsRaw } = (await db
     .from("bookings")
-    .select("id, status, total_cents, service_type, address, scheduled_at")
+    .select(
+      "id, status, total_cents, service_type, service_type_label, address, scheduled_at, duration_minutes",
+    )
     .eq("client_id", client.id)
     .is("billing_invoice_id", null)
     .lt("scheduled_at", cutoff)
@@ -316,6 +322,10 @@ async function generateClientInvoice(
   }
 
   // ── Create line items ────────────────────────────────────────────────────
+  const { getOrgTimezone } = await import("@/lib/org-timezone");
+  const { bookingLineLabel } = await import("@/lib/invoice-line-label");
+  const lineTz = await getOrgTimezone(org.id);
+
   if (client.billing_type === "flat_rate") {
     // Single retainer line item
     const { error: liErr } = await db.from("invoice_line_items").insert({
@@ -337,13 +347,17 @@ async function generateClientInvoice(
     // One line item per completed booking
     for (let i = 0; i < completedBookings.length; i++) {
       const b = completedBookings[i];
-      const date = new Date(b.scheduled_at).toLocaleDateString("en-US", {
-        month: "short",
-        day: "numeric",
-        timeZone: "UTC",
+      // Was formatted in UTC, which pushed any late-afternoon Alberta job
+      // onto the next day's date on the client's invoice.
+      const label = bookingLineLabel({
+        serviceLabel:
+          b.service_type_label ??
+          (b.service_type ? humanizeEnum(b.service_type) : "Service"),
+        scheduledAt: b.scheduled_at,
+        durationMinutes: b.duration_minutes ?? null,
+        address: b.address,
+        tz: lineTz,
       });
-      const svc = b.service_type ? humanizeEnum(b.service_type) : "Service";
-      const label = `${svc} — ${date}${b.address ? ` @ ${b.address}` : ""}`;
 
       const { error: liErr } = await db.from("invoice_line_items").insert({
         organization_id: org.id,
