@@ -19,6 +19,7 @@ import "server-only";
 import { getEnv } from "@/lib/env";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { parsePostalAddress } from "@/lib/postal-address";
 import {
   consumeOAuthState,
   issueOAuthState,
@@ -531,12 +532,22 @@ type SageContact = {
  * (caller can decide whether that's an error).
  *
  * Sync rules:
- *   - Sollos name → Sage contact name
- *   - Sollos email → main_address.email (Sage's main contact-method spot)
- *   - Sollos phone → main_address.telephone
- *   - Sollos address → main_address.address_line_1
+ *   - Sollos name    → Sage contact name
+ *   - Sollos address → main_address AND delivery_address, parsed into
+ *                      address_line_1 / city / region / postal_code /
+ *                      country_id
+ *   - Sollos email   → main_contact_person.email
+ *   - Sollos phone   → main_contact_person.telephone
  *   - contact_type_ids: Sage requires at least one type; we pass
  *     "CUSTOMER" (Sage's built-in type id).
+ *
+ * This mapping was wrong until now: email and telephone were being written
+ * INTO main_address, which has no such fields in Sage's schema — they belong
+ * on main_contact_person. Worse, a client with a null address/email/phone
+ * produced literally `"main_address": {}`, because JSON.stringify drops
+ * undefined values. Sage accepted the contact (201) but every subsequent
+ * sales-invoice POST for that contact 422'd with "Invoice Address is
+ * required." — which is why no invoice has ever reached Sage.
  */
 export async function pushClientToSage(
   clientId: string,
@@ -565,14 +576,52 @@ export async function pushClientToSage(
     console.log(`[sage] pushClientToSage: client ${clientId} not found`);
     return null;
   }
-  if (client.sage_contact_id) {
-    return client.sage_contact_id;
-  }
-
   const conn = await getSageConnection(client.organization_id);
   if (!conn) {
     console.log(
       `[sage] pushClientToSage: org ${client.organization_id} has no active Sage connection`,
+    );
+    return null;
+  }
+
+  if (client.sage_contact_id) {
+    // The contact exists, but it may be one of the address-less ones this
+    // function used to create — and Sage rejects invoices for those forever.
+    // Push the current address up before returning. PUT is idempotent, so a
+    // contact that is already correct simply stays correct.
+    const repair = parsePostalAddress(client.address);
+    if (repair) {
+      try {
+        await sageFetch(
+          client.organization_id,
+          `/contacts/${client.sage_contact_id}`,
+          {
+            method: "PUT",
+            body: JSON.stringify({
+              contact: { main_address: repair, delivery_address: repair },
+            }),
+          },
+        );
+      } catch (err) {
+        // Non-fatal: the invoice now carries its own addresses, so a failed
+        // contact repair no longer blocks the sync.
+        console.error(
+          `[sage] contact ${client.sage_contact_id} address repair failed:`,
+          err,
+        );
+      }
+    }
+    return client.sage_contact_id;
+  }
+
+  // Sage will not accept an invoice for a contact with no address, so refuse
+  // to create a contact we already know is unusable rather than storing an id
+  // that poisons every future sync.
+  const parsed = parsePostalAddress(client.address);
+  if (!parsed) {
+    console.error(
+      `[sage] pushClientToSage: client ${clientId} has no usable address; ` +
+        `Sage rejects invoices for address-less contacts, so not creating one`,
     );
     return null;
   }
@@ -587,11 +636,21 @@ export async function pushClientToSage(
           contact: {
             name: client.name,
             contact_type_ids: ["CUSTOMER"],
-            main_address: {
-              email: client.email ?? undefined,
-              telephone: client.phone ?? undefined,
-              address_line_1: client.address ?? undefined,
-            },
+            main_address: parsed,
+            // Sage treats these as separate records; without a delivery
+            // address the invoice POST fails its own "Delivery Address is
+            // required." rule even when main_address is present.
+            delivery_address: parsed,
+            ...(client.email || client.phone
+              ? {
+                  main_contact_person: {
+                    name: client.name,
+                    ...(client.email ? { email: client.email } : {}),
+                    ...(client.phone ? { telephone: client.phone } : {}),
+                    is_main_contact: true,
+                  },
+                }
+              : {}),
           },
         }),
       },
@@ -651,6 +710,8 @@ export async function pushInvoiceToSage(
         amount_cents, due_date, created_at,
         tax_rate_bps, tax_amount_cents,
         sage_invoice_id,
+        client:clients ( address ),
+        booking:bookings!invoices_booking_id_fkey ( address ),
         line_items:invoice_line_items (
           id, label, quantity, unit_price_cents, sort_order
         )
@@ -670,6 +731,8 @@ export async function pushInvoiceToSage(
       tax_rate_bps: number | null;
       tax_amount_cents: number | null;
       sage_invoice_id: string | null;
+      client: { address: string | null } | null;
+      booking: { address: string | null } | null;
       line_items: Array<{
         id: string;
         label: string;
@@ -748,6 +811,20 @@ export async function pushInvoiceToSage(
     invoice.tax_amount_cents ?? 0,
   );
 
+  // Address for the invoice: the job's own address wins (that's where the
+  // work happened), then the client's address on file. Resolved BEFORE the
+  // POST so a missing address fails with a message naming the client instead
+  // of a raw Sage 422.
+  const invoiceAddress = parsePostalAddress(
+    invoice.booking?.address ?? invoice.client?.address ?? null,
+  );
+  if (!invoiceAddress) {
+    return fail(
+      "Sage needs a service address on this invoice. Add an address to the " +
+        "client (or to the booking) and sync again.",
+    );
+  }
+
   const invoiceDate = new Date(invoice.created_at)
     .toISOString()
     .slice(0, 10);
@@ -811,6 +888,15 @@ export async function pushInvoiceToSage(
             date: invoiceDate,
             due_date: dueDate,
             reference: invoice.number ?? undefined,
+            // Sage will not create a sales invoice it cannot resolve an
+            // address for. It only inherits one from the contact, so an
+            // address-less contact produced a 422 naming BOTH rules:
+            // "Invoice Address is required." + "Delivery Address is
+            // required." Sending them explicitly makes the invoice
+            // self-sufficient — it no longer depends on the contact record
+            // being correct.
+            main_address: invoiceAddress,
+            delivery_address: invoiceAddress,
             // Required by Sage US/CA — without it the POST 422s with
             // "tax_address_region_id is required".
             tax_address_region_id: taxRegionId,
