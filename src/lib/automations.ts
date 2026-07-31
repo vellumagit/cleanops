@@ -5635,6 +5635,10 @@ export async function sendShiftClockOutReminders(): Promise<{
           title: "A shift was auto-closed",
           body: `${firstName} was still clocked in ${hoursOver}h past the end of their job (${hoursOpen}h total). We capped the shift and flagged it for review.`,
           href: "/app/timesheets",
+          // Email as well as in-app/push. This has to land even when nobody
+          // is looking at the app and the owner has no usable phone — which
+          // is exactly how a capped shift went unnoticed for hours.
+          channels: { email: true },
         });
 
         for (const m of await resolveResponsiblePhones(
@@ -5654,7 +5658,18 @@ export async function sendShiftClockOutReminders(): Promise<{
       const lastMs = e.last_reminder_at
         ? new Date(e.last_reminder_at).getTime()
         : 0;
-      if (now - lastMs < reminderIntervalMinutes * 60_000) continue;
+      // Tolerance matters: this cron runs every 30 minutes and the default
+      // interval is also 30. A tick landing at +29m38s failed a strict
+      // comparison and skipped, so the next nag came an hour later — the
+      // reminders went out at half the configured rate. Observed live:
+      // reminder_count 2 across a two-hour overrun, at 17:00 and 18:01.
+      // Subtracting a minute lets a tick that is fractionally early still
+      // count, without ever firing two nags inside one cron period.
+      const intervalMs = Math.max(
+        60_000,
+        reminderIntervalMinutes * 60_000 - 60_000,
+      );
+      if (now - lastMs < intervalMs) continue;
 
       await notify({
         audience: "membership",
@@ -6241,6 +6256,8 @@ export async function autoCompletePastBookings(): Promise<{ completed: number }>
             : `${unstaffed.length} past jobs were never staffed`,
         body: `${names}${unstaffed.length > 3 ? ` and ${unstaffed.length - 3} more` : ""} — nobody was assigned and the time has passed. These were NOT completed or invoiced. Check what happened, then close them out by hand.`,
         href: "/app/bookings",
+        // Work that never happened and was never billed. Email it.
+        channels: { email: true },
       });
       console.log(
         `[auto] ${unstaffed.length} unstaffed past booking(s) left alone for org ${org.id}`,

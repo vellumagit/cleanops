@@ -2041,3 +2041,44 @@ export function invoiceReviewDigestEmail(args: {
   }Review: ${args.invoicesUrl}\n\nNo action needed — hold or edit anything before it sends.`;
   return { subject, html, text };
 }
+
+/**
+ * Generic staff alert — the email twin of an in-app notification.
+ *
+ * Deliberately content-agnostic: notify() passes whatever title/body the
+ * caller wrote, so one template covers a capped shift, an unstaffed job, a
+ * failed invoice send. Exists because management escalations used to leave
+ * the building by SMS only, and an owner without a usable phone number got
+ * nothing at all.
+ */
+export function renderStaffAlertEmail(args: {
+  name: string;
+  title: string;
+  body: string;
+  href: string;
+  brandColor?: string;
+  logoUrl?: string;
+}) {
+  const subject = `Sollos: ${args.title}`;
+  const accent = args.brandColor
+    ? `#${args.brandColor.replace(/^#/, "")}`
+    : DEFAULT_BRAND;
+
+  const html = layout(
+    `
+    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;letter-spacing:-0.02em;color:#18181b;line-height:1.3;">${escapeHtml(args.title)}</h1>
+    <p style="margin:0 0 20px;font-size:14px;line-height:1.55;color:#52525b;">
+      ${escapeHtml(args.body)}
+    </p>
+    ${button("Open Sollos", args.href, accent)}
+    <p style="margin:20px 0 0;font-size:12px;line-height:1.5;color:#a1a1aa;">
+      You're getting this because you manage this organisation in Sollos.
+    </p>
+    `,
+    { brandColor: args.brandColor, logoUrl: args.logoUrl },
+  );
+
+  const text = `${args.title}\n\n${args.body}\n\n${args.href}`;
+
+  return { subject, html, text };
+}

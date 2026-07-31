@@ -631,6 +631,8 @@ export async function runInvoiceAutoSend(): Promise<{
           title: "An invoice couldn't auto-send",
           body: `Invoice ${inv.number ?? inv.id.slice(0, 8)} wasn't sent automatically: ${result.error}`,
           href: `/app/invoices/${inv.id}`,
+                  // Money that did not go out. Email it.
+          channels: { email: true },
         });
       } catch (notifyErr) {
         console.error("[invoice-send] auto-send failure notify failed:", notifyErr);

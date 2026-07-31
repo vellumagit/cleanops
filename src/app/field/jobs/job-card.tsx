@@ -65,6 +65,21 @@ export function JobCard({ job, tz }: { job: FieldJob; tz: string }) {
             </StatusBadge>
           )}
         </div>
+        {/*
+         * In progress, but this person's clock is NOT running — reachable
+         * whenever the auto-close cron caps a forgotten shift, which closes
+         * the time entry and leaves the booking open. Without this the card
+         * showed a bare "End job" and no timer, which reads as "the timer is
+         * broken" rather than "the system stopped your clock hours ago".
+         */}
+        {inProgress && !job.clocked_in_since ? (
+          <div className="mt-1.5">
+            <span className="inline-flex items-center gap-1.5 rounded-md bg-amber-500/15 px-2 py-0.5 text-xs font-semibold text-amber-800 dark:text-amber-300">
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" />
+              Job still open · you&rsquo;re not on the clock
+            </span>
+          </div>
+        ) : null}
         {job.clocked_in_since ? (
           <div className="mt-1.5">
             <JobCardElapsed

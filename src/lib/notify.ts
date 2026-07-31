@@ -36,8 +36,15 @@ type NotifyBase = {
   href: string;
   /** Notification `type` (defaults to "general"). */
   type?: string;
-  /** Channels — both on by default. */
-  channels?: { inApp?: boolean; push?: boolean };
+  /**
+   * Channels. inApp and push are on by default; email is OPT-IN.
+   *
+   * Email defaults off deliberately — turning it on globally would mail an
+   * owner for every routine event. Switch it on for escalations that must
+   * land even when nobody is looking at the app: a capped shift, an
+   * unstaffed job, a failed invoice send.
+   */
+  channels?: { inApp?: boolean; push?: boolean; email?: boolean };
   /** Push behaviour. sticky = stays in the shade until dismissed (Android);
    *  quiet = updates without re-buzzing; tag = explicit collapse key so a
    *  repeating nudge rewrites itself instead of stacking. */
@@ -68,12 +75,96 @@ async function membershipIdsForRoles(
   return (data ?? []).map((m) => m.id);
 }
 
+
+/**
+ * Resolve a staff member's address. contact_email on the membership wins;
+ * otherwise the identity they sign in with, which lives in auth.users rather
+ * than public.profiles.
+ */
+async function staffEmail(
+  db: AdminDb,
+  membershipId: string,
+): Promise<{ email: string; name: string } | null> {
+  const { data } = (await db
+    .from("memberships")
+    .select("display_name, contact_email, profile:profiles ( id, full_name )")
+    .eq("id", membershipId)
+    .maybeSingle()) as unknown as {
+    data: {
+      display_name: string | null;
+      contact_email: string | null;
+      profile: { id: string; full_name: string | null } | null;
+    } | null;
+  };
+  if (!data) return null;
+  const name = data.display_name ?? data.profile?.full_name ?? "there";
+
+  const direct = data.contact_email?.trim();
+  if (direct) return { email: direct, name };
+
+  const profileId = data.profile?.id;
+  if (!profileId) return null;
+  try {
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+    const res = await fetch(
+      `${process.env.NEXT_PUBLIC_SUPABASE_URL}/auth/v1/admin/users/${profileId}`,
+      { headers: { apikey: key, Authorization: `Bearer ${key}` } },
+    );
+    if (!res.ok) return null;
+    const j = (await res.json()) as { email?: string };
+    return j.email ? { email: j.email, name } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Email the same content the in-app row carries.
+ *
+ * Exists because SMS was the only channel that ever left the building for
+ * management escalations, and an owner with no phone (or a placeholder one)
+ * got nothing at all when a shift was capped.
+ */
+async function emailRecipients(
+  db: AdminDb,
+  input: NotifyInput,
+  recipientIds: string[],
+  type: string,
+): Promise<void> {
+  const { sendOrgEmail } = await import("@/lib/email");
+  const { renderStaffAlertEmail } = await import("@/lib/email-templates");
+  const site = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+  const url = input.href.startsWith("http") ? input.href : `${site}${input.href}`;
+
+  for (const id of recipientIds) {
+    const who = await staffEmail(db, id);
+    if (!who) {
+      console.error(`[notify] no email for membership ${id} (type="${type}")`);
+      continue;
+    }
+    const { subject, html, text } = renderStaffAlertEmail({
+      name: who.name,
+      title: input.title,
+      body: input.body,
+      href: url,
+    });
+    await sendOrgEmail(input.organizationId, {
+      to: who.email,
+      toName: who.name,
+      subject,
+      html,
+      text,
+    });
+  }
+}
+
 export async function notify(input: NotifyInput): Promise<void> {
   try {
     const db = createSupabaseAdminClient();
     const type = input.type ?? "general";
     const doInApp = input.channels?.inApp ?? true;
     const doPush = input.channels?.push ?? true;
+    const doEmail = input.channels?.email ?? false;
     const push = {
       title: input.title,
       body: input.body,
@@ -114,7 +205,7 @@ export async function notify(input: NotifyInput): Promise<void> {
 
     if (recipientIds === null) {
       if (doInApp) {
-        await (db.from("notifications").insert({
+        const { error: insErr } = (await db.from("notifications").insert({
           organization_id: input.organizationId,
           recipient_membership_id: null,
           type,
@@ -122,7 +213,12 @@ export async function notify(input: NotifyInput): Promise<void> {
           body: input.body,
           href: input.href,
           min_role: minRole,
-        } as never) as unknown as Promise<unknown>);
+        } as never)) as unknown as { error: { message: string } | null };
+        if (insErr) {
+          console.error(
+            `[notify] in-app insert FAILED (type="${type}", audience=org-wide): ${insErr.message}`,
+          );
+        }
       }
       if (doPush) await sendPushToOrg(input.organizationId, push);
       return;
@@ -131,7 +227,11 @@ export async function notify(input: NotifyInput): Promise<void> {
     if (recipientIds.length === 0) return;
 
     if (doInApp) {
-      await (db.from("notifications").insert(
+      // The result used to be discarded. notifications.type is an ENUM, and
+      // seven of the eight types this app sends were never members of it —
+      // so every insert failed 22P02 and nobody found out for weeks. Check
+      // it, and shout, because a silent notification is worse than none.
+      const { error: insErr } = (await db.from("notifications").insert(
         recipientIds.map((id) => ({
           organization_id: input.organizationId,
           recipient_membership_id: id,
@@ -141,13 +241,19 @@ export async function notify(input: NotifyInput): Promise<void> {
           href: input.href,
           min_role: minRole,
         })) as never,
-      ) as unknown as Promise<unknown>);
+      )) as unknown as { error: { message: string } | null };
+      if (insErr) {
+        console.error(
+          `[notify] in-app insert FAILED (type="${type}", audience=${input.audience}): ${insErr.message}`,
+        );
+      }
     }
     if (doPush) {
       await Promise.allSettled(
         recipientIds.map((id) => sendPushToMembership(id, push)),
       );
     }
+    if (doEmail) await emailRecipients(db, input, recipientIds, type);
   } catch (err) {
     console.error("[notify] failed:", err);
   }
