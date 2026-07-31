@@ -59,6 +59,36 @@ describe("bookingLineLabel", () => {
     expect(label).toBe("Standard clean · Thu, Jul 30, 2026, 9:00 AM–10:00 AM");
   });
 
+  it("falls back to the client's address when the booking has none", () => {
+    // A booking created without a snapshotted address used to bill as
+    // "on site" even though the client's profile held a full street address.
+    expect(
+      bookingLineLabel({
+        serviceLabel: "Standard clean",
+        scheduledAt: "2026-07-30T15:00:00Z",
+        durationMinutes: 120,
+        address: null,
+        fallbackAddress: "4033 32 St NW, Edmonton, AB",
+        tz: EDM,
+      }),
+    ).toBe(
+      "Standard clean · Thu, Jul 30, 2026, 9:00 AM–11:00 AM · 4033 32 St NW, Edmonton, AB",
+    );
+  });
+
+  it("prefers the booking's own address over the client's", () => {
+    expect(
+      bookingLineLabel({
+        serviceLabel: "Standard clean",
+        scheduledAt: "2026-07-30T15:00:00Z",
+        durationMinutes: 60,
+        address: "Unit 12, 500 Jasper Ave",
+        fallbackAddress: "4033 32 St NW",
+        tz: EDM,
+      }),
+    ).toContain("Unit 12, 500 Jasper Ave");
+  });
+
   it("shows a start time only when there is no duration", () => {
     expect(
       bookingLineLabel({

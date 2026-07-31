@@ -55,6 +55,8 @@ type ClientRow = {
   id: string;
   name: string;
   email: string | null;
+  /** Fallback service location when a booking has no address of its own. */
+  address: string | null;
   billing_cadence: "on_demand" | "biweekly" | "monthly";
   billing_type: "itemized" | "flat_rate";
   flat_rate_cents: number | null;
@@ -356,6 +358,7 @@ async function generateClientInvoice(
         scheduledAt: b.scheduled_at,
         durationMinutes: b.duration_minutes ?? null,
         address: b.address,
+        fallbackAddress: client.address,
         tz: lineTz,
       });
 
@@ -473,7 +476,7 @@ export async function GET(request: Request) {
     const { data: clientsRaw } = (await db
       .from("clients")
       .select(
-        "id, name, email, billing_cadence, billing_type, flat_rate_cents, organization_id",
+        "id, name, email, address, billing_cadence, billing_type, flat_rate_cents, organization_id",
       )
       .in("billing_cadence", activeCadences)
       .is("archived_at" as never, null as never)) as unknown as {

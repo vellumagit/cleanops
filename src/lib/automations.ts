@@ -229,7 +229,7 @@ export async function autoInvoiceOnJobComplete(
     const { data: booking } = (await db
       .from("bookings")
       .select(
-        "id, organization_id, client_id, total_cents, service_type, service_type_label, address, duration_minutes, scheduled_at, billing_invoice_id",
+        "id, organization_id, client_id, total_cents, service_type, service_type_label, address, duration_minutes, scheduled_at, billing_invoice_id, client:clients ( address )",
       )
       .eq("id", bookingId)
       .maybeSingle()) as unknown as {
@@ -244,6 +244,7 @@ export async function autoInvoiceOnJobComplete(
         duration_minutes: number;
         scheduled_at: string;
         billing_invoice_id: string | null;
+        client: { address: string | null } | null;
       } | null;
     };
 
@@ -498,6 +499,7 @@ export async function autoInvoiceOnJobComplete(
         scheduledAt: booking.scheduled_at,
         durationMinutes: booking.duration_minutes,
         address: booking.address,
+        fallbackAddress: booking.client?.address ?? null,
         tz: lineTz,
       }),
       // Mirrors the billing-cycle path: the line records which job it bills,

@@ -34,13 +34,23 @@ export function bookingLineLabel({
   scheduledAt,
   durationMinutes,
   address,
+  fallbackAddress,
   tz,
 }: {
   /** service_type_label, or a humanized service_type. */
   serviceLabel: string;
   scheduledAt: string | null;
   durationMinutes: number | null;
+  /** The booking's own address. */
   address: string | null;
+  /**
+   * The client's address on file, used when the booking carries none. The
+   * field job card has always fallen back this way (`b.address ??
+   * b.client?.address`); invoices did not, so a booking created without a
+   * snapshotted address billed as "on site" even when the client's profile
+   * held a full street address.
+   */
+  fallbackAddress?: string | null;
   /** IANA zone, e.g. "America/Edmonton". */
   tz: string;
 }): string {
@@ -78,7 +88,7 @@ export function bookingLineLabel({
 
   // Omitted entirely when absent — the old "on site" placeholder told a
   // client nothing they didn't already know.
-  const addr = address?.trim();
+  const addr = address?.trim() || fallbackAddress?.trim();
   if (addr) parts.push(addr);
 
   return parts.join(" · ");
