@@ -119,3 +119,98 @@ export async function resolveTeamDivision(
     return noDivide;
   }
 }
+
+/**
+ * resolveTeamDivision for many bookings at once.
+ *
+ * Same rule, three queries total instead of two per booking. The office
+ * timesheet needs this for every row it renders; calling the single-booking
+ * version in a loop was 2N round-trips on a page that routinely lists
+ * hundreds of entries.
+ *
+ * Returns effective (per-person) minutes keyed by booking id. Bookings absent
+ * from the map have no division applied — callers should fall back to the
+ * booking's own duration.
+ */
+export async function resolveTeamDivisionBatch(
+  bookings: Array<{ id: string; duration_minutes: number | null }>,
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  const ids = bookings.map((b) => b.id).filter(Boolean);
+  if (ids.length === 0) return out;
+
+  try {
+    const db = createSupabaseAdminClient();
+
+    const [crewRes, bkRes] = await Promise.all([
+      db
+        .from("booking_assignees")
+        .select("booking_id")
+        .in("booking_id", ids) as unknown as Promise<{
+        data: Array<{ booking_id: string }> | null;
+      }>,
+      db
+        .from("bookings" as never)
+        .select("id, divide_hours_evenly, organization_id")
+        .in("id" as never, ids as never) as unknown as Promise<{
+        data: Array<{
+          id: string;
+          divide_hours_evenly: boolean | null;
+          organization_id: string;
+        }> | null;
+      }>,
+    ]);
+
+    const crewCount = new Map<string, number>();
+    for (const r of crewRes.data ?? []) {
+      crewCount.set(r.booking_id, (crewCount.get(r.booking_id) ?? 0) + 1);
+    }
+
+    // One org lookup per distinct org, not per booking. In practice the
+    // timesheet is single-org, so this is one query.
+    const orgDivide = new Map<string, boolean>();
+    for (const orgId of new Set((bkRes.data ?? []).map((b) => b.organization_id))) {
+      const { data: org } = (await db
+        .from("organizations")
+        .select("automation_settings")
+        .eq("id", orgId)
+        .maybeSingle()) as unknown as {
+        data: {
+          automation_settings: Record<
+            string,
+            { enabled?: boolean } | undefined
+          > | null;
+        } | null;
+      };
+      orgDivide.set(
+        orgId,
+        resolveAutomationEnabled(
+          org?.automation_settings ?? null,
+          "divide_crew_hours",
+        ),
+      );
+    }
+
+    const durationById = new Map(
+      bookings.map((b) => [b.id, b.duration_minutes ?? 0]),
+    );
+
+    for (const bk of bkRes.data ?? []) {
+      const full = durationById.get(bk.id) ?? 0;
+      if (full <= 0) continue;
+      const crew = crewCount.get(bk.id) ?? 0;
+      if (crew < 2) {
+        out.set(bk.id, full);
+        continue;
+      }
+      const divideOn =
+        bk.divide_hours_evenly === true ||
+        orgDivide.get(bk.organization_id) === true;
+      out.set(bk.id, divideOn ? Math.max(1, Math.round(full / crew)) : full);
+    }
+  } catch {
+    // Fall through with whatever we resolved — callers use the booking's own
+    // duration for anything missing, which is the pre-division behaviour.
+  }
+  return out;
+}

@@ -386,9 +386,19 @@ export function TimesheetsView({
           without this panel the system flagging a bad shift made it LESS
           visible than leaving it open. */}
       {(() => {
-        const flagged = filteredEntries.filter((e) => e.needs_review);
+        // Two ways in: the cron capped it (needs_review), or the recorded
+        // hours simply exceeded what the job allowed. The second is the
+        // common case — nobody forgot anything, the job just ran long — and
+        // it went completely unsurfaced before.
+        const flagged = filteredEntries.filter(
+          (e) => e.needs_review || e.over_allotted_minutes > 0,
+        );
         if (flagged.length === 0) return null;
         const hrs = flagged.reduce((sum, e) => sum + (e.actual_minutes ?? 0), 0) / 60;
+        const cappedCount = flagged.filter((e) => e.needs_review).length;
+        const overCount = flagged.filter(
+          (e) => !e.needs_review && e.over_allotted_minutes > 0,
+        ).length;
         return (
           <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 dark:border-amber-900/40 dark:bg-amber-950/30">
             <div className="flex items-start gap-3">
@@ -401,10 +411,26 @@ export function TimesheetsView({
                   · {hrs.toFixed(1)}h
                 </div>
                 <p className="text-xs text-amber-900/80 dark:text-amber-300/80">
-                  Nobody clocked out, so the system capped these and stopped
-                  the clock. The hours have NOT been changed — look for the
-                  amber REVIEW tag below, then confirm or correct each one.
-                  Payroll will not run while shifts are awaiting review.
+                  {cappedCount > 0 && (
+                    <>
+                      <span className="font-medium">{cappedCount}</span>{" "}
+                      {cappedCount === 1 ? "was" : "were"} capped because
+                      nobody clocked out — the clock was stopped but the hours
+                      have NOT been changed (amber{" "}
+                      <span className="font-semibold">REVIEW</span> tag).{" "}
+                    </>
+                  )}
+                  {overCount > 0 && (
+                    <>
+                      <span className="font-medium">{overCount}</span> ran past
+                      the time allotted for the job (orange{" "}
+                      <span className="font-semibold">+time</span> tag) —
+                      that&rsquo;s not automatically wrong, it just hasn&rsquo;t
+                      been confirmed.{" "}
+                    </>
+                  )}
+                  Confirm or correct each one. Payroll will not run while
+                  capped shifts are awaiting review.
                 </p>
               </div>
             </div>
@@ -857,6 +883,16 @@ export function TimesheetsView({
                                       className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold text-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
                                     >
                                       REVIEW
+                                    </span>
+                                  )}
+                                  {r.over_allotted_minutes > 0 && (
+                                    <span
+                                      title={`Ran ${formatDurationMinutes(
+                                        r.over_allotted_minutes,
+                                      )} past the time allotted for this job. Not necessarily wrong — confirm it before paying.`}
+                                      className="rounded-full bg-orange-100 px-1.5 py-0.5 text-[9px] font-semibold text-orange-800 dark:bg-orange-950/40 dark:text-orange-300"
+                                    >
+                                      +{formatDurationMinutes(r.over_allotted_minutes)}
                                     </span>
                                   )}
                                 </div>

@@ -3,6 +3,8 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { PageShell } from "@/components/page-shell";
 import { memberDisplayName } from "@/lib/member-display";
+import { closedEntryOverrunMinutes } from "@/lib/shift-overrun";
+import { resolveTeamDivisionBatch } from "@/lib/crew-hours";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { maybeDecryptField } from "@/lib/field-encryption";
 import { TimesheetsView } from "./timesheets-view";
@@ -183,6 +185,29 @@ export default async function TimesheetsPage({
   // time_entries.notes is encrypted at write; legacy plaintext rows
   // pass through unchanged via maybeDecryptField (imported at top).
 
+  // Per-person allotment for the over-allotted flag. estimated_minutes below
+  // is the FULL booking length (what "completion" has always compared
+  // against), but the clock-out cron and the field card both measure a
+  // person against their SHARE of a team job. Using the full length here
+  // would let a cleaner work a 6h two-person job solo, alone, for six hours
+  // and show as perfectly on time — while the cron had already flagged them
+  // three hours over. Same rule, batched.
+  const allottedByBooking = await resolveTeamDivisionBatch(
+    Array.from(
+      new Map(
+        (entries ?? [])
+          .filter((e) => e.booking?.id)
+          .map((e) => [
+            e.booking!.id,
+            {
+              id: e.booking!.id,
+              duration_minutes: e.booking!.duration_minutes ?? null,
+            },
+          ]),
+      ).values(),
+    ),
+  );
+
   // Build entries
   const rows: TimesheetEntry[] = (entries ?? []).map((e) => {
     const isOpen = !e.clock_out_at;
@@ -284,6 +309,14 @@ export default async function TimesheetsPage({
       punctuality_minutes: punctualityMinutes,
       completion,
       completion_diff_minutes: completionDiffMinutes,
+      over_allotted_minutes: closedEntryOverrunMinutes({
+        clockInIso: e.clock_in_at,
+        clockOutIso: e.clock_out_at,
+        scheduledStartIso: scheduledAt,
+        scheduledMinutes: e.booking?.id
+          ? allottedByBooking.get(e.booking.id) ?? estimatedMinutes
+          : estimatedMinutes,
+      }),
       // Pay
       pay_rate_cents: payRateCents,
       pay_type: payType,

@@ -5451,12 +5451,10 @@ export async function sendOvertimeWarnings(): Promise<{ emailsSent: number }> {
 // mark it, and let a human say what actually happened.
 // ─────────────────────────────────────────────────────────────────
 
-/** Grace period past the expected end before the shift is capped. */
-const SHIFT_AUTO_CLOSE_GRACE_MIN = 120;
-/** Minimum gap between nags to one employee about one shift. */
-const SHIFT_REMINDER_INTERVAL_MIN = 30;
-/** Expected length for a clock-in with no booking attached. */
-const STANDALONE_SHIFT_MAX_MIN = 12 * 60;
+// Grace period and nag interval are per-org now (Settings -> Automations),
+// resolved from automation_settings via resolveClockOutThresholds. The old
+// hardcoded 120/30 survive as the defaults, so an org that never touches the
+// setting behaves exactly as before.
 
 export async function sendShiftClockOutReminders(): Promise<{
   considered: number;
@@ -5511,7 +5509,15 @@ export async function sendShiftClockOutReminders(): Promise<{
   let autoClosed = 0;
   if (!open || open.length === 0) return { considered, reminded, autoClosed };
 
+  const { resolveClockOutThresholds, STANDALONE_SHIFT_MAX_MIN } = await import(
+    "@/lib/shift-overrun"
+  );
+
   const orgEnabled = new Map<string, boolean>();
+  const orgThresholds = new Map<
+    string,
+    ReturnType<typeof resolveClockOutThresholds>
+  >();
 
   for (const e of open) {
     try {
@@ -5524,6 +5530,22 @@ export async function sendShiftClockOutReminders(): Promise<{
         orgEnabled.set(e.organization_id, enabled);
       }
       if (!enabled) continue;
+
+      let thresholds = orgThresholds.get(e.organization_id);
+      if (thresholds === undefined) {
+        const { data: orgRow } = (await db
+          .from("organizations")
+          .select("automation_settings")
+          .eq("id", e.organization_id)
+          .maybeSingle()) as unknown as {
+          data: { automation_settings: Record<string, unknown> | null } | null;
+        };
+        thresholds = resolveClockOutThresholds(
+          orgRow?.automation_settings ?? null,
+        );
+        orgThresholds.set(e.organization_id, thresholds);
+      }
+      const { graceMinutes, reminderIntervalMinutes } = thresholds;
 
       const clockInMs = new Date(e.clock_in_at).getTime();
 
@@ -5565,9 +5587,9 @@ export async function sendShiftClockOutReminders(): Promise<{
         null;
 
       // ---- Cap it ----
-      if (minutesOver >= SHIFT_AUTO_CLOSE_GRACE_MIN) {
+      if (minutesOver >= graceMinutes) {
         const cappedIso = new Date(
-          expectedEndMs + SHIFT_AUTO_CLOSE_GRACE_MIN * 60_000,
+          expectedEndMs + graceMinutes * 60_000,
         ).toISOString();
 
         // Guard on clock_out_at IS NULL so a human closing the shift in the
@@ -5613,7 +5635,7 @@ export async function sendShiftClockOutReminders(): Promise<{
       const lastMs = e.last_reminder_at
         ? new Date(e.last_reminder_at).getTime()
         : 0;
-      if (now - lastMs < SHIFT_REMINDER_INTERVAL_MIN * 60_000) continue;
+      if (now - lastMs < reminderIntervalMinutes * 60_000) continue;
 
       await notify({
         audience: "membership",

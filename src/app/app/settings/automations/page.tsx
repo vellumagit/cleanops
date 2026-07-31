@@ -15,6 +15,8 @@ import {
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { PageShell } from "@/components/page-shell";
+import { resolveClockOutThresholds } from "@/lib/shift-overrun";
+import { ClockOutThresholds } from "./clock-out-thresholds";
 import { SubmitButton } from "@/components/submit-button";
 import {
   resolveAutomationEnabled,
@@ -242,7 +244,7 @@ const STAGES: Stage[] = [
         key: "shift_clock_out_reminder",
         title: "Forgotten clock-out reminders",
         description:
-          "Reminds a cleaner who is still clocked in past their job's expected end, then repeats every 30 minutes. Two hours past the end, the shift is capped, flagged for review, and your managers are notified (plus a text to the owner). Hours are never silently reduced — you confirm or correct the flagged shift yourself.",
+          "Reminds a cleaner who is still clocked in past their job's expected end, then repeats. Once your grace period is up, the shift is capped, flagged for review, and your managers are notified (plus a text to the owner). Hours are never silently reduced — you confirm or correct the flagged shift yourself. Set both intervals below.",
         trigger: "Every 30 minutes",
       },
       {
@@ -521,6 +523,9 @@ export default async function AutomationsPage() {
   };
 
   const settings = org?.automation_settings ?? {};
+  const clockOutThresholds = resolveClockOutThresholds(
+    org?.automation_settings ?? null,
+  );
   const contactDefault = org?.default_contact_preference ?? "email";
   const masterOn = org?.automations_enabled === true;
   const smsEnabled = org?.sms_enabled === true;
@@ -657,6 +662,18 @@ export default async function AutomationsPage() {
                           </SubmitButton>
                         </form>
                       </div>
+                      {/* Configuration that belongs to one automation lives
+                          under it, not on a separate settings page — the
+                          numbers only mean anything next to the description
+                          that explains them. */}
+                      {a.key === "shift_clock_out_reminder" && on && (
+                        <ClockOutThresholds
+                          graceMinutes={clockOutThresholds.graceMinutes}
+                          reminderIntervalMinutes={
+                            clockOutThresholds.reminderIntervalMinutes
+                          }
+                        />
+                      )}
                     </li>
                   );
                 })}

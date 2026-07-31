@@ -30,6 +30,17 @@ export type TimesheetEntry = {
   punctuality_minutes: number;
   completion: "under" | "on_target" | "over" | null;
   completion_diff_minutes: number;
+  /**
+   * Whole minutes this entry ran past the job's allotted time, measured from
+   * max(scheduled start, clock-in) + allotted length — the same arithmetic
+   * the field card and the clock-out cron use. 0 when within the allotment
+   * or when the job has no length to be over.
+   *
+   * Derived at read time rather than stored, so it is correct for every
+   * historical entry the moment this shipped and can never drift from the
+   * booking if someone edits the job's duration afterwards.
+   */
+  over_allotted_minutes: number;
   // Pay
   pay_rate_cents: number;
   pay_type: "hourly" | "flat" | "percent";

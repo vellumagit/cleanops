@@ -358,11 +358,20 @@ export async function toggleAutomationAction(formData: FormData) {
     .select("automation_settings")
     .eq("id", membership.organization_id)
     .maybeSingle()) as unknown as {
-    data: { automation_settings: Record<string, { enabled: boolean }> } | null;
+    data: {
+      automation_settings: Record<string, Record<string, unknown>> | null;
+    } | null;
   };
 
   const current = org?.automation_settings ?? {};
-  const updated = { ...current, [key]: { enabled } };
+  // Spread the EXISTING entry, don't replace it. Some automations store
+  // numeric config beside `enabled` (shift_clock_out_reminder's thresholds);
+  // `{ enabled }` alone would silently reset those every time the switch
+  // was flipped.
+  const updated = {
+    ...current,
+    [key]: { ...(current[key] ?? {}), enabled },
+  };
 
   await admin
     .from("organizations")
@@ -387,4 +396,65 @@ export async function toggleAutomationAction(formData: FormData) {
   }
 
   revalidatePath("/app/settings/automations", "page");
+}
+
+/**
+ * Set the forgotten-clock-out thresholds for this org.
+ *
+ * Both live beside `enabled` in automation_settings.shift_clock_out_reminder
+ * rather than in their own columns — they are configuration for one
+ * automation, and keeping them together is what lets the cron read the
+ * toggle and its settings in the same row it already fetches.
+ *
+ * Values are snapped to 5-minute steps and clamped by
+ * resolveClockOutThresholds, so a hand-crafted form post can't disable the
+ * guard by asking for a 30-day grace period.
+ */
+export async function updateClockOutThresholdsAction(
+  formData: FormData,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { membership } = await getActionContext();
+  if (!["owner", "admin"].includes(membership.role)) {
+    return { ok: false, error: "You don't have permission to change this." };
+  }
+
+  const { resolveClockOutThresholds } = await import("@/lib/shift-overrun");
+  const requested = resolveClockOutThresholds({
+    shift_clock_out_reminder: {
+      grace_minutes: Number(formData.get("grace_minutes")),
+      reminder_interval_minutes: Number(
+        formData.get("reminder_interval_minutes"),
+      ),
+    },
+  });
+
+  const admin = createSupabaseAdminClient();
+  const { data: org } = (await admin
+    .from("organizations")
+    .select("automation_settings")
+    .eq("id", membership.organization_id)
+    .maybeSingle()) as unknown as {
+    data: {
+      automation_settings: Record<string, Record<string, unknown>> | null;
+    } | null;
+  };
+
+  const current = org?.automation_settings ?? {};
+  const updated = {
+    ...current,
+    shift_clock_out_reminder: {
+      ...(current["shift_clock_out_reminder"] ?? {}),
+      grace_minutes: requested.graceMinutes,
+      reminder_interval_minutes: requested.reminderIntervalMinutes,
+    },
+  };
+
+  const { error } = await admin
+    .from("organizations")
+    .update({ automation_settings: updated } as never)
+    .eq("id", membership.organization_id);
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/app/settings/automations", "page");
+  return { ok: true };
 }

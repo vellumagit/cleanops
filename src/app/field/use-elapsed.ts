@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 
+
 /** "3h 12m" / "47m" — the number a person needs to notice something is wrong. */
 export function formatElapsed(ms: number): string {
   const totalMin = Math.max(0, Math.floor(ms / 60_000));
@@ -51,32 +52,10 @@ export function useElapsed(sinceIso: string | null): number | null {
  */
 export const STALE_SHIFT_MS = 10 * 3_600_000;
 
-/**
- * Whole minutes a running shift is past its scheduled end, or 0 if it isn't.
- *
- * Must stay identical to sendShiftClockOutReminders in src/lib/automations.ts:
- *
- *     expectedEnd = max(scheduledStart, clockIn) + length
- *
- * The max() is load-bearing in both directions. Anchoring to clock-in alone
- * invents an overrun for anyone who starts early — 42% of real entries do —
- * and the card would then contradict the scheduled window printed directly
- * beneath it. Anchoring to the scheduled start alone would cut short someone
- * who started late. Whole minutes, not milliseconds, so the label can never
- * read "0m over".
+/*
+ * The overrun arithmetic itself lives in src/lib/shift-overrun.ts — a plain
+ * module, not a "use client" one, so the cron and the office timesheet can
+ * import the same function. Re-exported here so field components keep their
+ * single import.
  */
-export function overrunMinutes({
-  clockInMs,
-  scheduledStartMs,
-  scheduledMinutes,
-  nowMs,
-}: {
-  clockInMs: number;
-  scheduledStartMs: number;
-  scheduledMinutes: number;
-  nowMs: number;
-}): number {
-  const expectedEndMs =
-    Math.max(clockInMs, scheduledStartMs) + scheduledMinutes * 60_000;
-  return Math.max(0, Math.floor((nowMs - expectedEndMs) / 60_000));
-}
+export { overrunMinutes } from "@/lib/shift-overrun";

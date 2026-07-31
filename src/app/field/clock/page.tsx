@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { FieldHeader } from "@/components/field-shell";
@@ -61,9 +62,19 @@ export default async function FieldClockPage() {
       />
 
       <section className="mt-7">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-          Last 7 days
-        </h2>
+        <div className="mb-3 flex items-baseline justify-between gap-2">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+            Last 7 days
+          </h2>
+          {/* This list is capped at 7 days / 20 rows. Anyone checking a pay
+              period or an older shift needs the full history. */}
+          <Link
+            href="/field/hours"
+            className="text-xs font-semibold text-primary underline-offset-2 hover:underline"
+          >
+            All my hours →
+          </Link>
+        </div>
         {!history || history.length === 0 ? (
           <div className="rounded-xl border border-dashed border-border bg-card px-5 py-10 text-center text-sm text-muted-foreground">
             No completed shifts yet this week.
