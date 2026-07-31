@@ -4,7 +4,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { PageShell } from "@/components/page-shell";
 import { memberDisplayName } from "@/lib/member-display";
 import { closedEntryOverrunMinutes } from "@/lib/shift-overrun";
-import { resolveTeamDivisionBatch } from "@/lib/crew-hours";
+import { resolveShiftWindows, shiftWindowKey } from "@/lib/crew-hours";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { maybeDecryptField } from "@/lib/field-encryption";
 import { TimesheetsView } from "./timesheets-view";
@@ -192,7 +192,7 @@ export default async function TimesheetsPage({
   // would let a cleaner work a 6h two-person job solo, alone, for six hours
   // and show as perfectly on time — while the cron had already flagged them
   // three hours over. Same rule, batched.
-  const allottedByBooking = await resolveTeamDivisionBatch(
+  const shiftWindows = await resolveShiftWindows(
     Array.from(
       new Map(
         (entries ?? [])
@@ -263,6 +263,11 @@ export default async function TimesheetsPage({
     // last month's payroll" bug. Legacy entries without a snapshot fall
     // through to the current-rate path, matching old behavior.
     const empId = e.employee_id ?? e.employee?.id ?? "";
+    // This member's own window on this job (split segment, or their share).
+    const shiftWindow =
+      e.booking?.id && scheduledAt
+        ? shiftWindows.get(shiftWindowKey(e.booking.id, empId))
+        : undefined;
     const meta = empMeta[empId];
     const entryRow = e as { pay_rate_cents_snapshot?: number | null };
     const payRateCents =
@@ -312,10 +317,17 @@ export default async function TimesheetsPage({
       over_allotted_minutes: closedEntryOverrunMinutes({
         clockInIso: e.clock_in_at,
         clockOutIso: e.clock_out_at,
-        scheduledStartIso: scheduledAt,
-        scheduledMinutes: e.booking?.id
-          ? allottedByBooking.get(e.booking.id) ?? estimatedMinutes
-          : estimatedMinutes,
+        // Segment-adjusted start, not the booking's. On a split shift the
+        // second cleaner's window opens hours after the job does; anchoring
+        // to the booking told someone who left 87 minutes early that they
+        // ran 33 minutes over.
+        scheduledStartIso: shiftWindow
+          ? new Date(
+              new Date(scheduledAt!).getTime() +
+                shiftWindow.startOffsetMinutes * 60_000,
+            ).toISOString()
+          : scheduledAt,
+        scheduledMinutes: shiftWindow?.allottedMinutes ?? estimatedMinutes,
       }),
       // Pay
       pay_rate_cents: payRateCents,

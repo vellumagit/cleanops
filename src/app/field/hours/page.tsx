@@ -5,7 +5,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { FieldHeader } from "@/components/field-shell";
 import { formatDurationMinutes, humanizeEnum } from "@/lib/format";
 import { getOrgTimezone } from "@/lib/org-timezone";
-import { resolveTeamDivisionBatch } from "@/lib/crew-hours";
+import { resolveShiftWindows, shiftWindowKey } from "@/lib/crew-hours";
 import { closedEntryOverrunMinutes } from "@/lib/shift-overrun";
 
 export const metadata = { title: "My hours" };
@@ -113,7 +113,7 @@ export default async function FieldHoursPage({
 
   // Same per-person allotment the office timesheet and the clock-out cron
   // use, so a cleaner never sees a different overrun than their manager.
-  const allotted = await resolveTeamDivisionBatch(
+  const shiftWindows = await resolveShiftWindows(
     Array.from(
       new Map(
         rows
@@ -133,13 +133,25 @@ export default async function FieldHoursPage({
     const minutes = r.clock_out_at
       ? minutesBetween(r.clock_in_at, r.clock_out_at)
       : 0;
+    // This cleaner's own window — on a split shift their segment starts
+    // hours after the booking does, and using the booking's start told
+    // people they ran over when they had finished early.
+    const win = r.booking?.id
+      ? shiftWindows.get(shiftWindowKey(r.booking.id, membership.id))
+      : undefined;
+    const segStartIso =
+      win && r.booking?.scheduled_at
+        ? new Date(
+            new Date(r.booking.scheduled_at).getTime() +
+              win.startOffsetMinutes * 60_000,
+          ).toISOString()
+        : r.booking?.scheduled_at ?? null;
     const over = closedEntryOverrunMinutes({
       clockInIso: r.clock_in_at,
       clockOutIso: r.clock_out_at,
-      scheduledStartIso: r.booking?.scheduled_at ?? null,
-      scheduledMinutes: r.booking?.id
-        ? allotted.get(r.booking.id) ?? r.booking.duration_minutes
-        : null,
+      scheduledStartIso: segStartIso,
+      scheduledMinutes:
+        win?.allottedMinutes ?? r.booking?.duration_minutes ?? null,
     });
     return { ...r, minutes, over };
   });

@@ -156,6 +156,58 @@ describe("closedEntryOverrunMinutes", () => {
     ).toBe(180);
   });
 
+  it("a split-shift segment measured from its OWN start is not an overrun", () => {
+    // Production shape: booking b536cc7c (Svit) — scheduled 16:00Z, 240 min,
+    // crew of 2, split into two 120-minute segments. Anastasiia holds the
+    // SECOND segment (offset 120), so her window is 18:00Z-20:00Z. She
+    // clocked in at 15:59:10Z and out at 18:33:31Z — 87 minutes BEFORE her
+    // segment was due to end.
+    //
+    // Anchored to her segment start: 0 over, which is the truth.
+    expect(
+      closedEntryOverrunMinutes({
+        clockInIso: "2026-06-05T15:59:10Z",
+        clockOutIso: "2026-06-05T18:33:31Z",
+        scheduledStartIso: "2026-06-05T18:00:00Z", // 16:00 + 120min offset
+        scheduledMinutes: 120,
+      }),
+    ).toBe(0);
+
+    // Anchored to the BOOKING's start with duration/crew, which is what the
+    // timesheet and /field/hours did, it invents 33 minutes.
+    expect(
+      closedEntryOverrunMinutes({
+        clockInIso: "2026-06-05T15:59:10Z",
+        clockOutIso: "2026-06-05T18:33:31Z",
+        scheduledStartIso: "2026-06-05T16:00:00Z",
+        scheduledMinutes: 120,
+      }),
+    ).toBe(33);
+  });
+
+  it("an asymmetric split is not duration/crew", () => {
+    // Production: booking 433caeb1 — 825 minutes, crew 2, real segments of
+    // 600 and 225. Dividing by crew would allot 413 to both, which is wrong
+    // for each of them in opposite directions.
+    expect(
+      closedEntryOverrunMinutes({
+        clockInIso: "2026-06-01T14:00:00Z",
+        clockOutIso: "2026-06-02T00:00:00Z", // 600 min exactly
+        scheduledStartIso: "2026-06-01T14:00:00Z",
+        scheduledMinutes: 600,
+      }),
+    ).toBe(0);
+    // Same shift judged against 413 minutes would report 187 minutes over.
+    expect(
+      closedEntryOverrunMinutes({
+        clockInIso: "2026-06-01T14:00:00Z",
+        clockOutIso: "2026-06-02T00:00:00Z",
+        scheduledStartIso: "2026-06-01T14:00:00Z",
+        scheduledMinutes: 413,
+      }),
+    ).toBe(187);
+  });
+
   it("returns 0 rather than guessing when there is nothing to be over", () => {
     expect(
       closedEntryOverrunMinutes({ ...base, clockOutIso: null }),

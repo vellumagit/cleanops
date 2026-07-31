@@ -121,21 +121,44 @@ export async function resolveTeamDivision(
 }
 
 /**
- * resolveTeamDivision for many bookings at once.
+ * Per-PERSON shift window for many bookings at once: when their share starts
+ * and how long it is.
  *
- * Same rule, three queries total instead of two per booking. The office
- * timesheet needs this for every row it renders; calling the single-booking
- * version in a loop was 2N round-trips on a page that routinely lists
- * hundreds of entries.
+ * Keyed by `${bookingId}:${membershipId}` because the answer is not a property
+ * of the booking. On a split shift (a sequential hand-off) each cleaner has
+ * their own offset and their own length, and a 240-minute job split 120/120
+ * is NOT the same as 240 divided by a crew of 2 — the durations coincide but
+ * the START TIMES do not, and that difference alone invented a 33-minute
+ * overrun for a cleaner who left 87 minutes early.
  *
- * Returns effective (per-person) minutes keyed by booking id. Bookings absent
- * from the map have no division applied — callers should fall back to the
- * booking's own duration.
+ * Precedence mirrors src/app/field/jobs/data.ts exactly, because the field
+ * card, the office timesheet, /field/hours and the clock-out cron must all
+ * produce the same number:
+ *   1. a split segment for this member  -> its own offset + duration
+ *   2. else the job divides crew hours  -> offset 0, duration / crewCount
+ *   3. else                             -> offset 0, full duration
+ *
+ * Three queries total. Bookings absent from the map get no adjustment, so
+ * callers should fall back to the booking's own start and duration.
  */
-export async function resolveTeamDivisionBatch(
+export type ShiftWindow = {
+  /** Minutes after the booking's scheduled_at that this person starts. */
+  startOffsetMinutes: number;
+  /** This person's own allotment, in minutes. */
+  allottedMinutes: number;
+};
+
+export function shiftWindowKey(
+  bookingId: string,
+  membershipId: string,
+): string {
+  return `${bookingId}:${membershipId}`;
+}
+
+export async function resolveShiftWindows(
   bookings: Array<{ id: string; duration_minutes: number | null }>,
-): Promise<Map<string, number>> {
-  const out = new Map<string, number>();
+): Promise<Map<string, ShiftWindow>> {
+  const out = new Map<string, ShiftWindow>();
   const ids = bookings.map((b) => b.id).filter(Boolean);
   if (ids.length === 0) return out;
 
@@ -145,9 +168,17 @@ export async function resolveTeamDivisionBatch(
     const [crewRes, bkRes] = await Promise.all([
       db
         .from("booking_assignees")
-        .select("booking_id")
+        .select(
+          "booking_id, membership_id, split_start_offset_minutes, split_duration_minutes",
+        )
         .in("booking_id", ids) as unknown as Promise<{
-        data: Array<{ booking_id: string }> | null;
+        data: Array<{
+          booking_id: string;
+          membership_id: string;
+          split_start_offset_minutes: number | null;
+          split_duration_minutes: number | null;
+        }> | null;
+        error: { message: string } | null;
       }>,
       db
         .from("bookings" as never)
@@ -158,18 +189,32 @@ export async function resolveTeamDivisionBatch(
           divide_hours_evenly: boolean | null;
           organization_id: string;
         }> | null;
+        error: { message: string } | null;
       }>,
     ]);
 
+    // A PostgREST error leaves data null, which would look identical to "this
+    // booking has no crew" and silently drop every adjustment. Say so.
+    if (crewRes.error || bkRes.error) {
+      console.error(
+        "[crew-hours] resolveShiftWindows query failed:",
+        crewRes.error?.message ?? bkRes.error?.message,
+      );
+      return out;
+    }
+
+    const crewRows = crewRes.data ?? [];
     const crewCount = new Map<string, number>();
-    for (const r of crewRes.data ?? []) {
+    for (const r of crewRows) {
       crewCount.set(r.booking_id, (crewCount.get(r.booking_id) ?? 0) + 1);
     }
 
-    // One org lookup per distinct org, not per booking. In practice the
-    // timesheet is single-org, so this is one query.
+    // One org lookup per distinct org, not per booking. In practice these
+    // pages are single-org, so this is one query.
     const orgDivide = new Map<string, boolean>();
-    for (const orgId of new Set((bkRes.data ?? []).map((b) => b.organization_id))) {
+    for (const orgId of new Set(
+      (bkRes.data ?? []).map((b) => b.organization_id),
+    )) {
       const { data: org } = (await db
         .from("organizations")
         .select("automation_settings")
@@ -194,23 +239,38 @@ export async function resolveTeamDivisionBatch(
     const durationById = new Map(
       bookings.map((b) => [b.id, b.duration_minutes ?? 0]),
     );
+    const divideById = new Map(
+      (bkRes.data ?? []).map((b) => [
+        b.id,
+        b.divide_hours_evenly === true ||
+          orgDivide.get(b.organization_id) === true,
+      ]),
+    );
 
-    for (const bk of bkRes.data ?? []) {
-      const full = durationById.get(bk.id) ?? 0;
+    for (const r of crewRows) {
+      const full = durationById.get(r.booking_id) ?? 0;
       if (full <= 0) continue;
-      const crew = crewCount.get(bk.id) ?? 0;
-      if (crew < 2) {
-        out.set(bk.id, full);
+
+      // 1. A split segment always wins — it is the explicit statement of when
+      //    this person works and for how long.
+      if (r.split_duration_minutes && r.split_duration_minutes > 0) {
+        out.set(shiftWindowKey(r.booking_id, r.membership_id), {
+          startOffsetMinutes: r.split_start_offset_minutes ?? 0,
+          allottedMinutes: r.split_duration_minutes,
+        });
         continue;
       }
-      const divideOn =
-        bk.divide_hours_evenly === true ||
-        orgDivide.get(bk.organization_id) === true;
-      out.set(bk.id, divideOn ? Math.max(1, Math.round(full / crew)) : full);
+
+      // 2/3. Otherwise everyone starts with the booking and shares the length.
+      const crew = crewCount.get(r.booking_id) ?? 0;
+      const divides = crew >= 2 && divideById.get(r.booking_id) === true;
+      out.set(shiftWindowKey(r.booking_id, r.membership_id), {
+        startOffsetMinutes: 0,
+        allottedMinutes: divides ? Math.max(1, Math.round(full / crew)) : full,
+      });
     }
-  } catch {
-    // Fall through with whatever we resolved — callers use the booking's own
-    // duration for anything missing, which is the pre-division behaviour.
+  } catch (err) {
+    console.error("[crew-hours] resolveShiftWindows threw:", err);
   }
   return out;
 }
