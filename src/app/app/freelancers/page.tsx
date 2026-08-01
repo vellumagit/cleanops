@@ -7,6 +7,10 @@ import { buttonVariants } from "@/components/ui/button";
 import { FreelancersTable, type FreelancerRow } from "./freelancers-table";
 import { UnassignedBookings, type UnassignedBookingRow } from "./unassigned-bookings";
 import { isTwilioEnabled } from "@/lib/twilio";
+import { getSubcontractorPayables } from "@/lib/subcontractor-payables";
+import { getOrgCurrency } from "@/lib/org-currency";
+import { formatCurrencyCents } from "@/lib/format";
+import { Wallet } from "lucide-react";
 
 export const metadata = { title: "Subcontractor bench" };
 
@@ -41,6 +45,15 @@ export default async function FreelancersPage() {
 
   const rows: FreelancerRow[] = contacts ?? [];
   const twilioOn = isTwilioEnabled();
+
+  // Pay is a view of these same people, so it belongs in this section rather
+  // than as its own sidebar entry. Surfacing the outstanding total here means
+  // the link is worth following (or obviously isn't).
+  const [{ rows: payRows, totalOutstandingCents }, currency] = await Promise.all([
+    getSubcontractorPayables(membership.organization_id),
+    getOrgCurrency(membership.organization_id),
+  ]);
+  const owedCount = payRows.filter((r) => r.outstandingCents > 0).length;
 
   // A freelancer who claims an offer CANNOT be written to bookings.assigned_to
   // — they aren't a membership, and that column is a FK to memberships. So
@@ -96,6 +109,35 @@ export default async function FreelancersPage() {
           you&rsquo;re ready to start sending real SMS.
         </div>
       )}
+
+      {/* ── Pay: the subsection, not a separate area of the app ── */}
+      <Link
+        href="/app/freelancers/payables"
+        className="mb-6 flex items-center justify-between gap-4 rounded-xl border border-border bg-card p-4 transition-colors hover:bg-muted/40"
+      >
+        <div className="flex items-center gap-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+            <Wallet className="h-5 w-5" />
+          </span>
+          <div>
+            <p className="text-sm font-semibold">Subcontractor pay</p>
+            <p className="text-xs text-muted-foreground">
+              {totalOutstandingCents > 0
+                ? `Owed to ${owedCount} subcontractor${owedCount === 1 ? "" : "s"} for completed jobs`
+                : "Nothing outstanding — every claimed job is paid up"}
+            </p>
+          </div>
+        </div>
+        <span
+          className={
+            totalOutstandingCents > 0
+              ? "shrink-0 text-lg font-bold tabular-nums text-amber-600 dark:text-amber-400"
+              : "shrink-0 text-lg font-bold tabular-nums text-muted-foreground"
+          }
+        >
+          {formatCurrencyCents(totalOutstandingCents, currency)}
+        </span>
+      </Link>
 
       {/* Unassigned bookings ready to deploy */}
       {unassignedRows.length > 0 && (

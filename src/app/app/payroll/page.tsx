@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Plus } from "lucide-react";
+import { Plus, Wallet, ChevronRight } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { PageShell } from "@/components/page-shell";
@@ -8,6 +8,7 @@ import { StatusBadge } from "@/components/status-badge";
 import { formatCurrencyCents, formatDate } from "@/lib/format";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { NewPayrollRunForm } from "./new-run-form";
+import { getSubcontractorPayables } from "@/lib/subcontractor-payables";
 
 export const metadata = { title: "Payroll" };
 
@@ -35,6 +36,14 @@ export default async function PayrollPage() {
   });
 
   const runs = rawRuns ?? [];
+
+  // Subcontractors are paid outside payroll runs — they are contractors, not
+  // employees, and rolling them into a run total would misstate both the run
+  // and their tax treatment. Shown here because "what am I paying out this
+  // period" is the question this page answers, and the answer was incomplete.
+  const { rows: subRows, totalOutstandingCents: subOutstandingCents } =
+    await getSubcontractorPayables(membership.organization_id);
+  const subOwedCount = subRows.filter((r) => r.outstandingCents > 0).length;
 
   return (
     <PageShell
@@ -92,14 +101,45 @@ export default async function PayrollPage() {
           )}
         </div>
 
-        {/* New run form */}
-        <aside>
-          <div className="sticky top-4 rounded-lg border border-border bg-card p-5">
-            <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold">
-              <Plus className="h-4 w-4" />
-              New pay period
-            </h2>
-            <NewPayrollRunForm />
+        {/* New run form + subcontractor payables */}
+        <aside className="space-y-4">
+          <div className="sticky top-4 space-y-4">
+            <div className="rounded-lg border border-border bg-card p-5">
+              <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold">
+                <Plus className="h-4 w-4" />
+                New pay period
+              </h2>
+              <NewPayrollRunForm />
+            </div>
+
+            <Link
+              href="/app/freelancers/payables"
+              className="block rounded-lg border border-border bg-card p-5 transition-colors hover:bg-muted/40"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="flex items-center gap-2 text-sm font-semibold">
+                  <Wallet className="h-4 w-4" />
+                  Subcontractor pay
+                </h2>
+                <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+              </div>
+              <p
+                className={
+                  subOutstandingCents > 0
+                    ? "mt-2 text-2xl font-bold tabular-nums text-amber-600 dark:text-amber-400"
+                    : "mt-2 text-2xl font-bold tabular-nums text-muted-foreground"
+                }
+              >
+                {formatCurrencyCents(subOutstandingCents, currency)}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {subOutstandingCents > 0
+                  ? `Outstanding to ${subOwedCount} subcontractor${subOwedCount === 1 ? "" : "s"}.`
+                  : "Nothing outstanding."}{" "}
+                Paid separately from payroll runs — subcontractors are
+                contractors, so their pay is never part of a run total.
+              </p>
+            </Link>
           </div>
         </aside>
       </div>

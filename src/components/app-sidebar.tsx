@@ -17,7 +17,6 @@ import {
   Star,
   Award,
   Receipt,
-  Wallet,
   Package,
   GraduationCap,
   Boxes,
@@ -97,8 +96,10 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/app/employees", label: "Employees", icon: UserRound, roles: ["owner", "admin"] },
       { href: "/app/applicants", label: "Applicants", icon: ClipboardList, roles: ["owner", "admin"] },
       { href: "/app/timesheets", label: "Timesheets", icon: Clock, roles: ["owner", "admin", "manager"] },
-      { href: "/app/freelancers", label: "Subcontractor bench", icon: UserPlus, roles: ["owner", "admin"] },
-      { href: "/app/freelancers/payables", label: "Subcontractor pay", icon: Wallet, roles: ["owner", "admin", "manager"] },
+      // Subcontractor pay lives INSIDE the bench section now — it's a view of
+      // the same people, not a separate area of the app, and two adjacent
+      // "Subcontractor …" rows made the sidebar read like two features.
+      { href: "/app/freelancers", label: "Subcontractors", icon: UserPlus, roles: ["owner", "admin", "manager"] },
       { href: "/app/reviews", label: "Reviews", icon: Star },
       { href: "/app/bonuses", label: "Bonuses", icon: Award },
       { href: "/app/training", label: "Training", icon: GraduationCap },
