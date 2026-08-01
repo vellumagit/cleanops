@@ -337,6 +337,11 @@ export function TimesheetsView({
       clock_in_at: entry.clock_in_at,
       clock_out_at: entry.clock_out_at,
       notes: entry.notes,
+      needs_review: entry.needs_review,
+      auto_closed: entry.auto_closed,
+      over_allotted_minutes: entry.over_allotted_minutes,
+      expected_end_at: entry.expected_end_at,
+      client_name: entry.client_name,
     });
     setDialogOpen(true);
   }

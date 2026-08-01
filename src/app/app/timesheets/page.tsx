@@ -3,7 +3,10 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { PageShell } from "@/components/page-shell";
 import { memberDisplayName } from "@/lib/member-display";
-import { closedEntryOverrunMinutes } from "@/lib/shift-overrun";
+import {
+  closedEntryOverrunMinutes,
+  expectedEndMs,
+} from "@/lib/shift-overrun";
 import { resolveShiftWindows, shiftWindowKey } from "@/lib/crew-hours";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { maybeDecryptField } from "@/lib/field-encryption";
@@ -314,6 +317,19 @@ export default async function TimesheetsPage({
       punctuality_minutes: punctualityMinutes,
       completion,
       completion_diff_minutes: completionDiffMinutes,
+      expected_end_at:
+        scheduledAt && e.clock_in_at && (shiftWindow || estimatedMinutes)
+          ? new Date(
+              expectedEndMs({
+                clockInMs: new Date(e.clock_in_at).getTime(),
+                scheduledStartMs:
+                  new Date(scheduledAt).getTime() +
+                  (shiftWindow?.startOffsetMinutes ?? 0) * 60_000,
+                scheduledMinutes:
+                  shiftWindow?.allottedMinutes ?? estimatedMinutes ?? 0,
+              }),
+            ).toISOString()
+          : null,
       over_allotted_minutes: closedEntryOverrunMinutes({
         clockInIso: e.clock_in_at,
         clockOutIso: e.clock_out_at,

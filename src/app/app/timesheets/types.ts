@@ -41,6 +41,14 @@ export type TimesheetEntry = {
    * booking if someone edits the job's duration afterwards.
    */
   over_allotted_minutes: number;
+  /**
+   * When this person's shift was due to end — max(clock-in, their segment
+   * start) + their allotment, the same arithmetic the cron and the field
+   * card use. Null for off-job time. The edit dialog offers it as a one-tap
+   * correction, because "they actually finished when they were supposed to"
+   * is the single most common fix for a capped shift.
+   */
+  expected_end_at: string | null;
   // Pay
   pay_rate_cents: number;
   pay_type: "hourly" | "flat" | "percent";

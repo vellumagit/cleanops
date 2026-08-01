@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { History, Pencil, Plus, Trash2 } from "lucide-react";
+import { Clock, History, Pencil, Plus, Trash2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -37,6 +37,16 @@ export type EditingEntry = {
   clock_in_at: string; // UTC ISO
   clock_out_at: string | null; // UTC ISO
   notes: string | null;
+  /* --- Why this row is being corrected. Without it the editor was just two
+     datetime boxes, and you had to remember what the row said. --- */
+  needs_review: boolean;
+  /** The cron wrote this clock-out, not a person. */
+  auto_closed: boolean;
+  /** Minutes past the allotment, 0 if within it. */
+  over_allotted_minutes: number;
+  /** When the shift was due to end (UTC ISO), or null for off-job time. */
+  expected_end_at: string | null;
+  client_name: string | null;
 };
 
 type Props = {
@@ -73,6 +83,18 @@ function utcIsoToLocalInput(utc: string, tz: string): string {
   const get = (type: string) =>
     parts.find((p) => p.type === type)?.value ?? "00";
   return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}`;
+}
+
+/** "6h 30m" from two datetime-local strings, or null if not both valid. */
+function durationLabel(start: string, end: string): string | null {
+  if (!start || !end) return null;
+  const a = new Date(start).getTime();
+  const b = new Date(end).getTime();
+  if (!Number.isFinite(a) || !Number.isFinite(b) || b <= a) return null;
+  const mins = Math.round((b - a) / 60_000);
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
 function formatBookingLabel(b: BookingOption, tz: string): string {
@@ -113,6 +135,23 @@ export function ManualEntryDialog({
   // Inline edit history (audit_log entries for this time_entry). Lazy-loaded
   // when the dialog opens in edit mode; hidden by default to keep the
   // form view uncluttered. Owners click "Show history" to reveal.
+  // Expected end, in the two shapes the UI needs: a datetime-local value to
+  // write into the input, and a short label to show on the button.
+  const expectedEndLocal =
+    mode === "edit" && editing?.expected_end_at
+      ? utcIsoToLocalInput(editing.expected_end_at, orgTz)
+      : "";
+  const expectedEndDisplay =
+    mode === "edit" && editing?.expected_end_at
+      ? new Intl.DateTimeFormat("en-US", {
+          timeZone: orgTz,
+          hour: "numeric",
+          minute: "2-digit",
+        }).format(new Date(editing.expected_end_at))
+      : "";
+
+  const liveDuration = durationLabel(startAt, endAt);
+
   const [historyOpen, setHistoryOpen] = useState(false);
   const [history, setHistory] = useState<TimeEntryHistoryRow[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -304,6 +343,54 @@ export function ManualEntryDialog({
               />
             </div>
           </div>
+
+          {/*
+           * Why this row is open for correction, and the one number that
+           * makes the decision. Previously the editor was two datetime boxes
+           * with no context: you had to remember what the row said, and
+           * there was no hint that saving is what clears the flag.
+           */}
+          {mode === "edit" && editing && (editing.needs_review || editing.over_allotted_minutes > 0) && (
+            <div className="rounded-md border border-amber-300 bg-amber-50 p-3 dark:border-amber-900/40 dark:bg-amber-950/30">
+              <p className="text-xs font-semibold text-amber-900 dark:text-amber-200">
+                {editing.auto_closed
+                  ? "Nobody clocked out — the system capped this shift"
+                  : editing.needs_review
+                    ? "Flagged for review"
+                    : "Ran past the time allotted for this job"}
+              </p>
+              <p className="mt-1 text-[11px] leading-relaxed text-amber-900/80 dark:text-amber-300/80">
+                {editing.auto_closed
+                  ? "The end time below was written by the system, not by a person. Set it to what actually happened."
+                  : "The hours below are as recorded. Confirm or correct them."}
+                {expectedEndLocal
+                  ? ` This shift was due to end at ${expectedEndDisplay}.`
+                  : ""}
+                {" Saving clears the flag and unblocks payroll."}
+              </p>
+              {expectedEndLocal && (
+                <button
+                  type="button"
+                  onClick={() => setEndAt(expectedEndLocal)}
+                  className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-amber-400 bg-background px-2.5 py-1 text-[11px] font-semibold text-amber-900 hover:bg-amber-100 dark:text-amber-200 dark:hover:bg-amber-950/60"
+                >
+                  <Clock className="h-3 w-3" />
+                  Use expected end ({expectedEndDisplay})
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* The number payroll actually pays on — visible while you type,
+              rather than only after saving. */}
+          {liveDuration && (
+            <p className="text-xs text-muted-foreground">
+              Recorded time:{" "}
+              <span className="font-semibold tabular-nums text-foreground">
+                {liveDuration}
+              </span>
+            </p>
+          )}
 
           <div className="space-y-1.5">
             <Label htmlFor="notes">
