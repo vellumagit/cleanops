@@ -154,6 +154,12 @@ async function emailRecipients(
       subject,
       html,
       text,
+      // CLIENT_EMAILS_PAUSED exists to stop CLIENTS being mailed during
+      // onboarding or testing. This is an internal alert to the org's own
+      // staff, so that switch must not silence it — otherwise flipping it
+      // would mute the escalation and nobody would know, which is precisely
+      // the failure this whole email channel was added to fix.
+      pauseExempt: true,
     });
   }
 }
