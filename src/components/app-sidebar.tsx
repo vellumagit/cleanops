@@ -291,7 +291,7 @@ export function AppSidebar({
       <div className="mx-3 mt-2 border-t border-zinc-800/80" />
 
       {/* Sections */}
-      <nav className="flex-1 overflow-y-auto px-3 py-3">
+      <nav className="sollos-scroll flex-1 overflow-y-auto px-3 py-3">
         {visibleNavSections.map((section) => {
           const visibleItems = section.items.filter(
             (item) => !item.roles || item.roles.includes(role),
