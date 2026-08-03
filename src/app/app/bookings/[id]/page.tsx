@@ -62,12 +62,21 @@ function offerTone(status: OfferStatus): StatusTone {
 
 export default async function BookingDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ _return?: string }>;
 }) {
   const membership = await requireMembership();
   const canEdit = membership.role === "owner" || membership.role === "admin";
   const { id } = await params;
+  // This page is itself reachable from the scheduler, so forward whatever
+  // origin brought us here. Otherwise scheduler -> details -> edit -> save
+  // would lose the board on the last hop.
+  const returnTo = (await searchParams)._return;
+  const editHref = returnTo
+    ? `/app/bookings/${id}/edit?_return=${encodeURIComponent(returnTo)}`
+    : `/app/bookings/${id}/edit`;
   const supabase = await createSupabaseServerClient();
   const tz = await getOrgTimezone(membership.organization_id);
 
@@ -356,7 +365,7 @@ export default async function BookingDetailPage({
               Send to bench
             </Link>
             <Link
-              href={`/app/bookings/${booking.id}/edit`}
+              href={editHref}
               className={buttonVariants({ variant: "default" })}
             >
               <Pencil className="h-4 w-4" />

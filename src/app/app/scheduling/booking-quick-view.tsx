@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useReturnTo } from "@/components/return-to-field";
 import { useState } from "react";
 import {
   Pencil,
@@ -78,6 +79,9 @@ export function BookingQuickView({
   onOpenChange: (open: boolean) => void;
   tz: string;
 }) {
+  // Every link out of this dialog carries the scheduler board we are on, so
+  // saving or cancelling returns to the same week/day instead of the list.
+  const withReturn = useReturnTo();
   const [assignOpen, setAssignOpen] = useState(false);
 
   if (!booking) return null;
@@ -262,21 +266,21 @@ export function BookingQuickView({
             Assign
           </Button>
           <Link
-            href={`/app/bookings/${booking.id}/offer`}
+            href={withReturn(`/app/bookings/${booking.id}/offer`)}
             className={buttonVariants({ variant: "outline", size: "sm" })}
           >
             <Send className="h-4 w-4" />
             Send to bench
           </Link>
           <Link
-            href={`/app/bookings/${booking.id}`}
+            href={withReturn(`/app/bookings/${booking.id}`)}
             className={buttonVariants({ variant: "outline", size: "sm" })}
           >
             <ExternalLink className="h-4 w-4" />
             Full details
           </Link>
           <Link
-            href={`/app/bookings/${booking.id}/edit`}
+            href={withReturn(`/app/bookings/${booking.id}/edit`)}
             className={buttonVariants({ size: "sm" })}
           >
             <Pencil className="h-4 w-4" />

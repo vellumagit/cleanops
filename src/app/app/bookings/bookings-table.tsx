@@ -3,6 +3,7 @@
 import { useState, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useReturnTo } from "@/components/return-to-field";
 import {
   Users,
   Repeat,
@@ -144,6 +145,8 @@ export function BookingsTable({
   employees: AssignableEmployee[];
 }) {
   const router = useRouter();
+  // Carry the board/list state we are on, so Save and Cancel return here.
+  const withReturn = useReturnTo();
   const [view, setView] = useState<ViewMode>("table");
   // Open on the actionable pipeline (today + future), not all-time history —
   // otherwise the list dumps up to 1000 rows on load.
@@ -424,6 +427,7 @@ export function BookingsTable({
           warnings={warnings}
           canEdit={canEdit}
           router={router}
+          withReturn={withReturn}
           tz={tz}
           employees={employees}
         />
@@ -433,6 +437,7 @@ export function BookingsTable({
           warnings={warnings}
           canEdit={canEdit}
           router={router}
+          withReturn={withReturn}
           tz={tz}
           employees={employees}
         />
@@ -497,6 +502,7 @@ function TableView({
   warnings,
   canEdit,
   router,
+  withReturn,
   tz,
   employees,
 }: {
@@ -504,6 +510,8 @@ function TableView({
   warnings: Map<string, BookingWarning[]>;
   canEdit: boolean;
   router: ReturnType<typeof useRouter>;
+  /** Wraps a href with ?_return so Save/Cancel come back to this list. */
+  withReturn: (href: string) => string;
   tz: string;
   employees: AssignableEmployee[];
 }) {
@@ -542,7 +550,7 @@ function TableView({
                 key={r.id}
                 onClick={
                   canEdit
-                    ? () => router.push(`/app/bookings/${r.id}/edit`)
+                    ? () => router.push(withReturn(`/app/bookings/${r.id}/edit`))
                     : undefined
                 }
                 className={cn(
@@ -655,6 +663,7 @@ function CardsView({
   warnings,
   canEdit,
   router,
+  withReturn,
   tz,
   employees,
 }: {
@@ -662,6 +671,8 @@ function CardsView({
   warnings: Map<string, BookingWarning[]>;
   canEdit: boolean;
   router: ReturnType<typeof useRouter>;
+  /** Wraps a href with ?_return so Save/Cancel come back to this list. */
+  withReturn: (href: string) => string;
   tz: string;
   employees: AssignableEmployee[];
 }) {
@@ -697,7 +708,7 @@ function CardsView({
                 tabIndex={canEdit ? 0 : undefined}
                 onClick={
                   canEdit
-                    ? () => router.push(`/app/bookings/${r.id}/edit`)
+                    ? () => router.push(withReturn(`/app/bookings/${r.id}/edit`))
                     : undefined
                 }
                 onKeyDown={
@@ -705,7 +716,7 @@ function CardsView({
                     ? (e) => {
                         if (e.key === "Enter" || e.key === " ") {
                           e.preventDefault();
-                          router.push(`/app/bookings/${r.id}/edit`);
+                          router.push(withReturn(`/app/bookings/${r.id}/edit`));
                         }
                       }
                     : undefined

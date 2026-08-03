@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect, RedirectType } from "next/navigation";
+import { redirectBack } from "@/lib/return-to";
 import { after } from "next/server";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
 import type { Database, Json } from "@/lib/supabase/types";
@@ -1666,10 +1667,11 @@ export async function updateBookingAction(
   revalidatePath(`/app/bookings/${id}/edit`);
   revalidatePath("/app");
   revalidatePath("/app/invoices");
-  // The edit page is finished with — replace it so Back returns to wherever
-    // the user opened the editor from (scheduler week, calendar month, filtered
-    // list) instead of the form they just saved.
-  redirect("/app/bookings", RedirectType.replace);
+  // Back to wherever the editor was opened from — the scheduler week, the
+  // calendar month, the filtered list — instead of always the bookings list.
+  // redirectBack replaces rather than pushes, so the consumed edit page does
+  // not sit on the history stack.
+  redirectBack(formData, "/app/bookings");
 }
 
 // ─── Duplicate booking ────────────────────────────────────────────────────────

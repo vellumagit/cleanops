@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { useReturnTo } from "@/components/return-to-field";
 import { cn } from "@/lib/utils";
 import { bookingStatusTone } from "@/components/status-badge";
 import type { ScheduleBooking, ScheduleEmployee } from "./data";
@@ -115,6 +116,9 @@ export function MonthGrid({
   offDays: Record<string, string[]>;
   tz: string;
 }) {
+  // Carry the board/calendar state we are on, so Save and Cancel return here.
+  const withReturn = useReturnTo();
+
   const router = useRouter();
   const anchor = parseYMD(monthYmd);
   const currentMonth = anchor.getMonth();
@@ -227,7 +231,7 @@ export function MonthGrid({
                         key={b.id}
                         type="button"
                         onClick={() =>
-                          router.push(`/app/bookings/${b.id}/edit`)
+                          router.push(withReturn(`/app/bookings/${b.id}/edit`))
                         }
                         title={`${b.client_name}${assigneeName ? ` · ${assigneeName}` : ""} · ${b.status}`}
                         className={cn(

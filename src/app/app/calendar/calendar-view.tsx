@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useReturnTo } from "@/components/return-to-field";
 import { useState, useMemo, useEffect, useRef } from "react";
 import {
   format,
@@ -973,6 +974,8 @@ function EventDetail({
   onClose: () => void;
   tz: string;
 }) {
+  // Carry the board/calendar state we are on, so Save and Cancel return here.
+  const withReturn = useReturnTo();
   // Google Calendar events use a prefixed id like "gcal_<id>" — anything
   // else is a real booking or invoice row in our DB and is linkable
   // inside the app.
@@ -1116,7 +1119,7 @@ function EventDetail({
               View booking
             </Link>
             <Link
-              href={`/app/bookings/${event.id}/edit`}
+              href={withReturn(`/app/bookings/${event.id}/edit`)}
               className="inline-flex items-center gap-1.5 rounded-md bg-foreground px-2.5 py-1.5 text-xs font-medium text-background transition-opacity hover:opacity-90"
             >
               <Pencil className="h-3.5 w-3.5" />

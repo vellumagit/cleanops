@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useActionState, useEffect, useRef } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Repeat, CalendarPlus, SplitSquareVertical, Plus, Trash2, AlertTriangle } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -9,7 +10,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { FormError, FormField, FormSelect } from "@/components/form-field";
 import { SubmitButton } from "@/components/submit-button";
 import { DurationInput } from "@/components/duration-input";
-import { SetupReturnField } from "@/components/setup-return-field";
+import { ReturnToField } from "@/components/return-to-field";
 import { AddressAutocomplete } from "@/components/address-autocomplete";
 import { cn } from "@/lib/utils";
 import { RECURRENCE_OPTIONS } from "@/lib/recurrence";
@@ -223,6 +224,12 @@ export function BookingForm({
    *  the parent can close the Sheet. */
   onSuccess?: () => void;
 }) {
+  // Cancel should land where Save lands — both read the same ?_return, so
+  // abandoning an edit opened from the scheduler returns to that week rather
+  // than dumping you on the bookings list.
+  const returnTo = useSearchParams().get("_return");
+  const cancelHref = returnTo || "/app/bookings";
+
   const [isRecurring, setIsRecurring] = useState(false);
   const [recurrencePattern, setRecurrencePattern] = useState("weekly");
   const [selectedDays, setSelectedDays] = useState<number[]>([]);
@@ -536,7 +543,7 @@ export function BookingForm({
 
   return (
     <form action={formAction} className="space-y-5">
-      <SetupReturnField />
+      <ReturnToField />
       {/* Signal the server action to return a done-state instead of
           redirecting when we're embedded inside a Sheet / drawer. */}
       {onSuccess && <input type="hidden" name="_source" value="calendar" />}
@@ -1563,7 +1570,7 @@ export function BookingForm({
             back to — the sheet's own close button serves as Cancel. */}
         {!onSuccess && (
           <Link
-            href="/app/bookings"
+            href={cancelHref}
             className={buttonVariants({ variant: "ghost" })}
           >
             Cancel
