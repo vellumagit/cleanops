@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useReturnTo } from "@/components/return-to-field";
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useUrlState } from "@/components/use-url-state";
+import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import {
   format,
   startOfMonth,
@@ -150,9 +151,36 @@ function fmtTimeInTz(
 // Main component
 // ---------------------------------------------------------------------------
 
+/** "2026-09-14" -> that day at local midnight (new Date(str) would parse UTC). */
+function parseYmdLocal(ymd: string): Date {
+  const [y, m, d] = ymd.split("-").map(Number);
+  if (!y || !m || !d) return new Date();
+  return new Date(y, m - 1, d);
+}
+
 export function CalendarView({ events, hasGoogleCalendar, formOptions, currency, tz }: Props) {
-  const [currentDate, setCurrentDate] = useState(new Date());
-  const [view, setView] = useState<ViewMode>("month");
+  // Month and view live in the URL. They were useState, so paging forward to
+  // September, opening a booking and saving snapped the calendar back to
+  // today — and a month could not be linked to. The editor's ?_return now
+  // carries both, so Save comes back to the month you were reading.
+  const [dateParam, setDateParam] = useUrlState<string>("d", "");
+  const [view, setView] = useUrlState<ViewMode>("view", "month");
+
+  // Derived, memoised on the param so the identity is stable across renders
+  // (several effects below depend on currentDate).
+  const currentDate = useMemo(
+    () => (dateParam ? parseYmdLocal(dateParam) : new Date()),
+    [dateParam],
+  );
+  // Accepts a Date or an updater, matching the useState API the paging
+  // handlers below already use.
+  const setCurrentDate = useCallback(
+    (next: Date | ((c: Date) => Date)) => {
+      const value = typeof next === "function" ? next(currentDate) : next;
+      setDateParam(format(value, "yyyy-MM-dd"));
+    },
+    [currentDate, setDateParam],
+  );
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [bookingDefaults, setBookingDefaults] = useState<BookingFormDefaults | undefined>(

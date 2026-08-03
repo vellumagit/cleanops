@@ -4,6 +4,7 @@ import { useState, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useReturnTo } from "@/components/return-to-field";
+import { useUrlState } from "@/components/use-url-state";
 import {
   Users,
   Repeat,
@@ -147,15 +148,20 @@ export function BookingsTable({
   const router = useRouter();
   // Carry the board/list state we are on, so Save and Cancel return here.
   const withReturn = useReturnTo();
-  const [view, setView] = useState<ViewMode>("table");
+  // Tab, search and the four filters live in the URL. They used to be plain
+  // useState, so the redirect back from the editor remounted this component
+  // with everything reset — and a filtered view could not be bookmarked or
+  // shared. Now the ?_return the editor carries includes them verbatim.
+  const [view, setView] = useUrlState<ViewMode>("view", "table");
   // Open on the actionable pipeline (today + future), not all-time history —
   // otherwise the list dumps up to 1000 rows on load.
-  const [tab, setTab] = useState<TimeTab>("upcoming");
-  const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [serviceFilter, setServiceFilter] = useState<string>("all");
-  const [assigneeFilter, setAssigneeFilter] = useState<string>("all");
-  const [clientFilter, setClientFilter] = useState<string>("all");
+  const [tab, setTab] = useUrlState<TimeTab>("tab", "upcoming");
+  const [query, setQuery] = useUrlState<string>("q", "");
+  const [statusFilter, setStatusFilter] = useUrlState<string>("status", "all");
+  const [serviceFilter, setServiceFilter] = useUrlState<string>("service", "all");
+  const [assigneeFilter, setAssigneeFilter] = useUrlState<string>("assignee", "all");
+  const [clientFilter, setClientFilter] = useUrlState<string>("client", "all");
+  // Purely cosmetic — whether the filter drawer is open is not worth a URL.
   const [showFilters, setShowFilters] = useState(false);
 
   // Derive unique values for dropdown filters.
@@ -180,10 +186,19 @@ export function BookingsTable({
       ].sort(),
     [rows],
   );
-  const clients = useMemo(
-    () => [...new Set(rows.map((r) => r.client_name))].sort(),
-    [rows],
-  );
+  // Keyed by id, not name: the client record links here as
+  // /app/bookings?client=<id> (clients/[id]/page.tsx:351), and matching on
+  // the display name meant that link silently showed the whole org. Ids also
+  // survive a client rename.
+  const clients = useMemo(() => {
+    const byId = new Map<string, string>();
+    for (const r of rows) {
+      if (r.client_id) byId.set(r.client_id, r.client_name);
+    }
+    return [...byId.entries()]
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [rows]);
 
   // Filter pipeline
   const filtered = useMemo(() => {
@@ -221,7 +236,7 @@ export function BookingsTable({
       }
     }
     if (clientFilter !== "all") {
-      result = result.filter((r) => r.client_name === clientFilter);
+      result = result.filter((r) => r.client_id === clientFilter);
     }
 
     return result;
@@ -359,7 +374,9 @@ export function BookingsTable({
           <FilterSelect label="Client" value={clientFilter} onChange={setClientFilter}>
             <option value="all">All clients</option>
             {clients.map((c) => (
-              <option key={c} value={c}>{c}</option>
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
             ))}
           </FilterSelect>
 
