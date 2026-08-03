@@ -1074,6 +1074,37 @@ export async function createPeriodInvoiceAction(
   }>));
   if (itemsErr) return { errors: { _form: itemsErr.message } };
 
+  // Stamp every booking on this invoice as billed — the same guard
+  // createInvoiceAction applies at the top of this file, which the period
+  // builder never did.
+  //
+  // A consolidated invoice has no single invoices.booking_id (it is set null
+  // above), so the ONLY record that this work is billed lives on the line
+  // items. The billing-cycle cron does not read those: it selects bookings
+  // with billing_invoice_id IS NULL (api/cron/billing-cycle/route.ts:166).
+  // So for a monthly or biweekly client, every job billed here was invisible
+  // to the cron and would be billed a second time on the 1st or 15th.
+  //
+  // Guarded on still-null so a booking already linked to another invoice is
+  // never re-pointed at this one.
+  const billedBookingIds = Array.from(
+    new Set(lineRows.map((r) => r.booking_id).filter(Boolean) as string[]),
+  );
+  if (billedBookingIds.length > 0) {
+    const { error: stampErr } = await supabase
+      .from("bookings")
+      .update({ billing_invoice_id: inv.id } as never)
+      .in("id", billedBookingIds)
+      .eq("organization_id", membership.organization_id)
+      .is("billing_invoice_id" as never, null as never);
+    if (stampErr) {
+      console.error(
+        `[invoices] period invoice ${inv.id}: billing_invoice_id stamp failed (invoice still created):`,
+        stampErr.message,
+      );
+    }
+  }
+
   await logAuditEvent({
     membership,
     action: "create",
@@ -1083,6 +1114,7 @@ export async function createPeriodInvoiceAction(
       client_id: clientId,
       amount_cents: tax.totalCents,
       lines: lineRows.length,
+      billed_bookings: billedBookingIds.length,
     },
   });
 
