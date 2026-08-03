@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
+import { redirect, RedirectType } from "next/navigation";
 import { after } from "next/server";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
 import type { Database, Json } from "@/lib/supabase/types";
@@ -1666,7 +1666,10 @@ export async function updateBookingAction(
   revalidatePath(`/app/bookings/${id}/edit`);
   revalidatePath("/app");
   revalidatePath("/app/invoices");
-  redirect("/app/bookings");
+  // The edit page is finished with — replace it so Back returns to wherever
+    // the user opened the editor from (scheduler week, calendar month, filtered
+    // list) instead of the form they just saved.
+  redirect("/app/bookings", RedirectType.replace);
 }
 
 // ─── Duplicate booking ────────────────────────────────────────────────────────
@@ -2067,7 +2070,8 @@ export async function markBookingCompleteAction(id: string) {
 
   revalidatePath("/app/bookings");
   revalidatePath(`/app/bookings/${id}`);
-  redirect(`/app/bookings/${id}`);
+  // Same URL we came from — pushing would add a duplicate history entry.
+  redirect(`/app/bookings/${id}`, RedirectType.replace);
 }
 
 // ─── Quick status set (bookings-list dropdown) ────────────────────────────────
@@ -2307,7 +2311,8 @@ export async function deleteBookingAction(formData: FormData) {
     // path is either a stale form or a direct POST — no-op and send them back
     // to the booking rather than destroying a record.
     if (existing && existing.scheduled_at < new Date().toISOString()) {
-      redirect(`/app/bookings/${id}`);
+      // Replace: this is a refusal, not a step forward.
+      redirect(`/app/bookings/${id}`, RedirectType.replace);
     }
 
     // Single-booking delete. CRITICAL: clean up personal calendar events
@@ -2344,7 +2349,9 @@ export async function deleteBookingAction(formData: FormData) {
   revalidatePath("/app/bookings");
   revalidatePath("/app/bookings/series");
   revalidatePath("/app");
-  redirect("/app/bookings");
+  // The booking no longer exists. Pushing would strand a history entry
+  // pointing at /app/bookings/{id}/edit, which now renders notFound().
+  redirect("/app/bookings", RedirectType.replace);
 }
 
 /**
@@ -2376,7 +2383,8 @@ export async function skipBookingOccurrenceAction(formData: FormData) {
   // past date. Skipping only makes sense for an upcoming visit (holiday, client
   // away); a past occurrence already happened and is a kept record.
   if (booking.scheduled_at < new Date().toISOString()) {
-    redirect(`/app/bookings/${id}`);
+    // Replace: a refusal, same as the delete guard above.
+    redirect(`/app/bookings/${id}`, RedirectType.replace);
   }
 
   // Key the skip on the occurrence's ORG-LOCAL calendar date — that's what
@@ -2438,7 +2446,8 @@ export async function skipBookingOccurrenceAction(formData: FormData) {
 
   revalidatePath("/app/bookings");
   revalidatePath("/app");
-  redirect("/app/bookings");
+  // The occurrence is gone — do not leave a history entry pointing at it.
+  redirect("/app/bookings", RedirectType.replace);
 }
 
 /**
@@ -2551,7 +2560,8 @@ export async function cancelSeriesAction(formData: FormData) {
 
   revalidatePath("/app/bookings");
   revalidatePath("/app");
-  redirect("/app/bookings");
+  // Series cancelled; the page behind us is stale.
+  redirect("/app/bookings", RedirectType.replace);
 }
 
 /**
