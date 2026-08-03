@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect, RedirectType } from "next/navigation";
 import { redirectBack } from "@/lib/return-to";
+import { futureStatusError } from "@/lib/booking-status";
 import { after } from "next/server";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
 import type { Database, Json } from "@/lib/supabase/types";
@@ -456,6 +457,8 @@ async function getBookingLabels(
   return { clientName, employeeName };
 }
 
+
+
 export async function createBookingAction(
   _prev: BookingFormState,
   formData: FormData,
@@ -472,6 +475,11 @@ export async function createBookingAction(
   // the authoritative per-org timezone.
   const orgTz = await getOrgTimezone(membership.organization_id);
   parsed.data.scheduled_at = localInputToUtcIso(raw.scheduled_at, orgTz);
+
+  {
+    const err = futureStatusError(parsed.data.scheduled_at, parsed.data.status);
+    if (err) return { errors: { status: err }, values: raw };
+  }
 
   // Past dates are allowed — owners regularly need to back-fill historical
   // jobs when they're onboarding, switching from another tool, catching up
@@ -980,6 +988,11 @@ export async function updateBookingAction(
   // Re-interpret datetime-local with the org's tz (see createBookingAction).
   const orgTz = await getOrgTimezone(membership.organization_id);
   parsed.data.scheduled_at = localInputToUtcIso(raw.scheduled_at, orgTz);
+
+  {
+    const err = futureStatusError(parsed.data.scheduled_at, parsed.data.status);
+    if (err) return { errors: { status: err }, values: raw };
+  }
 
   // Fetch the existing booking to detect assignee + scheduled_at + status changes.
   // service_type is pulled too so the "this and future" schedule-change
