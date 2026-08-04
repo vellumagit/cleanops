@@ -765,14 +765,9 @@ export async function pushInvoiceToSage(
     );
   }
 
-  // Sage's US and Canadian editions reject a sales invoice that doesn't say
-  // where the sale is destined — they validate the tax against that region.
-  const taxRegionId = getSageTaxRegionId(conn);
-  if (!taxRegionId) {
-    return fail(
-      "Sage needs a tax region before it will accept invoices. Pick one in Settings → Integrations → Sage Accounting, then try again.",
-    );
-  }
+  // The org's configured region. Only used to word the tax-rate error below —
+  // it is deliberately NOT sent on the invoice; see the payload comment.
+  const orgTaxRegionId = getSageTaxRegionId(conn);
 
   // Ensure the client exists in Sage first.
   const sageContactId = await pushClientToSage(invoice.client_id);
@@ -863,7 +858,13 @@ export async function pushInvoiceToSage(
           (taxRate.available.length
             ? `Sage currently has: ${taxRate.available.join(", ")}. `
             : "") +
-          `Create a matching rate in Sage for the ${taxRegionId} region (Settings → Tax Rates), then try again.`,
+          `Create a matching rate in Sage${
+            invoiceAddress.country_id && invoiceAddress.region
+              ? ` for the ${invoiceAddress.country_id}-${invoiceAddress.region} region`
+              : orgTaxRegionId
+                ? ` for the ${orgTaxRegionId} region`
+                : ""
+          } (Settings → Tax Rates), then try again.`,
       );
     }
 
@@ -897,9 +898,15 @@ export async function pushInvoiceToSage(
             // being correct.
             main_address: invoiceAddress,
             delivery_address: invoiceAddress,
-            // Required by Sage US/CA — without it the POST 422s with
-            // "tax_address_region_id is required".
-            tax_address_region_id: taxRegionId,
+            // NOT sent: tax_address_region_id. Sage treats it and
+            // delivery_address as mutually exclusive. With no address it is
+            // required; with an address present Sage derives the region from
+            // the destination itself and rejects ours outright —
+            // "tax_address_region_id is not allowed". Verified against the live
+            // API: address + region 422s, address alone passes, and this held
+            // for a Canadian and a US contact alike, so it is not about the
+            // customer's country. Since an address is now mandatory above,
+            // there is no case where we should send the region.
             invoice_lines: sageLines.map((l, i) => ({
               description: l.description,
               quantity: l.quantity,
