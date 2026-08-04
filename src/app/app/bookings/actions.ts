@@ -4,10 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect, RedirectType } from "next/navigation";
 import { redirectBack } from "@/lib/return-to";
 import { futureStatusError } from "@/lib/booking-status";
-import {
-  lifecycleByAssignee,
-  withPriorLifecycle,
-} from "@/lib/crew-sync";
+import { lifecycleByAssignee, withPriorLifecycle } from "@/lib/crew-sync";
 import { after } from "next/server";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
 import type { Database, Json } from "@/lib/supabase/types";
@@ -131,7 +128,9 @@ type SplitSegmentInput = { assigned_to: string; duration_minutes: number };
  */
 async function syncBookingAssignees(
   supabase: Awaited<
-    ReturnType<typeof import("@/lib/supabase/server").createSupabaseServerClient>
+    ReturnType<
+      typeof import("@/lib/supabase/server").createSupabaseServerClient
+    >
   >,
   organizationId: string,
   bookingId: string,
@@ -282,7 +281,9 @@ async function syncBookingAssignees(
 
   const { error: insertErr } = (await supabase
     .from("booking_assignees")
-    .insert(rows.map((r) => withPriorLifecycle(r, priorLifecycle)) as never)) as unknown as {
+    .insert(
+      rows.map((r) => withPriorLifecycle(r, priorLifecycle)) as never,
+    )) as unknown as {
     error: { message: string } | null;
   };
   if (insertErr) {
@@ -314,7 +315,9 @@ async function syncBookingAssignees(
  */
 async function syncBookingAssigneesBulk(
   supabase: Awaited<
-    ReturnType<typeof import("@/lib/supabase/server").createSupabaseServerClient>
+    ReturnType<
+      typeof import("@/lib/supabase/server").createSupabaseServerClient
+    >
   >,
   organizationId: string,
   bookingIds: string[],
@@ -446,9 +449,11 @@ async function syncBookingAssigneesBulk(
   const allRows: Row[] = bookingIds.flatMap(buildRowsForBooking);
   if (allRows.length === 0) return;
 
-  await (supabase.from("booking_assignees").insert(
-    allRows.map((r) => withPriorLifecycle(r, priorBulkLifecycle)) as never,
-  ) as unknown as Promise<unknown>);
+  await (supabase
+    .from("booking_assignees")
+    .insert(
+      allRows.map((r) => withPriorLifecycle(r, priorBulkLifecycle)) as never,
+    ) as unknown as Promise<unknown>);
 }
 
 /**
@@ -456,7 +461,11 @@ async function syncBookingAssigneesBulk(
  * the Google Calendar event has a useful title/description.
  */
 async function getBookingLabels(
-  supabase: Awaited<ReturnType<typeof import("@/lib/supabase/server").createSupabaseServerClient>>,
+  supabase: Awaited<
+    ReturnType<
+      typeof import("@/lib/supabase/server").createSupabaseServerClient
+    >
+  >,
   clientId: string,
   assignedTo: string | null,
 ) {
@@ -484,8 +493,6 @@ async function getBookingLabels(
 
   return { clientName, employeeName };
 }
-
-
 
 export async function createBookingAction(
   _prev: BookingFormState,
@@ -519,7 +526,13 @@ export async function createBookingAction(
   // client-side so it's an advisory, not a gate.
 
   if (!(await canCreateData(membership.organization_id))) {
-    return { errors: { _form: "Your subscription has expired. Subscribe to create new bookings." }, values: raw };
+    return {
+      errors: {
+        _form:
+          "Your subscription has expired. Subscribe to create new bookings.",
+      },
+      values: raw,
+    };
   }
 
   // Parse + validate split segments. Empty array = no split shift.
@@ -529,7 +542,11 @@ export async function createBookingAction(
   // assigned_to="" and no crew notifications.
   const splitsJson = String(formData.get("splits") ?? "[]");
   let splitsRaw: unknown[] = [];
-  try { splitsRaw = JSON.parse(splitsJson); } catch { splitsRaw = []; }
+  try {
+    splitsRaw = JSON.parse(splitsJson);
+  } catch {
+    splitsRaw = [];
+  }
   if (!Array.isArray(splitsRaw)) splitsRaw = [];
 
   const splitsParsed = SplitsArraySchema.safeParse(splitsRaw);
@@ -567,10 +584,7 @@ export async function createBookingAction(
   // booking's overall duration_minutes, which is the full slot length).
   const effectiveDuration =
     splits.length > 0
-      ? splits.reduce(
-          (sum, s) => sum + (Number(s.duration_minutes) || 0),
-          0,
-        )
+      ? splits.reduce((sum, s) => sum + (Number(s.duration_minutes) || 0), 0)
       : parsed.data.duration_minutes;
 
   // When splits are active, ALWAYS make assigned_to track segment 0.
@@ -584,9 +598,7 @@ export async function createBookingAction(
     return first?.assigned_to || null;
   })();
   const effectiveAssignedTo =
-    splits.length > 0
-      ? segmentZeroAssignee
-      : (parsed.data.assigned_to ?? null);
+    splits.length > 0 ? segmentZeroAssignee : (parsed.data.assigned_to ?? null);
 
   const serviceExtras = readServiceExtras(formData);
   // Server-side gate: the form's submit button is disabled when the
@@ -667,17 +679,12 @@ export async function createBookingAction(
         parsed.data.client_id,
         mid,
       );
-      notifyBookingAssignment(
-        membership.organization_id,
-        booking.id,
-        mid,
-        {
-          clientName: labels.clientName ?? "A client",
-          scheduledAt: parsed.data.scheduled_at,
-          serviceType: parsed.data.service_type,
-          address: parsed.data.address ?? null,
-        },
-      );
+      notifyBookingAssignment(membership.organization_id, booking.id, mid, {
+        clientName: labels.clientName ?? "A client",
+        scheduledAt: parsed.data.scheduled_at,
+        serviceType: parsed.data.service_type,
+        address: parsed.data.address ?? null,
+      });
     }
   }
 
@@ -706,11 +713,13 @@ export async function createBookingAction(
     const splitAssignees = (splits as SplitSegmentInput[])
       .map((s) => s.assigned_to)
       .filter(Boolean);
-    const allAssignees = Array.from(new Set([
-      ...(parsed.data.assigned_to ? [parsed.data.assigned_to] : []),
-      ...readAdditionalAssignees(formData),
-      ...splitAssignees,
-    ]));
+    const allAssignees = Array.from(
+      new Set([
+        ...(parsed.data.assigned_to ? [parsed.data.assigned_to] : []),
+        ...readAdditionalAssignees(formData),
+        ...splitAssignees,
+      ]),
+    );
     syncMemberCalendarEvents(booking.id, allAssignees, {
       id: booking.id,
       scheduled_at: parsed.data.scheduled_at,
@@ -742,7 +751,8 @@ export async function createRecurringBookingAction(
 ): Promise<BookingFormState> {
   const raw = readRecurringFormValues(formData);
   const parsed = parseForm(RecurringBookingSchema, raw);
-  if (!parsed.ok) return { errors: parsed.errors as BookingFormState["errors"], values: raw };
+  if (!parsed.ok)
+    return { errors: parsed.errors as BookingFormState["errors"], values: raw };
 
   const { membership, supabase } = await getActionContext();
 
@@ -762,7 +772,10 @@ export async function createRecurringBookingAction(
     (!parsed.data.custom_days || parsed.data.custom_days.length === 0)
   ) {
     return {
-      errors: { _form: "Select at least one day of the week for custom weekly scheduling." },
+      errors: {
+        _form:
+          "Select at least one day of the week for custom weekly scheduling.",
+      },
       values: raw,
     };
   }
@@ -773,7 +786,10 @@ export async function createRecurringBookingAction(
     (parsed.data.monthly_nth == null || parsed.data.monthly_dow == null)
   ) {
     return {
-      errors: { _form: "Pick both an ordinal (1st, 2nd, etc.) and a weekday for monthly scheduling." },
+      errors: {
+        _form:
+          "Pick both an ordinal (1st, 2nd, etc.) and a weekday for monthly scheduling.",
+      },
       values: raw,
     };
   }
@@ -800,15 +816,18 @@ export async function createRecurringBookingAction(
       organization_id: membership.organization_id,
       client_id: parsed.data.client_id,
       pattern: parsed.data.recurrence_pattern,
-      custom_days: parsed.data.recurrence_pattern === "custom_weekly"
-        ? parsed.data.custom_days
-        : null,
-      monthly_nth: parsed.data.recurrence_pattern === "monthly_nth"
-        ? parsed.data.monthly_nth ?? null
-        : null,
-      monthly_dow: parsed.data.recurrence_pattern === "monthly_nth"
-        ? parsed.data.monthly_dow ?? null
-        : null,
+      custom_days:
+        parsed.data.recurrence_pattern === "custom_weekly"
+          ? parsed.data.custom_days
+          : null,
+      monthly_nth:
+        parsed.data.recurrence_pattern === "monthly_nth"
+          ? (parsed.data.monthly_nth ?? null)
+          : null,
+      monthly_dow:
+        parsed.data.recurrence_pattern === "monthly_nth"
+          ? (parsed.data.monthly_dow ?? null)
+          : null,
       start_time: parsed.data.start_time,
       starts_at: parsed.data.starts_at,
       ends_at: parsed.data.ends_at ?? null,
@@ -830,7 +849,10 @@ export async function createRecurringBookingAction(
       notes: parsed.data.notes ?? null,
     })
     .select("id")
-    .single() as unknown as { data: { id: string } | null; error: { message: string } | null });
+    .single() as unknown as {
+    data: { id: string } | null;
+    error: { message: string } | null;
+  });
 
   if (seriesErr || !series) {
     return {
@@ -852,11 +874,18 @@ export async function createRecurringBookingAction(
     tz: orgTz,
   };
 
-  const occurrences = generateOccurrences(rule, parsed.data.generate_ahead, null);
+  const occurrences = generateOccurrences(
+    rule,
+    parsed.data.generate_ahead,
+    null,
+  );
 
   if (occurrences.length === 0) {
     return {
-      errors: { _form: "No occurrences could be generated from the recurrence rule. Check your start date and days." },
+      errors: {
+        _form:
+          "No occurrences could be generated from the recurrence rule. Check your start date and days.",
+      },
       values: raw,
     };
   }
@@ -946,9 +975,7 @@ export async function createRecurringBookingAction(
           notes: parsed.data.notes ?? null,
           client_name: labels.clientName,
           employee_name: labels.employeeName,
-        }).catch((err) =>
-          console.error("[gcal] recurring create:", err),
-        );
+        }).catch((err) => console.error("[gcal] recurring create:", err));
         await syncMemberCalendarEvents(b.id, recurringAssignees, {
           id: b.id,
           scheduled_at: b.scheduled_at,
@@ -1029,7 +1056,9 @@ export async function updateBookingAction(
   // bypasses the immutability rule the field-only edit path enforces.
   const { data: existing } = (await supabase
     .from("bookings")
-    .select("google_calendar_event_id, assigned_to, scheduled_at, status, service_type")
+    .select(
+      "google_calendar_event_id, assigned_to, scheduled_at, status, service_type",
+    )
     .eq("id", id)
     .maybeSingle()) as unknown as {
     data: {
@@ -1058,7 +1087,11 @@ export async function updateBookingAction(
   // Parse + validate split segments. Same rules as createBookingAction.
   const updateSplitsJson = String(formData.get("splits") ?? "[]");
   let updateSplitsRaw: unknown[] = [];
-  try { updateSplitsRaw = JSON.parse(updateSplitsJson); } catch { updateSplitsRaw = []; }
+  try {
+    updateSplitsRaw = JSON.parse(updateSplitsJson);
+  } catch {
+    updateSplitsRaw = [];
+  }
   if (!Array.isArray(updateSplitsRaw)) updateSplitsRaw = [];
 
   const updateSplitsParsed = SplitsArraySchema.safeParse(updateSplitsRaw);
@@ -1193,17 +1226,12 @@ export async function updateBookingAction(
         parsed.data.client_id,
         mid,
       );
-      notifyBookingAssignment(
-        membership.organization_id,
-        id,
-        mid,
-        {
-          clientName: labels.clientName ?? "A client",
-          scheduledAt: parsed.data.scheduled_at,
-          serviceType: parsed.data.service_type,
-          address: parsed.data.address ?? null,
-        },
-      );
+      notifyBookingAssignment(membership.organization_id, id, mid, {
+        clientName: labels.clientName ?? "A client",
+        scheduledAt: parsed.data.scheduled_at,
+        serviceType: parsed.data.service_type,
+        address: parsed.data.address ?? null,
+      });
     }
   }
 
@@ -1213,7 +1241,9 @@ export async function updateBookingAction(
   // policy predicate — org isolation is still enforced via an explicit filter.
   const updateScope = String(formData.get("update_scope") ?? "this_only");
   const seriesId = String(formData.get("series_id") ?? "").trim();
-  const seriesScheduledAt = String(formData.get("series_scheduled_at") ?? "").trim();
+  const seriesScheduledAt = String(
+    formData.get("series_scheduled_at") ?? "",
+  ).trim();
 
   if (updateScope === "this_and_future" && seriesId && seriesScheduledAt) {
     const admin = createSupabaseAdminClient();
@@ -1255,7 +1285,9 @@ export async function updateBookingAction(
 
     if (updateSchedule) {
       const newPattern = String(formData.get("series_pattern") ?? "").trim();
-      const newStartTime = String(formData.get("series_start_time") ?? "").trim();
+      const newStartTime = String(
+        formData.get("series_start_time") ?? "",
+      ).trim();
       const newStartsAt = String(formData.get("series_starts_at") ?? "").trim();
       const newEndsAt =
         String(formData.get("series_ends_at") ?? "").trim() || null;
@@ -1270,8 +1302,15 @@ export async function updateBookingAction(
       ).trim();
 
       const validPatterns = [
-        "weekly", "bi_weekly", "tri_weekly", "quad_weekly", "monthly",
-        "custom_weekly", "monthly_nth", "every_2_months", "every_3_months",
+        "weekly",
+        "bi_weekly",
+        "tri_weekly",
+        "quad_weekly",
+        "monthly",
+        "custom_weekly",
+        "monthly_nth",
+        "every_2_months",
+        "every_3_months",
         "every_6_months",
       ];
 
@@ -1383,7 +1422,10 @@ export async function updateBookingAction(
           .eq("organization_id", membership.organization_id)
           .neq("id", id)
           .gte("scheduled_at", seriesScheduledAt)
-          .in("status", ["pending", "confirmed"]) as unknown as Promise<unknown>);
+          .in("status", [
+            "pending",
+            "confirmed",
+          ]) as unknown as Promise<unknown>);
 
         // Generate new occurrences strictly after the current booking's
         // datetime so we don't create a duplicate for today's slot.
@@ -1429,9 +1471,9 @@ export async function updateBookingAction(
           const { data: regenerated } = (await admin
             .from("bookings")
             .insert(bookingRows)
-            .select("id, scheduled_at") as unknown as {
+            .select("id, scheduled_at")) as unknown as {
             data: Array<{ id: string; scheduled_at: string }> | null;
-          });
+          };
 
           // Build booking_assignees for ALL regenerated occurrences in a
           // single bulk pass. Doing this per-row would do ~3 sequential
@@ -1512,11 +1554,9 @@ export async function updateBookingAction(
         .eq("organization_id", membership.organization_id)
         .neq("id", id)
         .gte("scheduled_at", seriesScheduledAt)
-        .not(
-          "status",
-          "in",
-          '("completed","cancelled")',
-        )) as unknown as { data: Array<{ id: string }> | null };
+        .not("status", "in", '("completed","cancelled")')) as unknown as {
+        data: Array<{ id: string }> | null;
+      };
 
       await (admin
         .from("bookings")
@@ -1554,7 +1594,10 @@ export async function updateBookingAction(
       .from("booking_series")
       .update({ ...propagatableFields, ...scheduleFields })
       .eq("id", seriesId)
-      .eq("organization_id", membership.organization_id) as unknown as Promise<unknown>);
+      .eq(
+        "organization_id",
+        membership.organization_id,
+      ) as unknown as Promise<unknown>);
 
     console.log(`[series-update] saved changes to series ${seriesId}`);
   }
@@ -1584,10 +1627,7 @@ export async function updateBookingAction(
 
   // If the status flipped TO cancelled (not already cancelled), push the
   // assigned employee AND email the client.
-  if (
-    existing?.status !== "cancelled" &&
-    parsed.data.status === "cancelled"
-  ) {
+  if (existing?.status !== "cancelled" && parsed.data.status === "cancelled") {
     notifyBookingCancelledToEmployee(id);
     sendBookingCancelledToClient(id);
   }
@@ -1599,10 +1639,7 @@ export async function updateBookingAction(
   // the auto-invoice feature was broken. Awaited so the draft invoice is
   // present by the time /app/invoices revalidates below. The automation
   // catches its own errors internally so this won't throw here.
-  if (
-    existing?.status !== "completed" &&
-    parsed.data.status === "completed"
-  ) {
+  if (existing?.status !== "completed" && parsed.data.status === "completed") {
     await autoInvoiceOnJobComplete(id);
   }
 
@@ -1622,9 +1659,7 @@ export async function updateBookingAction(
       await deleteCalendarEvent(
         membership.organization_id,
         existing.google_calendar_event_id,
-      ).catch((err) =>
-        console.error("[gcal] cancel cleanup failed:", err),
-      );
+      ).catch((err) => console.error("[gcal] cancel cleanup failed:", err));
       // Clear the stored event ID so a later un-cancel re-creates clean.
       await supabase
         .from("bookings")
@@ -1687,11 +1722,13 @@ export async function updateBookingAction(
       const splitAssignees = (updateSplits as SplitSegmentInput[])
         .map((s) => s.assigned_to)
         .filter(Boolean);
-      const allAssignees = Array.from(new Set([
-        ...(parsed.data.assigned_to ? [parsed.data.assigned_to] : []),
-        ...readAdditionalAssignees(formData),
-        ...splitAssignees,
-      ]));
+      const allAssignees = Array.from(
+        new Set([
+          ...(parsed.data.assigned_to ? [parsed.data.assigned_to] : []),
+          ...readAdditionalAssignees(formData),
+          ...splitAssignees,
+        ]),
+      );
       syncMemberCalendarEvents(id, allAssignees, {
         id,
         scheduled_at: parsed.data.scheduled_at,
@@ -1842,7 +1879,10 @@ export async function convertBookingToRecurringAction(
   };
 
   if (seriesErr || !series) {
-    return { ok: false, error: seriesErr?.message ?? "Couldn't create series." };
+    return {
+      ok: false,
+      error: seriesErr?.message ?? "Couldn't create series.",
+    };
   }
 
   // Link the existing booking as the first occurrence.
@@ -1863,7 +1903,11 @@ export async function convertBookingToRecurringAction(
     monthly_dow: null,
     tz: orgTz,
   };
-  const occurrences = generateOccurrences(rule, 8, new Date(booking.scheduled_at));
+  const occurrences = generateOccurrences(
+    rule,
+    8,
+    new Date(booking.scheduled_at),
+  );
 
   if (occurrences.length > 0) {
     const rows = occurrences.map((scheduled_at) => ({
@@ -1990,7 +2034,7 @@ export async function duplicateBookingAction(id: string) {
       hourly_rate_cents: source.hourly_rate_cents ?? null,
       address: source.address ?? null,
       notes: source.notes ?? null,
-      splits: (source.splits ?? []),
+      splits: source.splits ?? [],
     })
     .select("id")
     .single();
@@ -2034,9 +2078,9 @@ export async function duplicateBookingAction(id: string) {
   // redirect. Use the same effective-duration logic as create: sum of
   // segments if splits exist, otherwise the booking's duration.
   {
-    const sourceSplits = (Array.isArray(source.splits)
-      ? source.splits
-      : []) as Array<{ assigned_to?: string; duration_minutes?: number }>;
+    const sourceSplits = (
+      Array.isArray(source.splits) ? source.splits : []
+    ) as Array<{ assigned_to?: string; duration_minutes?: number }>;
     const dupEffectiveDuration =
       sourceSplits.length > 0
         ? sourceSplits.reduce(
@@ -2063,9 +2107,7 @@ export async function duplicateBookingAction(id: string) {
       split_count: new Set(
         sourceSplits.map((s) => s.assigned_to).filter(Boolean),
       ).size,
-    }).catch((err) =>
-      console.error("[gcal] sync error on duplicate:", err),
-    );
+    }).catch((err) => console.error("[gcal] sync error on duplicate:", err));
 
     // Personal calendars for every assignee (segment crew + primary).
     const everyAssignee = Array.from(
@@ -2100,6 +2142,23 @@ export async function duplicateBookingAction(id: string) {
  */
 export async function markBookingCompleteAction(id: string) {
   const { membership, supabase } = await getActionContext();
+
+  // One click completes the job AND drafts an invoice for it. On a job that
+  // has not happened yet that bills the client for work nobody has done, and
+  // hides the shift from the crew — so read the date before writing.
+  const { data: booking } = await supabase
+    .from("bookings")
+    .select("scheduled_at")
+    .eq("id", id)
+    .eq("organization_id", membership.organization_id)
+    .maybeSingle();
+  if (!booking) return;
+  if (futureStatusError(booking.scheduled_at, "completed")) {
+    // This action has no error channel — it redirects either way. The detail
+    // page still shows the real status, so the click reads as a no-op rather
+    // than silently billing a job that has not happened.
+    redirect(`/app/bookings/${id}`, RedirectType.replace);
+  }
 
   const { error } = await supabase
     .from("bookings")
@@ -2139,7 +2198,9 @@ export async function setBookingStatusAction(
   const id = String(formData.get("id") ?? "").trim();
   const target = String(formData.get("status") ?? "").trim();
   if (!id) return { ok: false, error: "Missing booking." };
-  if (!["confirmed", "in_progress", "completed", "cancelled"].includes(target)) {
+  if (
+    !["confirmed", "in_progress", "completed", "cancelled"].includes(target)
+  ) {
     return { ok: false, error: "Invalid status." };
   }
 
@@ -2177,6 +2238,13 @@ export async function setBookingStatusAction(
       error: `Can't change a ${booking.status.replace("_", " ")} booking to ${target.replace("_", " ")} here.`,
     };
   }
+
+  // The transition table says confirmed → completed is fine, and it is — for a
+  // job that has happened. One click here on a job scheduled for next week
+  // reproduces a766d848 exactly, and completing also auto-invoices below.
+  // scheduled_at is already loaded, so this costs nothing.
+  const dateErr = futureStatusError(booking.scheduled_at, target);
+  if (dateErr) return { ok: false, error: dateErr };
 
   const { error } = await supabase
     .from("bookings")
@@ -2282,7 +2350,10 @@ export async function deleteBookingAction(formData: FormData) {
       .eq("series_id", existing.series_id)
       .eq("organization_id", membership.organization_id)
       .gte("scheduled_at", fromTs)) as unknown as {
-      data: Array<{ id: string; google_calendar_event_id: string | null }> | null;
+      data: Array<{
+        id: string;
+        google_calendar_event_id: string | null;
+      }> | null;
     };
 
     const { error: delBookingsErr, count: delBookingsCount } = await admin
@@ -2309,10 +2380,9 @@ export async function deleteBookingAction(formData: FormData) {
       .from("booking_series")
       .update({ active: false })
       .eq("id", existing.series_id)
-      .eq(
-        "organization_id",
-        membership.organization_id,
-      )) as unknown as { error: { message: string } | null };
+      .eq("organization_id", membership.organization_id)) as unknown as {
+      error: { message: string } | null;
+    };
     if (deactivateErr) {
       console.error(
         "[cascade-delete] series deactivate failed:",
@@ -2512,7 +2582,10 @@ export async function cancelSeriesAction(formData: FormData) {
     .from("booking_series")
     .update({ active: false })
     .eq("id", seriesId)
-    .eq("organization_id", membership.organization_id) as unknown as Promise<unknown>);
+    .eq(
+      "organization_id",
+      membership.organization_id,
+    ) as unknown as Promise<unknown>);
 
   // Pull the affected occurrences FIRST so we have their event IDs.
   // After the status flip the booking rows still exist but their GCal
@@ -2743,7 +2816,9 @@ export async function assignBookingCrewAction(
   // Update personal calendars for all newly assigned members (and remove
   // events for unassigned ones). Fire-and-forget.
   if (existing) {
-    const allAssignees = [primaryId, ...additionalIds].filter(Boolean) as string[];
+    const allAssignees = [primaryId, ...additionalIds].filter(
+      Boolean,
+    ) as string[];
     syncMemberCalendarEvents(id, allAssignees, {
       id,
       scheduled_at: existing.scheduled_at,
@@ -2797,17 +2872,12 @@ export async function assignBookingCrewAction(
   // Fire the assignment notification when the primary actually
   // changed. Fire-and-forget — never block the dialog on it.
   if (primaryId && primaryId !== existing.assigned_to) {
-    notifyBookingAssignment(
-      membership.organization_id,
-      id,
-      primaryId,
-      {
-        clientName: existing.client?.name ?? "A client",
-        scheduledAt: existing.scheduled_at,
-        serviceType: existing.service_type,
-        address: existing.address ?? null,
-      },
-    );
+    notifyBookingAssignment(membership.organization_id, id, primaryId, {
+      clientName: existing.client?.name ?? "A client",
+      scheduledAt: existing.scheduled_at,
+      serviceType: existing.service_type,
+      address: existing.address ?? null,
+    });
   }
 
   // "This and all future" propagation for recurring series.
@@ -2825,37 +2895,32 @@ export async function assignBookingCrewAction(
 
     // Collect all future sibling IDs so we can sync their assignees.
     // organization_id filter is explicit because the admin client bypasses RLS.
-    const { data: siblings } = await (admin
+    const { data: siblings } = (await admin
       .from("bookings")
       .select("id")
       .eq("series_id", seriesId)
       .eq("organization_id", membership.organization_id)
       .gte("scheduled_at", seriesScheduledAt)
       .neq("id", id)
-      .not(
-        "status",
-        "in",
-        '("completed","cancelled")',
-      )) as unknown as { data: Array<{ id: string }> | null };
+      .not("status", "in", '("completed","cancelled")')) as unknown as {
+      data: Array<{ id: string }> | null;
+    };
 
     const siblingIds = (siblings ?? []).map((s) => s.id);
 
     if (siblingIds.length > 0) {
       // Bulk-update assigned_to on all future siblings.
-      await (admin
+      (await admin
         .from("bookings")
         .update({ assigned_to: primaryId })
         .in("id", siblingIds)) as unknown as Promise<unknown>;
 
       // Replace booking_assignees for each sibling so additional crew
       // propagates consistently with the current booking.
-      await (admin
+      (await admin
         .from("booking_assignees")
         .delete()
-        .in(
-          "booking_id",
-          siblingIds,
-        )) as unknown as Promise<unknown>;
+        .in("booking_id", siblingIds)) as unknown as Promise<unknown>;
 
       const assigneeRows: Array<{
         organization_id: string;
@@ -2884,7 +2949,7 @@ export async function assignBookingCrewAction(
       });
 
       if (assigneeRows.length > 0) {
-        await (admin
+        (await admin
           .from("booking_assignees")
           .insert(assigneeRows)) as unknown as Promise<unknown>;
       }
@@ -2893,11 +2958,14 @@ export async function assignBookingCrewAction(
     // Update the series template row so newly-generated occurrences
     // inherit the new primary assignee. Admin client bypasses RLS so we
     // must filter by organization_id explicitly.
-    await (admin
+    (await admin
       .from("booking_series")
       .update({ assigned_to: primaryId })
       .eq("id", seriesId)
-      .eq("organization_id", membership.organization_id)) as unknown as Promise<unknown>;
+      .eq(
+        "organization_id",
+        membership.organization_id,
+      )) as unknown as Promise<unknown>;
   }
 
   revalidatePath("/app/bookings");

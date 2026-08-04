@@ -4,10 +4,14 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { dispatchWebhookEvent } from "@/lib/webhooks";
 import { findOrCreateClient } from "@/lib/find-or-create-client";
 import { findCrossOrgRef } from "@/lib/api/org-scope";
+import { futureStatusError } from "@/lib/booking-status";
 import {
   isValidServiceTypeEnum,
   resolveServiceTypeColumns,
 } from "@/lib/api/service-type-columns";
+
+/** The four live booking statuses. */
+const BOOKING_STATUSES = ["confirmed", "in_progress", "completed", "cancelled"];
 
 /**
  * GET /api/v1/bookings — List bookings for the authenticated org.
@@ -56,7 +60,8 @@ export async function GET(request: NextRequest) {
   if (scheduledBefore) query = query.lte("scheduled_at", scheduledBefore);
 
   const { data, count, error } = await query;
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error)
+    return NextResponse.json({ error: error.message }, { status: 500 });
 
   return NextResponse.json({
     data,
@@ -102,14 +107,18 @@ export async function POST(request: NextRequest) {
         { status: 400 },
       );
     }
-    clientId = (await findOrCreateClient(admin, auth.organizationId, {
-      name: clientName.trim(),
-      email: clientEmail?.trim(),
-      phone: (body.client_phone as string)?.trim(),
-      address: (body.client_address as string)?.trim(),
-    })) ?? undefined;
+    clientId =
+      (await findOrCreateClient(admin, auth.organizationId, {
+        name: clientName.trim(),
+        email: clientEmail?.trim(),
+        phone: (body.client_phone as string)?.trim(),
+        address: (body.client_address as string)?.trim(),
+      })) ?? undefined;
     if (!clientId) {
-      return NextResponse.json({ error: "Failed to resolve client" }, { status: 500 });
+      return NextResponse.json(
+        { error: "Failed to resolve client" },
+        { status: 500 },
+      );
     }
   }
 
@@ -132,8 +141,36 @@ export async function POST(request: NextRequest) {
   const scheduled_at = body.scheduled_at as string | undefined;
   const duration_minutes = body.duration_minutes as number | undefined;
 
-  if (!scheduled_at) return NextResponse.json({ error: "scheduled_at is required" }, { status: 400 });
-  if (!duration_minutes) return NextResponse.json({ error: "duration_minutes is required" }, { status: 400 });
+  if (!scheduled_at)
+    return NextResponse.json(
+      { error: "scheduled_at is required" },
+      { status: 400 },
+    );
+  if (!duration_minutes)
+    return NextResponse.json(
+      { error: "duration_minutes is required" },
+      { status: 400 },
+    );
+
+  // Same treatment service_type gets twelve lines down: validate against the
+  // live enum rather than letting Postgres reject it, and refuse a status the
+  // date cannot support. This route writes through the service-role client, so
+  // an API key was all it took to create the a766d848 shape — a future job
+  // already marked completed, which silently swallows the crew's accept prompt.
+  const requestedStatus = (body.status as string | undefined) ?? "confirmed";
+  if (!BOOKING_STATUSES.includes(requestedStatus)) {
+    return NextResponse.json(
+      {
+        error:
+          "Invalid status. Allowed: confirmed, in_progress, completed, cancelled.",
+      },
+      { status: 400 },
+    );
+  }
+  const statusErr = futureStatusError(scheduled_at, requestedStatus);
+  if (statusErr) {
+    return NextResponse.json({ error: statusErr }, { status: 400 });
+  }
 
   // Validate service_type against the enum and resolve FK + label
   // from the org's catalog. Defaults to "standard" when omitted. An
@@ -173,7 +210,7 @@ export async function POST(request: NextRequest) {
       service_type: serviceCols.service_type,
       service_type_id: serviceCols.service_type_id,
       service_type_label: serviceCols.service_type_label,
-      status: (body.status as string) ?? "confirmed",
+      status: requestedStatus,
       total_cents: (body.total_cents as number) ?? 0,
       hourly_rate_cents: (body.hourly_rate_cents as number) ?? null,
       address: (body.address as string) ?? null,
@@ -181,12 +218,17 @@ export async function POST(request: NextRequest) {
       assigned_to: (body.assigned_to as string) ?? null,
       package_id: (body.package_id as string) ?? null,
     } as never)
-    .select("id, client_id, scheduled_at, duration_minutes, service_type, service_type_id, service_type_label, status, total_cents, address, notes, created_at")
+    .select(
+      "id, client_id, scheduled_at, duration_minutes, service_type, service_type_id, service_type_label, status, total_cents, address, notes, created_at",
+    )
     .single();
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error)
+    return NextResponse.json({ error: error.message }, { status: 500 });
 
-  dispatchWebhookEvent(auth.organizationId, "booking.created", data).catch(() => {});
+  dispatchWebhookEvent(auth.organizationId, "booking.created", data).catch(
+    () => {},
+  );
 
   return NextResponse.json({ data }, { status: 201 });
 }

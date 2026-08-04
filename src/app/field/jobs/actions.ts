@@ -6,6 +6,7 @@ import { autoInvoiceOnJobComplete } from "@/lib/automations";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { deleteMemberCalendarEvent } from "@/lib/google-calendar";
 import { notify } from "@/lib/notify";
+import { futureStatusError } from "@/lib/booking-status";
 
 export type JobActionResult = { ok: true } | { ok: false; error: string };
 
@@ -33,7 +34,7 @@ export async function startJobAction(
 
   const { data: booking, error: fetchError } = await supabase
     .from("bookings")
-    .select("id, assigned_to, status")
+    .select("id, assigned_to, status, scheduled_at")
     .eq("id", bookingId)
     .maybeSingle();
   if (fetchError) return { ok: false, error: fetchError.message };
@@ -74,6 +75,19 @@ export async function startJobAction(
     return { ok: false, error: "Please accept this shift before starting it." };
   }
 
+  // A cleaner arriving early is normal and the grace window in
+  // futureStatusError exists for exactly that. What it still catches is a job
+  // days out being started — which usually means the schedule is wrong, not
+  // that someone is very keen.
+  const earlyErr = futureStatusError(booking.scheduled_at, "in_progress");
+  if (earlyErr) {
+    return {
+      ok: false,
+      error:
+        "This job isn't due for a while yet. Check the date with your manager before starting it.",
+    };
+  }
+
   // Update status if it's not already started or finished.
   if (booking.status !== "in_progress" && booking.status !== "completed") {
     const { error: updateError } = await supabase
@@ -110,7 +124,9 @@ export async function startJobAction(
   const payRateSnapshot = rateRow?.pay_rate_cents ?? null;
 
   if (anyOpenEntry) {
-    if ((anyOpenEntry as { booking_id: string | null }).booking_id === bookingId) {
+    if (
+      (anyOpenEntry as { booking_id: string | null }).booking_id === bookingId
+    ) {
       // Already clocked in on this exact job — idempotent, nothing to do.
     } else {
       // Clocked in on a different job or a standalone clock-in — close it first
@@ -126,15 +142,17 @@ export async function startJobAction(
         .eq("employee_id", membership.id);
       if (closeError) return { ok: false, error: closeError.message };
 
-      const { error: insertError } = await supabase.from("time_entries").insert({
-        organization_id: membership.organization_id,
-        employee_id: membership.id,
-        booking_id: bookingId,
-        clock_in_at: new Date().toISOString(),
-        clock_in_lat: lat,
-        clock_in_lng: lng,
-        pay_rate_cents_snapshot: payRateSnapshot,
-      });
+      const { error: insertError } = await supabase
+        .from("time_entries")
+        .insert({
+          organization_id: membership.organization_id,
+          employee_id: membership.id,
+          booking_id: bookingId,
+          clock_in_at: new Date().toISOString(),
+          clock_in_lat: lat,
+          clock_in_lng: lng,
+          pay_rate_cents_snapshot: payRateSnapshot,
+        });
       if (insertError) {
         const code = (insertError as { code?: string }).code;
         if (code === "23505") {
@@ -185,7 +203,7 @@ export async function completeJobAction(
 
   const { data: booking, error: fetchError } = await supabase
     .from("bookings")
-    .select("id, assigned_to, status")
+    .select("id, assigned_to, status, scheduled_at")
     .eq("id", bookingId)
     .maybeSingle();
   if (fetchError) return { ok: false, error: fetchError.message };
@@ -273,6 +291,19 @@ export async function completeJobAction(
       revalidatePath("/field/clock");
       return { ok: true };
     }
+  }
+
+  // Completing also drafts an invoice. On a job that has not happened that
+  // bills the client for work nobody has done, and drops the shift out of
+  // every other crew member's list (needs_acceptance goes false when the
+  // booking reads completed).
+  const notYetErr = futureStatusError(booking.scheduled_at, "completed");
+  if (notYetErr) {
+    return {
+      ok: false,
+      error:
+        "This job isn't due for a while yet. Check the date with your manager before finishing it.",
+    };
   }
 
   const { error: updateBookingError } = await supabase

@@ -3,14 +3,13 @@
 import { revalidatePath } from "next/cache";
 import { getActionContext } from "@/lib/actions";
 import { getOrgTimezone } from "@/lib/org-timezone";
+import { futureStatusError } from "@/lib/booking-status";
 import {
   notifyBookingAssignment,
   sendBookingRescheduled,
 } from "@/lib/automations";
 
-export type RescheduleResult =
-  | { ok: true }
-  | { ok: false; error: string };
+export type RescheduleResult = { ok: true } | { ok: false; error: string };
 
 /**
  * Mark a cleaner's "take me off the recurring client" request as handled.
@@ -86,25 +85,23 @@ export async function rescheduleBookingAction(
   // can detect split-shift bookings and avoid wiping their assignees.
   const { data: current, error: fetchError } = (await supabase
     .from("bookings")
-    .select("id, scheduled_at, duration_minutes, assigned_to, splits")
+    .select("id, scheduled_at, duration_minutes, assigned_to, splits, status")
     .eq("id", id)
     .maybeSingle()) as unknown as {
-    data:
-      | {
-          id: string;
-          scheduled_at: string;
-          duration_minutes: number;
-          assigned_to: string | null;
-          splits: Array<{ assigned_to?: string; duration_minutes?: number }> | null;
-        }
-      | null;
+    data: {
+      id: string;
+      scheduled_at: string;
+      duration_minutes: number;
+      assigned_to: string | null;
+      status: string;
+      splits: Array<{ assigned_to?: string; duration_minutes?: number }> | null;
+    } | null;
     error: { message: string } | null;
   };
   if (fetchError) return { ok: false, error: fetchError.message };
   if (!current) return { ok: false, error: "Booking not found" };
 
-  const hasSplits =
-    Array.isArray(current.splits) && current.splits.length > 0;
+  const hasSplits = Array.isArray(current.splits) && current.splits.length > 0;
 
   let targetHour: number;
   let targetMin: number;
@@ -120,12 +117,8 @@ export async function rescheduleBookingAction(
       minute: "2-digit",
       hour12: false,
     }).formatToParts(previous);
-    targetHour = Number(
-      prevParts.find((p) => p.type === "hour")?.value ?? 0,
-    );
-    targetMin = Number(
-      prevParts.find((p) => p.type === "minute")?.value ?? 0,
-    );
+    targetHour = Number(prevParts.find((p) => p.type === "hour")?.value ?? 0);
+    targetMin = Number(prevParts.find((p) => p.type === "minute")?.value ?? 0);
   }
 
   // Build the new datetime and convert to UTC via the org's timezone.
@@ -146,9 +139,7 @@ export async function rescheduleBookingAction(
   );
   const offsetMs = inTz.getTime() - naiveMs;
   const next = new Date(naiveMs - offsetMs);
-  const nextEnd = new Date(
-    next.getTime() + current.duration_minutes * 60_000,
-  );
+  const nextEnd = new Date(next.getTime() + current.duration_minutes * 60_000);
 
   // Hard-conflict check: same employee can't be in two places. Different
   // employees overlapping is legit (two-person jobs) and isn't blocked
@@ -177,9 +168,7 @@ export async function rescheduleBookingAction(
 
     const overlap = (sameDay ?? []).find((other) => {
       const oStart = new Date(other.scheduled_at);
-      const oEnd = new Date(
-        oStart.getTime() + other.duration_minutes * 60_000,
-      );
+      const oEnd = new Date(oStart.getTime() + other.duration_minutes * 60_000);
       return oStart < nextEnd && oEnd > next;
     });
     if (overlap) {
@@ -210,6 +199,14 @@ export async function rescheduleBookingAction(
     // Re-arm the day-before reminder for the new date (audit B5).
     bookingUpdate.client_reminder_sent_at = null;
   }
+
+  // The status/date rule has a second direction nobody guards: instead of
+  // marking a future job completed, drag a completed job into the future.
+  // futureStatusError is keyed on (date, status), so every writer that moves
+  // the DATE is structurally outside a check that only fires on status writes.
+  // Svit drags constantly — ~243 bookings a week — so this path matters.
+  const dateErr = futureStatusError(next.toISOString(), current.status);
+  if (dateErr) return { ok: false, error: dateErr };
 
   const { error: updateError } = await supabase
     .from("bookings")
@@ -261,21 +258,19 @@ export async function rescheduleBookingAction(
         })
       : { data: null };
 
-    await (supabase
+    (await supabase
       .from("booking_assignees" as never)
       .delete()
       .eq("booking_id" as never, id as never)) as unknown as Promise<unknown>;
 
     if (assignedTo) {
-      await (supabase
-        .from("booking_assignees" as never)
-        .insert({
-          organization_id: membership.organization_id,
-          booking_id: id,
-          membership_id: assignedTo,
-          is_primary: true,
-          ...(priorRow ?? {}),
-        } as never)) as unknown as Promise<unknown>;
+      (await supabase.from("booking_assignees" as never).insert({
+        organization_id: membership.organization_id,
+        booking_id: id,
+        membership_id: assignedTo,
+        is_primary: true,
+        ...(priorRow ?? {}),
+      } as never)) as unknown as Promise<unknown>;
     }
   }
 
@@ -283,16 +278,10 @@ export async function rescheduleBookingAction(
   // (non-split bookings only — split crew doesn't change on reschedule).
   // Previously drag-drop silently moved jobs to a new cleaner without
   // any push, so the new owner had no idea they were on the hook.
-  if (
-    !hasSplits &&
-    assignedTo &&
-    assignedTo !== current.assigned_to
-  ) {
+  if (!hasSplits && assignedTo && assignedTo !== current.assigned_to) {
     const { data: bookingForNotify } = (await supabase
       .from("bookings")
-      .select(
-        "service_type, address, client:clients ( name )",
-      )
+      .select("service_type, address, client:clients ( name )")
       .eq("id", id)
       .maybeSingle()) as unknown as {
       data: {
@@ -302,17 +291,12 @@ export async function rescheduleBookingAction(
       } | null;
     };
     if (bookingForNotify) {
-      notifyBookingAssignment(
-        membership.organization_id,
-        id,
-        assignedTo,
-        {
-          clientName: bookingForNotify.client?.name ?? "A client",
-          scheduledAt: next.toISOString(),
-          serviceType: bookingForNotify.service_type,
-          address: bookingForNotify.address,
-        },
-      );
+      notifyBookingAssignment(membership.organization_id, id, assignedTo, {
+        clientName: bookingForNotify.client?.name ?? "A client",
+        scheduledAt: next.toISOString(),
+        serviceType: bookingForNotify.service_type,
+        address: bookingForNotify.address,
+      });
     }
   }
 

@@ -3,7 +3,14 @@
 import { useState, useActionState, useEffect, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { Repeat, CalendarPlus, SplitSquareVertical, Plus, Trash2, AlertTriangle } from "lucide-react";
+import {
+  Repeat,
+  CalendarPlus,
+  SplitSquareVertical,
+  Plus,
+  Trash2,
+  AlertTriangle,
+} from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { buttonVariants } from "@/components/ui/button";
@@ -14,6 +21,7 @@ import { ReturnToField } from "@/components/return-to-field";
 import { AddressAutocomplete } from "@/components/address-autocomplete";
 import { cn } from "@/lib/utils";
 import { RECURRENCE_OPTIONS } from "@/lib/recurrence";
+import { EARLY_START_GRACE_MINUTES } from "@/lib/booking-status";
 import {
   createBookingAction,
   createRecurringBookingAction,
@@ -291,7 +299,9 @@ export function BookingForm({
 
   function toggleSeriesDay(day: number) {
     setSeriesCustomDays((prev) =>
-      prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day].sort(),
+      prev.includes(day)
+        ? prev.filter((d) => d !== day)
+        : [...prev, day].sort(),
     );
   }
 
@@ -328,9 +338,7 @@ export function BookingForm({
   const [splitEnabled, setSplitEnabled] = useState(
     Boolean(defaults?.splits?.length),
   );
-  const [splits, setSplits] = useState<SplitSegment[]>(
-    defaults?.splits ?? [],
-  );
+  const [splits, setSplits] = useState<SplitSegment[]>(defaults?.splits ?? []);
   const [divideHours, setDivideHours] = useState<boolean>(
     defaults?.divide_hours_evenly ?? false,
   );
@@ -376,6 +384,53 @@ export function BookingForm({
   const formAction = isRecurring ? recurringFormAction : singleFormAction;
   const v = state.values ?? {};
 
+  // Mirrored into state so the Status options can react to it. See
+  // `statusOptions` below — a job far enough out simply isn't offered
+  // "Completed", rather than being offered it and rejected on save.
+  const [scheduledAtLocal, setScheduledAtLocal] = useState(
+    v.scheduled_at ?? defaults?.scheduled_at_local ?? "",
+  );
+
+  const currentStatus = v.status ?? defaults?.status ?? "confirmed";
+
+  /*
+   * Which statuses this job can hold, given when it happens.
+   *
+   * This control is a bare native <select>, and on Windows Chrome a focused
+   * closed select changes value on the mouse wheel — inside a sheet you have
+   * to wheel-scroll to reach the submit button. Simplifying the status list
+   * (1081c28) moved "Completed" from four notches below the default to two,
+   * and made native typeahead "c" walk from Confirmed to Completed instead of
+   * being a no-op. That is how booking a766d848 was created two days early
+   * already marked complete, which hid the shift from Jim entirely.
+   *
+   * The server rejects it now, but a rejection is an error message someone has
+   * to read. An option that isn't in the DOM can't be reached by wheel, arrow
+   * key or typeahead at all. So the rule from src/lib/booking-status.ts is
+   * mirrored here: past and imminent jobs keep the full list — back-filling
+   * history is legitimate and common — and jobs further out than the
+   * early-start grace drop the two statuses they cannot legitimately hold.
+   *
+   * The booking's own current status always stays, so editing a completed job
+   * never silently rewrites it; moving that job into the future is the server
+   * guard's business, and it explains itself.
+   */
+  const scheduledMs = new Date(scheduledAtLocal).getTime();
+  const beyondGrace =
+    Number.isFinite(scheduledMs) &&
+    scheduledMs > Date.now() + EARLY_START_GRACE_MINUTES * 60_000;
+  const statusOptions = [
+    { value: "confirmed", label: "Confirmed" },
+    { value: "in_progress", label: "In progress" },
+    { value: "completed", label: "Completed" },
+    { value: "cancelled", label: "Cancelled" },
+  ].filter(
+    (o) =>
+      !beyondGrace ||
+      o.value === currentStatus ||
+      (o.value !== "completed" && o.value !== "in_progress"),
+  );
+
   // When embedded (onSuccess is set), watch for the server action returning
   // _done=1 (meaning it skipped redirect) and call onSuccess to close the Sheet.
   useEffect(() => {
@@ -393,9 +448,7 @@ export function BookingForm({
   const [addressValue, setAddressValue] = useState<string>(
     defaults?.address ?? "",
   );
-  const [notesValue, setNotesValue] = useState<string>(
-    defaults?.notes ?? "",
-  );
+  const [notesValue, setNotesValue] = useState<string>(defaults?.notes ?? "");
   const [totalValue, setTotalValue] = useState<string>(
     defaults?.total_dollars ?? "",
   );
@@ -511,13 +564,15 @@ export function BookingForm({
 
   const isEditingSeries = mode === "edit" && !!defaults?.series_id;
 
-  const [updateScope, setUpdateScope] = useState<"this_only" | "this_and_future">(
-    "this_only",
-  );
+  const [updateScope, setUpdateScope] = useState<
+    "this_only" | "this_and_future"
+  >("this_only");
 
   function toggleDay(day: number) {
     setSelectedDays((prev) =>
-      prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day].sort(),
+      prev.includes(day)
+        ? prev.filter((d) => d !== day)
+        : [...prev, day].sort(),
     );
   }
 
@@ -553,8 +608,16 @@ export function BookingForm({
       {isEditingSeries && (
         <>
           <input type="hidden" name="update_scope" value={updateScope} />
-          <input type="hidden" name="series_id" value={defaults?.series_id ?? ""} />
-          <input type="hidden" name="series_scheduled_at" value={defaults?.scheduled_at_utc ?? ""} />
+          <input
+            type="hidden"
+            name="series_id"
+            value={defaults?.series_id ?? ""}
+          />
+          <input
+            type="hidden"
+            name="series_scheduled_at"
+            value={defaults?.scheduled_at_utc ?? ""}
+          />
         </>
       )}
 
@@ -603,7 +666,8 @@ export function BookingForm({
       {isEditingSeries && (
         <div className="flex items-center gap-2 rounded-md bg-blue-500/10 border border-blue-500/20 px-3 py-2 text-xs text-blue-700 dark:text-blue-300">
           <Repeat className="h-3.5 w-3.5 shrink-0" />
-          This booking is part of a recurring schedule. Editing it only changes this single occurrence.
+          This booking is part of a recurring schedule. Editing it only changes
+          this single occurrence.
         </div>
       )}
 
@@ -660,11 +724,7 @@ export function BookingForm({
           </h3>
 
           <div className="grid gap-4 sm:grid-cols-2">
-            <FormField
-              label="Frequency"
-              htmlFor="recurrence_pattern"
-              required
-            >
+            <FormField label="Frequency" htmlFor="recurrence_pattern" required>
               <FormSelect
                 id="recurrence_pattern"
                 name="recurrence_pattern"
@@ -680,18 +740,13 @@ export function BookingForm({
               {/* Description of the currently-selected pattern. */}
               <p className="mt-1.5 text-xs text-muted-foreground leading-relaxed">
                 {
-                  RECURRENCE_OPTIONS.find(
-                    (o) => o.value === recurrencePattern,
-                  )?.description
+                  RECURRENCE_OPTIONS.find((o) => o.value === recurrencePattern)
+                    ?.description
                 }
               </p>
             </FormField>
 
-            <FormField
-              label="Time"
-              htmlFor="start_time"
-              required
-            >
+            <FormField label="Time" htmlFor="start_time" required>
               <Input
                 id="start_time"
                 name="start_time"
@@ -705,7 +760,11 @@ export function BookingForm({
           {/* Monthly-Nth picker */}
           {recurrencePattern === "monthly_nth" && (
             <div className="grid gap-4 sm:grid-cols-2">
-              <FormField label="Which occurrence" htmlFor="monthly_nth" required>
+              <FormField
+                label="Which occurrence"
+                htmlFor="monthly_nth"
+                required
+              >
                 <FormSelect
                   id="monthly_nth"
                   name="monthly_nth"
@@ -779,11 +838,7 @@ export function BookingForm({
           )}
 
           <div className="grid gap-4 sm:grid-cols-2">
-            <FormField
-              label="Start date"
-              htmlFor="starts_at"
-              required
-            >
+            <FormField label="Start date" htmlFor="starts_at" required>
               <Input
                 id="starts_at"
                 name="starts_at"
@@ -842,9 +897,9 @@ export function BookingForm({
           </div>
 
           <p className="text-xs text-muted-foreground leading-relaxed">
-            Sollos generates about 2 months of bookings ahead and
-            auto-extends each night. There&rsquo;s no cap — the series
-            keeps going forever unless you set an end date or pause it.
+            Sollos generates about 2 months of bookings ahead and auto-extends
+            each night. There&rsquo;s no cap — the series keeps going forever
+            unless you set an end date or pause it.
           </p>
 
           {/* Hidden: generate_ahead is the cron's batch size.
@@ -867,9 +922,8 @@ export function BookingForm({
               name="scheduled_at"
               type="datetime-local"
               required
-              defaultValue={
-                v.scheduled_at ?? defaults?.scheduled_at_local ?? ""
-              }
+              value={scheduledAtLocal}
+              onChange={(e) => setScheduledAtLocal(e.target.value)}
             />
           </FormField>
 
@@ -940,7 +994,9 @@ export function BookingForm({
             name="service_type"
             value={
               mode === "edit"
-                ? (defaults?.service_type ?? selectedService?.category ?? "other")
+                ? (defaults?.service_type ??
+                  selectedService?.category ??
+                  "other")
                 : (selectedService?.category ?? "other")
             }
           />
@@ -963,15 +1019,12 @@ export function BookingForm({
             required
             error={state.errors?.status}
           >
-            <FormSelect
-              id="status"
-              name="status"
-              defaultValue={v.status ?? defaults?.status ?? "confirmed"}
-            >
-              <option value="confirmed">Confirmed</option>
-              <option value="in_progress">In progress</option>
-              <option value="completed">Completed</option>
-              <option value="cancelled">Cancelled</option>
+            <FormSelect id="status" name="status" defaultValue={currentStatus}>
+              {statusOptions.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
             </FormSelect>
           </FormField>
         )}
@@ -1104,8 +1157,8 @@ export function BookingForm({
                 Divide the hours evenly across the crew
               </span>
               <span className="mt-0.5 block text-xs text-muted-foreground">
-                Each cleaner sees their share in the field app — a 4h job with
-                2 cleaners shows as ~2h each. Doesn&rsquo;t change the visit
+                Each cleaner sees their share in the field app — a 4h job with 2
+                cleaners shows as ~2h each. Doesn&rsquo;t change the visit
                 window, their pay (from clock-in/out), or the client&rsquo;s
                 bill.
               </span>
@@ -1129,8 +1182,18 @@ export function BookingForm({
                 setSplitEnabled(e.target.checked);
                 if (e.target.checked && splits.length === 0) {
                   setSplits([
-                    { id: crypto.randomUUID(), assigned_to: "", duration_minutes: Math.round(defaultMinutes / 2) || 120, hourly_rate_cents: 0 },
-                    { id: crypto.randomUUID(), assigned_to: "", duration_minutes: Math.round(defaultMinutes / 2) || 120, hourly_rate_cents: 0 },
+                    {
+                      id: crypto.randomUUID(),
+                      assigned_to: "",
+                      duration_minutes: Math.round(defaultMinutes / 2) || 120,
+                      hourly_rate_cents: 0,
+                    },
+                    {
+                      id: crypto.randomUUID(),
+                      assigned_to: "",
+                      duration_minutes: Math.round(defaultMinutes / 2) || 120,
+                      hourly_rate_cents: 0,
+                    },
                   ]);
                 }
               }}
@@ -1140,16 +1203,20 @@ export function BookingForm({
             <span className="text-sm font-medium">Split shift (hand-off)</span>
           </label>
           <p className="-mt-1 pl-7 text-xs text-muted-foreground">
-            One cleaner works the first part, another takes over partway
-            through — they do <strong>not</strong> overlap. For two cleaners
-            working the <strong>same hours together</strong>, don&rsquo;t split:
-            just assign them both as crew.
+            One cleaner works the first part, another takes over partway through
+            — they do <strong>not</strong> overlap. For two cleaners working the{" "}
+            <strong>same hours together</strong>, don&rsquo;t split: just assign
+            them both as crew.
           </p>
 
           {splitEnabled && (
             <div className="space-y-3 pt-1">
               {/* Hidden field: serialised splits JSON */}
-              <input type="hidden" name="splits" value={JSON.stringify(splits)} />
+              <input
+                type="hidden"
+                name="splits"
+                value={JSON.stringify(splits)}
+              />
 
               {splits.map((seg, idx) => {
                 // Compute start time for display
@@ -1157,7 +1224,10 @@ export function BookingForm({
                   .slice(0, idx)
                   .reduce((sum, s) => sum + s.duration_minutes, 0);
                 return (
-                  <div key={seg.id} className="rounded-md border border-border bg-card p-3 space-y-2.5">
+                  <div
+                    key={seg.id}
+                    className="rounded-md border border-border bg-card p-3 space-y-2.5"
+                  >
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                         Segment {idx + 1}
@@ -1181,28 +1251,38 @@ export function BookingForm({
 
                     <div className="grid gap-2 sm:grid-cols-3">
                       <div className="sm:col-span-1">
-                        <label className="mb-1 block text-xs text-muted-foreground">Assigned to</label>
+                        <label className="mb-1 block text-xs text-muted-foreground">
+                          Assigned to
+                        </label>
                         <select
                           value={seg.assigned_to}
                           onChange={(e) => {
-                            const emp = employees.find((em) => em.id === e.target.value);
+                            const emp = employees.find(
+                              (em) => em.id === e.target.value,
+                            );
                             updateSplit(seg.id, {
                               assigned_to: e.target.value,
                               // Pre-fill rate from employee profile if not set
-                              hourly_rate_cents: seg.hourly_rate_cents || (emp?.pay_rate_cents ?? 0),
+                              hourly_rate_cents:
+                                seg.hourly_rate_cents ||
+                                (emp?.pay_rate_cents ?? 0),
                             });
                           }}
                           className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm"
                         >
                           <option value="">Select employee…</option>
                           {employees.map((emp) => (
-                            <option key={emp.id} value={emp.id}>{emp.label}</option>
+                            <option key={emp.id} value={emp.id}>
+                              {emp.label}
+                            </option>
                           ))}
                         </select>
                       </div>
 
                       <div>
-                        <label className="mb-1 block text-xs text-muted-foreground">Duration</label>
+                        <label className="mb-1 block text-xs text-muted-foreground">
+                          Duration
+                        </label>
                         <div className="flex items-center gap-1">
                           <input
                             type="number"
@@ -1210,12 +1290,20 @@ export function BookingForm({
                             step={1}
                             value={Math.floor(seg.duration_minutes / 60)}
                             onChange={(e) => {
-                              const hrs = Math.max(0, Number(e.target.value) || 0);
-                              updateSplit(seg.id, { duration_minutes: hrs * 60 + (seg.duration_minutes % 60) });
+                              const hrs = Math.max(
+                                0,
+                                Number(e.target.value) || 0,
+                              );
+                              updateSplit(seg.id, {
+                                duration_minutes:
+                                  hrs * 60 + (seg.duration_minutes % 60),
+                              });
                             }}
                             className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm"
                           />
-                          <span className="shrink-0 text-xs text-muted-foreground">hr</span>
+                          <span className="shrink-0 text-xs text-muted-foreground">
+                            hr
+                          </span>
                           <input
                             type="number"
                             min={0}
@@ -1223,17 +1311,28 @@ export function BookingForm({
                             step={5}
                             value={seg.duration_minutes % 60}
                             onChange={(e) => {
-                              const mins = Math.min(55, Math.max(0, Number(e.target.value) || 0));
-                              updateSplit(seg.id, { duration_minutes: Math.floor(seg.duration_minutes / 60) * 60 + mins });
+                              const mins = Math.min(
+                                55,
+                                Math.max(0, Number(e.target.value) || 0),
+                              );
+                              updateSplit(seg.id, {
+                                duration_minutes:
+                                  Math.floor(seg.duration_minutes / 60) * 60 +
+                                  mins,
+                              });
                             }}
                             className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm"
                           />
-                          <span className="shrink-0 text-xs text-muted-foreground">min</span>
+                          <span className="shrink-0 text-xs text-muted-foreground">
+                            min
+                          </span>
                         </div>
                       </div>
 
                       <div>
-                        <label className="mb-1 block text-xs text-muted-foreground">Rate ($/hr)</label>
+                        <label className="mb-1 block text-xs text-muted-foreground">
+                          Rate ($/hr)
+                        </label>
                         <input
                           type="number"
                           min={0}
@@ -1241,7 +1340,9 @@ export function BookingForm({
                           value={(seg.hourly_rate_cents / 100).toFixed(2)}
                           onChange={(e) =>
                             updateSplit(seg.id, {
-                              hourly_rate_cents: Math.round(Number(e.target.value) * 100),
+                              hourly_rate_cents: Math.round(
+                                Number(e.target.value) * 100,
+                              ),
                             })
                           }
                           className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm"
@@ -1262,23 +1363,34 @@ export function BookingForm({
               </button>
 
               {/* Summary row */}
-              {splits.length > 0 && (() => {
-                const totalSplitMins = splits.reduce((s, seg) => s + seg.duration_minutes, 0);
-                const totalSplitCost = splits.reduce(
-                  (s, seg) => s + (seg.hourly_rate_cents / 100) * (seg.duration_minutes / 60),
-                  0,
-                );
-                return (
-                  <p className="text-xs text-muted-foreground">
-                    Total:{" "}
-                    <strong>
-                      {Math.floor(totalSplitMins / 60)}h{totalSplitMins % 60 > 0 ? ` ${totalSplitMins % 60}m` : ""}
-                    </strong>{" "}
-                    across {splits.length} employees ·{" "}
-                    <strong>${totalSplitCost.toFixed(2)}</strong> estimated cost
-                  </p>
-                );
-              })()}
+              {splits.length > 0 &&
+                (() => {
+                  const totalSplitMins = splits.reduce(
+                    (s, seg) => s + seg.duration_minutes,
+                    0,
+                  );
+                  const totalSplitCost = splits.reduce(
+                    (s, seg) =>
+                      s +
+                      (seg.hourly_rate_cents / 100) *
+                        (seg.duration_minutes / 60),
+                    0,
+                  );
+                  return (
+                    <p className="text-xs text-muted-foreground">
+                      Total:{" "}
+                      <strong>
+                        {Math.floor(totalSplitMins / 60)}h
+                        {totalSplitMins % 60 > 0
+                          ? ` ${totalSplitMins % 60}m`
+                          : ""}
+                      </strong>{" "}
+                      across {splits.length} employees ·{" "}
+                      <strong>${totalSplitCost.toFixed(2)}</strong> estimated
+                      cost
+                    </p>
+                  );
+                })()}
             </div>
           )}
         </div>
@@ -1319,7 +1431,11 @@ export function BookingForm({
         </FormField>
       </div>
 
-      <FormField label="Address" htmlFor="address" error={state.errors?.address}>
+      <FormField
+        label="Address"
+        htmlFor="address"
+        error={state.errors?.address}
+      >
         <AddressAutocomplete
           id="address"
           name="address"
@@ -1355,7 +1471,9 @@ export function BookingForm({
             />
             <span className="text-sm">
               <span className="font-medium">Just this booking</span>
-              <span className="ml-1.5 text-muted-foreground">— only this occurrence is updated</span>
+              <span className="ml-1.5 text-muted-foreground">
+                — only this occurrence is updated
+              </span>
             </span>
           </label>
           <label className="flex items-center gap-2.5 cursor-pointer">
@@ -1369,7 +1487,9 @@ export function BookingForm({
             />
             <span className="text-sm">
               <span className="font-medium">This and all future bookings</span>
-              <span className="ml-1.5 text-muted-foreground">— updates this and every upcoming occurrence</span>
+              <span className="ml-1.5 text-muted-foreground">
+                — updates this and every upcoming occurrence
+              </span>
             </span>
           </label>
         </fieldset>
@@ -1390,8 +1510,8 @@ export function BookingForm({
             </h3>
           </div>
           <p className="text-xs text-muted-foreground -mt-2">
-            Changing the schedule will cancel future occurrences and
-            regenerate them from the new rule.
+            Changing the schedule will cancel future occurrences and regenerate
+            them from the new rule.
           </p>
 
           {/* Signal the server to apply schedule changes */}
@@ -1412,7 +1532,10 @@ export function BookingForm({
                 ))}
               </FormSelect>
               <p className="mt-1 text-[11px] text-muted-foreground leading-snug">
-                {RECURRENCE_OPTIONS.find((o) => o.value === seriesPattern)?.description}
+                {
+                  RECURRENCE_OPTIONS.find((o) => o.value === seriesPattern)
+                    ?.description
+                }
               </p>
             </FormField>
 
@@ -1431,7 +1554,11 @@ export function BookingForm({
           {/* Monthly-Nth picker */}
           {seriesPattern === "monthly_nth" && (
             <div className="grid gap-4 sm:grid-cols-2">
-              <FormField label="Which occurrence" htmlFor="series_monthly_nth" required>
+              <FormField
+                label="Which occurrence"
+                htmlFor="series_monthly_nth"
+                required
+              >
                 <FormSelect
                   id="series_monthly_nth"
                   name="series_monthly_nth"
@@ -1454,13 +1581,19 @@ export function BookingForm({
                 >
                   {DAY_LABELS.map((d) => (
                     <option key={d.value} value={d.value}>
-                      {d.label === "Sun" ? "Sunday"
-                        : d.label === "Mon" ? "Monday"
-                        : d.label === "Tue" ? "Tuesday"
-                        : d.label === "Wed" ? "Wednesday"
-                        : d.label === "Thu" ? "Thursday"
-                        : d.label === "Fri" ? "Friday"
-                        : "Saturday"}
+                      {d.label === "Sun"
+                        ? "Sunday"
+                        : d.label === "Mon"
+                          ? "Monday"
+                          : d.label === "Tue"
+                            ? "Tuesday"
+                            : d.label === "Wed"
+                              ? "Wednesday"
+                              : d.label === "Thu"
+                                ? "Thursday"
+                                : d.label === "Fri"
+                                  ? "Friday"
+                                  : "Saturday"}
                     </option>
                   ))}
                 </FormSelect>

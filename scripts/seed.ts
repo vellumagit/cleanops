@@ -242,14 +242,18 @@ async function main() {
 
     let userId: string;
     if (createErr) {
-      if (createErr.message.includes("already") || createErr.code === "email_exists") {
+      if (
+        createErr.message.includes("already") ||
+        createErr.code === "email_exists"
+      ) {
         // Look it up — list users and match by email
         const { data: list } = await admin.auth.admin.listUsers({
           page: 1,
           perPage: 200,
         });
         const existing = list?.users.find((u) => u.email === email);
-        if (!existing) await die(`Could not create or find ${email}`, createErr);
+        if (!existing)
+          await die(`Could not create or find ${email}`, createErr);
         userId = existing!.id;
       } else {
         await die(`Failed to create ${email}`, createErr);
@@ -288,7 +292,8 @@ async function main() {
         })
         .select("id")
         .single();
-      if (memErr || !newMem) await die(`membership insert failed for ${email}`, memErr);
+      if (memErr || !newMem)
+        await die(`membership insert failed for ${email}`, memErr);
       membershipId = newMem!.id;
     }
 
@@ -402,6 +407,13 @@ async function main() {
     const dayOffset = status === "completed" ? -7 + i : i;
     const scheduled = daysFromNow(dayOffset);
     scheduled.setHours(8 + (i % 8), (i % 4) * 15, 0, 0);
+    // A job can't be in progress days before it is due — the trigger from
+    // migration 20260804010000 rejects that shape. This one landed six days
+    // out. Put the running job two hours ago, which is what "in progress"
+    // actually looks like.
+    if (status === "in_progress") {
+      scheduled.setTime(Date.now() - 2 * 60 * 60 * 1000);
+    }
 
     return {
       organization_id: orgId,
@@ -409,7 +421,12 @@ async function main() {
       address: faker.location.streetAddress({ useFullAddress: true }),
       scheduled_at: scheduled.toISOString(),
       duration_minutes: pkg.duration_minutes,
-      service_type: pick(["standard", "deep", "move_out", "recurring"] as const),
+      service_type: pick([
+        "standard",
+        "deep",
+        "move_out",
+        "recurring",
+      ] as const),
       package_id: pkg.id,
       hourly_rate_cents: null,
       assigned_to: employee?.id ?? null,
@@ -423,7 +440,8 @@ async function main() {
     .from("bookings")
     .insert(bookingsToInsert)
     .select("id, client_id, assigned_to, status, total_cents, scheduled_at");
-  if (bookingsErr || !bookings) await die("bookings insert failed", bookingsErr);
+  if (bookingsErr || !bookings)
+    await die("bookings insert failed", bookingsErr);
 
   // Step 7: estimates with line items
   console.log("📄 Creating 3 estimates…");
@@ -740,19 +758,17 @@ async function main() {
 
   // Step 13: bonus rule (Phase 7)
   console.log("🏆 Creating bonus rule…");
-  await admin
-    .from("bonus_rules")
-    .upsert(
-      {
-        organization_id: orgId,
-        enabled: true,
-        min_avg_rating: 4.8,
-        min_reviews_count: 3,
-        period_days: 30,
-        amount_cents: cents(75),
-      },
-      { onConflict: "organization_id" },
-    );
+  await admin.from("bonus_rules").upsert(
+    {
+      organization_id: orgId,
+      enabled: true,
+      min_avg_rating: 4.8,
+      min_reviews_count: 3,
+      period_days: 30,
+      amount_cents: cents(75),
+    },
+    { onConflict: "organization_id" },
+  );
 
   // Step 14: chat — re-provision #general and seed a few welcome messages.
   // The Phase 8 trigger only fires on membership INSERT, so after a --force
