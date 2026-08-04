@@ -39,6 +39,22 @@ export function WarningProvider({
   );
 }
 
+/**
+ * The warnings for one booking, for surfaces with room to spell them out.
+ *
+ * The dot's explanation lives in a `title` tooltip, which never fires on a
+ * touch device — on a phone the owner sees a red dot and has no way to learn
+ * what it means. Anything inside the grid can read the same context and say it
+ * properly.
+ */
+export function useBookingWarnings(
+  bookingId: string | null | undefined,
+): BookingWarning[] {
+  const lookup = useContext(WarningContext);
+  if (!bookingId) return [];
+  return lookup(bookingId) ?? [];
+}
+
 export function WarningDot({ bookingId }: { bookingId: string }) {
   const lookup = useContext(WarningContext);
   const warnings = lookup(bookingId);

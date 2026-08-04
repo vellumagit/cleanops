@@ -14,6 +14,7 @@ import {
   Send,
   FileText,
   StickyNote,
+  AlertTriangle,
 } from "lucide-react";
 import {
   Dialog,
@@ -34,6 +35,7 @@ import {
   type SplitTimelineSegment,
 } from "./split-shift-timeline";
 import { toneForEmployee } from "./color";
+import { useBookingWarnings } from "./warning-dot";
 
 function formatDateTime(iso: string, tz?: string) {
   const d = new Date(iso);
@@ -83,6 +85,9 @@ export function BookingQuickView({
   // saving or cancelling returns to the same week/day instead of the list.
   const withReturn = useReturnTo();
   const [assignOpen, setAssignOpen] = useState(false);
+  // Same context the grid's dot reads. Called before the early return so the
+  // hook order stays stable when no booking is selected.
+  const warnings = useBookingWarnings(booking?.id);
 
   if (!booking) return null;
 
@@ -172,6 +177,32 @@ export function BookingQuickView({
             </p>
           )}
         </DialogHeader>
+
+        {/* Why the grid flagged this job. The dot that brought the owner here
+            only explains itself on hover, which never happens on a phone — so
+            the reason and the fix are spelled out at the top, above the
+            details, rather than needing a trip to the bookings list. */}
+        {warnings.length > 0 && (
+          <div className="space-y-2">
+            {warnings.map((w) => (
+              <div
+                key={w.code}
+                className={cn(
+                  "rounded-md border px-3 py-2 text-[11px]",
+                  w.severity === "high"
+                    ? "border-red-200 bg-red-50 text-red-800 dark:border-red-900/40 dark:bg-red-950/40 dark:text-red-200"
+                    : "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/40 dark:text-amber-200",
+                )}
+              >
+                <p className="flex items-center gap-1.5 font-semibold">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                  {w.label}
+                </p>
+                <p className="mt-0.5 leading-relaxed">{w.detail}</p>
+              </div>
+            ))}
+          </div>
+        )}
 
         <dl className="space-y-3 text-sm">
           <Row icon={<Clock className="h-3.5 w-3.5" />} label="When">
