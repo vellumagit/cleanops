@@ -7,10 +7,11 @@ import {
   isValidServiceTypeEnum,
   resolveServiceTypeColumns,
 } from "@/lib/api/service-type-columns";
-import { futureStatusError } from "@/lib/booking-status";
-
-/** The four live booking statuses. */
-const BOOKING_STATUSES = ["confirmed", "in_progress", "completed", "cancelled"];
+import {
+  futureStatusError,
+  WRITABLE_BOOKING_STATUSES,
+  WRITABLE_BOOKING_STATUS_LIST,
+} from "@/lib/booking-status";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -145,12 +146,13 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     const nextStatus = (updates.status as string | undefined) ?? prev.status;
     if (
       "status" in updates &&
-      !BOOKING_STATUSES.includes(updates.status as string)
+      !WRITABLE_BOOKING_STATUSES.includes(
+        updates.status as (typeof WRITABLE_BOOKING_STATUSES)[number],
+      )
     ) {
       return NextResponse.json(
         {
-          error:
-            "Invalid status. Allowed: confirmed, in_progress, completed, cancelled.",
+          error: `Invalid status. Allowed: ${WRITABLE_BOOKING_STATUS_LIST}.`,
         },
         { status: 400 },
       );

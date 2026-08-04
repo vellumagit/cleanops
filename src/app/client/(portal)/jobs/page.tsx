@@ -8,10 +8,7 @@ import {
   formatDurationMinutes,
   humanizeEnum,
 } from "@/lib/format";
-import {
-  StatusBadge,
-  bookingStatusTone,
-} from "@/components/status-badge";
+import { StatusBadge, bookingStatusTone } from "@/components/status-badge";
 
 export const metadata = { title: "My jobs" };
 
@@ -22,10 +19,12 @@ export default async function ClientJobsPage() {
 
   const { data: jobs } = await supabase
     .from("bookings")
-    .select(
-      "id, scheduled_at, duration_minutes, status, service_type, address",
-    )
+    .select("id, scheduled_at, duration_minutes, status, service_type, address")
     .eq("client_id", client.id)
+    // Same rule as the portal home: an unconfirmed job is not the client's
+    // business yet. Without this the full history list rendered a bare amber
+    // "Pending" chip via humanizeEnum, which is internal jargon.
+    .neq("status", "pending")
     .order("scheduled_at", { ascending: false })
     .limit(200);
 

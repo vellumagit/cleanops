@@ -4,14 +4,15 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { dispatchWebhookEvent } from "@/lib/webhooks";
 import { findOrCreateClient } from "@/lib/find-or-create-client";
 import { findCrossOrgRef } from "@/lib/api/org-scope";
-import { futureStatusError } from "@/lib/booking-status";
+import {
+  futureStatusError,
+  WRITABLE_BOOKING_STATUSES,
+  WRITABLE_BOOKING_STATUS_LIST,
+} from "@/lib/booking-status";
 import {
   isValidServiceTypeEnum,
   resolveServiceTypeColumns,
 } from "@/lib/api/service-type-columns";
-
-/** The four live booking statuses. */
-const BOOKING_STATUSES = ["confirmed", "in_progress", "completed", "cancelled"];
 
 /**
  * GET /api/v1/bookings — List bookings for the authenticated org.
@@ -158,11 +159,14 @@ export async function POST(request: NextRequest) {
   // an API key was all it took to create the a766d848 shape — a future job
   // already marked completed, which silently swallows the crew's accept prompt.
   const requestedStatus = (body.status as string | undefined) ?? "confirmed";
-  if (!BOOKING_STATUSES.includes(requestedStatus)) {
+  if (
+    !WRITABLE_BOOKING_STATUSES.includes(
+      requestedStatus as (typeof WRITABLE_BOOKING_STATUSES)[number],
+    )
+  ) {
     return NextResponse.json(
       {
-        error:
-          "Invalid status. Allowed: confirmed, in_progress, completed, cancelled.",
+        error: `Invalid status. Allowed: ${WRITABLE_BOOKING_STATUS_LIST}.`,
       },
       { status: 400 },
     );

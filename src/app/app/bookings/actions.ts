@@ -3,7 +3,10 @@
 import { revalidatePath } from "next/cache";
 import { redirect, RedirectType } from "next/navigation";
 import { redirectBack } from "@/lib/return-to";
-import { futureStatusError } from "@/lib/booking-status";
+import {
+  futureStatusError,
+  BOOKING_STATUS_TRANSITIONS,
+} from "@/lib/booking-status";
 import { lifecycleByAssignee, withPriorLifecycle } from "@/lib/crew-sync";
 import { after } from "next/server";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
@@ -653,8 +656,14 @@ export async function createBookingAction(
     splits as SplitSegmentInput[],
   );
 
-  // Email booking confirmation to client (fire-and-forget)
-  sendBookingConfirmation(booking.id);
+  // Email booking confirmation to client (fire-and-forget) — unless the
+  // booking is Pending. sendBookingConfirmation never reads status, so an
+  // unguarded call would email AND text the client "Booking confirmed" for a
+  // job the owner just explicitly marked unconfirmed. Leaving pending is the
+  // confirmation event; updateBookingAction sends it there.
+  if (parsed.data.status !== "pending") {
+    sendBookingConfirmation(booking.id);
+  }
 
   // Notify EVERY assigned crew member (primary + additional + every
   // split segment employee). Previously only segment-0 got a push, so
@@ -1622,7 +1631,25 @@ export async function updateBookingAction(
       .update({ client_reminder_sent_at: null })
       .eq("id", id)
       .eq("organization_id", membership.organization_id);
-    sendBookingRescheduled(id, existing.scheduled_at);
+    // Not for a booking the client has never been told about. Picking the
+    // real date is the whole point of a pending placeholder — both Duplicate
+    // and the estimate conversion create one — so "your job has been moved"
+    // would be the first thing the client ever heard about it.
+    if (existing.status !== "pending") {
+      sendBookingRescheduled(id, existing.scheduled_at);
+    }
+  }
+
+  // Leaving Pending is the moment the client should hear about the job.
+  // createBookingAction stays silent for a pending booking, and this is the
+  // only other caller of sendBookingConfirmation in the codebase — without
+  // this branch a booking that starts pending is never announced at all.
+  // Scoped to pending → confirmed specifically: knocking a pending row
+  // straight to completed must not email a client about a job already done.
+  // Safe if it somehow runs twice — the automation dedupes on
+  // confirmation_email_sent_at / confirmation_sms_sent_at.
+  if (existing?.status === "pending" && parsed.data.status === "confirmed") {
+    sendBookingConfirmation(id);
   }
 
   // If the status flipped TO cancelled (not already cancelled), push the
@@ -2148,12 +2175,17 @@ export async function markBookingCompleteAction(id: string) {
   // hides the shift from the crew — so read the date before writing.
   const { data: booking } = await supabase
     .from("bookings")
-    .select("scheduled_at")
+    .select("scheduled_at, status")
     .eq("id", id)
     .eq("organization_id", membership.organization_id)
     .maybeSingle();
   if (!booking) return;
-  if (futureStatusError(booking.scheduled_at, "completed")) {
+  // The button is hidden for a pending booking; this is the same rule on the
+  // server, because a server action is a POST endpoint anyone can call.
+  if (
+    booking.status === "pending" ||
+    futureStatusError(booking.scheduled_at, "completed")
+  ) {
     // This action has no error channel — it redirects either way. The detail
     // page still shows the real status, so the click reads as a no-op rather
     // than silently billing a job that has not happened.
@@ -2182,10 +2214,6 @@ export async function markBookingCompleteAction(id: string) {
  * Forward-only transitions offered by the list dropdown. completed + cancelled
  * are terminal (no entry) — reverting a completed booking isn't offered here.
  */
-const STATUS_DROPDOWN_TRANSITIONS: Record<string, readonly string[]> = {
-  confirmed: ["in_progress", "completed", "cancelled"],
-  in_progress: ["completed", "cancelled"],
-};
 
 /**
  * Set a booking's status straight from the list. Enforces the forward+cancel
@@ -2231,7 +2259,7 @@ export async function setBookingStatusAction(
   if (!booking) return { ok: false, error: "Booking not found." };
 
   if (booking.status === target) return { ok: true };
-  const allowed = STATUS_DROPDOWN_TRANSITIONS[booking.status] ?? [];
+  const allowed = BOOKING_STATUS_TRANSITIONS[booking.status] ?? [];
   if (!allowed.includes(target)) {
     return {
       ok: false,

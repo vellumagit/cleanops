@@ -24,7 +24,11 @@ export default async function ClientDashboardPage() {
       .select("id, scheduled_at, service_type, status, address")
       .eq("client_id", client.id)
       .gte("scheduled_at", new Date().toISOString())
-      .in("status", ["pending", "confirmed", "en_route", "in_progress"])
+      // Pending deliberately excluded: it means the office has penciled the
+      // job in but not committed to it (an estimate placeholder, a duplicate
+      // awaiting a real date). A client should not see, or plan around, a job
+      // nobody has confirmed — it appears here the moment it is confirmed.
+      .in("status", ["confirmed", "en_route", "in_progress"])
       .order("scheduled_at", { ascending: true })
       .limit(3),
     // Pull public_token so the outstanding list can deep-link clients
@@ -124,8 +128,8 @@ export default async function ClientDashboardPage() {
                     {formatCurrencyCents(inv.amount_cents, currency)}
                   </p>
                   <p className="mt-0.5 text-xs text-muted-foreground">
-                    Invoice {inv.number ?? inv.id.slice(0, 8).toUpperCase()}{" "}
-                    · {humanizeEnum(inv.status)}
+                    Invoice {inv.number ?? inv.id.slice(0, 8).toUpperCase()} ·{" "}
+                    {humanizeEnum(inv.status)}
                     {inv.due_date ? ` · due ${inv.due_date}` : ""}
                   </p>
                 </div>

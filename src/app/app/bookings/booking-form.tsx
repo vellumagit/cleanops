@@ -420,6 +420,7 @@ export function BookingForm({
     Number.isFinite(scheduledMs) &&
     scheduledMs > Date.now() + EARLY_START_GRACE_MINUTES * 60_000;
   const statusOptions = [
+    { value: "pending", label: "Pending" },
     { value: "confirmed", label: "Confirmed" },
     { value: "in_progress", label: "In progress" },
     { value: "completed", label: "Completed" },

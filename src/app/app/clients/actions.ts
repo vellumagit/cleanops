@@ -105,7 +105,12 @@ export async function createClientAction(
   const { membership, supabase } = await getActionContext();
 
   if (!(await canCreateData(membership.organization_id))) {
-    return { errors: { _form: "Your subscription has expired. Subscribe to add new clients." }, values: raw };
+    return {
+      errors: {
+        _form: "Your subscription has expired. Subscribe to add new clients.",
+      },
+      values: raw,
+    };
   }
 
   // Checkbox sends "on" when checked, nothing when unchecked.
@@ -156,7 +161,10 @@ export async function createClientAction(
   };
 
   if (error || !inserted) {
-    return { errors: { _form: error?.message ?? "Insert failed" }, values: raw };
+    return {
+      errors: { _form: error?.message ?? "Insert failed" },
+      values: raw,
+    };
   }
 
   await logAuditEvent({
@@ -194,8 +202,14 @@ export async function updateClientAction(
 
   // A client cannot refer themselves — catch both crafted form POSTs and
   // UI bugs before they create a circular self-referral in the DB.
-  if (parsed.data.referred_by_client_id && parsed.data.referred_by_client_id === id) {
-    return { errors: { _form: "A client cannot be their own referrer." }, values: raw };
+  if (
+    parsed.data.referred_by_client_id &&
+    parsed.data.referred_by_client_id === id
+  ) {
+    return {
+      errors: { _form: "A client cannot be their own referrer." },
+      values: raw,
+    };
   }
 
   const { data: previous } = (await supabase
@@ -226,7 +240,10 @@ export async function updateClientAction(
   const wasOptedIn = Boolean(previous?.sms_opted_in);
   const consentPatch =
     smsOptedIn && !wasOptedIn
-      ? { sms_opted_in_at: new Date().toISOString(), sms_opt_in_source: "client_form" }
+      ? {
+          sms_opted_in_at: new Date().toISOString(),
+          sms_opt_in_source: "client_form",
+        }
       : !smsOptedIn
         ? { sms_opted_in_at: null, sms_opt_in_source: null }
         : {};
@@ -251,7 +268,10 @@ export async function updateClientAction(
       referred_by_client_id: parsed.data.referred_by_client_id ?? null,
     } as never)
     .eq("id", id)
-    .eq("organization_id" as never, membership.organization_id as never) as unknown as Promise<{ error: { message: string } | null }>);
+    .eq(
+      "organization_id" as never,
+      membership.organization_id as never,
+    ) as unknown as Promise<{ error: { message: string } | null }>);
 
   if (error) {
     return { errors: { _form: error.message }, values: raw };
@@ -291,7 +311,11 @@ export async function updateClientAction(
       )
       .eq("client_id", id)
       .eq("organization_id", membership.organization_id)
-      .in("status", ["confirmed", "in_progress"])
+      // Pending included: a pending booking still gets a real Google Calendar
+      // event (Duplicate and the estimate conversion both create one), so
+      // leaving it out meant a renamed client kept its old name on that event
+      // forever.
+      .in("status", ["pending", "confirmed", "in_progress"])
       .gte("scheduled_at", now)) as unknown as {
       data: Array<{
         id: string;
@@ -375,7 +399,11 @@ export async function deleteClientAction(formData: FormData) {
     .eq("organization_id" as never, membership.organization_id as never)
     .maybeSingle();
 
-  const { error } = await supabase.from("clients").delete().eq("id", id).eq("organization_id", membership.organization_id);
+  const { error } = await supabase
+    .from("clients")
+    .delete()
+    .eq("id", id)
+    .eq("organization_id", membership.organization_id);
   if (error) throw error;
 
   await logAuditEvent({
@@ -620,7 +648,10 @@ export async function requestSmsOptInAction(
   });
 
   if (!res.ok) {
-    return { ok: false, error: "Couldn't send the request — check the phone number." };
+    return {
+      ok: false,
+      error: "Couldn't send the request — check the phone number.",
+    };
   }
   if (res.status !== "sent") {
     return {

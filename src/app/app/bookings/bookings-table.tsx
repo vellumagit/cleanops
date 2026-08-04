@@ -116,6 +116,7 @@ type TimeTab = (typeof TIME_TABS)[number]["key"];
 
 const STATUS_OPTIONS = [
   { key: "all", label: "All statuses" },
+  { key: "pending", label: "Pending" },
   { key: "confirmed", label: "Confirmed" },
   { key: "in_progress", label: "In progress" },
   { key: "completed", label: "Completed" },
@@ -158,8 +159,14 @@ export function BookingsTable({
   const [tab, setTab] = useUrlState<TimeTab>("tab", "upcoming");
   const [query, setQuery] = useUrlState<string>("q", "");
   const [statusFilter, setStatusFilter] = useUrlState<string>("status", "all");
-  const [serviceFilter, setServiceFilter] = useUrlState<string>("service", "all");
-  const [assigneeFilter, setAssigneeFilter] = useUrlState<string>("assignee", "all");
+  const [serviceFilter, setServiceFilter] = useUrlState<string>(
+    "service",
+    "all",
+  );
+  const [assigneeFilter, setAssigneeFilter] = useUrlState<string>(
+    "assignee",
+    "all",
+  );
   const [clientFilter, setClientFilter] = useUrlState<string>("client", "all");
   // Purely cosmetic — whether the filter drawer is open is not worth a URL.
   const [showFilters, setShowFilters] = useState(false);
@@ -171,9 +178,7 @@ export function BookingsTable({
   const services = useMemo(
     () =>
       [
-        ...new Set(
-          rows.map((r) => r.service_type_label ?? r.service_type),
-        ),
+        ...new Set(rows.map((r) => r.service_type_label ?? r.service_type)),
       ].sort(),
     [rows],
   );
@@ -240,7 +245,15 @@ export function BookingsTable({
     }
 
     return result;
-  }, [rows, tab, statusFilter, query, serviceFilter, assigneeFilter, clientFilter]);
+  }, [
+    rows,
+    tab,
+    statusFilter,
+    query,
+    serviceFilter,
+    assigneeFilter,
+    clientFilter,
+  ]);
 
   // Computed over ALL rows, never the filtered subset: a double-booking is
   // still a double-booking when the conflicting job is filtered off screen.
@@ -365,13 +378,23 @@ export function BookingsTable({
       {/* ── Collapsible who/what filters ───────────────────────────────── */}
       {showFilters && (
         <div className="flex flex-wrap items-end gap-2 rounded-lg border border-border bg-card p-3">
-          <FilterSelect label="Status" value={statusFilter} onChange={setStatusFilter}>
+          <FilterSelect
+            label="Status"
+            value={statusFilter}
+            onChange={setStatusFilter}
+          >
             {STATUS_OPTIONS.map((s) => (
-              <option key={s.key} value={s.key}>{s.label}</option>
+              <option key={s.key} value={s.key}>
+                {s.label}
+              </option>
             ))}
           </FilterSelect>
 
-          <FilterSelect label="Client" value={clientFilter} onChange={setClientFilter}>
+          <FilterSelect
+            label="Client"
+            value={clientFilter}
+            onChange={setClientFilter}
+          >
             <option value="all">All clients</option>
             {clients.map((c) => (
               <option key={c.id} value={c.id}>
@@ -380,18 +403,30 @@ export function BookingsTable({
             ))}
           </FilterSelect>
 
-          <FilterSelect label="Service" value={serviceFilter} onChange={setServiceFilter}>
+          <FilterSelect
+            label="Service"
+            value={serviceFilter}
+            onChange={setServiceFilter}
+          >
             <option value="all">All services</option>
             {services.map((s) => (
-              <option key={s} value={s}>{humanizeEnum(s)}</option>
+              <option key={s} value={s}>
+                {humanizeEnum(s)}
+              </option>
             ))}
           </FilterSelect>
 
-          <FilterSelect label="Assignee" value={assigneeFilter} onChange={setAssigneeFilter}>
+          <FilterSelect
+            label="Assignee"
+            value={assigneeFilter}
+            onChange={setAssigneeFilter}
+          >
             <option value="all">All assignees</option>
             <option value="unassigned">Unassigned</option>
             {assignees.map((a) => (
-              <option key={a} value={a}>{a}</option>
+              <option key={a} value={a}>
+                {a}
+              </option>
             ))}
           </FilterSelect>
 
@@ -418,7 +453,9 @@ export function BookingsTable({
         </div>
       ) : filtered.length === 0 ? (
         <div className="rounded-xl border border-dashed border-border bg-card px-5 py-14 text-center">
-          <p className="text-sm text-muted-foreground">No bookings match your filters.</p>
+          <p className="text-sm text-muted-foreground">
+            No bookings match your filters.
+          </p>
           <button
             type="button"
             onClick={clearFilters}
@@ -567,7 +604,8 @@ function TableView({
                 key={r.id}
                 onClick={
                   canEdit
-                    ? () => router.push(withReturn(`/app/bookings/${r.id}/edit`))
+                    ? () =>
+                        router.push(withReturn(`/app/bookings/${r.id}/edit`))
                     : undefined
                 }
                 className={cn(
@@ -725,7 +763,8 @@ function CardsView({
                 tabIndex={canEdit ? 0 : undefined}
                 onClick={
                   canEdit
-                    ? () => router.push(withReturn(`/app/bookings/${r.id}/edit`))
+                    ? () =>
+                        router.push(withReturn(`/app/bookings/${r.id}/edit`))
                     : undefined
                 }
                 onKeyDown={
@@ -854,15 +893,8 @@ function CardsView({
 // Helpers
 // ---------------------------------------------------------------------------
 
-function AssignedCell({
-  row,
-  canEdit,
-}: {
-  row: BookingRow;
-  canEdit: boolean;
-}) {
-  const isActionable =
-    row.status !== "completed" && row.status !== "cancelled";
+function AssignedCell({ row, canEdit }: { row: BookingRow; canEdit: boolean }) {
+  const isActionable = row.status !== "completed" && row.status !== "cancelled";
   return (
     <span className="flex items-center gap-1.5">
       <span className="text-amber-500 text-xs font-medium">Unassigned</span>

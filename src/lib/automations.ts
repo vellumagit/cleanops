@@ -102,7 +102,7 @@ async function getMembershipRecipient(
   membershipId: string,
 ): Promise<AdminRecipient | null> {
   const db = admin();
-  const { data: m } = await db
+  const { data: m } = (await db
     .from("memberships")
     .select("profile_id, organization_id, status")
     .eq("id", membershipId)
@@ -110,16 +110,16 @@ async function getMembershipRecipient(
     // warnings, payroll receipts, PTO or cert emails (audit T9) — they often
     // remain referenced by booking_assignees / payroll_items rows.
     .eq("status", "active")
-    .maybeSingle() as unknown as {
+    .maybeSingle()) as unknown as {
     data: { profile_id: string; organization_id: string } | null;
   };
   if (!m) return null;
 
-  const { data: profile } = await db
+  const { data: profile } = (await db
     .from("profiles")
     .select("full_name")
     .eq("id", m.profile_id)
-    .maybeSingle() as unknown as {
+    .maybeSingle()) as unknown as {
     data: { full_name: string | null } | null;
   };
 
@@ -143,9 +143,7 @@ async function getMembershipRecipient(
   };
 }
 
-async function getOrgAdminRecipients(
-  orgId: string,
-): Promise<AdminRecipient[]> {
+async function getOrgAdminRecipients(orgId: string): Promise<AdminRecipient[]> {
   const db = admin();
   const { data: owners } = await db
     .from("memberships")
@@ -158,11 +156,11 @@ async function getOrgAdminRecipients(
 
   const recipients: AdminRecipient[] = [];
   for (const o of owners as Array<{ profile_id: string }>) {
-    const { data: profile } = await db
+    const { data: profile } = (await db
       .from("profiles")
       .select("full_name")
       .eq("id", o.profile_id)
-      .maybeSingle() as unknown as {
+      .maybeSingle()) as unknown as {
       data: { full_name: string | null } | null;
     };
 
@@ -344,13 +342,21 @@ export async function autoInvoiceOnJobComplete(
         .select("id, number, voided_at")
         .eq("id", booking.billing_invoice_id)
         .maybeSingle()) as unknown as {
-        data: { id: string; number: string | null; voided_at: string | null } | null;
+        data: {
+          id: string;
+          number: string | null;
+          voided_at: string | null;
+        } | null;
       };
       if (stampedInv && !stampedInv.voided_at) {
         console.log(
           `[auto] autoInvoiceOnJobComplete: booking ${bookingId} already on consolidated invoice ${stampedInv.id}`,
         );
-        return { ok: true, invoiceId: stampedInv.id, number: stampedInv.number };
+        return {
+          ok: true,
+          invoiceId: stampedInv.id,
+          number: stampedInv.number,
+        };
       }
     }
 
@@ -538,7 +544,8 @@ export async function autoInvoiceOnJobComplete(
     // yourself, not to queue it for automatic delivery in 24h.
     if (!options?.force) {
       try {
-        const { scheduleAutoSendIfEnabled } = await import("@/lib/invoice-send");
+        const { scheduleAutoSendIfEnabled } =
+          await import("@/lib/invoice-send");
         await scheduleAutoSendIfEnabled(invoice.id, booking.organization_id);
       } catch (scheduleErr) {
         console.error(
@@ -576,10 +583,12 @@ export async function notifyUpcomingJobs() {
     // Find jobs starting in the next hour that are assigned
     const { data: jobs } = (await db
       .from("bookings")
-      .select(`
+      .select(
+        `
         id, organization_id, assigned_to, scheduled_at, service_type, service_type_label, address,
         client:clients ( name )
-      `)
+      `,
+      )
       .not("assigned_to", "is", null)
       .gte("scheduled_at", now.toISOString())
       .lte("scheduled_at", in1h.toISOString())
@@ -614,7 +623,9 @@ export async function notifyUpcomingJobs() {
     if (gatedJobs.length === 0) return 0;
 
     // Pre-fetch org timezones so notification times display in local time.
-    const orgIds = [...new Set(gatedJobs.map((j) => j.organization_id as string))];
+    const orgIds = [
+      ...new Set(gatedJobs.map((j) => j.organization_id as string)),
+    ];
     const { data: orgRows } = (await db
       .from("organizations")
       .select("id, timezone")
@@ -643,8 +654,10 @@ export async function notifyUpcomingJobs() {
     const rows = gatedJobs
       .filter((j) => !alreadyNotified.has(j.id))
       .map((j) => {
-        const clientName = (j.client as unknown as { name: string } | null)?.name ?? "a client";
-        const orgTz = orgTimezones.get(j.organization_id as string) ?? "America/Edmonton";
+        const clientName =
+          (j.client as unknown as { name: string } | null)?.name ?? "a client";
+        const orgTz =
+          orgTimezones.get(j.organization_id as string) ?? "America/Edmonton";
         const when = new Date(j.scheduled_at).toLocaleTimeString("en-US", {
           hour: "numeric",
           minute: "2-digit",
@@ -697,7 +710,9 @@ export async function autoBookingOnEstimateApproval(estimateId: string) {
 
     const { data: estimate } = await db
       .from("estimates")
-      .select("id, organization_id, client_id, total_cents, service_description, notes")
+      .select(
+        "id, organization_id, client_id, total_cents, service_description, notes",
+      )
       .eq("id", estimateId)
       .maybeSingle();
 
@@ -746,24 +761,28 @@ export async function autoBookingOnEstimateApproval(estimateId: string) {
       orgTz,
     );
 
-    const { data: newBooking } = (await (db.from("bookings").insert({
-      organization_id: estimate.organization_id,
-      client_id: estimate.client_id,
-      estimate_id: estimateId,
-      scheduled_at: placeholderIso,
-      duration_minutes: 120,
-      service_type: serviceType,
-      // pending: the manager still has to pick the real date/time. Also
-      // pre-stamp the client reminder so the day-before cron can never
-      // announce this placeholder to the client — the real reschedule
-      // clears the stamp and re-arms it for the actual date.
-      status: "pending",
-      client_reminder_sent_at: new Date().toISOString(),
-      total_cents: estimate.total_cents,
-      notes: estimate.service_description ?? "",
-    } as never).select("id").single() as unknown as Promise<{
+    const { data: newBooking } = await (db
+      .from("bookings")
+      .insert({
+        organization_id: estimate.organization_id,
+        client_id: estimate.client_id,
+        estimate_id: estimateId,
+        scheduled_at: placeholderIso,
+        duration_minutes: 120,
+        service_type: serviceType,
+        // pending: the manager still has to pick the real date/time. Also
+        // pre-stamp the client reminder so the day-before cron can never
+        // announce this placeholder to the client — the real reschedule
+        // clears the stamp and re-arms it for the actual date.
+        status: "pending",
+        client_reminder_sent_at: new Date().toISOString(),
+        total_cents: estimate.total_cents,
+        notes: estimate.service_description ?? "",
+      } as never)
+      .select("id")
+      .single() as unknown as Promise<{
       data: { id: string } | null;
-    }>));
+    }>);
 
     const bookingHref = newBooking
       ? `/app/bookings/${newBooking.id}`
@@ -776,7 +795,9 @@ export async function autoBookingOnEstimateApproval(estimateId: string) {
       body: `A new pending ${humanize(serviceType).toLowerCase()} booking was auto-created. Set the date and assign a cleaner.`,
       href: bookingHref,
     };
-    await notifyOrgAdmins(estimate.organization_id, notifPayload).catch(() => {});
+    await notifyOrgAdmins(estimate.organization_id, notifPayload).catch(
+      () => {},
+    );
 
     console.log(`[auto] Booking created from approved estimate ${estimateId}`);
   } catch (err) {
@@ -849,7 +870,8 @@ export async function alertStaleEstimates() {
         }
         const details = ests.map((e) => {
           const clientName =
-            (e.client as unknown as { name: string } | null)?.name ?? "a client";
+            (e.client as unknown as { name: string } | null)?.name ??
+            "a client";
           return {
             href: `/app/estimates/${e.id}/edit`,
             body: `Estimate for ${clientName} ($${((e.total_cents ?? 0) / 100).toFixed(0)}) has been pending for 7+ days.`,
@@ -900,15 +922,17 @@ export async function sendBookingConfirmation(bookingId: string) {
     const { sendOrgEmail } = await import("@/lib/email");
     const { bookingConfirmationEmail } = await import("@/lib/email-templates");
 
-    const { data: booking } = await db
+    const { data: booking } = (await db
       .from("bookings")
-      .select(`
+      .select(
+        `
         id, organization_id, client_id, scheduled_at, duration_minutes, service_type, service_type_label, address,
         confirmation_email_sent_at, confirmation_sms_sent_at,
         client:clients ( name, email, phone )
-      `)
+      `,
+      )
       .eq("id", bookingId)
-      .maybeSingle() as unknown as {
+      .maybeSingle()) as unknown as {
       data: {
         id: string;
         organization_id: string;
@@ -939,11 +963,11 @@ export async function sendBookingConfirmation(bookingId: string) {
     if (!booking.client) return; // narrow for TS (hasEmail/hasPhone imply set)
 
     // Org info — needed by BOTH channels (fetched once, up front).
-    const { data: org } = await db
+    const { data: org } = (await db
       .from("organizations")
       .select("name, brand_color, logo_url, contact_phone, timezone")
       .eq("id", booking.organization_id)
-      .maybeSingle() as unknown as {
+      .maybeSingle()) as unknown as {
       data: {
         name: string;
         brand_color: string | null;
@@ -970,7 +994,10 @@ export async function sendBookingConfirmation(bookingId: string) {
       hasEmail &&
       decision.email &&
       !booking.confirmation_email_sent_at &&
-      (await isAutomationEnabled(booking.organization_id, "booking_confirmation_email"))
+      (await isAutomationEnabled(
+        booking.organization_id,
+        "booking_confirmation_email",
+      ))
     ) {
       const dateTime = new Date(booking.scheduled_at).toLocaleString("en-US", {
         weekday: "long",
@@ -983,9 +1010,8 @@ export async function sendBookingConfirmation(bookingId: string) {
 
       // When the team divides the hours, tell the client when the crew will
       // finish (the visit is shorter with more cleaners).
-      const { resolveTeamDivision, crewFinishNote } = await import(
-        "@/lib/crew-hours"
-      );
+      const { resolveTeamDivision, crewFinishNote } =
+        await import("@/lib/crew-hours");
       const division = await resolveTeamDivision(
         booking.id,
         booking.duration_minutes,
@@ -999,7 +1025,8 @@ export async function sendBookingConfirmation(bookingId: string) {
       const template = bookingConfirmationEmail({
         clientName: booking.client.name ?? "there",
         orgName: org?.name ?? "your service provider",
-        serviceName: booking.service_type_label ?? humanize(booking.service_type),
+        serviceName:
+          booking.service_type_label ?? humanize(booking.service_type),
         dateTime,
         crewNote,
         address: booking.address ?? "(address to be confirmed)",
@@ -1017,7 +1044,9 @@ export async function sendBookingConfirmation(bookingId: string) {
           .from("bookings")
           .update({ confirmation_email_sent_at: new Date().toISOString() })
           .eq("id", booking.id);
-        console.log(`[auto] Booking confirmation email sent to ${maskEmail(booking.client.email)}`);
+        console.log(
+          `[auto] Booking confirmation email sent to ${maskEmail(booking.client.email)}`,
+        );
       }
     }
 
@@ -1047,11 +1076,16 @@ export async function sendBookingConfirmation(bookingId: string) {
         if (smsRes.ok && smsRes.status === "sent") {
           await db
             .from("bookings")
-            .update({ confirmation_sms_sent_at: new Date().toISOString() } as never)
+            .update({
+              confirmation_sms_sent_at: new Date().toISOString(),
+            } as never)
             .eq("id", booking.id);
         }
       } catch (smsErr) {
-        console.error("[auto] sendBookingConfirmation SMS path errored:", smsErr);
+        console.error(
+          "[auto] sendBookingConfirmation SMS path errored:",
+          smsErr,
+        );
       }
     }
   } catch (err) {
@@ -1074,10 +1108,12 @@ export async function sendBookingRescheduled(
 
     const { data: booking } = (await db
       .from("bookings")
-      .select(`
+      .select(
+        `
         id, organization_id, client_id, scheduled_at, service_type, service_type_label, address, assigned_to,
         client:clients ( name, email, phone )
-      `)
+      `,
+      )
       .eq("id", bookingId)
       .maybeSingle()) as unknown as {
       data: {
@@ -1104,11 +1140,11 @@ export async function sendBookingRescheduled(
 
     // Org row up front — we need the timezone to format times in the client's
     // local wall-clock, not Vercel's UTC clock (which turned noon into "6 PM").
-    const { data: org } = await db
+    const { data: org } = (await db
       .from("organizations")
       .select("name, brand_color, logo_url, timezone, contact_phone")
       .eq("id", booking.organization_id)
-      .maybeSingle() as unknown as {
+      .maybeSingle()) as unknown as {
       data: {
         name: string;
         brand_color: string | null;
@@ -1191,7 +1227,10 @@ export async function sendBookingRescheduled(
           `[auto] Booking rescheduled text sent to ${maskPhone(booking.client.phone)}`,
         );
       } catch (smsErr) {
-        console.error("[auto] sendBookingRescheduled SMS path errored:", smsErr);
+        console.error(
+          "[auto] sendBookingRescheduled SMS path errored:",
+          smsErr,
+        );
       }
     }
 
@@ -1200,7 +1239,10 @@ export async function sendBookingRescheduled(
     if (
       !decision.email ||
       !booking.client.email ||
-      !(await isAutomationEnabled(booking.organization_id, "booking_rescheduled_email"))
+      !(await isAutomationEnabled(
+        booking.organization_id,
+        "booking_rescheduled_email",
+      ))
     ) {
       return;
     }
@@ -1239,7 +1281,9 @@ export async function sendBookingRescheduled(
         .eq("id", booking.id);
     }
 
-    console.log(`[auto] Booking rescheduled email sent to ${maskEmail(booking.client.email)}`);
+    console.log(
+      `[auto] Booking rescheduled email sent to ${maskEmail(booking.client.email)}`,
+    );
   } catch (err) {
     console.error("[auto] sendBookingRescheduled failed:", err);
   }
@@ -1256,13 +1300,13 @@ export async function sendBookingRescheduled(
 export async function notifyBookingCancelledToEmployee(bookingId: string) {
   try {
     const db = admin();
-    const { data: booking } = await db
+    const { data: booking } = (await db
       .from("bookings")
       .select(
         "id, organization_id, assigned_to, scheduled_at, service_type, service_type_label, client:clients ( name )",
       )
       .eq("id", bookingId)
-      .maybeSingle() as unknown as {
+      .maybeSingle()) as unknown as {
       data: {
         id: string;
         organization_id: string;
@@ -1291,11 +1335,13 @@ export async function notifyBookingCancelledToEmployee(bookingId: string) {
     if (booking.assigned_to) cancelCrew.add(booking.assigned_to);
     if (cancelCrew.size === 0) return;
 
-    const { data: orgTzRow } = await db
+    const { data: orgTzRow } = (await db
       .from("organizations")
       .select("timezone")
       .eq("id", booking.organization_id)
-      .maybeSingle() as unknown as { data: { timezone: string | null } | null };
+      .maybeSingle()) as unknown as {
+      data: { timezone: string | null } | null;
+    };
 
     const when = new Date(booking.scheduled_at).toLocaleString("en-US", {
       weekday: "short",
@@ -1339,15 +1385,17 @@ export async function sendBookingCancelledToClient(bookingId: string) {
     const { sendOrgEmail } = await import("@/lib/email");
     const { bookingCancelledEmail } = await import("@/lib/email-templates");
 
-    const { data: booking } = await db
+    const { data: booking } = (await db
       .from("bookings")
-      .select(`
+      .select(
+        `
         id, organization_id, client_id, scheduled_at, service_type, service_type_label, address,
         cancelled_email_sent_at,
         client:clients ( name, email, phone )
-      `)
+      `,
+      )
       .eq("id", bookingId)
-      .maybeSingle() as unknown as {
+      .maybeSingle()) as unknown as {
       data: {
         id: string;
         organization_id: string;
@@ -1371,15 +1419,17 @@ export async function sendBookingCancelledToClient(bookingId: string) {
     // predates the SMS channel — it marks "notice sent" whichever channel(s)
     // delivered; a both-preference client gets text + email in that one pass.)
     if (booking.cancelled_email_sent_at) {
-      console.log(`[auto] Cancellation notice already sent for ${bookingId}, skipping`);
+      console.log(
+        `[auto] Cancellation notice already sent for ${bookingId}, skipping`,
+      );
       return;
     }
 
-    const { data: org } = await db
+    const { data: org } = (await db
       .from("organizations")
       .select("name, brand_color, logo_url, timezone, contact_phone")
       .eq("id", booking.organization_id)
-      .maybeSingle() as unknown as {
+      .maybeSingle()) as unknown as {
       data: {
         name: string;
         brand_color: string | null;
@@ -1425,7 +1475,10 @@ export async function sendBookingCancelledToClient(bookingId: string) {
           );
         }
       } catch (smsErr) {
-        console.error("[auto] sendBookingCancelledToClient SMS path errored:", smsErr);
+        console.error(
+          "[auto] sendBookingCancelledToClient SMS path errored:",
+          smsErr,
+        );
       }
     }
 
@@ -1434,7 +1487,10 @@ export async function sendBookingCancelledToClient(bookingId: string) {
     if (
       decision.email &&
       booking.client.email &&
-      (await isAutomationEnabled(booking.organization_id, "booking_cancelled_email"))
+      (await isAutomationEnabled(
+        booking.organization_id,
+        "booking_cancelled_email",
+      ))
     ) {
       const dateTime = new Date(booking.scheduled_at).toLocaleString("en-US", {
         weekday: "long",
@@ -1448,7 +1504,8 @@ export async function sendBookingCancelledToClient(bookingId: string) {
       const template = bookingCancelledEmail({
         clientName: booking.client.name ?? "there",
         orgName: org?.name ?? "your service provider",
-        serviceName: booking.service_type_label ?? humanize(booking.service_type),
+        serviceName:
+          booking.service_type_label ?? humanize(booking.service_type),
         dateTime,
         address: booking.address ?? "(address on file)",
         brandColor: org?.brand_color ?? undefined,
@@ -1494,7 +1551,9 @@ export async function sendRebookingPrompts(): Promise<{
   const { rebookingPromptEmail } = await import("@/lib/email-templates");
 
   const now = Date.now();
-  const fourteenDaysAgo = new Date(now - 14 * 24 * 60 * 60 * 1000).toISOString();
+  const fourteenDaysAgo = new Date(
+    now - 14 * 24 * 60 * 60 * 1000,
+  ).toISOString();
   const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
   const nowIso = new Date(now).toISOString();
 
@@ -1518,7 +1577,8 @@ export async function sendRebookingPrompts(): Promise<{
       automation_settings: Record<string, { enabled?: boolean }> | null;
     }> | null;
   };
-  const { resolveAutomationEnabled } = await import("@/lib/automation-defaults");
+  const { resolveAutomationEnabled } =
+    await import("@/lib/automation-defaults");
   const enabledOrgs = new Map<
     string,
     {
@@ -1545,7 +1605,7 @@ export async function sendRebookingPrompts(): Promise<{
   // forever. 14d..180d is the actionable window.
   const ceilingIso = new Date(now - 180 * 24 * 60 * 60 * 1000).toISOString();
 
-  const { data: candidates } = await db
+  const { data: candidates } = (await db
     .from("clients")
     .select("id, organization_id, name, email, last_rebook_prompt_at")
     .in("organization_id", Array.from(enabledOrgs.keys()))
@@ -1553,7 +1613,7 @@ export async function sendRebookingPrompts(): Promise<{
     .or(
       `last_rebook_prompt_at.is.null,last_rebook_prompt_at.lt.${thirtyDaysAgo}`,
     )
-    .limit(500) as unknown as {
+    .limit(500)) as unknown as {
     data: Array<{
       id: string;
       organization_id: string;
@@ -1583,14 +1643,14 @@ export async function sendRebookingPrompts(): Promise<{
     if (!client.email) continue;
 
     // Check most recent completed booking for this client.
-    const { data: lastCompleted } = await db
+    const { data: lastCompleted } = (await db
       .from("bookings")
       .select("scheduled_at")
       .eq("client_id", client.id)
       .eq("status", "completed")
       .order("scheduled_at", { ascending: false })
       .limit(1)
-      .maybeSingle() as unknown as {
+      .maybeSingle()) as unknown as {
       data: { scheduled_at: string } | null;
     };
 
@@ -1634,7 +1694,8 @@ export async function sendRebookingPrompts(): Promise<{
       replyTo = org.sender_email ?? "";
       if (!replyTo) {
         const admins = await getOrgAdminRecipients(client.organization_id);
-        replyTo = admins[0]?.email ?? process.env.EMAIL_FROM ?? "noreply@sollos3.com";
+        replyTo =
+          admins[0]?.email ?? process.env.EMAIL_FROM ?? "noreply@sollos3.com";
       }
       replyToCache.set(client.organization_id, replyTo);
     }
@@ -1721,7 +1782,7 @@ export async function sendStaleEstimateFollowups(): Promise<{
   // Pull every estimate that's still in 'sent' status + has a sent_at
   // old enough to qualify for at least the 7-day follow-up. We'll decide
   // per-row which stage applies.
-  const { data: candidates } = await db
+  const { data: candidates } = (await db
     .from("estimates")
     .select(
       `id, organization_id, client_id, total_cents, sent_at, public_token,
@@ -1730,7 +1791,7 @@ export async function sendStaleEstimateFollowups(): Promise<{
     )
     .eq("status", "sent")
     .lte("sent_at", sevenDaysAgo)
-    .is("decided_at", null) as unknown as {
+    .is("decided_at", null)) as unknown as {
     data: Array<{
       id: string;
       organization_id: string;
@@ -1800,11 +1861,11 @@ export async function sendStaleEstimateFollowups(): Promise<{
         est.organization_id,
         "estimate_followup_email",
       );
-      const { data: orgData } = await db
+      const { data: orgData } = (await db
         .from("organizations")
         .select("name, brand_color, logo_url")
         .eq("id", est.organization_id)
-        .maybeSingle() as unknown as {
+        .maybeSingle()) as unknown as {
         data: {
           name: string;
           brand_color: string | null;
@@ -1913,18 +1974,24 @@ export async function sendOverdueReminders(): Promise<{
   // Find every overdue, unpaid invoice whose last reminder is either null
   // or older than 7 days. Uses the partial index from migration
   // 20260418030000_invoice_overdue_reminders.sql.
-  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const sevenDaysAgo = new Date(
+    Date.now() - 7 * 24 * 60 * 60 * 1000,
+  ).toISOString();
 
-  const { data: candidates } = await db
+  const { data: candidates } = (await db
     .from("invoices")
-    .select(`
+    .select(
+      `
       id, number, organization_id, client_id, amount_cents, due_date, public_token,
       overdue_reminder_sent_at,
       client:clients ( name, email )
-    `)
+    `,
+    )
     .eq("status", "overdue")
     .is("paid_at", null)
-    .or(`overdue_reminder_sent_at.is.null,overdue_reminder_sent_at.lt.${sevenDaysAgo}`) as unknown as {
+    .or(
+      `overdue_reminder_sent_at.is.null,overdue_reminder_sent_at.lt.${sevenDaysAgo}`,
+    )) as unknown as {
     data: Array<{
       id: string;
       number: string | null;
@@ -1949,7 +2016,13 @@ export async function sendOverdueReminders(): Promise<{
   // Cache org lookups — many invoices share the same org.
   const orgCache = new Map<
     string,
-    { name: string; brand_color: string | null; logo_url: string | null; enabled: boolean; currency: CurrencyCode } | null
+    {
+      name: string;
+      brand_color: string | null;
+      logo_url: string | null;
+      enabled: boolean;
+      currency: CurrencyCode;
+    } | null
   >();
 
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
@@ -1983,18 +2056,23 @@ export async function sendOverdueReminders(): Promise<{
 
     let cached = orgCache.get(inv.organization_id);
     if (cached === undefined) {
-      const enabled = await isAutomationEnabled(inv.organization_id, "invoice_overdue_reminder");
-      const { data: orgData } = await db
+      const enabled = await isAutomationEnabled(
+        inv.organization_id,
+        "invoice_overdue_reminder",
+      );
+      const { data: orgData } = (await db
         .from("organizations")
         .select("name, brand_color, logo_url")
         .eq("id", inv.organization_id)
-        .maybeSingle() as unknown as {
-        data: { name: string; brand_color: string | null; logo_url: string | null } | null;
+        .maybeSingle()) as unknown as {
+        data: {
+          name: string;
+          brand_color: string | null;
+          logo_url: string | null;
+        } | null;
       };
       const currency = await getOrgCurrency(inv.organization_id);
-      cached = orgData
-        ? { ...orgData, enabled, currency }
-        : null;
+      cached = orgData ? { ...orgData, enabled, currency } : null;
       orgCache.set(inv.organization_id, cached);
     }
 
@@ -2004,7 +2082,9 @@ export async function sendOverdueReminders(): Promise<{
     }
 
     if (!cached.enabled) {
-      console.log(`[auto] Overdue reminder paused for org ${inv.organization_id}`);
+      console.log(
+        `[auto] Overdue reminder paused for org ${inv.organization_id}`,
+      );
       skipped += 1;
       continue;
     }
@@ -2015,8 +2095,13 @@ export async function sendOverdueReminders(): Promise<{
       Math.floor((Date.now() - dueDate.getTime()) / (24 * 60 * 60 * 1000)),
     );
     const invoiceNumber = inv.number ?? inv.id.slice(0, 8).toUpperCase();
-    const amountFormatted = formatCurrencyCents(inv.amount_cents, cached.currency);
-    const publicUrl = inv.public_token ? `${siteUrl}/i/${inv.public_token}` : siteUrl;
+    const amountFormatted = formatCurrencyCents(
+      inv.amount_cents,
+      cached.currency,
+    );
+    const publicUrl = inv.public_token
+      ? `${siteUrl}/i/${inv.public_token}`
+      : siteUrl;
 
     // Send first, stamp second — if the send throws we'll retry tomorrow.
     let emailOk = false;
@@ -2062,7 +2147,11 @@ export async function sendOverdueReminders(): Promise<{
         });
         smsOk = smsRes.ok && smsRes.status === "sent";
       } catch (smsErr) {
-        console.error("[auto] overdue reminder SMS path errored:", inv.id, smsErr);
+        console.error(
+          "[auto] overdue reminder SMS path errored:",
+          inv.id,
+          smsErr,
+        );
       }
     }
 
@@ -2123,7 +2212,9 @@ export async function sendBookingReviewRequests(): Promise<{
   const { generateClaimToken } = await import("@/lib/claim-token");
 
   if (isClientEmailPaused()) {
-    console.log("[auto] sendBookingReviewRequests: CLIENT_EMAILS_PAUSED — skipping");
+    console.log(
+      "[auto] sendBookingReviewRequests: CLIENT_EMAILS_PAUSED — skipping",
+    );
     return { considered: 0, sent: 0, skipped: 0 };
   }
 
@@ -2154,23 +2245,25 @@ export async function sendBookingReviewRequests(): Promise<{
     Date.now() - 30 * 60 * 1000, // at LEAST 30 min must have elapsed
   ).toISOString();
 
-  const { data: candidates } = await db
+  const { data: candidates } = (await db
     .from("bookings")
-    .select(`
+    .select(
+      `
       id, organization_id, scheduled_at, service_type, duration_minutes, assigned_to,
       client:clients ( id, name, email ),
       assigned:memberships!bookings_assigned_to_fkey (
         display_name,
         profile:profiles ( full_name )
       )
-    `)
+    `,
+    )
     .eq("status", "completed")
     .is("review_request_sent_at", null)
     .gte("scheduled_at", earliestCutoff)
     .lte("scheduled_at", latestCutoff)
     // Deterministic under backlog — oldest first so catch-up drains in order.
     .order("scheduled_at", { ascending: true })
-    .limit(200) as unknown as {
+    .limit(200)) as unknown as {
     data: Array<{
       id: string;
       organization_id: string;
@@ -2282,11 +2375,11 @@ export async function sendBookingReviewRequests(): Promise<{
         booking.organization_id,
         "review_request_after_completion",
       );
-      const { data: orgData } = await db
+      const { data: orgData } = (await db
         .from("organizations")
         .select("name, brand_color, logo_url, internal_review_delay_minutes")
         .eq("id", booking.organization_id)
-        .maybeSingle() as unknown as {
+        .maybeSingle()) as unknown as {
         data: {
           name: string;
           brand_color: string | null;
@@ -2347,7 +2440,11 @@ export async function sendBookingReviewRequests(): Promise<{
       };
 
       if (updateErr) {
-        console.error("[auto] review token stamp failed:", booking.id, updateErr.message);
+        console.error(
+          "[auto] review token stamp failed:",
+          booking.id,
+          updateErr.message,
+        );
         skipped += 1;
         continue;
       }
@@ -2406,7 +2503,11 @@ export async function sendBookingReviewRequests(): Promise<{
         skipped += 1;
       }
     } catch (err) {
-      console.error("[auto] sendBookingReviewRequests booking error:", booking.id, err);
+      console.error(
+        "[auto] sendBookingReviewRequests booking error:",
+        booking.id,
+        err,
+      );
       skipped += 1;
     }
   }
@@ -2459,13 +2560,14 @@ export async function sendGbpReviewRequests(): Promise<{
 }> {
   const db = admin();
   const { sendOrgEmail, isClientEmailPaused } = await import("@/lib/email");
-  const { gbpReviewRequestEmail, gbpReviewReminderEmail } = await import(
-    "@/lib/email-templates"
-  );
+  const { gbpReviewRequestEmail, gbpReviewReminderEmail } =
+    await import("@/lib/email-templates");
   const { generateClaimToken } = await import("@/lib/claim-token");
 
   if (isClientEmailPaused()) {
-    console.log("[auto] sendGbpReviewRequests: CLIENT_EMAILS_PAUSED — skipping");
+    console.log(
+      "[auto] sendGbpReviewRequests: CLIENT_EMAILS_PAUSED — skipping",
+    );
     return {
       considered: 0,
       initialSent: 0,
@@ -2557,7 +2659,9 @@ export async function sendGbpReviewRequests(): Promise<{
   const considered = byClient.size;
   const orgCache = await buildOrgGbpCache(
     db,
-    Array.from(new Set(Array.from(byClient.values()).map((r) => r.organization_id))),
+    Array.from(
+      new Set(Array.from(byClient.values()).map((r) => r.organization_id)),
+    ),
   );
 
   const orgDefaultCache = new Map<
@@ -2823,11 +2927,7 @@ export async function sendGbpReviewRequests(): Promise<{
         skipped += 1;
       }
     } catch (err) {
-      console.error(
-        "[auto] sendGbpReviewRequests reminder error:",
-        c.id,
-        err,
-      );
+      console.error("[auto] sendGbpReviewRequests reminder error:", c.id, err);
       skipped += 1;
     }
   }
@@ -2927,16 +3027,24 @@ export async function sendUpcomingBookingReminders(): Promise<{
   const windowStart = new Date(now + 6 * 60 * 60 * 1000).toISOString();
   const windowEnd = new Date(now + 32 * 60 * 60 * 1000).toISOString();
 
-  const { data: candidates } = await db
+  const { data: candidates } = (await db
     .from("bookings")
-    .select(`
+    .select(
+      `
       id, organization_id, client_id, scheduled_at, duration_minutes, service_type, service_type_label, address,
       client:clients ( name, email, phone )
-    `)
+    `,
+    )
     .is("client_reminder_sent_at", null)
-    .in("status", ["pending", "confirmed"])
+    // Confirmed only. Pending used to be safe here because both of its
+    // producers pre-stamp client_reminder_sent_at, but that is not a durable
+    // guard: a manager picking Pending in the form gets no stamp, and
+    // updateBookingAction clears the stamp on every reschedule. A pending
+    // booking that gets its real date set would be re-armed, and the client
+    // would be told "your job is tomorrow" for a job nobody confirmed.
+    .eq("status", "confirmed")
     .gte("scheduled_at", windowStart)
-    .lte("scheduled_at", windowEnd) as unknown as {
+    .lte("scheduled_at", windowEnd)) as unknown as {
     data: Array<{
       id: string;
       organization_id: string;
@@ -3006,11 +3114,11 @@ export async function sendUpcomingBookingReminders(): Promise<{
           booking.organization_id,
           "booking_reminder_client_email",
         );
-        const { data: orgData } = await db
+        const { data: orgData } = (await db
           .from("organizations")
           .select("name, brand_color, logo_url, timezone, contact_phone")
           .eq("id", booking.organization_id)
-          .maybeSingle() as unknown as {
+          .maybeSingle()) as unknown as {
           data: {
             name: string;
             brand_color: string | null;
@@ -3049,9 +3157,8 @@ export async function sendUpcomingBookingReminders(): Promise<{
         timeZone: cached.timezone ?? "America/Edmonton",
       });
 
-      const { resolveTeamDivision, crewFinishNote } = await import(
-        "@/lib/crew-hours"
-      );
+      const { resolveTeamDivision, crewFinishNote } =
+        await import("@/lib/crew-hours");
       const division = await resolveTeamDivision(
         booking.id,
         booking.duration_minutes,
@@ -3065,7 +3172,8 @@ export async function sendUpcomingBookingReminders(): Promise<{
       const template = bookingReminderEmail({
         clientName: booking.client.name ?? "there",
         orgName: cached.name,
-        serviceName: booking.service_type_label ?? humanize(booking.service_type),
+        serviceName:
+          booking.service_type_label ?? humanize(booking.service_type),
         dateTime,
         crewNote,
         address: booking.address ?? "(address on file)",
@@ -3135,7 +3243,9 @@ export async function sendUpcomingBookingReminders(): Promise<{
           .update({ client_reminder_sent_at: new Date().toISOString() })
           .eq("id", booking.id);
         sent += 1;
-        console.log(`[auto] Booking reminder delivered for booking ${booking.id}`);
+        console.log(
+          `[auto] Booking reminder delivered for booking ${booking.id}`,
+        );
       } else {
         skipped += 1;
       }
@@ -3192,32 +3302,39 @@ export async function sendEstimateToClient(
 
     let estimateQuery = db
       .from("estimates")
-      .select(`
+      .select(
+        `
         id, organization_id, service_description, total_cents,
         status, public_token, expires_at,
         client:clients ( name, email )
-      `)
+      `,
+      )
       .eq("id", estimateId);
     if (opts.organizationId) {
       estimateQuery = estimateQuery.eq("organization_id", opts.organizationId);
     }
-    const { data: estimate } = await estimateQuery
-      .maybeSingle() as unknown as {
-      data: {
-        id: string;
-        organization_id: string;
-        service_description: string | null;
-        total_cents: number;
-        status: string;
-        public_token: string | null;
-        expires_at: string | null;
-        client: { name: string | null; email: string | null } | null;
-      } | null;
-    };
+    const { data: estimate } =
+      (await estimateQuery.maybeSingle()) as unknown as {
+        data: {
+          id: string;
+          organization_id: string;
+          service_description: string | null;
+          total_cents: number;
+          status: string;
+          public_token: string | null;
+          expires_at: string | null;
+          client: { name: string | null; email: string | null } | null;
+        } | null;
+      };
 
-    if (!estimate) return { ok: false, publicToken: null, error: "Estimate not found" };
+    if (!estimate)
+      return { ok: false, publicToken: null, error: "Estimate not found" };
     if (!estimate.client?.email) {
-      return { ok: false, publicToken: null, error: "Client has no email on file" };
+      return {
+        ok: false,
+        publicToken: null,
+        error: "Client has no email on file",
+      };
     }
 
     // Lazily mint a public token + 30-day expiry on first send. Conditional
@@ -3244,19 +3361,26 @@ export async function sendEstimateToClient(
           .select("public_token, expires_at")
           .eq("id", estimateId)
           .maybeSingle()) as unknown as {
-          data: { public_token: string | null; expires_at: string | null } | null;
+          data: {
+            public_token: string | null;
+            expires_at: string | null;
+          } | null;
         };
         publicToken = winner?.public_token ?? publicToken;
         expiresAt = winner?.expires_at ?? expiresAt;
       }
     }
 
-    const { data: orgData } = await db
+    const { data: orgData } = (await db
       .from("organizations")
       .select("name, brand_color, logo_url")
       .eq("id", estimate.organization_id)
-      .maybeSingle() as unknown as {
-      data: { name: string; brand_color: string | null; logo_url: string | null } | null;
+      .maybeSingle()) as unknown as {
+      data: {
+        name: string;
+        brand_color: string | null;
+        logo_url: string | null;
+      } | null;
     };
 
     const orgName = orgData?.name ?? "Your service provider";
@@ -3288,7 +3412,11 @@ export async function sendEstimateToClient(
     // depending on our hosted page staying up. Best-effort: if PDF
     // rendering fails (Chromium hiccup, cold-start timeout), we still
     // send the email — the link in the body works as the fallback.
-    let pdfAttachment: { filename: string; content: Buffer; contentType: string } | null = null;
+    let pdfAttachment: {
+      filename: string;
+      content: Buffer;
+      contentType: string;
+    } | null = null;
     try {
       const { renderEstimatePdf } = await import("@/lib/estimate-pdf");
       const pdfBuffer = await renderEstimatePdf({ publicToken });
@@ -3365,11 +3493,20 @@ export async function notifyBookingAssignment(
   organizationId: string,
   bookingId: string,
   assignedTo: string,
-  meta: { clientName: string; scheduledAt: string; serviceType: string; address: string | null },
+  meta: {
+    clientName: string;
+    scheduledAt: string;
+    serviceType: string;
+    address: string | null;
+  },
 ) {
   try {
-    if (!(await isAutomationEnabled(organizationId, "booking_assignment_notify"))) {
-      console.log(`[auto] Booking assignment notify paused for org ${organizationId}`);
+    if (
+      !(await isAutomationEnabled(organizationId, "booking_assignment_notify"))
+    ) {
+      console.log(
+        `[auto] Booking assignment notify paused for org ${organizationId}`,
+      );
       return;
     }
 
@@ -3417,9 +3554,7 @@ export async function notifyBookingAssignment(
 
       const { data: member } = (await db
         .from("memberships")
-        .select(
-          "id, display_name, profile:profiles ( full_name, phone )",
-        )
+        .select("id, display_name, profile:profiles ( full_name, phone )")
         .eq("id", assignedTo)
         .maybeSingle()) as unknown as {
         data: {
@@ -3453,13 +3588,12 @@ export async function notifyBookingAssignment(
         );
       }
     } catch (smsErr) {
-      console.error(
-        "[auto] notifyBookingAssignment SMS path errored:",
-        smsErr,
-      );
+      console.error("[auto] notifyBookingAssignment SMS path errored:", smsErr);
     }
 
-    console.log(`[auto] Notified ${assignedTo} about booking assignment ${bookingId}`);
+    console.log(
+      `[auto] Notified ${assignedTo} about booking assignment ${bookingId}`,
+    );
   } catch (err) {
     console.error("[auto] notifyBookingAssignment failed:", err);
   }
@@ -3472,25 +3606,36 @@ export async function notifyBookingAssignment(
 export async function autoOnInvoicePaid(invoiceId: string) {
   try {
     const db = admin();
-    const { sendOrgEmail, isInvoiceEmailUnpaused } = await import("@/lib/email");
-    const { reviewRequestEmail, paymentReceiptEmail } = await import("@/lib/email-templates");
+    const { sendOrgEmail, isInvoiceEmailUnpaused } =
+      await import("@/lib/email");
+    const { reviewRequestEmail, paymentReceiptEmail } =
+      await import("@/lib/email-templates");
     const { formatCurrencyCents } = await import("@/lib/format");
     const { getOrgCurrency } = await import("@/lib/org-currency");
     const { generateClaimToken } = await import("@/lib/claim-token");
 
     const { data: invoice } = await db
       .from("invoices")
-      .select(`
+      .select(
+        `
         id, number, organization_id, amount_cents, public_token, paid_at, booking_id,
         client:clients ( id, name, email )
-      `)
+      `,
+      )
       .eq("id", invoiceId)
       .maybeSingle();
 
     if (!invoice || !invoice.client) return;
 
-    if (!(await isAutomationEnabled(invoice.organization_id, "invoice_paid_receipt"))) {
-      console.log(`[auto] Receipt + review request paused for org ${invoice.organization_id}`);
+    if (
+      !(await isAutomationEnabled(
+        invoice.organization_id,
+        "invoice_paid_receipt",
+      ))
+    ) {
+      console.log(
+        `[auto] Receipt + review request paused for org ${invoice.organization_id}`,
+      );
       return;
     }
 
@@ -3545,12 +3690,17 @@ export async function autoOnInvoicePaid(invoiceId: string) {
       );
     }
 
-    const { data: orgData } = await db
+    const { data: orgData } = (await db
       .from("organizations")
       .select("name, brand_color, logo_url, timezone")
       .eq("id", invoice.organization_id)
-      .maybeSingle() as unknown as {
-      data: { name: string; brand_color: string | null; logo_url: string | null; timezone: string | null } | null;
+      .maybeSingle()) as unknown as {
+      data: {
+        name: string;
+        brand_color: string | null;
+        logo_url: string | null;
+        timezone: string | null;
+      } | null;
     };
 
     const orgName = orgData?.name ?? "Your service provider";
@@ -3566,23 +3716,29 @@ export async function autoOnInvoicePaid(invoiceId: string) {
       orgName,
       invoiceNumber: invoice.number ?? invoiceId.slice(0, 8).toUpperCase(),
       amountFormatted: formatCurrencyCents(invoice.amount_cents, currency),
-      paidDate: new Date(invoice.paid_at ?? new Date()).toLocaleDateString("en-US", {
-        month: "short",
-        day: "numeric",
-        year: "numeric",
-        timeZone: orgTz,
-      }),
-      publicUrl: invoice.public_token ? `${siteUrl}/i/${invoice.public_token}` : siteUrl,
+      paidDate: new Date(invoice.paid_at ?? new Date()).toLocaleDateString(
+        "en-US",
+        {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+          timeZone: orgTz,
+        },
+      ),
+      publicUrl: invoice.public_token
+        ? `${siteUrl}/i/${invoice.public_token}`
+        : siteUrl,
       brandColor,
       logoUrl,
     });
 
-    if (receiptEmail) await sendOrgEmail(invoice.organization_id, {
-      to: invoice.client.email!,
-      toName: invoice.client.name ?? undefined,
-      ...receiptTemplate,
-      pauseExempt: isInvoiceEmailUnpaused(),
-    });
+    if (receiptEmail)
+      await sendOrgEmail(invoice.organization_id, {
+        to: invoice.client.email!,
+        toName: invoice.client.name ?? undefined,
+        ...receiptTemplate,
+        pauseExempt: isInvoiceEmailUnpaused(),
+      });
 
     // Receipt by text — independent channel; sendOrgSms applies its own
     // gates (per-key toggle, opt-in, cap, TWILIO_ENABLED).
@@ -3594,8 +3750,12 @@ export async function autoOnInvoicePaid(invoiceId: string) {
           to: billingDecision.clientPhone!,
           body: composePaymentReceiptSms({
             orgName,
-            invoiceNumber: invoice.number ?? invoiceId.slice(0, 8).toUpperCase(),
-            amountFormatted: formatCurrencyCents(invoice.amount_cents, currency),
+            invoiceNumber:
+              invoice.number ?? invoiceId.slice(0, 8).toUpperCase(),
+            amountFormatted: formatCurrencyCents(
+              invoice.amount_cents,
+              currency,
+            ),
           }),
           automationKey: "invoice_paid_receipt",
         });
@@ -3636,13 +3796,16 @@ export async function autoOnInvoicePaid(invoiceId: string) {
     // because the process terminates when the function returns. Back-to-back
     // Resend calls land in separate email threads in Gmail/Outlook anyway
     // (different Message-IDs), so there's no deliverability reason to delay.
-    if (reviewEmail) await sendOrgEmail(invoice.organization_id, {
-      to: invoice.client.email!,
-      toName: invoice.client.name ?? undefined,
-      ...reviewTemplate,
-    });
+    if (reviewEmail)
+      await sendOrgEmail(invoice.organization_id, {
+        to: invoice.client.email!,
+        toName: invoice.client.name ?? undefined,
+        ...reviewTemplate,
+      });
 
-    console.log(`[auto] Receipt + review request sent for invoice ${invoiceId}`);
+    console.log(
+      `[auto] Receipt + review request sent for invoice ${invoiceId}`,
+    );
   } catch (err) {
     console.error("[auto] autoOnInvoicePaid failed:", err);
   }
@@ -3663,8 +3826,12 @@ export async function notifyReviewSubmitted(
   },
 ) {
   try {
-    if (!(await isAutomationEnabled(organizationId, "review_submitted_notify"))) {
-      console.log(`[auto] Review submitted notify paused for org ${organizationId}`);
+    if (
+      !(await isAutomationEnabled(organizationId, "review_submitted_notify"))
+    ) {
+      console.log(
+        `[auto] Review submitted notify paused for org ${organizationId}`,
+      );
       return;
     }
 
@@ -3692,17 +3859,18 @@ export async function notifyReviewSubmitted(
         const { sendEmail } = await import("@/lib/email");
         const { lowReviewAlertEmail } = await import("@/lib/email-templates");
 
-        const { data: org } = await db
+        const { data: org } = (await db
           .from("organizations")
           .select("name")
           .eq("id", organizationId)
-          .maybeSingle() as unknown as {
+          .maybeSingle()) as unknown as {
           data: { name: string } | null;
         };
         const orgName = org?.name ?? "your organization";
 
         const recipients = await getOrgAdminRecipients(organizationId);
-        const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+        const siteUrl =
+          process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
         for (const r of recipients) {
           const template = lowReviewAlertEmail({
             recipientName: r.fullName ?? "there",
@@ -3744,14 +3912,9 @@ export async function autoExtendRecurringSeries(): Promise<number> {
     // dead tenants and eventually tries to insert with FK violations.
     const { data: series } = (await db
       .from("booking_series")
-      .select(
-        `*, organization:organizations!inner(deleted_at)`,
-      )
+      .select(`*, organization:organizations!inner(deleted_at)`)
       .eq("active", true)
-      .is(
-        "organization.deleted_at",
-        null,
-      )) as unknown as {
+      .is("organization.deleted_at", null)) as unknown as {
       data: Array<{
         id: string;
         organization_id: string;
@@ -3855,12 +4018,12 @@ export async function autoExtendRecurringSeries(): Promise<number> {
         series_id: s.id,
       }));
 
-      const { data: inserted } = (await (db
+      const { data: inserted } = await (db
         .from("bookings")
         .insert(rows)
         .select("id, scheduled_at") as unknown as Promise<{
         data: Array<{ id: string; scheduled_at: string }> | null;
-      }>));
+      }>);
 
       // Create the crew junction rows so generated occurrences actually show
       // up in the cleaner's field app (the field views read booking_assignees,
@@ -3895,12 +4058,10 @@ export async function autoExtendRecurringSeries(): Promise<number> {
           acceptance_status: status,
           responded_at: seriesAccepted ? new Date().toISOString() : null,
         }));
-        await (db
-          .from("booking_assignees")
-          .upsert(junctionRows, {
-            onConflict: "booking_id,membership_id",
-            ignoreDuplicates: true,
-          }) as unknown as Promise<unknown>);
+        await (db.from("booking_assignees").upsert(junctionRows, {
+          onConflict: "booking_id,membership_id",
+          ignoreDuplicates: true,
+        }) as unknown as Promise<unknown>);
       }
 
       // Sync to calendar. Awaited (not fire-and-forget) so the cron's
@@ -3923,7 +4084,9 @@ export async function autoExtendRecurringSeries(): Promise<number> {
       }
 
       totalGenerated += occurrences.length;
-      console.log(`[auto] Extended series ${s.id}: +${occurrences.length} bookings`);
+      console.log(
+        `[auto] Extended series ${s.id}: +${occurrences.length} bookings`,
+      );
     }
 
     return totalGenerated;
@@ -4021,7 +4184,9 @@ export async function autoComputeReviewBonuses(): Promise<number> {
       }
 
       if (toCreate.length > 0) {
-        await (db.from("bonuses").insert(toCreate) as unknown as Promise<unknown>);
+        await (db
+          .from("bonuses")
+          .insert(toCreate) as unknown as Promise<unknown>);
         totalCreated += toCreate.length;
 
         // Owner/admin-only — payroll/bonus info is management-facing.
@@ -4061,14 +4226,16 @@ export async function sendUnassignedBookingAlerts(): Promise<{
   const now = Date.now();
   const windowEnd = new Date(now + 24 * 60 * 60 * 1000).toISOString();
 
-  const { data: rawCandidates } = await db
+  const { data: rawCandidates } = (await db
     .from("bookings")
-    .select("id, organization_id, scheduled_at, service_type, service_type_label, address, client:clients ( name )")
+    .select(
+      "id, organization_id, scheduled_at, service_type, service_type_label, address, client:clients ( name )",
+    )
     .is("assigned_to", null)
     .is("unassigned_alert_sent_at", null)
     .in("status", ["pending", "confirmed"])
     .gte("scheduled_at", new Date(now).toISOString())
-    .lte("scheduled_at", windowEnd) as unknown as {
+    .lte("scheduled_at", windowEnd)) as unknown as {
     data: Array<{
       id: string;
       organization_id: string;
@@ -4120,11 +4287,11 @@ export async function sendUnassignedBookingAlerts(): Promise<{
       continue;
     }
 
-    const { data: orgData } = await db
+    const { data: orgData } = (await db
       .from("organizations")
       .select("name, timezone")
       .eq("id", orgId)
-      .maybeSingle() as unknown as {
+      .maybeSingle()) as unknown as {
       data: { name: string; timezone: string | null } | null;
     };
     const orgName = orgData?.name ?? "your organization";
@@ -4147,7 +4314,9 @@ export async function sendUnassignedBookingAlerts(): Promise<{
       address: b.address ?? "(no address)",
       hoursUntil: Math.max(
         1,
-        Math.round((new Date(b.scheduled_at).getTime() - now) / (60 * 60 * 1000)),
+        Math.round(
+          (new Date(b.scheduled_at).getTime() - now) / (60 * 60 * 1000),
+        ),
       ),
     }));
 
@@ -4202,11 +4371,11 @@ export async function sendPayoutNotification(args: {
     const { stripePayoutAlertEmail } = await import("@/lib/email-templates");
     const { formatCurrencyCents } = await import("@/lib/format");
 
-    const { data: org } = await db
+    const { data: org } = (await db
       .from("organizations")
       .select("id, name")
       .eq("stripe_account_id", args.stripeAccountId)
-      .maybeSingle() as unknown as {
+      .maybeSingle()) as unknown as {
       data: { id: string; name: string } | null;
     };
 
@@ -4308,8 +4477,7 @@ export async function notifyPlatformPaymentFailed(
     if (recipients.length === 0) return;
 
     const { sendEmail } = await import("@/lib/email");
-    const siteUrl =
-      process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
     const billingUrl = `${siteUrl}/app/settings/billing`;
     const orgName = org?.name ?? "your team";
 
@@ -4368,9 +4536,8 @@ export async function sendInvoiceReviewDigests(): Promise<{
   const { formatCurrencyCents, DEFAULT_TZ } = await import("@/lib/format");
   const { getOrgCurrency } = await import("@/lib/org-currency");
   const { isValidIanaTz } = await import("@/lib/org-timezone");
-  const { zonedDayBoundsUtc, formatHourLabel } = await import(
-    "@/lib/wall-clock"
-  );
+  const { zonedDayBoundsUtc, formatHourLabel } =
+    await import("@/lib/wall-clock");
 
   const now = new Date();
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
@@ -4545,10 +4712,10 @@ export async function sendWeeklyOpsDigests(): Promise<{
   const prevStart = new Date(start.getTime() - 7 * 24 * 60 * 60 * 1000);
   const weekLabel = `${start.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${end.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
 
-  const { data: orgs } = await db
+  const { data: orgs } = (await db
     .from("organizations")
     .select("id, name")
-    .is("deleted_at", null) as unknown as {
+    .is("deleted_at", null)) as unknown as {
     data: Array<{ id: string; name: string }> | null;
   };
 
@@ -4573,48 +4740,73 @@ export async function sendWeeklyOpsDigests(): Promise<{
       { count: overdueCount },
       { data: unassignedUpcomingRows },
     ] = await Promise.all([
-      db.from("invoices").select("amount_cents").eq("organization_id", org.id)
+      db
+        .from("invoices")
+        .select("amount_cents")
+        .eq("organization_id", org.id)
         .gte("paid_at", start.toISOString())
         .lte("paid_at", end.toISOString()) as unknown as Promise<{
         data: Array<{ amount_cents: number }> | null;
       }>,
-      db.from("invoices").select("amount_cents").eq("organization_id", org.id)
+      db
+        .from("invoices")
+        .select("amount_cents")
+        .eq("organization_id", org.id)
         .gte("paid_at", prevStart.toISOString())
         .lte("paid_at", start.toISOString()) as unknown as Promise<{
         data: Array<{ amount_cents: number }> | null;
       }>,
-      db.from("bookings").select("id", { count: "exact", head: true })
-        .eq("organization_id", org.id).eq("status", "completed")
+      db
+        .from("bookings")
+        .select("id", { count: "exact", head: true })
+        .eq("organization_id", org.id)
+        .eq("status", "completed")
         .gte("scheduled_at", start.toISOString())
         .lte("scheduled_at", end.toISOString()),
-      db.from("bookings").select("id", { count: "exact", head: true })
-        .eq("organization_id", org.id).eq("status", "cancelled")
+      db
+        .from("bookings")
+        .select("id", { count: "exact", head: true })
+        .eq("organization_id", org.id)
+        .eq("status", "cancelled")
         .gte("updated_at", start.toISOString())
         .lte("updated_at", end.toISOString()),
-      db.from("reviews").select("rating").eq("organization_id", org.id)
+      db
+        .from("reviews")
+        .select("rating")
+        .eq("organization_id", org.id)
         .gte("created_at", start.toISOString())
         .lte("created_at", end.toISOString()) as unknown as Promise<{
         data: Array<{ rating: number }> | null;
       }>,
-      db.from("invoices").select("id", { count: "exact", head: true })
-        .eq("organization_id", org.id).eq("status", "overdue")
+      db
+        .from("invoices")
+        .select("id", { count: "exact", head: true })
+        .eq("organization_id", org.id)
+        .eq("status", "overdue")
         .is("paid_at", null),
       // Rows, not a count — a bench claim never sets assigned_to, so counting
       // on that column alone reported covered jobs as unstaffed in the digest.
-      db.from("bookings").select("id")
-        .eq("organization_id", org.id).is("assigned_to", null)
+      db
+        .from("bookings")
+        .select("id")
+        .eq("organization_id", org.id)
+        .is("assigned_to", null)
         .in("status", ["pending", "confirmed"])
         .gte("scheduled_at", now.toISOString())
-        .lte("scheduled_at", new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString())
+        .lte(
+          "scheduled_at",
+          new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+        )
         .limit(200),
     ]);
 
     // Drop jobs a bench freelancer already claimed — they aren't unstaffed.
-    const { resolveBookingCoverage: coverFor } = await import(
-      "@/lib/booking-coverage"
-    );
+    const { resolveBookingCoverage: coverFor } =
+      await import("@/lib/booking-coverage");
     const upcomingCov = await coverFor(
-      ((unassignedUpcomingRows ?? []) as Array<{ id: string }>).map((b) => b.id),
+      ((unassignedUpcomingRows ?? []) as Array<{ id: string }>).map(
+        (b) => b.id,
+      ),
     );
     const unassignedUpcoming = (
       (unassignedUpcomingRows ?? []) as Array<{ id: string }>
@@ -4630,12 +4822,16 @@ export async function sendWeeklyOpsDigests(): Promise<{
     );
     const deltaPct =
       prevRevenueCents > 0
-        ? Math.round(((revenueCents - prevRevenueCents) / prevRevenueCents) * 100)
+        ? Math.round(
+            ((revenueCents - prevRevenueCents) / prevRevenueCents) * 100,
+          )
         : null;
 
     const avgRating =
       reviews && reviews.length > 0
-        ? (reviews.reduce((a, r) => a + r.rating, 0) / reviews.length).toFixed(1)
+        ? (reviews.reduce((a, r) => a + r.rating, 0) / reviews.length).toFixed(
+            1,
+          )
         : null;
 
     const currency = await getOrgCurrency(org.id);
@@ -4709,17 +4905,19 @@ export async function sendMonthlyOpsDigests(): Promise<{ orgsSent: number }> {
   // Oct 1 00:00 UTC through Nov 1 00:00 UTC.
   const now = new Date();
   const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+  const start = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1),
+  );
   const monthLabel = start.toLocaleDateString("en-US", {
     month: "long",
     year: "numeric",
     timeZone: "UTC",
   });
 
-  const { data: orgs } = await db
+  const { data: orgs } = (await db
     .from("organizations")
     .select("id, name")
-    .is("deleted_at", null) as unknown as {
+    .is("deleted_at", null)) as unknown as {
     data: Array<{ id: string; name: string }> | null;
   };
 
@@ -4741,7 +4939,8 @@ export async function sendMonthlyOpsDigests(): Promise<{ orgsSent: number }> {
       { data: reviews },
       { count: newClientsCount },
     ] = await Promise.all([
-      db.from("invoices")
+      db
+        .from("invoices")
         .select("amount_cents, client_id, client:clients ( name )")
         .eq("organization_id", org.id)
         .gte("paid_at", start.toISOString())
@@ -4752,27 +4951,41 @@ export async function sendMonthlyOpsDigests(): Promise<{ orgsSent: number }> {
           client: { name: string | null } | null;
         }> | null;
       }>,
-      db.from("bookings").select("id", { count: "exact", head: true })
-        .eq("organization_id", org.id).eq("status", "completed")
+      db
+        .from("bookings")
+        .select("id", { count: "exact", head: true })
+        .eq("organization_id", org.id)
+        .eq("status", "completed")
         .gte("scheduled_at", start.toISOString())
         .lt("scheduled_at", end.toISOString()),
-      db.from("bookings").select("id", { count: "exact", head: true })
-        .eq("organization_id", org.id).eq("status", "cancelled")
+      db
+        .from("bookings")
+        .select("id", { count: "exact", head: true })
+        .eq("organization_id", org.id)
+        .eq("status", "cancelled")
         .gte("updated_at", start.toISOString())
         .lt("updated_at", end.toISOString()),
-      db.from("reviews").select("rating").eq("organization_id", org.id)
+      db
+        .from("reviews")
+        .select("rating")
+        .eq("organization_id", org.id)
         .gte("created_at", start.toISOString())
         .lt("created_at", end.toISOString()) as unknown as Promise<{
         data: Array<{ rating: number }> | null;
       }>,
-      db.from("clients").select("id", { count: "exact", head: true })
+      db
+        .from("clients")
+        .select("id", { count: "exact", head: true })
         .eq("organization_id", org.id)
         .gte("created_at", start.toISOString())
         .lt("created_at", end.toISOString()),
     ]);
 
     // Aggregate top clients by revenue.
-    const clientAgg = new Map<string, { name: string; cents: number; jobs: number }>();
+    const clientAgg = new Map<
+      string,
+      { name: string; cents: number; jobs: number }
+    >();
     for (const inv of paidInvoices ?? []) {
       const existing = clientAgg.get(inv.client_id) ?? {
         name: inv.client?.name ?? "—",
@@ -4790,14 +5003,14 @@ export async function sendMonthlyOpsDigests(): Promise<{ orgsSent: number }> {
     const currency = await getOrgCurrency(org.id);
 
     // Top performer by completed jobs.
-    const { data: completedByEmp } = await db
+    const { data: completedByEmp } = (await db
       .from("bookings")
       .select("assigned_to")
       .eq("organization_id", org.id)
       .eq("status", "completed")
       .not("assigned_to", "is", null)
       .gte("scheduled_at", start.toISOString())
-      .lt("scheduled_at", end.toISOString()) as unknown as {
+      .lt("scheduled_at", end.toISOString())) as unknown as {
       data: Array<{ assigned_to: string }> | null;
     };
     const empCount = new Map<string, number>();
@@ -4806,12 +5019,14 @@ export async function sendMonthlyOpsDigests(): Promise<{ orgsSent: number }> {
     }
     let topEmployee: { name: string; jobs: number } | null = null;
     if (empCount.size > 0) {
-      const [topId, jobs] = [...empCount.entries()].sort((a, b) => b[1] - a[1])[0];
-      const { data: m } = await db
+      const [topId, jobs] = [...empCount.entries()].sort(
+        (a, b) => b[1] - a[1],
+      )[0];
+      const { data: m } = (await db
         .from("memberships")
         .select("profile:profiles ( full_name )")
         .eq("id", topId)
-        .maybeSingle() as unknown as {
+        .maybeSingle()) as unknown as {
         data: { profile: { full_name: string | null } | null } | null;
       };
       topEmployee = {
@@ -4826,7 +5041,9 @@ export async function sendMonthlyOpsDigests(): Promise<{ orgsSent: number }> {
     );
     const avgRating =
       reviews && reviews.length > 0
-        ? (reviews.reduce((a, r) => a + r.rating, 0) / reviews.length).toFixed(1)
+        ? (reviews.reduce((a, r) => a + r.rating, 0) / reviews.length).toFixed(
+            1,
+          )
         : null;
 
     const stats = [
@@ -4836,9 +5053,10 @@ export async function sendMonthlyOpsDigests(): Promise<{ orgsSent: number }> {
       {
         label: "Avg rating",
         value: avgRating ? `${avgRating} ★` : "—",
-        sub: reviews && reviews.length > 0
-          ? `${reviews.length} review${reviews.length === 1 ? "" : "s"}`
-          : undefined,
+        sub:
+          reviews && reviews.length > 0
+            ? `${reviews.length} review${reviews.length === 1 ? "" : "s"}`
+            : undefined,
       },
       { label: "New clients", value: String(newClientsCount ?? 0) },
     ];
@@ -4899,7 +5117,10 @@ type SegRow = {
 async function loadCrewForBookings(
   db: ReturnType<typeof admin>,
   bookingIds: string[],
-): Promise<{ rowsByBooking: Map<string, SegRow[]>; nameById: Map<string, string> }> {
+): Promise<{
+  rowsByBooking: Map<string, SegRow[]>;
+  nameById: Map<string, string>;
+}> {
   const rowsByBooking = new Map<string, SegRow[]>();
   const nameById = new Map<string, string>();
   if (bookingIds.length === 0) return { rowsByBooking, nameById };
@@ -4919,7 +5140,9 @@ async function loadCrewForBookings(
     rowsByBooking.set(r.booking_id, arr);
   }
 
-  const memberIds = [...new Set((assigneeRows ?? []).map((r) => r.membership_id))];
+  const memberIds = [
+    ...new Set((assigneeRows ?? []).map((r) => r.membership_id)),
+  ];
   if (memberIds.length > 0) {
     const { data: memberRows } = (await db
       .from("memberships")
@@ -5067,10 +5290,10 @@ export async function sendDailyEmployeeSchedules(): Promise<{
 
   const now = new Date();
 
-  const { data: orgs } = await db
+  const { data: orgs } = (await db
     .from("organizations")
     .select("id, name, timezone")
-    .is("deleted_at", null) as unknown as {
+    .is("deleted_at", null)) as unknown as {
     data: Array<{ id: string; name: string; timezone: string | null }> | null;
   };
 
@@ -5079,7 +5302,8 @@ export async function sendDailyEmployeeSchedules(): Promise<{
   let emailsSent = 0;
 
   for (const org of orgs) {
-    if (!(await isAutomationEnabled(org.id, "employee_daily_schedule"))) continue;
+    if (!(await isAutomationEnabled(org.id, "employee_daily_schedule")))
+      continue;
     const orgTz = org.timezone ?? "America/Edmonton";
 
     // "Today" must be the org's LOCAL calendar day, not a UTC day. Using a UTC
@@ -5091,18 +5315,20 @@ export async function sendDailyEmployeeSchedules(): Promise<{
     );
     const endOfDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000);
 
-    const { data: bookings } = await db
+    const { data: bookings } = (await db
       .from("bookings")
-      .select(`
+      .select(
+        `
         id, scheduled_at, service_type, service_type_label, duration_minutes, address, notes,
         assigned_to,
         client:clients ( name, address )
-      `)
+      `,
+      )
       .eq("organization_id", org.id)
       .in("status", ["pending", "confirmed"])
       .gte("scheduled_at", startOfDay.toISOString())
       .lt("scheduled_at", endOfDay.toISOString())
-      .order("scheduled_at") as unknown as {
+      .order("scheduled_at")) as unknown as {
       data: Array<{
         id: string;
         scheduled_at: string;
@@ -5218,10 +5444,10 @@ export async function sendWeeklyEmployeeSchedules(): Promise<{
   );
   const weekLabel = `${startOfTomorrow.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })} – ${new Date(endOfWeek.getTime() - 1).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })}`;
 
-  const { data: orgs } = await db
+  const { data: orgs } = (await db
     .from("organizations")
     .select("id, name, timezone")
-    .is("deleted_at", null) as unknown as {
+    .is("deleted_at", null)) as unknown as {
     data: Array<{ id: string; name: string; timezone: string | null }> | null;
   };
 
@@ -5230,20 +5456,23 @@ export async function sendWeeklyEmployeeSchedules(): Promise<{
   let emailsSent = 0;
 
   for (const org of orgs) {
-    if (!(await isAutomationEnabled(org.id, "employee_weekly_schedule"))) continue;
+    if (!(await isAutomationEnabled(org.id, "employee_weekly_schedule")))
+      continue;
     const orgTz = org.timezone ?? "America/Edmonton";
 
-    const { data: bookings } = await db
+    const { data: bookings } = (await db
       .from("bookings")
-      .select(`
+      .select(
+        `
         id, scheduled_at, service_type, service_type_label, duration_minutes, assigned_to,
         client:clients ( name )
-      `)
+      `,
+      )
       .eq("organization_id", org.id)
       .in("status", ["pending", "confirmed"])
       .gte("scheduled_at", startOfTomorrow.toISOString())
       .lt("scheduled_at", endOfWeek.toISOString())
-      .order("scheduled_at") as unknown as {
+      .order("scheduled_at")) as unknown as {
       data: Array<{
         id: string;
         scheduled_at: string;
@@ -5302,7 +5531,9 @@ export async function sendWeeklyEmployeeSchedules(): Promise<{
         dayMap.set(localKey, []);
       }
       for (const r of resolved) {
-        const localKey = r.win.start.toLocaleDateString("en-CA", { timeZone: orgTz });
+        const localKey = r.win.start.toLocaleDateString("en-CA", {
+          timeZone: orgTz,
+        });
         const bucket = dayMap.get(localKey) ?? [];
         bucket.push(r);
         dayMap.set(localKey, bucket);
@@ -5357,7 +5588,8 @@ export async function sendWeeklyEmployeeSchedules(): Promise<{
 export async function sendOvertimeWarnings(): Promise<{ emailsSent: number }> {
   const db = admin();
   const { sendEmail } = await import("@/lib/email");
-  const { employeeOvertimeWarningEmail } = await import("@/lib/email-templates");
+  const { employeeOvertimeWarningEmail } =
+    await import("@/lib/email-templates");
 
   // Week = Monday through Sunday, UTC. Friday = most of the week banked.
   const now = new Date();
@@ -5369,11 +5601,15 @@ export async function sendOvertimeWarnings(): Promise<{ emailsSent: number }> {
   const endOfWeek = new Date(startOfWeek.getTime() + 7 * 24 * 60 * 60 * 1000);
   const weekLabel = `Week of ${startOfWeek.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })}`;
 
-  const { data: orgs } = await db
+  const { data: orgs } = (await db
     .from("organizations")
     .select("id, name, overtime_threshold_hours")
-    .is("deleted_at", null) as unknown as {
-    data: Array<{ id: string; name: string; overtime_threshold_hours: number }> | null;
+    .is("deleted_at", null)) as unknown as {
+    data: Array<{
+      id: string;
+      name: string;
+      overtime_threshold_hours: number;
+    }> | null;
   };
 
   if (!orgs) return { emailsSent: 0 };
@@ -5389,13 +5625,13 @@ export async function sendOvertimeWarnings(): Promise<{ emailsSent: number }> {
     // skipped as "no entries", and the cron reported success every Friday.
     // The overtime warning had therefore never fired for anyone, including
     // the week containing a 68-hour entry.
-    const { data: entries } = await db
+    const { data: entries } = (await db
       .from("time_entries")
       .select("employee_id, clock_in_at, clock_out_at")
       .eq("organization_id", org.id)
       .gte("clock_in_at", startOfWeek.toISOString())
       .lt("clock_in_at", endOfWeek.toISOString())
-      .not("clock_out_at", "is", null) as unknown as {
+      .not("clock_out_at", "is", null)) as unknown as {
       data: Array<{
         employee_id: string;
         clock_in_at: string;
@@ -5528,9 +5764,8 @@ export async function sendShiftClockOutReminders(): Promise<{
   let autoClosed = 0;
   if (!open || open.length === 0) return { considered, reminded, autoClosed };
 
-  const { resolveClockOutThresholds, STANDALONE_SHIFT_MAX_MIN } = await import(
-    "@/lib/shift-overrun"
-  );
+  const { resolveClockOutThresholds, STANDALONE_SHIFT_MAX_MIN } =
+    await import("@/lib/shift-overrun");
 
   const orgEnabled = new Map<string, boolean>();
   const orgThresholds = new Map<
@@ -5592,8 +5827,11 @@ export async function sendShiftClockOutReminders(): Promise<{
       if (minutesOver < 0) continue; // still within the expected window
 
       const firstName =
-        (e.employee?.display_name ?? e.employee?.profile?.full_name ?? "")
-          .split(" ")[0] || "Someone";
+        (
+          e.employee?.display_name ??
+          e.employee?.profile?.full_name ??
+          ""
+        ).split(" ")[0] || "Someone";
       // TWO different numbers, and conflating them was a real bug: the alert
       // said "Nh after their job ended" while passing hoursOpen, so a 2-hour
       // overrun on a 2-hour job reported as 4.0h — always overstated by the
@@ -5730,13 +5968,13 @@ export async function notifyPtoStatus(ptoRequestId: string): Promise<void> {
     const { sendEmail } = await import("@/lib/email");
     const { employeePtoStatusEmail } = await import("@/lib/email-templates");
 
-    const { data: req } = await db
+    const { data: req } = (await db
       .from("pto_requests")
       .select(
         "id, organization_id, employee_id, start_date, end_date, hours, reason, status",
       )
       .eq("id", ptoRequestId)
-      .maybeSingle() as unknown as {
+      .maybeSingle()) as unknown as {
       data: {
         id: string;
         organization_id: string;
@@ -5752,19 +5990,23 @@ export async function notifyPtoStatus(ptoRequestId: string): Promise<void> {
     if (!req) return;
     if (!["approved", "declined", "cancelled"].includes(req.status)) return;
 
-    if (!(await isAutomationEnabled(req.organization_id, "pto_status_notify"))) {
-      console.log(`[auto] PTO status notify paused for org ${req.organization_id}`);
+    if (
+      !(await isAutomationEnabled(req.organization_id, "pto_status_notify"))
+    ) {
+      console.log(
+        `[auto] PTO status notify paused for org ${req.organization_id}`,
+      );
       return;
     }
 
     const recipient = await getMembershipRecipient(req.employee_id);
     if (!recipient) return;
 
-    const { data: org } = await db
+    const { data: org } = (await db
       .from("organizations")
       .select("name")
       .eq("id", req.organization_id)
-      .maybeSingle() as unknown as { data: { name: string } | null };
+      .maybeSingle()) as unknown as { data: { name: string } | null };
 
     const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
     const fmt = (d: string) =>
@@ -5789,7 +6031,9 @@ export async function notifyPtoStatus(ptoRequestId: string): Promise<void> {
       toName: recipient.fullName ?? undefined,
       ...template,
     });
-    console.log(`[auto] PTO ${req.status} email sent to ${maskEmail(recipient.email)}`);
+    console.log(
+      `[auto] PTO ${req.status} email sent to ${maskEmail(recipient.email)}`,
+    );
   } catch (err) {
     console.error("[auto] notifyPtoStatus failed:", err);
   }
@@ -5804,11 +6048,11 @@ export async function notifyPayrollPaid(payrollRunId: string): Promise<void> {
     const { formatCurrencyCents } = await import("@/lib/format");
     const { getOrgCurrency } = await import("@/lib/org-currency");
 
-    const { data: run } = await db
+    const { data: run } = (await db
       .from("payroll_runs")
       .select("id, organization_id, period_start, period_end, paid_at")
       .eq("id", payrollRunId)
-      .maybeSingle() as unknown as {
+      .maybeSingle()) as unknown as {
       data: {
         id: string;
         organization_id: string;
@@ -5819,17 +6063,21 @@ export async function notifyPayrollPaid(payrollRunId: string): Promise<void> {
     };
 
     if (!run) return;
-    if (!(await isAutomationEnabled(run.organization_id, "payroll_paid_receipt"))) {
-      console.log(`[auto] Payroll paid receipt paused for org ${run.organization_id}`);
+    if (
+      !(await isAutomationEnabled(run.organization_id, "payroll_paid_receipt"))
+    ) {
+      console.log(
+        `[auto] Payroll paid receipt paused for org ${run.organization_id}`,
+      );
       return;
     }
 
-    const { data: items } = await db
+    const { data: items } = (await db
       .from("payroll_items")
       .select(
         "employee_id, hours_worked, regular_pay_cents, bonus_cents, pto_hours, pto_pay_cents, total_cents",
       )
-      .eq("payroll_run_id", payrollRunId) as unknown as {
+      .eq("payroll_run_id", payrollRunId)) as unknown as {
       data: Array<{
         employee_id: string;
         hours_worked: number;
@@ -5843,18 +6091,21 @@ export async function notifyPayrollPaid(payrollRunId: string): Promise<void> {
 
     if (!items || items.length === 0) return;
 
-    const { data: org } = await db
+    const { data: org } = (await db
       .from("organizations")
       .select("name")
       .eq("id", run.organization_id)
-      .maybeSingle() as unknown as { data: { name: string } | null };
+      .maybeSingle()) as unknown as { data: { name: string } | null };
     const currency = await getOrgCurrency(run.organization_id);
     const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
-    const paidDate = new Date(run.paid_at ?? new Date()).toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
+    const paidDate = new Date(run.paid_at ?? new Date()).toLocaleDateString(
+      "en-US",
+      {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      },
+    );
     const periodStart = new Date(run.period_start).toLocaleDateString("en-US", {
       month: "short",
       day: "numeric",
@@ -5901,13 +6152,14 @@ export async function notifyTrainingAssigned(
   try {
     const db = admin();
     const { sendEmail } = await import("@/lib/email");
-    const { employeeTrainingAssignedEmail } = await import("@/lib/email-templates");
+    const { employeeTrainingAssignedEmail } =
+      await import("@/lib/email-templates");
 
-    const { data: assignment } = await db
+    const { data: assignment } = (await db
       .from("training_assignments")
       .select("id, organization_id, employee_id, module_id")
       .eq("id", assignmentId)
-      .maybeSingle() as unknown as {
+      .maybeSingle()) as unknown as {
       data: {
         id: string;
         organization_id: string;
@@ -5917,18 +6169,25 @@ export async function notifyTrainingAssigned(
     };
 
     if (!assignment) return;
-    if (!(await isAutomationEnabled(assignment.organization_id, "training_assigned_notify"))) {
+    if (
+      !(await isAutomationEnabled(
+        assignment.organization_id,
+        "training_assigned_notify",
+      ))
+    ) {
       return;
     }
 
     const [{ data: module }, { data: org }] = await Promise.all([
-      db.from("training_modules")
+      db
+        .from("training_modules")
         .select("title, description")
         .eq("id", assignment.module_id)
         .maybeSingle() as unknown as Promise<{
         data: { title: string; description: string | null } | null;
       }>,
-      db.from("organizations")
+      db
+        .from("organizations")
         .select("name")
         .eq("id", assignment.organization_id)
         .maybeSingle() as unknown as Promise<{
@@ -5953,7 +6212,9 @@ export async function notifyTrainingAssigned(
       toName: recipient.fullName ?? undefined,
       ...template,
     });
-    console.log(`[auto] Training assigned email sent to ${maskEmail(recipient.email)}`);
+    console.log(
+      `[auto] Training assigned email sent to ${maskEmail(recipient.email)}`,
+    );
   } catch (err) {
     console.error("[auto] notifyTrainingAssigned failed:", err);
   }
@@ -5965,22 +6226,25 @@ export async function sendCertificationExpiryReminders(): Promise<{
 }> {
   const db = admin();
   const { sendEmail } = await import("@/lib/email");
-  const { employeeCertificationExpiryEmail } = await import("@/lib/email-templates");
+  const { employeeCertificationExpiryEmail } =
+    await import("@/lib/email-templates");
 
   const now = Date.now();
   const in30d = new Date(now + 30 * 24 * 60 * 60 * 1000).toISOString();
   const in7d = new Date(now + 7 * 24 * 60 * 60 * 1000).toISOString();
 
   // Pull all assignments expiring in the next 30 days that need an alert.
-  const { data: rows } = await db
+  const { data: rows } = (await db
     .from("training_assignments")
-    .select(`
+    .select(
+      `
       id, organization_id, employee_id, module_id, certification_expires_at,
       expiry_reminder_30d_sent_at, expiry_reminder_7d_sent_at
-    `)
+    `,
+    )
     .not("certification_expires_at", "is", null)
     .gte("certification_expires_at", new Date(now).toISOString())
-    .lte("certification_expires_at", in30d) as unknown as {
+    .lte("certification_expires_at", in30d)) as unknown as {
     data: Array<{
       id: string;
       organization_id: string;
@@ -5999,7 +6263,10 @@ export async function sendCertificationExpiryReminders(): Promise<{
 
   for (const a of rows) {
     if (
-      !(await isAutomationEnabled(a.organization_id, "certification_expiry_reminder"))
+      !(await isAutomationEnabled(
+        a.organization_id,
+        "certification_expiry_reminder",
+      ))
     ) {
       continue;
     }
@@ -6007,27 +6274,25 @@ export async function sendCertificationExpiryReminders(): Promise<{
     const expiresAt = a.certification_expires_at;
     const daysUntil = Math.max(
       1,
-      Math.ceil(
-        (new Date(expiresAt).getTime() - now) / (24 * 60 * 60 * 1000),
-      ),
+      Math.ceil((new Date(expiresAt).getTime() - now) / (24 * 60 * 60 * 1000)),
     );
 
     // Which reminder bucket? Priority: 7-day > 30-day.
-    const needs7d =
-      expiresAt <= in7d && !a.expiry_reminder_7d_sent_at;
-    const needs30d =
-      !needs7d && !a.expiry_reminder_30d_sent_at;
+    const needs7d = expiresAt <= in7d && !a.expiry_reminder_7d_sent_at;
+    const needs30d = !needs7d && !a.expiry_reminder_30d_sent_at;
 
     if (!needs7d && !needs30d) continue;
 
     const [{ data: module }, { data: org }] = await Promise.all([
-      db.from("training_modules")
+      db
+        .from("training_modules")
         .select("title")
         .eq("id", a.module_id)
         .maybeSingle() as unknown as Promise<{
         data: { title: string } | null;
       }>,
-      db.from("organizations")
+      db
+        .from("organizations")
         .select("name")
         .eq("id", a.organization_id)
         .maybeSingle() as unknown as Promise<{
@@ -6062,15 +6327,13 @@ export async function sendCertificationExpiryReminders(): Promise<{
       ? { expiry_reminder_7d_sent_at: new Date().toISOString() }
       : { expiry_reminder_30d_sent_at: new Date().toISOString() };
 
-    await db
-      .from("training_assignments")
-      .update(update)
-      .eq("id", a.id);
+    await db.from("training_assignments").update(update).eq("id", a.id);
 
     sent += 1;
   }
 
-  if (sent > 0) console.log(`[auto] Certification expiry reminders sent: ${sent}`);
+  if (sent > 0)
+    console.log(`[auto] Certification expiry reminders sent: ${sent}`);
   return { sent };
 }
 
@@ -6088,41 +6351,52 @@ export async function autoExpireStaleEstimates(): Promise<{ expired: number }> {
   const db = admin();
   let expired = 0;
 
-  const { data: orgs } = await db
+  const { data: orgs } = (await db
     .from("organizations")
     .select("id, stale_estimate_expire_days")
-    .is("deleted_at", null) as unknown as {
-    data: Array<{ id: string; stale_estimate_expire_days: number | null }> | null;
+    .is("deleted_at", null)) as unknown as {
+    data: Array<{
+      id: string;
+      stale_estimate_expire_days: number | null;
+    }> | null;
   };
 
   for (const org of orgs ?? []) {
-    if (!(await isAutomationEnabled(org.id, "auto_expire_stale_estimates"))) continue;
+    if (!(await isAutomationEnabled(org.id, "auto_expire_stale_estimates")))
+      continue;
     // NULL = explicitly blanked in Settings → Thresholds = disabled
     // (audit T5 — defaults are backfilled by migration 20260726010000).
     if (org.stale_estimate_expire_days == null) continue;
     const days = org.stale_estimate_expire_days;
     if (days < 1) continue;
 
-    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    const cutoff = new Date(
+      Date.now() - days * 24 * 60 * 60 * 1000,
+    ).toISOString();
 
-    const { data, error } = await db
+    const { data, error } = (await db
       .from("estimates")
       .update({ status: "expired" })
       .eq("organization_id", org.id)
       .eq("status", "sent")
       .lt("sent_at", cutoff)
-      .select("id") as unknown as {
+      .select("id")) as unknown as {
       data: Array<{ id: string }> | null;
       error: { message: string } | null;
     };
 
     if (error) {
-      console.error(`[auto] expire estimates failed for org ${org.id}:`, error.message);
+      console.error(
+        `[auto] expire estimates failed for org ${org.id}:`,
+        error.message,
+      );
       continue;
     }
     if (data && data.length > 0) {
       expired += data.length;
-      console.log(`[auto] Expired ${data.length} stale estimate(s) for org ${org.id}`);
+      console.log(
+        `[auto] Expired ${data.length} stale estimate(s) for org ${org.id}`,
+      );
     }
   }
   return { expired };
@@ -6133,15 +6407,16 @@ export async function autoVoidOldInvoices(): Promise<{ voided: number }> {
   const db = admin();
   let voided = 0;
 
-  const { data: orgs } = await db
+  const { data: orgs } = (await db
     .from("organizations")
     .select("id, invoice_void_days")
-    .is("deleted_at", null) as unknown as {
+    .is("deleted_at", null)) as unknown as {
     data: Array<{ id: string; invoice_void_days: number | null }> | null;
   };
 
   for (const org of orgs ?? []) {
-    if (!(await isAutomationEnabled(org.id, "auto_void_overdue_invoices"))) continue;
+    if (!(await isAutomationEnabled(org.id, "auto_void_overdue_invoices")))
+      continue;
     if (org.invoice_void_days == null) continue; // blank = disabled (T5)
     const days = org.invoice_void_days;
     if (days < 30) continue;
@@ -6155,7 +6430,7 @@ export async function autoVoidOldInvoices(): Promise<{ voided: number }> {
     // status meant any later ledger event silently resurrected the "void"
     // back to sent/overdue, and payments could still be recorded against it
     // (audit P3).
-    const { data, error } = await db
+    const { data, error } = (await db
       .from("invoices")
       .update({ status: "void", voided_at: new Date().toISOString() })
       .eq("organization_id", org.id)
@@ -6163,42 +6438,91 @@ export async function autoVoidOldInvoices(): Promise<{ voided: number }> {
       .is("paid_at", null)
       .is("voided_at", null)
       .lt("due_date", cutoff)
-      .select("id") as unknown as {
+      .select("id")) as unknown as {
       data: Array<{ id: string }> | null;
       error: { message: string } | null;
     };
 
     if (error) {
-      console.error(`[auto] void invoices failed for org ${org.id}:`, error.message);
+      console.error(
+        `[auto] void invoices failed for org ${org.id}:`,
+        error.message,
+      );
       continue;
     }
     if (data && data.length > 0) {
       voided += data.length;
-      console.log(`[auto] Voided ${data.length} old overdue invoice(s) for org ${org.id}`);
+      console.log(
+        `[auto] Voided ${data.length} old overdue invoice(s) for org ${org.id}`,
+      );
     }
   }
   return { voided };
 }
 
 // 24. Auto-complete past bookings (daily)
-export async function autoCompletePastBookings(): Promise<{ completed: number }> {
+export async function autoCompletePastBookings(): Promise<{
+  completed: number;
+}> {
   const db = admin();
   let completed = 0;
 
-  const { data: orgs } = await db
+  const { data: orgs } = (await db
     .from("organizations")
     .select("id, booking_auto_complete_hours")
-    .is("deleted_at", null) as unknown as {
-    data: Array<{ id: string; booking_auto_complete_hours: number | null }> | null;
+    .is("deleted_at", null)) as unknown as {
+    data: Array<{
+      id: string;
+      booking_auto_complete_hours: number | null;
+    }> | null;
   };
 
   for (const org of orgs ?? []) {
-    if (!(await isAutomationEnabled(org.id, "auto_complete_past_bookings"))) continue;
+    if (!(await isAutomationEnabled(org.id, "auto_complete_past_bookings")))
+      continue;
     if (org.booking_auto_complete_hours == null) continue; // blank = disabled (T5)
     const hours = org.booking_auto_complete_hours;
     if (hours < 1) continue;
 
     const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+
+    // Pending past its date is a human problem too, and a different one: the
+    // office penciled a job in and never came back to it. Deliberately NOT in
+    // the auto-complete set below — a duplicated job carries the source's
+    // assignee and date, so a duplicate of a past job is pending + staffed +
+    // past-due, exactly the shape that would auto-complete and draft an
+    // invoice for something nobody ever confirmed.
+    const { data: stalePending } = (await db
+      .from("bookings")
+      .select("id, scheduled_at, client:clients ( name )")
+      .eq("organization_id", org.id)
+      .eq("status", "pending")
+      .lt("scheduled_at", cutoff)
+      .limit(50)) as unknown as {
+      data: Array<{
+        id: string;
+        scheduled_at: string;
+        client: { name: string | null } | null;
+      }> | null;
+    };
+    if (stalePending && stalePending.length > 0) {
+      const names = stalePending
+        .slice(0, 3)
+        .map((b) => b.client?.name ?? "a client")
+        .join(", ");
+      await notify({
+        audience: "org-management",
+        organizationId: org.id,
+        type: "general",
+        title:
+          stalePending.length === 1
+            ? "A pending job's date has passed"
+            : `${stalePending.length} pending jobs have passed their date`,
+        body: `${names}${stalePending.length > 3 ? ` and ${stalePending.length - 3} more` : ""} — still marked Pending, so nobody confirmed them and the time has gone by. Confirm them if they happened, or cancel them.`,
+        href: "/app/bookings?status=pending",
+        channels: { email: true },
+      });
+    }
 
     // Find candidates FIRST — we no longer blanket-complete, because a
     // booking nobody was assigned to is not evidence that work happened.
@@ -6208,7 +6532,8 @@ export async function autoCompletePastBookings(): Promise<{ completed: number }>
       .from("bookings")
       .select("id, scheduled_at, client:clients ( name )")
       .eq("organization_id", org.id)
-      // Confirmed OR in progress; completed/cancelled are terminal.
+      // Confirmed OR in progress; completed/cancelled are terminal, and
+      // pending is handled above — it must never auto-complete.
       .in("status", ["confirmed", "in_progress"])
       .lt("scheduled_at", cutoff)
       .limit(200)) as unknown as {
@@ -6220,7 +6545,10 @@ export async function autoCompletePastBookings(): Promise<{ completed: number }>
       error: { message: string } | null;
     };
     if (findErr) {
-      console.error(`[auto] complete bookings failed for org ${org.id}:`, findErr.message);
+      console.error(
+        `[auto] complete bookings failed for org ${org.id}:`,
+        findErr.message,
+      );
       continue;
     }
     if (!candidates || candidates.length === 0) continue;
@@ -6277,12 +6605,17 @@ export async function autoCompletePastBookings(): Promise<{ completed: number }>
     };
 
     if (error) {
-      console.error(`[auto] complete bookings failed for org ${org.id}:`, error.message);
+      console.error(
+        `[auto] complete bookings failed for org ${org.id}:`,
+        error.message,
+      );
       continue;
     }
     if (data && data.length > 0) {
       completed += data.length;
-      console.log(`[auto] Auto-completed ${data.length} past booking(s) for org ${org.id}`);
+      console.log(
+        `[auto] Auto-completed ${data.length} past booking(s) for org ${org.id}`,
+      );
 
       // Parity with the manual "mark complete" path: draft the per-job invoice
       // for each booking we just auto-completed. Without this, jobs the cron
@@ -6314,20 +6647,23 @@ export async function autoArchiveOldRecords(): Promise<{
   const db = admin();
   const totals = { bookings: 0, invoices: 0, estimates: 0 };
 
-  const { data: orgs } = await db
+  const { data: orgs } = (await db
     .from("organizations")
     .select("id, archive_after_days")
-    .is("deleted_at", null) as unknown as {
+    .is("deleted_at", null)) as unknown as {
     data: Array<{ id: string; archive_after_days: number | null }> | null;
   };
 
   for (const org of orgs ?? []) {
-    if (!(await isAutomationEnabled(org.id, "auto_archive_old_records"))) continue;
+    if (!(await isAutomationEnabled(org.id, "auto_archive_old_records")))
+      continue;
     if (org.archive_after_days == null) continue; // blank = disabled (T5)
     const days = org.archive_after_days;
     if (days < 180) continue;
 
-    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    const cutoff = new Date(
+      Date.now() - days * 24 * 60 * 60 * 1000,
+    ).toISOString();
     const now = new Date().toISOString();
 
     // Archive bookings where scheduled_at is older than cutoff AND status is
@@ -6335,22 +6671,34 @@ export async function autoArchiveOldRecords(): Promise<{
     // archived even if dated in the past (shouldn't happen if the complete
     // cron ran, but safety first).
     const [{ data: b }, { data: i }, { data: e }] = await Promise.all([
-      db.from("bookings").update({ archived_at: now })
-        .eq("organization_id", org.id).is("archived_at", null)
+      db
+        .from("bookings")
+        .update({ archived_at: now })
+        .eq("organization_id", org.id)
+        .is("archived_at", null)
         .in("status", ["completed", "cancelled"])
-        .lt("scheduled_at", cutoff).select("id") as unknown as Promise<{
+        .lt("scheduled_at", cutoff)
+        .select("id") as unknown as Promise<{
         data: Array<{ id: string }> | null;
       }>,
-      db.from("invoices").update({ archived_at: now })
-        .eq("organization_id", org.id).is("archived_at", null)
+      db
+        .from("invoices")
+        .update({ archived_at: now })
+        .eq("organization_id", org.id)
+        .is("archived_at", null)
         .in("status", ["paid", "void"])
-        .lt("created_at", cutoff).select("id") as unknown as Promise<{
+        .lt("created_at", cutoff)
+        .select("id") as unknown as Promise<{
         data: Array<{ id: string }> | null;
       }>,
-      db.from("estimates").update({ archived_at: now })
-        .eq("organization_id", org.id).is("archived_at", null)
+      db
+        .from("estimates")
+        .update({ archived_at: now })
+        .eq("organization_id", org.id)
+        .is("archived_at", null)
         .in("status", ["approved", "declined", "expired"])
-        .lt("created_at", cutoff).select("id") as unknown as Promise<{
+        .lt("created_at", cutoff)
+        .select("id") as unknown as Promise<{
         data: Array<{ id: string }> | null;
       }>,
     ]);
@@ -6378,14 +6726,16 @@ export async function autoGenerateRecurringInvoices(): Promise<{
   const now = new Date();
   const nowIso = now.toISOString();
 
-  const { data: due } = await db
+  const { data: due } = (await db
     .from("invoice_series")
-    .select(`
+    .select(
+      `
       id, organization_id, client_id, name, cadence,
       amount_cents, line_items, notes, next_run_at, due_days
-    `)
+    `,
+    )
     .eq("active", true)
-    .lte("next_run_at", nowIso) as unknown as {
+    .lte("next_run_at", nowIso)) as unknown as {
     data: Array<{
       id: string;
       organization_id: string;
@@ -6404,7 +6754,10 @@ export async function autoGenerateRecurringInvoices(): Promise<{
 
   for (const series of due) {
     if (
-      !(await isAutomationEnabled(series.organization_id, "auto_recurring_invoices"))
+      !(await isAutomationEnabled(
+        series.organization_id,
+        "auto_recurring_invoices",
+      ))
     ) {
       continue;
     }
@@ -6480,7 +6833,7 @@ export async function autoGenerateRecurringInvoices(): Promise<{
     // and this automation never generated a single invoice (audit C1).
     // Line items live in invoice_line_items; notes are applied as a
     // separate best-effort update below.
-    const { data: inserted, error } = await db
+    const { data: inserted, error } = (await db
       .from("invoices")
       .insert({
         organization_id: series.organization_id,
@@ -6491,7 +6844,7 @@ export async function autoGenerateRecurringInvoices(): Promise<{
         due_date: dueDate.toISOString().slice(0, 10),
       })
       .select("id")
-      .single() as unknown as {
+      .single()) as unknown as {
       data: { id: string } | null;
       error: { message: string } | null;
     };
@@ -6631,13 +6984,13 @@ export async function autoGenerateRecurringInvoices(): Promise<{
 export async function sendTaskReminder(taskId: string): Promise<void> {
   try {
     const db = admin();
-    const { data: task } = await db
+    const { data: task } = (await db
       .from("tasks")
       .select(
         "id, organization_id, title, notes, assigned_to, reminded_at, completed_at",
       )
       .eq("id", taskId)
-      .maybeSingle() as unknown as {
+      .maybeSingle()) as unknown as {
       data: {
         id: string;
         organization_id: string;
@@ -6653,9 +7006,7 @@ export async function sendTaskReminder(taskId: string): Promise<void> {
     // Skip if already reminded or already completed
     if (task.reminded_at || task.completed_at) return;
 
-    const body = task.notes
-      ? task.notes.slice(0, 120)
-      : "Tap to view details.";
+    const body = task.notes ? task.notes.slice(0, 120) : "Tap to view details.";
 
     if (task.assigned_to) {
       await sendPushToMembership(task.assigned_to, {
@@ -6665,12 +7016,12 @@ export async function sendTaskReminder(taskId: string): Promise<void> {
       });
     } else {
       // Unassigned — notify all active managers+ in the org
-      const { data: managers } = await db
+      const { data: managers } = (await db
         .from("memberships")
         .select("id")
         .eq("organization_id", task.organization_id)
         .in("role", ["owner", "admin", "manager"])
-        .eq("status", "active") as unknown as {
+        .eq("status", "active")) as unknown as {
         data: Array<{ id: string }> | null;
       };
 
@@ -6710,11 +7061,25 @@ function inferServiceType(
 ): "standard" | "deep" | "move_out" | "recurring" {
   if (!description) return "standard";
   const d = description.toLowerCase();
-  if (d.includes("move out") || d.includes("move-out") || d.includes("moveout") || d.includes("end of tenancy"))
+  if (
+    d.includes("move out") ||
+    d.includes("move-out") ||
+    d.includes("moveout") ||
+    d.includes("end of tenancy")
+  )
     return "move_out";
-  if (d.includes("deep clean") || d.includes("deep-clean") || d.includes("spring clean"))
+  if (
+    d.includes("deep clean") ||
+    d.includes("deep-clean") ||
+    d.includes("spring clean")
+  )
     return "deep";
-  if (d.includes("recurring") || d.includes("weekly") || d.includes("bi-weekly") || d.includes("monthly"))
+  if (
+    d.includes("recurring") ||
+    d.includes("weekly") ||
+    d.includes("bi-weekly") ||
+    d.includes("monthly")
+  )
     return "recurring";
   return "standard";
 }

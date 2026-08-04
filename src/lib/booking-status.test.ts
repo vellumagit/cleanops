@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { futureStatusError, EARLY_START_GRACE_MINUTES } from "./booking-status";
+import {
+  futureStatusError,
+  EARLY_START_GRACE_MINUTES,
+  WRITABLE_BOOKING_STATUSES,
+  BOOKING_STATUS_TRANSITIONS,
+  statusDropdownOptions,
+} from "./booking-status";
 
 const NOW = new Date("2026-08-04T16:00:00Z").getTime();
 const MIN = 60_000;
@@ -78,5 +84,62 @@ describe("the early-start grace window", () => {
 
   it("catches dragging a finished job into next week", () => {
     expect(futureStatusError(at(7 * 24 * 60), "completed", NOW)).not.toBeNull();
+  });
+});
+
+describe("WRITABLE_BOOKING_STATUSES", () => {
+  it("includes pending — it has three producers and is form-selectable", () => {
+    // The estimate-to-booking conversion, Duplicate, and now the form itself.
+    expect(WRITABLE_BOOKING_STATUSES).toContain("pending");
+  });
+
+  it("excludes en_route — still in the enum, but nothing produces one", () => {
+    // Postgres can't drop enum values, so the DB will accept it forever. The
+    // app should not offer or accept what it has no meaning for.
+    expect(WRITABLE_BOOKING_STATUSES).not.toContain("en_route");
+  });
+
+  it("never blocks pending on a date, however far out", () => {
+    // Pencilling in a job months ahead is the entire point of the status.
+    expect(futureStatusError(at(365 * 24 * 60), "pending", NOW)).toBeNull();
+  });
+});
+
+describe("statusDropdownOptions", () => {
+  it("offers pending a way out — it used to be a dead end", () => {
+    // Duplicate creates pending bookings, and with no `pending` key the
+    // server's lookup fell through to [] and refused every target. The list
+    // dropdown could not move a duplicated booking at all.
+    expect(statusDropdownOptions("pending")).toEqual([
+      "pending",
+      "confirmed",
+      "cancelled",
+    ]);
+  });
+
+  it("won't let one click take pending straight to completed", () => {
+    // → completed auto-invoices. Billing a client for a job nobody confirmed
+    // is the wrong end of that mistake to find out from.
+    expect(statusDropdownOptions("pending")).not.toContain("completed");
+    expect(statusDropdownOptions("pending")).not.toContain("in_progress");
+  });
+
+  it("always leads with the current status so it reads as selected", () => {
+    for (const s of ["pending", "confirmed", "in_progress"]) {
+      expect(statusDropdownOptions(s)[0]).toBe(s);
+    }
+  });
+
+  it("gives terminal statuses nothing — they render as a plain badge", () => {
+    expect(statusDropdownOptions("completed")).toEqual([]);
+    expect(statusDropdownOptions("cancelled")).toEqual([]);
+  });
+
+  it("never offers a status the app cannot write", () => {
+    for (const from of Object.keys(BOOKING_STATUS_TRANSITIONS)) {
+      for (const to of statusDropdownOptions(from)) {
+        expect(WRITABLE_BOOKING_STATUSES).toContain(to);
+      }
+    }
   });
 });

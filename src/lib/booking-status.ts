@@ -47,3 +47,56 @@ export function futureStatusError(
     ? "This job is scheduled too far in the future to be marked completed. Save it as Confirmed — it can be completed once it has started."
     : "This job is scheduled too far in the future to be marked in progress.";
 }
+
+/**
+ * The statuses the application actually writes.
+ *
+ * `en_route` is still in the Postgres enum — Postgres cannot drop enum values —
+ * but 1081c28 retired it and nothing has produced one since. `pending` was
+ * retired in the same commit and then quietly came back: the estimate-to-booking
+ * conversion (automations.ts) and Duplicate (bookings/actions.ts) both create
+ * pending bookings today. It is now selectable in the form as well.
+ *
+ * Kept here because the two /api/v1 routes had each grown their own copy of
+ * this list, plus a third copy inside their error strings.
+ */
+export const WRITABLE_BOOKING_STATUSES = [
+  "pending",
+  "confirmed",
+  "in_progress",
+  "completed",
+  "cancelled",
+] as const;
+
+export type WritableBookingStatus = (typeof WRITABLE_BOOKING_STATUSES)[number];
+
+/** "pending, confirmed, in_progress, completed, cancelled" — for 400 bodies. */
+export const WRITABLE_BOOKING_STATUS_LIST =
+  WRITABLE_BOOKING_STATUSES.join(", ");
+
+/**
+ * Forward+cancel transitions the bookings-list status dropdown offers, keyed by
+ * current status. Terminal statuses (completed, cancelled) have no entry and
+ * render as a static badge instead.
+ *
+ * Lives here rather than beside the server action because the dropdown
+ * component needs the same table to build its option list, and the action file
+ * is "use server" — it can only export async functions. The two were separate
+ * literals whose docstrings promised they matched; one gaining a `pending` key
+ * without the other is a silent dead end, which is exactly what shipped.
+ */
+export const BOOKING_STATUS_TRANSITIONS: Record<string, readonly string[]> = {
+  // Pending is the earliest state: confirm it or kill it. Deliberately not
+  // → completed, which auto-invoices — one click should not bill a client for
+  // a job that was never confirmed.
+  pending: ["confirmed", "cancelled"],
+  confirmed: ["in_progress", "completed", "cancelled"],
+  in_progress: ["completed", "cancelled"],
+};
+
+/** What the dropdown shows for a booking at `status`: itself, then where it
+ *  can go. Empty for a terminal status, which renders as a plain badge. */
+export function statusDropdownOptions(status: string): readonly string[] {
+  const next = BOOKING_STATUS_TRANSITIONS[status];
+  return next ? [status, ...next] : [];
+}

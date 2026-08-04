@@ -149,7 +149,9 @@ export default async function BookingDetailPage({
 
   // Resolve names for filled offers so the booking shows WHO is covering it
   // (freelancers aren't members, so they can't fill the assigned-crew slot).
-  const filledContactIds = ((offers ?? []) as Array<{ filled_contact_id?: string | null }>)
+  const filledContactIds = (
+    (offers ?? []) as Array<{ filled_contact_id?: string | null }>
+  )
     .map((o) => o.filled_contact_id)
     .filter((v): v is string => Boolean(v));
   const filledNames = new Map<string, string>();
@@ -169,7 +171,10 @@ export default async function BookingDetailPage({
   // no assigned member but a claimed offer is staffed by a freelancer — surface
   // that instead of a misleading "Unassigned".
   const coveringFreelancerNames = (
-    (offers ?? []) as Array<{ status: string; filled_contact_id?: string | null }>
+    (offers ?? []) as Array<{
+      status: string;
+      filled_contact_id?: string | null;
+    }>
   )
     .filter((o) => o.status === "filled" && o.filled_contact_id)
     .map((o) => filledNames.get(o.filled_contact_id as string))
@@ -191,9 +196,7 @@ export default async function BookingDetailPage({
         .maybeSingle()
     : { data: null };
   const showGenerateInvoice =
-    canEdit &&
-    bookingStatus === "completed" &&
-    !existingInvoice;
+    canEdit && bookingStatus === "completed" && !existingInvoice;
 
   // Photos are read-visible to any org member (RLS enforces that). Upload
   // + delete UI only shows for owner/admin/manager on the admin side.
@@ -206,7 +209,9 @@ export default async function BookingDetailPage({
   // there's more than one assignee so solo jobs look unchanged.
   const { data: extraAssignees } = (await supabase
     .from("booking_assignees" as never)
-    .select("membership_id, membership:memberships ( id, display_name, profile:profiles ( full_name ) )")
+    .select(
+      "membership_id, membership:memberships ( id, display_name, profile:profiles ( full_name ) )",
+    )
     .eq("booking_id" as never, booking.id as never)
     .eq("is_primary" as never, false as never)) as unknown as {
     data: Array<{
@@ -219,10 +224,11 @@ export default async function BookingDetailPage({
     }> | null;
   };
   const additionalCrewNames = (extraAssignees ?? [])
-    .map((r) =>
-      r.membership?.display_name?.trim() ||
-      r.membership?.profile?.full_name?.trim() ||
-      null,
+    .map(
+      (r) =>
+        r.membership?.display_name?.trim() ||
+        r.membership?.profile?.full_name?.trim() ||
+        null,
     )
     .filter((n): n is string => !!n);
   const additionalAssigneeIds = (extraAssignees ?? []).map(
@@ -238,7 +244,10 @@ export default async function BookingDetailPage({
       "membership_id, is_primary, acceptance_status, responded_at, membership:memberships ( display_name, profile:profiles ( full_name ) )",
     )
     .eq("booking_id" as never, booking.id as never)
-    .order("is_primary" as never, { ascending: false } as never)) as unknown as {
+    .order(
+      "is_primary" as never,
+      { ascending: false } as never,
+    )) as unknown as {
     data: Array<{
       is_primary: boolean;
       acceptance_status: string | null;
@@ -295,18 +304,24 @@ export default async function BookingDetailPage({
       .from("booking_checklist_items" as never)
       .select("id, ordinal, title, phase, is_required, checked_at")
       .eq("booking_id" as never, booking.id as never)
-      .order("ordinal" as never, {
-        ascending: true,
-      } as never) as unknown as Promise<{
+      .order(
+        "ordinal" as never,
+        {
+          ascending: true,
+        } as never,
+      ) as unknown as Promise<{
       data: BookingChecklistItem[] | null;
     }>,
     supabase
       .from("checklist_templates" as never)
       .select("id, name")
       .eq("is_active" as never, true as never)
-      .order("name" as never, {
-        ascending: true,
-      } as never) as unknown as Promise<{
+      .order(
+        "name" as never,
+        {
+          ascending: true,
+        } as never,
+      ) as unknown as Promise<{
       data: Array<{ id: string; name: string }> | null;
     }>,
   ]);
@@ -321,17 +336,24 @@ export default async function BookingDetailPage({
             {showGenerateInvoice && (
               <GenerateInvoiceButton bookingId={booking.id} />
             )}
-            {bookingStatus !== "completed" && bookingStatus !== "cancelled" && (
-              <form action={markBookingCompleteAction.bind(null, booking.id)}>
-                <button
-                  type="submit"
-                  className={buttonVariants({ variant: "outline" })}
-                >
-                  <CheckCircle2 className="h-4 w-4" />
-                  Mark complete
-                </button>
-              </form>
-            )}
+            {/* Pending excluded alongside the terminal statuses: completing
+                also drafts an invoice, and billing a client for a job nobody
+                confirmed is the wrong end of that mistake to discover. Confirm
+                it first — the status dropdown on the list does that in a
+                click. */}
+            {bookingStatus !== "completed" &&
+              bookingStatus !== "cancelled" &&
+              bookingStatus !== "pending" && (
+                <form action={markBookingCompleteAction.bind(null, booking.id)}>
+                  <button
+                    type="submit"
+                    className={buttonVariants({ variant: "outline" })}
+                  >
+                    <CheckCircle2 className="h-4 w-4" />
+                    Mark complete
+                  </button>
+                </form>
+              )}
             <form action={duplicateBookingAction.bind(null, booking.id)}>
               <button
                 type="submit"
@@ -548,9 +570,7 @@ export default async function BookingDetailPage({
             ) : (
               <p className="text-xs text-muted-foreground">
                 No checklist attached yet.
-                {canEdit
-                  ? " Pick a template above to apply one."
-                  : ""}
+                {canEdit ? " Pick a template above to apply one." : ""}
               </p>
             )}
           </div>

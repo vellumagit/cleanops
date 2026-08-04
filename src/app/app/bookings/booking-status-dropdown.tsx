@@ -9,17 +9,7 @@ import {
   formatBookingStatus,
 } from "@/components/status-badge";
 import { setBookingStatusAction } from "./actions";
-
-/**
- * Forward+cancel options the dropdown offers, keyed by current status. Terminal
- * statuses (completed, cancelled) aren't listed → they render as a static badge.
- * Mirrors STATUS_DROPDOWN_TRANSITIONS in actions.ts (plus the current status so
- * it shows as the selected option).
- */
-const OPTIONS: Record<string, readonly string[]> = {
-  confirmed: ["confirmed", "in_progress", "completed", "cancelled"],
-  in_progress: ["in_progress", "completed", "cancelled"],
-};
+import { statusDropdownOptions } from "@/lib/booking-status";
 
 export function BookingStatusDropdown({
   bookingId,
@@ -33,11 +23,15 @@ export function BookingStatusDropdown({
   const router = useRouter();
   const [pending, startTransition] = useTransition();
 
-  const options = OPTIONS[status];
+  const options = statusDropdownOptions(status);
   // Read-only: no edit rights, or a terminal status → plain badge.
   if (!canEdit || !options) {
     return (
-      <StatusBadge tone={bookingStatusTone(status as Parameters<typeof bookingStatusTone>[0])}>
+      <StatusBadge
+        tone={bookingStatusTone(
+          status as Parameters<typeof bookingStatusTone>[0],
+        )}
+      >
         {formatBookingStatus(status)}
       </StatusBadge>
     );
