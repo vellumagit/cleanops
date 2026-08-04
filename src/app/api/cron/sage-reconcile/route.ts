@@ -115,7 +115,10 @@ export async function GET(request: NextRequest) {
       .slice(0, limit);
 
     let synced = 0;
-    const skipped: string[] = [];
+    // Carries the reason, not just the invoice number — otherwise finding out
+    // WHY something is stuck means digging in the connection's metadata, which
+    // is the same "go read the logs" dead end this integration already had.
+    const skipped: Array<{ invoice: string | null; reason: string }> = [];
     const retryable: Array<{ invoice: string | null; reason: string }> = [];
     const newSkips: Record<string, SkipEntry> = {};
 
@@ -128,7 +131,7 @@ export async function GET(request: NextRequest) {
       const reason = result.error ?? "Unknown error";
       if (result.permanent) {
         newSkips[inv.id] = { reason, at: new Date().toISOString() };
-        skipped.push(inv.number ?? inv.id);
+        skipped.push({ invoice: inv.number, reason });
       } else {
         retryable.push({ invoice: inv.number, reason });
       }

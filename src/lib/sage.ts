@@ -842,6 +842,18 @@ export async function pushInvoiceToSage(
     );
   }
 
+  // Whether the address itself pins a tax jurisdiction. Drives the
+  // tax_address_region_id decision at the POST — see the payload comment.
+  const addressPinsRegion = Boolean(
+    invoiceAddress.country_id && invoiceAddress.region,
+  );
+  if (!addressPinsRegion && !orgTaxRegionId) {
+    return fail(
+      "This invoice's address doesn't name a state/province and country, and no default tax region is set. Add a fuller address, or pick a region in Settings → Integrations → Sage Accounting.",
+      true,
+    );
+  }
+
   const invoiceDate = new Date(invoice.created_at)
     .toISOString()
     .slice(0, 10);
@@ -923,15 +935,19 @@ export async function pushInvoiceToSage(
             // being correct.
             main_address: invoiceAddress,
             delivery_address: invoiceAddress,
-            // NOT sent: tax_address_region_id. Sage treats it and
-            // delivery_address as mutually exclusive. With no address it is
-            // required; with an address present Sage derives the region from
-            // the destination itself and rejects ours outright —
-            // "tax_address_region_id is not allowed". Verified against the live
-            // API: address + region 422s, address alone passes, and this held
-            // for a Canadian and a US contact alike, so it is not about the
-            // customer's country. Since an address is now mandatory above,
-            // there is no case where we should send the region.
+            // tax_address_region_id and the delivery address are mutually
+            // exclusive — but only when the address actually pins a
+            // jurisdiction. With country + region present Sage derives the tax
+            // region itself and refuses ours ("not allowed"); with a vaguer
+            // address (a bare street line, no city or country) it can derive
+            // nothing and demands the field instead ("required"). Both were
+            // observed on real invoices, so this is decided per invoice rather
+            // than picking one and hoping. Not about the customer's country:
+            // the "not allowed" case reproduced for a Canadian and a US
+            // contact alike.
+            ...(addressPinsRegion
+              ? {}
+              : { tax_address_region_id: orgTaxRegionId }),
             invoice_lines: sageLines.map((l, i) => ({
               description: l.description,
               quantity: l.quantity,
