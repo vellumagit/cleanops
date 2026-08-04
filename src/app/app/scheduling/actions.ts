@@ -237,7 +237,30 @@ export async function rescheduleBookingAction(
   // SPLIT BOOKINGS: preserve booking_assignees entirely. The crew + their
   // segment offsets/durations belong with the booking; rescheduling
   // (which only changes scheduled_at above) doesn't affect them.
-  if (!hasSplits) {
+  //
+  // ONLY when the primary actually changes. Dragging a card to a different
+  // TIME in the same lane is not a reassignment, and rewriting crew for it
+  // deleted every additional crew member on the booking — a 3-person job
+  // nudged 30 minutes silently became a 1-person job, with no notification
+  // and no calendar cleanup. Svit runs ~243 bookings a week and drags
+  // constantly.
+  const primaryChanged = assignedTo !== current.assigned_to;
+
+  if (!hasSplits && primaryChanged) {
+    // The incoming primary may already be on this job as additional crew.
+    // Carry their acceptance/completion across so a promotion doesn't re-ask
+    // someone to confirm a shift they already accepted.
+    const { data: priorRow } = assignedTo
+      ? ((await supabase
+          .from("booking_assignees" as never)
+          .select("acceptance_status, responded_at, completed_at")
+          .eq("booking_id" as never, id as never)
+          .eq("membership_id" as never, assignedTo as never)
+          .maybeSingle()) as unknown as {
+          data: Record<string, unknown> | null;
+        })
+      : { data: null };
+
     await (supabase
       .from("booking_assignees" as never)
       .delete()
@@ -251,6 +274,7 @@ export async function rescheduleBookingAction(
           booking_id: id,
           membership_id: assignedTo,
           is_primary: true,
+          ...(priorRow ?? {}),
         } as never)) as unknown as Promise<unknown>;
     }
   }

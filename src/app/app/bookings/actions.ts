@@ -4,6 +4,10 @@ import { revalidatePath } from "next/cache";
 import { redirect, RedirectType } from "next/navigation";
 import { redirectBack } from "@/lib/return-to";
 import { futureStatusError } from "@/lib/booking-status";
+import {
+  lifecycleByAssignee,
+  withPriorLifecycle,
+} from "@/lib/crew-sync";
 import { after } from "next/server";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
 import type { Database, Json } from "@/lib/supabase/types";
@@ -172,11 +176,19 @@ async function syncBookingAssignees(
   const { data: priorRows } = (await supabase
     .from("booking_assignees")
     .select(
-      "organization_id, booking_id, membership_id, is_primary, split_index, split_start_offset_minutes, split_duration_minutes",
+      "organization_id, booking_id, membership_id, is_primary, split_index, split_start_offset_minutes, split_duration_minutes, acceptance_status, responded_at, completed_at",
     )
     .eq("booking_id", bookingId)) as unknown as {
     data: Array<Record<string, unknown>> | null;
   };
+
+  /*
+   * Crew rows are rebuilt from the form on every save, so a member already on
+   * the job came back as a BRAND NEW row — acceptance reset to pending,
+   * completed_at wiped. See src/lib/crew-sync.ts for why those three columns
+   * are not the form's to own.
+   */
+  const priorLifecycle = lifecycleByAssignee(priorRows);
 
   // Drop the existing set. RLS scopes this to the caller's org; the
   // booking_id filter is the authoritative narrowing.
@@ -270,7 +282,9 @@ async function syncBookingAssignees(
 
   const { error: insertErr } = (await supabase
     .from("booking_assignees")
-    .insert(rows)) as unknown as { error: { message: string } | null };
+    .insert(rows.map((r) => withPriorLifecycle(r, priorLifecycle)) as never)) as unknown as {
+    error: { message: string } | null;
+  };
   if (insertErr) {
     // Best-effort restore so a transient insert failure doesn't leave the
     // booking crew-less, then surface the error loudly instead of a false
@@ -334,6 +348,20 @@ async function syncBookingAssigneesBulk(
   const safePrimaryId = isValid(primaryId) ? primaryId : null;
   const safeAdditionalIds = additionalIds.filter(isValid);
   const safeSplits = splits.filter((s) => isValid(s.assigned_to));
+
+  // Snapshot lifecycle per (booking, member) before the wipe — same reason as
+  // the single-booking path: acceptance and completion belong to the person on
+  // the job, not to the form being re-saved. A "this and future" series edit
+  // otherwise re-asked every cleaner to confirm every remaining occurrence.
+  const { data: priorBulk } = (await supabase
+    .from("booking_assignees")
+    .select(
+      "booking_id, membership_id, acceptance_status, responded_at, completed_at",
+    )
+    .in("booking_id", bookingIds)) as unknown as {
+    data: Array<Record<string, unknown>> | null;
+  };
+  const priorBulkLifecycle = lifecycleByAssignee(priorBulk);
 
   // One DELETE for every target booking.
   await (supabase
@@ -418,9 +446,9 @@ async function syncBookingAssigneesBulk(
   const allRows: Row[] = bookingIds.flatMap(buildRowsForBooking);
   if (allRows.length === 0) return;
 
-  await (supabase
-    .from("booking_assignees")
-    .insert(allRows) as unknown as Promise<unknown>);
+  await (supabase.from("booking_assignees").insert(
+    allRows.map((r) => withPriorLifecycle(r, priorBulkLifecycle)) as never,
+  ) as unknown as Promise<unknown>);
 }
 
 /**
