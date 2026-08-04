@@ -59,6 +59,17 @@ export type ScheduleBooking = {
   notes: string | null;
   /** The client's standing profile note, read live off the profile. */
   client_notes: string | null;
+  /**
+   * Staffed by the SHARED rule (src/lib/booking-coverage.ts): an assignee, OR
+   * additional crew, OR a claimed bench offer. The board used to test
+   * `!assigned_to`, so a job covered by crew-only or by a subcontractor sat in
+   * the unassigned tray while the coverage banner directly above it — which
+   * already used this rule — reported nothing unfilled.
+   */
+  staffed: boolean;
+  /** Fields booking-warnings needs; the board could not warn without them. */
+  client_id: string | null;
+  hourly_rate_cents: number | null;
   /** Invoice/quote total in cents for this booking. Used by the
    *  scheduler revenue bar to show projected and earned revenue
    *  for the displayed period. Null when the booking has no
@@ -212,6 +223,8 @@ export async function fetchScheduleWeek(
           total_cents,
           series_id,
           notes,
+          client_id,
+          hourly_rate_cents,
           client:clients ( name, notes )
         `,
       )
@@ -316,6 +329,14 @@ export async function fetchScheduleWeek(
     }
   }
 
+  // The same coverage rule the banner uses, resolved once for the week. Without
+  // it the board and the banner directly above it disagreed about which jobs
+  // were unfilled.
+  const { resolveBookingCoverage } = await import("@/lib/booking-coverage");
+  const coverage = await resolveBookingCoverage(
+    (bookingsRes.data ?? []).map((b) => b.id),
+  );
+
   const bookings: ScheduleBooking[] = (bookingsRes.data ?? []).map((b) => {
     const extras = extraAssigneesByBooking.get(b.id) ?? [];
     // Union: primary assignee first (when set), then junction rows.
@@ -336,6 +357,10 @@ export async function fetchScheduleWeek(
       address: b.address,
       notes: (b as { notes?: string | null }).notes ?? null,
       client_notes: b.client?.notes ?? null,
+      staffed: coverage.get(b.id)?.staffed ?? Boolean(b.assigned_to),
+      client_id: (b as { client_id?: string | null }).client_id ?? null,
+      hourly_rate_cents:
+        (b as { hourly_rate_cents?: number | null }).hourly_rate_cents ?? null,
       total_cents: (b as { total_cents?: number | null }).total_cents ?? null,
       series_id: (b as { series_id?: string | null }).series_id ?? null,
       assigneeSegments: segmentsByBooking.get(b.id) ?? {},

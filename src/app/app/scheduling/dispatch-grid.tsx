@@ -24,6 +24,8 @@ import type { ScheduleBooking, ScheduleEmployee } from "./data";
 import { BookingQuickView } from "./booking-quick-view";
 import { toneForBooking, toneForEmployee, type ColorBy } from "./color";
 import { computeSplitCue, type SplitCue } from "./split-cue";
+import type { BookingWarning } from "@/app/app/bookings/booking-warnings";
+import { WarningDot, WarningProvider } from "./warning-dot";
 
 /**
  * Dispatch view: single-day, time-of-day axis, employee columns.
@@ -93,6 +95,7 @@ export function DispatchGrid({
   tz,
   offDays = {},
   colorBy = "employee",
+  warnings = {},
 }: {
   date: string;
   bookings: ScheduleBooking[];
@@ -107,6 +110,8 @@ export function DispatchGrid({
    *  regardless — switching by service/client/status only changes the
    *  card left border. */
   colorBy?: ColorBy;
+  /** booking id → warnings, computed once by the shell. */
+  warnings?: Record<string, BookingWarning[]> | Map<string, BookingWarning[]>;
 }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
@@ -165,29 +170,20 @@ export function DispatchGrid({
     [employees],
   );
 
-  // Compute overlap conflicts per employee. O(n log n) total across all
-  // employees — n is small (most cleaners have <10 jobs a day).
+  // The red border reads off the same warnings the dot and the bookings list
+  // use. This view used to re-derive overlaps itself, which is how the two
+  // surfaces ended up disagreeing about the same morning — and the shared
+  // engine sees the whole week, so a job overlapping one on an adjacent day
+  // is caught too.
   const conflictIds = useMemo(() => {
     const flagged = new Set<string>();
-    for (const list of bookingsByEmployee.values()) {
-      for (let i = 0; i < list.length; i++) {
-        const a = list[i];
-        const aStart = minutesOfDay(a.scheduled_at, tz);
-        const aEnd = aStart + a.duration_minutes;
-        for (let j = i + 1; j < list.length; j++) {
-          const b = list[j];
-          const bStart = minutesOfDay(b.scheduled_at, tz);
-          if (bStart >= aEnd) break;
-          const bEnd = bStart + b.duration_minutes;
-          if (bStart < aEnd && bEnd > aStart) {
-            flagged.add(a.id);
-            flagged.add(b.id);
-          }
-        }
-      }
+    const entries =
+      warnings instanceof Map ? warnings.entries() : Object.entries(warnings);
+    for (const [id, list] of entries) {
+      if (list.some((w) => w.code === "double_booked")) flagged.add(id);
     }
     return flagged;
-  }, [bookingsByEmployee, tz]);
+  }, [warnings]);
 
   // Auto-scroll to ~6 AM on mount (cleaning shifts start early). Or to
   // 2h before the current time when viewing today.
@@ -220,11 +216,7 @@ export function DispatchGrid({
     if (target.kind === "unassigned") {
       if (!booking.assigned_to) return; // already there
       startTransition(async () => {
-        const result = await rescheduleBookingAction(
-          bookingId,
-          null,
-          date,
-        );
+        const result = await rescheduleBookingAction(bookingId, null, date);
         if (result.ok) {
           toast.success("Moved to unassigned");
           router.refresh();
@@ -277,140 +269,143 @@ export function DispatchGrid({
     );
   }
 
-  const activeBooking = activeId ? bookingById.get(activeId) ?? null : null;
+  const activeBooking = activeId ? (bookingById.get(activeId) ?? null) : null;
 
   return (
-    <DndContext
-      sensors={sensors}
-      onDragStart={handleDragStart}
-      onDragEnd={handleDragEnd}
-    >
-      <div className="overflow-hidden rounded-lg border border-border bg-card">
-        {/* Header row — employee names pinned at the top */}
-        <div
-          className="grid border-b border-border bg-muted/30"
-          style={{
-            gridTemplateColumns: `60px repeat(${Math.max(employees.length, 1)}, minmax(140px, 1fr))`,
-          }}
-        >
-          <div className="border-r border-border px-2 py-2 text-[10px] uppercase tracking-wide text-muted-foreground">
-            Time
-          </div>
-          {employees.length === 0 ? (
-            <div className="px-4 py-2 text-sm text-muted-foreground">
-              No active employees.
-            </div>
-          ) : (
-            employees.map((emp, idx) => {
-              const isOff = offEmployeeIds.has(emp.id);
-              return (
-                <div
-                  key={emp.id}
-                  className={cn(
-                    "border-r border-border px-3 py-2 last:border-r-0",
-                    isOff && "bg-muted/30",
-                  )}
-                >
-                  <div className="flex items-center gap-2">
-                    <span
-                      className="h-2 w-2 shrink-0 rounded-full"
-                      style={{ backgroundColor: toneForEmployee(idx) }}
-                    />
-                    <span
-                      className={cn(
-                        "truncate text-sm font-medium",
-                        isOff && "text-muted-foreground line-through",
-                      )}
-                    >
-                      {emp.name}
-                    </span>
-                  </div>
-                  <p className="mt-0.5 text-[10px] text-muted-foreground">
-                    {isOff
-                      ? "Off today"
-                      : `${bookingsByEmployee.get(emp.id)?.length ?? 0} jobs`}
-                  </p>
-                </div>
-              );
-            })
-          )}
-        </div>
-
-        {/* Scrollable time grid */}
-        <div ref={scrollRef} className="max-h-[72vh] overflow-y-auto">
+    <WarningProvider warnings={warnings}>
+      <DndContext
+        sensors={sensors}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
+      >
+        <div className="overflow-hidden rounded-lg border border-border bg-card">
+          {/* Header row — employee names pinned at the top */}
           <div
-            className="relative grid"
+            className="grid border-b border-border bg-muted/30"
             style={{
               gridTemplateColumns: `60px repeat(${Math.max(employees.length, 1)}, minmax(140px, 1fr))`,
-              height: DAY_HEIGHT_PX,
             }}
           >
-            {/* Time gutter — labels positioned at each hour boundary */}
-            <div className="relative border-r border-border">
-              {Array.from({ length: 24 }, (_, hour) => (
-                <div
-                  key={hour}
-                  className="absolute right-1.5 text-[10px] leading-none text-muted-foreground"
-                  style={{ top: hour * 2 * SLOT_PX }}
-                >
-                  {hour === 0 ? (
-                    <span className="block pt-0.5">{formatHourLabel(hour)}</span>
-                  ) : (
-                    <span className="block -translate-y-1/2 rounded bg-card px-1">
-                      {formatHourLabel(hour)}
-                    </span>
-                  )}
-                </div>
+            <div className="border-r border-border px-2 py-2 text-[10px] uppercase tracking-wide text-muted-foreground">
+              Time
+            </div>
+            {employees.length === 0 ? (
+              <div className="px-4 py-2 text-sm text-muted-foreground">
+                No active employees.
+              </div>
+            ) : (
+              employees.map((emp, idx) => {
+                const isOff = offEmployeeIds.has(emp.id);
+                return (
+                  <div
+                    key={emp.id}
+                    className={cn(
+                      "border-r border-border px-3 py-2 last:border-r-0",
+                      isOff && "bg-muted/30",
+                    )}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="h-2 w-2 shrink-0 rounded-full"
+                        style={{ backgroundColor: toneForEmployee(idx) }}
+                      />
+                      <span
+                        className={cn(
+                          "truncate text-sm font-medium",
+                          isOff && "text-muted-foreground line-through",
+                        )}
+                      >
+                        {emp.name}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 text-[10px] text-muted-foreground">
+                      {isOff
+                        ? "Off today"
+                        : `${bookingsByEmployee.get(emp.id)?.length ?? 0} jobs`}
+                    </p>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {/* Scrollable time grid */}
+          <div ref={scrollRef} className="max-h-[72vh] overflow-y-auto">
+            <div
+              className="relative grid"
+              style={{
+                gridTemplateColumns: `60px repeat(${Math.max(employees.length, 1)}, minmax(140px, 1fr))`,
+                height: DAY_HEIGHT_PX,
+              }}
+            >
+              {/* Time gutter — labels positioned at each hour boundary */}
+              <div className="relative border-r border-border">
+                {Array.from({ length: 24 }, (_, hour) => (
+                  <div
+                    key={hour}
+                    className="absolute right-1.5 text-[10px] leading-none text-muted-foreground"
+                    style={{ top: hour * 2 * SLOT_PX }}
+                  >
+                    {hour === 0 ? (
+                      <span className="block pt-0.5">
+                        {formatHourLabel(hour)}
+                      </span>
+                    ) : (
+                      <span className="block -translate-y-1/2 rounded bg-card px-1">
+                        {formatHourLabel(hour)}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {/* Employee columns */}
+              {employees.map((emp, idx) => (
+                <EmployeeColumn
+                  key={emp.id}
+                  employee={emp}
+                  laneIdx={idx}
+                  bookings={bookingsByEmployee.get(emp.id) ?? []}
+                  conflictIds={conflictIds}
+                  canEdit={canEdit}
+                  tz={tz}
+                  date={date}
+                  isOff={offEmployeeIds.has(emp.id)}
+                  onQuickView={setQuickViewId}
+                  onSlotClick={handleSlotClick}
+                  colorBy={colorBy}
+                  nameById={nameById}
+                />
               ))}
             </div>
-
-            {/* Employee columns */}
-            {employees.map((emp, idx) => (
-              <EmployeeColumn
-                key={emp.id}
-                employee={emp}
-                laneIdx={idx}
-                bookings={bookingsByEmployee.get(emp.id) ?? []}
-                conflictIds={conflictIds}
-                canEdit={canEdit}
-                tz={tz}
-                date={date}
-                isOff={offEmployeeIds.has(emp.id)}
-                onQuickView={setQuickViewId}
-                onSlotClick={handleSlotClick}
-                colorBy={colorBy}
-                nameById={nameById}
-              />
-            ))}
           </div>
         </div>
-      </div>
 
-      <DragOverlay>
-        {activeBooking ? (
-          <div className="rounded-md border border-border bg-background px-2 py-1.5 text-xs shadow-lg ring-2 ring-primary">
-            <div className="font-semibold">{activeBooking.client_name}</div>
-            <div className="text-muted-foreground">
-              {activeBooking.duration_minutes}m
+        <DragOverlay>
+          {activeBooking ? (
+            <div className="rounded-md border border-border bg-background px-2 py-1.5 text-xs shadow-lg ring-2 ring-primary">
+              <div className="font-semibold">{activeBooking.client_name}</div>
+              <div className="text-muted-foreground">
+                {activeBooking.duration_minutes}m
+              </div>
             </div>
-          </div>
-        ) : null}
-      </DragOverlay>
+          ) : null}
+        </DragOverlay>
 
-      <BookingQuickView
-        booking={quickViewId ? bookingById.get(quickViewId) ?? null : null}
-        employees={employees}
-        open={!!quickViewId}
-        onOpenChange={(o) => !o && setQuickViewId(null)}
-        tz={tz}
-      />
-    </DndContext>
+        <BookingQuickView
+          booking={quickViewId ? (bookingById.get(quickViewId) ?? null) : null}
+          employees={employees}
+          open={!!quickViewId}
+          onOpenChange={(o) => !o && setQuickViewId(null)}
+          tz={tz}
+        />
+      </DndContext>
+    </WarningProvider>
   );
 }
 
 type DropTarget =
-  | { kind: "cell"; employeeId: string; time: string }
-  | { kind: "unassigned" };
+  { kind: "cell"; employeeId: string; time: string } | { kind: "unassigned" };
 
 function parseDroppableId(id: string): DropTarget | null {
   if (id === "unassigned") return { kind: "unassigned" };
@@ -520,7 +515,10 @@ function EmployeeColumn({
       {/* Unused but keeps `date` on the hook dependency if we later want
           per-column empty-state UI. */}
       {bookings.length === 0 && (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center opacity-0" aria-hidden>
+        <div
+          className="pointer-events-none absolute inset-0 flex items-center justify-center opacity-0"
+          aria-hidden
+        >
           {date}
         </div>
       )}
@@ -636,8 +634,9 @@ function PositionedBooking({
     >
       <div className="flex items-start justify-between gap-1">
         <div className="min-w-0 flex-1">
-          <div className="truncate font-semibold leading-tight">
-            {booking.client_name}
+          <div className="flex items-center gap-1.5 font-semibold leading-tight">
+            <WarningDot bookingId={booking.id} />
+            <span className="truncate">{booking.client_name}</span>
           </div>
           <div className="truncate text-[10px] leading-tight text-muted-foreground">
             {new Date(booking.scheduled_at).toLocaleTimeString("en-US", {

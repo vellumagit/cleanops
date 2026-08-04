@@ -61,7 +61,7 @@ export function lifecycleByAssignee(
 export function withPriorLifecycle<T extends AssigneeKeyed>(
   row: T,
   prior: Map<string, AssigneeLifecycle>,
-): T {
+): T & Partial<AssigneeLifecycle> {
   const found = prior.get(assigneeKey(row));
   return found ? { ...row, ...found } : row;
 }

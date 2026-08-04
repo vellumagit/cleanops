@@ -11,6 +11,9 @@ import {
   type SchedulerFilters as SchedulerFiltersState,
 } from "./scheduler-filters";
 import { SavedViews } from "./saved-views";
+import {
+  computeBookingWarnings,
+} from "@/app/app/bookings/booking-warnings";
 import type {
   ScheduleBooking,
   ScheduleEmployee,
@@ -221,6 +224,47 @@ export function SchedulerShell({
     return { scheduled, completed, remaining: scheduled - completed, jobsWithRevenue };
   }, [filteredBookings]);
 
+  /*
+   * The same warnings the bookings LIST has always shown — double-booked,
+   * never staffed, stuck in progress, no price, possible duplicate. They were
+   * computed in exactly one place (bookings-table.tsx) and never reached the
+   * board people actually dispatch from, so the surface best placed to catch
+   * a clash was the one surface blind to it.
+   *
+   * Computed over every booking in range, not the filtered subset: a clash is
+   * still a clash when one side is hidden by an employee filter.
+   */
+  const warnings = useMemo(() => {
+    const warnable = bookings.map((b) => {
+      const additional = (b.all_assignee_ids ?? []).filter(
+        (id) => id !== b.assigned_to,
+      );
+      return {
+        id: b.id,
+        client_id: b.client_id,
+        client_name: b.client_name,
+        scheduled_at: b.scheduled_at,
+        duration_minutes: b.duration_minutes,
+        status: b.status,
+        total_cents: b.total_cents ?? 0,
+        hourly_rate_cents: b.hourly_rate_cents,
+        assigned_to: b.assigned_to,
+        additional_assignee_ids: additional,
+        // Split shifts are a deliberate hand-off, not a clash. Without this
+        // the two halves of one job flag each other as double-booked.
+        assignee_segments: b.assigneeSegments,
+        // `staffed` already encodes the shared rule (assignee OR crew OR a
+        // claimed bench offer). Feed it through the slot booking-warnings
+        // uses for bench cover so the two agree on what "unstaffed" means.
+        covered_by_name:
+          b.staffed && !b.assigned_to && additional.length === 0
+            ? "Subcontractor"
+            : null,
+      };
+    });
+    return computeBookingWarnings(warnable);
+  }, [bookings]);
+
   return (
     <>
       <div className="flex items-center justify-end gap-2">
@@ -290,6 +334,7 @@ export function SchedulerShell({
           date={weekStart}
           bookings={filteredBookings}
           employees={filteredEmployees}
+          warnings={warnings}
           canEdit={canEdit}
           tz={tz}
           offDays={offDays}
@@ -300,6 +345,7 @@ export function SchedulerShell({
           weekStart={weekStart}
           bookings={filteredBookings}
           employees={filteredEmployees}
+          warnings={warnings}
           canEdit={canEdit}
           view={view}
           tz={tz}

@@ -41,6 +41,13 @@ export type WarnableBooking = {
   assigned_to: string | null;
   additional_assignee_ids: string[];
   covered_by_name: string | null;
+  /** membership_id → that person's segment of a split shift, when the job is
+   *  one. Omitted for the callers that don't load it; those keep the old
+   *  whole-booking behaviour. */
+  assignee_segments?: Record<
+    string,
+    { start_offset_minutes: number; duration_minutes: number }
+  > | null;
 };
 
 const HOUR = 3_600_000;
@@ -65,6 +72,29 @@ function endMs(b: WarnableBooking): number {
   return (
     new Date(b.scheduled_at).getTime() + (b.duration_minutes || 0) * 60_000
   );
+}
+
+/**
+ * One person's window on a booking.
+ *
+ * On a SPLIT shift that is their segment, not the whole job — Maria works
+ * 9–12 and Ana takes 12–3. Measuring the full booking for both made the two
+ * halves of one deliberate hand-off report as a double-booking, and made
+ * either cleaner look busy for hours on both sides of the part they actually
+ * work, so a genuinely free slot read as occupied.
+ */
+function memberWindow(
+  b: WarnableBooking,
+  memberId: string,
+): { start: number; end: number } {
+  const seg = b.assignee_segments?.[memberId];
+  const start =
+    new Date(b.scheduled_at).getTime() +
+    (seg?.start_offset_minutes ?? 0) * 60_000;
+  return {
+    start,
+    end: start + (seg?.duration_minutes ?? b.duration_minutes ?? 0) * 60_000,
+  };
 }
 
 /**
@@ -96,18 +126,22 @@ export function computeBookingWarnings(
     }
   }
   const conflicted = new Map<string, string>(); // bookingId -> other client
-  for (const list of byMember.values()) {
-    const sorted = [...list].sort(
-      (a, b) =>
-        new Date(a.scheduled_at).getTime() - new Date(b.scheduled_at).getTime(),
-    );
-    for (let i = 0; i < sorted.length - 1; i++) {
+  for (const [memberId, list] of byMember) {
+    const sorted = list
+      .map((b) => ({ b, ...memberWindow(b, memberId) }))
+      .sort((x, y) => x.start - y.start);
+    // Compare every later job that could still overlap, not just the next
+    // one: a long morning job can run past a short job into a third.
+    for (let i = 0; i < sorted.length; i++) {
       const a = sorted[i];
-      const b = sorted[i + 1];
-      // Zero-length bookings can't overlap; treat touching edges as fine.
-      if (endMs(a) > new Date(b.scheduled_at).getTime()) {
-        conflicted.set(a.id, b.client_name);
-        conflicted.set(b.id, a.client_name);
+      for (let j = i + 1; j < sorted.length; j++) {
+        const b = sorted[j];
+        // Zero-length windows can't overlap; touching edges are fine.
+        if (b.start >= a.end) break;
+        if (b.end > a.start) {
+          conflicted.set(a.b.id, b.b.client_name);
+          conflicted.set(b.b.id, a.b.client_name);
+        }
       }
     }
   }

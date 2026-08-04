@@ -24,6 +24,8 @@ import type { ScheduleBooking, ScheduleEmployee } from "./data";
 import { BookingQuickView } from "./booking-quick-view";
 import { toneForBooking, toneForEmployee, type ColorBy } from "./color";
 import { computeSplitCue, type SplitCue } from "./split-cue";
+import type { BookingWarning } from "@/app/app/bookings/booking-warnings";
+import { WarningDot, WarningProvider } from "./warning-dot";
 
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -57,8 +59,7 @@ function formatHourMinute(iso: string, tz?: string) {
 }
 
 type DropTarget =
-  | { kind: "cell"; employeeId: string; date: string }
-  | { kind: "unassigned" };
+  { kind: "cell"; employeeId: string; date: string } | { kind: "unassigned" };
 
 function parseDroppableId(id: string): DropTarget | null {
   if (id === "unassigned") return { kind: "unassigned" };
@@ -89,6 +90,7 @@ export function WeekGrid({
   /** How card accent color is computed. Lane headers always use the
    *  per-employee tone regardless. */
   colorBy = "employee",
+  warnings = {},
 }: {
   /** ISO date YYYY-MM-DD for Monday of the displayed week (or the day
    *  itself in day view). */
@@ -100,6 +102,8 @@ export function WeekGrid({
   tz: string;
   offDays?: Record<string, string[]>;
   colorBy?: ColorBy;
+  /** booking id → warnings, computed once by the shell. */
+  warnings?: Record<string, BookingWarning[]> | Map<string, BookingWarning[]>;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -134,7 +138,11 @@ export function WeekGrid({
   const unassigned = useMemo(
     () =>
       bookings
-        .filter((b) => !b.assigned_to)
+        // `staffed` is the shared rule — assignee OR crew OR a claimed bench
+        // offer. Testing `!assigned_to` put crew-only and subcontractor-covered
+        // jobs in this tray while the coverage banner above reported nothing
+        // unfilled, so the two disagreed on the same screen.
+        .filter((b) => !b.staffed)
         .sort((a, b) => a.scheduled_at.localeCompare(b.scheduled_at)),
     [bookings],
   );
@@ -229,106 +237,107 @@ export function WeekGrid({
     });
   }
 
-  const activeBooking = activeId ? bookingById.get(activeId) ?? null : null;
+  const activeBooking = activeId ? (bookingById.get(activeId) ?? null) : null;
 
   return (
-    <DndContext
-      sensors={sensors}
-      onDragStart={handleDragStart}
-      onDragEnd={handleDragEnd}
-    >
-      <div className="space-y-6">
-        <UnassignedTray
-          bookings={unassigned}
-          canEdit={canEdit}
-          isPending={isPending}
-          onQuickView={setQuickViewId}
-          tz={tz}
-          colorBy={colorBy}
-        />
+    <WarningProvider warnings={warnings}>
+      <DndContext
+        sensors={sensors}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
+      >
+        <div className="space-y-6">
+          <UnassignedTray
+            bookings={unassigned}
+            canEdit={canEdit}
+            isPending={isPending}
+            onQuickView={setQuickViewId}
+            tz={tz}
+            colorBy={colorBy}
+          />
 
-        <div className="overflow-x-auto rounded-lg border border-border bg-card">
-          <div
-            className={cn(
-              "grid",
-              view === "day" ? "min-w-[360px]" : "min-w-[960px]",
-            )}
-            style={{
-              gridTemplateColumns:
-                view === "day"
-                  ? `180px minmax(220px, 1fr)`
-                  : `180px repeat(7, minmax(140px, 1fr))`,
-            }}
-          >
-            <div className="sticky left-0 z-10 border-b border-r border-border bg-card px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Cleaner
+          <div className="overflow-x-auto rounded-lg border border-border bg-card">
+            <div
+              className={cn(
+                "grid",
+                view === "day" ? "min-w-[360px]" : "min-w-[960px]",
+              )}
+              style={{
+                gridTemplateColumns:
+                  view === "day"
+                    ? `180px minmax(220px, 1fr)`
+                    : `180px repeat(7, minmax(140px, 1fr))`,
+              }}
+            >
+              <div className="sticky left-0 z-10 border-b border-r border-border bg-card px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Cleaner
+              </div>
+              {days.map((d) => (
+                <div
+                  key={d.toISOString()}
+                  className="border-b border-border px-3 py-3 text-center"
+                >
+                  <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    {DAY_LABELS[(d.getDay() + 6) % 7]}
+                  </div>
+                  <div className="text-sm font-medium tabular-nums">
+                    {d.toLocaleDateString("en-US", {
+                      month: "short",
+                      day: "numeric",
+                    })}
+                  </div>
+                </div>
+              ))}
+
+              {employees.length === 0 ? (
+                <div
+                  className={cn(
+                    "px-4 py-12 text-center text-sm text-muted-foreground",
+                    view === "day" ? "col-span-2" : "col-span-8",
+                  )}
+                >
+                  No active employees. Invite team members from Settings →
+                  Members.
+                </div>
+              ) : null}
+
+              {employees.map((emp, idx) => (
+                <EmployeeRow
+                  key={emp.id}
+                  employee={emp}
+                  laneTone={toneForEmployee(idx)}
+                  laneIdx={idx}
+                  days={days}
+                  cellMap={cellMap}
+                  canEdit={canEdit}
+                  onQuickView={setQuickViewId}
+                  tz={tz}
+                  offDates={offDaysByEmployee.get(emp.id) ?? new Set()}
+                  colorBy={colorBy}
+                  nameById={nameById}
+                />
+              ))}
             </div>
-            {days.map((d) => (
-              <div
-                key={d.toISOString()}
-                className="border-b border-border px-3 py-3 text-center"
-              >
-                <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  {DAY_LABELS[(d.getDay() + 6) % 7]}
-                </div>
-                <div className="text-sm font-medium tabular-nums">
-                  {d.toLocaleDateString("en-US", {
-                    month: "short",
-                    day: "numeric",
-                  })}
-                </div>
-              </div>
-            ))}
-
-            {employees.length === 0 ? (
-              <div
-                className={cn(
-                  "px-4 py-12 text-center text-sm text-muted-foreground",
-                  view === "day" ? "col-span-2" : "col-span-8",
-                )}
-              >
-                No active employees. Invite team members from Settings → Members.
-              </div>
-            ) : null}
-
-            {employees.map((emp, idx) => (
-              <EmployeeRow
-                key={emp.id}
-                employee={emp}
-                laneTone={toneForEmployee(idx)}
-                laneIdx={idx}
-                days={days}
-                cellMap={cellMap}
-                canEdit={canEdit}
-                onQuickView={setQuickViewId}
-                tz={tz}
-                offDates={offDaysByEmployee.get(emp.id) ?? new Set()}
-                colorBy={colorBy}
-                nameById={nameById}
-              />
-            ))}
           </div>
         </div>
-      </div>
 
-      <DragOverlay>
-        {activeBooking ? (
-          <BookingCard booking={activeBooking} dragging accent="" />
-        ) : null}
-      </DragOverlay>
+        <DragOverlay>
+          {activeBooking ? (
+            <BookingCard booking={activeBooking} dragging accent="" />
+          ) : null}
+        </DragOverlay>
 
-      <BookingQuickView
-        booking={
-          quickViewId ? bookingById.get(quickViewId) ?? null : null
-        }
-        employees={employees}
-        open={!!quickViewId}
-        onOpenChange={(o) => {
-          if (!o) setQuickViewId(null);
-        }}
-        tz={tz}
-      />
-    </DndContext>
+        <BookingQuickView
+          booking={quickViewId ? (bookingById.get(quickViewId) ?? null) : null}
+          employees={employees}
+          open={!!quickViewId}
+          onOpenChange={(o) => {
+            if (!o) setQuickViewId(null);
+          }}
+          tz={tz}
+        />
+      </DndContext>
+    </WarningProvider>
   );
 }
 
@@ -434,7 +443,9 @@ function DayCell({
       className={cn(
         "min-h-[110px] space-y-2 border-b border-r border-border p-2 transition-colors",
         isOver && "bg-primary/5 ring-2 ring-inset ring-primary/40",
-        isOff && !isOver && "bg-muted/40 bg-[repeating-linear-gradient(45deg,transparent,transparent_8px,rgba(0,0,0,0.04)_8px,rgba(0,0,0,0.04)_16px)] dark:bg-[repeating-linear-gradient(45deg,transparent,transparent_8px,rgba(255,255,255,0.04)_8px,rgba(255,255,255,0.04)_16px)]",
+        isOff &&
+          !isOver &&
+          "bg-muted/40 bg-[repeating-linear-gradient(45deg,transparent,transparent_8px,rgba(0,0,0,0.04)_8px,rgba(0,0,0,0.04)_16px)] dark:bg-[repeating-linear-gradient(45deg,transparent,transparent_8px,rgba(255,255,255,0.04)_8px,rgba(255,255,255,0.04)_16px)]",
       )}
       title={isOff ? "Employee is off this day" : undefined}
     >
@@ -567,7 +578,10 @@ function BookingCard({
       style={accent ? { borderLeftColor: accent } : undefined}
     >
       <div className="flex items-start justify-between gap-1">
-        <div className="font-semibold">{booking.client_name}</div>
+        <div className="flex min-w-0 items-center gap-1.5 font-semibold">
+          <WarningDot bookingId={booking.id} />
+          <span className="truncate">{booking.client_name}</span>
+        </div>
         {canDrag && dragListeners ? (
           <button
             type="button"
@@ -581,7 +595,8 @@ function BookingCard({
         ) : null}
       </div>
       <div className="tabular-nums text-muted-foreground">
-        {formatHourMinute(booking.scheduled_at, tz)} · {booking.duration_minutes}m
+        {formatHourMinute(booking.scheduled_at, tz)} ·{" "}
+        {booking.duration_minutes}m
       </div>
       <div className="mt-1 flex items-center gap-1 flex-wrap">
         <StatusBadge tone={bookingStatusTone(booking.status)}>
@@ -680,7 +695,8 @@ function UnassignedTray({
       </div>
       {bookings.length === 0 ? (
         <p className="text-xs text-muted-foreground">
-          Every booking this week has a cleaner. Drop a booking here to unassign it.
+          Every booking this week has a cleaner. Drop a booking here to unassign
+          it.
         </p>
       ) : (
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">

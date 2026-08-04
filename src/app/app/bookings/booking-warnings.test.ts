@@ -191,3 +191,103 @@ describe("duplicates", () => {
     );
   });
 });
+
+describe("split shifts are a hand-off, not a clash", () => {
+  it("does not flag two people covering halves of one long job", () => {
+    // 9am–3pm job: Maria 9–12, Ana 12–3. Same booking, so both rows share
+    // scheduled_at and duration — only the segments tell them apart.
+    const start = new Date(NOW + 48 * H).toISOString();
+    const a = bk({
+      scheduled_at: start,
+      duration_minutes: 360,
+      assigned_to: "maria",
+      additional_assignee_ids: ["ana"],
+      assignee_segments: {
+        maria: { start_offset_minutes: 0, duration_minutes: 180 },
+        ana: { start_offset_minutes: 180, duration_minutes: 180 },
+      },
+    });
+    expect(computeBookingWarnings([a], NOW).get(a.id)).toBeUndefined();
+  });
+
+  it("lets a cleaner take a second job in the half they are not working", () => {
+    // Ana works the back half (12–3) of the split, so a 9–11 job elsewhere
+    // that morning is genuinely free time — the full-booking measure said
+    // she was busy from 9am.
+    const start = new Date(NOW + 48 * H).toISOString();
+    const split = bk({
+      client_name: "Long House",
+      scheduled_at: start,
+      duration_minutes: 360,
+      assigned_to: "maria",
+      additional_assignee_ids: ["ana"],
+      assignee_segments: {
+        maria: { start_offset_minutes: 0, duration_minutes: 180 },
+        ana: { start_offset_minutes: 180, duration_minutes: 180 },
+      },
+    });
+    const morning = bk({
+      client_name: "Corner Cafe",
+      scheduled_at: start,
+      duration_minutes: 120,
+      assigned_to: "ana",
+    });
+    const out = computeBookingWarnings([split, morning], NOW);
+    expect(codes(out, split.id)).not.toContain("double_booked");
+    expect(codes(out, morning.id)).not.toContain("double_booked");
+  });
+
+  it("still flags a real overlap inside someone's own segment", () => {
+    const start = new Date(NOW + 48 * H).toISOString();
+    const split = bk({
+      client_name: "Long House",
+      scheduled_at: start,
+      duration_minutes: 360,
+      assigned_to: "maria",
+      additional_assignee_ids: ["ana"],
+      assignee_segments: {
+        maria: { start_offset_minutes: 0, duration_minutes: 180 },
+        ana: { start_offset_minutes: 180, duration_minutes: 180 },
+      },
+    });
+    // 1pm, squarely inside Ana's 12–3 half.
+    const clash = bk({
+      client_name: "Corner Cafe",
+      scheduled_at: new Date(NOW + 48 * H + 4 * H).toISOString(),
+      duration_minutes: 60,
+      assigned_to: "ana",
+    });
+    const out = computeBookingWarnings([split, clash], NOW);
+    expect(codes(out, split.id)).toContain("double_booked");
+    expect(codes(out, clash.id)).toContain("double_booked");
+  });
+});
+
+describe("overlaps that are not adjacent in time order", () => {
+  it("flags a long job against a third booking it swallows", () => {
+    // 8am–2pm, 9am–10am, 11am–noon. Sorted by start, the long job is only
+    // adjacent to the 9am one — the noon job used to slip through.
+    const day = NOW + 48 * H;
+    const long = bk({
+      client_name: "All Day",
+      scheduled_at: new Date(day).toISOString(),
+      duration_minutes: 360,
+      assigned_to: "jim",
+    });
+    const early = bk({
+      client_name: "Early",
+      scheduled_at: new Date(day + H).toISOString(),
+      duration_minutes: 60,
+      assigned_to: "jim",
+    });
+    const later = bk({
+      client_name: "Later",
+      scheduled_at: new Date(day + 3 * H).toISOString(),
+      duration_minutes: 60,
+      assigned_to: "jim",
+    });
+    const out = computeBookingWarnings([long, early, later], NOW);
+    expect(codes(out, later.id)).toContain("double_booked");
+    expect(codes(out, long.id)).toContain("double_booked");
+  });
+});
