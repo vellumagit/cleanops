@@ -84,20 +84,17 @@ export const RECURRENCE_OPTIONS: Array<{
   {
     value: "every_2_months",
     label: "Every 2 months",
-    description:
-      "Same day of the month, every other month. 6 visits per year.",
+    description: "Same day of the month, every other month. 6 visits per year.",
   },
   {
     value: "every_3_months",
     label: "Every 3 months (quarterly)",
-    description:
-      "Same day of the month, once per quarter. 4 visits per year.",
+    description: "Same day of the month, once per quarter. 4 visits per year.",
   },
   {
     value: "every_6_months",
     label: "Every 6 months",
-    description:
-      "Same day of the month, twice a year.",
+    description: "Same day of the month, twice a year.",
   },
 ];
 
@@ -126,7 +123,7 @@ export type SeriesRule = {
   /**
    * IANA timezone string (e.g. "America/Edmonton"). Drives how
    * `start_time` is applied to each occurrence date. Defaults to
-   * DEFAULT_TZ when omitted — callers with org context should always
+   * FALLBACK_TZ when omitted — callers with org context should always
    * pass the org's timezone for DST and multi-region correctness.
    */
   tz?: string;

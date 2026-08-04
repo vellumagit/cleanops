@@ -30,7 +30,13 @@ export type SeriesRow = {
   upcoming_bookings: number;
 };
 
-function CancelButton({ seriesId, clientName }: { seriesId: string; clientName: string }) {
+function CancelButton({
+  seriesId,
+  clientName,
+}: {
+  seriesId: string;
+  clientName: string;
+}) {
   const [pending, startTransition] = useTransition();
 
   return (
@@ -58,7 +64,14 @@ function CancelButton({ seriesId, clientName }: { seriesId: string; clientName: 
   );
 }
 
-export function SeriesTable({ rows }: { rows: SeriesRow[] }) {
+export function SeriesTable({
+  rows,
+  tz,
+}: {
+  rows: SeriesRow[];
+  /** Org IANA timezone — every date on this table renders in it. */
+  tz: string;
+}) {
   const columns: DataTableColumn<SeriesRow>[] = [
     {
       key: "client",
@@ -118,8 +131,8 @@ export function SeriesTable({ rows }: { rows: SeriesRow[] }) {
       header: "Period",
       render: (r) => (
         <span className="text-xs text-muted-foreground tabular-nums">
-          {formatDate(r.starts_at)}
-          {r.ends_at ? ` → ${formatDate(r.ends_at)}` : " → ongoing"}
+          {formatDate(r.starts_at, tz)}
+          {r.ends_at ? ` → ${formatDate(r.ends_at, tz)}` : " → ongoing"}
         </span>
       ),
     },

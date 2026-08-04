@@ -5,11 +5,13 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { PageShell } from "@/components/page-shell";
 import { memberDisplayName } from "@/lib/member-display";
 import { MembersTable, type MemberRow } from "./members-table";
+import { getOrgTimezone } from "@/lib/org-timezone";
 
 export const metadata = { title: "Team members" };
 
 export default async function MembersPage() {
   const membership = await requireMembership(["owner", "admin"]);
+  const tz = await getOrgTimezone(membership.organization_id);
 
   // Admin client because pay_rate_cents is RLS-locked from end-user
   // JWTs. Explicit org filter on every read keeps the bypass safe.
@@ -59,7 +61,7 @@ export default async function MembersPage() {
         </Link>
       }
     >
-      <MembersTable rows={rows} currentRole={membership.role} />
+      <MembersTable tz={tz} rows={rows} currentRole={membership.role} />
     </PageShell>
   );
 }

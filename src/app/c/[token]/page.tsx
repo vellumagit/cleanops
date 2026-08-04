@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { CheckCircle2 } from "lucide-react";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getOrgCurrency } from "@/lib/org-currency";
+import { getOrgTimezone } from "@/lib/org-timezone";
 import { formatCurrencyCents, formatDate, humanizeEnum } from "@/lib/format";
 import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
 import { RateLimitedPage } from "@/components/rate-limited-page";
@@ -87,6 +88,7 @@ export default async function PublicContractPage({
   };
 
   const currency = await getOrgCurrency(contract.organization_id);
+  const tz = await getOrgTimezone(contract.organization_id);
   const orgName = contract.organization?.name ?? "the business";
   const clientName = contract.client?.name ?? "";
   const isSigned = signInfo?.sign_status === "signed";
@@ -149,14 +151,14 @@ export default async function PublicContractPage({
               <div>
                 <dt className="sollos-label">Start date</dt>
                 <dd className="mt-0.5 font-medium">
-                  {formatDate(contract.start_date)}
+                  {formatDate(contract.start_date, tz)}
                 </dd>
               </div>
               <div>
                 <dt className="sollos-label">End date</dt>
                 <dd className="mt-0.5 font-medium">
                   {contract.end_date
-                    ? formatDate(contract.end_date)
+                    ? formatDate(contract.end_date, tz)
                     : "Open-ended"}
                 </dd>
               </div>
@@ -178,9 +180,7 @@ export default async function PublicContractPage({
             {showThankYou ? (
               <div className="mt-8 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-6 text-center">
                 <CheckCircle2 className="mx-auto h-10 w-10 text-emerald-500" />
-                <h2 className="mt-3 text-lg font-semibold">
-                  Contract signed
-                </h2>
+                <h2 className="mt-3 text-lg font-semibold">Contract signed</h2>
                 <p className="mt-1.5 text-sm text-muted-foreground">
                   Signed by{" "}
                   <strong className="text-foreground">
@@ -192,6 +192,7 @@ export default async function PublicContractPage({
                       {new Date(signInfo.signed_at).toLocaleDateString(
                         "en-US",
                         {
+                          timeZone: tz,
                           month: "long",
                           day: "numeric",
                           year: "numeric",
@@ -221,8 +222,8 @@ export default async function PublicContractPage({
         </div>
 
         <p className="mt-6 text-center text-[11px] text-muted-foreground">
-          Questions? Contact {orgName} directly — this is a secure signing
-          page and does not accept messages.
+          Questions? Contact {orgName} directly — this is a secure signing page
+          and does not accept messages.
         </p>
       </div>
     </main>

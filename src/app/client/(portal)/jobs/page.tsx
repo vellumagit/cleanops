@@ -9,11 +9,15 @@ import {
   humanizeEnum,
 } from "@/lib/format";
 import { StatusBadge, bookingStatusTone } from "@/components/status-badge";
+import { getOrgTimezone } from "@/lib/org-timezone";
 
 export const metadata = { title: "My jobs" };
 
 export default async function ClientJobsPage() {
   const client = await requireClient();
+  // The portal HOME one directory up already resolves this for the very
+  // same bookings. This list did not, so a client's two screens disagreed.
+  const tz = await getOrgTimezone(client.organization_id);
   const supabase = await createSupabaseServerClient();
   const admin = createSupabaseAdminClient();
 
@@ -77,12 +81,14 @@ export default async function ClientJobsPage() {
       </div>
 
       <Section
+        tz={tz}
         title="Upcoming"
         jobs={upcoming}
         tokenMap={tokenMap}
         reviewedMap={reviewedBookingIds}
       />
       <Section
+        tz={tz}
         title="Past"
         jobs={past}
         tokenMap={tokenMap}
@@ -102,11 +108,13 @@ type Job = {
 };
 
 function Section({
+  tz,
   title,
   jobs,
   tokenMap,
   reviewedMap,
 }: {
+  tz: string;
   title: string;
   jobs: Job[];
   tokenMap: Map<string, string | null>;
@@ -145,7 +153,7 @@ function Section({
                 <div className="min-w-0 flex-1">
                   <p className="flex items-center gap-2 font-medium">
                     <Calendar className="h-4 w-4 shrink-0 text-muted-foreground" />
-                    {formatDateTime(j.scheduled_at)}
+                    {formatDateTime(j.scheduled_at, tz)}
                   </p>
                   <p className="mt-1 text-xs text-muted-foreground">
                     {humanizeEnum(j.service_type)} ·{" "}

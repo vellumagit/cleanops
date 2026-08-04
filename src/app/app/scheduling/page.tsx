@@ -16,6 +16,7 @@ import {
 } from "./data";
 import { SchedulerShell } from "./scheduler-shell";
 import { CoveragePanel } from "./coverage-panel";
+import { zonedYmd, startOfWeekUtc } from "@/lib/wall-clock";
 
 export const metadata = { title: "Scheduling" };
 
@@ -83,12 +84,12 @@ export default async function SchedulingPage({
   // Using the same param keeps the nav URLs simple.
   const weekStart =
     view === "day"
-      ? (week && /^\d{4}-\d{2}-\d{2}$/.test(week)
-          ? (() => {
-              const [y, m, d] = week.split("-").map(Number);
-              return new Date(y, m - 1, d);
-            })()
-          : new Date(new Date().setHours(0, 0, 0, 0)))
+      ? week && /^\d{4}-\d{2}-\d{2}$/.test(week)
+        ? (() => {
+            const [y, m, d] = week.split("-").map(Number);
+            return new Date(y, m - 1, d);
+          })()
+        : new Date(new Date().setHours(0, 0, 0, 0))
       : view === "month"
         ? (() => {
             // Anchor to the 1st of the month (any date within the month works).
@@ -145,18 +146,15 @@ export default async function SchedulingPage({
   const fetchStart = midnightInTzUtc(weekStartYmd, tz);
   const fetchEnd = midnightInTzUtc(weekEndYmd, tz);
 
-  const [
-    { bookings, employees, offDays },
-    savedViews,
-    currency,
-  ] = await Promise.all([
-    fetchScheduleWeek(fetchStart, fetchEnd, {
-      startYmd: weekStartYmd,
-      endYmdExclusive: weekEndYmd,
-    }),
-    fetchSchedulerViews(membership.organization_id),
-    getOrgCurrency(membership.organization_id),
-  ]);
+  const [{ bookings, employees, offDays }, savedViews, currency] =
+    await Promise.all([
+      fetchScheduleWeek(fetchStart, fetchEnd, {
+        startYmd: weekStartYmd,
+        endYmdExclusive: weekEndYmd,
+      }),
+      fetchSchedulerViews(membership.organization_id),
+      getOrgCurrency(membership.organization_id),
+    ]);
 
   // For month nav, prev/next = first of prev/next month.
   const prev =
@@ -171,14 +169,17 @@ export default async function SchedulingPage({
           new Date(weekStart.getFullYear(), weekStart.getMonth() + 1, 1),
         )
       : formatWeekParam(addDays(weekStart, view === "day" ? 1 : 7));
+  // Where the "Today" button jumps to. All three branches used to do their
+  // date arithmetic in the SERVER's zone — UTC on Vercel — so after 6 PM in
+  // Edmonton the scheduler's idea of today had already rolled over and the
+  // button landed on tomorrow, or next week, with nothing to say it had.
+  const nowYmd = zonedYmd(new Date(), tz);
   const today =
     view === "day"
-      ? formatWeekParam(new Date(new Date().setHours(0, 0, 0, 0)))
+      ? nowYmd
       : view === "month"
-        ? formatWeekParam(
-            new Date(new Date().getFullYear(), new Date().getMonth(), 1),
-          )
-        : formatWeekParam(startOfWeek(new Date()));
+        ? `${nowYmd.slice(0, 7)}-01`
+        : zonedYmd(startOfWeekUtc(new Date(), tz), tz);
 
   const weekEnd = addDays(weekStart, view === "day" ? 0 : 6);
   const range =
@@ -186,6 +187,7 @@ export default async function SchedulingPage({
       ? weekStart.toLocaleDateString("en-US", {
           month: "long",
           year: "numeric",
+          timeZone: tz,
         })
       : view === "day"
         ? weekStart.toLocaleDateString("en-US", {
@@ -193,20 +195,24 @@ export default async function SchedulingPage({
             month: "short",
             day: "numeric",
             year: "numeric",
+            timeZone: tz,
           })
         : `${weekStart.toLocaleDateString("en-US", {
             month: "short",
             day: "numeric",
+            timeZone: tz,
           })} – ${weekEnd.toLocaleDateString("en-US", {
             month: "short",
             day: "numeric",
             year: "numeric",
+            timeZone: tz,
           })}`;
 
   const descriptions: Record<View, string> = {
     week: "Drag bookings between cleaners and days. Click a card for details.",
     day: "Dispatch view — 30-min slots with an employee column per cleaner. Click an empty slot to create, click a card to edit, drag the grip to move.",
-    month: "Overview of the full month. Click a day number to switch to Day view. Click a booking chip to edit it.",
+    month:
+      "Overview of the full month. Click a day number to switch to Day view. Click a booking chip to edit it.",
   };
 
   const tabLinkClass = (active: boolean) =>
@@ -264,10 +270,7 @@ export default async function SchedulingPage({
     >
       <div className="space-y-4">
         {canEdit || membership.role === "manager" ? (
-          <CoveragePanel
-            organizationId={membership.organization_id}
-            tz={tz}
-          />
+          <CoveragePanel organizationId={membership.organization_id} tz={tz} />
         ) : null}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="text-sm font-medium text-muted-foreground">

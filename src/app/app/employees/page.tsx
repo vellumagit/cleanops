@@ -7,11 +7,13 @@ import { EmployeesTable, type EmployeeRow } from "./employees-table";
 import { PendingInvitations, type InvitationRow } from "./pending-invitations";
 import { InviteDialog } from "./invite-dialog";
 import { AddManualEmployeeDialog } from "./add-manual-dialog";
+import { getOrgTimezone } from "@/lib/org-timezone";
 
 export const metadata = { title: "Employees" };
 
 export default async function EmployeesPage() {
   const membership = await requireMembership(["owner", "admin", "manager"]);
+  const tz = await getOrgTimezone(membership.organization_id);
   const supabase = await createSupabaseServerClient();
   const isAdmin = membership.role === "owner" || membership.role === "admin";
   const canInvite = isAdmin; // managers can view but not invite
@@ -98,9 +100,13 @@ export default async function EmployeesPage() {
       }
     >
       {isAdmin && invitations.length > 0 && (
-        <PendingInvitations invitations={invitations} siteUrl={siteUrl} />
+        <PendingInvitations
+          tz={tz}
+          invitations={invitations}
+          siteUrl={siteUrl}
+        />
       )}
-      <EmployeesTable rows={rows} viewerRole={membership.role} />
+      <EmployeesTable tz={tz} rows={rows} viewerRole={membership.role} />
     </PageShell>
   );
 }

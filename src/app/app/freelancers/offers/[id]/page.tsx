@@ -13,6 +13,7 @@ import {
   humanizeEnum,
 } from "@/lib/format";
 import { CancelOfferForm } from "./cancel-form";
+import { getOrgTimezone } from "@/lib/org-timezone";
 
 export const metadata = { title: "Job offer" };
 
@@ -41,7 +42,8 @@ export default async function JobOfferDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  await requireMembership(["owner", "admin", "manager"]);
+  const membership = await requireMembership(["owner", "admin", "manager"]);
+  const tz = await getOrgTimezone(membership.organization_id);
   const { id } = await params;
   const supabase = await createSupabaseServerClient();
 
@@ -113,7 +115,7 @@ export default async function JobOfferDetailPage({
   return (
     <PageShell
       title="Job offer"
-      description={`Broadcast on ${formatDateTime(offer.created_at)}`}
+      description={`Broadcast on ${formatDateTime(offer.created_at, tz)}`}
       actions={
         <Link
           href="/app/freelancers/offers"
@@ -135,8 +137,10 @@ export default async function JobOfferDetailPage({
                   {humanizeEnum(offer.booking?.service_type ?? null)}
                 </h2>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  {formatDateTime(offer.booking?.scheduled_at ?? null)} ·{" "}
-                  {formatDurationMinutes(offer.booking?.duration_minutes ?? null)}
+                  {formatDateTime(offer.booking?.scheduled_at ?? null, tz)} ·{" "}
+                  {formatDurationMinutes(
+                    offer.booking?.duration_minutes ?? null,
+                  )}
                 </p>
                 <p className="mt-0.5 text-sm text-muted-foreground">
                   {offer.booking?.client?.name ?? "Unknown client"} ·{" "}
@@ -164,13 +168,13 @@ export default async function JobOfferDetailPage({
               <div>
                 <dt className="text-xs text-muted-foreground">Expires</dt>
                 <dd className="mt-0.5 font-medium text-foreground">
-                  {formatDateTime(offer.expires_at)}
+                  {formatDateTime(offer.expires_at, tz)}
                 </dd>
               </div>
               <div>
                 <dt className="text-xs text-muted-foreground">Filled</dt>
                 <dd className="mt-0.5 font-medium text-foreground">
-                  {offer.filled_at ? formatDateTime(offer.filled_at) : "—"}
+                  {offer.filled_at ? formatDateTime(offer.filled_at, tz) : "—"}
                 </dd>
               </div>
             </dl>
@@ -212,8 +216,9 @@ export default async function JobOfferDetailPage({
                 </li>
               ) : (
                 dispatches.map((d) => {
-                  const claimed =
-                    d.contact?.id ? claimedContactIds.has(d.contact.id) : false;
+                  const claimed = d.contact?.id
+                    ? claimedContactIds.has(d.contact.id)
+                    : false;
                   return (
                     <li
                       key={d.id}
@@ -250,7 +255,7 @@ export default async function JobOfferDetailPage({
                           </StatusBadge>
                         )}
                         <p className="text-[10px] text-muted-foreground">
-                          {formatDateTime(d.sent_at)}
+                          {formatDateTime(d.sent_at, tz)}
                         </p>
                       </div>
                     </li>
@@ -277,9 +282,17 @@ export default async function JobOfferDetailPage({
                 token.
               </li>
               <li>
-                2. {positionsNeeded > 1
-                  ? `Up to ${positionsNeeded} subcontractors can claim a spot. The offer stays open until all positions are filled.`
-                  : <>The first to tap <Copy className="inline h-3 w-3" /> and claim wins — the offer state flips to <code className="font-mono text-[11px]">filled</code> atomically.</>}
+                2.{" "}
+                {positionsNeeded > 1 ? (
+                  `Up to ${positionsNeeded} subcontractors can claim a spot. The offer stays open until all positions are filled.`
+                ) : (
+                  <>
+                    The first to tap <Copy className="inline h-3 w-3" /> and
+                    claim wins — the offer state flips to{" "}
+                    <code className="font-mono text-[11px]">filled</code>{" "}
+                    atomically.
+                  </>
+                )}
               </li>
               <li>
                 3. Subcontractors who tap after all spots are taken see a

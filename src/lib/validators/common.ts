@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { DEFAULT_TZ } from "@/lib/format";
+import { FALLBACK_TZ } from "@/lib/format";
 
 /**
  * Shared zod helpers used across CRUD form validators.
@@ -78,7 +78,7 @@ export const optionalDate = z
  */
 export function toDatetimeLocal(
   iso: string | null | undefined,
-  tz: string = DEFAULT_TZ,
+  tz: string = FALLBACK_TZ,
 ): string {
   if (!iso) return "";
   const d = new Date(iso);
@@ -107,11 +107,11 @@ export function toDatetimeLocal(
  * but the user meant 2:00 PM in their org's timezone. This function computes
  * the correct UTC offset and produces the right ISO string.
  *
- * Pass `tz` to use a specific org's timezone; defaults to DEFAULT_TZ.
+ * Pass `tz` to use a specific org's timezone; defaults to FALLBACK_TZ.
  */
 export function localInputToUtcIso(
   datetimeLocal: string,
-  tz: string = DEFAULT_TZ,
+  tz: string = FALLBACK_TZ,
 ): string {
   const d = new Date(datetimeLocal);
   if (Number.isNaN(d.getTime())) {

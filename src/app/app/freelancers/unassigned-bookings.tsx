@@ -2,7 +2,11 @@
 
 import Link from "next/link";
 import { AlertTriangle, Users, Clock, MapPin } from "lucide-react";
-import { StatusBadge, bookingStatusTone, formatBookingStatus } from "@/components/status-badge";
+import {
+  StatusBadge,
+  bookingStatusTone,
+  formatBookingStatus,
+} from "@/components/status-badge";
 import {
   formatCurrencyCents,
   formatDateTime,
@@ -20,7 +24,14 @@ export type UnassignedBookingRow = {
   client_name: string;
 };
 
-export function UnassignedBookings({ rows }: { rows: UnassignedBookingRow[] }) {
+export function UnassignedBookings({
+  rows,
+  tz,
+}: {
+  rows: UnassignedBookingRow[];
+  /** Org IANA timezone — every date on this table renders in it. */
+  tz: string;
+}) {
   // Capture once per render so every row tests against the same instant.
   // eslint-disable-next-line react-hooks/purity
   const nowMs = Date.now();
@@ -42,10 +53,7 @@ export function UnassignedBookings({ rows }: { rows: UnassignedBookingRow[] }) {
             new Date(r.scheduled_at).getTime() - nowMs < 24 * 60 * 60 * 1000;
 
           return (
-            <div
-              key={r.id}
-              className="flex items-center gap-4 px-4 py-3"
-            >
+            <div key={r.id} className="flex items-center gap-4 px-4 py-3">
               {/* Job info */}
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
@@ -64,7 +72,7 @@ export function UnassignedBookings({ rows }: { rows: UnassignedBookingRow[] }) {
                 </div>
                 <div className="mt-0.5 flex items-center gap-3 text-xs text-muted-foreground">
                   <span className="tabular-nums">
-                    {formatDateTime(r.scheduled_at)}
+                    {formatDateTime(r.scheduled_at, tz)}
                   </span>
                   <span>{formatDurationMinutes(r.duration_minutes)}</span>
                   <span>{humanizeEnum(r.service_type)}</span>

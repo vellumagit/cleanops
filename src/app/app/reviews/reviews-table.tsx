@@ -45,9 +45,12 @@ function Stars({ rating }: { rating: number }) {
 export function ReviewsTable({
   rows,
   canEdit = false,
+  tz,
 }: {
   rows: ReviewRow[];
   canEdit?: boolean;
+  /** Org IANA timezone — every date on this table renders in it. */
+  tz: string;
 }) {
   const [editing, setEditing] = useState<ReviewRow | null>(null);
 
@@ -62,9 +65,7 @@ export function ReviewsTable({
       key: "employee",
       header: "Employee",
       render: (r) => (
-        <span className="text-muted-foreground">
-          {r.employee_name ?? "—"}
-        </span>
+        <span className="text-muted-foreground">{r.employee_name ?? "—"}</span>
       ),
       searchValue: (r) => r.employee_name,
     },
@@ -88,7 +89,7 @@ export function ReviewsTable({
       header: "Submitted",
       render: (r) => (
         <span className="tabular-nums text-muted-foreground">
-          {formatDate(r.submitted_at)}
+          {formatDate(r.submitted_at, tz)}
         </span>
       ),
     },

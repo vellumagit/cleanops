@@ -7,6 +7,7 @@ import { formatDurationMinutes, humanizeEnum } from "@/lib/format";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { resolveShiftWindows, shiftWindowKey } from "@/lib/crew-hours";
 import { closedEntryOverrunMinutes } from "@/lib/shift-overrun";
+import { startOfWeekUtc, zonedDayStartUtc } from "@/lib/wall-clock";
 
 export const metadata = { title: "My hours" };
 
@@ -19,31 +20,23 @@ const PERIODS: Array<{ key: PeriodKey; label: string; days: number }> = [
   { key: "last_90", label: "90 days", days: 90 },
 ];
 
-/** Monday-start week containing `d`, in the org's timezone. */
-function startOfWeek(d: Date, tz: string): Date {
-  const local = new Date(d.toLocaleString("en-US", { timeZone: tz }));
-  const dow = (local.getDay() + 6) % 7; // Mon = 0
-  local.setDate(local.getDate() - dow);
-  local.setHours(0, 0, 0, 0);
-  return local;
-}
-
 function resolveRange(period: PeriodKey, tz: string): { from: Date; to: Date } {
+  // Every boundary here is a PAY-PERIOD boundary — a shift on the wrong side
+  // of one is counted in the wrong week's hours. The old helper rendered the
+  // org's wall clock to a string and re-parsed it as server-local (UTC on
+  // Vercel), so "Monday 00:00" resolved to Sunday 18:00 in Edmonton and a
+  // Sunday-evening shift fell into the previous week. This page promises the
+  // cleaner "the same numbers the office sees".
   const now = new Date();
   if (period === "this_week") {
-    return { from: startOfWeek(now, tz), to: now };
+    return { from: startOfWeekUtc(now, tz), to: now };
   }
   if (period === "last_week") {
-    const thisWeek = startOfWeek(now, tz);
-    const from = new Date(thisWeek);
-    from.setDate(from.getDate() - 7);
-    return { from, to: thisWeek };
+    const thisWeek = startOfWeekUtc(now, tz);
+    return { from: zonedDayStartUtc(thisWeek, tz, -7), to: thisWeek };
   }
   const days = period === "last_90" ? 90 : 30;
-  const from = new Date(now);
-  from.setDate(from.getDate() - days);
-  from.setHours(0, 0, 0, 0);
-  return { from, to: now };
+  return { from: zonedDayStartUtc(now, tz, -days), to: now };
 }
 
 function minutesBetween(a: string, b: string): number {
@@ -145,7 +138,7 @@ export default async function FieldHoursPage({
             new Date(r.booking.scheduled_at).getTime() +
               win.startOffsetMinutes * 60_000,
           ).toISOString()
-        : r.booking?.scheduled_at ?? null;
+        : (r.booking?.scheduled_at ?? null);
     const over = closedEntryOverrunMinutes({
       clockInIso: r.clock_in_at,
       clockOutIso: r.clock_out_at,
@@ -244,6 +237,7 @@ export default async function FieldHoursPage({
                       weekday: "long",
                       month: "short",
                       day: "numeric",
+                      timeZone: tz,
                     })}
                   </h2>
                   <span className="text-sm font-semibold tabular-nums">

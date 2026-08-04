@@ -17,6 +17,10 @@ const empty: JobOfferFormState = {};
 type Contact = { id: string; full_name: string; phone: string };
 
 type Props = {
+  /** Org IANA timezone. composeOfferSms on the server takes one explicitly,
+   *  so without it here the preview and the message actually sent disagree —
+   *  and the preview is the only thing anyone checks first. */
+  tz: string;
   bookingId: string;
   contacts: Contact[];
   booking: {
@@ -32,7 +36,7 @@ type Props = {
  * field, positions needed, and a live preview of the rendered SMS text so
  * the admin sees exactly what will go out before hitting send.
  */
-export function JobOfferForm({ bookingId, contacts, booking }: Props) {
+export function JobOfferForm({ bookingId, contacts, booking, tz }: Props) {
   const [state, formAction] = useActionState(createJobOfferAction, empty);
 
   const [selected, setSelected] = useState<Set<string>>(
@@ -66,6 +70,7 @@ export function JobOfferForm({ bookingId, contacts, booking }: Props) {
       day: "numeric",
       hour: "numeric",
       minute: "2-digit",
+      timeZone: tz,
     });
     const duration =
       booking.duration_minutes >= 60
@@ -81,7 +86,7 @@ export function JobOfferForm({ bookingId, contacts, booking }: Props) {
         ? `${positionsNeeded} spots available`
         : "First to claim gets it";
     return `Sollos 3: Coverage needed. ${service} ${when}, ${duration}, ${dollars}. ${addrShort}. ${spots}: https://…/claim/<token>`;
-  }, [booking, payDollars, positionsNeeded]);
+  }, [booking, payDollars, positionsNeeded, tz]);
 
   const segmentCount = Math.max(1, Math.ceil(preview.length / 160));
 
@@ -224,8 +229,8 @@ export function JobOfferForm({ bookingId, contacts, booking }: Props) {
           {preview}
         </p>
         <p className="mt-2 text-[11px] text-muted-foreground">
-          The real link will use a unique claim token per recipient. Going
-          over 160 chars doubles the per-message cost.
+          The real link will use a unique claim token per recipient. Going over
+          160 chars doubles the per-message cost.
         </p>
       </div>
 

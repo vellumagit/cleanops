@@ -5,6 +5,7 @@ import { PageShell } from "@/components/page-shell";
 import { FreelancerForm } from "../../freelancer-form";
 import { DeleteFreelancerForm } from "./delete-form";
 import { formatDateTime } from "@/lib/format";
+import { getOrgTimezone } from "@/lib/org-timezone";
 
 export const metadata = { title: "Edit subcontractor" };
 
@@ -13,7 +14,8 @@ export default async function EditFreelancerPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  await requireMembership(["owner", "admin", "manager"]);
+  const membership = await requireMembership(["owner", "admin", "manager"]);
+  const tz = await getOrgTimezone(membership.organization_id);
   const { id } = await params;
   const supabase = await createSupabaseServerClient();
 
@@ -76,13 +78,13 @@ export default async function EditFreelancerPage({
               <div className="flex justify-between gap-3">
                 <dt className="text-muted-foreground">Last offered</dt>
                 <dd className="font-medium text-foreground">
-                  {formatDateTime(contact.last_offered_at)}
+                  {formatDateTime(contact.last_offered_at, tz)}
                 </dd>
               </div>
               <div className="flex justify-between gap-3">
                 <dt className="text-muted-foreground">Last accepted</dt>
                 <dd className="font-medium text-foreground">
-                  {formatDateTime(contact.last_accepted_at)}
+                  {formatDateTime(contact.last_accepted_at, tz)}
                 </dd>
               </div>
             </dl>
@@ -107,7 +109,7 @@ export default async function EditFreelancerPage({
                           "Shift"}
                       </p>
                       <p className="text-muted-foreground">
-                        {formatDateTime(d.sent_at)}
+                        {formatDateTime(d.sent_at, tz)}
                       </p>
                     </div>
                     <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">

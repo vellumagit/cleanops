@@ -20,9 +20,11 @@ export type InvitationRow = {
 function InvitationCard({
   inv,
   siteUrl,
+  tz,
 }: {
   inv: InvitationRow;
   siteUrl: string;
+  tz: string;
 }) {
   const [copied, setCopied] = useState(false);
   const inviteLink = `${siteUrl}/join/${inv.token}`;
@@ -38,7 +40,15 @@ function InvitationCard({
       <div className="flex min-w-0 flex-col gap-0.5">
         <div className="flex items-center gap-2">
           <span className="truncate text-sm font-medium">{inv.email}</span>
-          <StatusBadge tone={inv.role === "admin" ? "blue" : inv.role === "manager" ? "amber" : "neutral"}>
+          <StatusBadge
+            tone={
+              inv.role === "admin"
+                ? "blue"
+                : inv.role === "manager"
+                  ? "amber"
+                  : "neutral"
+            }
+          >
             {humanizeEnum(inv.role)}
           </StatusBadge>
           {inv.expired ? (
@@ -49,9 +59,9 @@ function InvitationCard({
         </div>
         <span className="text-xs text-muted-foreground">
           <Clock className="mr-1 inline h-3 w-3" />
-          Invited {formatDate(inv.created_at)}
+          Invited {formatDate(inv.created_at, tz)}
           {!inv.expired && (
-            <> &middot; Expires {formatDate(inv.expires_at)}</>
+            <> &middot; Expires {formatDate(inv.expires_at, tz)}</>
           )}
         </span>
       </div>
@@ -93,9 +103,12 @@ function InvitationCard({
 export function PendingInvitations({
   invitations,
   siteUrl,
+  tz,
 }: {
   invitations: InvitationRow[];
   siteUrl: string;
+  /** Org IANA timezone — every date on this table renders in it. */
+  tz: string;
 }) {
   if (invitations.length === 0) return null;
 
@@ -106,7 +119,7 @@ export function PendingInvitations({
       </h2>
       <div className="space-y-2">
         {invitations.map((inv) => (
-          <InvitationCard key={inv.id} inv={inv} siteUrl={siteUrl} />
+          <InvitationCard key={inv.id} inv={inv} siteUrl={siteUrl} tz={tz} />
         ))}
       </div>
     </div>

@@ -10,6 +10,7 @@ import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
 import { RateLimitedPage } from "@/components/rate-limited-page";
 import { OpenInMaps } from "@/components/open-in-maps";
 import { ClaimForm } from "./claim-form";
+import { getOrgTimezone } from "@/lib/org-timezone";
 
 export const metadata: Metadata = {
   title: "Shift offer",
@@ -58,7 +59,7 @@ export default async function ClaimPage({
         offer:job_offers (
           id, status, pay_cents, notes, expires_at, filled_contact_id,
           booking:bookings (
-            id, scheduled_at, duration_minutes, service_type,
+            id, organization_id, scheduled_at, duration_minutes, service_type,
             address, notes,
             client:clients ( name, phone, notes )
           )
@@ -69,7 +70,11 @@ export default async function ClaimPage({
     .maybeSingle();
 
   if (!dispatch || !dispatch.offer || !dispatch.offer.booking) {
-    return <Shell><InvalidState /></Shell>;
+    return (
+      <Shell>
+        <InvalidState />
+      </Shell>
+    );
   }
 
   // Fetch positions columns separately (not in generated types yet).
@@ -84,10 +89,17 @@ export default async function ClaimPage({
     positions_filled: number;
   };
   // Merge positions data (defaults for pre-migration rows).
-  offer.positions_needed = (offerPositions as Record<string, number> | null)?.positions_needed ?? 1;
-  offer.positions_filled = (offerPositions as Record<string, number> | null)?.positions_filled ?? 0;
+  offer.positions_needed =
+    (offerPositions as Record<string, number> | null)?.positions_needed ?? 1;
+  offer.positions_filled =
+    (offerPositions as Record<string, number> | null)?.positions_filled ?? 0;
 
   const booking = offer.booking;
+  // This page is the other half of an SMS that already formats the shift
+  // time in the org's timezone (claim/[token]/actions.ts). Without this the
+  // text said 3:00 PM and the page it opened said 5:00 PM, so a subcontractor
+  // either declined work they could take or arrived two hours late.
+  const tz = await getOrgTimezone(booking.organization_id);
   // Server component — rendered once per request, so capturing "now" here
   // is deterministic for the response. React 19's purity rule doesn't
   // differentiate Server vs Client Components, so we opt out for this line.
@@ -100,7 +112,10 @@ export default async function ClaimPage({
   let view: React.ReactNode;
   if (offer.status === "cancelled") {
     view = <CancelledState />;
-  } else if (offer.status === "expired" || (offer.status === "open" && expiredByClock)) {
+  } else if (
+    offer.status === "expired" ||
+    (offer.status === "open" && expiredByClock)
+  ) {
     view = <ExpiredState />;
   } else if (offer.status === "filled") {
     // Check if THIS contact claimed one of the spots.
@@ -112,7 +127,14 @@ export default async function ClaimPage({
       .maybeSingle();
 
     if (myClaim || offer.filled_contact_id === dispatch.contact_id) {
-      view = <GotItState booking={booking} contactName={dispatch.contact?.full_name ?? null} pay={offer.pay_cents} />;
+      view = (
+        <GotItState
+          booking={booking}
+          contactName={dispatch.contact?.full_name ?? null}
+          pay={offer.pay_cents}
+          tz={tz}
+        />
+      );
     } else {
       view = <LostRaceState />;
     }
@@ -131,10 +153,18 @@ export default async function ClaimPage({
 
     if (myClaim) {
       // Already claimed — show the "you got it" state
-      view = <GotItState booking={booking} contactName={dispatch.contact?.full_name ?? null} pay={offer.pay_cents} />;
+      view = (
+        <GotItState
+          booking={booking}
+          contactName={dispatch.contact?.full_name ?? null}
+          pay={offer.pay_cents}
+          tz={tz}
+        />
+      );
     } else {
       view = (
         <OpenState
+          tz={tz}
           token={token}
           contactName={dispatch.contact?.full_name ?? null}
           pay={offer.pay_cents}
@@ -207,7 +237,9 @@ function OpenState({
   expiresAt,
   positionsNeeded = 1,
   spotsRemaining,
+  tz,
 }: {
+  tz: string;
   token: string;
   contactName: string | null;
   pay: number;
@@ -225,7 +257,8 @@ function OpenState({
       <div>
         <p className="sollos-label">Shift offer</p>
         <h1 className="mt-1 text-2xl font-bold tracking-tight">
-          {contactName ? `Hey ${contactName.split(" ")[0]}, ` : ""}coverage needed
+          {contactName ? `Hey ${contactName.split(" ")[0]}, ` : ""}coverage
+          needed
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
           {isMultiPosition
@@ -242,7 +275,7 @@ function OpenState({
             </span>
           </Row>
           <Row label="Service">{humanizeEnum(booking.service_type)}</Row>
-          <Row label="When">{formatDateTime(booking.scheduled_at)}</Row>
+          <Row label="When">{formatDateTime(booking.scheduled_at, tz)}</Row>
           <Row label="Duration">
             {formatDurationMinutes(booking.duration_minutes)}
           </Row>
@@ -270,7 +303,7 @@ function OpenState({
 
       {expiresAt && (
         <p className="text-center text-[11px] text-muted-foreground">
-          Offer expires {formatDateTime(expiresAt)}
+          Offer expires {formatDateTime(expiresAt, tz)}
         </p>
       )}
     </div>
@@ -281,10 +314,12 @@ function GotItState({
   booking,
   contactName,
   pay,
+  tz,
 }: {
   booking: BookingForClaim;
   contactName: string | null;
   pay: number;
+  tz: string;
 }) {
   return (
     <div className="space-y-5">
@@ -293,7 +328,8 @@ function GotItState({
           You got it
         </p>
         <h1 className="mt-1 text-2xl font-bold tracking-tight">
-          {contactName ? `Nice, ${contactName.split(" ")[0]}!` : "Nice!"} The shift is yours.
+          {contactName ? `Nice, ${contactName.split(" ")[0]}!` : "Nice!"} The
+          shift is yours.
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Here are the full details. Save this page or screenshot it.
@@ -308,7 +344,7 @@ function GotItState({
             </span>
           </Row>
           <Row label="Service">{humanizeEnum(booking.service_type)}</Row>
-          <Row label="When">{formatDateTime(booking.scheduled_at)}</Row>
+          <Row label="When">{formatDateTime(booking.scheduled_at, tz)}</Row>
           <Row label="Duration">
             {formatDurationMinutes(booking.duration_minutes)}
           </Row>
@@ -369,8 +405,8 @@ function LostRaceState() {
     <div className="space-y-3 text-center">
       <h1 className="text-xl font-bold tracking-tight">Already claimed</h1>
       <p className="text-sm text-muted-foreground">
-        Another subcontractor grabbed this shift before you. Thanks for
-        checking — we&apos;ll send the next one your way.
+        Another subcontractor grabbed this shift before you. Thanks for checking
+        — we&apos;ll send the next one your way.
       </p>
     </div>
   );
@@ -392,8 +428,8 @@ function ExpiredState() {
     <div className="space-y-3 text-center">
       <h1 className="text-xl font-bold tracking-tight">Offer expired</h1>
       <p className="text-sm text-muted-foreground">
-        This offer is no longer open. Keep an eye on your texts for the
-        next one.
+        This offer is no longer open. Keep an eye on your texts for the next
+        one.
       </p>
     </div>
   );

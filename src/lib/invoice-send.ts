@@ -14,7 +14,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { resolveClientNotify } from "@/lib/notification-gate";
 import { sendOrgEmailDetailed, isEmailConfigured } from "@/lib/email";
 import { invoiceSentEmail } from "@/lib/email-templates";
-import { formatCurrencyCents, DEFAULT_TZ } from "@/lib/format";
+import { formatCurrencyCents, FALLBACK_TZ } from "@/lib/format";
 import { isValidIanaTz } from "@/lib/org-timezone";
 import { nextDayAtHourUtc } from "@/lib/wall-clock";
 import { getOrgCurrency } from "@/lib/org-currency";
@@ -126,10 +126,14 @@ export async function deliverInvoiceEmailCore(
     invoiceNumber: prev.number ?? invoiceId.slice(0, 8).toUpperCase(),
     amountFormatted: formatCurrencyCents(prev.amount_cents, currency),
     dueDate: prev.due_date
-      ? new Date(prev.due_date).toLocaleDateString("en-US", {
+      ? // due_date is a DATE column — no time of day to place in a zone.
+        // UTC keeps "Sep 3" reading as Sep 3 everywhere; an org zone would
+        // roll it back to Sep 2.
+        new Date(prev.due_date).toLocaleDateString("en-US", {
           month: "short",
           day: "numeric",
           year: "numeric",
+          timeZone: "UTC",
         })
       : "On receipt",
     publicUrl: `${siteUrl}/i/${prev.public_token}`,
@@ -159,9 +163,11 @@ export async function deliverInvoiceEmailCore(
   // inline render here would silently fail, so we fetch the rendered PDF,
   // bounded by a timeout so a slow cold render never blocks the email (which
   // also carries a Download PDF link as a reliable fallback).
-  let pdfAttachment:
-    | { filename: string; content: Buffer; contentType: string }
-    | null = null;
+  let pdfAttachment: {
+    filename: string;
+    content: Buffer;
+    contentType: string;
+  } | null = null;
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 7_000);
@@ -265,7 +271,7 @@ export function computeAutoSendAt(
   timezone: string | null,
   hour: number | null,
 ): Date {
-  const tz = timezone && isValidIanaTz(timezone) ? timezone : DEFAULT_TZ;
+  const tz = timezone && isValidIanaTz(timezone) ? timezone : FALLBACK_TZ;
   const h = typeof hour === "number" && hour >= 0 && hour <= 23 ? hour : 17;
   return nextDayAtHourUtc(from, tz, h);
 }
@@ -307,7 +313,10 @@ export async function markInvoiceSentSystem(
         console.error("[invoice-send] Sage sync on auto-send failed:", err),
       );
       pushInvoiceToQuickBooks(invoiceId).catch((err) =>
-        console.error("[invoice-send] QuickBooks sync on auto-send failed:", err),
+        console.error(
+          "[invoice-send] QuickBooks sync on auto-send failed:",
+          err,
+        ),
       );
       return { ok: true, messageId: delivered.messageId };
     }
@@ -337,7 +346,9 @@ async function deliverInvoiceSmsSystem(
     const db = createSupabaseAdminClient();
     const { data: inv } = (await db
       .from("invoices")
-      .select("id, number, status, sent_at, public_token, amount_cents, organization_id")
+      .select(
+        "id, number, status, sent_at, public_token, amount_cents, organization_id",
+      )
       .eq("id", invoiceId)
       .maybeSingle()) as unknown as {
       data: {
@@ -354,7 +365,9 @@ async function deliverInvoiceSmsSystem(
     if (!inv.public_token) {
       // No hosted link to carry — a text saying "you owe money" with no way
       // to view or pay is worse than the skip note. Owner sends manually.
-      console.warn(`[invoice-send] SMS delivery for ${invoiceId} skipped — no public token`);
+      console.warn(
+        `[invoice-send] SMS delivery for ${invoiceId} skipped — no public token`,
+      );
       return "skipped";
     }
 
@@ -393,10 +406,16 @@ async function deliverInvoiceSmsSystem(
           .eq("id", invoiceId);
         if (!error) {
           pushInvoiceToSage(invoiceId).catch((err) =>
-            console.error("[invoice-send] Sage sync on SMS auto-send failed:", err),
+            console.error(
+              "[invoice-send] Sage sync on SMS auto-send failed:",
+              err,
+            ),
           );
           pushInvoiceToQuickBooks(invoiceId).catch((err) =>
-            console.error("[invoice-send] QuickBooks sync on SMS auto-send failed:", err),
+            console.error(
+              "[invoice-send] QuickBooks sync on SMS auto-send failed:",
+              err,
+            ),
           );
           break;
         }
@@ -409,7 +428,11 @@ async function deliverInvoiceSmsSystem(
     }
     return "sent";
   } catch (err) {
-    console.error("[invoice-send] deliverInvoiceSmsSystem failed:", invoiceId, err);
+    console.error(
+      "[invoice-send] deliverInvoiceSmsSystem failed:",
+      invoiceId,
+      err,
+    );
     return "error";
   }
 }
@@ -547,7 +570,11 @@ export async function runInvoiceAutoSend(): Promise<{
       .maybeSingle()) as unknown as {
       data: { status: string; auto_send_state: string | null } | null;
     };
-    if (!fresh || fresh.status !== "draft" || fresh.auto_send_state !== "scheduled") {
+    if (
+      !fresh ||
+      fresh.status !== "draft" ||
+      fresh.auto_send_state !== "scheduled"
+    ) {
       continue;
     }
 
@@ -631,11 +658,14 @@ export async function runInvoiceAutoSend(): Promise<{
           title: "An invoice couldn't auto-send",
           body: `Invoice ${inv.number ?? inv.id.slice(0, 8)} wasn't sent automatically: ${result.error}`,
           href: `/app/invoices/${inv.id}`,
-                  // Money that did not go out. Email it.
+          // Money that did not go out. Email it.
           channels: { email: true },
         });
       } catch (notifyErr) {
-        console.error("[invoice-send] auto-send failure notify failed:", notifyErr);
+        console.error(
+          "[invoice-send] auto-send failure notify failed:",
+          notifyErr,
+        );
       }
     } else {
       // Transient failure (Resend hiccup, etc.) — leave it 'scheduled' so the

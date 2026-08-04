@@ -5,11 +5,13 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
 import { SeriesTable, type SeriesRow } from "./series-table";
+import { getOrgTimezone } from "@/lib/org-timezone";
 
 export const metadata = { title: "Recurring bookings" };
 
 export default async function SeriesPage() {
-  await requireMembership(["owner", "admin", "manager"]);
+  const membership = await requireMembership(["owner", "admin", "manager"]);
+  const tz = await getOrgTimezone(membership.organization_id);
   const supabase = await createSupabaseServerClient();
 
   const { data, error } = await (supabase
@@ -74,7 +76,10 @@ export default async function SeriesPage() {
       .select("series_id")
       .in("series_id" as never, seriesIds as never)
       .gte("scheduled_at" as never, now as never)
-      .in("status" as never, ["pending", "confirmed"] as never) as unknown as Promise<{
+      .in(
+        "status" as never,
+        ["pending", "confirmed"] as never,
+      ) as unknown as Promise<{
       data: Array<{ series_id: string }> | null;
     }>);
 
@@ -117,7 +122,7 @@ export default async function SeriesPage() {
         </Link>
       }
     >
-      <SeriesTable rows={rows} />
+      <SeriesTable tz={tz} rows={rows} />
     </PageShell>
   );
 }

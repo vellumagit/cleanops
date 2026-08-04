@@ -4,10 +4,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { PageShell } from "@/components/page-shell";
-import {
-  centsToDollarString,
-  toDatetimeLocal,
-} from "@/lib/validators/common";
+import { centsToDollarString, toDatetimeLocal } from "@/lib/validators/common";
 import { BookingForm } from "../../booking-form";
 import { fetchBookingFormOptions } from "../../options";
 import { DeleteBookingForm } from "./delete-form";
@@ -50,7 +47,12 @@ export default async function EditBookingPage({
           address: string | null;
           notes: string | null;
           series_id: string | null;
-          splits: Array<{ id: string; assigned_to: string; duration_minutes: number; hourly_rate_cents: number }> | null;
+          splits: Array<{
+            id: string;
+            assigned_to: string;
+            duration_minutes: number;
+            hourly_rate_cents: number;
+          }> | null;
           divide_hours_evenly: boolean | null;
         } | null;
         error: { message: string } | null;
@@ -102,7 +104,10 @@ export default async function EditBookingPage({
   // The "regenerate from" date defaults to this booking's date in org tz
   // (YYYY-MM-DD). The owner can push it forward if they want to leave
   // earlier occurrences untouched.
-  const seriesStartsAtDefault = toDatetimeLocal(booking.scheduled_at, orgTz).slice(0, 10);
+  const seriesStartsAtDefault = toDatetimeLocal(
+    booking.scheduled_at,
+    orgTz,
+  ).slice(0, 10);
 
   return (
     <PageShell title="Edit booking">
@@ -163,10 +168,12 @@ export default async function EditBookingPage({
           </div>
         )}
         <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-6">
-          <h2 className="text-sm font-semibold text-destructive">Danger zone</h2>
+          <h2 className="text-sm font-semibold text-destructive">
+            Danger zone
+          </h2>
           <p className="mt-1 text-xs text-muted-foreground">
-            Deleting will also remove related time entries. Reviews and
-            invoices will be unlinked but preserved.
+            Deleting will also remove related time entries. Reviews and invoices
+            will be unlinked but preserved.
           </p>
           <div className="mt-4">
             <DeleteBookingForm

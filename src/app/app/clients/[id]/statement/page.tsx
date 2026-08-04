@@ -6,6 +6,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { formatCurrencyCents } from "@/lib/format";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { PrintButton } from "./print-button";
+import { getOrgTimezone } from "@/lib/org-timezone";
 
 export const metadata = { title: "Account Statement" };
 
@@ -18,6 +19,7 @@ export default async function ClientStatementPage({
   const { id } = await params;
   const supabase = await createSupabaseServerClient();
   const currency = await getOrgCurrency(membership.organization_id);
+  const tz = await getOrgTimezone(membership.organization_id);
 
   const [clientResult, orgResult, invoicesResult] = await Promise.all([
     supabase
@@ -52,7 +54,10 @@ export default async function ClientStatementPage({
       .from("invoices")
       .select("id, number, status, amount_cents, sent_at, due_date")
       .eq("client_id", id)
-      .order("sent_at", { ascending: true, nullsFirst: false }) as unknown as Promise<{
+      .order("sent_at", {
+        ascending: true,
+        nullsFirst: false,
+      }) as unknown as Promise<{
       data: Array<{
         id: string;
         number: number;
@@ -77,7 +82,7 @@ export default async function ClientStatementPage({
   const paidByInvoice = new Map<string, number>();
   if (invoices.length > 0) {
     const invoiceIds = invoices.map((inv) => inv.id);
-    const paymentsResult = await (supabase
+    const paymentsResult = (await supabase
       .from("invoice_payments" as never)
       .select("invoice_id, amount_cents, refunded_cents")
       .in("invoice_id" as never, invoiceIds as never)) as unknown as {
@@ -113,10 +118,14 @@ export default async function ClientStatementPage({
   const totalPaid = rows.reduce((s, r) => s + r.paid_cents, 0);
   const totalBalance = totalCharged - totalPaid;
 
+  // This document gets printed and handed to a client. "Statement generated
+  // August 3" at the top of one produced on the evening of August 2 undermines
+  // the one thing it is for — being the authoritative ledger.
   const generatedAt = new Date().toLocaleDateString("en-US", {
     month: "long",
     day: "numeric",
     year: "numeric",
+    timeZone: tz,
   });
 
   return (
@@ -234,9 +243,7 @@ export default async function ClientStatementPage({
                   <th className="text-right px-4 py-2.5 font-semibold">
                     Charged
                   </th>
-                  <th className="text-right px-4 py-2.5 font-semibold">
-                    Paid
-                  </th>
+                  <th className="text-right px-4 py-2.5 font-semibold">Paid</th>
                   <th className="text-right px-4 py-2.5 font-semibold">
                     Balance
                   </th>
@@ -244,7 +251,10 @@ export default async function ClientStatementPage({
               </thead>
               <tbody className="divide-y divide-border">
                 {rows.map((row) => (
-                  <tr key={row.id} className="hover:bg-muted/30 transition-colors">
+                  <tr
+                    key={row.id}
+                    className="hover:bg-muted/30 transition-colors"
+                  >
                     <td className="px-4 py-2.5 font-medium">
                       INV-{String(row.number).padStart(3, "0")}
                     </td>
@@ -254,6 +264,7 @@ export default async function ClientStatementPage({
                             month: "short",
                             day: "numeric",
                             year: "numeric",
+                            timeZone: tz,
                           })
                         : "—"}
                     </td>

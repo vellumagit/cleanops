@@ -100,3 +100,51 @@ export function formatHourLabel(hour: number): string {
   const h12 = hour % 12 === 0 ? 12 : hour % 12;
   return `${h12}:00 ${hour < 12 ? "AM" : "PM"}`;
 }
+
+/**
+ * "2026-08-04" — the calendar date `tz`'s wall clock shows at `instant`.
+ *
+ * The day-bucketing primitive. Grouping a list by day, deciding what "today"
+ * means, building a heading key: all of it must go through this, because
+ * `new Date(iso).toLocaleDateString(...)` without a timeZone renders in the
+ * SERVER's zone, which on Vercel is UTC. After 18:00 in Edmonton that is
+ * already tomorrow, so an evening job files itself under the next day's
+ * heading while the card beneath it prints today's time.
+ */
+export function zonedYmd(instant: Date, tz: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(instant);
+}
+
+/** The UTC instant when `tz`'s wall clock reads `dateYmd` at 00:00. */
+export function zonedMidnightUtc(dateYmd: string, tz: string): Date {
+  const [y, m, d] = dateYmd.split("-").map(Number);
+  return utcForWallClock(y, m, d, 0, tz);
+}
+
+/**
+ * UTC instant of Monday 00:00 local, for the week containing `from`.
+ *
+ * Replaces the round-trip idiom `new Date(d.toLocaleString("en-US", { timeZone }))`,
+ * which renders the org's wall clock to a US-format string and then re-parses
+ * it as SERVER-local. Every getDay/setDate/setHours after that runs in the
+ * wrong zone, so "Monday 00:00" resolved to Sunday 18:00 in Edmonton — and a
+ * Sunday-evening shift landed in the previous pay week.
+ */
+export function startOfWeekUtc(from: Date, tz: string): Date {
+  const { y, m, d } = zonedDateParts(from, tz);
+  // Date.UTC normalizes overflow in both directions, so d - dow is safe
+  // across month and year boundaries.
+  const mondayOffset = (new Date(Date.UTC(y, m - 1, d)).getUTCDay() + 6) % 7;
+  return utcForWallClock(y, m, d - mondayOffset, 0, tz);
+}
+
+/** UTC instant of 00:00 local, `days` from the day `from` falls on in `tz`. */
+export function zonedDayStartUtc(from: Date, tz: string, days = 0): Date {
+  const { y, m, d } = zonedDateParts(from, tz);
+  return utcForWallClock(y, m, d + days, 0, tz);
+}

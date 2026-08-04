@@ -508,7 +508,7 @@ export async function createBookingAction(
   const { membership, supabase } = await getActionContext();
 
   // Re-interpret the datetime-local string using the org's timezone.
-  // BookingSchema's transform used DEFAULT_TZ (falls back to a reasonable
+  // BookingSchema's transform used FALLBACK_TZ (falls back to a reasonable
   // default but can drift for orgs outside Eastern). Rewriting here uses
   // the authoritative per-org timezone.
   const orgTz = await getOrgTimezone(membership.organization_id);

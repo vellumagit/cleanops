@@ -5,11 +5,13 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
 import { ContractsTable, type ContractRow } from "./contracts-table";
+import { getOrgTimezone } from "@/lib/org-timezone";
 
 export const metadata = { title: "Contracts" };
 
 export default async function ContractsPage() {
   const membership = await requireMembership();
+  const tz = await getOrgTimezone(membership.organization_id);
   const canEdit = membership.role === "owner" || membership.role === "admin";
   const supabase = await createSupabaseServerClient();
 
@@ -59,7 +61,7 @@ export default async function ContractsPage() {
         ) : null
       }
     >
-      <ContractsTable rows={rows} canEdit={canEdit} />
+      <ContractsTable tz={tz} rows={rows} canEdit={canEdit} />
     </PageShell>
   );
 }

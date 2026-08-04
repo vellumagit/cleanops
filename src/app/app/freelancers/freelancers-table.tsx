@@ -18,9 +18,12 @@ export type FreelancerRow = {
 export function FreelancersTable({
   rows,
   canEdit,
+  tz,
 }: {
   rows: FreelancerRow[];
   canEdit: boolean;
+  /** Org IANA timezone — every date on this table renders in it. */
+  tz: string;
 }) {
   const router = useRouter();
   const columns: DataTableColumn<FreelancerRow>[] = [
@@ -61,7 +64,7 @@ export function FreelancersTable({
       header: "Last offered",
       render: (r) => (
         <span className="text-xs text-muted-foreground">
-          {formatDate(r.last_offered_at)}
+          {formatDate(r.last_offered_at, tz)}
         </span>
       ),
     },
@@ -70,7 +73,7 @@ export function FreelancersTable({
       header: "Last accepted",
       render: (r) => (
         <span className="text-xs text-muted-foreground">
-          {formatDate(r.last_accepted_at)}
+          {formatDate(r.last_accepted_at, tz)}
         </span>
       ),
     },

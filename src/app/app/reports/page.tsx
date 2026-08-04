@@ -7,6 +7,7 @@ import { getOrgCurrency } from "@/lib/org-currency";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { localInputToUtcIso } from "@/lib/validators/common";
 import { formatCurrencyCents, formatDate } from "@/lib/format";
+import { zonedYmd } from "@/lib/wall-clock";
 
 // Per-table cap. Large orgs exceeding this trigger a "narrow your range"
 // warning so the user knows the numbers are incomplete instead of silently
@@ -118,20 +119,17 @@ export default async function ReportsPage({
   // Cast through string because the generated invoice_status enum
   // doesn't yet include "refunded" (added in migration
   // 20260526010000_invoice_status_refunded, types not regenerated).
-  const totalPaid =
-    (invoices ?? [])
-      .filter((i) => i.status === "paid")
-      .reduce((s, i) => s + (i.amount_cents ?? 0), 0);
-  const totalRefunded =
-    (invoices ?? [])
-      .filter((i) => (i.status as string) === "refunded")
-      .reduce((s, i) => s + (i.amount_cents ?? 0), 0);
+  const totalPaid = (invoices ?? [])
+    .filter((i) => i.status === "paid")
+    .reduce((s, i) => s + (i.amount_cents ?? 0), 0);
+  const totalRefunded = (invoices ?? [])
+    .filter((i) => (i.status as string) === "refunded")
+    .reduce((s, i) => s + (i.amount_cents ?? 0), 0);
   const totalRevenue = totalPaid - totalRefunded;
 
-  const outstandingRevenue =
-    (invoices ?? [])
-      .filter((i) => ["sent", "overdue", "partially_paid"].includes(i.status))
-      .reduce((s, i) => s + (i.amount_cents ?? 0), 0);
+  const outstandingRevenue = (invoices ?? [])
+    .filter((i) => ["sent", "overdue", "partially_paid"].includes(i.status))
+    .reduce((s, i) => s + (i.amount_cents ?? 0), 0);
 
   const totalBookings = bookings?.length ?? 0;
   const completedBookings = (bookings ?? []).filter(
@@ -155,8 +153,15 @@ export default async function ReportsPage({
   const revenueByMonth = new Map<string, number>();
   for (const inv of invoices ?? []) {
     if (inv.status !== "paid" || !inv.paid_at) continue;
-    const m = inv.paid_at.slice(0, 7); // YYYY-MM
-    revenueByMonth.set(m, (revenueByMonth.get(m) ?? 0) + (inv.amount_cents ?? 0));
+    // Bucket in the org's calendar, not UTC's. Slicing the raw ISO string put
+    // an invoice paid Jul 31 at 7 PM Edmonton (Aug 1 01:00 UTC) into August,
+    // while the query window twenty lines up already uses orgTz — so the chart
+    // disagreed with the totals above it at every month boundary.
+    const m = zonedYmd(new Date(inv.paid_at), orgTz).slice(0, 7); // YYYY-MM
+    revenueByMonth.set(
+      m,
+      (revenueByMonth.get(m) ?? 0) + (inv.amount_cents ?? 0),
+    );
   }
   const monthEntries = [...revenueByMonth.entries()].sort(([a], [b]) =>
     a.localeCompare(b),
@@ -172,10 +177,7 @@ export default async function ReportsPage({
   const serviceEntries = [...byService.entries()].sort((a, b) => b[1] - a[1]);
 
   // Top clients by revenue
-  const clientRevenue = new Map<
-    string,
-    { name: string; total: number }
-  >();
+  const clientRevenue = new Map<string, { name: string; total: number }>();
   for (const inv of (topClientsRaw ?? []) as Array<{
     amount_cents: number;
     client_id: string;
@@ -197,7 +199,7 @@ export default async function ReportsPage({
   return (
     <PageShell
       title="Reports"
-      description={`Performance from ${formatDate(from)} to ${formatDate(to)}`}
+      description={`Performance from ${formatDate(from, orgTz)} to ${formatDate(to, orgTz)}`}
       actions={
         <a
           href={`/app/reports/export?from=${from}&to=${to}`}
@@ -213,8 +215,7 @@ export default async function ReportsPage({
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <div>
             <p className="font-medium">
-              Showing partial data — narrow the date range for complete
-              numbers.
+              Showing partial data — narrow the date range for complete numbers.
             </p>
             <p className="mt-0.5 text-xs text-amber-800/80 dark:text-amber-200/80">
               {truncated
@@ -257,8 +258,16 @@ export default async function ReportsPage({
 
       {/* KPI Cards */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        <Kpi label="Paid revenue" value={formatCurrencyCents(totalRevenue, currency)} tone="green" />
-        <Kpi label="Outstanding" value={formatCurrencyCents(outstandingRevenue, currency)} tone="amber" />
+        <Kpi
+          label="Paid revenue"
+          value={formatCurrencyCents(totalRevenue, currency)}
+          tone="green"
+        />
+        <Kpi
+          label="Outstanding"
+          value={formatCurrencyCents(outstandingRevenue, currency)}
+          tone="amber"
+        />
         <Kpi label="Bookings" value={String(totalBookings)} />
         <Kpi
           label="Completion rate"
@@ -285,12 +294,20 @@ export default async function ReportsPage({
         ) : (
           <div className="space-y-2">
             {monthEntries.map(([month, value]) => {
-              const pct = maxMonthRevenue > 0 ? (value / maxMonthRevenue) * 100 : 0;
+              const pct =
+                maxMonthRevenue > 0 ? (value / maxMonthRevenue) * 100 : 0;
               const [year, m] = month.split("-");
-              const label = new Date(Number(year), Number(m) - 1).toLocaleString(
-                "en-US",
-                { month: "short", year: "2-digit" },
-              );
+              // Constructed from the bucket's own year/month numbers, so it
+              // carries no instant to place in a zone — it is already the
+              // org's month, courtesy of zonedYmd above.
+              const label = new Date(
+                Number(year),
+                Number(m) - 1,
+              ).toLocaleString("en-US", {
+                month: "short",
+                year: "2-digit",
+                timeZone: "UTC",
+              });
               return (
                 <div key={month} className="flex items-center gap-3 text-sm">
                   <div className="w-16 shrink-0 text-xs text-muted-foreground">
@@ -319,11 +336,14 @@ export default async function ReportsPage({
         <div className="rounded-lg border border-border bg-card p-5">
           <h2 className="mb-4 text-sm font-semibold">Service mix</h2>
           {serviceEntries.length === 0 ? (
-            <p className="text-xs text-muted-foreground">No bookings in this window.</p>
+            <p className="text-xs text-muted-foreground">
+              No bookings in this window.
+            </p>
           ) : (
             <div className="space-y-2">
               {serviceEntries.map(([type, count]) => {
-                const pct = totalBookings > 0 ? (count / totalBookings) * 100 : 0;
+                const pct =
+                  totalBookings > 0 ? (count / totalBookings) * 100 : 0;
                 return (
                   <div key={type} className="flex items-center gap-3 text-sm">
                     <div className="w-24 shrink-0 text-xs capitalize">
@@ -350,7 +370,9 @@ export default async function ReportsPage({
         <div className="rounded-lg border border-border bg-card p-5">
           <h2 className="mb-4 text-sm font-semibold">Top clients by revenue</h2>
           {topClients.length === 0 ? (
-            <p className="text-xs text-muted-foreground">No paid invoices yet.</p>
+            <p className="text-xs text-muted-foreground">
+              No paid invoices yet.
+            </p>
           ) : (
             <div className="space-y-2">
               {topClients.map((c, i) => {
@@ -358,7 +380,10 @@ export default async function ReportsPage({
                   maxClientRevenue > 0 ? (c.total / maxClientRevenue) * 100 : 0;
                 return (
                   <div key={i} className="flex items-center gap-3 text-sm">
-                    <div className="w-32 shrink-0 truncate text-xs" title={c.name}>
+                    <div
+                      className="w-32 shrink-0 truncate text-xs"
+                      title={c.name}
+                    >
                       {c.name}
                     </div>
                     <div className="relative flex-1">
@@ -382,9 +407,18 @@ export default async function ReportsPage({
 
       {/* Summary */}
       <div className="mt-6 grid gap-4 sm:grid-cols-3">
-        <StatCard label="Completed bookings" value={String(completedBookings)} />
-        <StatCard label="Cancelled bookings" value={String(cancelledBookings)} />
-        <StatCard label="Reviews received" value={String((reviews ?? []).length)} />
+        <StatCard
+          label="Completed bookings"
+          value={String(completedBookings)}
+        />
+        <StatCard
+          label="Cancelled bookings"
+          value={String(cancelledBookings)}
+        />
+        <StatCard
+          label="Reviews received"
+          value={String((reviews ?? []).length)}
+        />
       </div>
     </PageShell>
   );

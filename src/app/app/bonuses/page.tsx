@@ -7,12 +7,14 @@ import { memberDisplayName } from "@/lib/member-display";
 import { buttonVariants } from "@/components/ui/button";
 import { BonusesTable, type BonusRow } from "./bonuses-table";
 import { ComputeBonusesButton } from "./compute-button";
+import { getOrgTimezone } from "@/lib/org-timezone";
 
 export const metadata = { title: "Bonuses" };
 
 export default async function BonusesPage() {
   // Bonuses contain compensation data for all employees — owner/admin only.
   const membership = await requireMembership(["owner", "admin"]);
+  const tz = await getOrgTimezone(membership.organization_id);
   const canEdit = membership.role === "owner" || membership.role === "admin";
   const supabase = await createSupabaseServerClient();
 
@@ -147,9 +149,8 @@ export default async function BonusesPage() {
               </div>
               {rule.efficiency_enabled ? (
                 <p>
-                  Award $
-                  {(rule.efficiency_amount_cents / 100).toFixed(2)} when an
-                  employee saves ≥{Number(rule.efficiency_min_hours_saved)}h
+                  Award ${(rule.efficiency_amount_cents / 100).toFixed(2)} when
+                  an employee saves ≥{Number(rule.efficiency_min_hours_saved)}h
                   across at least {rule.efficiency_min_jobs} jobs in the last{" "}
                   {rule.period_days} days.
                 </p>
@@ -178,7 +179,12 @@ export default async function BonusesPage() {
           </div>
         )}
 
-        <BonusesTable rows={rows} canEdit={canEdit} employees={employees} />
+        <BonusesTable
+          tz={tz}
+          rows={rows}
+          canEdit={canEdit}
+          employees={employees}
+        />
       </div>
     </PageShell>
   );

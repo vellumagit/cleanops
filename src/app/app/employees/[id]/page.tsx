@@ -19,6 +19,7 @@ import { memberDisplayName } from "@/lib/member-display";
 import { formatCurrencyCents, formatDate, humanizeEnum } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { DocumentsPanel, type EmployeeDocument } from "./documents-panel";
+import { getOrgTimezone } from "@/lib/org-timezone";
 
 export const metadata = { title: "Employee file" };
 
@@ -49,6 +50,7 @@ export default async function EmployeeFilePage({
   params: Promise<{ id: string }>;
 }) {
   const viewer = await requireMembership(["owner", "admin"]);
+  const tz = await getOrgTimezone(viewer.organization_id);
   const { id } = await params;
   const admin = createSupabaseAdminClient();
 
@@ -95,7 +97,10 @@ export default async function EmployeeFilePage({
     .from("membership_documents" as never)
     .select("id, category, label, file_name, size_bytes, file_path, created_at")
     .eq("membership_id" as never, id)
-    .order("created_at" as never, { ascending: false } as never)) as unknown as {
+    .order(
+      "created_at" as never,
+      { ascending: false } as never,
+    )) as unknown as {
     data: Array<{
       id: string;
       category: string;
@@ -191,7 +196,7 @@ export default async function EmployeeFilePage({
                 <div className="flex items-center gap-2 text-muted-foreground">
                   <CalendarDays className="h-3.5 w-3.5 shrink-0" />
                   <span className="text-foreground">
-                    Joined {formatDate(member.created_at)}
+                    Joined {formatDate(member.created_at, tz)}
                   </span>
                 </div>
               </dl>
@@ -239,8 +244,8 @@ export default async function EmployeeFilePage({
           <div className="mb-3 flex items-baseline justify-between">
             <h2 className="text-sm font-semibold">Documents</h2>
             <span className="text-xs text-muted-foreground">
-              {documents.length} file{documents.length === 1 ? "" : "s"} · private
-              to owners &amp; admins
+              {documents.length} file{documents.length === 1 ? "" : "s"} ·
+              private to owners &amp; admins
             </span>
           </div>
           <DocumentsPanel membershipId={member.id} documents={documents} />

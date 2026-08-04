@@ -6,6 +6,7 @@ import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
 import { ArchivedToggle } from "@/components/archived-toggle";
 import { EstimatesTable, type EstimateRow } from "./estimates-table";
+import { getOrgTimezone } from "@/lib/org-timezone";
 
 export const metadata = { title: "Estimates" };
 
@@ -15,15 +16,14 @@ export default async function EstimatesPage({
   searchParams: Promise<{ archived?: string }>;
 }) {
   const membership = await requireMembership();
+  const tz = await getOrgTimezone(membership.organization_id);
   const canEdit = membership.role === "owner" || membership.role === "admin";
   const supabase = await createSupabaseServerClient();
   const { archived } = await searchParams;
   const showArchived = archived === "1";
 
-  let query = supabase
-    .from("estimates")
-    .select(
-      `
+  let query = supabase.from("estimates").select(
+    `
         id,
         status,
         total_cents,
@@ -34,7 +34,7 @@ export default async function EstimatesPage({
         pdf_url,
         client:clients ( name )
       `,
-    );
+  );
 
   query = showArchived
     ? query.not("archived_at" as never, "is" as never, null as never)
@@ -97,7 +97,7 @@ export default async function EstimatesPage({
         </div>
       }
     >
-      <EstimatesTable rows={rows} canEdit={canEdit && !showArchived} />
+      <EstimatesTable tz={tz} rows={rows} canEdit={canEdit && !showArchived} />
     </PageShell>
   );
 }

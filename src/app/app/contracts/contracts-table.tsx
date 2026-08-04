@@ -19,9 +19,12 @@ export type ContractRow = {
 export function ContractsTable({
   rows,
   canEdit,
+  tz,
 }: {
   rows: ContractRow[];
   canEdit: boolean;
+  /** Org IANA timezone — every date on this table renders in it. */
+  tz: string;
 }) {
   const router = useRouter();
   const columns: DataTableColumn<ContractRow>[] = [
@@ -46,7 +49,7 @@ export function ContractsTable({
       header: "Start",
       render: (r) => (
         <span className="tabular-nums text-muted-foreground">
-          {formatDate(r.start_date)}
+          {formatDate(r.start_date, tz)}
         </span>
       ),
     },
@@ -55,7 +58,7 @@ export function ContractsTable({
       header: "End",
       render: (r) => (
         <span className="tabular-nums text-muted-foreground">
-          {formatDate(r.end_date)}
+          {formatDate(r.end_date, tz)}
         </span>
       ),
     },

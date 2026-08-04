@@ -9,20 +9,24 @@ import { formatCurrencyCents, formatDate } from "@/lib/format";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { NewPayrollRunForm } from "./new-run-form";
 import { getSubcontractorPayables } from "@/lib/subcontractor-payables";
+import { getOrgTimezone } from "@/lib/org-timezone";
 
 export const metadata = { title: "Payroll" };
 
 export default async function PayrollPage() {
   const membership = await requireMembership(["owner", "admin"]);
+  const tz = await getOrgTimezone(membership.organization_id);
   const admin = createSupabaseAdminClient();
   const currency = await getOrgCurrency(membership.organization_id);
 
   const { data: rawRuns } = (await admin
     .from("payroll_runs" as never)
-    .select("id, period_start, period_end, status, total_cents, finalized_at, paid_at, created_at")
+    .select(
+      "id, period_start, period_end, status, total_cents, finalized_at, paid_at, created_at",
+    )
     .eq("organization_id" as never, membership.organization_id as never)
     .order("period_start" as never, { ascending: false } as never)
-    .limit(50) as unknown as {
+    .limit(50)) as unknown as {
     data: Array<{
       id: string;
       period_start: string;
@@ -33,7 +37,7 @@ export default async function PayrollPage() {
       paid_at: string | null;
       created_at: string;
     }> | null;
-  });
+  };
 
   const runs = rawRuns ?? [];
 
@@ -71,11 +75,12 @@ export default async function PayrollPage() {
                   >
                     <div className="min-w-0">
                       <p className="text-sm font-medium">
-                        {formatDate(r.period_start)} → {formatDate(r.period_end)}
+                        {formatDate(r.period_start, tz)} →{" "}
+                        {formatDate(r.period_end, tz)}
                       </p>
                       <p className="mt-0.5 text-xs text-muted-foreground">
-                        Created {formatDate(r.created_at)}
-                        {r.paid_at && ` · Paid ${formatDate(r.paid_at)}`}
+                        Created {formatDate(r.created_at, tz)}
+                        {r.paid_at && ` · Paid ${formatDate(r.paid_at, tz)}`}
                       </p>
                     </div>
                     <div className="flex items-center gap-3">

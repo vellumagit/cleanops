@@ -12,6 +12,7 @@ import {
 } from "@/lib/format";
 import { isTwilioEnabled } from "@/lib/twilio";
 import { JobOfferForm } from "./offer-form";
+import { getOrgTimezone } from "@/lib/org-timezone";
 
 export const metadata = { title: "Send to bench" };
 
@@ -20,7 +21,8 @@ export default async function NewJobOfferPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  await requireMembership(["owner", "admin", "manager"]);
+  const membership = await requireMembership(["owner", "admin", "manager"]);
+  const tz = await getOrgTimezone(membership.organization_id);
   const { id: bookingId } = await params;
   const supabase = await createSupabaseServerClient();
 
@@ -67,6 +69,7 @@ export default async function NewJobOfferPage({
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="rounded-lg border border-border bg-card p-6">
           <JobOfferForm
+            tz={tz}
             bookingId={booking.id}
             contacts={contacts.map((c) => ({
               id: c.id,
@@ -95,7 +98,7 @@ export default async function NewJobOfferPage({
               <div className="flex justify-between gap-3">
                 <dt className="text-muted-foreground">When</dt>
                 <dd className="font-medium text-foreground">
-                  {formatDateTime(booking.scheduled_at)}
+                  {formatDateTime(booking.scheduled_at, tz)}
                 </dd>
               </div>
               <div className="flex justify-between gap-3">

@@ -53,7 +53,7 @@ export async function resolveShiftRequestAction(
  * a toast on conflicts without nuking the optimistic UI.
  *
  * Fixes a timezone bug in the prior version: the hour-extraction used
- * DEFAULT_TZ (app-wide fallback) rather than the ORG's tz. An Edmonton
+ * FALLBACK_TZ (app-wide fallback) rather than the ORG's tz. An Edmonton
  * org with a booking at 08:00 Edmonton got round-tripped through
  * America/New_York and ended up at 06:00 Edmonton after the drop.
  */

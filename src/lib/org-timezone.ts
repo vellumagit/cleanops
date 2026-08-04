@@ -1,12 +1,12 @@
 import "server-only";
 import { cache } from "react";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { DEFAULT_TZ } from "@/lib/format";
+import { FALLBACK_TZ } from "@/lib/format";
 
 /**
  * Fetch the IANA timezone for an organization. Cached per-request via
  * React's `cache()` — a page that calls this in multiple server components
- * hits the DB once. Falls back to the global DEFAULT_TZ on any error;
+ * hits the DB once. Falls back to the global FALLBACK_TZ on any error;
  * timezone is a display concern, never block rendering on a lookup miss.
  *
  * Used by:
@@ -18,18 +18,18 @@ export const getOrgTimezone = cache(
   async (organizationId: string): Promise<string> => {
     try {
       const admin = createSupabaseAdminClient();
-      const { data } = await admin
+      const { data } = (await admin
         .from("organizations")
         .select("timezone")
         .eq("id", organizationId)
-        .maybeSingle() as unknown as {
+        .maybeSingle()) as unknown as {
         data: { timezone: string | null } | null;
       };
       const tz = data?.timezone;
       if (tz && isValidIanaTz(tz)) return tz;
-      return DEFAULT_TZ;
+      return FALLBACK_TZ;
     } catch {
-      return DEFAULT_TZ;
+      return FALLBACK_TZ;
     }
   },
 );

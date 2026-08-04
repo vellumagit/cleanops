@@ -128,7 +128,10 @@ export default async function SubcontractorLedgerPage({
         </div>
 
         {/* ── Jobs ── */}
-        <Section title="Jobs" subtitle="Completed jobs this subcontractor claimed.">
+        <Section
+          title="Jobs"
+          subtitle="Completed jobs this subcontractor claimed."
+        >
           {ledger.jobs.length === 0 ? (
             <EmptyRow text="No completed jobs yet." />
           ) : (
@@ -139,7 +142,9 @@ export default async function SubcontractorLedgerPage({
                     <th className="px-4 py-2.5 font-medium">Date</th>
                     <th className="px-4 py-2.5 font-medium">Service</th>
                     <th className="px-4 py-2.5 text-right font-medium">Pay</th>
-                    <th className="px-4 py-2.5 text-right font-medium">Booking</th>
+                    <th className="px-4 py-2.5 text-right font-medium">
+                      Booking
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border/50">
@@ -164,7 +169,9 @@ export default async function SubcontractorLedgerPage({
                             <ExternalLink className="h-3 w-3" />
                           </Link>
                         ) : (
-                          <span className="text-xs text-muted-foreground">—</span>
+                          <span className="text-xs text-muted-foreground">
+                            —
+                          </span>
                         )}
                       </td>
                     </tr>
@@ -176,7 +183,10 @@ export default async function SubcontractorLedgerPage({
         </Section>
 
         {/* ── Payments ── */}
-        <Section title="Payments" subtitle="What you've paid this subcontractor.">
+        <Section
+          title="Payments"
+          subtitle="What you've paid this subcontractor."
+        >
           {ledger.payouts.length === 0 ? (
             <EmptyRow text="No payments recorded yet." />
           ) : (
@@ -185,7 +195,9 @@ export default async function SubcontractorLedgerPage({
                 <thead>
                   <tr className="border-b border-border text-left text-xs text-muted-foreground">
                     <th className="px-4 py-2.5 font-medium">Date</th>
-                    <th className="px-4 py-2.5 text-right font-medium">Amount</th>
+                    <th className="px-4 py-2.5 text-right font-medium">
+                      Amount
+                    </th>
                     <th className="px-4 py-2.5 font-medium">Method</th>
                     <th className="px-4 py-2.5 font-medium">Reference</th>
                     <th className="px-4 py-2.5 font-medium">Notes</th>
@@ -236,7 +248,9 @@ export default async function SubcontractorLedgerPage({
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium">{b.label}</p>
                     <p className="text-[11px] text-muted-foreground">
-                      {b.billDate ? formatDate(b.billDate, tz) : formatDate(b.createdAt, tz)}
+                      {b.billDate
+                        ? formatDate(b.billDate, tz)
+                        : formatDate(b.createdAt, tz)}
                       {b.amountCents != null
                         ? ` · ${formatCurrencyCents(b.amountCents, currency)}`
                         : ""}
@@ -303,5 +317,9 @@ function Section({
 }
 
 function EmptyRow({ text }: { text: string }) {
-  return <p className="px-4 py-8 text-center text-sm text-muted-foreground">{text}</p>;
+  return (
+    <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+      {text}
+    </p>
+  );
 }

@@ -4,22 +4,32 @@
  * Keep these pure and dependency-free so they can be called from server
  * components, client components, and the seed script alike.
  *
- * TIMEZONE NOTE: All dates in the database are stored as UTC ISO strings.
- * Display functions format them in the app-wide default timezone so that
- * server-rendered HTML (UTC on Vercel) and client-rendered output (browser
- * local tz) show the same time. When org-level timezone support is added,
- * replace DEFAULT_TZ with the org's preference.
+ * TIMEZONE NOTE: All dates in the database are stored as UTC ISO strings, so
+ * every render needs a timezone to be meaningful. `tz` is REQUIRED on the date
+ * formatters — omitting it used to fall back to America/New_York, silently, and
+ * two Svit cleaners who clocked in at 3:00 PM Edmonton showed up as 5:00 PM on
+ * the timesheet. A wrong render that no one is told about is worse than a
+ * compile error, so this is a compile error now.
+ *
+ * Get it from `getOrgTimezone(organizationId)` in a server component (it is
+ * React-cache()'d, so repeat calls in one request are free), or thread it down
+ * as a prop to a client component. When there is genuinely no single org in
+ * scope — the seed script, marketing pages, cross-org admin — pass
+ * FALLBACK_TZ and mean it.
  */
 
 /**
- * App-wide display timezone. Override with NEXT_PUBLIC_DEFAULT_TIMEZONE
- * in .env.local (e.g. "America/Chicago", "Europe/London").
- * Falls back to America/New_York — most Sollos 3 early customers are US-East.
+ * Last-resort timezone for the few surfaces with no organization in scope.
+ *
+ * Deliberately NOT named DEFAULT_TZ and deliberately not a default parameter
+ * value: it should be typed out at a call site by someone who has decided
+ * there is no org to ask, which is rare. If you are reaching for it inside
+ * /app or /field, you want getOrgTimezone instead.
  */
-export const DEFAULT_TZ =
+export const FALLBACK_TZ =
   (typeof process !== "undefined"
     ? process.env?.NEXT_PUBLIC_DEFAULT_TIMEZONE
-    : undefined) ?? "America/New_York";
+    : undefined) ?? "America/Edmonton";
 
 export type CurrencyCode = "CAD" | "USD";
 
@@ -46,10 +56,7 @@ export function formatCurrencyCents(
  * Format an ISO timestamp as a short date, e.g. "Apr 7, 2026".
  * Pass `tz` to use an org-specific timezone; defaults to DEFAULT_TZ.
  */
-export function formatDate(
-  iso: string | null | undefined,
-  tz: string = DEFAULT_TZ,
-): string {
+export function formatDate(iso: string | null | undefined, tz: string): string {
   if (!iso) return "—";
   // Date-only strings ("2026-04-13") are UTC midnight — applying a timezone
   // offset rolls them back by a day. Append noon UTC so the date stays stable
@@ -67,11 +74,10 @@ export function formatDate(
 
 /**
  * Format an ISO timestamp as a date + time, e.g. "Apr 7, 2026 · 9:30 AM".
- * Pass `tz` to use an org-specific timezone; defaults to DEFAULT_TZ.
  */
 export function formatDateTime(
   iso: string | null | undefined,
-  tz: string = DEFAULT_TZ,
+  tz: string,
 ): string {
   if (!iso) return "—";
   // Date-only strings shouldn't reach here, but handle them gracefully.
@@ -91,7 +97,9 @@ export function formatDateTime(
 }
 
 /** Format a duration in minutes as e.g. "1h 30m" or "45m". */
-export function formatDurationMinutes(minutes: number | null | undefined): string {
+export function formatDurationMinutes(
+  minutes: number | null | undefined,
+): string {
   if (minutes == null) return "—";
   if (minutes < 60) return `${minutes}m`;
   const h = Math.floor(minutes / 60);

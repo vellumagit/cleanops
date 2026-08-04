@@ -34,10 +34,7 @@ import type {
   OpenShift,
 } from "./types";
 import { PtoApprovalPanel } from "./pto-approval-panel";
-import {
-  ManualEntryDialog,
-  type EditingEntry,
-} from "./manual-entry-dialog";
+import { ManualEntryDialog, type EditingEntry } from "./manual-entry-dialog";
 
 type EmpSummary = {
   id: string;
@@ -104,7 +101,9 @@ function buildSummaries(
     }
   }
 
-  return Array.from(map.values()).sort((a, b) => b.totalMinutes - a.totalMinutes);
+  return Array.from(map.values()).sort(
+    (a, b) => b.totalMinutes - a.totalMinutes,
+  );
 }
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -164,7 +163,8 @@ function CompletionBadge({
   if (type === "under")
     return (
       <span className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-medium text-violet-700 dark:bg-violet-950/40 dark:text-violet-300">
-        <TrendingUp className="h-3 w-3" /> {formatDurationMinutes(minutes)} faster
+        <TrendingUp className="h-3 w-3" /> {formatDurationMinutes(minutes)}{" "}
+        faster
       </span>
     );
   return (
@@ -288,10 +288,7 @@ export function TimesheetsView({
   async function handleCloseOpenShift(shiftId: string) {
     const endLocal = prompt(
       "End time for this shift (YYYY-MM-DD HH:MM, org timezone):",
-      new Date()
-        .toISOString()
-        .slice(0, 16)
-        .replace("T", " "),
+      new Date().toISOString().slice(0, 16).replace("T", " "),
     );
     if (!endLocal) return;
     // Accept both space and T separator; the action's parser handles ISO format.
@@ -351,10 +348,16 @@ export function TimesheetsView({
   const totalHours = Math.round(
     filteredEntries.reduce((sum, e) => sum + e.actual_minutes, 0) / 60,
   );
-  const totalEarned = filteredEntries.reduce((sum, e) => sum + e.earned_cents, 0);
-  const filteredPto = empFilter === "all"
-    ? ptoEntries.filter((p) => p.status === "approved")
-    : ptoEntries.filter((p) => p.status === "approved" && p.employee_id === empFilter);
+  const totalEarned = filteredEntries.reduce(
+    (sum, e) => sum + e.earned_cents,
+    0,
+  );
+  const filteredPto =
+    empFilter === "all"
+      ? ptoEntries.filter((p) => p.status === "approved")
+      : ptoEntries.filter(
+          (p) => p.status === "approved" && p.employee_id === empFilter,
+        );
   const totalPtoHours = filteredPto.reduce((sum, p) => sum + p.hours, 0);
 
   function applyDateRange() {
@@ -399,7 +402,8 @@ export function TimesheetsView({
           (e) => e.needs_review || e.over_allotted_minutes > 0,
         );
         if (flagged.length === 0) return null;
-        const hrs = flagged.reduce((sum, e) => sum + (e.actual_minutes ?? 0), 0) / 60;
+        const hrs =
+          flagged.reduce((sum, e) => sum + (e.actual_minutes ?? 0), 0) / 60;
         const cappedCount = flagged.filter((e) => e.needs_review).length;
         const overCount = flagged.filter(
           (e) => !e.needs_review && e.over_allotted_minutes > 0,
@@ -419,9 +423,9 @@ export function TimesheetsView({
                   {cappedCount > 0 && (
                     <>
                       <span className="font-medium">{cappedCount}</span>{" "}
-                      {cappedCount === 1 ? "was" : "were"} capped because
-                      nobody clocked out — the clock was stopped but the hours
-                      have NOT been changed (amber{" "}
+                      {cappedCount === 1 ? "was" : "were"} capped because nobody
+                      clocked out — the clock was stopped but the hours have NOT
+                      been changed (amber{" "}
                       <span className="font-semibold">REVIEW</span> tag).{" "}
                     </>
                   )}
@@ -434,8 +438,8 @@ export function TimesheetsView({
                       been confirmed.{" "}
                     </>
                   )}
-                  Confirm or correct each one. Payroll will not run while
-                  capped shifts are awaiting review.
+                  Confirm or correct each one. Payroll will not run while capped
+                  shifts are awaiting review.
                 </p>
               </div>
             </div>
@@ -520,7 +524,9 @@ export function TimesheetsView({
       <div className="flex flex-wrap items-end gap-3">
         <div className="flex items-center gap-2">
           <div>
-            <label className="text-xs font-medium text-muted-foreground">From</label>
+            <label className="text-xs font-medium text-muted-foreground">
+              From
+            </label>
             <input
               type="date"
               value={localFrom}
@@ -529,7 +535,9 @@ export function TimesheetsView({
             />
           </div>
           <div>
-            <label className="text-xs font-medium text-muted-foreground">To</label>
+            <label className="text-xs font-medium text-muted-foreground">
+              To
+            </label>
             <input
               type="date"
               value={localTo}
@@ -589,7 +597,9 @@ export function TimesheetsView({
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <div className="rounded-xl border border-border bg-card px-4 py-3">
           <div className="text-xs text-muted-foreground">Total hours</div>
-          <div className="mt-1 text-xl font-semibold tabular-nums">{totalHours}h</div>
+          <div className="mt-1 text-xl font-semibold tabular-nums">
+            {totalHours}h
+          </div>
         </div>
         <div className="rounded-xl border border-border bg-card px-4 py-3">
           <div className="text-xs text-muted-foreground">Total earnings</div>
@@ -599,7 +609,9 @@ export function TimesheetsView({
         </div>
         <div className="rounded-xl border border-border bg-card px-4 py-3">
           <div className="text-xs text-muted-foreground">Shifts</div>
-          <div className="mt-1 text-xl font-semibold tabular-nums">{entries.length}</div>
+          <div className="mt-1 text-xl font-semibold tabular-nums">
+            {entries.length}
+          </div>
         </div>
         <div className="rounded-xl border border-border bg-card px-4 py-3">
           <div className="text-xs text-muted-foreground">PTO hours</div>
@@ -642,7 +654,10 @@ export function TimesheetsView({
           {(empFilter !== "all" || manualOnly) && (
             <button
               type="button"
-              onClick={() => { setEmpFilter("all"); setManualOnly(false); }}
+              onClick={() => {
+                setEmpFilter("all");
+                setManualOnly(false);
+              }}
               className="text-xs text-primary underline-offset-4 hover:underline"
             >
               Clear filters
@@ -704,9 +719,7 @@ export function TimesheetsView({
         <div className="space-y-2">
           {summaries.map((emp) => {
             const isExpanded = expandedEmp === emp.id;
-            const empEntries = entries.filter(
-              (e) => e.employee_id === emp.id,
-            );
+            const empEntries = entries.filter((e) => e.employee_id === emp.id);
             const hours = Math.floor(emp.totalMinutes / 60);
             const mins = emp.totalMinutes % 60;
             const empPto = ptoEntries.filter(
@@ -720,9 +733,7 @@ export function TimesheetsView({
               >
                 <button
                   type="button"
-                  onClick={() =>
-                    setExpandedEmp(isExpanded ? null : emp.id)
-                  }
+                  onClick={() => setExpandedEmp(isExpanded ? null : emp.id)}
                   className="flex w-full items-center gap-4 px-4 py-3.5 text-left transition-colors hover:bg-muted/50"
                 >
                   <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-violet-100 text-violet-600 dark:bg-violet-950/40 dark:text-violet-300">
@@ -730,9 +741,7 @@ export function TimesheetsView({
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-semibold text-sm">
-                        {emp.name}
-                      </span>
+                      <span className="font-semibold text-sm">{emp.name}</span>
                       {emp.openShift && (
                         <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
                           <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
@@ -753,7 +762,8 @@ export function TimesheetsView({
                         <span>
                           {Math.round((emp.jobMinutes / 60) * 10) / 10}h jobs ·{" "}
                           <span className="text-violet-600 dark:text-violet-300">
-                            {Math.round((emp.otherMinutes / 60) * 10) / 10}h other
+                            {Math.round((emp.otherMinutes / 60) * 10) / 10}h
+                            other
                           </span>
                         </span>
                       )}
@@ -810,9 +820,11 @@ export function TimesheetsView({
                                   setSelectedIds((prev) => {
                                     const next = new Set(prev);
                                     if (e.target.checked) {
-                                      for (const r of empEntries) next.add(r.id);
+                                      for (const r of empEntries)
+                                        next.add(r.id);
                                     } else {
-                                      for (const r of empEntries) next.delete(r.id);
+                                      for (const r of empEntries)
+                                        next.delete(r.id);
                                     }
                                     return next;
                                   });
@@ -869,7 +881,7 @@ export function TimesheetsView({
                               </td>
                               <td className="px-4 py-2.5 tabular-nums">
                                 <div className="flex items-center gap-1.5">
-                                  {formatDateTime(r.clock_in_at)}
+                                  {formatDateTime(r.clock_in_at, orgTz)}
                                   {r.is_manual && (
                                     <span
                                       title="Manually entered"
@@ -897,7 +909,10 @@ export function TimesheetsView({
                                       )} past the time allotted for this job. Not necessarily wrong — confirm it before paying.`}
                                       className="rounded-full bg-orange-100 px-1.5 py-0.5 text-[9px] font-semibold text-orange-800 dark:bg-orange-950/40 dark:text-orange-300"
                                     >
-                                      +{formatDurationMinutes(r.over_allotted_minutes)}
+                                      +
+                                      {formatDurationMinutes(
+                                        r.over_allotted_minutes,
+                                      )}
                                     </span>
                                   )}
                                 </div>
@@ -909,7 +924,7 @@ export function TimesheetsView({
                                     In progress
                                   </span>
                                 ) : (
-                                  formatDateTime(r.clock_out_at)
+                                  formatDateTime(r.clock_out_at, orgTz)
                                 )}
                               </td>
                               <td className="px-4 py-2.5 font-medium tabular-nums">
@@ -923,7 +938,8 @@ export function TimesheetsView({
                                   : "—"}
                               </td>
                               <td className="px-4 py-2.5 hidden sm:table-cell text-muted-foreground">
-                                {r.client_name ?? categoryLabel(r.work_category)}
+                                {r.client_name ??
+                                  categoryLabel(r.work_category)}
                               </td>
                               <td className="px-4 py-2.5 hidden md:table-cell">
                                 <PunctualityBadge
@@ -997,9 +1013,7 @@ export function TimesheetsView({
                   <th className="px-4 py-2.5 text-left font-medium">
                     Clock out
                   </th>
-                  <th className="px-4 py-2.5 text-left font-medium">
-                    Actual
-                  </th>
+                  <th className="px-4 py-2.5 text-left font-medium">Actual</th>
                   <th className="px-4 py-2.5 text-left font-medium hidden sm:table-cell">
                     Est.
                   </th>
@@ -1012,9 +1026,7 @@ export function TimesheetsView({
                   <th className="px-4 py-2.5 text-left font-medium hidden md:table-cell">
                     Speed
                   </th>
-                  <th className="px-4 py-2.5 text-right font-medium">
-                    Earned
-                  </th>
+                  <th className="px-4 py-2.5 text-right font-medium">Earned</th>
                   <th className="w-10" />
                 </tr>
               </thead>
@@ -1049,7 +1061,7 @@ export function TimesheetsView({
                       </div>
                     </td>
                     <td className="px-4 py-2.5 tabular-nums">
-                      {formatDateTime(r.clock_in_at)}
+                      {formatDateTime(r.clock_in_at, orgTz)}
                     </td>
                     <td className="px-4 py-2.5 tabular-nums">
                       {r.is_open ? (
@@ -1058,7 +1070,7 @@ export function TimesheetsView({
                           In progress
                         </span>
                       ) : (
-                        formatDateTime(r.clock_out_at)
+                        formatDateTime(r.clock_out_at, orgTz)
                       )}
                     </td>
                     <td className="px-4 py-2.5 font-medium tabular-nums">

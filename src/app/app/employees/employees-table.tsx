@@ -52,9 +52,12 @@ function roleTone(r: EmployeeRow["role"]): StatusTone {
 export function EmployeesTable({
   rows,
   viewerRole,
+  tz,
 }: {
   rows: EmployeeRow[];
   viewerRole: string;
+  /** Org IANA timezone — every date on this table renders in it. */
+  tz: string;
 }) {
   const router = useRouter();
 
@@ -69,8 +72,14 @@ export function EmployeesTable({
    * work, not history. (Pending invitations also have their own panel above.)
    */
   const [tab, setTab] = useUrlState<"active" | "archived">("team", "active");
-  const active = useMemo(() => rows.filter((r) => r.status !== "disabled"), [rows]);
-  const archived = useMemo(() => rows.filter((r) => r.status === "disabled"), [rows]);
+  const active = useMemo(
+    () => rows.filter((r) => r.status !== "disabled"),
+    [rows],
+  );
+  const archived = useMemo(
+    () => rows.filter((r) => r.status === "disabled"),
+    [rows],
+  );
   const shown = tab === "archived" ? archived : active;
 
   const canEdit = viewerRole === "owner" || viewerRole === "admin";
@@ -109,7 +118,9 @@ export function EmployeesTable({
       key: "role",
       header: "Role",
       render: (r) => (
-        <StatusBadge tone={roleTone(r.role)}>{humanizeEnum(r.role)}</StatusBadge>
+        <StatusBadge tone={roleTone(r.role)}>
+          {humanizeEnum(r.role)}
+        </StatusBadge>
       ),
       searchValue: (r) => r.role,
     },
@@ -127,7 +138,7 @@ export function EmployeesTable({
       header: "Joined",
       render: (r) => (
         <span className="tabular-nums text-muted-foreground">
-          {formatDate(r.created_at)}
+          {formatDate(r.created_at, tz)}
         </span>
       ),
     },

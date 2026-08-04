@@ -69,10 +69,13 @@ export function BonusesTable({
   rows,
   canEdit,
   employees,
+  tz,
 }: {
   rows: BonusRow[];
   canEdit: boolean;
   employees: BonusEmployeeOption[];
+  /** Org IANA timezone — every date on this table renders in it. */
+  tz: string;
 }) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogMode, setDialogMode] = useState<"create" | "edit">("create");
@@ -114,7 +117,7 @@ export function BonusesTable({
       header: "Period",
       render: (r) => (
         <span className="tabular-nums text-muted-foreground">
-          {formatDate(r.period_start)} → {formatDate(r.period_end)}
+          {formatDate(r.period_start, tz)} → {formatDate(r.period_end, tz)}
         </span>
       ),
     },
@@ -140,7 +143,9 @@ export function BonusesTable({
       header: "Status",
       render: (r) => (
         <StatusBadge tone={bonusStatusTone(r.status)}>
-          {r.status === "paid" ? `Paid · ${formatDate(r.paid_at)}` : "Pending"}
+          {r.status === "paid"
+            ? `Paid · ${formatDate(r.paid_at, tz)}`
+            : "Pending"}
         </StatusBadge>
       ),
     },

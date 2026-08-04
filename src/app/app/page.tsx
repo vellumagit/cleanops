@@ -24,7 +24,7 @@ import {
   formatCurrencyCents,
   formatDate,
   formatDateTime,
-  DEFAULT_TZ,
+  FALLBACK_TZ,
 } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { memberDisplayName } from "@/lib/member-display";
@@ -125,7 +125,9 @@ export default async function DashboardPage() {
       .from("organizations")
       .select("onboarding_completed_at")
       .eq("id", membership.organization_id)
-      .maybeSingle() as unknown as { data: { onboarding_completed_at: string | null } | null },
+      .maybeSingle() as unknown as {
+      data: { onboarding_completed_at: string | null } | null;
+    },
     supabase
       .from("organizations")
       .select("logo_url, brand_color")
@@ -134,9 +136,7 @@ export default async function DashboardPage() {
       data: { logo_url: string | null; brand_color: string | null } | null;
     },
     // Used only to decide whether to auto-redirect fresh orgs to setup.
-    supabase
-      .from("clients")
-      .select("id", { count: "exact", head: true }),
+    supabase.from("clients").select("id", { count: "exact", head: true }),
   ]);
 
   // -------- Onboarding state --------
@@ -227,34 +227,28 @@ export default async function DashboardPage() {
       };
 
   const activity: Activity[] = [
-    ...(recentBookings.data ?? []).slice(0, 5).map(
-      (b): Activity => ({
-        kind: "booking_created",
-        at: b.created_at,
-        title: `New booking · ${b.client?.name ?? "—"}`,
-        meta: formatCurrencyCents(b.total_cents, currency),
-        href: "/app/bookings",
-      }),
-    ),
-    ...reviews.slice(0, 5).map(
-      (r): Activity => ({
-        kind: "review",
-        at: r.submitted_at,
-        title: `${r.rating}★ from ${r.client?.name ?? "client"}`,
-        meta: r.employee ? memberDisplayName(r.employee) : "—",
-        rating: r.rating,
-        href: "/app/reviews",
-      }),
-    ),
-    ...(recentPaidInvoices.data ?? []).map(
-      (i): Activity => ({
-        kind: "invoice_paid",
-        at: i.paid_at!,
-        title: `Invoice paid · ${i.client?.name ?? "—"}`,
-        meta: formatCurrencyCents(i.amount_cents, currency),
-        href: "/app/invoices",
-      }),
-    ),
+    ...(recentBookings.data ?? []).slice(0, 5).map((b): Activity => ({
+      kind: "booking_created",
+      at: b.created_at,
+      title: `New booking · ${b.client?.name ?? "—"}`,
+      meta: formatCurrencyCents(b.total_cents, currency),
+      href: "/app/bookings",
+    })),
+    ...reviews.slice(0, 5).map((r): Activity => ({
+      kind: "review",
+      at: r.submitted_at,
+      title: `${r.rating}★ from ${r.client?.name ?? "client"}`,
+      meta: r.employee ? memberDisplayName(r.employee) : "—",
+      rating: r.rating,
+      href: "/app/reviews",
+    })),
+    ...(recentPaidInvoices.data ?? []).map((i): Activity => ({
+      kind: "invoice_paid",
+      at: i.paid_at!,
+      title: `Invoice paid · ${i.client?.name ?? "—"}`,
+      meta: formatCurrencyCents(i.amount_cents, currency),
+      href: "/app/invoices",
+    })),
   ]
     .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
     .slice(0, 10);
@@ -286,7 +280,7 @@ export default async function DashboardPage() {
             weekday: "long",
             month: "long",
             day: "numeric",
-            timeZone: DEFAULT_TZ,
+            timeZone: FALLBACK_TZ,
           })}
         </p>
       </div>
@@ -305,7 +299,8 @@ export default async function DashboardPage() {
               Finish setting up your workspace
             </p>
             <p className="mt-0.5 text-xs text-indigo-600/70 dark:text-indigo-400/70">
-              A few quick steps to get {membership.organization_name} up and running.
+              A few quick steps to get {membership.organization_name} up and
+              running.
             </p>
           </div>
           <ArrowRight className="h-4 w-4 shrink-0 text-indigo-400 transition-transform group-hover:translate-x-1" />
@@ -343,9 +338,7 @@ export default async function DashboardPage() {
           sub={`${openInv.length} open · ${
             overdueInvoiceCount.count ?? 0
           } overdue`}
-          tone={
-            (overdueInvoiceCount.count ?? 0) > 0 ? "warning" : "default"
-          }
+          tone={(overdueInvoiceCount.count ?? 0) > 0 ? "warning" : "default"}
         />
       </div>
 
@@ -376,7 +369,9 @@ export default async function DashboardPage() {
                     </span>
                     <span className="truncate text-xs text-muted-foreground">
                       {formatDateTime(b.scheduled_at, tz)} ·{" "}
-                      {b.assigned ? memberDisplayName(b.assigned) : "Unassigned"}
+                      {b.assigned
+                        ? memberDisplayName(b.assigned)
+                        : "Unassigned"}
                     </span>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
@@ -503,7 +498,7 @@ export default async function DashboardPage() {
                         {a.title}
                       </span>
                       <span className="truncate text-[11px] text-muted-foreground">
-                        {a.meta} · {formatDate(a.at)}
+                        {a.meta} · {formatDate(a.at, tz)}
                       </span>
                     </div>
                   </Link>
@@ -626,13 +621,7 @@ function Panel({
   );
 }
 
-function EmptyMini({
-  icon,
-  text,
-}: {
-  icon: React.ReactNode;
-  text: string;
-}) {
+function EmptyMini({ icon, text }: { icon: React.ReactNode; text: string }) {
   return (
     <div className="flex flex-col items-center justify-center gap-2 py-6 text-center text-xs text-muted-foreground">
       <span className="text-muted-foreground/60">{icon}</span>
@@ -681,7 +670,7 @@ function endOfDay(d: Date): Date {
 function startOfDayInTz(d: Date): Date {
   // 1. What date is it in the target timezone right now?
   const dateStr = new Intl.DateTimeFormat("en-CA", {
-    timeZone: DEFAULT_TZ,
+    timeZone: FALLBACK_TZ,
   }).format(d); // "2026-04-13"
 
   // 2. Midnight UTC for that calendar date
@@ -692,7 +681,7 @@ function startOfDayInTz(d: Date): Date {
     utcMidnight.toLocaleString("en-US", { timeZone: "UTC" }),
   );
   const tzRepr = new Date(
-    utcMidnight.toLocaleString("en-US", { timeZone: DEFAULT_TZ }),
+    utcMidnight.toLocaleString("en-US", { timeZone: FALLBACK_TZ }),
   );
   const offsetMs = utcRepr.getTime() - tzRepr.getTime();
 

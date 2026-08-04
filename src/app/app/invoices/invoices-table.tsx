@@ -37,10 +37,13 @@ export function InvoicesTable({
   rows,
   canEdit,
   currency,
+  tz,
 }: {
   rows: InvoiceRow[];
   canEdit: boolean;
   currency: CurrencyCode;
+  /** Org IANA timezone — every date on this table renders in it. */
+  tz: string;
 }) {
   const router = useRouter();
   const columns: DataTableColumn<InvoiceRow>[] = [
@@ -55,7 +58,7 @@ export function InvoicesTable({
       header: "Issued",
       render: (r) => (
         <span className="tabular-nums text-muted-foreground">
-          {formatDate(r.created_at)}
+          {formatDate(r.created_at, tz)}
         </span>
       ),
     },
@@ -64,7 +67,7 @@ export function InvoicesTable({
       header: "Due",
       render: (r) => (
         <span className="tabular-nums text-muted-foreground">
-          {formatDate(r.due_date)}
+          {formatDate(r.due_date, tz)}
         </span>
       ),
     },
@@ -73,7 +76,7 @@ export function InvoicesTable({
       header: "Paid",
       render: (r) => (
         <span className="tabular-nums text-muted-foreground">
-          {formatDate(r.paid_at)}
+          {formatDate(r.paid_at, tz)}
         </span>
       ),
     },

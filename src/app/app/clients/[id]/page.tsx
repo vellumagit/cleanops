@@ -34,6 +34,7 @@ import { PortalInviteButton } from "./portal-invite-button";
 import { ClientNotificationsCard } from "./notifications-card";
 import { fetchOrgNotificationContext } from "../org-contact-default";
 import { SmsOptInButton } from "./sms-opt-in-button";
+import { getOrgTimezone } from "@/lib/org-timezone";
 import {
   markGbpReviewedAction,
   optOutGbpAction,
@@ -49,6 +50,7 @@ export default async function ClientDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const membership = await requireMembership();
+  const tz = await getOrgTimezone(membership.organization_id);
   const { id } = await params;
   const supabase = await createSupabaseServerClient();
   const currency = await getOrgCurrency(membership.organization_id);
@@ -62,7 +64,9 @@ export default async function ClientDetailPage({
   ] = await Promise.all([
     supabase
       .from("clients")
-      .select("id, name, email, phone, address, notes, preferred_contact, contact_preference, contact_overrides, balance_cents, created_at, profile_id, portal_invited_at, portal_accepted_at, portal_invite_expires_at, referred_by_client_id, gbp_review_state, gbp_first_asked_at, gbp_last_asked_at, gbp_clicked_at, gbp_reminders_sent, gbp_unsubscribed_at, sms_opted_in, sms_opt_in_requested_at")
+      .select(
+        "id, name, email, phone, address, notes, preferred_contact, contact_preference, contact_overrides, balance_cents, created_at, profile_id, portal_invited_at, portal_accepted_at, portal_invite_expires_at, referred_by_client_id, gbp_review_state, gbp_first_asked_at, gbp_last_asked_at, gbp_clicked_at, gbp_reminders_sent, gbp_unsubscribed_at, sms_opted_in, sms_opt_in_requested_at",
+      )
       .eq("id", id)
       .maybeSingle() as unknown as Promise<{
       data: {
@@ -96,7 +100,9 @@ export default async function ClientDetailPage({
 
     supabase
       .from("bookings")
-      .select("id, scheduled_at, duration_minutes, status, service_type, address")
+      .select(
+        "id, scheduled_at, duration_minutes, status, service_type, address",
+      )
       .eq("client_id", id)
       .order("scheduled_at", { ascending: false })
       .limit(10),
@@ -186,8 +192,7 @@ export default async function ClientDetailPage({
     .maybeSingle()) as unknown as {
     data: { google_review_url: string | null } | null;
   };
-  const gbpPreconditionsMet =
-    !!client.email && !!orgGbp?.google_review_url;
+  const gbpPreconditionsMet = !!client.email && !!orgGbp?.google_review_url;
 
   const { orgDefault: orgContactDefault, smsEnabled: orgSmsEnabled } =
     await fetchOrgNotificationContext(membership.organization_id);
@@ -291,7 +296,9 @@ export default async function ClientDetailPage({
                 <p className="text-xs text-muted-foreground">Balance owing</p>
                 <p
                   className={`text-lg font-bold tabular-nums ${
-                    client.balance_cents > 0 ? "text-rose-600" : "text-foreground"
+                    client.balance_cents > 0
+                      ? "text-rose-600"
+                      : "text-foreground"
                   }`}
                 >
                   {formatCurrencyCents(client.balance_cents, currency)}
@@ -305,7 +312,9 @@ export default async function ClientDetailPage({
 
           {client.notes && (
             <div className="mt-4 rounded-md bg-muted/40 px-3 py-2">
-              <p className="text-xs font-semibold text-muted-foreground">Notes</p>
+              <p className="text-xs font-semibold text-muted-foreground">
+                Notes
+              </p>
               <p className="mt-0.5 text-sm">{client.notes}</p>
             </div>
           )}
@@ -328,6 +337,7 @@ export default async function ClientDetailPage({
             {new Date(client.created_at).toLocaleDateString("en-US", {
               month: "long",
               year: "numeric",
+              timeZone: tz,
             })}
           </p>
         </div>
@@ -340,7 +350,8 @@ export default async function ClientDetailPage({
           smsEnabled={orgSmsEnabled}
           contactPreference={client.contact_preference}
           contactOverrides={
-            client.contact_overrides as import("@/lib/notification-preferences").ContactOverrides | null
+            client.contact_overrides as
+              import("@/lib/notification-preferences").ContactOverrides | null
           }
           hasEmail={Boolean(client.email)}
           smsOptedIn={client.sms_opted_in}
@@ -348,10 +359,30 @@ export default async function ClientDetailPage({
 
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {[
-            { label: "Bookings", value: bookings.length, icon: Calendar, href: `/app/bookings?client=${id}` },
-            { label: "Invoices", value: invoices.length, icon: Receipt, href: `/app/invoices?client=${id}` },
-            { label: "Estimates", value: estimates.length, icon: ClipboardList, href: `/app/estimates?client=${id}` },
-            { label: "Reviews", value: reviews.length, icon: Star, href: undefined },
+            {
+              label: "Bookings",
+              value: bookings.length,
+              icon: Calendar,
+              href: `/app/bookings?client=${id}`,
+            },
+            {
+              label: "Invoices",
+              value: invoices.length,
+              icon: Receipt,
+              href: `/app/invoices?client=${id}`,
+            },
+            {
+              label: "Estimates",
+              value: estimates.length,
+              icon: ClipboardList,
+              href: `/app/estimates?client=${id}`,
+            },
+            {
+              label: "Reviews",
+              value: reviews.length,
+              icon: Star,
+              href: undefined,
+            },
           ].map(({ label, value, icon: Icon, href }) => {
             const inner = (
               <>
@@ -417,7 +448,7 @@ export default async function ClientDetailPage({
                     {humanizeEnum(b.service_type)}
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    {formatDateTime(b.scheduled_at)}
+                    {formatDateTime(b.scheduled_at, tz)}
                     {b.duration_minutes
                       ? ` · ${formatDurationMinutes(b.duration_minutes)}`
                       : ""}
@@ -459,7 +490,7 @@ export default async function ClientDetailPage({
                   <p className="text-xs text-muted-foreground">
                     {formatCurrencyCents(inv.amount_cents, currency)}
                     {inv.due_date
-                      ? ` · Due ${new Date(inv.due_date).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`
+                      ? ` · Due ${new Date(inv.due_date).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })}`
                       : ""}
                   </p>
                 </div>
@@ -502,17 +533,14 @@ export default async function ClientDetailPage({
                       month: "short",
                       day: "numeric",
                       year: "numeric",
+                      timeZone: tz,
                     })}
                   </p>
                 </div>
                 <StatusBadge
                   tone={estimateStatusTone(
                     est.status as
-                      | "draft"
-                      | "sent"
-                      | "approved"
-                      | "declined"
-                      | "expired",
+                      "draft" | "sent" | "approved" | "declined" | "expired",
                   )}
                 >
                   {humanizeEnum(est.status)}
@@ -522,15 +550,9 @@ export default async function ClientDetailPage({
           </Section>
 
           {/* ── Reviews ── */}
-          <Section
-            title="Reviews"
-            emptyText="No reviews yet."
-          >
+          <Section title="Reviews" emptyText="No reviews yet.">
             {reviews.map((rev) => (
-              <div
-                key={rev.id}
-                className="rounded-md px-2 py-2"
-              >
+              <div key={rev.id} className="rounded-md px-2 py-2">
                 <div className="flex items-center gap-1">
                   {[1, 2, 3, 4, 5].map((s) => (
                     <Star
@@ -547,6 +569,7 @@ export default async function ClientDetailPage({
                       month: "short",
                       day: "numeric",
                       year: "numeric",
+                      timeZone: tz,
                     })}
                   </span>
                 </div>

@@ -41,7 +41,14 @@ function DeleteButton({ id, title }: { id: string; title: string }) {
   );
 }
 
-export function TrainingTable({ rows }: { rows: TrainingRow[] }) {
+export function TrainingTable({
+  rows,
+  tz,
+}: {
+  rows: TrainingRow[];
+  /** Org IANA timezone — every date on this table renders in it. */
+  tz: string;
+}) {
   const columns: DataTableColumn<TrainingRow>[] = [
     {
       key: "title",
@@ -85,8 +92,7 @@ export function TrainingTable({ rows }: { rows: TrainingRow[] }) {
         const pct = Math.round((r.completed / r.assigned) * 100);
         return (
           <span className="tabular-nums text-muted-foreground">
-            {r.completed}/{r.assigned}{" "}
-            <span className="text-xs">({pct}%)</span>
+            {r.completed}/{r.assigned} <span className="text-xs">({pct}%)</span>
           </span>
         );
       },
@@ -106,7 +112,7 @@ export function TrainingTable({ rows }: { rows: TrainingRow[] }) {
       header: "Created",
       render: (r) => (
         <span className="tabular-nums text-muted-foreground">
-          {formatDate(r.created_at)}
+          {formatDate(r.created_at, tz)}
         </span>
       ),
     },

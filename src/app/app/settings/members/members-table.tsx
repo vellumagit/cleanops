@@ -88,7 +88,9 @@ function EditMemberDialog({
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger render={<Button variant="ghost" size="icon" className="h-8 w-8" />}>
+      <DialogTrigger
+        render={<Button variant="ghost" size="icon" className="h-8 w-8" />}
+      >
         <Pencil className="h-4 w-4" />
       </DialogTrigger>
       <DialogContent>
@@ -132,9 +134,7 @@ function EditMemberDialog({
           <div className="space-y-1.5">
             <Label htmlFor={`pay-${member.id}`}>
               Pay rate{" "}
-              <span className="font-normal text-muted-foreground">
-                ($/hr)
-              </span>
+              <span className="font-normal text-muted-foreground">($/hr)</span>
             </Label>
             <Input
               id={`pay-${member.id}`}
@@ -153,7 +153,12 @@ function EditMemberDialog({
           {canDeactivate && (
             <div className="space-y-1.5">
               <Label htmlFor={`status-${member.id}`}>Status</Label>
-              <Select name="status" defaultValue={member.status === "disabled" ? "disabled" : "active"}>
+              <Select
+                name="status"
+                defaultValue={
+                  member.status === "disabled" ? "disabled" : "active"
+                }
+              >
                 <SelectTrigger id={`status-${member.id}`}>
                   <SelectValue />
                 </SelectTrigger>
@@ -180,16 +185,17 @@ function EditMemberDialog({
 export function MembersTable({
   rows,
   currentRole,
+  tz,
 }: {
   rows: MemberRow[];
   currentRole: string;
+  /** Org IANA timezone — every date on this table renders in it. */
+  tz: string;
 }) {
   if (rows.length === 0) {
     return (
       <div className="rounded-lg border border-dashed border-border bg-card px-6 py-16 text-center">
-        <p className="text-sm font-semibold text-foreground">
-          No team members
-        </p>
+        <p className="text-sm font-semibold text-foreground">No team members</p>
         <p className="mt-1 text-xs text-muted-foreground">
           Go to Employees to invite your first team member.
         </p>
@@ -223,12 +229,9 @@ export function MembersTable({
             </div>
             <span className="text-xs text-muted-foreground">
               {m.phone ?? "No phone"} &middot; Joined{" "}
-              {formatDate(m.created_at)}
+              {formatDate(m.created_at, tz)}
               {m.pay_rate_cents != null && (
-                <>
-                  {" "}
-                  &middot; {formatCurrencyCents(m.pay_rate_cents)}/hr
-                </>
+                <> &middot; {formatCurrencyCents(m.pay_rate_cents)}/hr</>
               )}
             </span>
           </div>

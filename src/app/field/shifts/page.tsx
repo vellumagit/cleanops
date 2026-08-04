@@ -25,9 +25,13 @@ export default async function FieldShiftsPage() {
 
   const groups = new Map<string, typeof upcoming>();
   for (const job of upcoming) {
+    // Same timezone as the filter three lines up, which uses localDate(…, tz).
+    // Without it the heading rendered in the SERVER's zone — UTC on Vercel —
+    // so an Edmonton job at or after 6 PM was filed under tomorrow's heading
+    // while the card beneath it printed today's time.
     const key = new Date(job.effective_scheduled_at).toLocaleDateString(
       "en-US",
-      { weekday: "long", month: "short", day: "numeric" },
+      { weekday: "long", month: "short", day: "numeric", timeZone: tz },
     );
     const arr = groups.get(key) ?? [];
     arr.push(job);

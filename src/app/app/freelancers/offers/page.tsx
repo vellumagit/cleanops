@@ -3,7 +3,12 @@ import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
 import { StatusBadge, type StatusTone } from "@/components/status-badge";
-import { formatCurrencyCents, formatDateTime, humanizeEnum } from "@/lib/format";
+import {
+  formatCurrencyCents,
+  formatDateTime,
+  humanizeEnum,
+} from "@/lib/format";
+import { getOrgTimezone } from "@/lib/org-timezone";
 
 export const metadata = { title: "Job offers" };
 
@@ -23,7 +28,8 @@ function offerTone(status: OfferStatus): StatusTone {
 }
 
 export default async function JobOffersPage() {
-  await requireMembership(["owner", "admin", "manager"]);
+  const membership = await requireMembership(["owner", "admin", "manager"]);
+  const tz = await getOrgTimezone(membership.organization_id);
   const supabase = await createSupabaseServerClient();
 
   const { data, error } = await supabase
@@ -91,7 +97,7 @@ export default async function JobOffersPage() {
                       </Link>
                     </td>
                     <td className="px-4 py-2 text-muted-foreground">
-                      {formatDateTime(o.booking?.scheduled_at ?? null)}
+                      {formatDateTime(o.booking?.scheduled_at ?? null, tz)}
                     </td>
                     <td className="px-4 py-2 text-right font-medium tabular-nums">
                       {formatCurrencyCents(o.pay_cents)}
@@ -100,7 +106,7 @@ export default async function JobOffersPage() {
                       {dispatchCount}
                     </td>
                     <td className="px-4 py-2 text-xs text-muted-foreground">
-                      {formatDateTime(o.created_at)}
+                      {formatDateTime(o.created_at, tz)}
                     </td>
                     <td className="px-4 py-2">
                       <StatusBadge tone={offerTone(status)}>

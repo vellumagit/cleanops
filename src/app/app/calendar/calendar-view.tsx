@@ -158,7 +158,13 @@ function parseYmdLocal(ymd: string): Date {
   return new Date(y, m - 1, d);
 }
 
-export function CalendarView({ events, hasGoogleCalendar, formOptions, currency, tz }: Props) {
+export function CalendarView({
+  events,
+  hasGoogleCalendar,
+  formOptions,
+  currency,
+  tz,
+}: Props) {
   // Month and view live in the URL. They were useState, so paging forward to
   // September, opening a booking and saving snapped the calendar back to
   // today — and a month could not be linked to. The editor's ?_return now
@@ -181,11 +187,13 @@ export function CalendarView({ events, hasGoogleCalendar, formOptions, currency,
     },
     [currentDate, setDateParam],
   );
-  const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
-  const [sheetOpen, setSheetOpen] = useState(false);
-  const [bookingDefaults, setBookingDefaults] = useState<BookingFormDefaults | undefined>(
-    undefined,
+  const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(
+    null,
   );
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [bookingDefaults, setBookingDefaults] = useState<
+    BookingFormDefaults | undefined
+  >(undefined);
   // Increment every open so BookingForm remounts fresh (clears half-filled state).
   const [formKey, setFormKey] = useState(0);
 
@@ -201,23 +209,26 @@ export function CalendarView({ events, hasGoogleCalendar, formOptions, currency,
   }
   // Restore Google Calendar toggle from localStorage at mount time so
   // we don't cascade-render from a setState-in-effect.
-  const [enabledSources, setEnabledSources] = useState<Set<EventSource>>(
-    () => {
-      const defaults: EventSource[] = ["booking", "invoice", "google_calendar", "task"];
-      if (typeof window === "undefined") return new Set(defaults);
-      try {
-        const stored = localStorage.getItem("cleanops_gcal_overlay");
-        if (stored === "false") {
-          return new Set<EventSource>(
-            defaults.filter((s) => s !== "google_calendar"),
-          );
-        }
-      } catch {
-        // localStorage blocked (private mode, iframe) — use defaults
+  const [enabledSources, setEnabledSources] = useState<Set<EventSource>>(() => {
+    const defaults: EventSource[] = [
+      "booking",
+      "invoice",
+      "google_calendar",
+      "task",
+    ];
+    if (typeof window === "undefined") return new Set(defaults);
+    try {
+      const stored = localStorage.getItem("cleanops_gcal_overlay");
+      if (stored === "false") {
+        return new Set<EventSource>(
+          defaults.filter((s) => s !== "google_calendar"),
+        );
       }
-      return new Set(defaults);
-    },
-  );
+    } catch {
+      // localStorage blocked (private mode, iframe) — use defaults
+    }
+    return new Set(defaults);
+  });
 
   const filteredEvents = useMemo(
     () => events.filter((e) => enabledSources.has(e.type)),
@@ -270,175 +281,180 @@ export function CalendarView({ events, hasGoogleCalendar, formOptions, currency,
 
   return (
     <>
-    <div className="space-y-4">
-      {/* Toolbar */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        {/* Navigation */}
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => navigate("prev")}
-            className="rounded-md border border-border bg-card p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-          >
-            <ChevronLeft className="h-4 w-4" />
-          </button>
-          <button
-            onClick={() => navigate("today")}
-            className="rounded-md border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted transition-colors"
-          >
-            Today
-          </button>
-          <button
-            onClick={() => navigate("next")}
-            className="rounded-md border border-border bg-card p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-          >
-            <ChevronRight className="h-4 w-4" />
-          </button>
-          <h2 className="ml-2 text-sm font-semibold text-foreground">
-            {getTitle()}
-          </h2>
+      <div className="space-y-4">
+        {/* Toolbar */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          {/* Navigation */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => navigate("prev")}
+              className="rounded-md border border-border bg-card p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <button
+              onClick={() => navigate("today")}
+              className="rounded-md border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted transition-colors"
+            >
+              Today
+            </button>
+            <button
+              onClick={() => navigate("next")}
+              className="rounded-md border border-border bg-card p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+            <h2 className="ml-2 text-sm font-semibold text-foreground">
+              {getTitle()}
+            </h2>
+          </div>
+
+          {/* View switcher + source toggles */}
+          <div className="flex items-center gap-3">
+            {/* Source toggles */}
+            <div className="flex items-center gap-1.5">
+              <SourceToggle
+                label="Bookings"
+                icon={<CalendarIcon className="h-3 w-3" />}
+                color="#3b82f6"
+                enabled={enabledSources.has("booking")}
+                onToggle={() => toggleSource("booking")}
+              />
+              <SourceToggle
+                label="Invoices"
+                icon={<Receipt className="h-3 w-3" />}
+                color="#f59e0b"
+                enabled={enabledSources.has("invoice")}
+                onToggle={() => toggleSource("invoice")}
+              />
+              {hasGoogleCalendar && (
+                <SourceToggle
+                  label="Google Cal"
+                  icon={<CalendarDays className="h-3 w-3" />}
+                  color="#8b5cf6"
+                  enabled={enabledSources.has("google_calendar")}
+                  onToggle={() => toggleSource("google_calendar")}
+                />
+              )}
+              <SourceToggle
+                label="Tasks"
+                icon={<CheckSquare className="h-3 w-3" />}
+                color="#7c3aed"
+                enabled={enabledSources.has("task")}
+                onToggle={() => toggleSource("task")}
+              />
+            </div>
+
+            {/* New booking */}
+            <button
+              onClick={() => openBookingSheet()}
+              className="flex items-center gap-1.5 rounded-md bg-foreground px-3 py-1.5 text-xs font-medium text-background transition-opacity hover:opacity-90"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              New booking
+            </button>
+
+            <div className="h-4 w-px bg-border" />
+
+            {/* View mode */}
+            <div className="flex rounded-md border border-border bg-card">
+              <ViewButton
+                active={view === "month"}
+                onClick={() => setView("month")}
+                icon={<CalendarDays className="h-3.5 w-3.5" />}
+                label="Month"
+              />
+              <ViewButton
+                active={view === "week"}
+                onClick={() => setView("week")}
+                icon={<CalendarRange className="h-3.5 w-3.5" />}
+                label="Week"
+              />
+              <ViewButton
+                active={view === "day"}
+                onClick={() => setView("day")}
+                icon={<CalendarIcon className="h-3.5 w-3.5" />}
+                label="Day"
+              />
+            </div>
+          </div>
         </div>
 
-        {/* View switcher + source toggles */}
-        <div className="flex items-center gap-3">
-          {/* Source toggles */}
-          <div className="flex items-center gap-1.5">
-            <SourceToggle
-              label="Bookings"
-              icon={<CalendarIcon className="h-3 w-3" />}
-              color="#3b82f6"
-              enabled={enabledSources.has("booking")}
-              onToggle={() => toggleSource("booking")}
-            />
-            <SourceToggle
-              label="Invoices"
-              icon={<Receipt className="h-3 w-3" />}
-              color="#f59e0b"
-              enabled={enabledSources.has("invoice")}
-              onToggle={() => toggleSource("invoice")}
-            />
-            {hasGoogleCalendar && (
-              <SourceToggle
-                label="Google Cal"
-                icon={<CalendarDays className="h-3 w-3" />}
-                color="#8b5cf6"
-                enabled={enabledSources.has("google_calendar")}
-                onToggle={() => toggleSource("google_calendar")}
+        {/* Calendar grid + side detail panel */}
+        <div className="flex gap-4">
+          <div
+            className={`rounded-lg border border-border bg-card overflow-hidden transition-all ${selectedEvent ? "flex-1 min-w-0" : "w-full"}`}
+          >
+            {view === "month" && (
+              <MonthView
+                currentDate={currentDate}
+                events={filteredEvents}
+                onSelectEvent={setSelectedEvent}
+                onDayClick={(d) => {
+                  setCurrentDate(d);
+                  setView("day");
+                }}
+                onNewBooking={openBookingSheet}
+                tz={tz}
               />
             )}
-            <SourceToggle
-              label="Tasks"
-              icon={<CheckSquare className="h-3 w-3" />}
-              color="#7c3aed"
-              enabled={enabledSources.has("task")}
-              onToggle={() => toggleSource("task")}
-            />
+            {view === "week" && (
+              <WeekView
+                currentDate={currentDate}
+                events={filteredEvents}
+                onSelectEvent={setSelectedEvent}
+                onNewBooking={openBookingSheet}
+                tz={tz}
+              />
+            )}
+            {view === "day" && (
+              <DayView
+                currentDate={currentDate}
+                events={filteredEvents}
+                onSelectEvent={setSelectedEvent}
+                onNewBooking={openBookingSheet}
+                tz={tz}
+              />
+            )}
           </div>
 
-          {/* New booking */}
-          <button
-            onClick={() => openBookingSheet()}
-            className="flex items-center gap-1.5 rounded-md bg-foreground px-3 py-1.5 text-xs font-medium text-background transition-opacity hover:opacity-90"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            New booking
-          </button>
-
-          <div className="h-4 w-px bg-border" />
-
-          {/* View mode */}
-          <div className="flex rounded-md border border-border bg-card">
-            <ViewButton
-              active={view === "month"}
-              onClick={() => setView("month")}
-              icon={<CalendarDays className="h-3.5 w-3.5" />}
-              label="Month"
-            />
-            <ViewButton
-              active={view === "week"}
-              onClick={() => setView("week")}
-              icon={<CalendarRange className="h-3.5 w-3.5" />}
-              label="Week"
-            />
-            <ViewButton
-              active={view === "day"}
-              onClick={() => setView("day")}
-              icon={<CalendarIcon className="h-3.5 w-3.5" />}
-              label="Day"
-            />
-          </div>
+          {/* Event detail side panel */}
+          {selectedEvent && (
+            <div className="w-72 shrink-0 self-start sticky top-4">
+              <EventDetail
+                event={selectedEvent}
+                onClose={() => setSelectedEvent(null)}
+                tz={tz}
+              />
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Calendar grid + side detail panel */}
-      <div className="flex gap-4">
-        <div className={`rounded-lg border border-border bg-card overflow-hidden transition-all ${selectedEvent ? "flex-1 min-w-0" : "w-full"}`}>
-          {view === "month" && (
-            <MonthView
-              currentDate={currentDate}
-              events={filteredEvents}
-              onSelectEvent={setSelectedEvent}
-              onDayClick={(d) => {
-                setCurrentDate(d);
-                setView("day");
-              }}
-              onNewBooking={openBookingSheet}
-              tz={tz}
-            />
-          )}
-          {view === "week" && (
-            <WeekView
-              currentDate={currentDate}
-              events={filteredEvents}
-              onSelectEvent={setSelectedEvent}
-              onNewBooking={openBookingSheet}
-              tz={tz}
-            />
-          )}
-          {view === "day" && (
-            <DayView
-              currentDate={currentDate}
-              events={filteredEvents}
-              onSelectEvent={setSelectedEvent}
-              onNewBooking={openBookingSheet}
-              tz={tz}
-            />
-          )}
-        </div>
-
-        {/* Event detail side panel */}
-        {selectedEvent && (
-          <div className="w-72 shrink-0 self-start sticky top-4">
-            <EventDetail
-              event={selectedEvent}
-              onClose={() => setSelectedEvent(null)}
-              tz={tz}
+      {/* New booking Sheet — opened from toolbar button or day-cell "+" */}
+      <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
+        <SheetContent
+          side="right"
+          className="w-full sm:max-w-xl overflow-y-auto"
+        >
+          <SheetHeader className="pb-2">
+            <SheetTitle>New booking</SheetTitle>
+          </SheetHeader>
+          <div className="px-4 pb-6">
+            <BookingForm
+              key={formKey}
+              mode="create"
+              currency={currency}
+              defaults={bookingDefaults}
+              clients={formOptions.clients}
+              packages={formOptions.packages}
+              employees={formOptions.employees}
+              services={formOptions.services}
+              onSuccess={() => setSheetOpen(false)}
             />
           </div>
-        )}
-      </div>
-    </div>
-
-    {/* New booking Sheet — opened from toolbar button or day-cell "+" */}
-    <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
-      <SheetContent side="right" className="w-full sm:max-w-xl overflow-y-auto">
-        <SheetHeader className="pb-2">
-          <SheetTitle>New booking</SheetTitle>
-        </SheetHeader>
-        <div className="px-4 pb-6">
-          <BookingForm
-            key={formKey}
-            mode="create"
-            currency={currency}
-            defaults={bookingDefaults}
-            clients={formOptions.clients}
-            packages={formOptions.packages}
-            employees={formOptions.employees}
-            services={formOptions.services}
-            onSuccess={() => setSheetOpen(false)}
-          />
-        </div>
-      </SheetContent>
-    </Sheet>
+        </SheetContent>
+      </Sheet>
     </>
   );
 }
@@ -723,10 +739,7 @@ function WeekView({
       </div>
 
       {/* Time grid — scroll container so 24h doesn't explode the layout. */}
-      <div
-        ref={scrollRef}
-        className="max-h-[72vh] overflow-y-auto"
-      >
+      <div ref={scrollRef} className="max-h-[72vh] overflow-y-auto">
         <div className="grid grid-cols-[60px_repeat(7,1fr)]">
           {hours.map((hour) => (
             <div key={hour} className="contents">
@@ -777,17 +790,16 @@ function WeekView({
                         differenceInMinutes(evEnd, evStart),
                         30,
                       );
-                      const topOffset =
-                        (evStart.getMinutes() / 60) * ROW_PX;
-                      const height = Math.max(
-                        (duration / 60) * ROW_PX,
-                        20,
-                      );
+                      const topOffset = (evStart.getMinutes() / 60) * ROW_PX;
+                      const height = Math.max((duration / 60) * ROW_PX, 20);
 
                       return (
                         <button
                           key={ev.id}
-                          onClick={(e) => { e.stopPropagation(); onSelectEvent(ev); }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onSelectEvent(ev);
+                          }}
                           className={`absolute left-0.5 right-0.5 z-10 overflow-hidden rounded px-1.5 py-0.5 text-left text-[10px] leading-tight text-white transition-opacity hover:opacity-80 ${
                             ev.type === "google_calendar"
                               ? "border border-dashed border-white/30 opacity-85"
@@ -938,14 +950,16 @@ function DayView({
                       differenceInMinutes(evEnd, evStart),
                       30,
                     );
-                    const topOffset =
-                      (evStart.getMinutes() / 60) * ROW_PX;
+                    const topOffset = (evStart.getMinutes() / 60) * ROW_PX;
                     const height = Math.max((duration / 60) * ROW_PX, 24);
 
                     return (
                       <button
                         key={ev.id}
-                        onClick={(e) => { e.stopPropagation(); onSelectEvent(ev); }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onSelectEvent(ev);
+                        }}
                         className={`absolute left-1 right-4 z-10 overflow-hidden rounded-md px-3 py-1.5 text-left text-xs text-white transition-opacity hover:opacity-80 ${
                           ev.type === "google_calendar"
                             ? "border border-dashed border-white/30 opacity-85"
@@ -1008,8 +1022,7 @@ function EventDetail({
   // else is a real booking or invoice row in our DB and is linkable
   // inside the app.
   const isLinkable = !event.id.startsWith("gcal_");
-  const bookingAddress =
-    event.type === "booking" ? event.meta.address : null;
+  const bookingAddress = event.type === "booking" ? event.meta.address : null;
   const gcalLocation =
     event.type === "google_calendar" ? event.meta.location : null;
   const addressForMaps = bookingAddress ?? gcalLocation ?? null;

@@ -4,11 +4,13 @@ import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
 import { TrainingTable, type TrainingRow } from "./training-table";
+import { getOrgTimezone } from "@/lib/org-timezone";
 
 export const metadata = { title: "Training" };
 
 export default async function TrainingPage() {
-  await requireMembership(["owner", "admin", "manager"]);
+  const membership = await requireMembership(["owner", "admin", "manager"]);
+  const tz = await getOrgTimezone(membership.organization_id);
   const supabase = await createSupabaseServerClient();
 
   const { data, error } = await supabase
@@ -29,15 +31,17 @@ export default async function TrainingPage() {
 
   if (error) throw error;
 
-  const rows: TrainingRow[] = ((data ?? []) as unknown as Array<{
-    id: string;
-    title: string;
-    description: string | null;
-    created_at: string;
-    status: string | null;
-    steps: Array<{ id: string }> | null;
-    assignments: Array<{ id: string; completed_at: string | null }> | null;
-  }>).map((m) => {
+  const rows: TrainingRow[] = (
+    (data ?? []) as unknown as Array<{
+      id: string;
+      title: string;
+      description: string | null;
+      created_at: string;
+      status: string | null;
+      steps: Array<{ id: string }> | null;
+      assignments: Array<{ id: string; completed_at: string | null }> | null;
+    }>
+  ).map((m) => {
     const assigned = m.assignments?.length ?? 0;
     const completed =
       m.assignments?.filter((a) => a.completed_at != null).length ?? 0;
@@ -67,7 +71,7 @@ export default async function TrainingPage() {
         </Link>
       }
     >
-      <TrainingTable rows={rows} />
+      <TrainingTable tz={tz} rows={rows} />
     </PageShell>
   );
 }

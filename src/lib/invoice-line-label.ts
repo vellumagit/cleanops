@@ -75,10 +75,14 @@ export function bookingLineLabel({
     if (start) {
       const end =
         durationMinutes && durationMinutes > 0
-          ? fmt(new Date(startMs + durationMinutes * 60_000).toISOString(), tz, {
-              hour: "numeric",
-              minute: "2-digit",
-            })
+          ? fmt(
+              new Date(startMs + durationMinutes * 60_000).toISOString(),
+              tz,
+              {
+                hour: "numeric",
+                minute: "2-digit",
+              },
+            )
           : null;
       when = when ? `${when}, ${start}` : start;
       if (end) when += `–${end}`;

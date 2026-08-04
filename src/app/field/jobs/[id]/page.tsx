@@ -119,8 +119,7 @@ export default async function FieldJobDetailPage({
     } | null;
   };
 
-  const isAssignee =
-    booking.assigned_to === membership.id || crewRow !== null;
+  const isAssignee = booking.assigned_to === membership.id || crewRow !== null;
 
   // Compute segment-adjusted start time and duration for split employees.
   const effectiveScheduledAt =
@@ -166,8 +165,7 @@ export default async function FieldJobDetailPage({
   // Per-job address wins (some jobs override it), otherwise fall back to the
   // client's address on file. Bookings created without a snapshotted address
   // (certain recurring series / portal requests) were showing nothing here.
-  const displayAddress =
-    booking.address ?? booking.client?.address ?? null;
+  const displayAddress = booking.address ?? booking.client?.address ?? null;
 
   // Photos, all assignee segments, and checklist items only depend on
   // booking.id — fetch them in parallel. Serializing these round-trips made
@@ -175,56 +173,59 @@ export default async function FieldJobDetailPage({
   // mobile connection).
   const [photos, segResult, checklistResult, flagResult, orgAutoResult] =
     await Promise.all([
-    fetchJobPhotos(booking.id),
-    supabase
-      .from("booking_assignees" as never)
-      .select(
-        `membership_id, is_primary, split_start_offset_minutes, split_duration_minutes,
+      fetchJobPhotos(booking.id),
+      supabase
+        .from("booking_assignees" as never)
+        .select(
+          `membership_id, is_primary, split_start_offset_minutes, split_duration_minutes,
          membership:memberships ( display_name, profile:profiles ( full_name ) )`,
-      )
-      .eq("booking_id" as never, booking.id as never) as unknown as Promise<{
-      data: Array<{
-        membership_id: string;
-        is_primary: boolean;
-        split_start_offset_minutes: number | null;
-        split_duration_minutes: number | null;
-        membership: {
-          display_name: string | null;
-          profile: { full_name: string | null } | null;
+        )
+        .eq("booking_id" as never, booking.id as never) as unknown as Promise<{
+        data: Array<{
+          membership_id: string;
+          is_primary: boolean;
+          split_start_offset_minutes: number | null;
+          split_duration_minutes: number | null;
+          membership: {
+            display_name: string | null;
+            profile: { full_name: string | null } | null;
+          } | null;
+        }> | null;
+      }>,
+      supabase
+        .from("booking_checklist_items" as never)
+        .select("id, ordinal, title, phase, is_required, checked_at")
+        .eq("booking_id" as never, booking.id as never)
+        .order(
+          "ordinal" as never,
+          {
+            ascending: true,
+          } as never,
+        ) as unknown as Promise<{
+        data: BookingChecklistItem[] | null;
+      }>,
+      // divide_hours_evenly isn't in the generated types yet — cast around it.
+      supabase
+        .from("bookings" as never)
+        .select("divide_hours_evenly" as never)
+        .eq("id" as never, booking.id as never)
+        .maybeSingle() as unknown as Promise<{
+        data: { divide_hours_evenly: boolean | null } | null;
+      }>,
+      // Org-level default — when on, every team job divides automatically.
+      supabase
+        .from("organizations")
+        .select("automation_settings")
+        .eq("id", membership.organization_id)
+        .maybeSingle() as unknown as Promise<{
+        data: {
+          automation_settings: Record<
+            string,
+            { enabled?: boolean } | undefined
+          > | null;
         } | null;
-      }> | null;
-    }>,
-    supabase
-      .from("booking_checklist_items" as never)
-      .select("id, ordinal, title, phase, is_required, checked_at")
-      .eq("booking_id" as never, booking.id as never)
-      .order("ordinal" as never, {
-        ascending: true,
-      } as never) as unknown as Promise<{
-      data: BookingChecklistItem[] | null;
-    }>,
-    // divide_hours_evenly isn't in the generated types yet — cast around it.
-    supabase
-      .from("bookings" as never)
-      .select("divide_hours_evenly" as never)
-      .eq("id" as never, booking.id as never)
-      .maybeSingle() as unknown as Promise<{
-      data: { divide_hours_evenly: boolean | null } | null;
-    }>,
-    // Org-level default — when on, every team job divides automatically.
-    supabase
-      .from("organizations")
-      .select("automation_settings")
-      .eq("id", membership.organization_id)
-      .maybeSingle() as unknown as Promise<{
-      data: {
-        automation_settings: Record<
-          string,
-          { enabled?: boolean } | undefined
-        > | null;
-      } | null;
-    }>,
-  ]);
+      }>,
+    ]);
   const allSegRows = segResult.data;
   const checklistItems = checklistResult.data;
   const divideHoursEvenly =
@@ -283,19 +284,20 @@ export default async function FieldJobDetailPage({
         key: r.membership_id,
         name: isYou
           ? "You"
-          : memberDisplayName(r.membership ?? {}) ?? "Crew member",
+          : (memberDisplayName(r.membership ?? {}) ?? "Crew member"),
         isPrimary: r.is_primary,
         isYou,
         color: toneForEmployee(i),
         windowLabel:
           offset != null && dur != null
-            ? `${new Date(
-                bookingStartMs + offset * 60_000,
-              ).toLocaleTimeString("en-US", {
-                hour: "numeric",
-                minute: "2-digit",
-                timeZone: tz,
-              })} · ${formatDurationMinutes(dur)}`
+            ? `${new Date(bookingStartMs + offset * 60_000).toLocaleTimeString(
+                "en-US",
+                {
+                  hour: "numeric",
+                  minute: "2-digit",
+                  timeZone: tz,
+                },
+              )} · ${formatDurationMinutes(dur)}`
             : null,
       };
     })
@@ -480,11 +482,7 @@ export default async function FieldJobDetailPage({
         </div>
       )}
 
-      <JobPhotos
-        bookingId={booking.id}
-        photos={photos}
-        canManage={true}
-      />
+      <JobPhotos bookingId={booking.id} photos={photos} canManage={true} />
 
       {checklistItems && checklistItems.length > 0 && (
         <div className="rounded-xl border border-border bg-card p-5">

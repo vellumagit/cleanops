@@ -79,7 +79,8 @@ type TaskEvent = {
   };
 };
 
-export type CalendarEvent = BookingEvent | InvoiceEvent | GoogleCalEvent | TaskEvent;
+export type CalendarEvent =
+  BookingEvent | InvoiceEvent | GoogleCalEvent | TaskEvent;
 
 function getStatusColor(status: string): string {
   switch (status) {
@@ -120,7 +121,15 @@ export default async function CalendarPage() {
   const rangeStart = startOfMonth(subMonths(now, 1));
   const rangeEnd = endOfMonth(addMonths(now, 1));
 
-  const [bookingsResult, invoicesResult, gcalEvents, tasksResult, formOptions, currency, tz] = await Promise.all([
+  const [
+    bookingsResult,
+    invoicesResult,
+    gcalEvents,
+    tasksResult,
+    formOptions,
+    currency,
+    tz,
+  ] = await Promise.all([
     supabase
       .from("bookings")
       .select(
@@ -154,9 +163,7 @@ export default async function CalendarPage() {
     // for assigned_to in a separate batch query below.
     supabase
       .from("tasks" as never)
-      .select(
-        `id, title, notes, due_at, recurrence, completed_at, assigned_to`,
-      )
+      .select(`id, title, notes, due_at, recurrence, completed_at, assigned_to`)
       .gte("due_at" as never, rangeStart.toISOString())
       .lte("due_at" as never, rangeEnd.toISOString())
       .order("due_at") as unknown as Promise<{
@@ -189,9 +196,7 @@ export default async function CalendarPage() {
         display_name: string | null;
         profile: { full_name: string | null } | null;
       } | null;
-      const employeeName = assignedRow
-        ? memberDisplayName(assignedRow)
-        : null;
+      const employeeName = assignedRow ? memberDisplayName(assignedRow) : null;
 
       return {
         id: b.id,
@@ -239,9 +244,10 @@ export default async function CalendarPage() {
     type: "google_calendar" as const,
     title: ge.summary,
     start: ge.start.length === 10 ? `${ge.start}T00:00:00` : ge.start,
-    end: (ge.end || ge.start).length === 10
-      ? `${ge.end || ge.start}T23:59:59`
-      : ge.end || ge.start,
+    end:
+      (ge.end || ge.start).length === 10
+        ? `${ge.end || ge.start}T23:59:59`
+        : ge.end || ge.start,
     status: "external",
     color: "#8b5cf6", // purple
     meta: {
@@ -263,7 +269,10 @@ export default async function CalendarPage() {
   );
   const taskAssigneeMap = new Map<
     string,
-    { display_name: string | null; profile: { full_name: string | null } | null }
+    {
+      display_name: string | null;
+      profile: { full_name: string | null } | null;
+    }
   >();
   if (taskAssigneeIds.length > 0) {
     const { data: members } = (await supabase
@@ -305,7 +314,12 @@ export default async function CalendarPage() {
     };
   });
 
-  const events = [...bookingEvents, ...invoiceEvents, ...googleEvents, ...taskEvents];
+  const events = [
+    ...bookingEvents,
+    ...invoiceEvents,
+    ...googleEvents,
+    ...taskEvents,
+  ];
   const hasGoogleCalendar = gcalEvents.length > 0;
 
   return (

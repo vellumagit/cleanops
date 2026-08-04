@@ -11,7 +11,7 @@ import { AutomationsOffBanner } from "@/components/automations-off-banner";
 import { SetupReturnBanner } from "@/components/setup-return-banner";
 import { QuickActions } from "@/components/quick-actions";
 import { AIWidget } from "@/components/ai-assistant/ai-widget";
-import { DEFAULT_TZ } from "@/lib/format";
+import { FALLBACK_TZ } from "@/lib/format";
 import { isFeedVisible } from "@/lib/feed-visibility";
 
 export default async function AppLayout({
@@ -24,7 +24,9 @@ export default async function AppLayout({
   const membership = await requireMembership(["owner", "admin", "manager"]);
 
   const supabase = await createSupabaseServerClient();
-  const subscriptionInfo = await getSubscriptionInfo(membership.organization_id);
+  const subscriptionInfo = await getSubscriptionInfo(
+    membership.organization_id,
+  );
 
   // Hard wall: an expired org (trial elapsed, or past-due grace run out) gets
   // the subscribe screen INSTEAD of the app — the single chokepoint every
@@ -44,14 +46,14 @@ export default async function AppLayout({
   // Compute today's boundaries in the org's timezone
   const now = new Date();
   const dateStr = new Intl.DateTimeFormat("en-CA", {
-    timeZone: DEFAULT_TZ,
+    timeZone: FALLBACK_TZ,
   }).format(now);
   const utcMidnight = new Date(`${dateStr}T00:00:00Z`);
   const utcRepr = new Date(
     utcMidnight.toLocaleString("en-US", { timeZone: "UTC" }),
   );
   const tzRepr = new Date(
-    utcMidnight.toLocaleString("en-US", { timeZone: DEFAULT_TZ }),
+    utcMidnight.toLocaleString("en-US", { timeZone: FALLBACK_TZ }),
   );
   const offsetMs = utcRepr.getTime() - tzRepr.getTime();
   const todayStart = new Date(utcMidnight.getTime() + offsetMs);
@@ -73,80 +75,89 @@ export default async function AppLayout({
     // Capture once — used as the lower bound on two time-windowed counts.
     // eslint-disable-next-line react-hooks/purity
     const nowMs = Date.now();
-    const reviewsSince = new Date(nowMs - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const reviewsSince = new Date(
+      nowMs - 7 * 24 * 60 * 60 * 1000,
+    ).toISOString();
     return Promise.all([
-    supabase
-      .from("profiles")
-      .select("full_name")
-      .eq("id", membership.profile_id)
-      .maybeSingle(),
-    supabase
-      .from("organizations")
-      .select("onboarding_completed_at, logo_url, brand_color, name")
-      .eq("id", membership.organization_id)
-      .maybeSingle() as unknown as {
-      data: {
-        onboarding_completed_at: string | null;
-        logo_url: string | null;
-        brand_color: string | null;
-        name: string | null;
-      } | null;
-    },
-    (supabase
-      .from("notifications" as never)
-      .select("id", { count: "exact", head: true })
-      .eq("organization_id", membership.organization_id)
-      .or(
-        `recipient_membership_id.is.null,recipient_membership_id.eq.${membership.id}`,
-      )
-      .is("read_at", null)) as unknown as { count: number | null },
-    // Today's bookings
-    supabase
-      .from("bookings")
-      .select("id", { count: "exact", head: true })
-      .gte("scheduled_at", todayStart.toISOString())
-      .lte("scheduled_at", todayEnd.toISOString()),
-    // Overdue invoices
-    supabase
-      .from("invoices")
-      .select("id", { count: "exact", head: true })
-      .eq("status", "overdue"),
-    // Pending estimates (sent, awaiting response)
-    supabase
-      .from("estimates")
-      .select("id", { count: "exact", head: true })
-      .eq("status", "sent"),
-    // Unread chat — real per-member unread count (messages after each
-    // thread's last_read_at watermark that the member didn't send).
-    supabase.rpc("chat_unread_total" as never, {
-      p_org_id: membership.organization_id,
-    } as never) as unknown as {
-      data: number | null;
-    },
-    // New reviews in the last 7 days
-    supabase
-      .from("reviews")
-      .select("id", { count: "exact", head: true })
-      .gte("submitted_at", reviewsSince),
-    // Pending booking requests from the client portal
-    supabase
-      .from("booking_requests" as never)
-      .select("id", { count: "exact", head: true })
-      .eq("organization_id", membership.organization_id)
-      .eq("status", "pending") as unknown as { count: number | null },
-    // Overdue + today tasks (incomplete, due <= now)
-    supabase
-      .from("tasks" as never)
-      .select("id", { count: "exact", head: true })
-      .lte("due_at" as never, todayEnd.toISOString())
-      .is("completed_at" as never, null) as unknown as { count: number | null },
-    // New job applicants awaiting review
-    supabase
-      .from("job_applicants" as never)
-      .select("id", { count: "exact", head: true })
-      .eq("organization_id" as never, membership.organization_id as never)
-      .eq("status" as never, "new" as never) as unknown as { count: number | null },
-  ]);
+      supabase
+        .from("profiles")
+        .select("full_name")
+        .eq("id", membership.profile_id)
+        .maybeSingle(),
+      supabase
+        .from("organizations")
+        .select("onboarding_completed_at, logo_url, brand_color, name")
+        .eq("id", membership.organization_id)
+        .maybeSingle() as unknown as {
+        data: {
+          onboarding_completed_at: string | null;
+          logo_url: string | null;
+          brand_color: string | null;
+          name: string | null;
+        } | null;
+      },
+      supabase
+        .from("notifications" as never)
+        .select("id", { count: "exact", head: true })
+        .eq("organization_id", membership.organization_id)
+        .or(
+          `recipient_membership_id.is.null,recipient_membership_id.eq.${membership.id}`,
+        )
+        .is("read_at", null) as unknown as { count: number | null },
+      // Today's bookings
+      supabase
+        .from("bookings")
+        .select("id", { count: "exact", head: true })
+        .gte("scheduled_at", todayStart.toISOString())
+        .lte("scheduled_at", todayEnd.toISOString()),
+      // Overdue invoices
+      supabase
+        .from("invoices")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "overdue"),
+      // Pending estimates (sent, awaiting response)
+      supabase
+        .from("estimates")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "sent"),
+      // Unread chat — real per-member unread count (messages after each
+      // thread's last_read_at watermark that the member didn't send).
+      supabase.rpc(
+        "chat_unread_total" as never,
+        {
+          p_org_id: membership.organization_id,
+        } as never,
+      ) as unknown as {
+        data: number | null;
+      },
+      // New reviews in the last 7 days
+      supabase
+        .from("reviews")
+        .select("id", { count: "exact", head: true })
+        .gte("submitted_at", reviewsSince),
+      // Pending booking requests from the client portal
+      supabase
+        .from("booking_requests" as never)
+        .select("id", { count: "exact", head: true })
+        .eq("organization_id", membership.organization_id)
+        .eq("status", "pending") as unknown as { count: number | null },
+      // Overdue + today tasks (incomplete, due <= now)
+      supabase
+        .from("tasks" as never)
+        .select("id", { count: "exact", head: true })
+        .lte("due_at" as never, todayEnd.toISOString())
+        .is("completed_at" as never, null) as unknown as {
+        count: number | null;
+      },
+      // New job applicants awaiting review
+      supabase
+        .from("job_applicants" as never)
+        .select("id", { count: "exact", head: true })
+        .eq("organization_id" as never, membership.organization_id as never)
+        .eq("status" as never, "new" as never) as unknown as {
+        count: number | null;
+      },
+    ]);
   })();
 
   const showSetup =
@@ -159,7 +170,10 @@ export default async function AppLayout({
   const feedEnabled = await isFeedVisible(membership.organization_id);
 
   return (
-    <BrandProvider brandColor={org?.brand_color ?? null} className="flex min-h-[100dvh] lg:h-screen">
+    <BrandProvider
+      brandColor={org?.brand_color ?? null}
+      className="flex min-h-[100dvh] lg:h-screen"
+    >
       <AppSidebar
         organizationName={membership.organization_name}
         role={membership.role}

@@ -7,6 +7,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { SubmitButton } from "@/components/submit-button";
 import { StatusBadge } from "@/components/status-badge";
 import { formatDateTime } from "@/lib/format";
+import { getOrgTimezone } from "@/lib/org-timezone";
 import {
   createWebhookAction,
   deleteWebhookAction,
@@ -40,6 +41,7 @@ const EVENT_OPTIONS: { value: string; label: string }[] = [
 
 export default async function WebhooksPage() {
   const membership = await requireMembership(["owner", "admin"]);
+  const tz = await getOrgTimezone(membership.organization_id);
   const admin = createSupabaseAdminClient();
 
   const { data: webhooks } = (await admin
@@ -90,7 +92,8 @@ export default async function WebhooksPage() {
                       {wh.is_active ? "Active" : "Paused"}
                     </StatusBadge>
                     <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-                      {wh.events.length} event{wh.events.length !== 1 ? "s" : ""}
+                      {wh.events.length} event
+                      {wh.events.length !== 1 ? "s" : ""}
                     </span>
                   </div>
                   <p
@@ -104,7 +107,7 @@ export default async function WebhooksPage() {
                   </p>
                   {wh.last_triggered_at && (
                     <p className="mt-1 text-[11px] text-muted-foreground">
-                      Last triggered: {formatDateTime(wh.last_triggered_at)}
+                      Last triggered: {formatDateTime(wh.last_triggered_at, tz)}
                       {wh.last_status_code != null && (
                         <span
                           className={
@@ -176,7 +179,10 @@ export default async function WebhooksPage() {
         <summary className="cursor-pointer select-none px-4 py-3 text-sm font-medium hover:bg-muted/50">
           + Create webhook
         </summary>
-        <form action={createWebhookAction} className="border-t border-border p-4">
+        <form
+          action={createWebhookAction}
+          className="border-t border-border p-4"
+        >
           <div className="space-y-4">
             <div>
               <label className="mb-1 block text-xs font-medium">

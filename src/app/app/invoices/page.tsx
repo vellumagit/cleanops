@@ -26,10 +26,8 @@ export default async function InvoicesPage({
   const { archived } = await searchParams;
   const showArchived = archived === "1";
 
-  let query = supabase
-    .from("invoices")
-    .select(
-      `
+  let query = supabase.from("invoices").select(
+    `
         id,
         status,
         amount_cents,
@@ -41,7 +39,7 @@ export default async function InvoicesPage({
         auto_send_at,
         client:clients ( name, email, contact_preference, contact_overrides, sms_opted_in )
       ` as never,
-    );
+  );
 
   query = showArchived
     ? query.not("archived_at" as never, "is" as never, null as never)
@@ -153,8 +151,8 @@ export default async function InvoicesPage({
                 : `${undelivered} invoices couldn't be auto-delivered.`}
             </p>
             <p className="mt-0.5">
-              Look for the &ldquo;Needs manual delivery&rdquo; tag below —
-              hover it for the reason, open the invoice to send it yourself.
+              Look for the &ldquo;Needs manual delivery&rdquo; tag below — hover
+              it for the reason, open the invoice to send it yourself.
               {onHold > 0 &&
                 ` (${onHold} more ${onHold === 1 ? "is" : "are"} on hold — that one's deliberate.)`}
             </p>
@@ -162,6 +160,7 @@ export default async function InvoicesPage({
         </div>
       )}
       <InvoicesTable
+        tz={orgTz}
         rows={rows}
         canEdit={canEdit && !showArchived}
         currency={currency}

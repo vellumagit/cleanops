@@ -21,9 +21,12 @@ export type EstimateRow = {
 export function EstimatesTable({
   rows,
   canEdit,
+  tz,
 }: {
   rows: EstimateRow[];
   canEdit: boolean;
+  /** Org IANA timezone — every date on this table renders in it. */
+  tz: string;
 }) {
   const router = useRouter();
   const columns: DataTableColumn<EstimateRow>[] = [
@@ -34,7 +37,9 @@ export function EstimatesTable({
         <span className="flex items-center gap-1.5 font-medium">
           {r.client_name}
           {r.pdf_url && (
-            <span title="PDF attached"><FileText className="h-3.5 w-3.5 shrink-0 text-red-500" /></span>
+            <span title="PDF attached">
+              <FileText className="h-3.5 w-3.5 shrink-0 text-red-500" />
+            </span>
           )}
         </span>
       ),
@@ -55,7 +60,7 @@ export function EstimatesTable({
       header: "Created",
       render: (r) => (
         <span className="tabular-nums text-muted-foreground">
-          {formatDate(r.created_at)}
+          {formatDate(r.created_at, tz)}
         </span>
       ),
     },
@@ -64,7 +69,7 @@ export function EstimatesTable({
       header: "Sent",
       render: (r) => (
         <span className="tabular-nums text-muted-foreground">
-          {formatDate(r.sent_at)}
+          {formatDate(r.sent_at, tz)}
         </span>
       ),
     },
@@ -97,8 +102,7 @@ export function EstimatesTable({
       }
       emptyState={{
         title: "No estimates yet",
-        description:
-          "Quotes you send to clients will show up here.",
+        description: "Quotes you send to clients will show up here.",
       }}
     />
   );

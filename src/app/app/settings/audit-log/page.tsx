@@ -4,10 +4,8 @@ import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
 import { memberDisplayName } from "@/lib/member-display";
-import {
-  AuditExportButton,
-  type AuditExportRow,
-} from "./audit-export-button";
+import { getOrgTimezone } from "@/lib/org-timezone";
+import { AuditExportButton, type AuditExportRow } from "./audit-export-button";
 
 export const metadata = { title: "Audit log" };
 
@@ -19,14 +17,12 @@ type AuditRow = {
   entity_id: string | null;
   before: unknown;
   after: unknown;
-  actor:
-    | {
-        id: string;
-        role: string;
-        display_name: string | null;
-        profile: { full_name: string | null } | null;
-      }
-    | null;
+  actor: {
+    id: string;
+    role: string;
+    display_name: string | null;
+    profile: { full_name: string | null } | null;
+  } | null;
 };
 
 function formatActor(row: AuditRow): string {
@@ -39,10 +35,11 @@ function formatActor(row: AuditRow): string {
   return name;
 }
 
-function formatTimestamp(iso: string) {
+function formatTimestamp(iso: string, tz: string) {
   return new Date(iso).toLocaleString("en-US", {
     dateStyle: "medium",
     timeStyle: "short",
+    timeZone: tz,
   });
 }
 
@@ -67,7 +64,11 @@ export default async function AuditLogPage({
 }) {
   // Owner / admin only — Postgres RLS would also block employees, but failing
   // fast at the page level keeps the URL out of the browser history.
-  await requireMembership(["owner", "admin"]);
+  const membership = await requireMembership(["owner", "admin"]);
+  // Rendered in the table AND written into the CSV export — the artifact
+  // someone attaches to a "who changed this, and when" dispute. It was UTC
+  // for every org, not just the Edmonton ones.
+  const tz = await getOrgTimezone(membership.organization_id);
 
   const params = await searchParams;
   const actionFilter =
@@ -130,7 +131,7 @@ export default async function AuditLogPage({
       (row.before as Record<string, unknown> | null) ??
       null;
     return {
-      when: formatTimestamp(row.created_at),
+      when: formatTimestamp(row.created_at, tz),
       actor: formatActor(row),
       role: row.actor?.role ?? "",
       action: ACTION_LABEL[row.action] ?? row.action,
@@ -214,9 +215,7 @@ export default async function AuditLogPage({
           <AuditExportButton
             rows={exportRows}
             filename={`audit-log${
-              hasFilters
-                ? `-${fromFilter ?? "all"}_${toFilter ?? "all"}`
-                : ""
+              hasFilters ? `-${fromFilter ?? "all"}_${toFilter ?? "all"}` : ""
             }.csv`}
           />
         </div>
@@ -225,7 +224,9 @@ export default async function AuditLogPage({
       {rows.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-card px-6 py-16 text-center">
           <p className="text-sm font-medium">
-            {hasFilters ? "No events match these filters" : "No audit events yet"}
+            {hasFilters
+              ? "No events match these filters"
+              : "No audit events yet"}
           </p>
           <p className="mt-1 max-w-md text-xs text-muted-foreground">
             {hasFilters ? (
@@ -259,7 +260,7 @@ export default async function AuditLogPage({
                 return (
                   <tr key={row.id} className="align-top">
                     <td className="whitespace-nowrap px-3 py-2 text-xs text-muted-foreground tabular-nums">
-                      {formatTimestamp(row.created_at)}
+                      {formatTimestamp(row.created_at, tz)}
                     </td>
                     <td className="whitespace-nowrap px-3 py-2 text-xs">
                       <span className="font-medium">{formatActor(row)}</span>

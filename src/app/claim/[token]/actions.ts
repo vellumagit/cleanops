@@ -28,7 +28,17 @@ import { formatDateTime, humanizeEnum } from "@/lib/format";
 
 export type ClaimResult =
   | { ok: true; spotsRemaining: number }
-  | { ok: false; reason: "already_filled" | "already_claimed" | "expired" | "cancelled" | "invalid" | "error"; message?: string };
+  | {
+      ok: false;
+      reason:
+        | "already_filled"
+        | "already_claimed"
+        | "expired"
+        | "cancelled"
+        | "invalid"
+        | "error";
+      message?: string;
+    };
 
 export async function claimOfferAction(token: string): Promise<ClaimResult> {
   if (!token) return { ok: false, reason: "invalid" };
@@ -88,7 +98,11 @@ export async function claimOfferAction(token: string): Promise<ClaimResult> {
     .maybeSingle();
 
   if (existingClaim) {
-    return { ok: false, reason: "already_claimed", message: "You already claimed this shift." };
+    return {
+      ok: false,
+      reason: "already_claimed",
+      message: "You already claimed this shift.",
+    };
   }
 
   // 2. Determine the new filled count and whether this claim completes the offer.
@@ -205,15 +219,22 @@ export async function claimOfferAction(token: string): Promise<ClaimResult> {
       address: string | null;
       client: { name: string | null } | null;
     } | null;
-    const orgName =
-      (orgRes.data as { name?: string } | null)?.name ?? "Sollos";
+    const orgName = (orgRes.data as { name?: string } | null)?.name ?? "Sollos";
     const freelancerName = contact?.full_name ?? "A subcontractor";
 
     // Notify org management — this is what makes the claim "reflect" for the
     // owner/managers, with a link straight to the booking.
     const { notify } = await import("@/lib/notify");
+    // Same timezone the confirmation SMS below uses. One claim event was
+    // emitting two different times for the same shift — the manager's
+    // notification in US Eastern, the freelancer's text in the org's zone.
+    // getOrgTimezone is React-cache()'d, so the second call is free.
+    const { getOrgTimezone } = await import("@/lib/org-timezone");
+    const orgTz = await getOrgTimezone(dispatch.organization_id);
     const svc = bookingRow ? humanizeEnum(bookingRow.service_type) : "shift";
-    const when = bookingRow ? ` on ${formatDateTime(bookingRow.scheduled_at)}` : "";
+    const when = bookingRow
+      ? ` on ${formatDateTime(bookingRow.scheduled_at, orgTz)}`
+      : "";
     await notify({
       organizationId: dispatch.organization_id,
       audience: "org-management",
@@ -229,17 +250,16 @@ export async function claimOfferAction(token: string): Promise<ClaimResult> {
     // the full details page (address, map, client phone).
     if (contact?.phone && bookingRow) {
       const { sendOrgSms } = await import("@/lib/sms");
-      const { composeShiftClaimedConfirmationSms } = await import("@/lib/twilio");
-      const { getOrgTimezone } = await import("@/lib/org-timezone");
-      const base =
-        process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+      const { composeShiftClaimedConfirmationSms } =
+        await import("@/lib/twilio");
+      const base = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
       const body = composeShiftClaimedConfirmationSms({
         orgName,
         serviceType: bookingRow.service_type,
         scheduledAt: bookingRow.scheduled_at,
         clientName: bookingRow.client?.name ?? null,
         claimUrl: `${base}/claim/${token}`,
-        tz: await getOrgTimezone(dispatch.organization_id),
+        tz: orgTz,
       });
       await sendOrgSms(dispatch.organization_id, {
         to: contact.phone,

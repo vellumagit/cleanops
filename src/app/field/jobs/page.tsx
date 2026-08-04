@@ -26,9 +26,13 @@ export default async function FieldTodayPage() {
   // Group by day so an overdue job from an earlier date is clearly labelled.
   const groups = new Map<string, typeof todayJobs>();
   for (const job of todayJobs) {
+    // Same timezone as the filter three lines up, which uses localDate(…, tz).
+    // Without it the heading rendered in the SERVER's zone — UTC on Vercel —
+    // so an Edmonton job at or after 6 PM was filed under tomorrow's heading
+    // while the card beneath it printed today's time.
     const key = new Date(job.effective_scheduled_at).toLocaleDateString(
       "en-US",
-      { weekday: "long", month: "short", day: "numeric" },
+      { weekday: "long", month: "short", day: "numeric", timeZone: tz },
     );
     const arr = groups.get(key) ?? [];
     arr.push(job);

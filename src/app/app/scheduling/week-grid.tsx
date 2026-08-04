@@ -284,6 +284,7 @@ export function WeekGrid({
                     {d.toLocaleDateString("en-US", {
                       month: "short",
                       day: "numeric",
+                      timeZone: tz,
                     })}
                   </div>
                 </div>

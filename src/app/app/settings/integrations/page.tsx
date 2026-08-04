@@ -1,5 +1,13 @@
 import Link from "next/link";
-import { ArrowLeft, BookOpen, CheckCircle2, CalendarDays, Plug, XCircle, AlertTriangle } from "lucide-react";
+import {
+  ArrowLeft,
+  BookOpen,
+  CheckCircle2,
+  CalendarDays,
+  Plug,
+  XCircle,
+  AlertTriangle,
+} from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -18,10 +26,7 @@ import {
   connectGoogleCalendarAction,
   disconnectGoogleCalendarAction,
 } from "./google-calendar-actions";
-import {
-  connectSageAction,
-  disconnectSageAction,
-} from "./sage-actions";
+import { connectSageAction, disconnectSageAction } from "./sage-actions";
 import { SageTaxRegionForm } from "./sage-tax-region";
 import {
   getSageConnection,
@@ -34,15 +39,12 @@ import {
 } from "./quickbooks-actions";
 import { StripeDisconnectButton } from "./stripe-connect-actions";
 import { IntegrationRequestForm } from "./integration-request-form";
+import { getOrgTimezone } from "@/lib/org-timezone";
 
 export const metadata = { title: "Integrations" };
 
 type ProviderKey =
-  | "stripe"
-  | "square"
-  | "google_calendar"
-  | "sage"
-  | "quickbooks";
+  "stripe" | "square" | "google_calendar" | "sage" | "quickbooks";
 
 type ProviderCard = {
   key: ProviderKey;
@@ -69,12 +71,14 @@ export default async function IntegrationsPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const membership = await requireMembership(["owner", "admin"]);
+  const tz = await getOrgTimezone(membership.organization_id);
 
   // OAuth round-trips (Square/Sage) redirect back here with a result flag.
   // Surface it so a failed connect isn't silent (previously nothing showed,
   // so a failure looked identical to success).
   const sp = await searchParams;
-  const str = (k: string) => (typeof sp[k] === "string" ? (sp[k] as string) : null);
+  const str = (k: string) =>
+    typeof sp[k] === "string" ? (sp[k] as string) : null;
   const oauthConnected = str("square_connected")
     ? "Square"
     : str("sage_connected")
@@ -151,7 +155,10 @@ export default async function IntegrationsPage({
     if (!current) {
       try {
         const list = await listSageAddressRegions(membership.organization_id);
-        regions = list.map((r) => ({ id: r.id, label: r.displayed_as ?? r.id }));
+        regions = list.map((r) => ({
+          id: r.id,
+          label: r.displayed_as ?? r.id,
+        }));
       } catch (err) {
         loadError =
           err instanceof Error ? err.message.slice(0, 160) : "unknown error";
@@ -243,13 +250,10 @@ export default async function IntegrationsPage({
       stripeConnected &&
       stripeInfo?.stripe_charges_enabled &&
       stripeInfo?.stripe_payouts_enabled;
-    const stripeNeedsAction =
-      stripeConnected && !stripeFullyEnabled;
+    const stripeNeedsAction = stripeConnected && !stripeFullyEnabled;
 
     const conn = byProvider.get(card.key);
-    const isConnected = isStripe
-      ? stripeConnected
-      : conn?.status === "active";
+    const isConnected = isStripe ? stripeConnected : conn?.status === "active";
 
     return (
       <li
@@ -307,20 +311,36 @@ export default async function IntegrationsPage({
                         <div className="flex justify-between gap-2">
                           <dt className="text-muted-foreground">Since</dt>
                           <dd className="text-foreground">
-                            {formatDateTime(stripeInfo.stripe_connected_at)}
+                            {formatDateTime(stripeInfo.stripe_connected_at, tz)}
                           </dd>
                         </div>
                       )}
                       <div className="flex justify-between gap-2">
                         <dt className="text-muted-foreground">Charges</dt>
-                        <dd className={stripeInfo?.stripe_charges_enabled ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}>
-                          {stripeInfo?.stripe_charges_enabled ? "Enabled" : "Pending"}
+                        <dd
+                          className={
+                            stripeInfo?.stripe_charges_enabled
+                              ? "text-emerald-600 dark:text-emerald-400"
+                              : "text-amber-600 dark:text-amber-400"
+                          }
+                        >
+                          {stripeInfo?.stripe_charges_enabled
+                            ? "Enabled"
+                            : "Pending"}
                         </dd>
                       </div>
                       <div className="flex justify-between gap-2">
                         <dt className="text-muted-foreground">Payouts</dt>
-                        <dd className={stripeInfo?.stripe_payouts_enabled ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}>
-                          {stripeInfo?.stripe_payouts_enabled ? "Enabled" : "Pending"}
+                        <dd
+                          className={
+                            stripeInfo?.stripe_payouts_enabled
+                              ? "text-emerald-600 dark:text-emerald-400"
+                              : "text-amber-600 dark:text-amber-400"
+                          }
+                        >
+                          {stripeInfo?.stripe_payouts_enabled
+                            ? "Enabled"
+                            : "Pending"}
                         </dd>
                       </div>
                     </>
@@ -348,7 +368,10 @@ export default async function IntegrationsPage({
                                   ? "Sage account"
                                   : "Account"}
                           </dt>
-                          <dd className="font-mono text-foreground truncate text-right" title={conn.external_account_id}>
+                          <dd
+                            className="font-mono text-foreground truncate text-right"
+                            title={conn.external_account_id}
+                          >
                             {conn.external_account_id}
                           </dd>
                         </div>
@@ -356,7 +379,7 @@ export default async function IntegrationsPage({
                       <div className="flex justify-between gap-2">
                         <dt className="text-muted-foreground">Since</dt>
                         <dd className="text-foreground">
-                          {formatDateTime(conn!.connected_at)}
+                          {formatDateTime(conn!.connected_at, tz)}
                         </dd>
                       </div>
                     </>
@@ -489,8 +512,8 @@ export default async function IntegrationsPage({
               )
             ) : (
               <p className="text-[11px] italic text-muted-foreground">
-                We&apos;re finishing the {card.name} app registration. This
-                will light up automatically once it&apos;s approved.
+                We&apos;re finishing the {card.name} app registration. This will
+                light up automatically once it&apos;s approved.
               </p>
             )}
           </div>

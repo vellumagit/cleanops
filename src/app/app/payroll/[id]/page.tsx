@@ -9,6 +9,7 @@ import { StatusBadge } from "@/components/status-badge";
 import { SubmitButton } from "@/components/submit-button";
 import { formatCurrencyCents, formatDate, formatDateTime } from "@/lib/format";
 import { getOrgCurrency } from "@/lib/org-currency";
+import { getOrgTimezone } from "@/lib/org-timezone";
 import {
   finalizePayrollRunAction,
   markPayrollPaidAction,
@@ -26,6 +27,7 @@ export default async function PayrollRunDetailPage({
   const { id } = await params;
   const admin = createSupabaseAdminClient();
   const currency = await getOrgCurrency(membership.organization_id);
+  const tz = await getOrgTimezone(membership.organization_id);
 
   const { data: runRaw } = (await admin
     .from("payroll_runs" as never)
@@ -33,7 +35,7 @@ export default async function PayrollRunDetailPage({
       "id, organization_id, period_start, period_end, status, total_cents, notes, finalized_at, paid_at, created_at",
     )
     .eq("id" as never, id as never)
-    .maybeSingle() as unknown as {
+    .maybeSingle()) as unknown as {
     data: {
       id: string;
       organization_id: string;
@@ -46,9 +48,10 @@ export default async function PayrollRunDetailPage({
       paid_at: string | null;
       created_at: string;
     } | null;
-  });
+  };
 
-  if (!runRaw || runRaw.organization_id !== membership.organization_id) notFound();
+  if (!runRaw || runRaw.organization_id !== membership.organization_id)
+    notFound();
 
   const { data: itemsRaw } = (await admin
     .from("payroll_items" as never)
@@ -56,7 +59,10 @@ export default async function PayrollRunDetailPage({
       "id, employee_id, employee_name, hours_worked, regular_pay_cents, bonus_cents, pto_hours, pto_pay_cents, total_cents",
     )
     .eq("payroll_run_id" as never, id as never)
-    .order("employee_name" as never, { ascending: true } as never) as unknown as {
+    .order(
+      "employee_name" as never,
+      { ascending: true } as never,
+    )) as unknown as {
     data: Array<{
       id: string;
       employee_id: string;
@@ -68,7 +74,7 @@ export default async function PayrollRunDetailPage({
       pto_pay_cents: number;
       total_cents: number;
     }> | null;
-  });
+  };
 
   const run = runRaw;
   const items = itemsRaw ?? [];
@@ -86,8 +92,8 @@ export default async function PayrollRunDetailPage({
 
   return (
     <PageShell
-      title={`${formatDate(run.period_start)} → ${formatDate(run.period_end)}`}
-      description={`Payroll run created ${formatDate(run.created_at)}`}
+      title={`${formatDate(run.period_start, tz)} → ${formatDate(run.period_end, tz)}`}
+      description={`Payroll run created ${formatDate(run.created_at, tz)}`}
       actions={
         <div className="flex items-center gap-2">
           <Link
@@ -200,11 +206,11 @@ export default async function PayrollRunDetailPage({
 
       {/* Timestamps */}
       <div className="mt-4 flex flex-wrap gap-4 text-xs text-muted-foreground">
-        <span>Created {formatDateTime(run.created_at)}</span>
+        <span>Created {formatDateTime(run.created_at, tz)}</span>
         {run.finalized_at && (
-          <span>Finalized {formatDateTime(run.finalized_at)}</span>
+          <span>Finalized {formatDateTime(run.finalized_at, tz)}</span>
         )}
-        {run.paid_at && <span>Paid {formatDateTime(run.paid_at)}</span>}
+        {run.paid_at && <span>Paid {formatDateTime(run.paid_at, tz)}</span>}
       </div>
 
       {/* Actions */}
@@ -212,7 +218,11 @@ export default async function PayrollRunDetailPage({
         {run.status === "draft" && (
           <form action={finalizePayrollRunAction}>
             <input type="hidden" name="id" value={run.id} />
-            <SubmitButton variant="default" size="sm" pendingLabel="Finalizing…">
+            <SubmitButton
+              variant="default"
+              size="sm"
+              pendingLabel="Finalizing…"
+            >
               <CheckCircle2 className="h-4 w-4" />
               Finalize
             </SubmitButton>
@@ -221,13 +231,20 @@ export default async function PayrollRunDetailPage({
         {run.status === "finalized" && (
           <form action={markPayrollPaidAction}>
             <input type="hidden" name="id" value={run.id} />
-            <SubmitButton variant="default" size="sm" pendingLabel="Marking paid…">
+            <SubmitButton
+              variant="default"
+              size="sm"
+              pendingLabel="Marking paid…"
+            >
               <DollarSign className="h-4 w-4" />
               Mark as paid
             </SubmitButton>
           </form>
         )}
-        <form action={deletePayrollRunAction} className="ml-auto flex items-center gap-2">
+        <form
+          action={deletePayrollRunAction}
+          className="ml-auto flex items-center gap-2"
+        >
           <input type="hidden" name="id" value={run.id} />
           {run.status !== "draft" && (
             <input

@@ -1,5 +1,15 @@
 import Link from "next/link";
-import { ChevronRight, GraduationCap, Calendar, CalendarClock, MapPin, CalendarDays, CheckCircle2, XCircle, Shield } from "lucide-react";
+import {
+  ChevronRight,
+  GraduationCap,
+  Calendar,
+  CalendarClock,
+  MapPin,
+  CalendarDays,
+  CheckCircle2,
+  XCircle,
+  Shield,
+} from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -15,11 +25,13 @@ import {
   resyncMyGoogleCalendarAction,
 } from "./actions";
 import { RefreshCw } from "lucide-react";
+import { getOrgTimezone } from "@/lib/org-timezone";
 
 export const metadata = { title: "Profile" };
 
 export default async function FieldProfilePage() {
   const membership = await requireMembership();
+  const tz = await getOrgTimezone(membership.organization_id);
   const supabase = await createSupabaseServerClient();
   const { data: profile } = await supabase
     .from("profiles")
@@ -33,7 +45,10 @@ export default async function FieldProfilePage() {
     .select("calendar_scope, calendar_color")
     .eq("id", membership.id)
     .maybeSingle()) as unknown as {
-    data: { calendar_scope: string | null; calendar_color: string | null } | null;
+    data: {
+      calendar_scope: string | null;
+      calendar_color: string | null;
+    } | null;
   };
   const calScope = calPrefs?.calendar_scope ?? "mine";
   const calColor = calPrefs?.calendar_color ?? "6";
@@ -115,7 +130,8 @@ export default async function FieldProfilePage() {
       <div className="mt-5 rounded-xl border border-border bg-card p-5">
         <h2 className="mb-3 text-sm font-semibold">Push notifications</h2>
         <p className="mb-3 text-xs text-muted-foreground">
-          Get alerts on this device for new jobs, messages, and schedule changes — even when the app is in the background.
+          Get alerts on this device for new jobs, messages, and schedule changes
+          — even when the app is in the background.
         </p>
         <PushToggle
           membershipId={membership.id}
@@ -142,46 +158,92 @@ export default async function FieldProfilePage() {
 
       {/* Google Calendar */}
       <div className="mt-5 rounded-xl border border-border bg-card p-5">
-          <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold">
-            <CalendarDays className="h-4 w-4 text-blue-500" />
-            Google Calendar
-          </h2>
-          <p className="mb-4 text-xs text-muted-foreground leading-relaxed">
-            Connect your personal Google Calendar to automatically see your
-            assigned jobs. Events are created, updated, and removed as your
-            schedule changes.
-          </p>
+        <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold">
+          <CalendarDays className="h-4 w-4 text-blue-500" />
+          Google Calendar
+        </h2>
+        <p className="mb-4 text-xs text-muted-foreground leading-relaxed">
+          Connect your personal Google Calendar to automatically see your
+          assigned jobs. Events are created, updated, and removed as your
+          schedule changes.
+        </p>
 
-          {gcalConn && !calendarGranted ? (
-            // Connected, but Calendar permission was NOT granted — events will
-            // never sync. Prompt a reconnect with the permission checked.
-            <div className="space-y-3">
-              <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-xs">
-                <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
-                <div className="min-w-0 flex-1 text-amber-800 dark:text-amber-200">
-                  {gcalConn.external_account_id && (
-                    <div className="truncate font-medium">
-                      {gcalConn.external_account_id}
-                    </div>
-                  )}
-                  <div>
-                    Calendar access wasn&rsquo;t granted, so your jobs can&rsquo;t
-                    sync. Reconnect and keep the{" "}
-                    <span className="font-medium">Google Calendar</span> checkbox
-                    ticked on the permission screen.
+        {gcalConn && !calendarGranted ? (
+          // Connected, but Calendar permission was NOT granted — events will
+          // never sync. Prompt a reconnect with the permission checked.
+          <div className="space-y-3">
+            <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-xs">
+              <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
+              <div className="min-w-0 flex-1 text-amber-800 dark:text-amber-200">
+                {gcalConn.external_account_id && (
+                  <div className="truncate font-medium">
+                    {gcalConn.external_account_id}
                   </div>
+                )}
+                <div>
+                  Calendar access wasn&rsquo;t granted, so your jobs can&rsquo;t
+                  sync. Reconnect and keep the{" "}
+                  <span className="font-medium">Google Calendar</span> checkbox
+                  ticked on the permission screen.
                 </div>
               </div>
-              <form action={connectMyGoogleCalendarAction}>
+            </div>
+            <form action={connectMyGoogleCalendarAction}>
+              <button
+                type="submit"
+                className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-foreground px-3 py-2.5 text-sm font-medium text-background transition-colors hover:bg-foreground/90 active:scale-95"
+              >
+                <CalendarDays className="h-4 w-4" />
+                Reconnect &amp; allow Calendar
+              </button>
+            </form>
+            <form action={disconnectMyGoogleCalendarAction}>
+              <button
+                type="submit"
+                className="inline-flex w-full items-center justify-center gap-1 rounded-md border border-border bg-background px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground active:scale-95"
+              >
+                <XCircle className="h-3.5 w-3.5" />
+                Disconnect
+              </button>
+            </form>
+          </div>
+        ) : gcalConn ? (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2.5 text-xs">
+              <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+              <div className="min-w-0 flex-1">
+                {gcalConn.external_account_id && (
+                  <div className="truncate font-medium">
+                    {gcalConn.external_account_id}
+                  </div>
+                )}
+                <div className="text-muted-foreground">
+                  Connected {formatDateTime(gcalConn.connected_at, tz)}
+                </div>
+              </div>
+            </div>
+            <form action={resyncMyGoogleCalendarAction}>
+              <button
+                type="submit"
+                className="inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-border bg-background px-3 py-2 text-xs font-medium text-foreground transition-colors hover:bg-muted active:scale-95"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                Re-sync upcoming jobs
+              </button>
+            </form>
+            <div className="flex gap-2">
+              <form action={connectMyGoogleCalendarAction} className="flex-1">
                 <button
                   type="submit"
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-foreground px-3 py-2.5 text-sm font-medium text-background transition-colors hover:bg-foreground/90 active:scale-95"
+                  className="inline-flex w-full items-center justify-center rounded-md bg-foreground px-3 py-2 text-xs font-medium text-background transition-colors hover:bg-foreground/90 active:scale-95"
                 >
-                  <CalendarDays className="h-4 w-4" />
-                  Reconnect &amp; allow Calendar
+                  Switch account
                 </button>
               </form>
-              <form action={disconnectMyGoogleCalendarAction}>
+              <form
+                action={disconnectMyGoogleCalendarAction}
+                className="flex-1"
+              >
                 <button
                   type="submit"
                   className="inline-flex w-full items-center justify-center gap-1 rounded-md border border-border bg-background px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground active:scale-95"
@@ -191,62 +253,19 @@ export default async function FieldProfilePage() {
                 </button>
               </form>
             </div>
-          ) : gcalConn ? (
-            <div className="space-y-3">
-              <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2.5 text-xs">
-                <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
-                <div className="min-w-0 flex-1">
-                  {gcalConn.external_account_id && (
-                    <div className="truncate font-medium">
-                      {gcalConn.external_account_id}
-                    </div>
-                  )}
-                  <div className="text-muted-foreground">
-                    Connected {formatDateTime(gcalConn.connected_at)}
-                  </div>
-                </div>
-              </div>
-              <form action={resyncMyGoogleCalendarAction}>
-                <button
-                  type="submit"
-                  className="inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-border bg-background px-3 py-2 text-xs font-medium text-foreground transition-colors hover:bg-muted active:scale-95"
-                >
-                  <RefreshCw className="h-3.5 w-3.5" />
-                  Re-sync upcoming jobs
-                </button>
-              </form>
-              <div className="flex gap-2">
-                <form action={connectMyGoogleCalendarAction} className="flex-1">
-                  <button
-                    type="submit"
-                    className="inline-flex w-full items-center justify-center rounded-md bg-foreground px-3 py-2 text-xs font-medium text-background transition-colors hover:bg-foreground/90 active:scale-95"
-                  >
-                    Switch account
-                  </button>
-                </form>
-                <form action={disconnectMyGoogleCalendarAction} className="flex-1">
-                  <button
-                    type="submit"
-                    className="inline-flex w-full items-center justify-center gap-1 rounded-md border border-border bg-background px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground active:scale-95"
-                  >
-                    <XCircle className="h-3.5 w-3.5" />
-                    Disconnect
-                  </button>
-                </form>
-              </div>
-            </div>
-          ) : (
-            <form action={connectMyGoogleCalendarAction}>
-              <button
-                type="submit"
-                className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-foreground px-3 py-2.5 text-sm font-medium text-background transition-colors hover:bg-foreground/90 active:scale-95"
-              >
-                <CalendarDays className="h-4 w-4" />
-                Connect Google Calendar
-              </button>
-            </form>
-          )}
-        </div>
+          </div>
+        ) : (
+          <form action={connectMyGoogleCalendarAction}>
+            <button
+              type="submit"
+              className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-foreground px-3 py-2.5 text-sm font-medium text-background transition-colors hover:bg-foreground/90 active:scale-95"
+            >
+              <CalendarDays className="h-4 w-4" />
+              Connect Google Calendar
+            </button>
+          </form>
+        )}
+      </div>
 
       {/* Calendar view (managers can mirror the whole org, with their jobs highlighted) */}
       {isManagerPlus && gcalConn && (
@@ -300,18 +319,23 @@ export default async function FieldProfilePage() {
                         ? "bg-muted text-muted-foreground"
                         : "bg-amber-500/10 text-amber-700 dark:text-amber-300";
                 return (
-                  <li key={req.id} className="flex items-center justify-between gap-3 px-3 py-2.5 text-xs">
+                  <li
+                    key={req.id}
+                    className="flex items-center justify-between gap-3 px-3 py-2.5 text-xs"
+                  >
                     <div className="min-w-0 flex-1">
                       <div className="font-medium">
                         {req.start_date}
-                        {req.start_date !== req.end_date && ` → ${req.end_date}`}
+                        {req.start_date !== req.end_date &&
+                          ` → ${req.end_date}`}
                       </div>
                       <div className="text-muted-foreground">
-                        {req.hours}h
-                        {req.reason && ` · ${req.reason}`}
+                        {req.hours}h{req.reason && ` · ${req.reason}`}
                       </div>
                     </div>
-                    <span className={`rounded-md px-2 py-0.5 text-[10px] font-medium uppercase ${toneClass}`}>
+                    <span
+                      className={`rounded-md px-2 py-0.5 text-[10px] font-medium uppercase ${toneClass}`}
+                    >
                       {req.status}
                     </span>
                   </li>
@@ -339,7 +363,9 @@ export default async function FieldProfilePage() {
           className="flex items-center gap-3 rounded-xl border border-border bg-card p-4 transition-colors active:bg-muted"
         >
           <GraduationCap className="h-5 w-5 text-muted-foreground" />
-          <span className="flex-1 text-[15px] font-medium">Training modules</span>
+          <span className="flex-1 text-[15px] font-medium">
+            Training modules
+          </span>
           <ChevronRight className="h-5 w-5 text-muted-foreground" />
         </Link>
       </div>

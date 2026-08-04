@@ -7,6 +7,7 @@ import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
 import { memberDisplayName } from "@/lib/member-display";
 import { formatDate } from "@/lib/format";
+import { getOrgTimezone } from "@/lib/org-timezone";
 import {
   TrainingAssignmentsPanel,
   type AssignmentRow,
@@ -20,6 +21,7 @@ export default async function TrainingModuleDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const membership = await requireMembership(["owner", "admin", "manager"]);
+  const tz = await getOrgTimezone(membership.organization_id);
   const { id } = await params;
   const supabase = await createSupabaseServerClient();
 
@@ -39,9 +41,7 @@ export default async function TrainingModuleDetailPage({
       }>,
       supabase
         .from("training_assignments")
-        .select(
-          "id, employee_id, completed_at, completed_step_ids, created_at",
-        )
+        .select("id, employee_id, completed_at, completed_step_ids, created_at")
         .eq("module_id", id) as unknown as Promise<{
         data: Array<{
           id: string;
@@ -55,9 +55,7 @@ export default async function TrainingModuleDetailPage({
       // mark anyone trained.
       supabase
         .from("memberships")
-        .select(
-          "id, role, display_name, profile:profiles ( full_name )",
-        )
+        .select("id, role, display_name, profile:profiles ( full_name )")
         .eq("status", "active")
         .eq("organization_id", membership.organization_id),
     ]);
@@ -122,14 +120,14 @@ export default async function TrainingModuleDetailPage({
             No active employees yet.
           </p>
         ) : (
-          <TrainingAssignmentsPanel moduleId={mod.id} rows={rows} />
+          <TrainingAssignmentsPanel tz={tz} moduleId={mod.id} rows={rows} />
         )}
 
         <p className="mt-4 text-[11px] text-muted-foreground">
           Marking someone complete here is an override — use it for staff who
-          were trained before you started using Sollos, manually-added crew
-          who don&rsquo;t use the app, or anyone you&rsquo;ve verified in
-          person. Last updated {formatDate(new Date().toISOString())}.
+          were trained before you started using Sollos, manually-added crew who
+          don&rsquo;t use the app, or anyone you&rsquo;ve verified in person.
+          Last updated {formatDate(new Date().toISOString(), tz)}.
         </p>
       </div>
     </PageShell>

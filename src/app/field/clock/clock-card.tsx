@@ -49,8 +49,7 @@ async function getCoords(): Promise<Coords> {
   }
   return new Promise((resolve) => {
     navigator.geolocation.getCurrentPosition(
-      (pos) =>
-        resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
       () => resolve({ lat: null, lng: null }),
       { enableHighAccuracy: true, timeout: 5000, maximumAge: 30_000 },
     );
@@ -70,7 +69,13 @@ export function ClockCard({
   openSinceIso,
   openBookingLabel,
   openBookingId,
+  tz,
 }: {
+  /** Org IANA timezone. Without it this rendered in the PHONE's zone, which
+   *  is accidentally right for a local cleaner and wrong for anyone whose
+   *  device is set elsewhere — and it disagreed with the shift history
+   *  directly beneath it, which uses the org's. */
+  tz: string;
   isClockedIn: boolean;
   openSinceIso: string | null;
   openBookingLabel: string | null;
@@ -145,6 +150,7 @@ export function ClockCard({
                   weekday: "short",
                   hour: "numeric",
                   minute: "2-digit",
+                  timeZone: tz,
                 })}
                 {openBookingLabel ? ` · ${openBookingLabel}` : ""}
               </p>

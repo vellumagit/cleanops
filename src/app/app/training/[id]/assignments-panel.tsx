@@ -29,14 +29,22 @@ export type AssignmentRow = {
 export function TrainingAssignmentsPanel({
   moduleId,
   rows,
+  tz,
 }: {
   moduleId: string;
   rows: AssignmentRow[];
+  /** Org IANA timezone — completion dates render in it. */
+  tz: string;
 }) {
   return (
     <ul className="divide-y divide-border">
       {rows.map((row) => (
-        <AssignmentRowItem key={row.employee_id} moduleId={moduleId} row={row} />
+        <AssignmentRowItem
+          key={row.employee_id}
+          moduleId={moduleId}
+          row={row}
+          tz={tz}
+        />
       ))}
     </ul>
   );
@@ -45,9 +53,11 @@ export function TrainingAssignmentsPanel({
 function AssignmentRowItem({
   moduleId,
   row,
+  tz,
 }: {
   moduleId: string;
   row: AssignmentRow;
+  tz: string;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -82,7 +92,7 @@ function AssignmentRowItem({
         </div>
         <p className="mt-0.5 text-xs text-muted-foreground">
           {isComplete
-            ? `Completed ${formatDate(row.completed_at!)}`
+            ? `Completed ${formatDate(row.completed_at!, tz)}`
             : row.assignment_id
               ? `In progress · ${row.progress_steps} step${
                   row.progress_steps === 1 ? "" : "s"
@@ -98,11 +108,7 @@ function AssignmentRowItem({
           onClick={() => toggle(false)}
           disabled={pending}
         >
-          {pending ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            "Undo"
-          )}
+          {pending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Undo"}
         </Button>
       ) : (
         <Button

@@ -750,7 +750,6 @@ export async function autoBookingOnEstimateApproval(estimateId: string) {
     const { getOrgTimezone } = await import("@/lib/org-timezone");
     const orgTz = await getOrgTimezone(estimate.organization_id);
     const tomorrowLocalDate = new Intl.DateTimeFormat("en-CA", {
-      timeZone: orgTz,
       year: "numeric",
       month: "2-digit",
       day: "2-digit",
@@ -2110,10 +2109,12 @@ export async function sendOverdueReminders(): Promise<{
         clientName: inv.client!.name ?? "there",
         invoiceNumber,
         amountFormatted,
+        // due_date is a DATE column — pinned, not zoned. See invoice-send.ts.
         dueDate: dueDate.toLocaleDateString("en-US", {
           month: "short",
           day: "numeric",
           year: "numeric",
+          timeZone: "UTC",
         }),
         daysOverdue,
         publicUrl,
@@ -3385,13 +3386,20 @@ export async function sendEstimateToClient(
 
     const orgName = orgData?.name ?? "Your service provider";
     const currency = await getOrgCurrency(estimate.organization_id);
+    const { getOrgTimezone: getEstimateTz } =
+      await import("@/lib/org-timezone");
+    const estimateTz = await getEstimateTz(estimate.organization_id);
     const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
 
+    // expires_at is a timestamptz (now() + 30 days), so the time of day is
+    // real. Formatted in UTC on Vercel, an estimate sent after 6 PM Edmonton
+    // promised "Expires Sep 4" for a link that dies the evening of Sep 3.
     const expiresOn = expiresAt
       ? new Date(expiresAt).toLocaleDateString("en-US", {
           month: "short",
           day: "numeric",
           year: "numeric",
+          timeZone: estimateTz,
         })
       : null;
 
@@ -4395,12 +4403,15 @@ export async function sendPayoutNotification(args: {
     if (recipients.length === 0) return;
 
     const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+    const { getOrgTimezone: getPayoutTz } = await import("@/lib/org-timezone");
+    const payoutTz = await getPayoutTz(org.id);
     const arrivalDate = args.arrivalDateUnix
       ? new Date(args.arrivalDateUnix * 1000).toLocaleDateString("en-US", {
           weekday: "long",
           month: "short",
           day: "numeric",
           year: "numeric",
+          timeZone: payoutTz,
         })
       : "soon";
 
@@ -4533,7 +4544,7 @@ export async function sendInvoiceReviewDigests(): Promise<{
   const db = admin();
   const { sendEmail } = await import("@/lib/email");
   const { invoiceReviewDigestEmail } = await import("@/lib/email-templates");
-  const { formatCurrencyCents, DEFAULT_TZ } = await import("@/lib/format");
+  const { formatCurrencyCents, FALLBACK_TZ } = await import("@/lib/format");
   const { getOrgCurrency } = await import("@/lib/org-currency");
   const { isValidIanaTz } = await import("@/lib/org-timezone");
   const { zonedDayBoundsUtc, formatHourLabel } =
@@ -4564,7 +4575,7 @@ export async function sendInvoiceReviewDigests(): Promise<{
     if (!(await isAutomationEnabled(org.id, "invoice_review_digest"))) continue;
 
     const tz =
-      org.timezone && isValidIanaTz(org.timezone) ? org.timezone : DEFAULT_TZ;
+      org.timezone && isValidIanaTz(org.timezone) ? org.timezone : FALLBACK_TZ;
     const yesterday = zonedDayBoundsUtc(now, tz, -1);
     const today = zonedDayBoundsUtc(now, tz, 0);
 
@@ -4639,7 +4650,6 @@ export async function sendInvoiceReviewDigests(): Promise<{
     );
 
     const dayLabel = yesterday.start.toLocaleDateString("en-US", {
-      timeZone: tz,
       weekday: "long",
       month: "long",
       day: "numeric",
@@ -5434,15 +5444,7 @@ export async function sendWeeklyEmployeeSchedules(): Promise<{
   const db = admin();
   const { sendEmail } = await import("@/lib/email");
   const { employeeWeeklyScheduleEmail } = await import("@/lib/email-templates");
-
-  // Next 7 days starting tomorrow UTC 00:00.
-  const startOfTomorrow = new Date();
-  startOfTomorrow.setUTCHours(0, 0, 0, 0);
-  startOfTomorrow.setUTCDate(startOfTomorrow.getUTCDate() + 1);
-  const endOfWeek = new Date(
-    startOfTomorrow.getTime() + 7 * 24 * 60 * 60 * 1000,
-  );
-  const weekLabel = `${startOfTomorrow.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })} – ${new Date(endOfWeek.getTime() - 1).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })}`;
+  const { zonedDayStartUtc } = await import("@/lib/wall-clock");
 
   const { data: orgs } = (await db
     .from("organizations")
@@ -5459,6 +5461,21 @@ export async function sendWeeklyEmployeeSchedules(): Promise<{
     if (!(await isAutomationEnabled(org.id, "employee_weekly_schedule")))
       continue;
     const orgTz = org.timezone ?? "America/Edmonton";
+
+    // The next 7 days in the ORG's calendar, not UTC's. These three were
+    // computed once above the loop from UTC midnight, so for a negative-offset
+    // org the "week" ran Sunday 18:00 to Sunday 18:00 local — and every job
+    // after 6 PM on the closing Sunday fell outside the query entirely. Not
+    // mislabelled: absent. A job missing from a schedule email is a no-show.
+    const startOfTomorrow = zonedDayStartUtc(new Date(), orgTz, 1);
+    const endOfWeek = zonedDayStartUtc(new Date(), orgTz, 8);
+    const labelDay = (d: Date) =>
+      d.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        timeZone: orgTz,
+      });
+    const weekLabel = `${labelDay(startOfTomorrow)} – ${labelDay(new Date(endOfWeek.getTime() - 1))}`;
 
     const { data: bookings } = (await db
       .from("bookings")
@@ -5531,9 +5548,7 @@ export async function sendWeeklyEmployeeSchedules(): Promise<{
         dayMap.set(localKey, []);
       }
       for (const r of resolved) {
-        const localKey = r.win.start.toLocaleDateString("en-CA", {
-          timeZone: orgTz,
-        });
+        const localKey = r.win.start.toLocaleDateString("en-CA", {});
         const bucket = dayMap.get(localKey) ?? [];
         bucket.push(r);
         dayMap.set(localKey, bucket);
@@ -6009,11 +6024,14 @@ export async function notifyPtoStatus(ptoRequestId: string): Promise<void> {
       .maybeSingle()) as unknown as { data: { name: string } | null };
 
     const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+    // PTO start_date/end_date are DATE columns — no time of day, so they are
+    // pinned rather than zoned. Zoning a bare date rolls it back a day.
     const fmt = (d: string) =>
       new Date(d).toLocaleDateString("en-US", {
         month: "short",
         day: "numeric",
         year: "numeric",
+        timeZone: "UTC",
       });
 
     const template = employeePtoStatusEmail({
@@ -6097,23 +6115,37 @@ export async function notifyPayrollPaid(payrollRunId: string): Promise<void> {
       .eq("id", run.organization_id)
       .maybeSingle()) as unknown as { data: { name: string } | null };
     const currency = await getOrgCurrency(run.organization_id);
+    const { getOrgTimezone: getPayrollTz } = await import("@/lib/org-timezone");
+    const payrollTz = await getPayrollTz(run.organization_id);
     const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+    // paid_at is a timestamptz. Formatted with no zone it rendered in the
+    // process timezone — UTC on Vercel — so a run marked paid in the evening
+    // dated every employee's receipt to the NEXT day. Wrong for all seven
+    // orgs, not only the Edmonton ones, and this is the artifact someone
+    // reconciles their pay against.
     const paidDate = new Date(run.paid_at ?? new Date()).toLocaleDateString(
       "en-US",
       {
         month: "short",
         day: "numeric",
         year: "numeric",
+        timeZone: payrollTz,
       },
     );
+    // period_start / period_end are DATE columns, not timestamps — they carry
+    // no time of day, so they are pinned to UTC deliberately. Applying the org
+    // zone to a bare date is what rolls it back to the previous day.
+    // eslint-disable-next-line no-restricted-syntax -- date column, no tz
     const periodStart = new Date(run.period_start).toLocaleDateString("en-US", {
       month: "short",
       day: "numeric",
+      timeZone: "UTC",
     });
     const periodEnd = new Date(run.period_end).toLocaleDateString("en-US", {
       month: "short",
       day: "numeric",
       year: "numeric",
+      timeZone: "UTC",
     });
 
     for (const item of items) {
@@ -6308,10 +6340,12 @@ export async function sendCertificationExpiryReminders(): Promise<{
       recipientName: recipient.fullName ?? "there",
       orgName: org?.name ?? "your organization",
       moduleTitle: module.title,
+      // expires_at here is a DATE column — pinned, not zoned.
       expiresOn: new Date(expiresAt).toLocaleDateString("en-US", {
         month: "long",
         day: "numeric",
         year: "numeric",
+        timeZone: "UTC",
       }),
       daysUntilExpiry: daysUntil,
       trainingUrl: `${siteUrl}/field/training/${a.module_id}`,

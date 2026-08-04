@@ -28,6 +28,7 @@ import { SyncSageButton } from "./sync-sage-button";
 import { SyncQuickBooksButton } from "./sync-quickbooks-button";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
+import { getOrgTimezone } from "@/lib/org-timezone";
 import {
   StatusBadge,
   invoiceStatusTone,
@@ -39,10 +40,7 @@ import {
   formatDateTime,
   humanizeEnum,
 } from "@/lib/format";
-import {
-  voidInvoiceAction,
-  generateReviewTokenAction,
-} from "../actions";
+import { voidInvoiceAction, generateReviewTokenAction } from "../actions";
 import { SubmitButton } from "@/components/submit-button";
 import { RecordPaymentForm } from "./record-payment-form";
 import { PaymentRowActions } from "./payment-row-actions";
@@ -51,12 +49,7 @@ import { humanizePaymentMethod } from "@/lib/validators/invoice-payment";
 export const metadata = { title: "Invoice" };
 
 type InvoiceStatus =
-  | "draft"
-  | "sent"
-  | "partially_paid"
-  | "paid"
-  | "overdue"
-  | "void";
+  "draft" | "sent" | "partially_paid" | "paid" | "overdue" | "void";
 
 /**
  * Invoice detail page — Phase 12 rework.
@@ -73,6 +66,7 @@ export default async function InvoiceDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const membership = await requireMembership(["owner", "admin", "manager"]);
+  const tz = await getOrgTimezone(membership.organization_id);
   const { id } = await params;
   const supabase = await createSupabaseServerClient();
   const currency = await getOrgCurrency(membership.organization_id);
@@ -86,9 +80,14 @@ export default async function InvoiceDetailPage({
     .eq("id", membership.organization_id)
     .maybeSingle();
   const stripeReady = Boolean(
-    (orgStripe as { stripe_account_id: string | null; stripe_charges_enabled: boolean } | null)
-      ?.stripe_account_id &&
-      (orgStripe as { stripe_charges_enabled: boolean } | null)?.stripe_charges_enabled,
+    (
+      orgStripe as {
+        stripe_account_id: string | null;
+        stripe_charges_enabled: boolean;
+      } | null
+    )?.stripe_account_id &&
+    (orgStripe as { stripe_charges_enabled: boolean } | null)
+      ?.stripe_charges_enabled,
   );
 
   const { data: invoice, error } = await supabase
@@ -183,10 +182,14 @@ export default async function InvoiceDetailPage({
     .select("auto_send_at, auto_send_state")
     .eq("id", id)
     .maybeSingle()) as unknown as {
-    data: { auto_send_at: string | null; auto_send_state: string | null } | null;
+    data: {
+      auto_send_at: string | null;
+      auto_send_state: string | null;
+    } | null;
   };
   const autoSendScheduled =
-    autoSendData?.auto_send_state === "scheduled" && Boolean(autoSendData?.auto_send_at);
+    autoSendData?.auto_send_state === "scheduled" &&
+    Boolean(autoSendData?.auto_send_at);
 
   // Auto-send gave up on this draft ("skipped"/"held") — recompute the
   // owner-readable reason against the client's current settings.
@@ -265,139 +268,151 @@ export default async function InvoiceDetailPage({
               }}
             />
             <div className="p-6">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="sollos-label">Invoice</p>
-                <h2 className="mt-1 text-2xl font-bold tracking-tight">
-                  {invoice.number ?? "—"}
-                </h2>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {invoice.client?.name ?? "—"}
-                  {invoice.client?.address && (
-                    <>
-                      {" · "}
-                      <span>{invoice.client.address}</span>
-                    </>
-                  )}
-                </p>
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="sollos-label">Invoice</p>
+                  <h2 className="mt-1 text-2xl font-bold tracking-tight">
+                    {invoice.number ?? "—"}
+                  </h2>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {invoice.client?.name ?? "—"}
+                    {invoice.client?.address && (
+                      <>
+                        {" · "}
+                        <span>{invoice.client.address}</span>
+                      </>
+                    )}
+                  </p>
+                </div>
+                <StatusBadge tone={invoiceStatusTone(status)}>
+                  {humanizeEnum(status)}
+                </StatusBadge>
               </div>
-              <StatusBadge tone={invoiceStatusTone(status)}>
-                {humanizeEnum(status)}
-              </StatusBadge>
-            </div>
 
-            <dl className="mt-6 grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
-              <Metric label="Total" value={formatCurrencyCents(invoice.amount_cents, currency)} />
-              <Metric
-                label="Paid"
-                value={formatCurrencyCents(paidCents, currency)}
-                tone="green"
-              />
-              <Metric
-                label="Balance"
-                value={formatCurrencyCents(balanceCents, currency)}
-                tone={balanceCents > 0 ? "amber" : "neutral"}
-              />
-              <Metric
-                label="Due"
-                value={invoice.due_date ? formatDate(invoice.due_date) : "—"}
-              />
-            </dl>
+              <dl className="mt-6 grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
+                <Metric
+                  label="Total"
+                  value={formatCurrencyCents(invoice.amount_cents, currency)}
+                />
+                <Metric
+                  label="Paid"
+                  value={formatCurrencyCents(paidCents, currency)}
+                  tone="green"
+                />
+                <Metric
+                  label="Balance"
+                  value={formatCurrencyCents(balanceCents, currency)}
+                  tone={balanceCents > 0 ? "amber" : "neutral"}
+                />
+                <Metric
+                  label="Due"
+                  value={
+                    invoice.due_date ? formatDate(invoice.due_date, tz) : "—"
+                  }
+                />
+              </dl>
 
-            {status === "draft" && !isVoid && autoSendScheduled && (
-              <AutoSendNotice iso={autoSendData!.auto_send_at!} />
-            )}
-
-            {status === "draft" && !isVoid && delivery?.kind === "skipped" && (
-              <p className="mt-4 flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
-                <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                <span>{delivery.note}</span>
-              </p>
-            )}
-            {status === "draft" && !isVoid && delivery?.kind === "held" && (
-              <p className="mt-4 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-                {delivery.note}
-              </p>
-            )}
-
-            <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-border pt-4">
-              {status === "draft" && !isVoid && (
-                <SendInvoiceButton invoiceId={invoice.id} />
-              )}
               {status === "draft" && !isVoid && autoSendScheduled && (
-                <HoldAutoSendButton invoiceId={invoice.id} />
+                <AutoSendNotice iso={autoSendData!.auto_send_at!} />
               )}
-              {status !== "draft" && !isVoid && (
-                <ResendInvoiceButton invoiceId={invoice.id} />
+
+              {status === "draft" &&
+                !isVoid &&
+                delivery?.kind === "skipped" && (
+                  <p className="mt-4 flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-300">
+                    <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    <span>{delivery.note}</span>
+                  </p>
+                )}
+              {status === "draft" && !isVoid && delivery?.kind === "held" && (
+                <p className="mt-4 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                  {delivery.note}
+                </p>
               )}
-              {stripeReady && !isVoid && balanceCents > 0 && (
-                <StripePaymentLinkButton invoiceId={invoice.id} />
-              )}
-              {sageConnected && !isVoid && (
-                <SyncSageButton
-                  invoiceId={invoice.id}
-                  alreadySynced={sageSynced}
-                />
-              )}
-              {qbConnected && !isVoid && (
-                <SyncQuickBooksButton
-                  invoiceId={invoice.id}
-                  alreadySynced={qbSynced}
-                />
-              )}
-              {invoice.public_token && (
-                <Link
-                  href={`/i/${invoice.public_token}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={buttonVariants({ variant: "outline", size: "sm" })}
-                >
-                  <ExternalLink className="h-4 w-4" />
-                  View public link
-                </Link>
-              )}
-              {status === "paid" && reviewToken ? (
-                <Link
-                  href={`/review/${reviewToken}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={buttonVariants({ variant: "outline", size: "sm" })}
-                >
-                  <Star className="h-4 w-4" />
-                  Review link
-                </Link>
-              ) : status === "paid" ? (
-                <form action={generateReviewTokenAction}>
-                  <input type="hidden" name="id" value={invoice.id} />
-                  <SubmitButton
-                    variant="outline"
-                    size="sm"
-                    pendingLabel="Generating…"
+
+              <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-border pt-4">
+                {status === "draft" && !isVoid && (
+                  <SendInvoiceButton invoiceId={invoice.id} />
+                )}
+                {status === "draft" && !isVoid && autoSendScheduled && (
+                  <HoldAutoSendButton invoiceId={invoice.id} />
+                )}
+                {status !== "draft" && !isVoid && (
+                  <ResendInvoiceButton invoiceId={invoice.id} />
+                )}
+                {stripeReady && !isVoid && balanceCents > 0 && (
+                  <StripePaymentLinkButton invoiceId={invoice.id} />
+                )}
+                {sageConnected && !isVoid && (
+                  <SyncSageButton
+                    invoiceId={invoice.id}
+                    alreadySynced={sageSynced}
+                  />
+                )}
+                {qbConnected && !isVoid && (
+                  <SyncQuickBooksButton
+                    invoiceId={invoice.id}
+                    alreadySynced={qbSynced}
+                  />
+                )}
+                {invoice.public_token && (
+                  <Link
+                    href={`/i/${invoice.public_token}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={buttonVariants({
+                      variant: "outline",
+                      size: "sm",
+                    })}
+                  >
+                    <ExternalLink className="h-4 w-4" />
+                    View public link
+                  </Link>
+                )}
+                {status === "paid" && reviewToken ? (
+                  <Link
+                    href={`/review/${reviewToken}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={buttonVariants({
+                      variant: "outline",
+                      size: "sm",
+                    })}
                   >
                     <Star className="h-4 w-4" />
-                    Generate review link
-                  </SubmitButton>
-                </form>
-              ) : null}
-              {!isVoid && (
-                <form
-                  action={voidInvoiceAction}
-                  className="ml-auto"
-                >
-                  <input type="hidden" name="id" value={invoice.id} />
-                  <SubmitButton
-                    variant="outline"
-                    size="sm"
-                    pendingLabel="Voiding…"
-                  >
-                    <Ban className="h-4 w-4" />
-                    Void invoice
-                  </SubmitButton>
-                </form>
-              )}
+                    Review link
+                  </Link>
+                ) : status === "paid" ? (
+                  <form action={generateReviewTokenAction}>
+                    <input type="hidden" name="id" value={invoice.id} />
+                    <SubmitButton
+                      variant="outline"
+                      size="sm"
+                      pendingLabel="Generating…"
+                    >
+                      <Star className="h-4 w-4" />
+                      Generate review link
+                    </SubmitButton>
+                  </form>
+                ) : null}
+                {!isVoid && (
+                  <form action={voidInvoiceAction} className="ml-auto">
+                    <input type="hidden" name="id" value={invoice.id} />
+                    <SubmitButton
+                      variant="outline"
+                      size="sm"
+                      pendingLabel="Voiding…"
+                    >
+                      <Ban className="h-4 w-4" />
+                      Void invoice
+                    </SubmitButton>
+                  </form>
+                )}
+              </div>
             </div>
-            </div>{/* close p-6 inner wrapper */}
-          </div>{/* close overflow-hidden card */}
+            {/* close p-6 inner wrapper */}
+          </div>
+          {/* close overflow-hidden card */}
 
           {/* Line items */}
           <div className="rounded-lg border border-border bg-card">
@@ -417,8 +432,9 @@ export default async function InvoiceDetailPage({
             ) : (
               <ul className="divide-y divide-border">
                 {lineItems.map((li) => {
-                  const subtotal =
-                    Math.round((li.quantity ?? 1) * li.unit_price_cents);
+                  const subtotal = Math.round(
+                    (li.quantity ?? 1) * li.unit_price_cents,
+                  );
                   return (
                     <li
                       key={li.id}
@@ -524,7 +540,7 @@ export default async function InvoiceDetailPage({
                         )}
                       </div>
                       <p className="mt-0.5 text-xs text-muted-foreground">
-                        {formatDateTime(p.received_at)}
+                        {formatDateTime(p.received_at, tz)}
                         {p.reference && (
                           <>
                             {" · "}
@@ -579,7 +595,7 @@ export default async function InvoiceDetailPage({
                 />
                 <Row
                   label="Scheduled"
-                  value={formatDateTime(invoice.booking.scheduled_at)}
+                  value={formatDateTime(invoice.booking.scheduled_at, tz)}
                 />
               </dl>
               <Link
@@ -594,19 +610,28 @@ export default async function InvoiceDetailPage({
           <div className="rounded-lg border border-border bg-card p-4">
             <p className="sollos-label">Meta</p>
             <dl className="mt-3 space-y-2 text-xs">
-              <Row label="Created" value={formatDateTime(invoice.created_at)} />
+              <Row
+                label="Created"
+                value={formatDateTime(invoice.created_at, tz)}
+              />
               <Row
                 label="Sent"
-                value={invoice.sent_at ? formatDateTime(invoice.sent_at) : "—"}
+                value={
+                  invoice.sent_at ? formatDateTime(invoice.sent_at, tz) : "—"
+                }
               />
               <Row
                 label="Paid"
-                value={invoice.paid_at ? formatDateTime(invoice.paid_at) : "—"}
+                value={
+                  invoice.paid_at ? formatDateTime(invoice.paid_at, tz) : "—"
+                }
               />
               <Row
                 label="Voided"
                 value={
-                  invoice.voided_at ? formatDateTime(invoice.voided_at) : "—"
+                  invoice.voided_at
+                    ? formatDateTime(invoice.voided_at, tz)
+                    : "—"
                 }
               />
             </dl>

@@ -4,6 +4,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { FieldHeader } from "@/components/field-shell";
 import { formatDateTime, formatDurationMinutes } from "@/lib/format";
 import { ClockCard } from "./clock-card";
+import { getOrgTimezone } from "@/lib/org-timezone";
 
 export const metadata = { title: "Clock" };
 
@@ -16,6 +17,7 @@ function diffMinutes(start: string, end: string): number {
 
 export default async function FieldClockPage() {
   const membership = await requireMembership();
+  const tz = await getOrgTimezone(membership.organization_id);
   const supabase = await createSupabaseServerClient();
 
   const since = new Date();
@@ -55,6 +57,7 @@ export default async function FieldClockPage() {
       />
 
       <ClockCard
+        tz={tz}
         isClockedIn={Boolean(open)}
         openSinceIso={open?.clock_in_at ?? null}
         openBookingLabel={openBookingLabel}
@@ -96,7 +99,7 @@ export default async function FieldClockPage() {
                       {entry.booking?.client?.name ?? "Generic shift"}
                     </div>
                     <div className="text-sm text-muted-foreground">
-                      {formatDateTime(entry.clock_in_at)}
+                      {formatDateTime(entry.clock_in_at, tz)}
                     </div>
                   </div>
                   <div className="shrink-0 text-right">

@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { FileText } from "lucide-react";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getOrgCurrency } from "@/lib/org-currency";
+import { getOrgTimezone } from "@/lib/org-timezone";
 import { formatCurrencyCents } from "@/lib/format";
 import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
 import { RateLimitedPage } from "@/components/rate-limited-page";
@@ -70,9 +71,10 @@ export default async function PublicEstimatePage({
   if (!estimate) notFound();
 
   const currency = await getOrgCurrency(estimate.organization_id);
+
+  const tz = await getOrgTimezone(estimate.organization_id);
   const orgName = estimate.organization?.name ?? "Your service provider";
-  const brandColor =
-    estimate.organization?.brand_color ?? "#6366f1";
+  const brandColor = estimate.organization?.brand_color ?? "#6366f1";
   const logoUrl = estimate.organization?.logo_url ?? null;
 
   // Server component — per-request render, so Date.now() here is
@@ -181,6 +183,7 @@ export default async function PublicEstimatePage({
                   month: "long",
                   day: "numeric",
                   year: "numeric",
+                  timeZone: tz,
                 })}
               </p>
             )}
@@ -216,8 +219,8 @@ export default async function PublicEstimatePage({
               Ready to proceed, or have questions?
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Reply to the email that brought you here and {orgName} will be
-              in touch. They&rsquo;ll confirm and schedule your service.
+              Reply to the email that brought you here and {orgName} will be in
+              touch. They&rsquo;ll confirm and schedule your service.
             </p>
           </section>
         </div>

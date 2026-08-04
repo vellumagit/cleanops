@@ -7,6 +7,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { memberDisplayName } from "@/lib/member-display";
 import { ReviewsFilters } from "./reviews-filters";
 import { ReviewsTable, type ReviewRow } from "./reviews-table";
+import { getOrgTimezone } from "@/lib/org-timezone";
 
 export const metadata = { title: "Reviews" };
 
@@ -18,6 +19,7 @@ export default async function ReviewsPage({
   searchParams: Promise<SearchParams>;
 }) {
   const membership = await requireMembership();
+  const tz = await getOrgTimezone(membership.organization_id);
   const canEdit = membership.role === "owner" || membership.role === "admin";
   const params = await searchParams;
   const employeeFilter =
@@ -94,7 +96,7 @@ export default async function ReviewsPage({
           employee={employeeFilter ?? ""}
           minRating={params.min_rating ?? ""}
         />
-        <ReviewsTable rows={rows} canEdit={canEdit} />
+        <ReviewsTable tz={tz} rows={rows} canEdit={canEdit} />
       </div>
     </PageShell>
   );

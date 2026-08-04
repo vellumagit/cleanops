@@ -2,16 +2,10 @@ import Link from "next/link";
 import { CreditCard, ExternalLink } from "lucide-react";
 import { requireClient } from "@/lib/client-auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import {
-  formatCurrencyCents,
-  formatDate,
-  humanizeEnum,
-} from "@/lib/format";
+import { formatCurrencyCents, formatDate, humanizeEnum } from "@/lib/format";
 import { getOrgCurrency } from "@/lib/org-currency";
-import {
-  StatusBadge,
-  invoiceStatusTone,
-} from "@/components/status-badge";
+import { getOrgTimezone } from "@/lib/org-timezone";
+import { StatusBadge, invoiceStatusTone } from "@/components/status-badge";
 
 export const metadata = { title: "My invoices" };
 
@@ -23,6 +17,7 @@ const PAYABLE_STATUSES = new Set(["sent", "overdue", "partially_paid"]);
 
 export default async function ClientInvoicesPage() {
   const client = await requireClient();
+  const tz = await getOrgTimezone(client.organization_id);
   const supabase = await createSupabaseServerClient();
   const currency = await getOrgCurrency(client.organization_id);
 
@@ -61,11 +56,12 @@ export default async function ClientInvoicesPage() {
                       {formatCurrencyCents(inv.amount_cents, currency)}
                     </p>
                     <p className="mt-0.5 text-xs text-muted-foreground">
-                      Invoice{" "}
-                      {inv.number ?? inv.id.slice(0, 8).toUpperCase()}
+                      Invoice {inv.number ?? inv.id.slice(0, 8).toUpperCase()}
                       {" · "}
-                      {formatDate(inv.created_at)}
-                      {inv.due_date ? ` · due ${formatDate(inv.due_date)}` : ""}
+                      {formatDate(inv.created_at, tz)}
+                      {inv.due_date
+                        ? ` · due ${formatDate(inv.due_date, tz)}`
+                        : ""}
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
