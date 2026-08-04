@@ -390,15 +390,31 @@ export function getSageTaxRegionId(conn: SageConnection): string | null {
   return typeof v === "string" && v ? v : null;
 }
 
-/** Persist the org's tax-region choice onto its Sage connection. */
-export async function setSageTaxRegionId(
+/**
+ * Merge a patch into the org's Sage connection metadata.
+ *
+ * The connection row's jsonb is the scratch space for everything we learn
+ * about an org's Sage setup — resolved ledger account, matched tax rates, the
+ * reconciler's skip-list — so none of it needs a column of its own.
+ */
+export async function mergeSageConnectionMetadata(
   organizationId: string,
-  regionId: string,
+  patch: Record<string, unknown>,
 ): Promise<boolean> {
   const conn = await getSageConnection(organizationId);
   if (!conn) return false;
-  await mergeConnectionMetadata(conn.id, { tax_address_region_id: regionId });
+  await mergeConnectionMetadata(conn.id, patch);
   return true;
+}
+
+/** Persist the org's tax-region choice onto its Sage connection. */
+export function setSageTaxRegionId(
+  organizationId: string,
+  regionId: string,
+): Promise<boolean> {
+  return mergeSageConnectionMetadata(organizationId, {
+    tax_address_region_id: regionId,
+  });
 }
 
 /**
@@ -695,10 +711,14 @@ type SageSalesInvoice = {
  * same lesson: a bare null made the UI print a speculative cause and sent us
  * chasing the wrong thing. The message is also stamped onto the connection's
  * last_error so it can be read from Settings → Integrations.
+ *
+ * `permanent` marks a failure that retrying cannot fix — missing data or Sage
+ * config, as opposed to a token blip or a 5xx. The reconcile cron uses it to
+ * stop hammering an invoice that will fail identically every time.
  */
 export async function pushInvoiceToSage(
   invoiceId: string,
-): Promise<{ id: string | null; error?: string }> {
+): Promise<{ id: string | null; error?: string; permanent?: boolean }> {
   const admin = createSupabaseAdminClient();
 
   // Fetch invoice + line items in one shot.
@@ -745,17 +765,17 @@ export async function pushInvoiceToSage(
 
   if (!invoice) {
     console.error(`[sage] pushInvoiceToSage: invoice ${invoiceId} not found`);
-    return { id: null, error: "Invoice not found." };
+    return { id: null, error: "Invoice not found.", permanent: true };
   }
   if (invoice.sage_invoice_id) {
     return { id: invoice.sage_invoice_id };
   }
 
   const orgId = invoice.organization_id;
-  const fail = async (error: string) => {
+  const fail = async (error: string, permanent = false) => {
     console.error(`[sage] invoice ${invoiceId}: ${error}`);
     await recordSageError(orgId, error);
-    return { id: null, error };
+    return { id: null, error, permanent };
   };
 
   const conn = await getSageConnection(orgId);
@@ -774,6 +794,7 @@ export async function pushInvoiceToSage(
   if (!sageContactId) {
     return fail(
       "Couldn't create this client as a Sage contact. Check the client has a name, then try again.",
+      true,
     );
   }
 
@@ -817,6 +838,7 @@ export async function pushInvoiceToSage(
     return fail(
       "Sage needs a service address on this invoice. Add an address to the " +
         "client (or to the booking) and sync again.",
+      true,
     );
   }
 
@@ -834,6 +856,7 @@ export async function pushInvoiceToSage(
     if (!ledgerAccountId) {
       return fail(
         "Sage has no sales ledger account to post this invoice to. Create one in Sage (Settings → Chart of Accounts), then try again.",
+        true,
       );
     }
 
@@ -865,6 +888,7 @@ export async function pushInvoiceToSage(
                 ? ` for the ${orgTaxRegionId} region`
                 : ""
           } (Settings → Tax Rates), then try again.`,
+        true,
       );
     }
 
@@ -875,6 +899,7 @@ export async function pushInvoiceToSage(
     if (!lineTaxRateId) {
       return fail(
         "Sage has no zero-rate tax code to put on an untaxed invoice line. Check Settings → Tax Rates in Sage.",
+        true,
       );
     }
 
@@ -942,8 +967,12 @@ export async function pushInvoiceToSage(
     );
     return { id: result.id };
   } catch (err) {
-    return fail(
-      err instanceof Error ? err.message : "Unknown error pushing to Sage.",
-    );
+    const message =
+      err instanceof Error ? err.message : "Unknown error pushing to Sage.";
+    // A 4xx means Sage read the request and refused it — the same payload will
+    // be refused again, so don't let the reconciler retry it forever. 5xx,
+    // timeouts and token trouble are worth another go. sageFetch formats the
+    // message as "Sage API POST /path → <status>: <body>".
+    return fail(message, /→\s*4\d\d:/.test(message));
   }
 }
