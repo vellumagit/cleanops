@@ -1,6 +1,9 @@
 "use client";
 
+import { useMemo } from "react";
 import { useRouter } from "next/navigation";
+import { useUrlState } from "@/components/use-url-state";
+import { cn } from "@/lib/utils";
 import { DataTable, type DataTableColumn } from "@/components/data-table";
 import { StatusBadge, type StatusTone } from "@/components/status-badge";
 import { formatCurrencyCents, formatDate, humanizeEnum } from "@/lib/format";
@@ -54,6 +57,22 @@ export function EmployeesTable({
   viewerRole: string;
 }) {
   const router = useRouter();
+
+  /*
+   * Disabled members were listed alongside everyone else, so Svit's team page
+   * showed 22 people of whom 11 had left — you had to read the status badge on
+   * every row to know who actually works there. Archive is the default-hidden
+   * half; nothing is deleted, and the edit dialog still flips status back, so
+   * restoring someone is two clicks from here.
+   *
+   * Invited members stay in Active: an unaccepted invitation is outstanding
+   * work, not history. (Pending invitations also have their own panel above.)
+   */
+  const [tab, setTab] = useUrlState<"active" | "archived">("team", "active");
+  const active = useMemo(() => rows.filter((r) => r.status !== "disabled"), [rows]);
+  const archived = useMemo(() => rows.filter((r) => r.status === "disabled"), [rows]);
+  const shown = tab === "archived" ? archived : active;
+
   const canEdit = viewerRole === "owner" || viewerRole === "admin";
   // Pay rates are confidential — managers can see the team list but not compensation.
   const canSeePay = viewerRole === "owner" || viewerRole === "admin";
@@ -129,20 +148,59 @@ export function EmployeesTable({
   ];
 
   return (
-    <DataTable
-      data={rows}
-      columns={columns}
-      getRowId={(r) => r.id}
-      // Click a row to open that person's file (owner/admin only — the file
-      // page itself is gated the same way).
-      onRowClick={
-        canEdit ? (r) => router.push(`/app/employees/${r.id}`) : undefined
-      }
-      searchPlaceholder="Search by name, phone, or role…"
-      emptyState={{
-        title: "No teammates yet",
-        description: "Click Invite to add your first team member.",
-      }}
-    />
+    <div className="space-y-3">
+      {/* Only worth showing once somebody has actually been archived. */}
+      {archived.length > 0 && (
+        <div className="flex items-center gap-1 rounded-lg border border-border bg-muted/30 p-1">
+          {(
+            [
+              ["active", "Team", active.length],
+              ["archived", "Archived", archived.length],
+            ] as const
+          ).map(([key, label, count]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setTab(key)}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                tab === key
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {label}
+              <span className="text-xs tabular-nums text-muted-foreground">
+                {count}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      <DataTable
+        data={shown}
+        columns={columns}
+        getRowId={(r) => r.id}
+        // Click a row to open that person's file (owner/admin only — the file
+        // page itself is gated the same way).
+        onRowClick={
+          canEdit ? (r) => router.push(`/app/employees/${r.id}`) : undefined
+        }
+        searchPlaceholder="Search by name, phone, or role…"
+        emptyState={
+          tab === "archived"
+            ? {
+                title: "Nobody archived",
+                description:
+                  "People you disable move here instead of cluttering the team list.",
+              }
+            : {
+                title: "No teammates yet",
+                description: "Click Invite to add your first team member.",
+              }
+        }
+      />
+    </div>
   );
 }
