@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { getActionContext } from "@/lib/actions";
 import { autoInvoiceOnJobComplete } from "@/lib/automations";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -445,65 +446,74 @@ export async function acceptShiftAction(
   }
 
   // Email the management accounts that this cleaner accepted (best-effort).
-  try {
-    const { data: bkInfo } = (await admin
-      .from("bookings")
-      .select("scheduled_at, address, organization_id, client:clients ( name )")
-      .eq("id", bookingId)
-      .maybeSingle()) as unknown as {
-      data: {
-        scheduled_at: string;
-        address: string | null;
-        organization_id: string;
-        client: { name: string | null } | null;
-      } | null;
-    };
-    if (bkInfo) {
-      const { data: meInfo } = (await admin
-        .from("memberships")
-        .select("display_name, profile:profiles ( full_name )")
-        .eq("id", membership.id)
+  //
+  // Deferred with after() so the cleaner is not standing in a doorway waiting
+  // on it. This block costs four more round trips and a Resend send, and none
+  // of it is the cleaner's business — they tapped Accept, the write above
+  // already happened, and the button stayed disabled through all of it.
+  after(async () => {
+    try {
+      const { data: bkInfo } = (await admin
+        .from("bookings")
+        .select(
+          "scheduled_at, address, organization_id, client:clients ( name )",
+        )
+        .eq("id", bookingId)
         .maybeSingle()) as unknown as {
         data: {
-          display_name: string | null;
-          profile: { full_name: string | null } | null;
+          scheduled_at: string;
+          address: string | null;
+          organization_id: string;
+          client: { name: string | null } | null;
         } | null;
       };
-      const { data: orgInfo } = (await admin
-        .from("organizations")
-        .select("name, brand_color, timezone")
-        .eq("id", bkInfo.organization_id)
-        .maybeSingle()) as unknown as {
-        data: {
-          name: string | null;
-          brand_color: string | null;
-          timezone: string | null;
-        } | null;
-      };
-      const whoName =
-        meInfo?.display_name ?? meInfo?.profile?.full_name ?? "A cleaner";
-      const whenStr = new Date(bkInfo.scheduled_at).toLocaleString("en-US", {
-        weekday: "short",
-        month: "short",
-        day: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
-        timeZone: orgInfo?.timezone ?? "America/Edmonton",
-      });
-      await emailShiftResponse({
-        orgId: bkInfo.organization_id,
-        employeeName: whoName,
-        action: "accepted",
-        clientName: bkInfo.client?.name ?? "a client",
-        whenStr,
-        address: bkInfo.address,
-        orgName: orgInfo?.name ?? null,
-        brandColor: orgInfo?.brand_color,
-      });
+      if (bkInfo) {
+        const { data: meInfo } = (await admin
+          .from("memberships")
+          .select("display_name, profile:profiles ( full_name )")
+          .eq("id", membership.id)
+          .maybeSingle()) as unknown as {
+          data: {
+            display_name: string | null;
+            profile: { full_name: string | null } | null;
+          } | null;
+        };
+        const { data: orgInfo } = (await admin
+          .from("organizations")
+          .select("name, brand_color, timezone")
+          .eq("id", bkInfo.organization_id)
+          .maybeSingle()) as unknown as {
+          data: {
+            name: string | null;
+            brand_color: string | null;
+            timezone: string | null;
+          } | null;
+        };
+        const whoName =
+          meInfo?.display_name ?? meInfo?.profile?.full_name ?? "A cleaner";
+        const whenStr = new Date(bkInfo.scheduled_at).toLocaleString("en-US", {
+          weekday: "short",
+          month: "short",
+          day: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+          timeZone: orgInfo?.timezone ?? "America/Edmonton",
+        });
+        await emailShiftResponse({
+          orgId: bkInfo.organization_id,
+          employeeName: whoName,
+          action: "accepted",
+          clientName: bkInfo.client?.name ?? "a client",
+          whenStr,
+          address: bkInfo.address,
+          orgName: orgInfo?.name ?? null,
+          brandColor: orgInfo?.brand_color,
+        });
+      }
+    } catch (err) {
+      console.error("[shift-response] accept email failed:", err);
     }
-  } catch (err) {
-    console.error("[shift-response] accept email failed:", err);
-  }
+  });
 
   revalidatePath(`/field/jobs/${bookingId}`, "page");
   revalidatePath("/field/jobs", "page");
@@ -642,26 +652,30 @@ async function dropShift(
     body += ` They're also requesting to be taken off the recurring ${client} going forward — please reassign the series.`;
   }
 
-  // Owner/admin/manager (the management team) — in-app + push via the primitive.
-  await notify({
-    audience: "org-management",
-    organizationId: booking.organization_id,
-    title,
-    body,
-    href: `/app/bookings/${bookingId}`,
-  });
+  // Management alerts — a push and an email. Both matter (the job needs
+  // reassigning) but neither is the cleaner's to wait for: the row is already
+  // written, and holding the response makes "Can't make it" feel broken on a
+  // phone with one bar. after() still guarantees they run.
+  after(async () => {
+    await notify({
+      audience: "org-management",
+      organizationId: booking.organization_id,
+      title,
+      body,
+      href: `/app/bookings/${bookingId}`,
+    });
 
-  // Email the management accounts that this cleaner declined (best-effort).
-  await emailShiftResponse({
-    orgId: booking.organization_id,
-    employeeName: who,
-    action: "declined",
-    clientName: booking.client?.name ?? "a client",
-    whenStr: when,
-    address: booking.address ?? null,
-    reason: opts.reason ?? null,
-    orgName: org?.name ?? null,
-    brandColor: org?.brand_color,
+    await emailShiftResponse({
+      orgId: booking.organization_id,
+      employeeName: who,
+      action: "declined",
+      clientName: booking.client?.name ?? "a client",
+      whenStr: when,
+      address: booking.address ?? null,
+      reason: opts.reason ?? null,
+      orgName: org?.name ?? null,
+      brandColor: org?.brand_color,
+    });
   });
 
   revalidatePath(`/field/jobs/${bookingId}`, "page");

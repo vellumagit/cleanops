@@ -3,24 +3,48 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { CheckCircle2, X, CalendarClock } from "lucide-react";
+import { CheckCircle2, X, Clock as ClockIcon, MapPin } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { acceptShiftAction, declineShiftAction } from "../actions";
 
 /**
- * Pending-shift confirmation card shown at the top of a job the cleaner
- * hasn't responded to yet. They must Accept before they can start the job;
- * "Can't make it" removes them and alerts the office to reassign.
+ * The whole decision on one screen: when, where, and the button.
+ *
+ * This card used to render at the very bottom of the job page — below the
+ * crew list, the photo grid and the checklist — even though its own docstring
+ * claimed it sat at the top. So a cleaner opening a shift they had not yet
+ * accepted scrolled past an empty photo section and a checklist for work that
+ * had not happened, to reach the only control that mattered.
+ *
+ * It now carries the date, time and address itself rather than relying on the
+ * detail card below it. Answering "when is it and where is it" is the entire
+ * substance of deciding whether you can make it, and it should not cost a
+ * scroll on a phone held one-handed in a doorway.
  */
-export function ShiftAcceptance({ bookingId }: { bookingId: string }) {
+export function ShiftAcceptance({
+  bookingId,
+  whenLabel,
+  durationLabel,
+  address,
+}: {
+  bookingId: string;
+  /** Already formatted in the org's timezone by the server component. */
+  whenLabel: string;
+  durationLabel: string;
+  address: string | null;
+}) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [confirmingDecline, setConfirmingDecline] = useState(false);
+  // Flip the card the instant the server says yes, rather than waiting for
+  // router.refresh() to re-run every query on the page behind it.
+  const [accepted, setAccepted] = useState(false);
 
   function accept() {
     startTransition(async () => {
       const res = await acceptShiftAction(bookingId);
       if (res.ok) {
+        setAccepted(true);
         toast.success("Shift confirmed — you're on it");
         router.refresh();
       } else {
@@ -42,20 +66,47 @@ export function ShiftAcceptance({ bookingId }: { bookingId: string }) {
     });
   }
 
-  return (
-    <div className="rounded-xl border border-amber-300 bg-amber-50 p-5 dark:border-amber-900/50 dark:bg-amber-950/30">
-      <div className="flex items-start gap-3">
-        <CalendarClock className="mt-0.5 h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" />
-        <div className="min-w-0 flex-1">
-          <h2 className="text-base font-semibold text-amber-900 dark:text-amber-200">
-            Confirm this shift
-          </h2>
-          <p className="mt-0.5 text-sm text-amber-800/80 dark:text-amber-200/70">
-            You&rsquo;ve been assigned this job. Let your team know you can
-            make it.
+  if (accepted) {
+    return (
+      <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-5 dark:border-emerald-900/50 dark:bg-emerald-950/30">
+        <div className="flex items-center gap-3">
+          <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+          <p className="text-base font-semibold text-emerald-900 dark:text-emerald-200">
+            You&rsquo;re on it.
           </p>
         </div>
       </div>
+    );
+  }
+
+  return (
+    <div className="rounded-xl border border-amber-300 bg-amber-50 p-5 dark:border-amber-900/50 dark:bg-amber-950/30">
+      <h2 className="text-base font-semibold text-amber-900 dark:text-amber-200">
+        Can you make this shift?
+      </h2>
+
+      {/* When and where, before the buttons — this is the decision. */}
+      <dl className="mt-3 space-y-2.5">
+        <div className="flex items-start gap-2.5">
+          <ClockIcon className="mt-0.5 h-5 w-5 shrink-0 text-amber-700 dark:text-amber-400" />
+          <div className="min-w-0">
+            <div className="text-[15px] font-semibold leading-snug text-amber-950 dark:text-amber-100">
+              {whenLabel}
+            </div>
+            <div className="text-sm text-amber-800/80 dark:text-amber-200/70">
+              {durationLabel}
+            </div>
+          </div>
+        </div>
+        {address ? (
+          <div className="flex items-start gap-2.5">
+            <MapPin className="mt-0.5 h-5 w-5 shrink-0 text-amber-700 dark:text-amber-400" />
+            <div className="min-w-0 text-[15px] font-semibold leading-snug text-amber-950 dark:text-amber-100">
+              {address}
+            </div>
+          </div>
+        ) : null}
+      </dl>
 
       {!confirmingDecline ? (
         <div className="mt-4 flex flex-col gap-2">

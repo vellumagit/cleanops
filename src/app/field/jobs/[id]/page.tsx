@@ -328,6 +328,17 @@ export default async function FieldJobDetailPage({
         <ChevronLeft className="h-4 w-4" /> All jobs
       </Link>
 
+      {/* First thing on the screen when a shift is unanswered. Everything
+          below is reference material; this is the decision. */}
+      {needsAcceptance && (
+        <ShiftAcceptance
+          bookingId={booking.id}
+          whenLabel={formatDateTime(effectiveScheduledAt, tz)}
+          durationLabel={`Estimated ${formatDurationMinutes(displayDurationMinutes)}`}
+          address={displayAddress}
+        />
+      )}
+
       <div className="rounded-xl border border-border bg-card p-5">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -482,9 +493,14 @@ export default async function FieldJobDetailPage({
         </div>
       )}
 
-      <JobPhotos bookingId={booking.id} photos={photos} canManage={true} />
+      {/* Both of these are for a job you have accepted and are working. On an
+          unanswered shift they are empty or irrelevant, and they were exactly
+          what the Accept button was buried beneath. */}
+      {!needsAcceptance && (
+        <JobPhotos bookingId={booking.id} photos={photos} canManage={true} />
+      )}
 
-      {checklistItems && checklistItems.length > 0 && (
+      {!needsAcceptance && checklistItems && checklistItems.length > 0 && (
         <div className="rounded-xl border border-border bg-card p-5">
           <h2 className="mb-3 text-base font-semibold">Checklist</h2>
           <BookingChecklist
@@ -495,9 +511,7 @@ export default async function FieldJobDetailPage({
         </div>
       )}
 
-      {needsAcceptance ? (
-        <ShiftAcceptance bookingId={booking.id} />
-      ) : (
+      {!needsAcceptance && (
         <>
           <JobActionButtons
             bookingId={booking.id}
