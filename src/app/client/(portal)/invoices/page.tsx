@@ -27,6 +27,13 @@ export default async function ClientInvoicesPage() {
       "id, number, amount_cents, status, due_date, created_at, public_token",
     )
     .eq("client_id", client.id)
+    // Explicit allowlist, not a "not draft" exclusion. Auto-invoicing creates
+    // a draft the moment a job completes, so without this a client saw a bill
+    // before anyone in the office had looked at it — a phone call the portal
+    // itself generates, which is the opposite of the point. An allowlist also
+    // means any status added later stays invisible until someone decides it
+    // should not be.
+    .in("status", ["sent", "overdue", "paid", "partially_paid", "refunded"])
     .order("created_at", { ascending: false })
     .limit(200);
 

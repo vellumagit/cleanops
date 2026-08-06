@@ -21,7 +21,9 @@ export default async function ClientDashboardPage() {
   const [upcoming, outstanding] = await Promise.all([
     supabase
       .from("bookings")
-      .select("id, scheduled_at, service_type, status, address")
+      .select(
+        "id, scheduled_at, service_type, service_type_label, status, address",
+      )
       .eq("client_id", client.id)
       .gte("scheduled_at", new Date().toISOString())
       // Pending deliberately excluded: it means the office has penciled the
@@ -80,7 +82,7 @@ export default async function ClientDashboardPage() {
                 >
                   <div className="min-w-0 flex-1">
                     <p className="font-medium">
-                      {humanizeEnum(b.service_type)}
+                      {b.service_type_label ?? humanizeEnum(b.service_type)}
                     </p>
                     <p className="mt-0.5 text-xs text-muted-foreground">
                       {formatDateTime(b.scheduled_at, tz)}

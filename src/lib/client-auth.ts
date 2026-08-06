@@ -2,6 +2,7 @@ import "server-only";
 
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { getOrgName } from "@/lib/org-name";
 
 export type CurrentClient = {
   id: string;
@@ -28,11 +29,14 @@ export async function getCurrentClient(): Promise<CurrentClient | null> {
   const userId = claims?.claims?.sub;
   if (!userId) return null;
 
+  // NO organizations embed here. A client has no memberships row, so the only
+  // SELECT policy on organizations excludes them entirely; an `!inner` embed
+  // therefore came back empty and dropped this row, and every client bounced
+  // between /client and /client/login forever. The org name is fetched
+  // separately, past RLS, once the client row has proven who they are.
   const { data, error } = await supabase
     .from("clients")
-    .select(
-      "id, organization_id, name, email, profile_id, organizations!inner(name)",
-    )
+    .select("id, organization_id, name, email, profile_id")
     .eq("profile_id", userId)
     .limit(1)
     .maybeSingle();
@@ -42,7 +46,7 @@ export async function getCurrentClient(): Promise<CurrentClient | null> {
   return {
     id: data.id,
     organization_id: data.organization_id,
-    organization_name: data.organizations?.name ?? "",
+    organization_name: await getOrgName(data.organization_id),
     name: data.name,
     email: data.email,
     profile_id: data.profile_id!,

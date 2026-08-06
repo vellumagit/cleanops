@@ -7,7 +7,15 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { logAuditEvent } from "@/lib/audit";
 import { sendOrgEmail } from "@/lib/email";
 
-type Result = { ok: true } | { ok: false; error: string };
+type Result =
+  | {
+      ok: true;
+      /** True when we linked an existing auth account rather than creating one.
+       *  The password they typed was NOT applied — the claim page has to say so
+       *  or they will try it and fail. */
+      usedExistingAccount?: boolean;
+    }
+  | { ok: false; error: string };
 
 const INVITE_TTL_DAYS = 14;
 
@@ -46,8 +54,7 @@ export async function invitePortalAction(formData: FormData): Promise<Result> {
   if (!client.email) {
     return {
       ok: false,
-      error:
-        "This client has no email on file. Add one first and try again.",
+      error: "This client has no email on file. Add one first and try again.",
     };
   }
 
@@ -74,8 +81,7 @@ export async function invitePortalAction(formData: FormData): Promise<Result> {
   if (error) return { ok: false, error: error.message };
 
   // Send the email (fire-and-forget; don't block the action on SMTP).
-  const siteUrl =
-    process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
   const claimUrl = `${siteUrl}/client/claim/${plainToken}`;
 
   // Owner-initiated portal invite — bypass the platform kill switch
@@ -164,8 +170,7 @@ export async function acceptPortalInviteAction(
   if (!client.email) {
     return {
       ok: false,
-      error:
-        "This client has no email on file. Ask the business to fix that.",
+      error: "This client has no email on file. Ask the business to fix that.",
     };
   }
 
@@ -177,6 +182,7 @@ export async function acceptPortalInviteAction(
   // account created (which Supabase then rejects, giving the client an
   // error instead of a working login).
   let userId: string | null = null;
+  let existingUser = false;
   {
     const targetEmail = client.email!.toLowerCase();
     let page = 1;
@@ -189,14 +195,55 @@ export async function acceptPortalInviteAction(
       for (const u of batch.users) {
         if (u.email?.toLowerCase() === targetEmail) {
           userId = u.id;
-          // Reset their password to the one they just typed.
-          await admin.auth.admin.updateUserById(u.id, { password });
+          existingUser = true;
           break outer;
         }
       }
       if (batch.users.length < 1000) break; // Last page reached
       page++;
     }
+  }
+
+  // An email match is NOT permission to set that account's password.
+  //
+  // listUsers() spans the whole Supabase project, and clients share auth.users
+  // with staff (memberships.profile_id vs clients.profile_id). The previous
+  // code called updateUserById(u.id, { password }) unconditionally on a match,
+  // so anyone holding a portal invite for an address that already had a Sollos
+  // account could set that account's password — including staff, and including
+  // owners of other organizations. It was never exploited only because no
+  // invite had ever been sent.
+  if (existingUser && userId) {
+    const [{ data: staff }, { data: otherClient }] = await Promise.all([
+      admin.from("memberships").select("id").eq("profile_id", userId).limit(1),
+      admin.from("clients").select("id").eq("profile_id", userId).limit(1),
+    ]);
+    if (
+      (staff && staff.length > 0) ||
+      (otherClient && otherClient.length > 0)
+    ) {
+      return {
+        ok: false,
+        error:
+          "That email already has a Sollos account. Sign in with it at /client/login instead of claiming a new one — your existing password still works.",
+      };
+    }
+    // An orphan auth user with no membership and no client row: safe to adopt,
+    // but still without touching the password. They sign in with what they have.
+    const { error: linkOnlyErr } = await admin
+      .from("clients")
+      .update({
+        profile_id: userId,
+        portal_invite_token: null,
+        portal_invite_expires_at: null,
+        portal_accepted_at: new Date().toISOString(),
+      } as never)
+      .eq("id", client.id);
+    if (linkOnlyErr) return { ok: false, error: linkOnlyErr.message };
+    return {
+      ok: true,
+      usedExistingAccount: true,
+    };
   }
 
   if (!userId) {

@@ -23,7 +23,11 @@ export default async function ClientJobsPage() {
 
   const { data: jobs } = await supabase
     .from("bookings")
-    .select("id, scheduled_at, duration_minutes, status, service_type, address")
+    .select(
+      // service_type_label — the enum is a category, not what the
+      // client bought. Every recurring occurrence otherwise reads "Recurring".
+      "id, scheduled_at, duration_minutes, status, service_type, service_type_label, address",
+    )
     .eq("client_id", client.id)
     // Same rule as the portal home: an unconfirmed job is not the client's
     // business yet. Without this the full history list rendered a bare amber
@@ -104,6 +108,7 @@ type Job = {
   duration_minutes: number;
   status: string;
   service_type: string;
+  service_type_label: string | null;
   address: string | null;
 };
 
@@ -156,7 +161,7 @@ function Section({
                     {formatDateTime(j.scheduled_at, tz)}
                   </p>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    {humanizeEnum(j.service_type)} ·{" "}
+                    {j.service_type_label ?? humanizeEnum(j.service_type)} ·{" "}
                     {formatDurationMinutes(j.duration_minutes)}
                   </p>
                   {j.address && (

@@ -37,7 +37,15 @@ export function ClaimForm({ token }: { token: string }) {
       // Server linked the auth user + client record. We don't have the
       // email on the client here, so send them to /client/login to sign
       // in once and establish their session.
-      router.push("/client/login?claimed=1");
+      //
+      // When an existing account was adopted, the password typed above was
+      // deliberately NOT applied — telling them otherwise sends them into a
+      // login loop with a password that was never set.
+      router.push(
+        res.usedExistingAccount
+          ? "/client/login?claimed=existing"
+          : "/client/login?claimed=1",
+      );
     });
   }
 
