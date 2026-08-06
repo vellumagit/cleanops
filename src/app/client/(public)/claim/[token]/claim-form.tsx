@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { PasswordInput } from "@/components/ui/password-input";
@@ -13,6 +15,7 @@ export function ClaimForm({ token }: { token: string }) {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [showSignIn, setShowSignIn] = useState(false);
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -32,6 +35,7 @@ export function ClaimForm({ token }: { token: string }) {
       const res = await acceptPortalInviteAction(token, password);
       if (!res.ok) {
         setError(res.error);
+        setShowSignIn(Boolean(res.signInInstead));
         return;
       }
       // Server linked the auth user + client record. We don't have the
@@ -57,6 +61,14 @@ export function ClaimForm({ token }: { token: string }) {
           className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"
         >
           {error}
+          {showSignIn && (
+            <Link
+              href="/client/login"
+              className="mt-2 flex h-10 w-full items-center justify-center rounded-md bg-primary text-sm font-semibold text-primary-foreground hover:bg-primary/90"
+            >
+              Go to sign in
+            </Link>
+          )}
         </div>
       )}
 

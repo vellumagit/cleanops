@@ -33,9 +33,9 @@ export default async function ClientLoginPage({
             trying a password that was never set. */}
         {claimed === "existing" && (
           <div className="mb-4 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
-            Your account is linked. This email already had a Sollos login, so
-            keep using the password you already have — the one you just typed
-            was not applied.
+            Your account is linked. This email already had a login, so use the
+            password you already have — the one you just typed was not applied.
+            Or just have a sign-in link emailed to you below.
           </div>
         )}
         {claimed === "1" && (

@@ -15,7 +15,13 @@ type Result =
        *  or they will try it and fail. */
       usedExistingAccount?: boolean;
     }
-  | { ok: false; error: string };
+  | {
+      ok: false;
+      error: string;
+      /** The refusal is "you already have an account" — the claim page turns
+       *  this into a Sign in button rather than telling them to navigate. */
+      signInInstead?: boolean;
+    };
 
 const INVITE_TTL_DAYS = 14;
 
@@ -225,7 +231,8 @@ export async function acceptPortalInviteAction(
       return {
         ok: false,
         error:
-          "That email already has a Sollos account. Sign in with it at /client/login instead of claiming a new one — your existing password still works.",
+          "That email already has an account. Sign in with it — your existing password still works, or have a sign-in link emailed to you.",
+        signInInstead: true,
       };
     }
     // An orphan auth user with no membership and no client row: safe to adopt,
