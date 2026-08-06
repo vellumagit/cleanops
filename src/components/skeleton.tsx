@@ -8,8 +8,10 @@ import { cn } from "@/lib/utils";
  * start. Within an app shell the right thing is a shape that matches what is
  * about to arrive, so the layout does not jump when it does.
  *
- * `animate-pulse` is Tailwind's own, and it already respects
- * prefers-reduced-motion via the motion-safe defaults in globals.css.
+ * `animate-pulse` is Tailwind's own and is NOT reduced-motion-safe on its own
+ * — Tailwind v4 never gates `animate-*`, and `motion-safe` is opt-in. globals.css
+ * stops it explicitly instead, so every Skeleton inherits that without any call
+ * site having to remember.
  */
 export function Skeleton({ className }: { className?: string }) {
   return (

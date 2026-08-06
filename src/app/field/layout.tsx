@@ -21,12 +21,13 @@ export default async function FieldLayout({
   const chatUnreadPromise: Promise<number> = (async () => {
     try {
       const res = (await Promise.race([
-        supabase.rpc("chat_unread_total" as never, {
-          p_org_id: membership.organization_id,
-        } as never),
-        new Promise((resolve) =>
-          setTimeout(() => resolve({ data: 0 }), 2500),
+        supabase.rpc(
+          "chat_unread_total" as never,
+          {
+            p_org_id: membership.organization_id,
+          } as never,
         ),
+        new Promise((resolve) => setTimeout(() => resolve({ data: 0 }), 2500)),
       ])) as { data: number | null };
       return Number(res?.data ?? 0);
     } catch {

@@ -74,7 +74,7 @@ export function FieldShell({
     <div className="flex min-h-[100dvh] flex-col bg-muted/30">
       {/* ── Sticky header ── */}
       <header
-        className="sticky top-0 z-20 flex items-center justify-between border-b bg-card/80 px-4 py-3 backdrop-blur supports-[padding-top:env(safe-area-inset-top)]:pt-[max(0.75rem,env(safe-area-inset-top))]"
+        className="sticky top-0 z-20 flex items-center justify-between border-b bg-card px-4 py-3 supports-[backdrop-filter]:bg-card/80 supports-[backdrop-filter]:backdrop-blur supports-[padding-top:env(safe-area-inset-top)]:pt-[max(0.75rem,env(safe-area-inset-top))]"
         style={{
           borderBottomColor: brandColor
             ? `rgba(var(--brand-rgb), 0.25)`
@@ -128,7 +128,7 @@ export function FieldShell({
       </main>
 
       {/* ── Bottom tab bar ── */}
-      <nav className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-card/95 backdrop-blur pb-[env(safe-area-inset-bottom)]">
+      <nav className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-card pb-[env(safe-area-inset-bottom)]">
         <ul className="mx-auto flex max-w-2xl">
           {visibleNav.map((item) => {
             const active =
@@ -142,7 +142,6 @@ export function FieldShell({
               <li key={item.href} className="flex-1">
                 <Link
                   href={item.href}
-                  prefetch={false}
                   className={cn(
                     "flex touch-manipulation flex-col items-center gap-1 py-2.5 text-xs font-medium transition-transform active:scale-90",
                     active
@@ -150,9 +149,7 @@ export function FieldShell({
                       : "text-muted-foreground active:text-foreground",
                   )}
                   style={
-                    active && brandColor
-                      ? { color: `var(--brand)` }
-                      : undefined
+                    active && brandColor ? { color: `var(--brand)` } : undefined
                   }
                 >
                   <span className="relative">

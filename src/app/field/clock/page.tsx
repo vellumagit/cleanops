@@ -73,7 +73,7 @@ export default async function FieldClockPage() {
               period or an older shift needs the full history. */}
           <Link
             href="/field/hours"
-            className="text-xs font-semibold text-primary underline-offset-2 hover:underline"
+            className="text-xs font-semibold text-primary underline-offset-2 transition-opacity hover:underline active:underline active:opacity-70"
           >
             All my hours →
           </Link>

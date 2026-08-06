@@ -33,7 +33,7 @@ export default async function FieldChatPage({
 
   const requested = params.thread ?? null;
   const activeThread = requested
-    ? threads.find((t) => t.id === requested) ?? null
+    ? (threads.find((t) => t.id === requested) ?? null)
     : null;
 
   let initialMessages: Awaited<ReturnType<typeof fetchChatMessages>> = [];

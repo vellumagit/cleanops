@@ -15,8 +15,7 @@ async function getCoords(): Promise<Coords> {
   }
   return new Promise((resolve) => {
     navigator.geolocation.getCurrentPosition(
-      (pos) =>
-        resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
       () => resolve({ lat: null, lng: null }),
       { enableHighAccuracy: true, timeout: 5000, maximumAge: 30_000 },
     );
@@ -64,9 +63,7 @@ export function JobActionButtons({
   function handleComplete() {
     startTransition(async () => {
       const coords = await getCoords();
-      const result = await completeJobAction(
-        buildFormData(bookingId, coords),
-      );
+      const result = await completeJobAction(buildFormData(bookingId, coords));
       if (result.ok) {
         toast.success("Job complete — clocked out");
         router.refresh();

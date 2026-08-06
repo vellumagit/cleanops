@@ -48,7 +48,7 @@ export function ClientTabBar() {
   const pathname = usePathname();
 
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-card/95 backdrop-blur pb-[env(safe-area-inset-bottom)]">
+    <nav className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-card pb-[env(safe-area-inset-bottom)]">
       <ul className="mx-auto flex max-w-3xl">
         {NAV.map((item) => {
           const Icon = item.icon;

@@ -25,7 +25,7 @@ export default async function ClientLayout({
   // client. Children still call requireClient for belt-and-braces.
   return (
     <div className="flex min-h-[100dvh] flex-col bg-muted/30">
-      <header className="sticky top-0 z-20 border-b border-border bg-card/80 px-4 py-3 backdrop-blur">
+      <header className="sticky top-0 z-20 border-b border-border bg-card px-4 py-3 supports-[backdrop-filter]:bg-card/80 supports-[backdrop-filter]:backdrop-blur supports-[padding-top:env(safe-area-inset-top)]:pt-[max(0.75rem,env(safe-area-inset-top))]">
         <div className="mx-auto flex max-w-3xl items-center justify-between">
           <div className="flex min-w-0 flex-col leading-snug">
             <span className="text-[11px] uppercase tracking-wide text-muted-foreground">

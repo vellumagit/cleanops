@@ -31,22 +31,25 @@ export default async function FieldAvailabilityPage() {
       .select("id, day_of_week, start_time, end_time")
       .eq("membership_id" as never, membership.id as never)
       .order("day_of_week" as never, { ascending: true } as never)
-      .order("start_time" as never, {
-        ascending: true,
-      } as never) as unknown as Promise<{
+      .order(
+        "start_time" as never,
+        {
+          ascending: true,
+        } as never,
+      ) as unknown as Promise<{
       data: SlotRow[] | null;
     }>,
     supabase
       .from("availability_overrides" as never)
       .select("id, date, kind, start_time, end_time, reason")
       .eq("membership_id" as never, membership.id as never)
-      .gte(
+      .gte("date" as never, new Date().toISOString().slice(0, 10) as never)
+      .order(
         "date" as never,
-        new Date().toISOString().slice(0, 10) as never,
-      )
-      .order("date" as never, {
-        ascending: true,
-      } as never) as unknown as Promise<{
+        {
+          ascending: true,
+        } as never,
+      ) as unknown as Promise<{
       data: OverrideRow[] | null;
     }>,
   ]);

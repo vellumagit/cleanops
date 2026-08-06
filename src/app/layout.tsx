@@ -28,7 +28,11 @@ const jetbrains = JetBrains_Mono({
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
+  // No maximumScale. Locking zoom is a WCAG 1.4.4 failure on every screen in
+  // the app — a client cannot enlarge an invoice total, a cleaner cannot
+  // enlarge an address. It was presumably there to stop iOS auto-zooming on
+  // focus, but the actual cause of that is a form control under 16px, which
+  // Input, Textarea and FormSelect now all clear on mobile.
   viewportFit: "cover",
 };
 

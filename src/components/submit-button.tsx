@@ -3,6 +3,7 @@
 import { useFormStatus } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { Loader2 } from "lucide-react";
 
 type Props = {
   /** Default label when idle. */
@@ -51,6 +52,13 @@ export function SubmitButton({
       formAction={formAction}
       className={cn(className)}
     >
+      {/* Additive: 74 of 75 call sites already pass pendingLabel, so the label
+          swap stays. The spinner is for the one case a swapped label cannot
+          cover — proving the work is still running rather than merely started.
+          Kept out of the reduced-motion clamp on .animate-pulse deliberately:
+          on a submit button the spin is the only continuous signal, and
+          freezing it reads as a hang. */}
+      {pending && <Loader2 className="size-4 animate-spin" aria-hidden />}
       {pending && pendingLabel ? pendingLabel : children}
     </Button>
   );

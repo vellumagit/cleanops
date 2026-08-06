@@ -7,7 +7,11 @@ import {
   StickyNote,
 } from "lucide-react";
 import { StatusBadge, bookingStatusTone } from "@/components/status-badge";
-import { formatDateTime, formatDurationMinutes, humanizeEnum } from "@/lib/format";
+import {
+  formatDateTime,
+  formatDurationMinutes,
+  humanizeEnum,
+} from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { FieldJob } from "./data";
 import { JobCardComplete } from "./job-card-complete";
@@ -110,7 +114,9 @@ export function JobCard({ job, tz }: { job: FieldJob; tz: string }) {
         {job.notes ? (
           <div className="mt-1.5 flex items-start gap-1.5 text-sm text-muted-foreground">
             <FileText className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            <span className="line-clamp-2 whitespace-pre-wrap">{job.notes}</span>
+            <span className="line-clamp-2 whitespace-pre-wrap">
+              {job.notes}
+            </span>
           </div>
         ) : null}
         {job.client_notes ? (

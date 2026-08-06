@@ -3,10 +3,7 @@
 import { useActionState, useEffect } from "react";
 import { toast } from "sonner";
 import { SubmitButton } from "@/components/submit-button";
-import {
-  updateCalendarScopeAction,
-  type CalendarScopeState,
-} from "./actions";
+import { updateCalendarScopeAction, type CalendarScopeState } from "./actions";
 
 const empty: CalendarScopeState = {};
 
@@ -91,7 +88,9 @@ export function CalendarScopeForm({
         </div>
       </div>
 
-      <SubmitButton pendingLabel="Saving…">Save calendar preference</SubmitButton>
+      <SubmitButton pendingLabel="Saving…">
+        Save calendar preference
+      </SubmitButton>
     </form>
   );
 }

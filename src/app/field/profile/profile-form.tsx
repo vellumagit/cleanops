@@ -55,7 +55,10 @@ export function ProfileForm({
       </FormField>
 
       <div className="pt-2">
-        <SubmitButton pendingLabel="Saving…" className="h-14 w-full text-base font-semibold">
+        <SubmitButton
+          pendingLabel="Saving…"
+          className="h-14 w-full text-base font-semibold"
+        >
           Save changes
         </SubmitButton>
       </div>

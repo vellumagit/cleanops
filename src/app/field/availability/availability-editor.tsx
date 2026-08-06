@@ -81,10 +81,7 @@ export function AvailabilityEditor({
     startTransition(async () => {
       const fd = new FormData();
       for (const s of slots) {
-        fd.append(
-          "slots",
-          `${s.day_of_week}|${s.start_time}|${s.end_time}`,
-        );
+        fd.append("slots", `${s.day_of_week}|${s.start_time}|${s.end_time}`);
       }
       const res = await saveAvailabilitySlotsAction(fd);
       if (!res.ok) {
@@ -102,8 +99,8 @@ export function AvailabilityEditor({
       <section className="rounded-xl border border-border bg-card p-4">
         <h2 className="mb-1 text-base font-semibold">Regular weekly hours</h2>
         <p className="mb-4 text-xs text-muted-foreground">
-          These apply every week. You can add more than one slot per day
-          if you work split shifts.
+          These apply every week. You can add more than one slot per day if you
+          work split shifts.
         </p>
 
         <div className="space-y-3">
@@ -126,19 +123,12 @@ export function AvailabilityEditor({
                     </p>
                   ) : (
                     daySlots.map((slot) => (
-                      <div
-                        key={slot.id}
-                        className="flex items-center gap-2"
-                      >
+                      <div key={slot.id} className="flex items-center gap-2">
                         <Input
                           type="time"
                           value={slot.start_time}
                           onChange={(e) =>
-                            updateSlot(
-                              slot.id,
-                              "start_time",
-                              e.target.value,
-                            )
+                            updateSlot(slot.id, "start_time", e.target.value)
                           }
                           className="w-[6.5rem]"
                         />
@@ -149,18 +139,14 @@ export function AvailabilityEditor({
                           type="time"
                           value={slot.end_time}
                           onChange={(e) =>
-                            updateSlot(
-                              slot.id,
-                              "end_time",
-                              e.target.value,
-                            )
+                            updateSlot(slot.id, "end_time", e.target.value)
                           }
                           className="w-[6.5rem]"
                         />
                         <button
                           type="button"
                           onClick={() => removeSlot(slot.id)}
-                          className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-destructive"
+                          className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-destructive active:bg-muted active:text-destructive"
                           aria-label="Remove slot"
                         >
                           <Trash2 className="h-3.5 w-3.5" />
@@ -171,7 +157,7 @@ export function AvailabilityEditor({
                   <button
                     type="button"
                     onClick={() => addSlot(day.value)}
-                    className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+                    className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground active:bg-muted active:text-foreground"
                   >
                     <Plus className="h-3 w-3" />
                     {daySlots.length === 0 ? "Add hours" : "Add another slot"}
@@ -195,8 +181,8 @@ export function AvailabilityEditor({
           One-off days (vacation, different hours)
         </h2>
         <p className="mb-4 text-xs text-muted-foreground">
-          Override a specific date. Mark a day off or change the hours for
-          that date only.
+          Override a specific date. Mark a day off or change the hours for that
+          date only.
         </p>
 
         <OverrideList initialOverrides={initialOverrides} />
@@ -332,9 +318,7 @@ function OverrideList({ initialOverrides }: { initialOverrides: Override[] }) {
 
       {/* Existing overrides */}
       {initialOverrides.length === 0 ? (
-        <p className="text-xs text-muted-foreground">
-          No upcoming overrides.
-        </p>
+        <p className="text-xs text-muted-foreground">No upcoming overrides.</p>
       ) : (
         <ul className="space-y-2">
           {initialOverrides.map((ov) => (
@@ -367,7 +351,7 @@ function OverrideList({ initialOverrides }: { initialOverrides: Override[] }) {
               <button
                 type="button"
                 onClick={() => remove(ov.id)}
-                className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-destructive"
+                className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-destructive active:bg-muted active:text-destructive"
                 aria-label="Remove override"
               >
                 <Trash2 className="h-3.5 w-3.5" />

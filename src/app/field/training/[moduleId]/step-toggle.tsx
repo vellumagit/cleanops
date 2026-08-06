@@ -44,7 +44,7 @@ export function StepToggle({
         "flex h-8 w-8 shrink-0 items-center justify-center rounded-full border-2 transition-colors",
         done
           ? "border-emerald-500 bg-emerald-500 text-white"
-          : "border-border bg-background text-transparent hover:border-foreground",
+          : "border-border bg-background text-transparent transition-colors hover:border-foreground active:border-foreground active:bg-muted",
         isPending && "opacity-60",
       )}
     >

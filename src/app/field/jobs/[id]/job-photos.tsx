@@ -6,10 +6,7 @@ import { toast } from "sonner";
 import { Camera, ImagePlus, Trash2, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import {
-  uploadJobPhotoAction,
-  deleteJobPhotoAction,
-} from "./photo-actions";
+import { uploadJobPhotoAction, deleteJobPhotoAction } from "./photo-actions";
 import type { JobPhoto } from "@/lib/job-photos";
 
 type OptimisticPhoto = {
@@ -102,8 +99,7 @@ export function JobPhotos({ bookingId, photos, canManage }: Props) {
   const optAfter = optimistic.filter((p) => p.kind === "after");
   const optOther = optimistic.filter((p) => p.kind === "other");
 
-  const hasAny =
-    photos.length > 0 || optimistic.length > 0 || canManage;
+  const hasAny = photos.length > 0 || optimistic.length > 0 || canManage;
 
   if (!hasAny) return null;
 

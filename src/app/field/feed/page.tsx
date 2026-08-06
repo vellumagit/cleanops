@@ -33,15 +33,10 @@ export default async function FieldFeedPage() {
 
   return (
     <>
-      <FieldHeader
-        title="Feed"
-        description="Updates from your team."
-      />
+      <FieldHeader title="Feed" description="Updates from your team." />
 
       <div className="space-y-4">
-        {canPost && (
-          <ComposeBox authorName={profile?.full_name ?? "You"} />
-        )}
+        {canPost && <ComposeBox authorName={profile?.full_name ?? "You"} />}
 
         {posts.length === 0 ? (
           <div className="rounded-xl border border-dashed border-border bg-card px-5 py-14 text-center text-base text-muted-foreground">

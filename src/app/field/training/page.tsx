@@ -51,7 +51,8 @@ export default async function FieldTrainingPage() {
             const totalSteps = a.module?.steps?.length ?? 0;
             const doneSteps = (a.completed_step_ids ?? []).length;
             const isDone = Boolean(a.completed_at);
-            const pct = totalSteps > 0 ? Math.round((doneSteps / totalSteps) * 100) : 0;
+            const pct =
+              totalSteps > 0 ? Math.round((doneSteps / totalSteps) * 100) : 0;
             return (
               <li key={a.id}>
                 <Link

@@ -186,7 +186,7 @@ export function ClockCard({
                 className={
                   category === c.key
                     ? "rounded-full bg-foreground px-3 py-1.5 text-xs font-medium text-background"
-                    : "rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted"
+                    : "rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted active:bg-muted active:text-foreground"
                 }
               >
                 {c.label}

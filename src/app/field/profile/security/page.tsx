@@ -41,7 +41,7 @@ export default async function FieldSecurityPage() {
         actions={
           <Link
             href="/field/profile"
-            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+            className="inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground active:text-foreground"
           >
             <ChevronLeft className="h-3.5 w-3.5" />
             Profile

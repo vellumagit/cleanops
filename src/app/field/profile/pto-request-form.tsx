@@ -21,7 +21,9 @@ export function PtoRequestForm() {
       if (r.ok) {
         // Clear the form by forcing a re-mount
         setTimeout(() => setResult(null), 4000);
-        const form = document.getElementById("pto-form") as HTMLFormElement | null;
+        const form = document.getElementById(
+          "pto-form",
+        ) as HTMLFormElement | null;
         form?.reset();
       }
     });
@@ -31,7 +33,10 @@ export function PtoRequestForm() {
     <form id="pto-form" action={onSubmit} className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label htmlFor="start_date" className="mb-1 block text-xs font-medium">
+          <label
+            htmlFor="start_date"
+            className="mb-1 block text-xs font-medium"
+          >
             Start date
           </label>
           <Input

@@ -162,6 +162,17 @@
   html {
     @apply font-sans;
   }
+
+  /* Android Chrome's pull-to-refresh hard-reloads the route, which kills an
+     in-flight server-component stream mid-navigation — the exact moment a
+     mobile user is most likely to swipe. On iOS the shell rubber-bands away
+     from the fixed bottom tab bar and shows the page background beneath it.
+     Neither mobile shell ever scrolls sideways, so the x rule costs nothing. */
+  html,
+  body {
+    overscroll-behavior-y: contain;
+    overscroll-behavior-x: none;
+  }
 }
 
 /* =============================================================================
@@ -478,6 +489,19 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  /* Tailwind gates nothing here: v4 compiles `animate-*` unconditionally and
+     `motion-safe` is opt-in. Every skeleton in every loading.tsx would
+     otherwise pulse at someone who asked the OS for stillness. Kept as a
+     dimmed block so the placeholder is still legible as a placeholder.
+
+     Deliberately NOT animate-spin: on a submit button the spin is the only
+     signal that anything is happening, and freezing it reads as a hang. Those
+     swap their label instead. */
+  .animate-pulse {
+    animation: none;
+    opacity: 0.6;
+  }
+
   .tap-progress {
     animation: none;
     width: 100%;

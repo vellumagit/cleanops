@@ -62,7 +62,7 @@ export default async function FieldTrainingModulePage({
     <div className="space-y-5">
       <Link
         href="/field/training"
-        className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+        className="inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground active:text-foreground"
       >
         <ChevronLeft className="h-3 w-3" /> All training
       </Link>
@@ -103,11 +103,7 @@ export default async function FieldTrainingModulePage({
                 key={step.id}
                 className="flex items-start gap-3 rounded-lg border border-border bg-card p-3"
               >
-                <StepToggle
-                  moduleId={module.id}
-                  stepId={step.id}
-                  done={done}
-                />
+                <StepToggle moduleId={module.id} stepId={step.id} done={done} />
                 <div className="min-w-0 flex-1">
                   <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                     Step {idx + 1}
