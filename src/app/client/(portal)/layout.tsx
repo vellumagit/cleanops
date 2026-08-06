@@ -1,6 +1,5 @@
-import Link from "next/link";
-import { Briefcase, Home, Receipt, LogOut, CalendarPlus } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { LogOut } from "lucide-react";
+import { ClientTabBar } from "./tab-bar";
 import { getCurrentClient } from "@/lib/client-auth";
 
 /**
@@ -39,7 +38,7 @@ export default async function ClientLayout({
           <form action="/auth/logout" method="post">
             <button
               type="submit"
-              className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+              className="inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground active:bg-muted active:text-foreground"
             >
               <LogOut className="h-3.5 w-3.5" />
               Sign out
@@ -52,34 +51,7 @@ export default async function ClientLayout({
         {children}
       </main>
 
-      <nav className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-card/95 backdrop-blur pb-[env(safe-area-inset-bottom)]">
-        <ul className="mx-auto flex max-w-3xl">
-          {NAV.map((item) => {
-            const Icon = item.icon;
-            return (
-              <li key={item.href} className="flex-1">
-                <Link
-                  href={item.href}
-                  className={cn(
-                    "flex flex-col items-center gap-1 py-2.5 text-xs font-medium",
-                    "text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  <Icon className="h-5 w-5" />
-                  <span>{item.label}</span>
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
-      </nav>
+      <ClientTabBar />
     </div>
   );
 }
-
-const NAV = [
-  { href: "/client", label: "Home", icon: Home },
-  { href: "/client/jobs", label: "Jobs", icon: Briefcase },
-  { href: "/client/request", label: "Request", icon: CalendarPlus },
-  { href: "/client/invoices", label: "Invoices", icon: Receipt },
-];

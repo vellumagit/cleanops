@@ -41,7 +41,10 @@ export function RequestForm({
           calendar. No need to do anything else.
         </p>
         <div className="mt-5 flex items-center justify-center gap-2">
-          <Link href="/client" className={buttonVariants({ variant: "outline" })}>
+          <Link
+            href="/client"
+            className={buttonVariants({ variant: "outline" })}
+          >
             Back to dashboard
           </Link>
         </div>
@@ -76,10 +79,7 @@ export function RequestForm({
           <Input id="preferred_date" name="preferred_date" type="date" />
         </FormField>
 
-        <FormField
-          label="Preferred time"
-          htmlFor="preferred_time_window"
-        >
+        <FormField label="Preferred time" htmlFor="preferred_time_window">
           <FormSelect
             id="preferred_time_window"
             name="preferred_time_window"
@@ -114,10 +114,7 @@ export function RequestForm({
       </FormField>
 
       <div className="flex items-center justify-end gap-2 pt-2">
-        <Link
-          href="/client"
-          className={buttonVariants({ variant: "ghost" })}
-        >
+        <Link href="/client" className={buttonVariants({ variant: "ghost" })}>
           Cancel
         </Link>
         <SubmitButton pendingLabel="Sending…">

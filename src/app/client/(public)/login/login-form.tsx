@@ -168,7 +168,7 @@ export function ClientLoginForm() {
         {mode === "link" ? (
           <button
             type="button"
-            className="text-muted-foreground underline underline-offset-2 hover:text-foreground"
+            className="text-muted-foreground underline underline-offset-2 transition-colors hover:text-foreground active:text-foreground"
             onClick={() => {
               setMode("password");
               setError(null);
@@ -180,7 +180,7 @@ export function ClientLoginForm() {
           <>
             <button
               type="button"
-              className="text-muted-foreground underline underline-offset-2 hover:text-foreground"
+              className="text-muted-foreground underline underline-offset-2 transition-colors hover:text-foreground active:text-foreground"
               onClick={() => {
                 setMode("link");
                 setError(null);
@@ -190,7 +190,7 @@ export function ClientLoginForm() {
             </button>
             <button
               type="button"
-              className="text-muted-foreground underline underline-offset-2 hover:text-foreground disabled:opacity-50"
+              className="text-muted-foreground underline underline-offset-2 transition-colors hover:text-foreground active:text-foreground disabled:opacity-50"
               onClick={sendReset}
               disabled={pending || !email.trim()}
             >

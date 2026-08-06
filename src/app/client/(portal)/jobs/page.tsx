@@ -192,7 +192,7 @@ function Section({
                   ) : canReview ? (
                     <Link
                       href={`/review/${reviewToken}`}
-                      className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-primary underline-offset-2 hover:underline"
+                      className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-primary underline-offset-2 transition-opacity hover:underline active:underline active:opacity-70"
                     >
                       <Star className="h-3 w-3" />
                       Leave a review

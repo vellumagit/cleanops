@@ -67,7 +67,7 @@ export default async function ClientLoginPage({
               <input type="hidden" name="next" value="/client/login" />
               <button
                 type="submit"
-                className="flex h-10 w-full items-center justify-center rounded-md border border-border text-sm font-semibold hover:bg-muted"
+                className="flex h-10 w-full items-center justify-center rounded-md border border-border text-sm font-semibold transition-all hover:bg-muted active:scale-[0.98] active:bg-muted"
               >
                 Sign out
               </button>
@@ -80,7 +80,7 @@ export default async function ClientLoginPage({
           Don&rsquo;t have an account?{" "}
           <Link
             href="/"
-            className="text-primary underline-offset-2 hover:underline"
+            className="text-primary underline-offset-2 transition-opacity hover:underline active:underline active:opacity-70"
           >
             Ask the cleaning company for an invite
           </Link>

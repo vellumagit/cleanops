@@ -64,7 +64,7 @@ export function ClaimForm({ token }: { token: string }) {
           {showSignIn && (
             <Link
               href="/client/login"
-              className="mt-2 flex h-10 w-full items-center justify-center rounded-md bg-primary text-sm font-semibold text-primary-foreground hover:bg-primary/90"
+              className="mt-2 flex h-10 w-full items-center justify-center rounded-md bg-primary text-sm font-semibold text-primary-foreground transition-all hover:bg-primary/90 active:scale-[0.98] active:bg-primary/80"
             >
               Go to sign in
             </Link>

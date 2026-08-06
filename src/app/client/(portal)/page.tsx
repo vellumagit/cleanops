@@ -63,7 +63,7 @@ export default async function ClientDashboardPage() {
           </h2>
           <Link
             href="/client/jobs"
-            className="text-xs text-muted-foreground hover:text-foreground"
+            className="text-xs text-muted-foreground transition-colors hover:text-foreground active:text-foreground active:underline"
           >
             See all →
           </Link>
@@ -78,7 +78,7 @@ export default async function ClientDashboardPage() {
               <li key={b.id}>
                 <Link
                   href={`/client/jobs`}
-                  className="flex items-center gap-3 rounded-lg border border-border bg-card p-4 transition-colors hover:border-foreground/30"
+                  className="tap-row flex items-center gap-3 rounded-lg border border-border bg-card p-4 hover:border-foreground/30"
                 >
                   <div className="min-w-0 flex-1">
                     <p className="font-medium">
@@ -109,7 +109,7 @@ export default async function ClientDashboardPage() {
           </h2>
           <Link
             href="/client/invoices"
-            className="text-xs text-muted-foreground hover:text-foreground"
+            className="text-xs text-muted-foreground transition-colors hover:text-foreground active:text-foreground active:underline"
           >
             See all →
           </Link>
@@ -123,7 +123,7 @@ export default async function ClientDashboardPage() {
             {(outstanding.data ?? []).map((inv) => (
               <li
                 key={inv.id}
-                className="flex items-center gap-3 rounded-lg border border-border bg-card p-4 transition-colors hover:border-foreground/30"
+                className="tap-row flex items-center gap-3 rounded-lg border border-border bg-card p-4 hover:border-foreground/30"
               >
                 <div className="min-w-0 flex-1">
                   <p className="font-medium tabular-nums">
@@ -138,7 +138,7 @@ export default async function ClientDashboardPage() {
                 {inv.public_token ? (
                   <Link
                     href={`/i/${inv.public_token}`}
-                    className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-foreground px-3 py-2 text-xs font-semibold text-background transition-opacity hover:opacity-90"
+                    className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-foreground px-3 py-2 text-xs font-semibold text-background transition-all hover:opacity-90 active:scale-95 active:opacity-80"
                   >
                     <CreditCard className="h-3.5 w-3.5" />
                     Pay now

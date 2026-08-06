@@ -91,7 +91,7 @@ export default async function ClientInvoicesPage() {
                     {payable && inv.public_token ? (
                       <Link
                         href={`/i/${inv.public_token}`}
-                        className="inline-flex items-center gap-1.5 rounded-md bg-foreground px-3 py-2 text-xs font-semibold text-background transition-opacity hover:opacity-90"
+                        className="inline-flex items-center gap-1.5 rounded-md bg-foreground px-3 py-2 text-xs font-semibold text-background transition-all hover:opacity-90 active:scale-95 active:opacity-80"
                       >
                         <CreditCard className="h-3.5 w-3.5" />
                         Pay now
@@ -99,7 +99,7 @@ export default async function ClientInvoicesPage() {
                     ) : inv.public_token ? (
                       <Link
                         href={`/i/${inv.public_token}`}
-                        className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                        className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground active:bg-muted active:text-foreground"
                         aria-label="View invoice"
                         title="View invoice"
                       >
