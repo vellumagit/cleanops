@@ -23,6 +23,54 @@ export type CurrentClient = {
  * person could in theory be both (edge case); this helper only finds
  * the client-side mapping.
  */
+/**
+ * Why there is no client, when there is no client.
+ *
+ * "Signed out" and "signed in as somebody who isn't a client" both used to
+ * collapse to null, and both then redirected to /client/login — which asks the
+ * same question, gets the same null, and renders the sign-in form again. A
+ * correctly authenticated person with no client row could sign in truthfully,
+ * forever, and never move. Callers need to tell the two apart.
+ */
+export type ClientAuthState =
+  | { status: "anonymous" }
+  | { status: "not-a-client"; userId: string; email: string | null }
+  | { status: "ok"; client: CurrentClient };
+
+export async function getClientAuthState(): Promise<ClientAuthState> {
+  const supabase = await createSupabaseServerClient();
+  const { data: claims } = await supabase.auth.getClaims();
+  const userId = claims?.claims?.sub;
+  if (!userId) return { status: "anonymous" };
+
+  const { data } = await supabase
+    .from("clients")
+    .select("id, organization_id, name, email, profile_id")
+    .eq("profile_id", userId)
+    .limit(1)
+    .maybeSingle();
+
+  if (!data) {
+    return {
+      status: "not-a-client",
+      userId,
+      email: (claims?.claims?.email as string | undefined) ?? null,
+    };
+  }
+
+  return {
+    status: "ok",
+    client: {
+      id: data.id,
+      organization_id: data.organization_id,
+      organization_name: await getOrgName(data.organization_id),
+      name: data.name,
+      email: data.email,
+      profile_id: data.profile_id!,
+    },
+  };
+}
+
 export async function getCurrentClient(): Promise<CurrentClient | null> {
   const supabase = await createSupabaseServerClient();
   const { data: claims } = await supabase.auth.getClaims();

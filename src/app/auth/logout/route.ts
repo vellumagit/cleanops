@@ -17,8 +17,20 @@ export async function POST(request: NextRequest) {
   const supabase = await createSupabaseServerClient();
   await supabase.auth.signOut();
 
+  // Clients and staff sign out to different places. Read it from the form
+  // body rather than the query string so the value cannot be pointed at
+  // another origin by a crafted link.
+  let next = "/login";
+  try {
+    const form = await request.formData();
+    const raw = String(form.get("next") ?? "");
+    if (raw.startsWith("/") && !raw.startsWith("//")) next = raw;
+  } catch {
+    // No body — keep the default.
+  }
+
   const url = request.nextUrl.clone();
-  url.pathname = "/login";
+  url.pathname = next;
   url.search = "";
   return NextResponse.redirect(url, { status: 303 });
 }

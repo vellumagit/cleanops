@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { getCurrentClient } from "@/lib/client-auth";
+import { getClientAuthState } from "@/lib/client-auth";
 import { ClientLoginForm } from "./login-form";
 
 export const metadata = { title: "Client sign-in" };
@@ -11,8 +11,8 @@ export default async function ClientLoginPage({
 }: {
   searchParams: Promise<{ claimed?: string }>;
 }) {
-  const existing = await getCurrentClient();
-  if (existing) redirect("/client");
+  const state = await getClientAuthState();
+  if (state.status === "ok") redirect("/client");
 
   const { claimed } = await searchParams;
 
@@ -43,7 +43,39 @@ export default async function ClientLoginPage({
             Account created. Sign in with the password you just chose.
           </div>
         )}
-        <ClientLoginForm />
+        {/* Signed in, but no client row points at this account. Rendering the
+            sign-in form here is what produced an endless loop: the person
+            authenticates correctly, gets bounced, and signs in again. Say what
+            is actually wrong and give them the way out. */}
+        {state.status === "not-a-client" ? (
+          <div className="space-y-3">
+            <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-3 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+              <p className="font-semibold">
+                You&rsquo;re signed in, but not as a client.
+              </p>
+              <p className="mt-1 text-[13px]">
+                {state.email ? `${state.email} ` : "This account "}
+                is a valid login, but it isn&rsquo;t linked to a client account
+                yet. Ask the cleaning company to send you a portal invite — or
+                sign out and use the email your invite was sent to.
+              </p>
+            </div>
+            {/* A form, never a link — /auth/logout is POST-only precisely
+                because Next's prefetcher would otherwise sign people out the
+                moment the button scrolled into view. */}
+            <form method="POST" action="/auth/logout">
+              <input type="hidden" name="next" value="/client/login" />
+              <button
+                type="submit"
+                className="flex h-10 w-full items-center justify-center rounded-md border border-border text-sm font-semibold hover:bg-muted"
+              >
+                Sign out
+              </button>
+            </form>
+          </div>
+        ) : (
+          <ClientLoginForm />
+        )}
         <p className="mt-4 text-center text-[11px] text-muted-foreground">
           Don&rsquo;t have an account?{" "}
           <Link

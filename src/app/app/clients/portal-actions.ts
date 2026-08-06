@@ -220,23 +220,29 @@ export async function acceptPortalInviteAction(
   // owners of other organizations. It was never exploited only because no
   // invite had ever been sent.
   if (existingUser && userId) {
-    const [{ data: staff }, { data: otherClient }] = await Promise.all([
-      admin.from("memberships").select("id").eq("profile_id", userId).limit(1),
-      admin.from("clients").select("id").eq("profile_id", userId).limit(1),
-    ]);
-    if (
-      (staff && staff.length > 0) ||
-      (otherClient && otherClient.length > 0)
-    ) {
+    // Refusing on "this user has a membership" was too broad and produced a
+    // worse bug than the one it fixed: an owner who invites their own address
+    // ends up authenticated but unlinked — signed in correctly, no client row,
+    // bouncing off /client/login forever. Staff being their own client is
+    // ordinary in a small business.
+    //
+    // The only genuine conflict is a user ALREADY linked to a DIFFERENT client
+    // row, which would silently move their portal from one client to another.
+    const { data: otherClient } = await admin
+      .from("clients")
+      .select("id, name")
+      .eq("profile_id", userId)
+      .neq("id", client.id)
+      .limit(1);
+    if (otherClient && otherClient.length > 0) {
       return {
         ok: false,
-        error:
-          "That email already has an account. Sign in with it — your existing password still works, or have a sign-in link emailed to you.",
+        error: `That email is already the portal login for ${otherClient[0].name}. One login can't cover two client accounts — send this invite to a different address.`,
         signInInstead: true,
       };
     }
-    // An orphan auth user with no membership and no client row: safe to adopt,
-    // but still without touching the password. They sign in with what they have.
+    // Adopt the account. Password untouched — they sign in with what they
+    // already have, or with an emailed link.
     const { error: linkOnlyErr } = await admin
       .from("clients")
       .update({
