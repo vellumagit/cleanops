@@ -14,6 +14,7 @@ import { requireMembership } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { PageShell } from "@/components/page-shell";
 import { StatusBadge, type StatusTone } from "@/components/status-badge";
+import { isSubcontractor } from "@/lib/engagement";
 import { buttonVariants } from "@/components/ui/button";
 import { memberDisplayName } from "@/lib/member-display";
 import { formatCurrencyCents, formatDate, humanizeEnum } from "@/lib/format";
@@ -57,7 +58,7 @@ export default async function EmployeeFilePage({
   const { data: member } = (await admin
     .from("memberships")
     .select(
-      "id, organization_id, profile_id, role, status, pay_rate_cents, display_name, contact_email, contact_phone, created_at, profile:profiles(full_name, phone)",
+      "id, organization_id, profile_id, role, engagement, status, pay_rate_cents, display_name, contact_email, contact_phone, created_at, profile:profiles(full_name, phone)",
     )
     .eq("id", id)
     .eq("organization_id", viewer.organization_id)
@@ -66,6 +67,7 @@ export default async function EmployeeFilePage({
       id: string;
       profile_id: string | null;
       role: string;
+      engagement: string | null;
       status: string;
       pay_rate_cents: number | null;
       display_name: string | null;
@@ -165,6 +167,9 @@ export default async function EmployeeFilePage({
                 <StatusBadge tone={roleTone(member.role)}>
                   {humanizeEnum(member.role)}
                 </StatusBadge>
+                {isSubcontractor(member.engagement) && (
+                  <StatusBadge tone="neutral">Subcontractor</StatusBadge>
+                )}
                 <StatusBadge tone={statusTone(member.status)}>
                   {humanizeEnum(member.status)}
                 </StatusBadge>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect } from "react";
+import { useActionState, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { UserCircle } from "lucide-react";
@@ -9,6 +9,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { FormError, FormField, FormSelect } from "@/components/form-field";
 import { SubmitButton } from "@/components/submit-button";
 import { updateMemberAction, type UpdateMemberState } from "../../actions";
+import {
+  ENGAGEMENTS,
+  ENGAGEMENT_LABEL,
+  ENGAGEMENT_HELP,
+  toEngagement,
+  type Engagement,
+} from "@/lib/engagement";
 
 const initial: UpdateMemberState = {};
 
@@ -20,6 +27,7 @@ export type EmployeeEditDefaults = {
   notes: string | null;
   accommodations: string | null;
   role: "owner" | "admin" | "manager" | "employee";
+  engagement: string | null;
   pay_rate_cents: number | null;
   status: "active" | "invited" | "disabled";
   /** true when this member was added manually and has no login account. */
@@ -40,6 +48,9 @@ export function EmployeeEditForm({
   isSelf: boolean;
 }) {
   const router = useRouter();
+  const [engagement, setEngagement] = useState<Engagement>(
+    toEngagement(defaults.engagement),
+  );
   const boundAction = updateMemberAction.bind(null, memberId);
   const [state, formAction, pending] = useActionState(boundAction, initial);
 
@@ -126,6 +137,31 @@ export function EmployeeEditForm({
         </p>
 
         <div className="grid gap-4 sm:grid-cols-2">
+          {/*
+            Deliberately NOT behind canChangeRole. Role is a permission and
+            only an owner may change it; engagement decides which pay system
+            someone is paid through, which is an admin's job too. Gating this
+            on role would mean an admin could set someone's pay rate but not
+            say how they get paid.
+          */}
+          <FormField label="Engagement" htmlFor="engagement">
+            <FormSelect
+              id="engagement"
+              name="engagement"
+              value={engagement}
+              onChange={(e) => setEngagement(toEngagement(e.target.value))}
+            >
+              {ENGAGEMENTS.map((e) => (
+                <option key={e} value={e}>
+                  {ENGAGEMENT_LABEL[e]}
+                </option>
+              ))}
+            </FormSelect>
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              {ENGAGEMENT_HELP[engagement]}
+            </p>
+          </FormField>
+
           {canChangeRole && (
             <FormField label="Role" htmlFor="role" error={state.errors?.role}>
               <FormSelect id="role" name="role" defaultValue={defaults.role}>

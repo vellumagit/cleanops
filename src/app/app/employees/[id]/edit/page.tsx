@@ -31,7 +31,7 @@ export default async function EditEmployeePage({
   const { data: member, error } = (await admin
     .from("memberships")
     .select(
-      "id, organization_id, profile_id, role, status, pay_rate_cents, display_name, contact_email, contact_phone, profile:profiles(full_name, phone)",
+      "id, organization_id, profile_id, role, engagement, status, pay_rate_cents, display_name, contact_email, contact_phone, profile:profiles(full_name, phone)",
     )
     .eq("id", id)
     .eq("organization_id", viewer.organization_id)
@@ -41,6 +41,7 @@ export default async function EditEmployeePage({
       organization_id: string;
       profile_id: string | null;
       role: "owner" | "admin" | "manager" | "employee";
+      engagement: string | null;
       status: "active" | "invited" | "disabled";
       pay_rate_cents: number | null;
       display_name: string | null;
@@ -87,6 +88,7 @@ export default async function EditEmployeePage({
     notes: adminData?.notes ?? null,
     accommodations: adminData?.accommodations ?? null,
     role: member.role,
+    engagement: member.engagement,
     pay_rate_cents: member.pay_rate_cents,
     status: member.status,
     is_shadow: member.profile_id === null,
