@@ -16,7 +16,7 @@ import {
 } from "./data";
 import { SchedulerShell } from "./scheduler-shell";
 import { CoveragePanel } from "./coverage-panel";
-import { zonedYmd, startOfWeekUtc } from "@/lib/wall-clock";
+import { zonedYmd, startOfWeekUtc, formatCalendarDate } from "@/lib/wall-clock";
 
 export const metadata = { title: "Scheduling" };
 
@@ -194,9 +194,7 @@ export default async function SchedulingPage({
    * added those timeZone options in the timezone sweep by pattern-matching
    * every toLocaleDateString call, which was wrong for this one value.
    */
-  const dateOnly = (d: Date, opts: Intl.DateTimeFormatOptions) =>
-    // eslint-disable-next-line no-restricted-syntax -- calendar date, not an instant; see above
-    d.toLocaleDateString("en-US", opts);
+  const dateOnly = formatCalendarDate;
   const range =
     view === "month"
       ? dateOnly(weekStart, { month: "long", year: "numeric" })

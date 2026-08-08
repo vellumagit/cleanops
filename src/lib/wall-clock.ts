@@ -148,3 +148,33 @@ export function zonedDayStartUtc(from: Date, tz: string, days = 0): Date {
   const { y, m, d } = zonedDateParts(from, tz);
   return utcForWallClock(y, m, d + days, 0, tz);
 }
+
+/**
+ * Format a Date that stands for a CALENDAR DATE, not an instant.
+ *
+ * Some Dates in this codebase are moments — `new Date(booking.scheduled_at)`.
+ * Those must be formatted with the org's timeZone, or they render in whatever
+ * zone the code happens to run in.
+ *
+ * Others are a calendar square wearing a Date object: `new Date(y, m - 1, d)`
+ * from a YYYY-MM-DD route param, the cells of a week grid, the days of a
+ * month. Their y/m/d components ALREADY are the answer. Passing a timeZone
+ * re-interprets that local midnight as a moment and shifts it: on Vercel
+ * (UTC) midnight is 18:00 the previous day in Edmonton, so the header reads a
+ * day early.
+ *
+ * That is a real bug this codebase shipped — the scheduler's week view showed
+ * "Sat Aug 7" above a column that was Saturday the 8th, because the weekday
+ * name came from local getDay() and the date number from a zoned read of the
+ * same value. The month view was right only because it never zoned anything.
+ *
+ * Use this for the second kind, so the intent is legible and the lint rule
+ * stops asking for a timeZone that would be wrong.
+ */
+export function formatCalendarDate(
+  d: Date,
+  opts: Intl.DateTimeFormatOptions,
+): string {
+  // eslint-disable-next-line no-restricted-syntax -- calendar date, not an instant; see above
+  return d.toLocaleDateString("en-US", opts);
+}

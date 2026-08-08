@@ -7,6 +7,7 @@ import {
   zonedMidnightUtc,
   startOfWeekUtc,
   zonedDayStartUtc,
+  formatCalendarDate,
 } from "./wall-clock";
 
 const EDM = "America/Edmonton"; // MDT (UTC-6) summer / MST (UTC-7) winter
@@ -203,5 +204,50 @@ describe("zonedDayStartUtc", () => {
     expect(zonedDayStartUtc(now, EDM, -30).toISOString()).toBe(
       "2026-07-05T06:00:00.000Z",
     );
+  });
+});
+
+describe("formatCalendarDate", () => {
+  it("renders the date the Date's own components say, whatever the machine tz", () => {
+    // The scheduler builds week columns as new Date(y, m-1, d) — a calendar
+    // square, not an instant. Its y/m/d ARE the answer, so the label must
+    // round-trip them exactly, on a Vercel box in UTC or a laptop in Brazil.
+    const aug8 = new Date(2026, 7, 8);
+    expect(formatCalendarDate(aug8, { month: "short", day: "numeric" })).toBe(
+      "Aug 8",
+    );
+    expect(
+      formatCalendarDate(aug8, {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+      }),
+    ).toBe("Sat, Aug 8");
+  });
+
+  it("agrees with the weekday the grid prints beside it", () => {
+    // The bug: the header printed DAY_LABELS[(d.getDay()+6)%7] — local — next
+    // to a ZONED date number, so "Sat" sat above "Aug 7". The two must come
+    // from the same reading of the same value.
+    const d = new Date(2026, 7, 8);
+    const localWeekday = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][
+      (d.getDay() + 6) % 7
+    ];
+    expect(formatCalendarDate(d, { weekday: "short" })).toBe(localWeekday);
+  });
+
+  it("keeps month-end and year boundaries intact", () => {
+    expect(
+      formatCalendarDate(new Date(2026, 11, 31), {
+        month: "short",
+        day: "numeric",
+      }),
+    ).toBe("Dec 31");
+    expect(
+      formatCalendarDate(new Date(2027, 0, 1), {
+        month: "short",
+        day: "numeric",
+      }),
+    ).toBe("Jan 1");
   });
 });

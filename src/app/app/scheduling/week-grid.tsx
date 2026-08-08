@@ -26,6 +26,7 @@ import { toneForBooking, toneForEmployee, type ColorBy } from "./color";
 import { computeSplitCue, type SplitCue } from "./split-cue";
 import type { BookingWarning } from "@/app/app/bookings/booking-warnings";
 import { WarningDot, WarningProvider } from "./warning-dot";
+import { formatCalendarDate } from "@/lib/wall-clock";
 
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -281,10 +282,15 @@ export function WeekGrid({
                     {DAY_LABELS[(d.getDay() + 6) % 7]}
                   </div>
                   <div className="text-sm font-medium tabular-nums">
-                    {d.toLocaleDateString("en-US", {
+                    {/* `d` is a calendar square, built local-midnight from
+                        weekStart — not an instant. Zoning it read that
+                        midnight as a moment and slid it back a day, so this
+                        said "Aug 7" under the "Sat" printed directly above
+                        from local getDay(). The two halves of one header
+                        disagreed. */}
+                    {formatCalendarDate(d, {
                       month: "short",
                       day: "numeric",
-                      timeZone: tz,
                     })}
                   </div>
                 </div>
