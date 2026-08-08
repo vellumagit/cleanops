@@ -50,18 +50,49 @@ export function lifecycleByAssignee(
   return out;
 }
 
+/** What a person who has never been asked about this job looks like. */
+const FRESH: AssigneeLifecycle = {
+  acceptance_status: "pending",
+  responded_at: null,
+  completed_at: null,
+};
+
 /**
  * Merge prior lifecycle onto a freshly-built row.
  *
  * Someone already on the job keeps their state; someone genuinely new starts
- * clean (the column defaults apply); someone removed simply has no row. The
- * structural fields — is_primary, split offsets — always come from the new
- * row, because those ARE the form's to decide.
+ * pending. The structural fields — is_primary, split offsets — always come
+ * from the new row, because those ARE the form's to decide.
+ *
+ * EVERY row carries all three keys, always. That is not tidiness, it is the
+ * whole point.
+ *
+ * This used to spread the prior lifecycle when there was one and return the
+ * row untouched when there wasn't, on the reasoning that a new person should
+ * "let the column defaults apply". A column default only applies when the
+ * column is absent from the entire INSERT — and these rows go in as one array.
+ * PostgREST unifies the column list across every row in that array, so the
+ * moment ONE row supplied acceptance_status, every row that didn't got an
+ * explicit NULL instead of the default, and the insert died on the NOT NULL
+ * constraint:
+ *
+ *   null value in column "acceptance_status" of relation "booking_assignees"
+ *   violates not-null constraint
+ *
+ * Which meant adding a crew member to a job that already had one — the most
+ * ordinary edit there is — failed every time, while adding one to an empty
+ * job worked fine. Uniform keys make the array homogeneous and the defaults
+ * irrelevant.
  */
 export function withPriorLifecycle<T extends AssigneeKeyed>(
   row: T,
   prior: Map<string, AssigneeLifecycle>,
-): T & Partial<AssigneeLifecycle> {
+): T & AssigneeLifecycle {
   const found = prior.get(assigneeKey(row));
-  return found ? { ...row, ...found } : row;
+  return {
+    ...row,
+    acceptance_status: found?.acceptance_status ?? FRESH.acceptance_status,
+    responded_at: found?.responded_at ?? FRESH.responded_at,
+    completed_at: found?.completed_at ?? FRESH.completed_at,
+  };
 }
