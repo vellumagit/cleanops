@@ -9,6 +9,7 @@ import { StatusBadge, type StatusTone } from "@/components/status-badge";
 import { formatDateTime, humanizeEnum } from "@/lib/format";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { updateRequestStatusAction } from "./actions";
+import { OpenSkipRequests } from "./open-skip-requests";
 
 export const metadata = { title: "Booking requests" };
 
@@ -22,7 +23,12 @@ type RequestRow = {
   status: string;
   created_at: string;
   responded_at: string | null;
-  client: { id: string; name: string; email: string | null; phone: string | null } | null;
+  client: {
+    id: string;
+    name: string;
+    email: string | null;
+    phone: string | null;
+  } | null;
 };
 
 function statusTone(status: string): StatusTone {
@@ -54,17 +60,59 @@ export default async function BookingRequestsPage({
     .limit(100);
 
   if (showResolved) {
-    query = query.in("status" as never, [
-      "scheduled",
-      "declined",
-      "cancelled",
-    ] as never);
+    query = query.in(
+      "status" as never,
+      ["scheduled", "declined", "cancelled"] as never,
+    );
   } else {
     query = query.eq("status" as never, "pending" as never);
   }
 
   const { data } = (await query) as unknown as { data: RequestRow[] | null };
   const rows = data ?? [];
+
+  /*
+   * Skip requests that landed inside the auto-apply window, so a person has to
+   * answer them. They live on this page because both kinds are "a client asked
+   * for something from the portal" — but these are time-critical: the crew is
+   * already scheduled, and an unanswered request is how the client ends up
+   * phoning anyway, which is the thing the portal exists to prevent.
+   */
+  const { data: skipRaw } = (await supabase
+    .from("client_job_requests" as never)
+    .select(
+      `id, booking_id, body, created_at,
+       client:clients ( name ),
+       booking:bookings ( scheduled_at, service_type_label, service_type )`,
+    )
+    .eq("kind" as never, "skip_occurrence" as never)
+    .eq("status" as never, "open" as never)
+    .order("created_at", { ascending: true })
+    .limit(50)) as unknown as {
+    data: Array<{
+      id: string;
+      booking_id: string | null;
+      body: string | null;
+      created_at: string;
+      client: { name: string | null } | null;
+      booking: {
+        scheduled_at: string;
+        service_type_label: string | null;
+        service_type: string;
+      } | null;
+    }> | null;
+  };
+  const openSkips = (skipRaw ?? []).map((r) => ({
+    id: r.id,
+    booking_id: r.booking_id,
+    body: r.body,
+    created_at: r.created_at,
+    clientName: r.client?.name ?? "A client",
+    whenLabel: r.booking
+      ? `${r.booking.service_type_label ?? humanizeEnum(r.booking.service_type)}, ${formatDateTime(r.booking.scheduled_at, tz)}`
+      : "visit no longer on the schedule",
+    askedLabel: formatDateTime(r.created_at, tz),
+  }));
 
   const tabLinkClass = (active: boolean) =>
     `rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
@@ -87,6 +135,8 @@ export default async function BookingRequestsPage({
         </Link>
       }
     >
+      <OpenSkipRequests rows={openSkips} />
+
       <div className="mb-4 inline-flex items-center gap-1 rounded-lg border border-border bg-muted/30 p-1">
         <Link
           href="/app/bookings/requests"

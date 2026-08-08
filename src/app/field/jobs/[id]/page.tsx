@@ -8,6 +8,7 @@ import {
   Phone,
   Users,
   StickyNote,
+  MessageSquare,
 } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -166,6 +167,27 @@ export default async function FieldJobDetailPage({
   // client's address on file. Bookings created without a snapshotted address
   // (certain recurring series / portal requests) were showing nothing here.
   const displayAddress = booking.address ?? booking.client?.address ?? null;
+
+  /*
+   * Notes the CLIENT left for this specific visit — "skip the bathroom this
+   * week". Distinct from bookings.notes (the office's instruction) and from
+   * clients.notes (the standing profile note): this one is per-visit and
+   * written by the person who lives there.
+   *
+   * Kept in its own table rather than appended to bookings.notes because an
+   * ordinary owner save rewrites that column wholesale, and on a "this and
+   * future" edit it is promoted to the series note and stamped onto every
+   * future occurrence — turning "just this week" into a standing instruction.
+   */
+  const { data: clientNotesRaw } = (await supabase
+    .from("client_job_requests" as never)
+    .select("id, body, created_at")
+    .eq("booking_id", booking.id)
+    .eq("kind", "job_note")
+    .order("created_at", { ascending: true })) as unknown as {
+    data: Array<{ id: string; body: string | null; created_at: string }> | null;
+  };
+  const clientNotes = (clientNotesRaw ?? []).filter((n) => n.body);
 
   // Photos, all assignee segments, and checklist items only depend on
   // booking.id — fetch them in parallel. Serializing these round-trips made
@@ -422,6 +444,25 @@ export default async function FieldJobDetailPage({
               </div>
             </div>
           ) : null}
+          {clientNotes.length > 0 ? (
+            <div className="flex items-start gap-3">
+              <MessageSquare className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
+              <div className="min-w-0">
+                <p className="text-xs font-semibold uppercase tracking-wide text-primary">
+                  From the client, for today
+                </p>
+                {clientNotes.map((n) => (
+                  <p
+                    key={n.id}
+                    className="mt-0.5 whitespace-pre-wrap text-sm font-medium text-foreground"
+                  >
+                    {n.body}
+                  </p>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
           {/*
            * The standing note from the client's profile — buzzer codes, pets,
            * "move the sofa". It used to live office-side only: the booking

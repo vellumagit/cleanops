@@ -36,15 +36,11 @@ export async function updateRequestStatusAction(
     .from("booking_requests" as never)
     .update({
       status: nextStatus,
-      responded_at:
-        nextStatus === "pending" ? null : new Date().toISOString(),
+      responded_at: nextStatus === "pending" ? null : new Date().toISOString(),
       responded_by: nextStatus === "pending" ? null : membership.id,
     } as never)
     .eq("id" as never, id as never)
-    .eq(
-      "organization_id" as never,
-      membership.organization_id as never,
-    );
+    .eq("organization_id" as never, membership.organization_id as never);
 
   if (error) {
     console.error("[booking-request] status update failed:", error.message);

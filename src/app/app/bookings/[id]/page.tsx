@@ -80,6 +80,30 @@ export default async function BookingDetailPage({
   const supabase = await createSupabaseServerClient();
   const tz = await getOrgTimezone(membership.organization_id);
 
+  /*
+   * What the CLIENT has said about this visit from their portal — a note for
+   * the crew, or a skip. Shown here so the office can see it without the
+   * client having phoned, which is the entire point of the portal.
+   *
+   * A skip still sitting at status='open' is the only kind that needs anyone
+   * to do anything; auto-applied ones are inserted already resolved.
+   */
+  const { data: clientSaidRaw } = (await supabase
+    .from("client_job_requests" as never)
+    .select("id, kind, body, status, auto_applied, created_at")
+    .eq("booking_id", id)
+    .order("created_at", { ascending: false })) as unknown as {
+    data: Array<{
+      id: string;
+      kind: string;
+      body: string | null;
+      status: string;
+      auto_applied: boolean;
+      created_at: string;
+    }> | null;
+  };
+  const clientSaid = clientSaidRaw ?? [];
+
   const { data: booking, error } = (await supabase
     .from("bookings")
     .select(
@@ -510,8 +534,41 @@ export default async function BookingDetailPage({
               </p>
             )}
 
+            {clientSaid.length > 0 && (
+              <div className="mt-5 space-y-2">
+                {clientSaid.map((r) => (
+                  <div
+                    key={r.id}
+                    className={
+                      r.status === "open"
+                        ? "rounded-md border border-amber-400 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200"
+                        : "rounded-md border border-border bg-primary/5 p-3 text-xs"
+                    }
+                  >
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <p className="sollos-label">
+                        {r.kind === "job_note"
+                          ? "Client note for this visit"
+                          : r.status === "open"
+                            ? "Client asked to skip — needs your call"
+                            : r.auto_applied
+                              ? "Client skipped this visit"
+                              : "Skip request — handled"}
+                      </p>
+                      <span className="shrink-0 text-muted-foreground">
+                        {formatDateTime(r.created_at, tz)}
+                      </span>
+                    </div>
+                    {r.body && (
+                      <span className="whitespace-pre-wrap">{r.body}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
             {booking.notes && (
-              <div className="mt-5 rounded-md border border-border bg-muted/20 p-3 text-xs text-muted-foreground">
+              <div className="mt-3 rounded-md border border-border bg-muted/20 p-3 text-xs text-muted-foreground">
                 <p className="sollos-label mb-1">This job</p>
                 <span className="whitespace-pre-wrap">{booking.notes}</span>
               </div>

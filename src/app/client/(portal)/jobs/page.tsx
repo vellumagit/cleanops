@@ -152,8 +152,17 @@ function Section({
           return (
             <li
               key={j.id}
-              className="rounded-lg border border-border bg-card p-4"
+              className="tap-row relative rounded-lg border border-border bg-card p-4"
             >
+              {/* Stretched link: the whole row is the tap target without
+                  nesting an anchor inside the review link this row already
+                  has. A chevron-sized target on a phone is a miss waiting to
+                  happen. */}
+              <Link
+                href={`/client/jobs/${j.id}`}
+                aria-label={`Open visit on ${formatDateTime(j.scheduled_at, tz)}`}
+                className="absolute inset-0 z-0 rounded-lg"
+              />
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <p className="flex items-center gap-2 font-medium">
@@ -192,7 +201,7 @@ function Section({
                   ) : canReview ? (
                     <Link
                       href={`/review/${reviewToken}`}
-                      className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-primary underline-offset-2 transition-opacity hover:underline active:underline active:opacity-70"
+                      className="relative z-10 mt-2 inline-flex items-center gap-1 text-xs font-medium text-primary underline-offset-2 transition-opacity hover:underline active:underline active:opacity-70"
                     >
                       <Star className="h-3 w-3" />
                       Leave a review
