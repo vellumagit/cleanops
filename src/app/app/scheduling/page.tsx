@@ -182,30 +182,38 @@ export default async function SchedulingPage({
         : zonedYmd(startOfWeekUtc(new Date(), tz), tz);
 
   const weekEnd = addDays(weekStart, view === "day" ? 0 : 6);
+  /*
+   * NOT zoned, deliberately. weekStart comes from parseWeekParam, which builds
+   * `new Date(y, m - 1, d)` — a SERVER-local midnight whose calendar
+   * components already ARE the date being displayed. It is a calendar date
+   * wearing a Date object, not an instant.
+   *
+   * Applying the org timezone to it re-interprets that midnight as a moment
+   * and shifts it backwards: on Vercel (UTC) midnight becomes 18:00 the
+   * previous day in Edmonton, so the header read one day early all week. I
+   * added those timeZone options in the timezone sweep by pattern-matching
+   * every toLocaleDateString call, which was wrong for this one value.
+   */
+  const dateOnly = (d: Date, opts: Intl.DateTimeFormatOptions) =>
+    // eslint-disable-next-line no-restricted-syntax -- calendar date, not an instant; see above
+    d.toLocaleDateString("en-US", opts);
   const range =
     view === "month"
-      ? weekStart.toLocaleDateString("en-US", {
-          month: "long",
-          year: "numeric",
-          timeZone: tz,
-        })
+      ? dateOnly(weekStart, { month: "long", year: "numeric" })
       : view === "day"
-        ? weekStart.toLocaleDateString("en-US", {
+        ? dateOnly(weekStart, {
             weekday: "long",
             month: "short",
             day: "numeric",
             year: "numeric",
-            timeZone: tz,
           })
-        : `${weekStart.toLocaleDateString("en-US", {
+        : `${dateOnly(weekStart, {
             month: "short",
             day: "numeric",
-            timeZone: tz,
-          })} – ${weekEnd.toLocaleDateString("en-US", {
+          })} – ${dateOnly(weekEnd, {
             month: "short",
             day: "numeric",
             year: "numeric",
-            timeZone: tz,
           })}`;
 
   const descriptions: Record<View, string> = {

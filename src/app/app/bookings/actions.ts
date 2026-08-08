@@ -140,7 +140,7 @@ async function syncBookingAssignees(
   primaryId: string | null,
   additionalIds: string[],
   splits: SplitSegmentInput[] = [],
-): Promise<void> {
+): Promise<string | null> {
   // CROSS-ORG GUARD: every submitted membership_id must belong to the
   // caller's org and be active. Otherwise a malicious owner with multiple
   // org memberships could plant a foreign membership in booking_assignees
@@ -201,7 +201,7 @@ async function syncBookingAssignees(
     error: { message: string } | null;
   };
   if (deleteErr) {
-    throw new Error(`Failed to update crew: ${deleteErr.message}`);
+    return `Couldn't update the crew: ${deleteErr.message}`;
   }
 
   const rows: Array<{
@@ -280,7 +280,7 @@ async function syncBookingAssignees(
     }
   }
 
-  if (rows.length === 0) return;
+  if (rows.length === 0) return null;
 
   const { error: insertErr } = (await supabase
     .from("booking_assignees")
@@ -298,8 +298,15 @@ async function syncBookingAssignees(
         .from("booking_assignees")
         .insert(priorRows as never) as unknown as Promise<unknown>);
     }
-    throw new Error(`Failed to update crew: ${insertErr.message}`);
+    // Returned, not thrown. A throw here escaped the action and Next rendered
+    // the generic error boundary — so the one message that says WHY the save
+    // failed reached nobody, and the owner saw "An unexpected error occurred"
+    // with a digest only the server logs can decode. The reason belongs on the
+    // form, next to the field the person was editing.
+    return `Couldn't update the crew: ${insertErr.message}`;
   }
+
+  return null;
 }
 
 /**
@@ -327,8 +334,8 @@ async function syncBookingAssigneesBulk(
   primaryId: string | null,
   additionalIds: string[],
   splits: SplitSegmentInput[] = [],
-): Promise<void> {
-  if (bookingIds.length === 0) return;
+): Promise<string | null> {
+  if (bookingIds.length === 0) return null;
 
   // Single membership validation pass (was repeated per booking).
   const submitted = new Set<string>();
@@ -450,13 +457,22 @@ async function syncBookingAssigneesBulk(
   };
 
   const allRows: Row[] = bookingIds.flatMap(buildRowsForBooking);
-  if (allRows.length === 0) return;
+  if (allRows.length === 0) return null;
 
-  await (supabase
+  // The result was previously cast to Promise<unknown> and dropped, so a
+  // failed insert across a whole series left every sibling crew-less and still
+  // reported success. One statement covers every booking here, which is what
+  // makes silence expensive: it is all of them or none.
+  const { error: bulkErr } = (await supabase
     .from("booking_assignees")
     .insert(
       allRows.map((r) => withPriorLifecycle(r, priorBulkLifecycle)) as never,
-    ) as unknown as Promise<unknown>);
+    )) as unknown as { error: { message: string } | null };
+  if (bulkErr) {
+    return `Couldn't update the crew on the future bookings: ${bulkErr.message}`;
+  }
+
+  return null;
 }
 
 /**
@@ -647,7 +663,7 @@ export async function createBookingAction(
   // Additional crew (if any) — write to booking_assignees so the primary
   // + extras are all tracked consistently. For split shifts, pass the
   // segments array so each employee gets a row with offset/duration.
-  await syncBookingAssignees(
+  const crewErr = await syncBookingAssignees(
     supabase,
     membership.organization_id,
     booking.id,
@@ -655,6 +671,7 @@ export async function createBookingAction(
     readAdditionalAssignees(formData),
     splits as SplitSegmentInput[],
   );
+  if (crewErr) return { errors: { _form: crewErr }, values: raw };
 
   // Email booking confirmation to client (fire-and-forget) — unless the
   // booking is Pending. sendBookingConfirmation never reads status, so an
@@ -956,7 +973,7 @@ export async function createRecurringBookingAction(
       // in every assignee's lane, the field app surfaces it to additional
       // crew, and quick-assign edits later work cleanly. Splits aren't
       // supported on recurring bookings (UI hides them), so pass [].
-      await syncBookingAssignees(
+      const seriesCrewErr = await syncBookingAssignees(
         supabase,
         membership.organization_id,
         b.id,
@@ -964,6 +981,9 @@ export async function createRecurringBookingAction(
         additionalIds,
         [],
       );
+      if (seriesCrewErr) {
+        return { errors: { _form: seriesCrewErr }, values: raw };
+      }
     }
 
     // Calendar sync runs in after() so the save returns immediately while the
@@ -1200,7 +1220,7 @@ export async function updateBookingAction(
   // Replace the booking_assignees rows to match the form's new primary +
   // additional selection. For split shifts, pass the segments array so
   // each employee gets a row with offset/duration.
-  await syncBookingAssignees(
+  const updateCrewErr = await syncBookingAssignees(
     supabase,
     membership.organization_id,
     id,
@@ -1208,6 +1228,7 @@ export async function updateBookingAction(
     readAdditionalAssignees(formData),
     updateSplits as SplitSegmentInput[],
   );
+  if (updateCrewErr) return { errors: { _form: updateCrewErr }, values: raw };
 
   // Notify NEW assignees (anyone who wasn't on the booking before).
   // Covers: new primary on a non-split edit, new additional crew added,
@@ -1490,7 +1511,7 @@ export async function updateBookingAction(
           const regenRows = regenerated ?? [];
           const regenIds = regenRows.map((r) => r.id);
           if (regenIds.length > 0) {
-            await syncBookingAssigneesBulk(
+            const regenCrewErr = await syncBookingAssigneesBulk(
               supabase,
               membership.organization_id,
               regenIds,
@@ -1498,6 +1519,9 @@ export async function updateBookingAction(
               readAdditionalAssignees(formData),
               updateSplits as SplitSegmentInput[],
             );
+            if (regenCrewErr) {
+              return { errors: { _form: regenCrewErr }, values: raw };
+            }
 
             // Create calendar events for each regenerated booking so the
             // rescheduled future occurrences actually land on the org
@@ -1585,7 +1609,7 @@ export async function updateBookingAction(
       // sibling and exceed Vercel's action timeout for long series.
       const siblingIdList = (siblingIds ?? []).map((r) => r.id);
       if (siblingIdList.length > 0) {
-        await syncBookingAssigneesBulk(
+        const siblingCrewErr = await syncBookingAssigneesBulk(
           supabase,
           membership.organization_id,
           siblingIdList,
@@ -1593,6 +1617,9 @@ export async function updateBookingAction(
           readAdditionalAssignees(formData),
           updateSplits as SplitSegmentInput[],
         );
+        if (siblingCrewErr) {
+          return { errors: { _form: siblingCrewErr }, values: raw };
+        }
       }
     }
 
@@ -1965,7 +1992,7 @@ export async function convertBookingToRecurringAction(
     const newIds = newRows.map((r) => r.id);
 
     if (newIds.length > 0) {
-      await syncBookingAssigneesBulk(
+      const newCrewErr = await syncBookingAssigneesBulk(
         supabase,
         membership.organization_id,
         newIds,
@@ -1973,6 +2000,9 @@ export async function convertBookingToRecurringAction(
         [],
         [],
       );
+      if (newCrewErr) {
+        return { ok: false, error: newCrewErr };
+      }
 
       const labels = await getBookingLabels(
         supabase,
@@ -2832,7 +2862,7 @@ export async function assignBookingCrewAction(
     if (updErr) return { error: updErr.message };
   }
 
-  await syncBookingAssignees(
+  const assignCrewErr = await syncBookingAssignees(
     supabase,
     membership.organization_id,
     id,
@@ -2840,6 +2870,7 @@ export async function assignBookingCrewAction(
     additionalIds,
     [], // no splits from the quick-assign crew dialog (guarded above)
   );
+  if (assignCrewErr) return { error: assignCrewErr };
 
   // Update personal calendars for all newly assigned members (and remove
   // events for unassigned ones). Fire-and-forget.
