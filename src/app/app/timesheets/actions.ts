@@ -6,6 +6,7 @@ import { logAuditEvent } from "@/lib/audit";
 import { notifyPtoStatus } from "@/lib/automations";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { localInputToUtcIso } from "@/lib/validators/common";
+import { endsAfterStart, preserveSubSecond } from "@/lib/time-entry-edit";
 import { encryptField } from "@/lib/field-encryption";
 
 type Result = { ok: true } | { ok: false; error: string };
@@ -456,14 +457,24 @@ export async function updateTimeEntryAction(
     .eq("organization_id", membership.organization_id)
     .maybeSingle();
 
+  // The edit form round-trips seconds; the stored punch has milliseconds. A
+  // field that comes back as the stored instant truncated to the second was
+  // not edited, so keep the original and leave the row untouched. Without
+  // this, opening an entry and saving it moved the start earlier — far enough
+  // to land inside the previous back-to-back punch, which the overlap check
+  // below then refused, with no way past it from the UI.
+  const start_at =
+    preserveSubSecond(parsed.start_at, before?.clock_in_at) ?? parsed.start_at;
+  const end_at = preserveSubSecond(parsed.end_at, before?.clock_out_at);
+
   // Overlap check — excludes the entry being edited so the entry doesn't
   // flag against itself.
   const overlap = await findOverlap(
     supabase,
     membership.organization_id,
     parsed.employee_id,
-    parsed.start_at,
-    parsed.end_at,
+    start_at,
+    end_at,
     id,
   );
   if (overlap) {
@@ -492,8 +503,8 @@ export async function updateTimeEntryAction(
     .update({
       employee_id: parsed.employee_id,
       booking_id: parsed.booking_id,
-      clock_in_at: parsed.start_at,
-      clock_out_at: parsed.end_at,
+      clock_in_at: start_at,
+      clock_out_at: end_at,
       // A human just set these hours deliberately — that IS the review, so
       // clear the flag. Without this needs_review is a write-once latch that
       // blocks payroll forever even after the entry has been corrected.
@@ -516,8 +527,8 @@ export async function updateTimeEntryAction(
     after: {
       employee_id: parsed.employee_id,
       booking_id: parsed.booking_id,
-      clock_in_at: parsed.start_at,
-      clock_out_at: parsed.end_at,
+      clock_in_at: start_at,
+      clock_out_at: end_at,
     },
   });
 
@@ -602,7 +613,7 @@ export async function deletePtoRequestAction(
 /**
  * Check for an OVERLAP with another time entry for the same employee.
  *
- * Two entries overlap when they share any minute on the clock — A.start <
+ * Two entries overlap when they share any instant on the clock — A.start <
  * B.end AND A.end > B.start. Open entries (clock_out_at IS NULL) are
  * treated as extending to the current moment for the purposes of this
  * check, so creating an entry that runs into an unclosed shift is
@@ -626,14 +637,12 @@ async function findOverlap(
   clock_in_at: string;
   clock_out_at: string | null;
 } | null> {
-  const effectiveEnd = endIso ?? new Date().toISOString();
+  const nowMs = Date.now();
+  const effectiveEnd = endIso ?? new Date(nowMs).toISOString();
 
-  // Pull every entry for this employee whose start is before our end and
-  // whose stop (clock_out_at or now() for open shifts) is after our
-  // start. Coalesce open entries by treating their end as the far
-  // future — they overlap anything that's in progress or later.
-  const FUTURE = "9999-12-31T00:00:00Z";
-
+  // Pull every entry for this employee whose start is before our end, then
+  // keep the ones whose stop is after our start. An open shift is treated as
+  // running until now, which is what the docstring above has always claimed.
   let query = supabase
     .from("time_entries")
     .select("id, clock_in_at, clock_out_at")
@@ -654,9 +663,7 @@ async function findOverlap(
   };
 
   for (const row of data ?? []) {
-    const otherEnd = row.clock_out_at ?? FUTURE;
-    // Overlap iff otherEnd > our start
-    if (otherEnd > startIso) {
+    if (endsAfterStart(row.clock_out_at, startIso, nowMs)) {
       return row;
     }
   }

@@ -9,6 +9,11 @@ import {
 } from "@/lib/shift-overrun";
 import { resolveShiftWindows, shiftWindowKey } from "@/lib/crew-hours";
 import { getOrgTimezone } from "@/lib/org-timezone";
+import {
+  zonedDayStartUtc,
+  zonedMidnightUtc,
+  zonedYmd,
+} from "@/lib/wall-clock";
 import { maybeDecryptField } from "@/lib/field-encryption";
 import { TimesheetsView } from "./timesheets-view";
 import type {
@@ -35,16 +40,31 @@ export default async function TimesheetsPage({
   const supabase = await createSupabaseServerClient();
   const params = await searchParams;
 
-  // Default: current pay period (last 14 days)
+  const orgTz = await getOrgTimezone(membership.organization_id);
+
+  // `from`/`to` are CALENDAR DAYS in the org's timezone, and every row below
+  // renders in that same zone via formatDateTime(..., orgTz). Both ends have
+  // to be resolved through it. Anchoring the window to UTC midnight instead
+  // offset it by the zone's whole UTC offset — six hours in Edmonton, seven
+  // in winter — so asking for a day actually returned the previous evening
+  // through that day's late afternoon. Every shift starting after 6 PM fell
+  // out of its own day, showed a date the picker disagreed with, and carried
+  // its hours into the neighbouring pay period.
+  //
+  // Default: current pay period (last 14 days), also in org-local days.
   const now = new Date();
-  const defaultFrom = new Date(now);
-  defaultFrom.setDate(defaultFrom.getDate() - 14);
+  const to = params.to || zonedYmd(now, orgTz);
+  const from =
+    params.from || zonedYmd(zonedDayStartUtc(now, orgTz, -14), orgTz);
 
-  const from = params.from || defaultFrom.toISOString().slice(0, 10);
-  const to = params.to || now.toISOString().slice(0, 10);
-
-  const fromIso = `${from}T00:00:00Z`;
-  const toIso = `${to}T23:59:59Z`;
+  // Half-open: [00:00 local on `from`, 00:00 local the day after `to`). An
+  // inclusive 23:59:59 end drops the final second of the range.
+  const fromIso = zonedMidnightUtc(from, orgTz).toISOString();
+  const toIso = zonedDayStartUtc(
+    zonedMidnightUtc(to, orgTz),
+    orgTz,
+    1,
+  ).toISOString();
 
   // Capture "now" once for the booking-picker window below. Single
   // reference point per render keeps the server response deterministic.
@@ -92,7 +112,7 @@ export default async function TimesheetsPage({
         `,
         )
         .gte("clock_in_at", fromIso)
-        .lte("clock_in_at", toIso)
+        .lt("clock_in_at", toIso)
         .order("clock_in_at", { ascending: false })
         .limit(1000) as unknown as Promise<{
         data: Array<{
@@ -395,8 +415,6 @@ export default async function TimesheetsPage({
     client_name: o.booking?.client?.name ?? null,
     service_type: o.booking?.service_type ?? null,
   }));
-
-  const orgTz = await getOrgTimezone(membership.organization_id);
 
   // PTO data
   const ptoRows = ((ptoRequests ?? []) as Array<{

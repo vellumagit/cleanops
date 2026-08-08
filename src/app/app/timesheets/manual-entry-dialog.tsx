@@ -63,10 +63,20 @@ type Props = {
 // -----------------------------------------------------------------------------
 // Datetime helpers
 //
-// <input type="datetime-local"> expects "YYYY-MM-DDTHH:mm" in the user's
+// <input type="datetime-local"> expects "YYYY-MM-DDTHH:mm[:ss]" in the user's
 // *display* wall-clock. Rendering a UTC timestamp in the org's tz lets us
 // prefill edit forms correctly. On submit, the server converts back to UTC
 // via localInputToUtcIso.
+//
+// SECONDS ARE LOAD-BEARING. A clock punch is recorded to the millisecond, and
+// the field app produces back-to-back punches — clock out of one job and into
+// the next a fraction of a second apart. Prefilling at minute precision meant
+// opening an entry and saving it unchanged rewound its start by up to 59
+// seconds, into the previous entry, and the overlap guard then refused the
+// save. It was unescapable from the UI: a minute-precision box cannot express
+// 12:56:56. The inputs carry step="1" so the browser keeps the seconds it is
+// given, and the server restores the milliseconds for any field left alone
+// (preserveSubSecond).
 
 function utcIsoToLocalInput(utc: string, tz: string): string {
   const d = new Date(utc);
@@ -78,11 +88,12 @@ function utcIsoToLocalInput(utc: string, tz: string): string {
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
+    second: "2-digit",
     hour12: false,
   }).formatToParts(d);
   const get = (type: string) =>
     parts.find((p) => p.type === type)?.value ?? "00";
-  return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}`;
+  return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}:${get("second")}`;
 }
 
 /** "6h 30m" from two datetime-local strings, or null if not both valid. */
@@ -322,6 +333,7 @@ export function ManualEntryDialog({
                 id="start_at"
                 name="start_at"
                 type="datetime-local"
+                step="1"
                 value={startAt}
                 onChange={(e) => setStartAt(e.target.value)}
                 required
@@ -338,6 +350,7 @@ export function ManualEntryDialog({
                 id="end_at"
                 name="end_at"
                 type="datetime-local"
+                step="1"
                 value={endAt}
                 onChange={(e) => setEndAt(e.target.value)}
               />

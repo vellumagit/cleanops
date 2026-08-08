@@ -25,6 +25,7 @@ import {
   formatDurationMinutes,
   formatCurrencyCents,
 } from "@/lib/format";
+import { zonedDayStartUtc, zonedYmd } from "@/lib/wall-clock";
 import { cn } from "@/lib/utils";
 import type {
   TimesheetEntry,
@@ -174,7 +175,15 @@ function CompletionBadge({
   );
 }
 
-function generateCSV(entries: TimesheetEntry[]): string {
+/**
+ * The payroll export, in the same wall-clock the table shows.
+ *
+ * These three columns used to be written as the raw stored UTC ISO string
+ * while the rows on screen rendered in the org's zone, so the export and the
+ * page disagreed by the zone's offset on every line — and an evening shift
+ * carried a date in the CSV that nobody could find on the timesheet.
+ */
+function generateCSV(entries: TimesheetEntry[], orgTz: string): string {
   const header = [
     "Employee",
     "Clock In",
@@ -194,12 +203,12 @@ function generateCSV(entries: TimesheetEntry[]): string {
   const rows = entries.map((e) =>
     [
       `"${e.employee_name}"`,
-      `"${e.clock_in_at}"`,
-      `"${e.clock_out_at ?? ""}"`,
+      `"${formatDateTime(e.clock_in_at, orgTz)}"`,
+      `"${e.clock_out_at ? formatDateTime(e.clock_out_at, orgTz) : ""}"`,
       e.actual_minutes,
       `"${e.client_name ?? ""}"`,
       `"${e.service_type ?? ""}"`,
-      `"${e.scheduled_at ?? ""}"`,
+      `"${e.scheduled_at ? formatDateTime(e.scheduled_at, orgTz) : ""}"`,
       e.estimated_minutes ?? "",
       `"${e.punctuality ?? ""}"`,
       `"${e.completion ?? ""}"`,
@@ -364,19 +373,21 @@ export function TimesheetsView({
     router.push(`/app/timesheets?from=${localFrom}&to=${localTo}`);
   }
 
+  // The presets name org-local calendar days, matching the window the server
+  // now builds. `toISOString().slice(0, 10)` took the UTC date off the
+  // browser's clock, so any evening after 6 PM in Edmonton already asked for
+  // tomorrow — "Last 7 days" quietly meant a different week than the label.
   function setPreset(days: number) {
-    const end = new Date();
-    const start = new Date(end);
-    start.setDate(start.getDate() - days);
-    setLocalFrom(start.toISOString().slice(0, 10));
-    setLocalTo(end.toISOString().slice(0, 10));
-    router.push(
-      `/app/timesheets?from=${start.toISOString().slice(0, 10)}&to=${end.toISOString().slice(0, 10)}`,
-    );
+    const now = new Date();
+    const end = zonedYmd(now, orgTz);
+    const start = zonedYmd(zonedDayStartUtc(now, orgTz, -days), orgTz);
+    setLocalFrom(start);
+    setLocalTo(end);
+    router.push(`/app/timesheets?from=${start}&to=${end}`);
   }
 
   function downloadReport() {
-    const csv = generateCSV(filteredEntries);
+    const csv = generateCSV(filteredEntries, orgTz);
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
