@@ -7,7 +7,7 @@ import { DeleteFreelancerForm } from "./delete-form";
 import { formatDateTime } from "@/lib/format";
 import { getOrgTimezone } from "@/lib/org-timezone";
 
-export const metadata = { title: "Edit subcontractor" };
+export const metadata = { title: "Edit outsourcing contact" };
 
 export default async function EditFreelancerPage({
   params,
@@ -41,7 +41,7 @@ export default async function EditFreelancerPage({
     .limit(15);
 
   return (
-    <PageShell title="Edit subcontractor">
+    <PageShell title="Edit outsourcing contact">
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="space-y-6">
           <div className="rounded-lg border border-border bg-card p-6">

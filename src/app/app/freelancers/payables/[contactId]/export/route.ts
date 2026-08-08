@@ -2,7 +2,10 @@ import { requireMembership } from "@/lib/auth";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { formatCurrencyCents, formatDate, formatDateTime, humanizeEnum } from "@/lib/format";
 import { getOrgCurrency } from "@/lib/org-currency";
-import { getSubcontractorLedger } from "@/lib/subcontractor-payables";
+import {
+  getSubcontractorLedger,
+  parsePayeeParam,
+} from "@/lib/subcontractor-payables";
 import { type NextRequest } from "next/server";
 
 function escapeCsv(value: string | null | undefined): string {
@@ -24,10 +27,10 @@ export async function GET(
 ) {
   // Auth guard — redirects on failure.
   const membership = await requireMembership(["owner", "admin", "manager"]);
-  const { contactId } = await params;
+  const { contactId: payeeParam } = await params;
 
   const [ledger, currency, tz] = await Promise.all([
-    getSubcontractorLedger(membership.organization_id, contactId),
+    getSubcontractorLedger(membership.organization_id, parsePayeeParam(payeeParam)),
     getOrgCurrency(membership.organization_id),
     getOrgTimezone(membership.organization_id),
   ]);

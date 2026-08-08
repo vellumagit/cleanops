@@ -79,16 +79,28 @@ export async function createPayrollRunAction(
           booking: { hourly_rate_cents: number | null; total_cents: number } | null;
         }> | null;
       }>,
-      // Include every active membership — owners who work shifts, and
+      // Include every active EMPLOYEE — owners who work shifts, and
       // manually-added shadow members, both belong on payroll.
       // Admin client because pay_rate_cents is RLS-locked from end-user
       // JWTs (migration 20260601040000). Org-filtered to stay scoped.
+      //
+      // Subcontractors are excluded here and nowhere else, deliberately. Every
+      // loop below gates on `buckets.get(...)`, and only pushes an id onto the
+      // counted* arrays once it has a bucket — so leaving a subcontractor out
+      // of this seed keeps their hours, bonuses and PTO out of the run AND
+      // leaves those rows unstamped (payroll_run_id stays NULL). Unstamped is
+      // what makes them still visible as owed in Subcontractor pay. Filter
+      // them out at the time_entries query instead and the rows would be
+      // skipped but the arrays would be built the same way — the effect is
+      // identical today, but this seed is the one place the two pay systems
+      // are actually partitioned, so it is the one place to say so.
       createSupabaseAdminClient()
         .from("memberships")
         .select(
           "id, pay_rate_cents, display_name, profile:profiles ( full_name )",
         )
         .eq("status", "active")
+        .eq("engagement" as never, "employee" as never)
         .eq("organization_id", membership.organization_id),
       supabase
         .from("bonuses")

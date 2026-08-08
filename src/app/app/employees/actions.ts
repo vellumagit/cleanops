@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
 import { logAuditEvent } from "@/lib/audit";
+import { toEngagement } from "@/lib/engagement";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { InvitationSchema } from "@/lib/validators/invitations";
 
@@ -23,6 +24,7 @@ export async function sendInvitationAction(
     name: String(formData.get("name") ?? "").trim(),
     email: String(formData.get("email") ?? "").trim().toLowerCase(),
     role: String(formData.get("role") ?? "employee"),
+    engagement: toEngagement(formData.get("engagement")),
     pay_rate: String(formData.get("pay_rate") ?? ""),
   };
 
@@ -81,6 +83,10 @@ export async function sendInvitationAction(
       organization_id: membership.organization_id,
       email: parsed.data.email,
       role: parsed.data.role as "admin" | "manager" | "employee",
+      // Carried on the invitation, not applied now — the membership doesn't
+      // exist until they accept. Without this the invitee lands as an
+      // employee and silently appears in the next payroll run.
+      engagement: raw.engagement,
       invited_by: membership.profile_id,
     })
     .select("id, token")
@@ -305,6 +311,15 @@ export async function updateMemberAction(
 ): Promise<UpdateMemberState> {
   const raw = {
     role: String(formData.get("role") ?? ""),
+    // ABSENCE MUST SURVIVE. Three forms call this action and only the
+    // employees edit dialog carries an engagement field; the Settings ›
+    // Members table and the full-page edit form do not. Reading it as
+    // toEngagement(null) would resolve to "employee" and silently move a
+    // subcontractor back onto payroll the next time somebody changed their
+    // phone number from the wrong screen. Undefined means "not being edited".
+    engagement: formData.has("engagement")
+      ? toEngagement(formData.get("engagement"))
+      : undefined,
     status: String(formData.get("status") ?? ""),
     pay_rate: String(formData.get("pay_rate") ?? ""),
     display_name: String(formData.get("display_name") ?? ""),
@@ -397,6 +412,7 @@ export async function updateMemberAction(
   // profiles.full_name (their login identity) is left untouched.
   const updatePayload: Record<string, unknown> = {};
   if (parsed.data.role) updatePayload.role = parsed.data.role;
+  if (raw.engagement) updatePayload.engagement = raw.engagement;
   if (parsed.data.status) updatePayload.status = parsed.data.status;
   if (parsed.data.pay_rate !== undefined)
     updatePayload.pay_rate_cents = parsed.data.pay_rate;
@@ -599,6 +615,7 @@ export type ManualEmployeeFormState = {
   values?: {
     display_name?: string;
     role?: string;
+    engagement?: string;
     pay_rate?: string;
     contact_email?: string;
     contact_phone?: string;
@@ -646,6 +663,7 @@ export async function createManualEmployeeAction(
   const raw = {
     display_name: String(formData.get("display_name") ?? ""),
     role: String(formData.get("role") ?? "employee"),
+    engagement: toEngagement(formData.get("engagement")),
     pay_rate: String(formData.get("pay_rate") ?? ""),
     contact_email: String(formData.get("contact_email") ?? ""),
     contact_phone: String(formData.get("contact_phone") ?? ""),

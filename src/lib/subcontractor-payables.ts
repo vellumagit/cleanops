@@ -2,6 +2,52 @@ import "server-only";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 /**
+ * A payee is one of two different things, and the difference is structural,
+ * not cosmetic:
+ *
+ *   contact     a bench freelancer (freelancer_contacts). Earns per CLAIMED
+ *               shift offer — a fixed pay_cents agreed up front.
+ *   membership  a roster subcontractor. Earns from CLOCKED HOURS, priced with
+ *               exactly the same precedence payroll uses, because the same
+ *               shift must not be worth two different amounts depending on
+ *               which screen you open.
+ *
+ * Encoded as a tagged key so a Map can hold both without one masking the
+ * other. Grouping on a bare id would collide the instant a contact and a
+ * membership shared a uuid, and would silently produce a null-keyed row the
+ * first time a membership payout was written.
+ */
+export type PayeeRef =
+  | { kind: "contact"; id: string }
+  | { kind: "membership"; id: string };
+
+export function payeeKey(p: PayeeRef): string {
+  return `${p.kind}:${p.id}`;
+}
+
+/**
+ * The payee as a URL segment.
+ *
+ * Bare uuid means a bench contact, so every /app/freelancers/payables/<uuid>
+ * link that exists today — in bookmarks, in emails, in the audit log — keeps
+ * resolving to the same person. Roster subcontractors get an "m-" prefix.
+ */
+export function encodePayeeParam(p: PayeeRef): string {
+  return p.kind === "membership" ? `m-${p.id}` : p.id;
+}
+
+export function parsePayeeParam(raw: string): PayeeRef {
+  return raw.startsWith("m-")
+    ? { kind: "membership", id: raw.slice(2) }
+    : { kind: "contact", id: raw };
+}
+
+export function parsePayeeKey(key: string): PayeeRef {
+  const [kind, ...rest] = key.split(":");
+  return { kind: kind === "membership" ? "membership" : "contact", id: rest.join(":") };
+}
+
+/**
  * Subcontractor payables — what the business owes each subcontractor.
  *
  * "Earned" is derived, not stored: a subcontractor earns an offer's pay_cents
@@ -13,8 +59,12 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
  */
 
 export type PayableSummary = {
-  contactId: string;
+  payee: PayeeRef;
+  /** Bench contacts only — kept so existing links keep working. */
+  contactId: string | null;
   name: string;
+  /** Roster subcontractors are people you also schedule; the bench are not. */
+  isRoster: boolean;
   earnedCents: number;
   paidCents: number;
   outstandingCents: number;
@@ -68,6 +118,10 @@ export async function getSubcontractorPayables(
 ): Promise<{ rows: PayableSummary[]; totalOutstandingCents: number }> {
   const admin = createSupabaseAdminClient();
 
+  const earned = new Map<string, number>();
+  const jobCount = new Map<string, number>();
+
+  // Bench freelancers earn the agreed pay_cents per claimed shift.
   const { data: claims } = (await admin
     .from("job_offer_claims" as never)
     .select(
@@ -82,50 +136,178 @@ export async function getSubcontractorPayables(
       } | null;
     }> | null;
   };
-
-  const earned = new Map<string, number>();
-  const jobCount = new Map<string, number>();
   for (const c of claims ?? []) {
+    if (!c.contact_id) continue;
     if (c.offer?.booking?.status === "completed") {
-      earned.set(c.contact_id, (earned.get(c.contact_id) ?? 0) + (c.offer.pay_cents ?? 0));
-      jobCount.set(c.contact_id, (jobCount.get(c.contact_id) ?? 0) + 1);
+      const k = payeeKey({ kind: "contact", id: c.contact_id });
+      earned.set(k, (earned.get(k) ?? 0) + (c.offer.pay_cents ?? 0));
+      jobCount.set(k, (jobCount.get(k) ?? 0) + 1);
+    }
+  }
+
+  /*
+   * Roster subcontractors earn from CLOCKED HOURS, priced with payroll's exact
+   * precedence — duplicated deliberately rather than approximated:
+   *
+   *   1. booking.hourly_rate_cents            per-booking override
+   *   2. time_entries.pay_rate_cents_snapshot locked at clock-in
+   *   3. memberships.pay_rate_cents           current rate
+   *
+   * The snapshot is what stops a raise silently re-pricing last month, and a
+   * contractor deserves that guarantee as much as an employee. Get the order
+   * wrong and one shift is worth two different amounts depending on which
+   * screen you open.
+   *
+   * payroll_run_id IS NULL matters just as much: hours already paid out in a
+   * finalized run must never reappear here as still owed. That is the
+   * double-pay case, and it is the reason this filter is not optional.
+   */
+  const { data: subs } = (await admin
+    .from("memberships")
+    .select("id, display_name, pay_rate_cents, profile:profiles ( full_name )")
+    .eq("organization_id", organizationId)
+    .eq("engagement" as never, "subcontractor" as never)) as unknown as {
+    data: Array<{
+      id: string;
+      display_name: string | null;
+      pay_rate_cents: number | null;
+      profile: { full_name: string | null } | null;
+    }> | null;
+  };
+  const subById = new Map((subs ?? []).map((m) => [m.id, m]));
+
+  if (subById.size > 0) {
+    const { data: entries } = (await admin
+      .from("time_entries")
+      .select(
+        "employee_id, clock_in_at, clock_out_at, pay_rate_cents_snapshot, booking:bookings ( hourly_rate_cents )",
+      )
+      .eq("organization_id", organizationId)
+      .is("payroll_run_id", null)
+      .not("clock_out_at", "is", null)
+      .in("employee_id", [...subById.keys()])) as unknown as {
+      data: Array<{
+        employee_id: string | null;
+        clock_in_at: string | null;
+        clock_out_at: string | null;
+        pay_rate_cents_snapshot: number | null;
+        booking: { hourly_rate_cents: number | null } | null;
+      }> | null;
+    };
+
+    for (const e of entries ?? []) {
+      if (!e.employee_id || !e.clock_in_at || !e.clock_out_at) continue;
+      const member = subById.get(e.employee_id);
+      if (!member) continue;
+      const mins = Math.max(
+        0,
+        Math.round(
+          (new Date(e.clock_out_at).getTime() -
+            new Date(e.clock_in_at).getTime()) /
+            60_000,
+        ),
+      );
+      if (mins === 0) continue;
+      const rate =
+        e.booking?.hourly_rate_cents ??
+        e.pay_rate_cents_snapshot ??
+        member.pay_rate_cents ??
+        0;
+      const k = payeeKey({ kind: "membership", id: e.employee_id });
+      earned.set(k, (earned.get(k) ?? 0) + Math.round((mins * rate) / 60));
+      jobCount.set(k, (jobCount.get(k) ?? 0) + 1);
     }
   }
 
   const { data: payouts } = (await admin
     .from("subcontractor_payouts" as never)
-    .select("contact_id, amount_cents")
+    .select("contact_id, membership_id, amount_cents")
     .eq("organization_id" as never, organizationId as never)) as unknown as {
-    data: Array<{ contact_id: string; amount_cents: number }> | null;
+    data: Array<{
+      contact_id: string | null;
+      membership_id: string | null;
+      amount_cents: number;
+    }> | null;
   };
   const paid = new Map<string, number>();
   for (const p of payouts ?? []) {
-    paid.set(p.contact_id, (paid.get(p.contact_id) ?? 0) + (p.amount_cents ?? 0));
+    // Skipped rather than grouped under a null key. The CHECK constraint makes
+    // a payee-less row impossible going forward, but this is what stops one
+    // bad row rendering as an "Unnamed" line with a negative balance that
+    // quietly drags down the org-wide total.
+    const ref: PayeeRef | null = p.membership_id
+      ? { kind: "membership", id: p.membership_id }
+      : p.contact_id
+        ? { kind: "contact", id: p.contact_id }
+        : null;
+    if (!ref) continue;
+    const k = payeeKey(ref);
+    paid.set(k, (paid.get(k) ?? 0) + (p.amount_cents ?? 0));
   }
 
-  const contactIds = [...new Set([...earned.keys(), ...paid.keys()])];
-  if (contactIds.length === 0) return { rows: [], totalOutstandingCents: 0 };
+  const keys = [...new Set([...earned.keys(), ...paid.keys()])];
+  if (keys.length === 0) return { rows: [], totalOutstandingCents: 0 };
 
-  const { data: contacts } = (await admin
-    .from("freelancer_contacts")
-    .select("id, full_name")
-    .in("id", contactIds)) as unknown as {
-    data: Array<{ id: string; full_name: string | null }> | null;
-  };
-  const nameById = new Map<string, string>();
-  for (const c of contacts ?? []) nameById.set(c.id, c.full_name ?? "Unnamed");
+  const refs = keys.map(parsePayeeKey);
 
-  const rows: PayableSummary[] = contactIds
-    .map((id) => {
-      const earnedCents = earned.get(id) ?? 0;
-      const paidCents = paid.get(id) ?? 0;
+  const contactIds = refs.filter((r) => r.kind === "contact").map((r) => r.id);
+  const nameByContact = new Map<string, string>();
+  if (contactIds.length > 0) {
+    const { data: contacts } = (await admin
+      .from("freelancer_contacts")
+      .select("id, full_name")
+      .in("id", contactIds)) as unknown as {
+      data: Array<{ id: string; full_name: string | null }> | null;
+    };
+    for (const c of contacts ?? []) {
+      nameByContact.set(c.id, c.full_name ?? "Unnamed");
+    }
+  }
+
+  // Someone paid as a subcontractor who has since been flipped back to
+  // employee still needs a name, or their history renders as "Unnamed".
+  const strayIds = refs
+    .filter((r) => r.kind === "membership" && !subById.has(r.id))
+    .map((r) => r.id);
+  const strayNames = new Map<string, string>();
+  if (strayIds.length > 0) {
+    const { data: extra } = (await admin
+      .from("memberships")
+      .select("id, display_name, profile:profiles ( full_name )")
+      .in("id", strayIds)) as unknown as {
+      data: Array<{
+        id: string;
+        display_name: string | null;
+        profile: { full_name: string | null } | null;
+      }> | null;
+    };
+    for (const m of extra ?? []) {
+      strayNames.set(m.id, m.display_name ?? m.profile?.full_name ?? "Unnamed");
+    }
+  }
+
+  const rows: PayableSummary[] = keys
+    .map((k) => {
+      const payee = parsePayeeKey(k);
+      const earnedCents = earned.get(k) ?? 0;
+      const paidCents = paid.get(k) ?? 0;
+      const member = subById.get(payee.id);
+      const name =
+        payee.kind === "contact"
+          ? (nameByContact.get(payee.id) ?? "Unnamed")
+          : (member?.display_name ??
+            member?.profile?.full_name ??
+            strayNames.get(payee.id) ??
+            "Unnamed");
       return {
-        contactId: id,
-        name: nameById.get(id) ?? "Unnamed",
+        payee,
+        contactId: payee.kind === "contact" ? payee.id : null,
+        isRoster: payee.kind === "membership",
+        name,
         earnedCents,
         paidCents,
         outstandingCents: earnedCents - paidCents,
-        jobCount: jobCount.get(id) ?? 0,
+        jobCount: jobCount.get(k) ?? 0,
       };
     })
     .sort((a, b) => b.outstandingCents - a.outstandingCents);
@@ -143,29 +325,45 @@ export async function getSubcontractorPayables(
 /** Full ledger for one subcontractor: jobs earned, payouts, and uploaded bills. */
 export async function getSubcontractorLedger(
   organizationId: string,
-  contactId: string,
+  payee: PayeeRef,
 ): Promise<SubcontractorLedger> {
   const admin = createSupabaseAdminClient();
+  const isMember = payee.kind === "membership";
+  const payeeCol = isMember ? "membership_id" : "contact_id";
 
   const [contactRes, claimsRes, payoutsRes, billsRes] = await Promise.all([
-    admin
-      .from("freelancer_contacts")
-      .select("id, full_name, phone, email")
-      .eq("id", contactId)
-      .eq("organization_id", organizationId)
-      .maybeSingle(),
-    admin
-      .from("job_offer_claims" as never)
-      .select(
-        "offer:job_offers ( id, pay_cents, booking:bookings ( id, status, scheduled_at, service_type ) )",
-      )
-      .eq("organization_id" as never, organizationId as never)
-      .eq("contact_id" as never, contactId as never),
+    isMember
+      ? admin
+          .from("memberships")
+          .select(
+            "id, display_name, contact_email, contact_phone, profile:profiles ( full_name )",
+          )
+          .eq("id", payee.id)
+          .eq("organization_id", organizationId)
+          .maybeSingle()
+      : admin
+          .from("freelancer_contacts")
+          .select("id, full_name, phone, email")
+          .eq("id", payee.id)
+          .eq("organization_id", organizationId)
+          .maybeSingle(),
+    // Claims belong to the bench only. A roster subcontractor never claims an
+    // offer — they are assigned the shift and clock in, so their earnings come
+    // from time_entries further down.
+    isMember
+      ? Promise.resolve({ data: [] })
+      : admin
+          .from("job_offer_claims" as never)
+          .select(
+            "offer:job_offers ( id, pay_cents, booking:bookings ( id, status, scheduled_at, service_type ) )",
+          )
+          .eq("organization_id" as never, organizationId as never)
+          .eq("contact_id" as never, payee.id as never),
     admin
       .from("subcontractor_payouts" as never)
       .select("id, amount_cents, paid_on, method, reference, notes")
       .eq("organization_id" as never, organizationId as never)
-      .eq("contact_id" as never, contactId as never)
+      .eq(payeeCol as never, payee.id as never)
       .order("paid_on" as never, { ascending: false } as never),
     admin
       .from("subcontractor_bills" as never)
@@ -173,16 +371,27 @@ export async function getSubcontractorLedger(
         "id, label, amount_cents, bill_date, file_name, file_path, mime_type, created_at",
       )
       .eq("organization_id" as never, organizationId as never)
-      .eq("contact_id" as never, contactId as never)
+      .eq(payeeCol as never, payee.id as never)
       .order("created_at" as never, { ascending: false } as never),
   ]);
 
-  const contactRow = contactRes.data as {
-    id: string;
-    full_name: string | null;
-    phone: string | null;
-    email: string | null;
-  } | null;
+  const rawRow = contactRes.data as Record<string, unknown> | null;
+  const contactRow = rawRow
+    ? {
+        id: String(rawRow.id),
+        full_name: isMember
+          ? ((rawRow.display_name as string | null) ??
+            ((rawRow.profile as { full_name?: string } | null)?.full_name ??
+              null))
+          : ((rawRow.full_name as string | null) ?? null),
+        phone: (isMember
+          ? (rawRow.contact_phone as string | null)
+          : (rawRow.phone as string | null)) ?? null,
+        email: (isMember
+          ? (rawRow.contact_email as string | null)
+          : (rawRow.email as string | null)) ?? null,
+      }
+    : null;
 
   const claimRows = (claimsRes.data ?? []) as unknown as Array<{
     offer: {
@@ -246,7 +455,59 @@ export async function getSubcontractorLedger(
     createdAt: b.created_at,
   }));
 
-  const earnedCents = jobs.reduce((s, j) => s + j.payCents, 0);
+  // A roster subcontractor's earnings are clocked hours, priced exactly as
+  // payroll prices them, and excluding anything already settled in a payroll
+  // run. Mirrors getSubcontractorPayables above — the two must agree or the
+  // list and the detail page will show different numbers for one person.
+  let hourEarnedCents = 0;
+  if (isMember) {
+    const [{ data: member }, { data: entries }] = await Promise.all([
+      admin
+        .from("memberships")
+        .select("pay_rate_cents")
+        .eq("id", payee.id)
+        .maybeSingle() as unknown as Promise<{
+        data: { pay_rate_cents: number | null } | null;
+      }>,
+      admin
+        .from("time_entries")
+        .select(
+          "clock_in_at, clock_out_at, pay_rate_cents_snapshot, booking:bookings ( hourly_rate_cents )",
+        )
+        .eq("organization_id", organizationId)
+        .eq("employee_id", payee.id)
+        .is("payroll_run_id", null)
+        .not("clock_out_at", "is", null) as unknown as Promise<{
+        data: Array<{
+          clock_in_at: string | null;
+          clock_out_at: string | null;
+          pay_rate_cents_snapshot: number | null;
+          booking: { hourly_rate_cents: number | null } | null;
+        }> | null;
+      }>,
+    ]);
+    for (const e of entries ?? []) {
+      if (!e.clock_in_at || !e.clock_out_at) continue;
+      const mins = Math.max(
+        0,
+        Math.round(
+          (new Date(e.clock_out_at).getTime() -
+            new Date(e.clock_in_at).getTime()) /
+            60_000,
+        ),
+      );
+      if (mins === 0) continue;
+      const rate =
+        e.booking?.hourly_rate_cents ??
+        e.pay_rate_cents_snapshot ??
+        member?.pay_rate_cents ??
+        0;
+      hourEarnedCents += Math.round((mins * rate) / 60);
+    }
+  }
+
+  const earnedCents =
+    jobs.reduce((s, j) => s + j.payCents, 0) + hourEarnedCents;
   const paidCents = payouts.reduce((s, p) => s + p.amountCents, 0);
 
   return {

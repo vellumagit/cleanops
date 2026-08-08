@@ -7,6 +7,7 @@ import { UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { EngagementField } from "./engagement-field";
 import {
   Dialog,
   DialogContent,
@@ -122,6 +123,8 @@ export function AddManualEmployeeDialog() {
               invite link. Shadow employees don&rsquo;t log in regardless.
             </p>
           </div>
+
+          <EngagementField defaultValue={state.values?.engagement} />
 
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">

@@ -68,13 +68,14 @@ export async function signupAction(
     role: string;
     expires_at: string;
     accepted_at: string | null;
+    engagement?: string | null;
   };
   let inviteRow: InviteRow | null = null;
 
   if (isInvite) {
     const { data } = (await admin
       .from("invitations")
-      .select("id, organization_id, role, expires_at, accepted_at")
+      .select("id, organization_id, role, engagement, expires_at, accepted_at")
       .eq("token", inviteToken as string)
       .maybeSingle()) as unknown as {
       data: InviteRow | null;
@@ -117,6 +118,8 @@ export async function signupAction(
       organization_id: inviteRow.organization_id,
       profile_id: userId,
       role: inviteRow.role as "owner" | "admin" | "manager" | "employee",
+      // Carried from the invitation — see /join/[token]/actions.ts.
+      engagement: inviteRow.engagement ?? "employee",
       status: "active",
     });
 

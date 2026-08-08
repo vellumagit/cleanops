@@ -4,7 +4,10 @@ import { requireMembership } from "@/lib/auth";
 import { PageShell } from "@/components/page-shell";
 import { formatCurrencyCents } from "@/lib/format";
 import { getOrgCurrency } from "@/lib/org-currency";
-import { getSubcontractorPayables } from "@/lib/subcontractor-payables";
+import {
+  getSubcontractorPayables,
+  encodePayeeParam,
+} from "@/lib/subcontractor-payables";
 
 export const metadata = { title: "Subcontractor pay" };
 
@@ -77,7 +80,7 @@ export default async function SubcontractorPayablesPage() {
                     >
                       <td className="px-4 py-2.5">
                         <Link
-                          href={`/app/freelancers/payables/${r.contactId}`}
+                          href={`/app/freelancers/payables/${encodePayeeParam(r.payee)}`}
                           className="font-medium text-foreground hover:underline underline-offset-2"
                         >
                           {r.name}

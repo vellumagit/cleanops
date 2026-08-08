@@ -27,7 +27,7 @@ function today(): string {
 }
 
 /** Dialog form for recording a payment made to a subcontractor. */
-export function RecordPaymentForm({ contactId }: { contactId: string }) {
+export function RecordPaymentForm({ payee }: { payee: string }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
@@ -35,7 +35,7 @@ export function RecordPaymentForm({ contactId }: { contactId: string }) {
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const fd = new FormData(e.currentTarget);
-    fd.set("contact_id", contactId);
+    fd.set("payee", payee);
     startTransition(async () => {
       const res = await recordPayoutAction(fd);
       if (res.ok) {

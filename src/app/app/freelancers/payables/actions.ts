@@ -4,6 +4,11 @@ import { revalidatePath } from "next/cache";
 import { getActionContext } from "@/lib/actions";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { logAuditEvent } from "@/lib/audit";
+import {
+  parsePayeeParam,
+  encodePayeeParam,
+  type PayeeRef,
+} from "@/lib/subcontractor-payables";
 
 const BILL_BUCKET = "subcontractor-bills";
 const MAX_BYTES = 15 * 1024 * 1024; // 15 MB
@@ -22,19 +27,64 @@ async function ownerAdmin() {
   return { membership, ok };
 }
 
-/** Verify a subcontractor contact belongs to the caller's org. */
-async function contactInOrg(
+/**
+ * Read the payee off the form and confirm it belongs to the caller's org.
+ *
+ * Two kinds land here: a bench freelancer (freelancer_contacts) and a roster
+ * subcontractor (memberships). Both are paid through Subcontractor pay, so
+ * both can have invoices and payments recorded against them.
+ *
+ * The org check is the tenancy boundary — these writes run on the service
+ * role, so a forged id in the form is the only thing standing between one
+ * company and another company's books. Never skip it.
+ */
+async function resolvePayee(
   admin: ReturnType<typeof createSupabaseAdminClient>,
-  contactId: string,
+  formData: FormData,
   organizationId: string,
-): Promise<boolean> {
+): Promise<PayeeRef | null> {
+  const raw = String(formData.get("payee") ?? "").trim();
+  if (!raw) return null;
+  const payee = parsePayeeParam(raw);
+
+  if (payee.kind === "membership") {
+    const { data } = (await admin
+      .from("memberships")
+      .select("id")
+      .eq("id", payee.id)
+      .eq("organization_id", organizationId)
+      .maybeSingle()) as unknown as { data: { id: string } | null };
+    return data ? payee : null;
+  }
+
   const { data } = (await admin
     .from("freelancer_contacts")
     .select("id")
-    .eq("id", contactId)
+    .eq("id", payee.id)
     .eq("organization_id", organizationId)
     .maybeSingle()) as unknown as { data: { id: string } | null };
-  return Boolean(data);
+  return data ? payee : null;
+}
+
+/** The one column that gets set — the CHECK constraint requires exactly one. */
+function payeeColumns(payee: PayeeRef) {
+  return payee.kind === "membership"
+    ? { membership_id: payee.id, contact_id: null }
+    : { contact_id: payee.id, membership_id: null };
+}
+
+/** Rebuild the URL segment from a stored row, for revalidation. */
+function paramForRow(row: {
+  contact_id: string | null;
+  membership_id: string | null;
+}): string | null {
+  if (row.membership_id) {
+    return encodePayeeParam({ kind: "membership", id: row.membership_id });
+  }
+  if (row.contact_id) {
+    return encodePayeeParam({ kind: "contact", id: row.contact_id });
+  }
+  return null;
 }
 
 /** Record a payment made to a subcontractor. Owner/admin only. */
@@ -42,26 +92,27 @@ export async function recordPayoutAction(formData: FormData): Promise<Result> {
   const { membership, ok } = await ownerAdmin();
   if (!ok) return { ok: false, error: "Only owners and admins can record payments." };
 
-  const contactId = String(formData.get("contact_id") ?? "").trim();
   const amountCents = parseMoneyToCents(formData.get("amount"));
   const paidOn = String(formData.get("paid_on") ?? "").trim() || null;
   const method = String(formData.get("method") ?? "").trim() || null;
   const reference = String(formData.get("reference") ?? "").trim() || null;
   const notes = String(formData.get("notes") ?? "").trim() || null;
 
-  if (!contactId) return { ok: false, error: "Missing subcontractor." };
   if (!amountCents || amountCents <= 0) {
     return { ok: false, error: "Enter a payment amount greater than zero." };
   }
 
   const admin = createSupabaseAdminClient();
-  if (!(await contactInOrg(admin, contactId, membership.organization_id))) {
-    return { ok: false, error: "Subcontractor not found." };
-  }
+  const payee = await resolvePayee(
+    admin,
+    formData,
+    membership.organization_id,
+  );
+  if (!payee) return { ok: false, error: "Subcontractor not found." };
 
   const { error } = (await (admin.from("subcontractor_payouts" as never).insert({
     organization_id: membership.organization_id,
-    contact_id: contactId,
+    ...payeeColumns(payee),
     amount_cents: amountCents,
     ...(paidOn ? { paid_on: paidOn } : {}),
     method,
@@ -75,11 +126,11 @@ export async function recordPayoutAction(formData: FormData): Promise<Result> {
     membership,
     action: "mark_paid",
     entity: "settings",
-    entity_id: contactId,
+    entity_id: payee.id,
     after: { subcontractor_payout_cents: amountCents, method },
   });
 
-  revalidatePath(`/app/freelancers/payables/${contactId}`);
+  revalidatePath(`/app/freelancers/payables/${encodePayeeParam(payee)}`);
   revalidatePath(`/app/freelancers/payables`);
   return { ok: true };
 }
@@ -95,10 +146,14 @@ export async function deletePayoutAction(formData: FormData): Promise<Result> {
   const admin = createSupabaseAdminClient();
   const { data: row } = (await admin
     .from("subcontractor_payouts" as never)
-    .select("id, organization_id, contact_id")
+    .select("id, organization_id, contact_id, membership_id")
     .eq("id" as never, id as never)
     .maybeSingle()) as unknown as {
-    data: { organization_id: string; contact_id: string } | null;
+    data: {
+      organization_id: string;
+      contact_id: string | null;
+      membership_id: string | null;
+    } | null;
   };
   if (!row || row.organization_id !== membership.organization_id) {
     return { ok: false, error: "Payout not found." };
@@ -112,7 +167,8 @@ export async function deletePayoutAction(formData: FormData): Promise<Result> {
   }>));
   if (error) return { ok: false, error: error.message };
 
-  revalidatePath(`/app/freelancers/payables/${row.contact_id}`);
+  const param = paramForRow(row);
+  if (param) revalidatePath(`/app/freelancers/payables/${param}`);
   revalidatePath(`/app/freelancers/payables`);
   return { ok: true };
 }
@@ -122,11 +178,9 @@ export async function uploadBillAction(formData: FormData): Promise<Result> {
   const { membership, ok } = await ownerAdmin();
   if (!ok) return { ok: false, error: "Only owners and admins can upload invoices." };
 
-  const contactId = String(formData.get("contact_id") ?? "").trim();
   const file = formData.get("file");
   const amountCents = parseMoneyToCents(formData.get("amount"));
   const billDate = String(formData.get("bill_date") ?? "").trim() || null;
-  if (!contactId) return { ok: false, error: "Missing subcontractor." };
   if (!(file instanceof File) || file.size === 0) {
     return { ok: false, error: "Choose a file to upload." };
   }
@@ -134,12 +188,15 @@ export async function uploadBillAction(formData: FormData): Promise<Result> {
   const label = String(formData.get("label") ?? "").trim().slice(0, 200) || file.name;
 
   const admin = createSupabaseAdminClient();
-  if (!(await contactInOrg(admin, contactId, membership.organization_id))) {
-    return { ok: false, error: "Subcontractor not found." };
-  }
+  const payee = await resolvePayee(
+    admin,
+    formData,
+    membership.organization_id,
+  );
+  if (!payee) return { ok: false, error: "Subcontractor not found." };
 
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 120) || "file";
-  const path = `${membership.organization_id}/${contactId}/${crypto.randomUUID()}-${safeName}`;
+  const path = `${membership.organization_id}/${encodePayeeParam(payee)}/${crypto.randomUUID()}-${safeName}`;
 
   const { error: upErr } = await admin.storage
     .from(BILL_BUCKET)
@@ -151,7 +208,7 @@ export async function uploadBillAction(formData: FormData): Promise<Result> {
 
   const { error: insErr } = (await (admin.from("subcontractor_bills" as never).insert({
     organization_id: membership.organization_id,
-    contact_id: contactId,
+    ...payeeColumns(payee),
     amount_cents: amountCents && amountCents >= 0 ? amountCents : null,
     ...(billDate ? { bill_date: billDate } : {}),
     label,
@@ -166,7 +223,8 @@ export async function uploadBillAction(formData: FormData): Promise<Result> {
     return { ok: false, error: insErr.message };
   }
 
-  revalidatePath(`/app/freelancers/payables/${contactId}`);
+  revalidatePath(`/app/freelancers/payables/${encodePayeeParam(payee)}`);
+  revalidatePath(`/app/freelancers/payables`);
   return { ok: true };
 }
 
@@ -181,10 +239,15 @@ export async function deleteBillAction(formData: FormData): Promise<Result> {
   const admin = createSupabaseAdminClient();
   const { data: row } = (await admin
     .from("subcontractor_bills" as never)
-    .select("id, organization_id, contact_id, file_path")
+    .select("id, organization_id, contact_id, membership_id, file_path")
     .eq("id" as never, id as never)
     .maybeSingle()) as unknown as {
-    data: { organization_id: string; contact_id: string; file_path: string } | null;
+    data: {
+      organization_id: string;
+      contact_id: string | null;
+      membership_id: string | null;
+      file_path: string;
+    } | null;
   };
   if (!row || row.organization_id !== membership.organization_id) {
     return { ok: false, error: "Bill not found." };
@@ -199,7 +262,9 @@ export async function deleteBillAction(formData: FormData): Promise<Result> {
   }>));
   if (error) return { ok: false, error: error.message };
 
-  revalidatePath(`/app/freelancers/payables/${row.contact_id}`);
+  const param = paramForRow(row);
+  if (param) revalidatePath(`/app/freelancers/payables/${param}`);
+  revalidatePath(`/app/freelancers/payables`);
   return { ok: true };
 }
 

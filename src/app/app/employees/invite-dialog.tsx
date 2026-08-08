@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { EngagementField } from "./engagement-field";
 import {
   Dialog,
   DialogContent,
@@ -213,6 +214,7 @@ export function InviteDialog({ siteUrl }: { siteUrl: string }) {
             {state.errors?.role && (
               <p className="text-xs text-destructive">{state.errors.role}</p>
             )}
+            <EngagementField hint="Applied when they accept the invite." />
             <p className="text-xs text-muted-foreground">
               Employees see the field app. Managers see the dashboard but
               can&apos;t change settings. Admins have full access.

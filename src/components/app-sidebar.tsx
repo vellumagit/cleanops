@@ -99,7 +99,9 @@ const NAV_SECTIONS: NavSection[] = [
       // Subcontractor pay lives INSIDE the bench section now — it's a view of
       // the same people, not a separate area of the app, and two adjacent
       // "Subcontractor …" rows made the sidebar read like two features.
-      { href: "/app/freelancers", label: "Subcontractors", icon: UserPlus, roles: ["owner", "admin", "manager"] },
+      // "Subcontractors" sent owners here looking for their own crew. This is
+      // the external bench; roster subcontractors live under Employees.
+      { href: "/app/freelancers", label: "Outsourcing", icon: UserPlus, roles: ["owner", "admin", "manager"] },
       { href: "/app/reviews", label: "Reviews", icon: Star },
       { href: "/app/bonuses", label: "Bonuses", icon: Award },
       { href: "/app/training", label: "Training", icon: GraduationCap },

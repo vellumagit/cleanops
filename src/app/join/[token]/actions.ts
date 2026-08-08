@@ -47,12 +47,25 @@ export async function acceptInvitationAction(
   const admin = createSupabaseAdminClient();
 
   // Re-verify the invitation is still valid
-  const { data: invitation } = await admin
+  const { data: invitation } = (await admin
     .from("invitations")
-    .select("id, email, role, expires_at, accepted_at, organization_id")
+    .select(
+      "id, email, role, engagement, expires_at, accepted_at, organization_id",
+    )
     .eq("id", meta.invitationId)
     .eq("token", meta.token)
-    .maybeSingle();
+    .maybeSingle()) as unknown as {
+    // engagement postdates the generated types — see employees/page.tsx.
+    data: {
+      id: string;
+      email: string;
+      role: "owner" | "admin" | "manager" | "employee";
+      engagement: string | null;
+      expires_at: string;
+      accepted_at: string | null;
+      organization_id: string;
+    } | null;
+  };
 
   if (!invitation) {
     return {
@@ -117,6 +130,7 @@ export async function acceptInvitationAction(
         .update({
           status: "active",
           role: invitation.role,
+          engagement: invitation.engagement,
         })
         .eq("id", existingMembership.id);
     } else if (!existingMembership) {
@@ -127,6 +141,10 @@ export async function acceptInvitationAction(
           organization_id: invitation.organization_id,
           profile_id: userId,
           role: invitation.role,
+          // The engagement chosen when the invite was sent. Applied here
+          // because this is the moment the membership first exists — miss it
+          // and a subcontractor joins as an employee and lands in payroll.
+          engagement: invitation.engagement,
           status: "active",
         });
 
@@ -169,6 +187,7 @@ export async function acceptInvitationAction(
         organization_id: invitation.organization_id,
         profile_id: userId,
         role: invitation.role,
+        engagement: invitation.engagement,
         status: "active",
       });
 

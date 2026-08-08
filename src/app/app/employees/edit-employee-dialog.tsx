@@ -16,6 +16,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { EngagementField } from "./engagement-field";
 import {
   Select,
   SelectContent,
@@ -32,6 +33,7 @@ type Props = {
     role: "owner" | "admin" | "manager" | "employee";
     status: "active" | "invited" | "disabled";
     pay_rate_cents: number | null;
+    engagement: string | null;
     is_shadow: boolean;
     contact_email?: string | null;
     contact_phone?: string | null;
@@ -175,6 +177,15 @@ export function EditEmployeeDialog({ member, viewerRole, isSelf }: Props) {
               </div>
             </>
           )}
+
+          <EngagementField
+            defaultValue={member.engagement}
+            hint={
+              isSelf
+                ? "Changing your own engagement changes how you are paid."
+                : undefined
+            }
+          />
 
           {canChangeRole && (
             <div className="space-y-1.5">

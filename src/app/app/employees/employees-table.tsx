@@ -1,5 +1,11 @@
 "use client";
 
+import {
+  isSubcontractor,
+  toEngagement,
+  ENGAGEMENT_LABEL,
+} from "@/lib/engagement";
+
 import { useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useUrlState } from "@/components/use-url-state";
@@ -13,6 +19,7 @@ export type EmployeeRow = {
   role: "owner" | "admin" | "manager" | "employee";
   status: "active" | "invited" | "disabled";
   pay_rate_cents: number | null;
+  engagement: string;
   created_at: string;
   full_name: string;
   phone: string | null;
@@ -123,6 +130,20 @@ export function EmployeesTable({
         </StatusBadge>
       ),
       searchValue: (r) => r.role,
+    },
+    {
+      key: "engagement",
+      header: "Engagement",
+      // Worth its own column: it is the difference between someone appearing
+      // in payroll and someone appearing in Subcontractor pay, and there is
+      // no other place on this page to see which crew are which.
+      render: (r) =>
+        isSubcontractor(r.engagement) ? (
+          <StatusBadge tone="neutral">Subcontractor</StatusBadge>
+        ) : (
+          <span className="text-muted-foreground">Employee</span>
+        ),
+      searchValue: (r) => ENGAGEMENT_LABEL[toEngagement(r.engagement)],
     },
     {
       key: "status",

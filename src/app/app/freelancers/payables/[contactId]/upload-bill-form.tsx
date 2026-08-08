@@ -18,7 +18,7 @@ import { FormField } from "@/components/form-field";
 import { uploadBillAction } from "../actions";
 
 /** Dialog form for uploading an invoice a subcontractor sent. */
-export function UploadBillForm({ contactId }: { contactId: string }) {
+export function UploadBillForm({ payee }: { payee: string }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
@@ -26,7 +26,7 @@ export function UploadBillForm({ contactId }: { contactId: string }) {
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const fd = new FormData(e.currentTarget);
-    fd.set("contact_id", contactId);
+    fd.set("payee", payee);
     startTransition(async () => {
       const res = await uploadBillAction(fd);
       if (res.ok) {

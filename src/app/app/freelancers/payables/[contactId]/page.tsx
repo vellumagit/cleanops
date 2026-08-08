@@ -19,7 +19,10 @@ import {
 } from "@/lib/format";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { getOrgTimezone } from "@/lib/org-timezone";
-import { getSubcontractorLedger } from "@/lib/subcontractor-payables";
+import {
+  getSubcontractorLedger,
+  parsePayeeParam,
+} from "@/lib/subcontractor-payables";
 import { RecordPaymentForm } from "./record-payment-form";
 import { UploadBillForm } from "./upload-bill-form";
 import { DeletePayoutButton } from "./delete-payout-button";
@@ -34,10 +37,13 @@ export default async function SubcontractorLedgerPage({
   params: Promise<{ contactId: string }>;
 }) {
   const membership = await requireMembership(["owner", "admin", "manager"]);
-  const { contactId } = await params;
+  // The segment is still named contactId so old links keep working; a bare
+  // uuid means a bench contact, "m-<uuid>" means a roster subcontractor.
+  const { contactId: payeeParam } = await params;
+  const payee = parsePayeeParam(payeeParam);
 
   const [ledger, currency, tz] = await Promise.all([
-    getSubcontractorLedger(membership.organization_id, contactId),
+    getSubcontractorLedger(membership.organization_id, payee),
     getOrgCurrency(membership.organization_id),
     getOrgTimezone(membership.organization_id),
   ]);
@@ -60,7 +66,7 @@ export default async function SubcontractorLedgerPage({
             Subcontractor pay
           </Link>
           <a
-            href={`/app/freelancers/payables/${contactId}/export`}
+            href={`/app/freelancers/payables/${payeeParam}/export`}
             className={buttonVariants({ variant: "outline", size: "sm" })}
           >
             <Download className="h-3.5 w-3.5" />
@@ -68,8 +74,8 @@ export default async function SubcontractorLedgerPage({
           </a>
           {canEdit && (
             <>
-              <UploadBillForm contactId={contactId} />
-              <RecordPaymentForm contactId={contactId} />
+              <UploadBillForm payee={payeeParam} />
+              <RecordPaymentForm payee={payeeParam} />
             </>
           )}
         </div>
@@ -130,10 +136,20 @@ export default async function SubcontractorLedgerPage({
         {/* ── Jobs ── */}
         <Section
           title="Jobs"
-          subtitle="Completed jobs this subcontractor claimed."
+          subtitle={
+            payee.kind === "membership"
+              ? "Earnings come from their clocked hours — see the timesheet."
+              : "Completed jobs this subcontractor claimed."
+          }
         >
           {ledger.jobs.length === 0 ? (
-            <EmptyRow text="No completed jobs yet." />
+            <EmptyRow
+              text={
+                payee.kind === "membership"
+                  ? "Earned above is their unpaid clocked hours."
+                  : "No completed jobs yet."
+              }
+            />
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">

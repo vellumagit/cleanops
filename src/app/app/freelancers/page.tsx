@@ -16,7 +16,7 @@ import { formatCurrencyCents } from "@/lib/format";
 import { Wallet } from "lucide-react";
 import { getOrgTimezone } from "@/lib/org-timezone";
 
-export const metadata = { title: "Subcontractor bench" };
+export const metadata = { title: "Outsourcing" };
 
 export default async function FreelancersPage() {
   const membership = await requireMembership(["owner", "admin", "manager"]);
@@ -88,7 +88,7 @@ export default async function FreelancersPage() {
 
   return (
     <PageShell
-      title="Subcontractor bench"
+      title="Outsourcing"
       description="Off-platform cleaners you can text when you need emergency coverage."
       actions={
         <div className="flex items-center gap-2">
@@ -104,7 +104,7 @@ export default async function FreelancersPage() {
             className={buttonVariants({ variant: "default" })}
           >
             <Plus className="h-4 w-4" />
-            New subcontractor
+            New contact
           </Link>
         </div>
       }

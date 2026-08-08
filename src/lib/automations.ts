@@ -5671,8 +5671,23 @@ export async function sendOvertimeWarnings(): Promise<{ emailsSent: number }> {
     // Warning band: >= 80% of threshold.
     const warnCutoff = threshold * 0.8;
 
+    // Subcontractors don't accrue overtime, and the email is not merely
+    // irrelevant to them — a weekly "you're approaching your overtime limit"
+    // from the company to someone that company calls self-employed is written
+    // evidence of control, the exact thing a misclassification review looks
+    // for. One query per org, not one per person.
+    const { data: subs } = (await db
+      .from("memberships")
+      .select("id")
+      .eq("organization_id", org.id)
+      .eq("engagement" as never, "subcontractor" as never)) as unknown as {
+      data: Array<{ id: string }> | null;
+    };
+    const subIds = new Set((subs ?? []).map((m) => m.id));
+
     for (const [membershipId, total] of hoursByMembership) {
       if (total < warnCutoff) continue;
+      if (subIds.has(membershipId)) continue;
       const recipient = await getMembershipRecipient(membershipId);
       if (!recipient) continue;
 

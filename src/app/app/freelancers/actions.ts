@@ -217,7 +217,7 @@ export async function createJobOfferAction(
   const contactIds = formData.getAll("contact_ids").map((v) => String(v));
   if (contactIds.length === 0) {
     return {
-      errors: { contact_ids: "Pick at least one subcontractor" },
+      errors: { contact_ids: "Pick at least one contact" },
       values: raw,
     };
   }
