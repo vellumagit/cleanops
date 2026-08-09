@@ -5745,6 +5745,13 @@ export async function sendShiftClockOutReminders(): Promise<{
   considered: number;
   reminded: number;
   autoClosed: number;
+  /** Open shifts passed over because their org has the toggle off. */
+  skippedDisabled: number;
+  /** Orgs those shifts belonged to. An open shift sitting in here is
+   *  unprotected — nothing will cap it — and the run used to say nothing at
+   *  all about that, so "the timer never stopped" only surfaced when someone
+   *  complained. */
+  orgsDisabled: string[];
 }> {
   const db = admin();
   const { notify } = await import("@/lib/notify");
@@ -5792,7 +5799,17 @@ export async function sendShiftClockOutReminders(): Promise<{
   const considered = open?.length ?? 0;
   let reminded = 0;
   let autoClosed = 0;
-  if (!open || open.length === 0) return { considered, reminded, autoClosed };
+  let skippedDisabled = 0;
+  const disabledOrgs = new Set<string>();
+  if (!open || open.length === 0) {
+    return {
+      considered,
+      reminded,
+      autoClosed,
+      skippedDisabled,
+      orgsDisabled: [],
+    };
+  }
 
   const { resolveClockOutThresholds, STANDALONE_SHIFT_MAX_MIN } =
     await import("@/lib/shift-overrun");
@@ -5813,7 +5830,11 @@ export async function sendShiftClockOutReminders(): Promise<{
         );
         orgEnabled.set(e.organization_id, enabled);
       }
-      if (!enabled) continue;
+      if (!enabled) {
+        skippedDisabled++;
+        disabledOrgs.add(e.organization_id);
+        continue;
+      }
 
       let thresholds = orgThresholds.get(e.organization_id);
       if (thresholds === undefined) {
@@ -5988,7 +6009,13 @@ export async function sendShiftClockOutReminders(): Promise<{
     }
   }
 
-  return { considered, reminded, autoClosed };
+  return {
+    considered,
+    reminded,
+    autoClosed,
+    skippedDisabled,
+    orgsDisabled: [...disabledOrgs],
+  };
 }
 
 // 18. PTO status notification (event — called from the approve/decline action)

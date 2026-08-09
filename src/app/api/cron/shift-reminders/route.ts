@@ -25,6 +25,16 @@ export async function GET(request: Request) {
 
   try {
     const result = await sendShiftClockOutReminders();
+    // An open shift in a disabled org is an UNPROTECTED shift — nothing will
+    // nudge the cleaner and nothing will cap it. The run used to report only
+    // what it acted on, so a org with the toggle off looked identical to a
+    // quiet one, and the gap surfaced as a complaint instead of a number.
+    if (result.skippedDisabled > 0) {
+      console.warn(
+        `[cron/shift-reminders] ${result.skippedDisabled} open shift(s) unprotected — ` +
+          `shift_clock_out_reminder is off for org(s): ${result.orgsDisabled.join(", ")}`,
+      );
+    }
     return Response.json(result);
   } catch (err) {
     console.error("[cron/shift-reminders] error:", err);
