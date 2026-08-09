@@ -9,7 +9,10 @@ import {
   formatBookingStatus,
 } from "@/components/status-badge";
 import { setBookingStatusAction } from "./actions";
-import { statusDropdownOptions } from "@/lib/booking-status";
+import {
+  rendersAsStaticBadge,
+  statusDropdownOptions,
+} from "@/lib/booking-status";
 
 export function BookingStatusDropdown({
   bookingId,
@@ -25,7 +28,7 @@ export function BookingStatusDropdown({
 
   const options = statusDropdownOptions(status);
   // Read-only: no edit rights, or a terminal status → plain badge.
-  if (!canEdit || !options) {
+  if (rendersAsStaticBadge(status, canEdit)) {
     return (
       <StatusBadge
         tone={bookingStatusTone(

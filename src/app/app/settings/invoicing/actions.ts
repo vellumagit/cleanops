@@ -131,5 +131,12 @@ export async function saveInvoiceAutoSendAction(
   });
 
   revalidatePath("/app/settings/invoicing");
+  // Both branches above mass-mutate invoices.auto_send_state / auto_send_at,
+  // and those two columns are what the invoice list and detail pages render
+  // their auto-send badge and countdown from. Without these the toggle looked
+  // like it had done nothing until the cache expired — the same "my setting
+  // didn't save" report that the settings form itself was already fixed for.
+  revalidatePath("/app/invoices");
+  revalidatePath("/app/invoices/[id]", "page");
   return { success: true, queued };
 }

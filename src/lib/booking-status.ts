@@ -100,3 +100,22 @@ export function statusDropdownOptions(status: string): readonly string[] {
   const next = BOOKING_STATUS_TRANSITIONS[status];
   return next ? [status, ...next] : [];
 }
+
+/**
+ * Should the row show a static badge instead of a working dropdown?
+ *
+ * This lives here, next to the option list, because the component got it
+ * wrong on its own. It used to read `const options = OPTIONS[status]` and
+ * guard on `!options` — correct while a terminal status yielded `undefined`.
+ * The refactor that moved the table into this file (77aefda) swapped that for
+ * `statusDropdownOptions`, which returns `[]`. An empty array is truthy, so
+ * the guard stopped firing and completed/cancelled bookings rendered an empty
+ * dropdown: a control with nothing in it, where a badge belongs.
+ *
+ * The pure option list was tested and correct throughout — the defect was
+ * entirely in how its result was interpreted. So the interpretation is a
+ * function now, and it has tests.
+ */
+export function rendersAsStaticBadge(status: string, canEdit: boolean): boolean {
+  return !canEdit || statusDropdownOptions(status).length === 0;
+}

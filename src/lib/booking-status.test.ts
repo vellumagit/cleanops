@@ -5,6 +5,7 @@ import {
   WRITABLE_BOOKING_STATUSES,
   BOOKING_STATUS_TRANSITIONS,
   statusDropdownOptions,
+  rendersAsStaticBadge,
 } from "./booking-status";
 
 const NOW = new Date("2026-08-04T16:00:00Z").getTime();
@@ -140,6 +141,42 @@ describe("statusDropdownOptions", () => {
       for (const to of statusDropdownOptions(from)) {
         expect(WRITABLE_BOOKING_STATUSES).toContain(to);
       }
+    }
+  });
+});
+
+describe("rendersAsStaticBadge", () => {
+  it("a finished job shows a badge, not an empty dropdown", () => {
+    // The regression this exists for: `[]` is truthy, so a guard written as
+    // `!options` stopped firing and every completed booking on the list
+    // rendered a select with no options in it.
+    expect(rendersAsStaticBadge("completed", true)).toBe(true);
+    expect(rendersAsStaticBadge("cancelled", true)).toBe(true);
+  });
+
+  it("a live job with edit rights gets the dropdown", () => {
+    for (const s of ["pending", "confirmed", "in_progress"]) {
+      expect(rendersAsStaticBadge(s, true)).toBe(false);
+    }
+  });
+
+  it("no edit rights is always a badge, whatever the status", () => {
+    for (const s of [...WRITABLE_BOOKING_STATUSES, "en_route", "nonsense"]) {
+      expect(rendersAsStaticBadge(s, false)).toBe(true);
+    }
+  });
+
+  it("a status with no transition table entry is a badge", () => {
+    // Retired ('en_route') or unknown values must not produce a live control.
+    expect(rendersAsStaticBadge("en_route", true)).toBe(true);
+    expect(rendersAsStaticBadge("nonsense", true)).toBe(true);
+  });
+
+  it("agrees with the option list it is derived from", () => {
+    for (const s of [...WRITABLE_BOOKING_STATUSES, "en_route"]) {
+      expect(rendersAsStaticBadge(s, true)).toBe(
+        statusDropdownOptions(s).length === 0,
+      );
     }
   });
 });
