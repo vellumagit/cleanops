@@ -122,3 +122,46 @@ describe("bookingLineLabel", () => {
     ).toBe("Service");
   });
 });
+
+describe("multi-property clients", () => {
+  it("names the property before the address", () => {
+    // An Airbnb host paying for four units cannot tell four identical
+    // "Standard clean — Aug 3" lines apart, and an address alone makes them
+    // remember which street is which unit.
+    expect(
+      bookingLineLabel({
+        serviceLabel: "Turnover clean",
+        scheduledAt: "2026-08-14T21:30:00Z",
+        durationMinutes: 120,
+        address: "155 Whyte Ave",
+        propertyLabel: "Unit 3",
+        tz: "America/Edmonton",
+      }),
+    ).toContain("Unit 3 · 155 Whyte Ave");
+  });
+
+  it("changes nothing for the clients that have one address", () => {
+    const withoutProperty = bookingLineLabel({
+      serviceLabel: "Standard clean",
+      scheduledAt: "2026-08-14T21:30:00Z",
+      durationMinutes: 120,
+      address: "155 Whyte Ave",
+      tz: "America/Edmonton",
+    });
+    expect(withoutProperty).not.toContain("·  ");
+    expect(withoutProperty).toContain("155 Whyte Ave");
+  });
+
+  it("still renders the property when the job has no address", () => {
+    expect(
+      bookingLineLabel({
+        serviceLabel: "Turnover clean",
+        scheduledAt: null,
+        durationMinutes: null,
+        address: null,
+        propertyLabel: "Unit 3",
+        tz: "America/Edmonton",
+      }),
+    ).toBe("Turnover clean · Unit 3");
+  });
+});

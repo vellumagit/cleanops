@@ -227,7 +227,7 @@ export async function autoInvoiceOnJobComplete(
     const { data: booking } = (await db
       .from("bookings")
       .select(
-        "id, organization_id, client_id, total_cents, service_type, service_type_label, address, duration_minutes, scheduled_at, billing_invoice_id, client:clients ( address )",
+        "id, organization_id, client_id, total_cents, service_type, service_type_label, address, duration_minutes, scheduled_at, billing_invoice_id, property:client_properties ( label ), client:clients ( address )",
       )
       .eq("id", bookingId)
       .maybeSingle()) as unknown as {
@@ -505,6 +505,7 @@ export async function autoInvoiceOnJobComplete(
         scheduledAt: booking.scheduled_at,
         durationMinutes: booking.duration_minutes,
         address: booking.address,
+        propertyLabel: (booking as { property?: { label?: string } | null }).property?.label ?? null,
         fallbackAddress: booking.client?.address ?? null,
         tz: lineTz,
       }),
@@ -4022,6 +4023,10 @@ export async function autoExtendRecurringSeries(): Promise<number> {
         total_cents: s.total_cents,
         hourly_rate_cents: s.hourly_rate_cents,
         address: s.address,
+        // The whole point of a series for a multi-property client: the
+        // property is chosen once, here, and every generated booking inherits
+        // it instead of someone retyping the address every week.
+        property_id: (s as { property_id?: string | null }).property_id ?? null,
         notes: s.notes ? `[Recurring] ${s.notes}` : "[Recurring]",
         series_id: s.id,
       }));

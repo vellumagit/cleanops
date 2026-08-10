@@ -53,6 +53,7 @@ export type BookingFormDefaults = {
   total_dollars?: string;
   hourly_rate_dollars?: string;
   address?: string | null;
+  property_id?: string | null;
   notes?: string | null;
   series_id?: string | null;
   /** Series schedule fields — passed when editing a recurring booking so the
@@ -177,9 +178,23 @@ function byCategoryThenSortOrder(a: ServiceOption, b: ServiceOption): number {
 }
 
 /** Client option carries the fields we auto-fill into the form. */
+export type PropertyOption = {
+  id: string;
+  label: string;
+  address: string | null;
+};
+
 export type ClientOption = Option & {
   address: string | null;
   notes: string | null;
+  /**
+   * The places this client has. Empty or single for almost everyone, several
+   * for an Airbnb host or a landlord. Shipped with the client list rather
+   * than fetched on selection so picking a client cannot leave the property
+   * dropdown briefly empty and tempt someone into typing the address again —
+   * which is the habit this whole feature exists to end.
+   */
+  properties?: PropertyOption[];
   /** Pre-assigned cleaner on this client. When set and the primary
    *  assignee is still empty on this form, picking this client will
    *  auto-fill the assignee dropdown — saves a click for clients who
@@ -450,6 +465,17 @@ export function BookingForm({
     defaults?.address ?? "",
   );
   const [notesValue, setNotesValue] = useState<string>(defaults?.notes ?? "");
+  const [propertyId, setPropertyId] = useState<string>(
+    defaults?.property_id ?? "",
+  );
+  // The client select stays uncontrolled (it has a defaultValue and a lot of
+  // prefill behaviour hanging off it); this mirrors the choice so the property
+  // picker knows whose properties to offer.
+  const [selectedClientId, setSelectedClientId] = useState<string>(
+    defaults?.client_id ?? "",
+  );
+  const selectedClientProperties =
+    clients.find((c) => c.id === selectedClientId)?.properties ?? [];
   const [totalValue, setTotalValue] = useState<string>(
     defaults?.total_dollars ?? "",
   );
@@ -473,8 +499,20 @@ export function BookingForm({
    * won't erase their work.
    */
   function handleClientChange(clientId: string) {
+    setSelectedClientId(clientId);
     const c = clients.find((x) => x.id === clientId);
     if (!c) return;
+    // One property means there is nothing to choose — select it and fill the
+    // address from it. More than one and we deliberately leave the picker
+    // empty so somebody has to say WHICH, rather than silently booking the
+    // first unit in the list.
+    const props = c.properties ?? [];
+    if (props.length === 1) {
+      setPropertyId(props[0].id);
+      if (!addressValue && props[0].address) setAddressValue(props[0].address);
+    } else {
+      setPropertyId("");
+    }
     if (!addressValue && c.address) setAddressValue(c.address);
     if (!notesValue && c.notes) setNotesValue(c.notes);
     // Pre-fill the primary assignee from the client's preferred cleaner
@@ -1431,6 +1469,39 @@ export function BookingForm({
           />
         </FormField>
       </div>
+
+      {/*
+        Only shown when the client actually has more than one place. A single
+        property is not a choice, and rendering a one-option dropdown on every
+        ordinary booking is the kind of noise that gets ignored — including on
+        the rare booking where it matters.
+      */}
+      {selectedClientProperties.length > 1 && (
+        <FormField label="Property" htmlFor="property_id">
+          <FormSelect
+            id="property_id"
+            name="property_id"
+            value={propertyId}
+            onChange={(e) => {
+              const id = e.target.value;
+              setPropertyId(id);
+              // Switching property always rewrites the address — unlike the
+              // client prefill, which only fills a blank. Picking the downtown
+              // loft and leaving the suburb address behind is precisely how a
+              // cleaner ends up at the wrong door.
+              const p = selectedClientProperties.find((x) => x.id === id);
+              if (p?.address) setAddressValue(p.address);
+            }}
+          >
+            <option value="">Choose a property…</option>
+            {selectedClientProperties.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.address ? p.label + " — " + p.address : p.label}
+              </option>
+            ))}
+          </FormSelect>
+        </FormField>
+      )}
 
       <FormField
         label="Address"

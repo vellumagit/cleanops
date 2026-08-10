@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
 import {
@@ -34,6 +35,7 @@ import { PortalInviteButton } from "./portal-invite-button";
 import { ClientNotificationsCard } from "./notifications-card";
 import { fetchOrgNotificationContext } from "../org-contact-default";
 import { SmsOptInButton } from "./sms-opt-in-button";
+import { ClientPropertiesCard, type PropertyRow } from "./properties-card";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import {
   markGbpReviewedAction,
@@ -101,7 +103,7 @@ export default async function ClientDetailPage({
     supabase
       .from("bookings")
       .select(
-        "id, scheduled_at, duration_minutes, status, service_type, address",
+        "id, scheduled_at, duration_minutes, status, service_type, address, property_id",
       )
       .eq("client_id", id)
       .order("scheduled_at", { ascending: false })
@@ -169,10 +171,63 @@ export default async function ClientDetailPage({
     }
   }
 
-  const bookings = bookingsResult.data ?? [];
+  // Cast: property_id postdates the generated types (migration
+  // 20260810010000), and one unknown column turns the whole row type into
+  // SelectQueryError. Drop once the types are regenerated.
+  const bookings = (bookingsResult.data ?? []) as unknown as Array<{
+    id: string;
+    scheduled_at: string;
+    duration_minutes: number | null;
+    status: string;
+    service_type: string;
+    address: string | null;
+    property_id: string | null;
+  }>;
   const invoices = invoicesResult.data ?? [];
   const estimates = estimatesResult.data ?? [];
   const reviews = reviewsResult.data ?? [];
+
+  // Properties + how many jobs each has, so archiving can say what it
+  // affects. Admin client because client_properties.access_notes holds door
+  // codes and this page is the one place they are meant to be edited; the
+  // read is org-scoped immediately below.
+  const admin = createSupabaseAdminClient();
+  const [{ data: propertyData }, { data: templateData }] = await Promise.all([
+    admin
+      .from("client_properties" as never)
+      .select(
+        "id, label, address, access_notes, default_checklist_template_id, notes",
+      )
+      .eq("client_id" as never, id as never)
+      .eq("organization_id" as never, membership.organization_id as never)
+      .is("archived_at" as never, null as never)
+      .order("label" as never) as unknown as Promise<{
+      data: Array<Omit<PropertyRow, "bookingCount">> | null;
+    }>,
+    admin
+      .from("checklist_templates" as never)
+      .select("id, name")
+      .eq("organization_id" as never, membership.organization_id as never)
+      .eq("is_active" as never, true as never)
+      .order("name" as never) as unknown as Promise<{
+      data: Array<{ id: string; name: string }> | null;
+    }>,
+  ]);
+
+  const jobsPerProperty = new Map<string, number>();
+  for (const b of bookings as Array<{ property_id?: string | null }>) {
+    if (b.property_id) {
+      jobsPerProperty.set(
+        b.property_id,
+        (jobsPerProperty.get(b.property_id) ?? 0) + 1,
+      );
+    }
+  }
+  const propertyRows: PropertyRow[] = (propertyData ?? []).map((p) => ({
+    ...p,
+    bookingCount: jobsPerProperty.get(p.id) ?? 0,
+  }));
+  const checklistTemplates = templateData ?? [];
 
   const canEdit =
     membership.role === "owner" ||
@@ -341,6 +396,13 @@ export default async function ClientDetailPage({
             })}
           </p>
         </div>
+
+        <ClientPropertiesCard
+          clientId={client.id}
+          properties={propertyRows}
+          checklistTemplates={checklistTemplates}
+          canEdit={canEdit}
+        />
 
         {/* ── Stats row ── */}
         <ClientNotificationsCard

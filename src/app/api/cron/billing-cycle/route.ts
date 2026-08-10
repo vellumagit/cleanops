@@ -160,7 +160,7 @@ async function generateClientInvoice(
   const { data: bookingsRaw } = (await db
     .from("bookings")
     .select(
-      "id, status, total_cents, service_type, service_type_label, address, scheduled_at, duration_minutes",
+      "id, status, total_cents, service_type, service_type_label, address, scheduled_at, duration_minutes, property:client_properties ( label )",
     )
     .eq("client_id", client.id)
     .is("billing_invoice_id", null)
@@ -358,6 +358,7 @@ async function generateClientInvoice(
         scheduledAt: b.scheduled_at,
         durationMinutes: b.duration_minutes ?? null,
         address: b.address,
+        propertyLabel: (b as { property?: { label?: string } | null }).property?.label ?? null,
         fallbackAddress: client.address,
         tz: lineTz,
       });

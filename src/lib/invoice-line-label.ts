@@ -35,6 +35,7 @@ export function bookingLineLabel({
   durationMinutes,
   address,
   fallbackAddress,
+  propertyLabel,
   tz,
 }: {
   /** service_type_label, or a humanized service_type. */
@@ -51,6 +52,13 @@ export function bookingLineLabel({
    * held a full street address.
    */
   fallbackAddress?: string | null;
+  /**
+   * The property's name, when the job was at one of a client's several
+   * places. An Airbnb host paying for four units needs to see WHICH unit on
+   * every line — an address alone forces them to remember which street is
+   * which, and "Standard clean — Aug 3" four times is unreadable.
+   */
+  propertyLabel?: string | null;
   /** IANA zone, e.g. "America/Edmonton". */
   tz: string;
 }): string {
@@ -92,6 +100,12 @@ export function bookingLineLabel({
 
   // Omitted entirely when absent — the old "on site" placeholder told a
   // client nothing they didn't already know.
+  // Property name before the address: it is the part a client recognises.
+  // Both, not one — the name identifies the unit and the address proves it,
+  // and an invoice line has to stand alone months later.
+  const name = propertyLabel?.trim();
+  if (name) parts.push(name);
+
   const addr = address?.trim() || fallbackAddress?.trim();
   if (addr) parts.push(addr);
 

@@ -37,7 +37,7 @@ export default async function PeriodInvoicePage({
     const { data: bookings } = (await supabase
       .from("bookings")
       .select(
-        "id, scheduled_at, service_type, service_type_label, total_cents, address, duration_minutes, client:clients ( address )",
+        "id, scheduled_at, service_type, service_type_label, total_cents, address, duration_minutes, property:client_properties ( label ), client:clients ( address )",
       )
       .eq("client_id", client_id as string)
       .gte("scheduled_at", `${from}T00:00:00`)
@@ -101,6 +101,7 @@ export default async function PeriodInvoicePage({
         scheduledAt: b.scheduled_at,
         durationMinutes: b.duration_minutes ?? null,
         address: b.address ?? null,
+        propertyLabel: (b as { property?: { label?: string } | null }).property?.label ?? null,
         fallbackAddress: b.client?.address ?? null,
         tz,
       }),

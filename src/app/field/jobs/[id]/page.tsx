@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import {
   ChevronLeft,
   MapPin,
+  KeyRound,
   Clock as ClockIcon,
   FileText,
   Phone,
@@ -10,6 +11,7 @@ import {
   StickyNote,
   MessageSquare,
 } from "lucide-react";
+import { jobAddress, propertyLabel } from "@/lib/client-properties";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { StatusBadge, bookingStatusTone } from "@/components/status-badge";
@@ -57,7 +59,7 @@ export default async function FieldJobDetailPage({
   const supabase = await createSupabaseServerClient();
   const tz = await getOrgTimezone(membership.organization_id);
 
-  const { data: booking, error } = await supabase
+  const { data: bookingRow, error } = await supabase
     .from("bookings")
     .select(
       `
@@ -70,6 +72,8 @@ export default async function FieldJobDetailPage({
         notes,
         assigned_to,
         series_id,
+        property_id,
+        property:client_properties ( id, label, address, access_notes ),
         client:clients ( name, phone, address, notes )
       `,
     )
@@ -77,7 +81,41 @@ export default async function FieldJobDetailPage({
     .maybeSingle();
 
   if (error) throw error;
-  if (!booking) notFound();
+  if (!bookingRow) notFound();
+
+  // Cast: property_id / client_properties postdate the generated types
+  // (migration 20260810010000), and one unknown column collapses the whole
+  // row type into SelectQueryError. Drop once the types are regenerated.
+  const booking = bookingRow as unknown as {
+    id: string;
+    scheduled_at: string;
+    duration_minutes: number;
+    status:
+      | "pending"
+      | "confirmed"
+      | "en_route"
+      | "in_progress"
+      | "completed"
+      | "cancelled";
+    service_type: string;
+    address: string | null;
+    notes: string | null;
+    assigned_to: string | null;
+    series_id: string | null;
+    property_id: string | null;
+    property: {
+      id: string;
+      label: string;
+      address: string | null;
+      access_notes: string | null;
+    } | null;
+    client: {
+      name: string | null;
+      phone: string | null;
+      address: string | null;
+      notes: string | null;
+    } | null;
+  };
 
   // Cancelled bookings shouldn't be openable via a bookmarked URL —
   // otherwise a cleaner could still tap "I'm done" / "On my way" on
@@ -166,7 +204,14 @@ export default async function FieldJobDetailPage({
   // Per-job address wins (some jobs override it), otherwise fall back to the
   // client's address on file. Bookings created without a snapshotted address
   // (certain recurring series / portal requests) were showing nothing here.
-  const displayAddress = booking.address ?? booking.client?.address ?? null;
+  const property = booking.property;
+
+  const displayAddress = jobAddress({
+    bookingAddress: booking.address,
+    property,
+    clientAddress: booking.client?.address,
+  });
+  const propertyName = propertyLabel(property);
 
   /*
    * Notes the CLIENT left for this specific visit — "skip the bathroom this
@@ -367,6 +412,17 @@ export default async function FieldJobDetailPage({
             <h1 className="truncate text-2xl font-bold">
               {booking.client?.name ?? "—"}
             </h1>
+            {/*
+              Which of this client's places. Rendered only when the job
+              actually has a property, so the single-address clients — nearly
+              all of them — see nothing new. For a host with four units this
+              is the difference between the right door and a wasted trip.
+            */}
+            {propertyName && (
+              <p className="mt-0.5 text-sm font-medium text-foreground">
+                {propertyName}
+              </p>
+            )}
             <p className="mt-1 text-sm text-muted-foreground">
               {humanizeEnum(booking.service_type)}
             </p>
@@ -417,6 +473,24 @@ export default async function FieldJobDetailPage({
                 >
                   Open in Maps
                 </OpenInMaps>
+              </div>
+            </div>
+          ) : null}
+          {/*
+            How to get in. Sits directly under the address and above the
+            phone number on purpose: this is what the cleaner reaches for
+            while standing at the door, and the alternative to having it here
+            is a phone call to Svitlana, which is the whole thing Sollos is
+            supposed to remove.
+          */}
+          {property?.access_notes ? (
+            <div className="flex items-start gap-3">
+              <KeyRound className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
+              <div className="min-w-0">
+                <div className="text-sm font-semibold">Getting in</div>
+                <div className="mt-0.5 whitespace-pre-wrap text-sm text-muted-foreground">
+                  {property.access_notes}
+                </div>
               </div>
             </div>
           ) : null}

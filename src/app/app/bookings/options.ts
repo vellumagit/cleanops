@@ -99,6 +99,32 @@ export async function fetchBookingFormOptions() {
     }>,
   ]);
 
+  // Every live property in the org, grouped by client. One query rather than
+  // one per client: the form needs them the instant a client is picked, and a
+  // dropdown that is briefly empty is a dropdown someone types around.
+  const { data: propertyRows } = (await admin
+    .from("client_properties" as never)
+    .select("id, client_id, label, address")
+    .eq("organization_id" as never, membership.organization_id as never)
+    .is("archived_at" as never, null as never)
+    .order("label" as never)) as unknown as {
+    data: Array<{
+      id: string;
+      client_id: string;
+      label: string;
+      address: string | null;
+    }> | null;
+  };
+  const propertiesByClient = new Map<
+    string,
+    Array<{ id: string; label: string; address: string | null }>
+  >();
+  for (const p of propertyRows ?? []) {
+    const list = propertiesByClient.get(p.client_id) ?? [];
+    list.push({ id: p.id, label: p.label, address: p.address });
+    propertiesByClient.set(p.client_id, list);
+  }
+
   // Which assignable cleaners carry an accommodation / health note — surfaces a
   // flag in the crew pickers (the note text stays on the employee file).
   const flaggedCrew = await getFlaggedCrewIds(
@@ -132,6 +158,7 @@ export async function fetchBookingFormOptions() {
         address: c.address ?? null,
         notes: c.notes ?? null,
         preferred_cleaner_id: c.preferred_cleaner_id ?? null,
+        properties: propertiesByClient.get(c.id) ?? [],
       })) ?? [],
     packages:
       packages.data?.map((p) => ({

@@ -82,6 +82,50 @@ function readServiceExtras(formData: FormData): {
   };
 }
 
+/**
+ * Which of the client's properties this job is at.
+ *
+ * Read here rather than in the Zod schema for the same reason as
+ * readServiceExtras above: a caller that does not ship the field — the client
+ * portal request form, an older cached page — must not fail validation. Absent
+ * means null, and null is exactly what every single-property client produces.
+ *
+ * NOT trusted as-is. The value arrives from a browser and points at a row that
+ * carries door codes, so every write path passes it through
+ * propertyBelongsToClient() below before it reaches the database.
+ */
+function readPropertyId(formData: FormData): string | null {
+  const id = String(formData.get("property_id") ?? "").trim();
+  return id.length > 0 ? id : null;
+}
+
+/**
+ * A property id from a form is only usable if it belongs to the client being
+ * booked, in the caller's org. Without this check a forged id would attach one
+ * tenant's job to another tenant's address — and the composite FK would not
+ * catch it, because it only proves the property and the booking share an org,
+ * not that they share a client.
+ *
+ * Returns null for anything that fails, so a bad id degrades to "no property"
+ * rather than rejecting the save. The address the user sees is still written.
+ */
+async function propertyBelongsToClient(
+  admin: ReturnType<typeof createSupabaseAdminClient>,
+  propertyId: string | null,
+  clientId: string,
+  organizationId: string,
+): Promise<string | null> {
+  if (!propertyId) return null;
+  const { data } = (await admin
+    .from("client_properties" as never)
+    .select("id")
+    .eq("id" as never, propertyId as never)
+    .eq("client_id" as never, clientId as never)
+    .eq("organization_id" as never, organizationId as never)
+    .maybeSingle()) as unknown as { data: { id: string } | null };
+  return data ? propertyId : null;
+}
+
 function readRecurringFormValues(formData: FormData) {
   return {
     client_id: String(formData.get("client_id") ?? ""),
@@ -523,6 +567,18 @@ export async function createBookingAction(
 
   const { membership, supabase } = await getActionContext();
 
+  // Validated before it touches a payload: the id came from a browser and
+  // points at a row holding door codes, so it must be proved to belong to
+  // THIS client in THIS org. A bad id degrades to null rather than failing
+  // the save — the address the user typed is still written either way.
+  const propertyId = await propertyBelongsToClient(
+    createSupabaseAdminClient(),
+    readPropertyId(formData),
+    parsed.data.client_id,
+    membership.organization_id,
+  );
+
+
   // Re-interpret the datetime-local string using the org's timezone.
   // BookingSchema's transform used FALLBACK_TZ (falls back to a reasonable
   // default but can drift for orgs outside Eastern). Rewriting here uses
@@ -651,6 +707,7 @@ export async function createBookingAction(
       total_cents: parsed.data.total_cents,
       hourly_rate_cents: parsed.data.hourly_rate_cents ?? null,
       address: parsed.data.address ?? null,
+      property_id: propertyId,
       notes: parsed.data.notes ?? null,
       divide_hours_evenly: parsed.data.divide_hours_evenly,
       splits: splits,
@@ -782,6 +839,18 @@ export async function createRecurringBookingAction(
 
   const { membership, supabase } = await getActionContext();
 
+  // Validated before it touches a payload: the id came from a browser and
+  // points at a row holding door codes, so it must be proved to belong to
+  // THIS client in THIS org. A bad id degrades to null rather than failing
+  // the save — the address the user typed is still written either way.
+  const propertyId = await propertyBelongsToClient(
+    createSupabaseAdminClient(),
+    readPropertyId(formData),
+    parsed.data.client_id,
+    membership.organization_id,
+  );
+
+
   const orgTz = await getOrgTimezone(membership.organization_id);
 
   // Past start dates are allowed — owners often back-fill a recurring
@@ -872,6 +941,7 @@ export async function createRecurringBookingAction(
       total_cents: parsed.data.total_cents,
       hourly_rate_cents: parsed.data.hourly_rate_cents ?? null,
       address: parsed.data.address ?? null,
+      property_id: propertyId,
       notes: parsed.data.notes ?? null,
     })
     .select("id")
@@ -931,6 +1001,7 @@ export async function createRecurringBookingAction(
     total_cents: parsed.data.total_cents,
     hourly_rate_cents: parsed.data.hourly_rate_cents ?? null,
     address: parsed.data.address ?? null,
+    property_id: propertyId,
     notes: parsed.data.notes
       ? `[Recurring] ${parsed.data.notes}`
       : "[Recurring]",
@@ -1068,6 +1139,18 @@ export async function updateBookingAction(
   if (!parsed.ok) return { errors: parsed.errors, values: raw };
 
   const { membership, supabase } = await getActionContext();
+
+  // Validated before it touches a payload: the id came from a browser and
+  // points at a row holding door codes, so it must be proved to belong to
+  // THIS client in THIS org. A bad id degrades to null rather than failing
+  // the save — the address the user typed is still written either way.
+  const propertyId = await propertyBelongsToClient(
+    createSupabaseAdminClient(),
+    readPropertyId(formData),
+    parsed.data.client_id,
+    membership.organization_id,
+  );
+
 
   // Re-interpret datetime-local with the org's tz (see createBookingAction).
   const orgTz = await getOrgTimezone(membership.organization_id);
@@ -1209,6 +1292,7 @@ export async function updateBookingAction(
       total_cents: parsed.data.total_cents,
       hourly_rate_cents: parsed.data.hourly_rate_cents ?? null,
       address: parsed.data.address ?? null,
+      property_id: propertyId,
       notes: parsed.data.notes ?? null,
       divide_hours_evenly: parsed.data.divide_hours_evenly,
       splits: updateSplits,
@@ -1302,6 +1386,7 @@ export async function updateBookingAction(
       hourly_rate_cents: parsed.data.hourly_rate_cents ?? null,
       assigned_to: updateEffectiveAssignedTo,
       address: parsed.data.address ?? null,
+      property_id: propertyId,
       notes: parsed.data.notes ?? null,
       splits: updateSplits,
     };
@@ -1493,6 +1578,7 @@ export async function updateBookingAction(
             total_cents: parsed.data.total_cents,
             hourly_rate_cents: parsed.data.hourly_rate_cents ?? null,
             address: parsed.data.address ?? null,
+            property_id: propertyId,
             notes: parsed.data.notes ?? null,
             splits: updateSplits,
             series_id: seriesId,
