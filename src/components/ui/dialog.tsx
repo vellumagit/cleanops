@@ -53,12 +53,34 @@ function DialogContent({
       <DialogPrimitive.Popup
         data-slot="dialog-content"
         className={cn(
-          "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          // max-h + an inner scroller: without them a dialog is centred with
+          // -translate-y-1/2, so tall content grows off the TOP AND BOTTOM of
+          // the screen at once and the footer is simply unreachable — no
+          // scrollbar, nothing to drag. Svitlana hit this on a booking whose
+          // client checklist ran long: the notes pushed Edit and Save past the
+          // bottom edge and she could not change a job she needed to move.
+          //
+          // dvh, not vh: on a phone vh is the tallest-possible viewport and
+          // ignores the browser's own toolbars, so a 100vh dialog still hides
+          // its last ~100px behind Safari's address bar — the exact rows this
+          // is here to rescue.
+          "fixed top-1/2 left-1/2 z-50 flex max-h-[calc(100dvh-2rem)] w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           className
         )}
         {...props}
       >
-        {children}
+        {/*
+          The scroller is INSIDE the popup so the close button — positioned
+          absolutely against the popup — stays put instead of scrolling away
+          with the content. min-h-0 is load-bearing: a flex child defaults to
+          min-height:auto and refuses to shrink below its content, which
+          silently defeats overflow-y-auto. The grid+gap-4 that used to live
+          on the popup moves here so every existing call site keeps its
+          spacing unchanged.
+        */}
+        <div className="grid min-h-0 gap-4 overflow-y-auto overscroll-contain">
+          {children}
+        </div>
         {showCloseButton && (
           <DialogPrimitive.Close
             data-slot="dialog-close"

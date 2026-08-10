@@ -118,7 +118,10 @@ export function AssignCrewDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
+      {/* max-h/overflow removed — DialogContent handles it for every dialog
+          now. Leaving them here would put a second scroll container on the
+          popup itself and override the dvh height with vh. */}
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-base">
             <Users className="h-4 w-4" />
