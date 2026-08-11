@@ -17,6 +17,8 @@ import { FieldHeader } from "@/components/field-shell";
 import { ProfileForm } from "./profile-form";
 import { CalendarScopeForm } from "./calendar-scope-form";
 import { PtoRequestForm } from "./pto-request-form";
+import { PtoHistory } from "./pto-history";
+import { zonedYmd } from "@/lib/wall-clock";
 import { PushToggle } from "@/components/push-prompt";
 import { formatDateTime } from "@/lib/format";
 import {
@@ -54,7 +56,8 @@ export default async function FieldProfilePage() {
   const calColor = calPrefs?.calendar_color ?? "6";
   const isManagerPlus = ["owner", "admin", "manager"].includes(membership.role);
 
-  // PTO history (most recent 5)
+  // PTO history — start_date desc puts upcoming requests (the editable
+  // ones) on top and history below.
   const admin = createSupabaseAdminClient();
   const [{ data: ptoHistory }, { data: gcalConn }] = await Promise.all([
     admin
@@ -62,7 +65,7 @@ export default async function FieldProfilePage() {
       .select("id, start_date, end_date, hours, status, reason, reviewed_at")
       .eq("employee_id" as never, membership.id as never)
       .order("start_date" as never, { ascending: false } as never)
-      .limit(5) as unknown as {
+      .limit(8) as unknown as {
       data: Array<{
         id: string;
         start_date: string;
@@ -303,47 +306,17 @@ export default async function FieldProfilePage() {
         </p>
         <PtoRequestForm />
 
-        {ptoHistory && ptoHistory.length > 0 && (
-          <>
-            <h3 className="mt-5 mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Recent requests
-            </h3>
-            <ul className="divide-y divide-border rounded-lg border border-border">
-              {ptoHistory.map((req) => {
-                const toneClass =
-                  req.status === "approved"
-                    ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-                    : req.status === "declined"
-                      ? "bg-red-500/10 text-red-700 dark:text-red-300"
-                      : req.status === "cancelled"
-                        ? "bg-muted text-muted-foreground"
-                        : "bg-amber-500/10 text-amber-700 dark:text-amber-300";
-                return (
-                  <li
-                    key={req.id}
-                    className="flex items-center justify-between gap-3 px-3 py-2.5 text-xs"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <div className="font-medium">
-                        {req.start_date}
-                        {req.start_date !== req.end_date &&
-                          ` → ${req.end_date}`}
-                      </div>
-                      <div className="text-muted-foreground">
-                        {req.hours}h{req.reason && ` · ${req.reason}`}
-                      </div>
-                    </div>
-                    <span
-                      className={`rounded-md px-2 py-0.5 text-[10px] font-medium uppercase ${toneClass}`}
-                    >
-                      {req.status}
-                    </span>
-                  </li>
-                );
-              })}
-            </ul>
-          </>
-        )}
+        <PtoHistory
+          rows={(ptoHistory ?? []).map((req) => ({
+            id: req.id,
+            start_date: req.start_date,
+            end_date: req.end_date,
+            hours: Number(req.hours),
+            status: req.status,
+            reason: req.reason,
+          }))}
+          todayYmd={zonedYmd(new Date(), tz)}
+        />
       </div>
 
       {/* Quick links */}

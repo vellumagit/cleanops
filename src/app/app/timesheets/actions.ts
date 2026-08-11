@@ -212,6 +212,22 @@ export async function updatePtoStatusAction(
     return { ok: false, error: "Invalid request." };
   }
 
+  // Prior state decides the balance side-effect below.
+  const { data: before } = (await supabase
+    .from("pto_requests")
+    .select("status, employee_id, hours, start_date")
+    .eq("id", id)
+    .eq("organization_id", membership.organization_id)
+    .maybeSingle()) as unknown as {
+    data: {
+      status: string;
+      employee_id: string;
+      hours: number;
+      start_date: string;
+    } | null;
+  };
+  if (!before) return { ok: false, error: "Request not found." };
+
   const { error } = await (supabase
     .from("pto_requests")
     .update({
@@ -227,9 +243,348 @@ export async function updatePtoStatusAction(
 
   if (error) return { ok: false, error: error.message };
 
+  // Keep the cached balance symmetric with create/delete: approving spends
+  // the hours, un-approving refunds them. Same best-effort RPC pattern as
+  // everywhere else — may not exist, non-critical.
+  const balanceDelta =
+    before.status !== "approved" && status === "approved"
+      ? Number(before.hours)
+      : before.status === "approved" && status !== "approved"
+        ? -Number(before.hours)
+        : 0;
+  if (balanceDelta !== 0) {
+    await (
+      supabase.rpc as unknown as (
+        name: string,
+        args: Record<string, unknown>,
+      ) => Promise<unknown>
+    )("increment_pto_used", {
+      p_employee_id: before.employee_id,
+      p_year: new Date(before.start_date).getFullYear(),
+      p_hours: balanceDelta,
+    }).catch(() => {});
+  }
+
   // Fire-and-forget email to the employee about the decision.
   notifyPtoStatus(id);
 
+  revalidatePath("/app/timesheets", "page");
+  revalidatePath("/field/profile");
+  return { ok: true };
+}
+
+/**
+ * Admin edit of a request's substance — dates, hours, reason. The status
+ * is deliberately KEPT: the editor is owner/admin/manager, i.e. the
+ * approval authority, so their edit re-answers the question itself.
+ * (A requester editing their own request goes through
+ * updateSelfPtoRequestAction below, which revokes approval instead.)
+ */
+export async function updatePtoRequestAction(
+  formData: FormData,
+): Promise<Result> {
+  const { membership, supabase } = await getActionContext();
+  if (!["owner", "admin", "manager"].includes(membership.role)) {
+    return { ok: false, error: "Not authorized." };
+  }
+
+  const id = String(formData.get("id") ?? "");
+  const fields = {
+    start_date: String(formData.get("start_date") ?? ""),
+    end_date: String(formData.get("end_date") ?? ""),
+    hours: Number(formData.get("hours") ?? 0),
+  };
+  const reason = String(formData.get("reason") ?? "").trim();
+  if (!id) return { ok: false, error: "Missing request id." };
+
+  const { validatePtoFields } = await import("@/lib/pto-rules");
+  const invalid = validatePtoFields(fields);
+  if (invalid) return { ok: false, error: invalid };
+
+  const { data: before } = (await supabase
+    .from("pto_requests")
+    .select("status, employee_id, hours, start_date")
+    .eq("id", id)
+    .eq("organization_id", membership.organization_id)
+    .maybeSingle()) as unknown as {
+    data: {
+      status: string;
+      employee_id: string;
+      hours: number;
+      start_date: string;
+    } | null;
+  };
+  if (!before) return { ok: false, error: "Request not found." };
+
+  const { error } = await (supabase
+    .from("pto_requests")
+    .update({
+      start_date: fields.start_date,
+      end_date: fields.end_date,
+      hours: fields.hours,
+      reason: reason || null,
+    })
+    .eq("id", id)
+    .eq(
+      "organization_id",
+      membership.organization_id,
+    ) as unknown as Promise<{ error: { message: string } | null }>);
+
+  if (error) return { ok: false, error: error.message };
+
+  // An approved request's hours moved — move the cached balance with them.
+  if (before.status === "approved" && Number(before.hours) !== fields.hours) {
+    await (
+      supabase.rpc as unknown as (
+        name: string,
+        args: Record<string, unknown>,
+      ) => Promise<unknown>
+    )("increment_pto_used", {
+      p_employee_id: before.employee_id,
+      p_year: new Date(before.start_date).getFullYear(),
+      p_hours: fields.hours - Number(before.hours),
+    }).catch(() => {});
+  }
+
+  // Tell the person their time off changed under them.
+  try {
+    const { notify } = await import("@/lib/notify");
+    await notify({
+      audience: "membership",
+      membershipId: before.employee_id,
+      organizationId: membership.organization_id,
+      title: "Your time off was updated",
+      body: `Now ${fields.start_date}${
+        fields.end_date !== fields.start_date ? ` to ${fields.end_date}` : ""
+      }, ${fields.hours}h (${before.status}).`,
+      href: "/field/profile",
+    });
+  } catch {
+    // Best-effort only.
+  }
+
+  revalidatePath("/app/timesheets", "page");
+  revalidatePath("/field/profile");
+  return { ok: true };
+}
+
+// ── Requester self-service: cancel / modify own request ──────
+//
+// Workers have no UPDATE policy on pto_requests (deliberately — approval
+// state is not theirs to write), so both actions verify ownership against
+// the caller's membership and then write with the admin client, the same
+// shape deletePtoRequestAction uses for its role-gated write.
+
+export async function cancelSelfPtoRequestAction(
+  formData: FormData,
+): Promise<Result> {
+  const { membership, supabase } = await getActionContext();
+  const id = String(formData.get("id") ?? "");
+  if (!id) return { ok: false, error: "Missing request id." };
+
+  const { createSupabaseAdminClient } = await import("@/lib/supabase/admin");
+  const admin = createSupabaseAdminClient();
+
+  const { data: before } = (await admin
+    .from("pto_requests")
+    .select("id, employee_id, start_date, end_date, hours, status")
+    .eq("id", id)
+    .eq("organization_id", membership.organization_id)
+    .maybeSingle()) as unknown as {
+    data: {
+      id: string;
+      employee_id: string;
+      start_date: string;
+      end_date: string;
+      hours: number;
+      status: "pending" | "approved" | "declined" | "cancelled";
+    } | null;
+  };
+
+  if (!before || before.employee_id !== membership.id) {
+    return { ok: false, error: "Request not found." };
+  }
+
+  const [{ workerCanCancel }, { zonedYmd }] = await Promise.all([
+    import("@/lib/pto-rules"),
+    import("@/lib/wall-clock"),
+  ]);
+  const orgTz = await getOrgTimezone(membership.organization_id);
+  if (!workerCanCancel(before.status, before.end_date, zonedYmd(new Date(), orgTz))) {
+    return {
+      ok: false,
+      error: "This request can no longer be cancelled — ask your manager.",
+    };
+  }
+
+  const { error } = (await admin
+    .from("pto_requests")
+    .update({ status: "cancelled" })
+    .eq("id", id)
+    .eq("organization_id", membership.organization_id)) as unknown as {
+    error: { message: string } | null;
+  };
+  if (error) return { ok: false, error: error.message };
+
+  // Refund the cached balance if the cancelled request was approved.
+  if (before.status === "approved") {
+    await (
+      supabase.rpc as unknown as (
+        name: string,
+        args: Record<string, unknown>,
+      ) => Promise<unknown>
+    )("increment_pto_used", {
+      p_employee_id: before.employee_id,
+      p_year: new Date(before.start_date).getFullYear(),
+      p_hours: -Number(before.hours),
+    }).catch(() => {});
+  }
+
+  // The schedule just got days back — management should hear about it.
+  try {
+    const { notify } = await import("@/lib/notify");
+    const { memberDisplayName } = await import("@/lib/member-display");
+    const { data: me } = (await admin
+      .from("memberships")
+      .select("display_name, profile:profiles ( full_name )")
+      .eq("id", membership.id)
+      .maybeSingle()) as unknown as {
+      data: {
+        display_name: string | null;
+        profile: { full_name: string | null } | null;
+      } | null;
+    };
+    await notify({
+      audience: "org-management",
+      organizationId: membership.organization_id,
+      title: "Time off cancelled",
+      body: `${me ? memberDisplayName(me) : "A team member"} cancelled their time off ${before.start_date}${
+        before.end_date !== before.start_date ? ` to ${before.end_date}` : ""
+      }.`,
+      href: "/app/timesheets",
+    });
+  } catch {
+    // Best-effort only.
+  }
+
+  revalidatePath("/field/profile");
+  revalidatePath("/app/timesheets", "page");
+  return { ok: true };
+}
+
+export async function updateSelfPtoRequestAction(
+  formData: FormData,
+): Promise<Result> {
+  const { membership, supabase } = await getActionContext();
+  const id = String(formData.get("id") ?? "");
+  const fields = {
+    start_date: String(formData.get("start_date") ?? ""),
+    end_date: String(formData.get("end_date") ?? ""),
+    hours: Number(formData.get("hours") ?? 0),
+  };
+  const reason = String(formData.get("reason") ?? "").trim();
+  if (!id) return { ok: false, error: "Missing request id." };
+
+  const [{ validatePtoFields, workerCanEdit, statusAfterWorkerEdit }, { zonedYmd }] =
+    await Promise.all([import("@/lib/pto-rules"), import("@/lib/wall-clock")]);
+  const invalid = validatePtoFields(fields);
+  if (invalid) return { ok: false, error: invalid };
+
+  const { createSupabaseAdminClient } = await import("@/lib/supabase/admin");
+  const admin = createSupabaseAdminClient();
+
+  const { data: before } = (await admin
+    .from("pto_requests")
+    .select("id, employee_id, start_date, end_date, hours, status")
+    .eq("id", id)
+    .eq("organization_id", membership.organization_id)
+    .maybeSingle()) as unknown as {
+    data: {
+      id: string;
+      employee_id: string;
+      start_date: string;
+      end_date: string;
+      hours: number;
+      status: "pending" | "approved" | "declined" | "cancelled";
+    } | null;
+  };
+
+  if (!before || before.employee_id !== membership.id) {
+    return { ok: false, error: "Request not found." };
+  }
+
+  const orgTz = await getOrgTimezone(membership.organization_id);
+  if (!workerCanEdit(before.status, before.start_date, zonedYmd(new Date(), orgTz))) {
+    return {
+      ok: false,
+      error:
+        "This request can no longer be changed — cancel it or ask your manager.",
+    };
+  }
+
+  // Changing an approved request revokes the approval: a manager said yes
+  // to specific dates, and different dates are a different question.
+  const wasApproved = before.status === "approved";
+  const { error } = (await admin
+    .from("pto_requests")
+    .update({
+      start_date: fields.start_date,
+      end_date: fields.end_date,
+      hours: fields.hours,
+      reason: reason || null,
+      status: statusAfterWorkerEdit(before.status),
+      reviewed_by: null,
+      reviewed_at: null,
+    })
+    .eq("id", id)
+    .eq("organization_id", membership.organization_id)) as unknown as {
+    error: { message: string } | null;
+  };
+  if (error) return { ok: false, error: error.message };
+
+  // The approval (and its spent hours) is revoked until re-approved.
+  if (wasApproved) {
+    await (
+      supabase.rpc as unknown as (
+        name: string,
+        args: Record<string, unknown>,
+      ) => Promise<unknown>
+    )("increment_pto_used", {
+      p_employee_id: before.employee_id,
+      p_year: new Date(before.start_date).getFullYear(),
+      p_hours: -Number(before.hours),
+    }).catch(() => {});
+  }
+
+  try {
+    const { notify } = await import("@/lib/notify");
+    const { memberDisplayName } = await import("@/lib/member-display");
+    const { data: me } = (await admin
+      .from("memberships")
+      .select("display_name, profile:profiles ( full_name )")
+      .eq("id", membership.id)
+      .maybeSingle()) as unknown as {
+      data: {
+        display_name: string | null;
+        profile: { full_name: string | null } | null;
+      } | null;
+    };
+    await notify({
+      audience: "org-management",
+      organizationId: membership.organization_id,
+      title: wasApproved
+        ? "Changed time off needs re-approval"
+        : "Time-off request updated",
+      body: `${me ? memberDisplayName(me) : "A team member"} now asks for ${fields.start_date}${
+        fields.end_date !== fields.start_date ? ` to ${fields.end_date}` : ""
+      }, ${fields.hours}h.`,
+      href: "/app/timesheets",
+    });
+  } catch {
+    // Best-effort only.
+  }
+
+  revalidatePath("/field/profile");
   revalidatePath("/app/timesheets", "page");
   return { ok: true };
 }
