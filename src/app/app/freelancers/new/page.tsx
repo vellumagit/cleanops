@@ -9,7 +9,7 @@ export default async function NewFreelancerPage() {
   return (
     <PageShell
       title="New outsourcing contact"
-      description="Add a contact to your emergency-coverage bench. They do not need a Sollos account."
+      description="Add a contact to your on-call pool. They do not need a Sollos account."
     >
       <div className="max-w-2xl rounded-lg border border-border bg-card p-6">
         <FreelancerForm mode="create" />

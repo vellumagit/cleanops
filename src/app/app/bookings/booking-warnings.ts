@@ -184,7 +184,7 @@ export function computeBookingWarnings(
         code: "never_staffed",
         label: "Never staffed",
         detail:
-          "This job's time has passed and nobody was ever assigned — no employee, no crew, no bench claim. It was deliberately NOT auto-completed or invoiced. Check whether it happened, then close it out.",
+          "This job's time has passed and nobody was ever assigned — no employee, no crew, no claimed offer. It was deliberately NOT auto-completed or invoiced. Check whether it happened, then close it out.",
         severity: "high",
       });
     } else if (
@@ -197,7 +197,7 @@ export function computeBookingWarnings(
         code: "unassigned_soon",
         label: "Starts soon · no one assigned",
         detail:
-          "This job starts within 24 hours and has nobody on it. Assign someone or send it to the bench.",
+          "This job starts within 24 hours and has nobody on it. Assign someone or offer the shift out.",
         severity: "high",
       });
     }

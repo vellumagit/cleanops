@@ -159,10 +159,17 @@ export function composeOfferSms(args: {
   serviceType: string;
   scheduledAt: string; // ISO
   durationMinutes: number;
-  payCents: number;
+  /** Flat pay for on-call recipients. Omit/null for roster subcontractors —
+   *  they're paid from clocked hours at their own rate, so quoting the
+   *  offer's flat amount to them would be a lie. */
+  payCents?: number | null;
   addressShort: string;
   claimUrl: string;
   positionsNeeded?: number;
+  /** "oncall" (default) = external on-call cleaner; "roster" = the org's own
+   *  subcontractor. Roster texts are operational dispatch to your own crew
+   *  (B2B, like composeBookingAssignmentSms) — no opt-out disclosure. */
+  audience?: "oncall" | "roster";
   /** IANA org timezone — required for correct display time. On Vercel the
    *  server clock is UTC, so without this a 2 PM ET booking renders as
    *  6 PM in the SMS. Falls back to UTC if missing. */
@@ -180,13 +187,18 @@ export function composeOfferSms(args: {
     args.durationMinutes >= 60
       ? `${Math.round((args.durationMinutes / 60) * 10) / 10} hrs`
       : `${args.durationMinutes} min`;
-  const dollars = `$${(args.payCents / 100).toFixed(0)}`;
   const service = args.serviceType.replace(/_/g, " ");
   const positions = args.positionsNeeded ?? 1;
   const cta =
     positions > 1
       ? `${positions} spots available — claim yours`
       : "First to claim gets it";
+  if (args.audience === "roster") {
+    // "Your usual rate" is spelled out so nobody shows up expecting a
+    // premium that was never on offer.
+    return `Sollos 3: Open shift. ${service} ${when}, ${duration}. ${args.addressShort}. Paid at your usual rate. ${cta}: ${args.claimUrl}`;
+  }
+  const dollars = `$${((args.payCents ?? 0) / 100).toFixed(0)}`;
   // Bench/freelancer recipients aren't employees of the org sending the
   // SMS — they're independent contractors getting a transactional offer.
   // A2P 10DLC carriers can throttle or suspend the campaign without the

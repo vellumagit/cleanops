@@ -50,24 +50,49 @@ export default async function ClaimPage({
 
   const admin = createSupabaseAdminClient();
 
-  const { data: dispatch } = await admin
+  const { data: dispatchRow } = await admin
     .from("job_offer_dispatches")
     .select(
       `
-        id, contact_id,
+        id, contact_id, membership_id,
         contact:freelancer_contacts ( id, full_name ),
+        member:memberships ( id, display_name, profile:profiles ( full_name ) ),
         offer:job_offers (
           id, status, pay_cents, notes, expires_at, filled_contact_id,
+          filled_membership_id,
           booking:bookings (
             id, organization_id, scheduled_at, duration_minutes, service_type,
             address, notes,
             client:clients ( name, phone, notes )
           )
         )
-      `,
+      ` as never,
     )
     .eq("claim_token", token)
     .maybeSingle();
+
+  type DispatchForClaim = {
+    id: string;
+    contact_id: string | null;
+    membership_id: string | null;
+    contact: { id: string; full_name: string | null } | null;
+    member: {
+      id: string;
+      display_name: string | null;
+      profile: { full_name: string | null } | null;
+    } | null;
+    offer: {
+      id: string;
+      status: string;
+      pay_cents: number;
+      notes: string | null;
+      expires_at: string | null;
+      filled_contact_id: string | null;
+      filled_membership_id: string | null;
+      booking: BookingForClaim & { organization_id: string };
+    } | null;
+  };
+  const dispatch = dispatchRow as unknown as DispatchForClaim | null;
 
   if (!dispatch || !dispatch.offer || !dispatch.offer.booking) {
     return (
@@ -76,6 +101,26 @@ export default async function ClaimPage({
       </Shell>
     );
   }
+
+  // Whose link is this? A roster subcontractor's claim carries no flat pay —
+  // they're paid from clocked hours at their usual rate — so every pay
+  // surface below shows "your usual rate" instead of the offer's amount.
+  const isRoster = dispatch.membership_id != null;
+  const recipientCol = isRoster ? "membership_id" : "contact_id";
+  const recipientId = dispatch.membership_id ?? dispatch.contact_id;
+  if (!recipientId) {
+    return (
+      <Shell>
+        <InvalidState />
+      </Shell>
+    );
+  }
+  const recipientName = isRoster
+    ? (dispatch.member?.display_name?.trim() ||
+        dispatch.member?.profile?.full_name?.trim() ||
+        null)
+    : (dispatch.contact?.full_name ?? null);
+  const payForView = isRoster ? null : dispatch.offer.pay_cents;
 
   // Fetch positions columns separately (not in generated types yet).
   const { data: offerPositions } = await admin
@@ -118,20 +163,24 @@ export default async function ClaimPage({
   ) {
     view = <ExpiredState />;
   } else if (offer.status === "filled") {
-    // Check if THIS contact claimed one of the spots.
+    // Check if THIS recipient claimed one of the spots.
     const { data: myClaim } = await admin
       .from("job_offer_claims" as never)
       .select("id")
       .eq("offer_id", offer.id)
-      .eq("contact_id", dispatch.contact_id)
+      .eq(recipientCol, recipientId)
       .maybeSingle();
 
-    if (myClaim || offer.filled_contact_id === dispatch.contact_id) {
+    const filledByMe = isRoster
+      ? offer.filled_membership_id === dispatch.membership_id
+      : offer.filled_contact_id === dispatch.contact_id;
+
+    if (myClaim || filledByMe) {
       view = (
         <GotItState
           booking={booking}
-          contactName={dispatch.contact?.full_name ?? null}
-          pay={offer.pay_cents}
+          contactName={recipientName}
+          pay={payForView}
           tz={tz}
         />
       );
@@ -139,12 +188,12 @@ export default async function ClaimPage({
       view = <LostRaceState />;
     }
   } else {
-    // open + not yet expired → check if this contact already claimed a spot
+    // open + not yet expired → check if this recipient already claimed a spot
     const { data: myClaim } = await admin
       .from("job_offer_claims" as never)
       .select("id")
       .eq("offer_id", offer.id)
-      .eq("contact_id", dispatch.contact_id)
+      .eq(recipientCol, recipientId)
       .maybeSingle();
 
     const positionsNeeded = offer.positions_needed ?? 1;
@@ -156,8 +205,8 @@ export default async function ClaimPage({
       view = (
         <GotItState
           booking={booking}
-          contactName={dispatch.contact?.full_name ?? null}
-          pay={offer.pay_cents}
+          contactName={recipientName}
+          pay={payForView}
           tz={tz}
         />
       );
@@ -166,8 +215,8 @@ export default async function ClaimPage({
         <OpenState
           tz={tz}
           token={token}
-          contactName={dispatch.contact?.full_name ?? null}
-          pay={offer.pay_cents}
+          contactName={recipientName}
+          pay={payForView}
           booking={booking}
           notes={offer.notes}
           expiresAt={offer.expires_at}
@@ -242,7 +291,9 @@ function OpenState({
   tz: string;
   token: string;
   contactName: string | null;
-  pay: number;
+  /** Flat pay for on-call cleaners; null for roster subcontractors, who are
+   *  paid from clocked hours at their usual rate. */
+  pay: number | null;
   booking: BookingForClaim;
   notes: string | null;
   expiresAt: string | null;
@@ -270,9 +321,15 @@ function OpenState({
       <div className="rounded-lg border border-border bg-muted/20 p-4">
         <dl className="space-y-3 text-sm">
           <Row label="Pay">
-            <span className="text-lg font-bold tabular-nums text-foreground">
-              {formatCurrencyCents(pay)}
-            </span>
+            {pay != null ? (
+              <span className="text-lg font-bold tabular-nums text-foreground">
+                {formatCurrencyCents(pay)}
+              </span>
+            ) : (
+              <span className="font-semibold text-foreground">
+                Your usual rate
+              </span>
+            )}
           </Row>
           <Row label="Service">{humanizeEnum(booking.service_type)}</Row>
           <Row label="When">{formatDateTime(booking.scheduled_at, tz)}</Row>
@@ -318,7 +375,9 @@ function GotItState({
 }: {
   booking: BookingForClaim;
   contactName: string | null;
-  pay: number;
+  /** Flat pay for on-call cleaners; null for roster subcontractors, who are
+   *  paid from clocked hours at their usual rate. */
+  pay: number | null;
   tz: string;
 }) {
   return (
@@ -339,9 +398,15 @@ function GotItState({
       <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-900/40 dark:bg-emerald-950/30">
         <dl className="space-y-3 text-sm">
           <Row label="Pay">
-            <span className="text-lg font-bold tabular-nums text-foreground">
-              {formatCurrencyCents(pay)}
-            </span>
+            {pay != null ? (
+              <span className="text-lg font-bold tabular-nums text-foreground">
+                {formatCurrencyCents(pay)}
+              </span>
+            ) : (
+              <span className="font-semibold text-foreground">
+                Your usual rate
+              </span>
+            )}
           </Row>
           <Row label="Service">{humanizeEnum(booking.service_type)}</Row>
           <Row label="When">{formatDateTime(booking.scheduled_at, tz)}</Row>
@@ -405,7 +470,7 @@ function LostRaceState() {
     <div className="space-y-3 text-center">
       <h1 className="text-xl font-bold tracking-tight">Already claimed</h1>
       <p className="text-sm text-muted-foreground">
-        Another subcontractor grabbed this shift before you. Thanks for checking
+        Someone else grabbed this shift before you. Thanks for checking
         — we&apos;ll send the next one your way.
       </p>
     </div>

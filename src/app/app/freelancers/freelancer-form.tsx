@@ -122,7 +122,7 @@ export function FreelancerForm({
           Cancel
         </Link>
         <SubmitButton pendingLabel="Saving…">
-          {mode === "create" ? "Add to bench" : "Save changes"}
+          {mode === "create" ? "Add to on-call pool" : "Save changes"}
         </SubmitButton>
       </div>
     </form>

@@ -16,7 +16,7 @@ import { formatCurrencyCents } from "@/lib/format";
 import { Wallet } from "lucide-react";
 import { getOrgTimezone } from "@/lib/org-timezone";
 
-export const metadata = { title: "Outsourcing" };
+export const metadata = { title: "On-call pool" };
 
 export default async function FreelancersPage() {
   const membership = await requireMembership(["owner", "admin", "manager"]);
@@ -88,8 +88,8 @@ export default async function FreelancersPage() {
 
   return (
     <PageShell
-      title="Outsourcing"
-      description="Off-platform cleaners you can text when you need emergency coverage."
+      title="On-call pool"
+      description="External cleaners you can text when you need emergency coverage. Your own subcontractors live under Employees — shift offers reach both."
       actions={
         <div className="flex items-center gap-2">
           <Link

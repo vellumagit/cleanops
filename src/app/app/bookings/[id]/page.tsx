@@ -408,7 +408,7 @@ export default async function BookingDetailPage({
               className={buttonVariants({ variant: "outline" })}
             >
               <Send className="h-4 w-4" />
-              Send to bench
+              Offer shift
             </Link>
             <Link
               href={editHref}
@@ -648,7 +648,7 @@ export default async function BookingDetailPage({
                 <div className="px-6 py-10 text-center text-xs text-muted-foreground">
                   No offers yet. Use{" "}
                   <span className="font-medium text-foreground">
-                    Send to bench
+                    Offer shift
                   </span>{" "}
                   above to broadcast this shift.
                 </div>

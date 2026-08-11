@@ -301,7 +301,7 @@ export function BookingQuickView({
             className={buttonVariants({ variant: "outline", size: "sm" })}
           >
             <Send className="h-4 w-4" />
-            Send to bench
+            Offer shift
           </Link>
           <Link
             href={withReturn(`/app/bookings/${booking.id}`)}

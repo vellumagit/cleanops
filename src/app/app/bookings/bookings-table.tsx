@@ -903,10 +903,10 @@ function AssignedCell({ row, canEdit }: { row: BookingRow; canEdit: boolean }) {
           href={`/app/bookings/${row.id}/offer`}
           onClick={(e) => e.stopPropagation()}
           className="inline-flex items-center gap-1 rounded-md bg-amber-500 px-2 py-0.5 text-[10px] font-semibold text-white hover:bg-amber-600 transition-colors"
-          title="Send to subcontractor bench"
+          title="Offer this shift out"
         >
           <Users className="h-3 w-3" />
-          Bench
+          Offer
         </Link>
       )}
     </span>

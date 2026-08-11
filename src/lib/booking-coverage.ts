@@ -65,10 +65,13 @@ export async function resolveBookingCoverage(
     // offer still means one real person is showing up.
     db
       .from("job_offer_claims")
-      .select("contact_id, offer:job_offers ( booking_id )")
+      .select(
+        "contact_id, membership_id, offer:job_offers ( booking_id )" as never,
+      )
       .in("offer.booking_id" as never, ids as never) as unknown as Promise<{
       data: Array<{
-        contact_id: string;
+        contact_id: string | null;
+        membership_id: string | null;
         offer: { booking_id: string } | null;
       }> | null;
     }>,
@@ -89,8 +92,16 @@ export async function resolveBookingCoverage(
     const bookingId = claim.offer?.booking_id;
     if (!bookingId) continue;
     const c = out.get(bookingId);
-    if (c && !c.freelancerContactIds.includes(claim.contact_id)) {
+    if (!c) continue;
+    if (claim.contact_id && !c.freelancerContactIds.includes(claim.contact_id)) {
       c.freelancerContactIds.push(claim.contact_id);
+    }
+    // A roster subcontractor's claim is assignment (the claim action writes
+    // assigned_to / booking_assignees too), so this is usually redundant —
+    // but if that write ever lagged or failed, the claim alone must still
+    // count as "someone is coming".
+    if (claim.membership_id && !c.employeeIds.includes(claim.membership_id)) {
+      c.employeeIds.push(claim.membership_id);
     }
   }
 

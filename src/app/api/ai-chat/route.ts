@@ -81,8 +81,13 @@ them any other way):
   own one-click unsubscribe for the client; unsubscribing stops only those,
   never booking confirmations or invoices.
 - Sending an estimate or invoice by hand is NOT an automation — the Send
-  buttons always work regardless of automation settings. Same for the bench
-  shift-offer texts and SMS opt-in requests: owner-clicked, always allowed.
+  buttons always work regardless of automation settings. Same for shift-offer
+  texts and SMS opt-in requests: owner-clicked, always allowed.
+- "Offer shift" on a booking texts a claim link to two groups at once: the
+  org's own subcontractors (team members with the subcontractor engagement —
+  paid their usual rate; claiming assigns them the job) and the on-call pool
+  (external cleaners under the On-call pool section — paid the flat amount
+  set on the offer). First tap claims the shift.
 
 STRICT RULE: if a question is about a feature or screen not described above or
 visible in the context snapshot, do NOT guess at steps or invent UI. Say you're

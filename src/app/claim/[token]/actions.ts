@@ -45,18 +45,39 @@ export async function claimOfferAction(token: string): Promise<ClaimResult> {
 
   const admin = createSupabaseAdminClient();
 
-  // 1. Look up the dispatch by token.
-  const { data: dispatch, error: dispatchErr } = await admin
+  // 1. Look up the dispatch by token. The recipient is EITHER an on-call
+  //    contact or one of the org's own roster subcontractors (memberships) —
+  //    exactly one of the two ids is set, enforced by a DB CHECK.
+  const { data: dispatch, error: dispatchErr } = (await admin
     .from("job_offer_dispatches")
     .select(
-      "id, organization_id, offer_id, contact_id, offer:job_offers ( id, status, expires_at, booking_id )",
+      "id, organization_id, offer_id, contact_id, membership_id, offer:job_offers ( id, status, expires_at, booking_id )" as never,
     )
     .eq("claim_token", token)
-    .maybeSingle();
+    .maybeSingle()) as unknown as {
+    data: {
+      id: string;
+      organization_id: string;
+      offer_id: string;
+      contact_id: string | null;
+      membership_id: string | null;
+      offer: {
+        id: string;
+        status: string;
+        expires_at: string | null;
+        booking_id: string | null;
+      } | null;
+    } | null;
+    error: { message: string } | null;
+  };
 
   if (dispatchErr || !dispatch || !dispatch.offer) {
     return { ok: false, reason: "invalid" };
   }
+
+  const recipientCol = dispatch.membership_id ? "membership_id" : "contact_id";
+  const recipientId = dispatch.membership_id ?? dispatch.contact_id;
+  if (!recipientId) return { ok: false, reason: "invalid" };
 
   // Fetch positions columns separately (not in generated types yet).
   const { data: positionsData } = await admin
@@ -89,12 +110,12 @@ export async function claimOfferAction(token: string): Promise<ClaimResult> {
     return { ok: false, reason: "already_filled" };
   }
 
-  // Check if this contact already claimed this offer.
+  // Check if this recipient already claimed this offer.
   const { data: existingClaim } = await admin
     .from("job_offer_claims" as never)
     .select("id")
     .eq("offer_id", offer.id)
-    .eq("contact_id", dispatch.contact_id)
+    .eq(recipientCol, recipientId)
     .maybeSingle();
 
   if (existingClaim) {
@@ -115,6 +136,7 @@ export async function claimOfferAction(token: string): Promise<ClaimResult> {
   const updatePayload: Record<string, unknown> = {
     positions_filled: newFilledCount,
     filled_contact_id: dispatch.contact_id,
+    filled_membership_id: dispatch.membership_id,
     filled_at: new Date().toISOString(),
   };
   if (isFinalClaim) {
@@ -140,25 +162,89 @@ export async function claimOfferAction(token: string): Promise<ClaimResult> {
   }
 
   // 3. Record the claim in job_offer_claims for multi-position tracking.
+  //    Exactly one of contact_id / membership_id, mirroring the dispatch.
   await admin.from("job_offer_claims" as never).insert({
     organization_id: dispatch.organization_id,
     offer_id: offer.id,
     contact_id: dispatch.contact_id,
+    membership_id: dispatch.membership_id,
     dispatch_id: dispatch.id,
     claimed_at: new Date().toISOString(),
   } as never);
 
   // 4. Stamp the dispatch row that actually claimed + the contact's
-  //    last_accepted_at.
+  //    last_accepted_at (a contacts-only column).
   await admin
     .from("job_offer_dispatches")
     .update({ responded_at: new Date().toISOString() })
     .eq("id", dispatch.id);
 
-  await admin
-    .from("freelancer_contacts")
-    .update({ last_accepted_at: new Date().toISOString() })
-    .eq("id", dispatch.contact_id);
+  if (dispatch.contact_id) {
+    await admin
+      .from("freelancer_contacts")
+      .update({ last_accepted_at: new Date().toISOString() })
+      .eq("id", dispatch.contact_id);
+  }
+
+  // 4b. A roster subcontractor's claim MEANS assignment. They're a
+  //     membership, so unlike an on-call claim the booking machinery can —
+  //     and must — record them directly: field tools, checklists, clock-in
+  //     and clocked-hours pay all key off the assignment, not the claim.
+  //     (Pay note: membership claims carry no flat pay; see the migration.)
+  if (dispatch.membership_id) {
+    try {
+      const { data: bookingRow } = await admin
+        .from("bookings")
+        .select("id, assigned_to")
+        .eq("id", offer.booking_id ?? "")
+        .maybeSingle();
+
+      if (bookingRow) {
+        const { data: assigneeRows } = await admin
+          .from("booking_assignees")
+          .select("membership_id, is_primary")
+          .eq("booking_id", bookingRow.id);
+
+        const alreadyOn =
+          bookingRow.assigned_to === dispatch.membership_id ||
+          (assigneeRows ?? []).some(
+            (a) => a.membership_id === dispatch.membership_id,
+          );
+
+        if (!alreadyOn) {
+          const hasPrimary =
+            bookingRow.assigned_to != null ||
+            (assigneeRows ?? []).some((a) => a.is_primary);
+
+          // Claiming IS accepting — don't re-ask them to confirm a shift
+          // they just grabbed on their own initiative.
+          await admin.from("booking_assignees").insert({
+            organization_id: dispatch.organization_id,
+            booking_id: bookingRow.id,
+            membership_id: dispatch.membership_id,
+            is_primary: !hasPrimary,
+            acceptance_status: "accepted",
+            responded_at: new Date().toISOString(),
+          } as never);
+
+          // Keep the denormalised primary pointer consistent with the
+          // backfill invariant: assigned_to set ⇔ a primary assignee row.
+          if (!hasPrimary) {
+            await admin
+              .from("bookings")
+              .update({ assigned_to: dispatch.membership_id })
+              .eq("id", bookingRow.id)
+              .is("assigned_to", null);
+          }
+        }
+      }
+    } catch (assignErr) {
+      // The claim stands even if the assignment write hiccups — the offer
+      // detail page still shows who claimed, and a manager can assign by
+      // hand. Losing the claim over this would be strictly worse.
+      console.error("[claim] roster assignment failed:", assignErr);
+    }
+  }
 
   // 5. Audit log.
   const spotsRemaining = positionsNeeded - newFilledCount;
@@ -178,6 +264,7 @@ export async function claimOfferAction(token: string): Promise<ClaimResult> {
       status: isFinalClaim ? "filled" : "open",
       positions_filled: newFilledCount,
       filled_contact_id: dispatch.contact_id,
+      filled_membership_id: dispatch.membership_id,
       via: "public_claim_link",
     } as never,
   });
@@ -186,12 +273,23 @@ export async function claimOfferAction(token: string): Promise<ClaimResult> {
   //    freelancer their confirmed details. Best-effort — a notification or SMS
   //    hiccup must never fail the claim itself.
   try {
-    const [contactRes, bookingRes, orgRes] = await Promise.all([
-      admin
-        .from("freelancer_contacts")
-        .select("full_name, phone")
-        .eq("id", dispatch.contact_id)
-        .maybeSingle(),
+    const [contactRes, memberRes, bookingRes, orgRes] = await Promise.all([
+      dispatch.contact_id
+        ? admin
+            .from("freelancer_contacts")
+            .select("full_name, phone")
+            .eq("id", dispatch.contact_id)
+            .maybeSingle()
+        : Promise.resolve({ data: null }),
+      dispatch.membership_id
+        ? admin
+            .from("memberships")
+            .select(
+              "id, display_name, contact_phone, profile:profiles ( full_name, phone )",
+            )
+            .eq("id", dispatch.membership_id)
+            .maybeSingle()
+        : Promise.resolve({ data: null }),
       offer.booking_id
         ? admin
             .from("bookings")
@@ -212,6 +310,12 @@ export async function claimOfferAction(token: string): Promise<ClaimResult> {
       full_name: string | null;
       phone: string | null;
     } | null;
+    const member = memberRes.data as {
+      id: string;
+      display_name: string | null;
+      contact_phone: string | null;
+      profile: { full_name: string | null; phone: string | null } | null;
+    } | null;
     const bookingRow = bookingRes.data as {
       id: string;
       service_type: string;
@@ -220,7 +324,14 @@ export async function claimOfferAction(token: string): Promise<ClaimResult> {
       client: { name: string | null } | null;
     } | null;
     const orgName = (orgRes.data as { name?: string } | null)?.name ?? "Sollos";
-    const freelancerName = contact?.full_name ?? "A subcontractor";
+    const { memberDisplayName } = await import("@/lib/member-display");
+    const recipientPhone =
+      contact?.phone ?? member?.contact_phone ?? member?.profile?.phone ?? null;
+    const freelancerName = contact
+      ? (contact.full_name ?? "A subcontractor")
+      : member
+        ? `${memberDisplayName(member)} (your subcontractor)`
+        : "A subcontractor";
 
     // Notify org management — this is what makes the claim "reflect" for the
     // owner/managers, with a link straight to the booking.
@@ -246,9 +357,11 @@ export async function claimOfferAction(token: string): Promise<ClaimResult> {
         : `/app/freelancers/offers/${offer.id}`,
     });
 
-    // Confirmation text to the freelancer with the essentials + a link back to
-    // the full details page (address, map, client phone).
-    if (contact?.phone && bookingRow) {
+    // Confirmation text to whoever claimed — on-call cleaner or roster
+    // subcontractor — with the essentials + a link back to the full details
+    // page (address, map, client phone). The claim URL works for both,
+    // including shadow-membership subcontractors who have no login.
+    if (recipientPhone && bookingRow) {
       const { sendOrgSms } = await import("@/lib/sms");
       const { composeShiftClaimedConfirmationSms } =
         await import("@/lib/twilio");
@@ -262,7 +375,7 @@ export async function claimOfferAction(token: string): Promise<ClaimResult> {
         tz: orgTz,
       });
       await sendOrgSms(dispatch.organization_id, {
-        to: contact.phone,
+        to: recipientPhone,
         body,
         automationKey: "freelancer_offer_sms",
       });

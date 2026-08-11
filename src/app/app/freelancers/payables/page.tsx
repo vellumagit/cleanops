@@ -28,7 +28,7 @@ export default async function SubcontractorPayablesPage() {
           className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
         >
           <ChevronLeft className="h-3.5 w-3.5" />
-          Subcontractor bench
+          On-call pool
         </Link>
       }
     >

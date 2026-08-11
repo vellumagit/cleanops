@@ -10,7 +10,7 @@ export function DeleteFreelancerForm({ id }: { id: string }) {
       onSubmit={(e) => {
         if (
           !window.confirm(
-            "Remove this contact from Outsourcing? Their offer history is preserved.",
+            "Remove this contact from the on-call pool? Their offer history is preserved.",
           )
         ) {
           e.preventDefault();
@@ -19,7 +19,7 @@ export function DeleteFreelancerForm({ id }: { id: string }) {
     >
       <input type="hidden" name="id" value={id} />
       <SubmitButton variant="destructive" pendingLabel="Removing…">
-        Remove from bench
+        Remove from on-call pool
       </SubmitButton>
     </form>
   );

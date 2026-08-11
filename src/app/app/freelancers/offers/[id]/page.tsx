@@ -74,7 +74,7 @@ export default async function JobOfferDetailPage({
   if (error) throw error;
   if (!offer) notFound();
 
-  const { data: dispatches } = await supabase
+  const { data: dispatchRows } = await supabase
     .from("job_offer_dispatches")
     .select(
       `
@@ -84,11 +84,29 @@ export default async function JobOfferDetailPage({
         delivery_error,
         sent_at,
         responded_at,
-        contact:freelancer_contacts ( id, full_name, phone )
-      `,
+        contact:freelancer_contacts ( id, full_name, phone ),
+        member:memberships ( id, display_name, contact_phone, profile:profiles ( full_name, phone ) )
+      ` as never,
     )
     .eq("offer_id", id)
     .order("sent_at", { ascending: true });
+
+  type DispatchRow = {
+    id: string;
+    claim_token: string;
+    delivery_status: string;
+    delivery_error: string | null;
+    sent_at: string;
+    responded_at: string | null;
+    contact: { id: string; full_name: string; phone: string } | null;
+    member: {
+      id: string;
+      display_name: string | null;
+      contact_phone: string | null;
+      profile: { full_name: string | null; phone: string | null } | null;
+    } | null;
+  };
+  const dispatches = (dispatchRows ?? []) as unknown as DispatchRow[];
 
   // Fetch positions data (columns not in generated types yet).
   const { data: posData } = await supabase
@@ -100,13 +118,20 @@ export default async function JobOfferDetailPage({
   const positionsNeeded = posRow?.positions_needed ?? 1;
   const positionsFilled = posRow?.positions_filled ?? 0;
 
-  // Fetch all claims for this offer to know which contacts claimed.
+  // Fetch all claims for this offer to know which recipients claimed.
   const { data: claims } = await supabase
     .from("job_offer_claims" as never)
-    .select("contact_id")
+    .select("contact_id, membership_id")
     .eq("offer_id", id);
-  const claimedContactIds = new Set(
-    ((claims ?? []) as Array<{ contact_id: string }>).map((c) => c.contact_id),
+  const claimedKeys = new Set(
+    (
+      (claims ?? []) as Array<{
+        contact_id: string | null;
+        membership_id: string | null;
+      }>
+    ).map((c) =>
+      c.membership_id ? `m:${c.membership_id}` : `c:${c.contact_id}`,
+    ),
   );
 
   const status = offer.status as OfferStatus;
@@ -154,9 +179,9 @@ export default async function JobOfferDetailPage({
 
             <dl className="mt-5 grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
               <div>
-                <dt className="text-xs text-muted-foreground">Pay</dt>
+                <dt className="text-xs text-muted-foreground">On-call pay</dt>
                 <dd className="mt-0.5 font-semibold tabular-nums text-foreground">
-                  {formatCurrencyCents(offer.pay_cents)}
+                  {offer.pay_cents > 0 ? formatCurrencyCents(offer.pay_cents) : "—"}
                 </dd>
               </div>
               <div>
@@ -201,35 +226,50 @@ export default async function JobOfferDetailPage({
           <div className="rounded-lg border border-border bg-card">
             <div className="border-b border-border px-6 py-3">
               <p className="sollos-label">
-                Dispatches ({dispatches?.length ?? 0})
+                Dispatches ({dispatches.length})
               </p>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                One row per subcontractor who received this offer. Click the
-                claim link below to preview what the subcontractor sees when
-                they tap their text message.
+                One row per person who received this offer — your own
+                subcontractors and on-call cleaners. Click a claim link to
+                preview what that person sees when they tap their text.
               </p>
             </div>
             <ul className="divide-y divide-border">
-              {!dispatches || dispatches.length === 0 ? (
+              {dispatches.length === 0 ? (
                 <li className="px-6 py-6 text-xs text-muted-foreground">
                   No dispatches — this offer was created but not sent.
                 </li>
               ) : (
                 dispatches.map((d) => {
-                  const claimed = d.contact?.id
-                    ? claimedContactIds.has(d.contact.id)
-                    : false;
+                  const claimed = d.member?.id
+                    ? claimedKeys.has(`m:${d.member.id}`)
+                    : d.contact?.id
+                      ? claimedKeys.has(`c:${d.contact.id}`)
+                      : false;
+                  const name = d.member
+                    ? (d.member.display_name?.trim() ||
+                      d.member.profile?.full_name?.trim() ||
+                      "Unknown")
+                    : (d.contact?.full_name ?? "Unknown");
+                  const phone = d.member
+                    ? (d.member.contact_phone ?? d.member.profile?.phone ?? "")
+                    : (d.contact?.phone ?? "");
                   return (
                     <li
                       key={d.id}
                       className="flex items-start justify-between gap-4 px-6 py-4"
                     >
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium">
-                          {d.contact?.full_name ?? "Unknown"}
+                        <p className="flex items-center gap-2 truncate text-sm font-medium">
+                          {name}
+                          {d.member && (
+                            <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">
+                              Your subcontractor
+                            </span>
+                          )}
                         </p>
                         <p className="truncate text-xs tabular-nums text-muted-foreground">
-                          {d.contact?.phone ?? ""}
+                          {phone}
                         </p>
                         <p className="mt-1.5 truncate font-mono text-[11px] text-muted-foreground">
                           <Link
@@ -278,13 +318,13 @@ export default async function JobOfferDetailPage({
             <p className="sollos-label">How claiming works</p>
             <ol className="mt-3 space-y-2 text-xs text-muted-foreground">
               <li>
-                1. Each subcontractor received a unique link with an entropy
+                1. Each recipient received a unique link with an entropy
                 token.
               </li>
               <li>
                 2.{" "}
                 {positionsNeeded > 1 ? (
-                  `Up to ${positionsNeeded} subcontractors can claim a spot. The offer stays open until all positions are filled.`
+                  `Up to ${positionsNeeded} people can claim a spot. The offer stays open until all positions are filled.`
                 ) : (
                   <>
                     The first to tap <Copy className="inline h-3 w-3" /> and
@@ -295,12 +335,13 @@ export default async function JobOfferDetailPage({
                 )}
               </li>
               <li>
-                3. Subcontractors who tap after all spots are taken see a
+                3. Anyone who taps after all spots are taken sees a
                 &ldquo;sorry, already filled&rdquo; page.
               </li>
               <li>
-                4. Subcontractors who claim see the full address and client
-                details on their claim page.
+                4. Whoever claims sees the full address and client details on
+                their claim page. Your own subcontractors are also assigned
+                the job directly.
               </li>
             </ol>
           </div>

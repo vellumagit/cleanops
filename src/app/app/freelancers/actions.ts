@@ -171,7 +171,7 @@ export async function deleteFreelancerContactAction(formData: FormData) {
 }
 
 // -----------------------------------------------------------------------------
-// Send to bench
+// Offer this shift — to your own subcontractors and/or the on-call pool
 // -----------------------------------------------------------------------------
 
 type OfferField = keyof typeof JobOfferSchema.shape | "contact_ids";
@@ -200,11 +200,17 @@ function claimBaseUrl(): string {
 }
 
 /**
- * Create a job_offer + one dispatch per selected contact, send SMS for
+ * Create a job_offer + one dispatch per selected recipient, send SMS for
  * each (or skip when Twilio is disabled), and redirect to the offer
  * detail page. Not atomic at the SQL level — if we crash halfway the
- * offer will still be open for the contacts we did dispatch to, which is
+ * offer will still be open for the recipients we did dispatch to, which is
  * the correct failure mode.
+ *
+ * Two recipient kinds, one offer:
+ *   contact_ids  on-call cleaners (freelancer_contacts) — earn the flat pay
+ *   member_ids   the org's own roster subcontractors (memberships) — their
+ *                SMS quotes "your usual rate", and claiming assigns them
+ *                the booking instead of creating a paid claim
  */
 export async function createJobOfferAction(
   _prev: JobOfferFormState,
@@ -215,9 +221,10 @@ export async function createJobOfferAction(
   if (!parsed.ok) return { errors: parsed.errors, values: raw };
 
   const contactIds = formData.getAll("contact_ids").map((v) => String(v));
-  if (contactIds.length === 0) {
+  const memberIds = formData.getAll("member_ids").map((v) => String(v));
+  if (contactIds.length === 0 && memberIds.length === 0) {
     return {
-      errors: { contact_ids: "Pick at least one contact" },
+      errors: { contact_ids: "Pick at least one recipient" },
       values: raw,
     };
   }
@@ -248,7 +255,7 @@ export async function createJobOfferAction(
   // (opt-out just isn't enforced until the migration runs). Order-independent.
   let contacts: BenchContact[] | null = null;
   let contactsErr: { message: string } | null = null;
-  {
+  if (contactIds.length > 0) {
     const withOptOut = (await supabase
       .from("freelancer_contacts")
       .select("id, full_name, phone, active, sms_opted_out_at")
@@ -269,22 +276,59 @@ export async function createJobOfferAction(
     } else {
       contacts = withOptOut.data;
     }
+    if (contactsErr) {
+      return { errors: { _form: contactsErr.message }, values: raw };
+    }
   }
 
-  if (contactsErr || !contacts || contacts.length === 0) {
-    return { errors: { _form: "No contacts matched" }, values: raw };
-  }
-
-  // `active` = on the bench; `sms_opted_out_at` = replied STOP. Opted-out
-  // contacts are excluded unconditionally — re-texting them violates their
-  // carrier opt-out (TCPA/CTIA), regardless of bench status.
-  const activeContacts = contacts.filter(
+  // `active` = on the on-call list; `sms_opted_out_at` = replied STOP.
+  // Opted-out contacts are excluded unconditionally — re-texting them
+  // violates their carrier opt-out (TCPA/CTIA), regardless of list status.
+  const activeContacts = (contacts ?? []).filter(
     (c) => c.active && !c.sms_opted_out_at,
   );
-  if (activeContacts.length === 0) {
+
+  // Sanity-check the members are OUR roster subcontractors. engagement is
+  // the gate: employees are scheduled, not offered — an open shift blast to
+  // payroll staff would create overtime obligations nobody chose.
+  type RosterMember = {
+    id: string;
+    display_name: string | null;
+    contact_phone: string | null;
+    profile: { full_name: string | null; phone: string | null } | null;
+  };
+  let rosterMembers: Array<{ id: string; name: string; phone: string }> = [];
+  if (memberIds.length > 0) {
+    const { memberDisplayName } = await import("@/lib/member-display");
+    const { data: memberRows, error: memberErr } = (await supabase
+      .from("memberships")
+      .select(
+        "id, display_name, contact_phone, profile:profiles ( full_name, phone )",
+      )
+      .in("id", memberIds)
+      .eq("organization_id", membership.organization_id)
+      .eq("status", "active")
+      .eq("engagement" as never, "subcontractor" as never)) as unknown as {
+      data: RosterMember[] | null;
+      error: { message: string } | null;
+    };
+    if (memberErr) {
+      return { errors: { _form: memberErr.message }, values: raw };
+    }
+    rosterMembers = (memberRows ?? [])
+      .map((m) => ({
+        id: m.id,
+        name: memberDisplayName(m),
+        phone: m.contact_phone ?? m.profile?.phone ?? "",
+      }))
+      .filter((m) => m.phone.length > 0);
+  }
+
+  if (activeContacts.length === 0 && rosterMembers.length === 0) {
     return {
       errors: {
-        contact_ids: "All selected contacts are inactive or have opted out of SMS.",
+        contact_ids:
+          "Nobody left to text — the selected recipients are inactive, opted out, or have no phone on file.",
       },
       values: raw,
     };
@@ -318,19 +362,37 @@ export async function createJobOfferAction(
     };
   }
 
-  // 2. Insert one dispatch per contact (queued status).
-  const dispatchesToInsert = activeContacts.map((c) => ({
-    organization_id: membership.organization_id,
-    offer_id: offer.id,
-    contact_id: c.id,
-    claim_token: generateClaimToken(),
-    delivery_status: "queued",
-  }));
+  // 2. Insert one dispatch per recipient (queued status). Exactly one of
+  //    contact_id / membership_id per row — the DB CHECK enforces it.
+  const dispatchesToInsert = [
+    ...activeContacts.map((c) => ({
+      organization_id: membership.organization_id,
+      offer_id: offer.id,
+      contact_id: c.id,
+      claim_token: generateClaimToken(),
+      delivery_status: "queued",
+    })),
+    ...rosterMembers.map((m) => ({
+      organization_id: membership.organization_id,
+      offer_id: offer.id,
+      membership_id: m.id,
+      claim_token: generateClaimToken(),
+      delivery_status: "queued",
+    })),
+  ];
 
-  const { data: dispatches, error: dispErr } = await supabase
+  const { data: dispatches, error: dispErr } = (await supabase
     .from("job_offer_dispatches")
-    .insert(dispatchesToInsert)
-    .select("id, contact_id, claim_token");
+    .insert(dispatchesToInsert as never)
+    .select("id, contact_id, membership_id, claim_token" as never)) as unknown as {
+    data: Array<{
+      id: string;
+      contact_id: string | null;
+      membership_id: string | null;
+      claim_token: string;
+    }> | null;
+    error: { message: string } | null;
+  };
 
   if (dispErr || !dispatches) {
     return {
@@ -346,26 +408,36 @@ export async function createJobOfferAction(
   const orgTz = await getOrgTimezone(membership.organization_id);
 
   for (const d of dispatches) {
-    const contact = activeContacts.find((c) => c.id === d.contact_id);
-    if (!contact) continue;
+    const contact = d.contact_id
+      ? activeContacts.find((c) => c.id === d.contact_id)
+      : undefined;
+    const member = d.membership_id
+      ? rosterMembers.find((m) => m.id === d.membership_id)
+      : undefined;
+    const to = contact?.phone ?? member?.phone;
+    if (!to) continue;
 
+    // Same offer, different deal: on-call cleaners are quoted the flat pay;
+    // roster subcontractors are told "your usual rate" (composeOfferSms
+    // handles both, including the STOP line only on-call texts carry).
     const body = composeOfferSms({
       serviceType: booking.service_type,
       scheduledAt: booking.scheduled_at,
       durationMinutes: booking.duration_minutes,
-      payCents: parsed.data.pay_dollars,
+      payCents: contact ? parsed.data.pay_dollars : null,
+      audience: contact ? "oncall" : "roster",
       addressShort,
       claimUrl: `${base}/claim/${d.claim_token}`,
       positionsNeeded: parsed.data.positions_needed,
       tz: orgTz,
     });
 
-    // Routed through sendOrgSms so freelancer offers send from the org's OWN
-    // number and count toward its allotment. Not client-facing (independent
-    // contractors), so the opt-in gate is bypassed; the automation key defaults
-    // ON. Requires the org to have SMS enabled (a provisioned number).
+    // Routed through sendOrgSms so shift offers send from the org's OWN
+    // number and count toward its allotment. Not client-facing (crew and
+    // independent contractors), so the opt-in gate is bypassed; the
+    // automation key defaults ON. Requires the org to have SMS enabled.
     const result = await sendOrgSms(membership.organization_id, {
-      to: contact.phone,
+      to,
       body,
       automationKey: "freelancer_offer_sms",
     });
@@ -389,14 +461,17 @@ export async function createJobOfferAction(
     }
   }
 
-  // 4. Stamp last_offered_at on every dispatched contact.
-  await supabase
-    .from("freelancer_contacts")
-    .update({ last_offered_at: new Date().toISOString() })
-    .in(
-      "id",
-      activeContacts.map((c) => c.id),
-    );
+  // 4. Stamp last_offered_at on every dispatched contact. (Roster members
+  //    have no such column — their activity lives on the booking itself.)
+  if (activeContacts.length > 0) {
+    await supabase
+      .from("freelancer_contacts")
+      .update({ last_offered_at: new Date().toISOString() })
+      .in(
+        "id",
+        activeContacts.map((c) => c.id),
+      );
+  }
 
   await logAuditEvent({
     membership,
@@ -408,6 +483,8 @@ export async function createJobOfferAction(
       booking_id: booking.id,
       pay_cents: parsed.data.pay_dollars,
       dispatch_count: dispatches.length,
+      oncall_count: activeContacts.length,
+      roster_count: rosterMembers.length,
       expires_at: expiresAt,
     },
   });

@@ -62,7 +62,7 @@ export default async function EditFreelancerPage({
               Danger zone
             </h2>
             <p className="mt-1 text-xs text-muted-foreground">
-              Removing a subcontractor detaches them from the bench but keeps
+              Removing an on-call cleaner detaches them from the pool but keeps
               their offer history intact.
             </p>
             <div className="mt-4">
@@ -73,7 +73,7 @@ export default async function EditFreelancerPage({
 
         <aside className="space-y-4">
           <div className="rounded-lg border border-border bg-card p-4">
-            <p className="sollos-label">Bench activity</p>
+            <p className="sollos-label">On-call activity</p>
             <dl className="mt-3 space-y-2 text-xs">
               <div className="flex justify-between gap-3">
                 <dt className="text-muted-foreground">Last offered</dt>

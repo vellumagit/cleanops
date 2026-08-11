@@ -121,7 +121,9 @@ export async function getSubcontractorPayables(
   const earned = new Map<string, number>();
   const jobCount = new Map<string, number>();
 
-  // Bench freelancers earn the agreed pay_cents per claimed shift.
+  // On-call cleaners earn the agreed pay_cents per claimed shift. The
+  // null-contact guard below is load-bearing: a roster subcontractor's claim
+  // (membership_id set, contact_id null) is assignment, never flat pay.
   const { data: claims } = (await admin
     .from("job_offer_claims" as never)
     .select(
@@ -347,9 +349,11 @@ export async function getSubcontractorLedger(
           .eq("id", payee.id)
           .eq("organization_id", organizationId)
           .maybeSingle(),
-    // Claims belong to the bench only. A roster subcontractor never claims an
-    // offer — they are assigned the shift and clock in, so their earnings come
-    // from time_entries further down.
+    // PAID claims belong to the on-call pool only. A roster subcontractor CAN
+    // claim an offer (since 20260811), but their claim is just assignment —
+    // it carries no flat pay, they clock in like any assigned shift, so their
+    // earnings come from time_entries further down. Counting their claims
+    // here would be the double-pay bug this module exists to prevent.
     isMember
       ? Promise.resolve({ data: [] })
       : admin

@@ -43,7 +43,7 @@ export function UnassignedBookings({
           Unassigned jobs ({rows.length})
         </h3>
         <p className="text-xs text-muted-foreground ml-1">
-          — send to your bench for coverage
+          — offer them out for coverage
         </p>
       </div>
 
@@ -88,7 +88,7 @@ export function UnassignedBookings({
                 className="inline-flex items-center gap-1.5 rounded-md bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-600 transition-colors shrink-0"
               >
                 <Users className="h-3.5 w-3.5" />
-                Send to bench
+                Offer shift
               </Link>
             </div>
           );

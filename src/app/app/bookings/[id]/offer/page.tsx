@@ -11,10 +11,11 @@ import {
   humanizeEnum,
 } from "@/lib/format";
 import { isTwilioEnabled } from "@/lib/twilio";
+import { memberDisplayName } from "@/lib/member-display";
 import { JobOfferForm } from "./offer-form";
 import { getOrgTimezone } from "@/lib/org-timezone";
 
-export const metadata = { title: "Send to bench" };
+export const metadata = { title: "Offer this shift" };
 
 export default async function NewJobOfferPage({
   params,
@@ -26,36 +27,64 @@ export default async function NewJobOfferPage({
   const { id: bookingId } = await params;
   const supabase = await createSupabaseServerClient();
 
-  const [{ data: booking, error: bErr }, { data: contacts, error: cErr }] =
-    await Promise.all([
-      supabase
-        .from("bookings")
-        .select(
-          "id, scheduled_at, duration_minutes, service_type, address, total_cents, client:clients ( name )",
-        )
-        .eq("id", bookingId)
-        .maybeSingle(),
-      supabase
-        .from("freelancer_contacts")
-        .select("id, full_name, phone, active")
-        .eq("active", true)
-        .order("full_name"),
-    ]);
+  const [
+    { data: booking, error: bErr },
+    { data: contacts, error: cErr },
+    { data: rosterRows, error: mErr },
+  ] = await Promise.all([
+    supabase
+      .from("bookings")
+      .select(
+        "id, scheduled_at, duration_minutes, service_type, address, total_cents, client:clients ( name )",
+      )
+      .eq("id", bookingId)
+      .maybeSingle(),
+    supabase
+      .from("freelancer_contacts")
+      .select("id, full_name, phone, active")
+      .eq("active", true)
+      .order("full_name"),
+    // The org's own subcontractors — same offer, different deal: they're
+    // paid from clocked hours at their usual rate, never the flat amount.
+    supabase
+      .from("memberships")
+      .select(
+        "id, role, status, engagement, display_name, contact_phone, profile:profiles ( full_name, phone )",
+      )
+      .eq("organization_id", membership.organization_id)
+      .eq("status", "active")
+      .eq("engagement" as never, "subcontractor" as never),
+  ]);
 
   if (bErr) throw bErr;
   if (!booking) notFound();
   if (cErr) throw cErr;
+  if (mErr) throw mErr;
 
-  // If there are zero active freelancers, push the admin to the bench page
-  // to add some before trying again.
-  if (!contacts || contacts.length === 0) {
+  type RosterRow = {
+    id: string;
+    display_name: string | null;
+    contact_phone: string | null;
+    profile: { full_name: string | null; phone: string | null } | null;
+  };
+  const members = ((rosterRows ?? []) as unknown as RosterRow[])
+    .map((m) => ({
+      id: m.id,
+      name: memberDisplayName(m),
+      phone: m.contact_phone ?? m.profile?.phone ?? null,
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  // Nobody to offer to at all — send the admin to the on-call page to add
+  // someone before trying again.
+  if ((!contacts || contacts.length === 0) && members.length === 0) {
     redirect("/app/freelancers");
   }
 
   return (
     <PageShell
-      title="Send to bench"
-      description={`Broadcast this shift to your subcontractor bench via SMS.`}
+      title="Offer this shift"
+      description="Text your own subcontractors and the on-call pool. First to claim gets it."
       actions={
         <Link
           href={`/app/bookings/${booking.id}`}
@@ -71,11 +100,12 @@ export default async function NewJobOfferPage({
           <JobOfferForm
             tz={tz}
             bookingId={booking.id}
-            contacts={contacts.map((c) => ({
+            contacts={(contacts ?? []).map((c) => ({
               id: c.id,
               full_name: c.full_name,
               phone: c.phone,
             }))}
+            members={members}
             booking={{
               scheduled_at: booking.scheduled_at,
               duration_minutes: booking.duration_minutes,
@@ -114,6 +144,23 @@ export default async function NewJobOfferPage({
                 </dd>
               </div>
             </dl>
+          </div>
+
+          <div className="rounded-lg border border-border bg-card p-4 text-xs text-muted-foreground">
+            <p className="sollos-label mb-2">Who gets paid what</p>
+            <p>
+              <span className="font-medium text-foreground">
+                Your subcontractors
+              </span>{" "}
+              are paid their usual rate from clocked hours — claiming just
+              assigns them the job.
+            </p>
+            <p className="mt-2">
+              <span className="font-medium text-foreground">
+                On-call cleaners
+              </span>{" "}
+              earn the flat amount you set here, once the job completes.
+            </p>
           </div>
 
           {!isTwilioEnabled() && (

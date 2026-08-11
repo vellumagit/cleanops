@@ -96,12 +96,14 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/app/employees", label: "Employees", icon: UserRound, roles: ["owner", "admin"] },
       { href: "/app/applicants", label: "Applicants", icon: ClipboardList, roles: ["owner", "admin"] },
       { href: "/app/timesheets", label: "Timesheets", icon: Clock, roles: ["owner", "admin", "manager"] },
-      // Subcontractor pay lives INSIDE the bench section now — it's a view of
-      // the same people, not a separate area of the app, and two adjacent
+      // Subcontractor pay lives INSIDE this section — it's a view of the same
+      // people, not a separate area of the app, and two adjacent
       // "Subcontractor …" rows made the sidebar read like two features.
-      // "Subcontractors" sent owners here looking for their own crew. This is
-      // the external bench; roster subcontractors live under Employees.
-      { href: "/app/freelancers", label: "Outsourcing", icon: UserPlus, roles: ["owner", "admin", "manager"] },
+      // "Subcontractors" sent owners here looking for their own crew; then
+      // "Outsourcing" read like a service Sollos sells. This is the on-call
+      // pool — external emergency coverage. Roster subcontractors live under
+      // Employees (and get shift offers through the same Offer flow).
+      { href: "/app/freelancers", label: "On-call pool", icon: UserPlus, roles: ["owner", "admin", "manager"] },
       { href: "/app/reviews", label: "Reviews", icon: Star },
       { href: "/app/bonuses", label: "Bonuses", icon: Award },
       { href: "/app/training", label: "Training", icon: GraduationCap },
