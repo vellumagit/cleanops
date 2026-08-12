@@ -173,7 +173,14 @@ export default async function TimesheetsPage({
         .from("pto_requests" as never)
         .select("id, employee_id, start_date, end_date, hours, status, reason, created_at")
         .eq("organization_id" as never, membership.organization_id as never)
-        .or(`and(start_date.gte.${from},start_date.lte.${to}),status.eq.pending` as never)
+        // In-window rows for the timesheet totals, PLUS everything pending
+        // (needs review) PLUS anything not yet over (end_date >= today) —
+        // the default window is the LAST 14 days, so without that third arm
+        // an approved future vacation is invisible on the only screen that
+        // can cancel it.
+        .or(
+          `and(start_date.gte.${from},start_date.lte.${to}),status.eq.pending,end_date.gte.${zonedYmd(now, orgTz)}` as never,
+        )
         .order("created_at" as never, { ascending: false } as never)
         .limit(500),
       // Recent bookings — feed the manual time-entry form's booking picker.

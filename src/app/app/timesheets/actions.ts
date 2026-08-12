@@ -268,8 +268,10 @@ export async function updatePtoStatusAction(
   // Fire-and-forget email to the employee about the decision.
   notifyPtoStatus(id);
 
+  // Own surface only — submitSelfPtoRequestAction documents the 30s+
+  // freezes cross-surface revalidation caused. The other side is a
+  // dynamic page and is fresh on its next request anyway.
   revalidatePath("/app/timesheets", "page");
-  revalidatePath("/field/profile");
   return { ok: true };
 }
 
@@ -364,7 +366,6 @@ export async function updatePtoRequestAction(
   }
 
   revalidatePath("/app/timesheets", "page");
-  revalidatePath("/field/profile");
   return { ok: true };
 }
 
@@ -467,8 +468,10 @@ export async function cancelSelfPtoRequestAction(
     // Best-effort only.
   }
 
+  // Field surface only — revalidating /app/timesheets from a field action
+  // is the exact pattern submitSelfPtoRequestAction documents as causing
+  // 30s+ freezes (the action waits on the admin layout's queries).
   revalidatePath("/field/profile");
-  revalidatePath("/app/timesheets", "page");
   return { ok: true };
 }
 
@@ -584,8 +587,8 @@ export async function updateSelfPtoRequestAction(
     // Best-effort only.
   }
 
+  // Field surface only — see cancelSelfPtoRequestAction above.
   revalidatePath("/field/profile");
-  revalidatePath("/app/timesheets", "page");
   return { ok: true };
 }
 
