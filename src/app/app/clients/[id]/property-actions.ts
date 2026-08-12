@@ -63,6 +63,19 @@ export async function saveClientPropertyAction(
     .maybeSingle()) as unknown as { data: { id: string } | null };
   if (!client) return { errors: { _form: "Client not found." } };
 
+  // Same proof-of-ownership rule as property_id on bookings: the template
+  // FK only proves the id exists SOMEWHERE — without this check a forged
+  // form stores another org's checklist template on this property.
+  if (templateId) {
+    const { data: tpl } = (await admin
+      .from("checklist_templates")
+      .select("id")
+      .eq("id", templateId)
+      .eq("organization_id", membership.organization_id)
+      .maybeSingle()) as unknown as { data: { id: string } | null };
+    if (!tpl) return { errors: { _form: "Checklist template not found." } };
+  }
+
   const payload = {
     label,
     address,
@@ -72,12 +85,15 @@ export async function saveClientPropertyAction(
   };
 
   if (propertyId) {
-    // Scoped by org as well as id — the id alone would let a forged form
-    // rewrite another tenant's property.
+    // Scoped by org AND by the validated client — id + org alone would let
+    // a same-org forged form rewrite a different client's property (door
+    // codes included) while the audit row below attributes the change to
+    // the client_id it posted.
     const { error } = (await admin
       .from("client_properties" as never)
       .update(payload as never)
       .eq("id" as never, propertyId as never)
+      .eq("client_id" as never, clientId as never)
       .eq(
         "organization_id" as never,
         membership.organization_id as never,
@@ -132,6 +148,43 @@ export async function archiveClientPropertyAction(
     data: { id: string; client_id: string; label: string } | null;
   };
   if (!row) return { ok: false, error: "Property not found." };
+
+  // Refuse while anything is still SENDING PEOPLE THERE. An archived
+  // property vanishes from the pickers but an active series would keep
+  // stamping it onto every night's newly generated bookings, and future
+  // bookings would keep dispatching cleaners with its door codes —
+  // "archived" would be a label, not a fact. Past bookings are untouched
+  // and don't block; that history is the reason archive exists.
+  const [{ count: futureCount }, { count: seriesCount }] = (await Promise.all([
+    admin
+      .from("bookings")
+      .select("id", { count: "exact", head: true })
+      .eq("property_id" as never, propertyId as never)
+      .gte("scheduled_at", new Date().toISOString())
+      .in("status", ["pending", "confirmed"]),
+    admin
+      .from("booking_series")
+      .select("id", { count: "exact", head: true })
+      .eq("property_id" as never, propertyId as never)
+      .eq("active", true),
+  ])) as unknown as Array<{ count: number | null }>;
+
+  if ((seriesCount ?? 0) > 0 || (futureCount ?? 0) > 0) {
+    const parts = [
+      (seriesCount ?? 0) > 0
+        ? `${seriesCount} recurring schedule${seriesCount === 1 ? "" : "s"}`
+        : null,
+      (futureCount ?? 0) > 0
+        ? `${futureCount} upcoming booking${futureCount === 1 ? "" : "s"}`
+        : null,
+    ].filter(Boolean);
+    return {
+      ok: false,
+      error: `${parts.join(" and ")} still point${
+        (seriesCount ?? 0) + (futureCount ?? 0) === 1 ? "s" : ""
+      } at this property. Move them to another property (or cancel them) first.`,
+    };
+  }
 
   const { error } = (await admin
     .from("client_properties" as never)

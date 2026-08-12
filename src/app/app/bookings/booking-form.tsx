@@ -465,9 +465,16 @@ export function BookingForm({
     defaults?.address ?? "",
   );
   const [notesValue, setNotesValue] = useState<string>(defaults?.notes ?? "");
-  const [propertyId, setPropertyId] = useState<string>(
-    defaults?.property_id ?? "",
-  );
+  const [propertyId, setPropertyId] = useState<string>(() => {
+    if (defaults?.property_id) return defaults.property_id;
+    // A client with exactly one property has nothing to choose — select it,
+    // the same rule handleClientChange applies. Doing it here too means a
+    // pre-filled edit form (where no client-change event ever fires) heals
+    // a legacy booking that predates properties on its next ordinary save.
+    const preset = clients.find((c) => c.id === defaults?.client_id);
+    const props = preset?.properties ?? [];
+    return props.length === 1 ? props[0].id : "";
+  });
   // The client select stays uncontrolled (it has a defaultValue and a lot of
   // prefill behaviour hanging off it); this mirrors the choice so the property
   // picker knows whose properties to offer.
@@ -1476,7 +1483,7 @@ export function BookingForm({
         ordinary booking is the kind of noise that gets ignored — including on
         the rare booking where it matters.
       */}
-      {selectedClientProperties.length > 1 && (
+      {selectedClientProperties.length > 1 ? (
         <FormField label="Property" htmlFor="property_id">
           <FormSelect
             id="property_id"
@@ -1501,6 +1508,14 @@ export function BookingForm({
             ))}
           </FormSelect>
         </FormField>
+      ) : (
+        // No visible choice — but the value must STILL be submitted. The
+        // single-property auto-selection above is worthless if it never
+        // reaches FormData: the server reads an absent field as null, which
+        // both (a) kept the sole property — 100% of clients after the
+        // backfill — off every booking they made, leaving door codes off the
+        // field screen, and (b) severed an existing link on every edit.
+        <input type="hidden" name="property_id" value={propertyId} />
       )}
 
       <FormField

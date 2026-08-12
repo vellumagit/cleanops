@@ -28,7 +28,7 @@ export default async function EditBookingPage({
       supabase
         .from("bookings")
         .select(
-          "id, client_id, package_id, assigned_to, scheduled_at, duration_minutes, service_type, service_type_id, status, total_cents, hourly_rate_cents, address, notes, series_id, splits, divide_hours_evenly",
+          "id, client_id, package_id, assigned_to, scheduled_at, duration_minutes, service_type, service_type_id, status, total_cents, hourly_rate_cents, address, notes, series_id, splits, divide_hours_evenly, property_id",
         )
         .eq("id", id)
         .maybeSingle() as unknown as Promise<{
@@ -54,6 +54,7 @@ export default async function EditBookingPage({
             hourly_rate_cents: number;
           }> | null;
           divide_hours_evenly: boolean | null;
+          property_id: string | null;
         } | null;
         error: { message: string } | null;
       }>,
@@ -134,6 +135,12 @@ export default async function EditBookingPage({
               ),
               address: booking.address,
               notes: booking.notes,
+              // Without this, every save of this form wrote property_id =
+              // null — the picker defaulted to "Choose…" and the server
+              // treats empty as "no property", so an ordinary time change
+              // silently severed the booking (and, via this-and-future,
+              // the whole series) from its property.
+              property_id: booking.property_id,
               series_id: booking.series_id,
               scheduled_at_utc: booking.scheduled_at,
               splits: booking.splits ?? [],

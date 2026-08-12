@@ -192,30 +192,41 @@ export default async function ClientDetailPage({
   // codes and this page is the one place they are meant to be edited; the
   // read is org-scoped immediately below.
   const admin = createSupabaseAdminClient();
-  const [{ data: propertyData }, { data: templateData }] = await Promise.all([
-    admin
-      .from("client_properties" as never)
-      .select(
-        "id, label, address, access_notes, default_checklist_template_id, notes",
-      )
-      .eq("client_id" as never, id as never)
-      .eq("organization_id" as never, membership.organization_id as never)
-      .is("archived_at" as never, null as never)
-      .order("label" as never) as unknown as Promise<{
-      data: Array<Omit<PropertyRow, "bookingCount">> | null;
-    }>,
-    admin
-      .from("checklist_templates" as never)
-      .select("id, name")
-      .eq("organization_id" as never, membership.organization_id as never)
-      .eq("is_active" as never, true as never)
-      .order("name" as never) as unknown as Promise<{
-      data: Array<{ id: string; name: string }> | null;
-    }>,
-  ]);
+  const [{ data: propertyData }, { data: templateData }, { data: propertyJobRows }] =
+    await Promise.all([
+      admin
+        .from("client_properties" as never)
+        .select(
+          "id, label, address, access_notes, default_checklist_template_id, notes",
+        )
+        .eq("client_id" as never, id as never)
+        .eq("organization_id" as never, membership.organization_id as never)
+        .is("archived_at" as never, null as never)
+        .order("label" as never) as unknown as Promise<{
+        data: Array<Omit<PropertyRow, "bookingCount">> | null;
+      }>,
+      admin
+        .from("checklist_templates" as never)
+        .select("id, name")
+        .eq("organization_id" as never, membership.organization_id as never)
+        .eq("is_active" as never, true as never)
+        .order("name" as never) as unknown as Promise<{
+        data: Array<{ id: string; name: string }> | null;
+      }>,
+      // ALL of this client's property-linked bookings, one column — the
+      // archive confirm quotes these counts, and tallying them from the
+      // recent-10 list above told an owner a 200-job property had "0 jobs".
+      admin
+        .from("bookings")
+        .select("property_id")
+        .eq("client_id", id)
+        .not("property_id", "is", null) as unknown as Promise<{
+        data: Array<{ property_id: string | null }> | null;
+      }>,
+    ]);
 
   const jobsPerProperty = new Map<string, number>();
-  for (const b of bookings as Array<{ property_id?: string | null }>) {
+  for (const b of propertyJobRows ?? []) {
     if (b.property_id) {
       jobsPerProperty.set(
         b.property_id,

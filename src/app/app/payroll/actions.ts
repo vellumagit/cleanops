@@ -6,6 +6,8 @@ import { getActionContext } from "@/lib/actions";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { logAuditEvent } from "@/lib/audit";
 import { notifyPayrollPaid } from "@/lib/automations";
+import { getOrgTimezone } from "@/lib/org-timezone";
+import { zonedDayStartUtc, zonedMidnightUtc } from "@/lib/wall-clock";
 
 type Result = { ok: true; id: string } | { ok: false; error: string };
 
@@ -32,8 +34,22 @@ export async function createPayrollRunAction(
     return { ok: false, error: "Period end must be on or after start." };
   }
 
-  const fromIso = `${period_start}T00:00:00Z`;
-  const toIso = `${period_end}T23:59:59Z`;
+  // `period_start`/`period_end` are CALENDAR DAYS in the org's timezone —
+  // the same contract the Timesheets page resolves with these exact
+  // helpers. The previous `${ymd}T00:00:00Z` anchored the window to UTC,
+  // which in Edmonton meant a run labelled Aug 1–15 actually covered
+  // Jul 31 18:00 → Aug 15 17:59 local: every evening shift filed into the
+  // neighbouring period, run totals disagreed with the timesheet for the
+  // same dates, and a final-day evening shift missed its own last run.
+  // Same bug class 32b0105 fixed on timesheet edits. Half-open end, so
+  // 23:59:59.5 isn't silently dropped either.
+  const orgTz = await getOrgTimezone(membership.organization_id);
+  const fromIso = zonedMidnightUtc(period_start, orgTz).toISOString();
+  const toIso = zonedDayStartUtc(
+    zonedMidnightUtc(period_end, orgTz),
+    orgTz,
+    1,
+  ).toISOString();
 
   // Refuse to pay hours the system doesn't believe. needs_review is set when
   // a shift was auto-capped after nobody clocked out — the recorded time is
@@ -46,7 +62,7 @@ export async function createPayrollRunAction(
     .eq("organization_id", membership.organization_id)
     .is("payroll_run_id", null)
     .gte("clock_in_at", fromIso)
-    .lte("clock_in_at", toIso)
+    .lt("clock_in_at", toIso)
     .eq("needs_review" as never, true as never)) as unknown as {
     count: number | null;
   };
@@ -68,7 +84,7 @@ export async function createPayrollRunAction(
         .eq("organization_id", membership.organization_id)
         .is("payroll_run_id", null) // not already in a run
         .gte("clock_in_at", fromIso)
-        .lte("clock_in_at", toIso)
+        .lt("clock_in_at", toIso)
         .not("clock_out_at", "is", null) as unknown as Promise<{
         data: Array<{
           id: string;
@@ -138,11 +154,13 @@ export async function createPayrollRunAction(
   };
 
   const buckets = new Map<string, Bucket>();
-  // Track which rows actually fed this run so we can stamp them with the
-  // run id and never pay them again.
-  const countedEntryIds: string[] = [];
-  const countedBonusIds: string[] = [];
-  const countedPtoIds: string[] = [];
+  // Track which rows fed this run — WITH their owner, because only rows
+  // belonging to people who survive the zero-value filter below may be
+  // stamped. Stamping is "this run paid it"; stamping a filtered-out
+  // person's row consumes it while paying $0, permanently.
+  const countedEntries: Array<{ id: string; employeeId: string }> = [];
+  const countedBonuses: Array<{ id: string; employeeId: string }> = [];
+  const countedPto: Array<{ id: string; employeeId: string }> = [];
 
   // Seed with every active employee (so zero-hour rows still show up)
   for (const emp of employees ?? []) {
@@ -163,7 +181,7 @@ export async function createPayrollRunAction(
     if (!e.employee_id || !e.clock_in_at || !e.clock_out_at) continue;
     const bucket = buckets.get(e.employee_id);
     if (!bucket) continue;
-    countedEntryIds.push(e.id);
+    countedEntries.push({ id: e.id, employeeId: e.employee_id });
     const mins = Math.max(
       0,
       Math.round(
@@ -194,7 +212,7 @@ export async function createPayrollRunAction(
     if (!b.employee_id) continue;
     const bucket = buckets.get(b.employee_id);
     if (!bucket) continue;
-    countedBonusIds.push(b.id);
+    countedBonuses.push({ id: b.id, employeeId: b.employee_id });
     bucket.bonusCents += b.amount_cents ?? 0;
   }
 
@@ -206,7 +224,7 @@ export async function createPayrollRunAction(
   }>) {
     const bucket = buckets.get(p.employee_id);
     if (!bucket) continue;
-    countedPtoIds.push(p.id);
+    countedPto.push({ id: p.id, employeeId: p.employee_id });
     const h = Number(p.hours) || 0;
     bucket.ptoHours += h;
     bucket.ptoCents += Math.round(h * bucket.payRateCents);
@@ -279,24 +297,41 @@ export async function createPayrollRunAction(
   // Stamp the consumed time entries + bonuses with this run so a later
   // overlapping run can't pay them again. Admin client, scoped strictly to
   // the ids we collected from this org's own query above.
+  //
+  // ONLY rows belonging to people who made it into `items`. The zero-value
+  // filter above drops a person whose run total is $0 — e.g. approved PTO
+  // priced at a pay rate that is still NULL — and stamping their rows here
+  // would mark them paid-by-this-run while paying nothing, making them
+  // permanently unpayable once the rate is fixed.
+  const included = new Set(items.map((i) => i.employeeId));
+  const stampEntryIds = countedEntries
+    .filter((c) => included.has(c.employeeId))
+    .map((c) => c.id);
+  const stampBonusIds = countedBonuses
+    .filter((c) => included.has(c.employeeId))
+    .map((c) => c.id);
+  const stampPtoIds = countedPto
+    .filter((c) => included.has(c.employeeId))
+    .map((c) => c.id);
+
   const stampDb = createSupabaseAdminClient();
-  if (countedEntryIds.length > 0) {
+  if (stampEntryIds.length > 0) {
     await (stampDb
       .from("time_entries")
       .update({ payroll_run_id: run.id })
-      .in("id", countedEntryIds) as unknown as Promise<unknown>);
+      .in("id", stampEntryIds) as unknown as Promise<unknown>);
   }
-  if (countedBonusIds.length > 0) {
+  if (stampBonusIds.length > 0) {
     await (stampDb
       .from("bonuses")
       .update({ payroll_run_id: run.id })
-      .in("id", countedBonusIds) as unknown as Promise<unknown>);
+      .in("id", stampBonusIds) as unknown as Promise<unknown>);
   }
-  if (countedPtoIds.length > 0) {
+  if (stampPtoIds.length > 0) {
     await (stampDb
       .from("pto_requests")
       .update({ payroll_run_id: run.id } as never)
-      .in("id", countedPtoIds) as unknown as Promise<unknown>);
+      .in("id", stampPtoIds) as unknown as Promise<unknown>);
   }
 
   await logAuditEvent({

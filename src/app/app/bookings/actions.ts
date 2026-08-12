@@ -1949,7 +1949,7 @@ export async function convertBookingToRecurringAction(
   const { data: booking } = (await supabase
     .from("bookings")
     .select(
-      "id, organization_id, client_id, scheduled_at, duration_minutes, service_type, service_type_id, service_type_label, package_id, assigned_to, total_cents, hourly_rate_cents, address, notes, status, series_id",
+      "id, organization_id, client_id, scheduled_at, duration_minutes, service_type, service_type_id, service_type_label, package_id, assigned_to, total_cents, hourly_rate_cents, address, notes, status, series_id, property_id",
     )
     .eq("id", bookingId)
     .eq("organization_id", membership.organization_id)
@@ -1971,6 +1971,7 @@ export async function convertBookingToRecurringAction(
       notes: string | null;
       status: string;
       series_id: string | null;
+      property_id: string | null;
     } | null;
   };
 
@@ -2011,6 +2012,10 @@ export async function convertBookingToRecurringAction(
       hourly_rate_cents: booking.hourly_rate_cents,
       address: booking.address,
       notes: booking.notes,
+      // Already proven to belong to this client when the source booking was
+      // saved; dropping it here made every "make recurring" series (and all
+      // its cron-generated occurrences) propertyless.
+      property_id: booking.property_id,
     } as never)
     .select("id")
     .single()) as unknown as {
@@ -2066,6 +2071,7 @@ export async function convertBookingToRecurringAction(
       address: booking.address,
       notes: booking.notes,
       series_id: series.id,
+      property_id: booking.property_id,
     }));
 
     const { data: inserted } = (await supabase
@@ -2131,7 +2137,7 @@ export async function duplicateBookingAction(id: string) {
   const { data: source } = (await supabase
     .from("bookings")
     .select(
-      "client_id, package_id, assigned_to, scheduled_at, duration_minutes, service_type, service_type_id, service_type_label, total_cents, hourly_rate_cents, address, notes, splits",
+      "client_id, package_id, assigned_to, scheduled_at, duration_minutes, service_type, service_type_id, service_type_label, total_cents, hourly_rate_cents, address, notes, splits, property_id",
     )
     .eq("id", id)
     .maybeSingle()) as unknown as {
@@ -2149,6 +2155,7 @@ export async function duplicateBookingAction(id: string) {
       address: string | null;
       notes: string | null;
       splits: Json;
+      property_id: string | null;
     } | null;
   };
 
@@ -2178,6 +2185,7 @@ export async function duplicateBookingAction(id: string) {
       address: source.address ?? null,
       notes: source.notes ?? null,
       splits: source.splits ?? [],
+      property_id: source.property_id ?? null,
     })
     .select("id")
     .single();

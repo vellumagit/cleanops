@@ -56,7 +56,7 @@ export default async function JobOffersPage() {
   return (
     <PageShell
       title="Job offers"
-      description="Every shift you have broadcast to your outsourcing contacts."
+      description="Every shift you have offered out — to your own subcontractors and the on-call pool."
     >
       {rows.length === 0 ? (
         <div className="sollos-card flex flex-col items-center justify-center border-dashed px-6 py-20 text-center">

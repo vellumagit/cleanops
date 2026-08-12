@@ -193,11 +193,26 @@ export async function claimOfferAction(token: string): Promise<ClaimResult> {
   //     (Pay note: membership claims carry no flat pay; see the migration.)
   if (dispatch.membership_id) {
     try {
-      const { data: bookingRow } = await admin
+      const { data: bookingRow } = (await admin
         .from("bookings")
-        .select("id, assigned_to")
+        .select(
+          "id, organization_id, assigned_to, scheduled_at, duration_minutes, service_type, address, notes, google_calendar_event_id, client:clients ( name )",
+        )
         .eq("id", offer.booking_id ?? "")
-        .maybeSingle();
+        .maybeSingle()) as unknown as {
+        data: {
+          id: string;
+          organization_id: string;
+          assigned_to: string | null;
+          scheduled_at: string;
+          duration_minutes: number;
+          service_type: string;
+          address: string | null;
+          notes: string | null;
+          google_calendar_event_id: string | null;
+          client: { name: string | null } | null;
+        } | null;
+      };
 
       if (bookingRow) {
         const { data: assigneeRows } = await admin
@@ -235,6 +250,77 @@ export async function claimOfferAction(token: string): Promise<ClaimResult> {
               .update({ assigned_to: dispatch.membership_id })
               .eq("id", bookingRow.id)
               .is("assigned_to", null);
+          }
+
+          // Calendars. Every other path that assigns someone syncs Google
+          // Calendar; a claim is an assignment, so it must too, or the one
+          // person who volunteered is the one person whose calendar never
+          // hears about it. Fire-and-forget — never fails the claim.
+          try {
+            const {
+              syncMemberCalendarEvents,
+              updateCalendarEvent,
+            } = await import("@/lib/google-calendar");
+            const { memberDisplayName } = await import("@/lib/member-display");
+
+            // Full current assignee set — syncMemberCalendarEvents DELETES
+            // events for members missing from this list, so passing only
+            // the claimer would wipe the rest of the crew's calendars.
+            const finalPrimary =
+              bookingRow.assigned_to ??
+              (assigneeRows ?? []).find((a) => a.is_primary)?.membership_id ??
+              dispatch.membership_id;
+            const allAssignees = Array.from(
+              new Set([
+                ...(bookingRow.assigned_to ? [bookingRow.assigned_to] : []),
+                ...(assigneeRows ?? []).map((a) => a.membership_id),
+                dispatch.membership_id,
+              ]),
+            );
+
+            const eventBooking = {
+              id: bookingRow.id,
+              scheduled_at: bookingRow.scheduled_at,
+              duration_minutes: bookingRow.duration_minutes,
+              service_type: bookingRow.service_type,
+              address: bookingRow.address,
+              notes: bookingRow.notes,
+              client_name: bookingRow.client?.name ?? undefined,
+            };
+
+            syncMemberCalendarEvents(
+              bookingRow.id,
+              allAssignees,
+              eventBooking,
+            ).catch((err) =>
+              console.error("[claim] member gcal sync failed:", err),
+            );
+
+            // Refresh the org event's assignee label too, so the calendar
+            // Svitlana looks at says who is coming.
+            if (bookingRow.google_calendar_event_id) {
+              const { data: primaryRow } = (await admin
+                .from("memberships")
+                .select("display_name, profile:profiles ( full_name )")
+                .eq("id", finalPrimary)
+                .maybeSingle()) as unknown as {
+                data: {
+                  display_name: string | null;
+                  profile: { full_name: string | null } | null;
+                } | null;
+              };
+              updateCalendarEvent(bookingRow.organization_id, {
+                ...eventBooking,
+                google_calendar_event_id: bookingRow.google_calendar_event_id,
+                employee_name: primaryRow
+                  ? memberDisplayName(primaryRow)
+                  : undefined,
+              }).catch((err) =>
+                console.error("[claim] org gcal update failed:", err),
+              );
+            }
+          } catch (gcalErr) {
+            console.error("[claim] gcal sync setup failed:", gcalErr);
           }
         }
       }
