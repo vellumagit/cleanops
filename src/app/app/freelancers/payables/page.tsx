@@ -79,12 +79,23 @@ export default async function SubcontractorPayablesPage() {
                       className="transition-colors hover:bg-muted/50"
                     >
                       <td className="px-4 py-2.5">
-                        <Link
-                          href={`/app/freelancers/payables/${encodePayeeParam(r.payee)}`}
-                          className="font-medium text-foreground hover:underline underline-offset-2"
-                        >
-                          {r.name}
-                        </Link>
+                        <div className="flex items-center gap-2">
+                          <Link
+                            href={`/app/freelancers/payables/${encodePayeeParam(r.payee)}`}
+                            className="font-medium text-foreground hover:underline underline-offset-2"
+                          >
+                            {r.name}
+                          </Link>
+                          {r.unreviewedCount > 0 && (
+                            <Link
+                              href="/app/timesheets"
+                              title={`${r.unreviewedCount} capped shift${r.unreviewedCount === 1 ? "" : "s"} not counted in Earned — nobody clocked out and the system capped the hours. Confirm or correct them on Timesheets and they'll appear here.`}
+                              className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold text-amber-800 hover:bg-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:hover:bg-amber-950/60"
+                            >
+                              {r.unreviewedCount} REVIEW
+                            </Link>
+                          )}
+                        </div>
                       </td>
                       <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">
                         {r.jobCount}

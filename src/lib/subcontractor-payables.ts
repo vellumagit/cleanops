@@ -69,6 +69,10 @@ export type PayableSummary = {
   paidCents: number;
   outstandingCents: number;
   jobCount: number;
+  /** Capped shifts (needs_review) EXCLUDED from earnedCents until an owner
+   *  confirms them on Timesheets — payroll refuses to pay unbelieved hours,
+   *  and this screen must not be the loophole. */
+  unreviewedCount: number;
 };
 
 export type LedgerJob = {
@@ -107,6 +111,10 @@ export type SubcontractorLedger = {
   earnedCents: number;
   paidCents: number;
   outstandingCents: number;
+  /** Capped shifts (needs_review) excluded from earnedCents until confirmed
+   *  on Timesheets. Roster subcontractors only — claims can't be capped. */
+  unreviewedCount: number;
+  unreviewedMinutes: number;
 };
 
 /**
@@ -120,6 +128,8 @@ export async function getSubcontractorPayables(
 
   const earned = new Map<string, number>();
   const jobCount = new Map<string, number>();
+  // Capped shifts awaiting an owner's confirmation — counted, never priced.
+  const unreviewed = new Map<string, number>();
 
   // On-call cleaners earn the agreed pay_cents per claimed shift. The
   // null-contact guard below is load-bearing: a roster subcontractor's claim
@@ -184,10 +194,11 @@ export async function getSubcontractorPayables(
       clock_in_at: string | null;
       clock_out_at: string | null;
       pay_rate_cents_snapshot: number | null;
+      needs_review: boolean | null;
       booking: { hourly_rate_cents: number | null } | null;
     };
     const ENTRY_COLS =
-      "employee_id, clock_in_at, clock_out_at, pay_rate_cents_snapshot, booking:bookings ( hourly_rate_cents )";
+      "employee_id, clock_in_at, clock_out_at, pay_rate_cents_snapshot, needs_review, booking:bookings ( hourly_rate_cents )";
 
     // Two fetches, one meaning: hours WORKED under the subcontractor
     // engagement. The snapshot (not the person's current engagement) is
@@ -246,6 +257,14 @@ export async function getSubcontractorPayables(
     for (const e of entries) {
       if (!e.employee_id || !e.clock_in_at || !e.clock_out_at) continue;
       if (!rateById.has(e.employee_id)) continue;
+      const k = payeeKey({ kind: "membership", id: e.employee_id });
+      // A capped shift is a ceiling, not an observation. Payroll refuses to
+      // pay these until an owner confirms them on Timesheets — the same
+      // hours must not walk out the door through this screen instead.
+      if (e.needs_review) {
+        unreviewed.set(k, (unreviewed.get(k) ?? 0) + 1);
+        continue;
+      }
       const mins = Math.max(
         0,
         Math.round(
@@ -260,7 +279,6 @@ export async function getSubcontractorPayables(
         e.pay_rate_cents_snapshot ??
         rateById.get(e.employee_id) ??
         0;
-      const k = payeeKey({ kind: "membership", id: e.employee_id });
       earned.set(k, (earned.get(k) ?? 0) + Math.round((mins * rate) / 60));
       jobCount.set(k, (jobCount.get(k) ?? 0) + 1);
     }
@@ -292,7 +310,12 @@ export async function getSubcontractorPayables(
     paid.set(k, (paid.get(k) ?? 0) + (p.amount_cents ?? 0));
   }
 
-  const keys = [...new Set([...earned.keys(), ...paid.keys()])];
+  // Unreviewed keys included: someone whose ONLY unstamped hours are capped
+  // shifts still needs a row, or the review chip has nowhere to appear and
+  // their hours are invisible on every pay surface at once.
+  const keys = [
+    ...new Set([...earned.keys(), ...paid.keys(), ...unreviewed.keys()]),
+  ];
   if (keys.length === 0) return { rows: [], totalOutstandingCents: 0 };
 
   const refs = keys.map(parsePayeeKey);
@@ -355,6 +378,7 @@ export async function getSubcontractorPayables(
         paidCents,
         outstandingCents: earnedCents - paidCents,
         jobCount: jobCount.get(k) ?? 0,
+        unreviewedCount: unreviewed.get(k) ?? 0,
       };
     })
     .sort((a, b) => b.outstandingCents - a.outstandingCents);
@@ -509,6 +533,8 @@ export async function getSubcontractorLedger(
   // run. Mirrors getSubcontractorPayables above — the two must agree or the
   // list and the detail page will show different numbers for one person.
   let hourEarnedCents = 0;
+  let unreviewedCount = 0;
+  let unreviewedMinutes = 0;
   if (isMember) {
     // Member first: whether NULL-snapshot (legacy) entries count depends on
     // their CURRENT engagement — the same rule the org-wide list applies —
@@ -524,7 +550,7 @@ export async function getSubcontractorLedger(
     const { data: entries } = (await admin
       .from("time_entries")
       .select(
-        "clock_in_at, clock_out_at, pay_rate_cents_snapshot, booking:bookings ( hourly_rate_cents )" as never,
+        "clock_in_at, clock_out_at, pay_rate_cents_snapshot, needs_review, booking:bookings ( hourly_rate_cents )" as never,
       )
       .eq("organization_id", organizationId)
       .eq("employee_id", payee.id)
@@ -539,6 +565,7 @@ export async function getSubcontractorLedger(
         clock_in_at: string | null;
         clock_out_at: string | null;
         pay_rate_cents_snapshot: number | null;
+        needs_review: boolean | null;
         booking: { hourly_rate_cents: number | null } | null;
       }> | null;
     };
@@ -552,6 +579,13 @@ export async function getSubcontractorLedger(
             60_000,
         ),
       );
+      // Capped shifts: counted so the page can say why the money isn't
+      // here, never priced — same rule as the org-wide list and payroll.
+      if (e.needs_review) {
+        unreviewedCount += 1;
+        unreviewedMinutes += mins;
+        continue;
+      }
       if (mins === 0) continue;
       const rate =
         e.booking?.hourly_rate_cents ??
@@ -581,5 +615,7 @@ export async function getSubcontractorLedger(
     earnedCents,
     paidCents,
     outstandingCents: earnedCents - paidCents,
+    unreviewedCount,
+    unreviewedMinutes,
   };
 }

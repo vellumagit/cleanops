@@ -112,6 +112,26 @@ export default async function SubcontractorLedgerPage({
             </div>
           </div>
 
+          {ledger.unreviewedCount > 0 && (
+            <div className="mt-4 rounded-md border border-amber-300 bg-amber-50/60 px-4 py-3 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-200">
+              <span className="font-semibold">
+                {ledger.unreviewedCount} capped shift
+                {ledger.unreviewedCount === 1 ? "" : "s"} (
+                {Math.round((ledger.unreviewedMinutes / 60) * 10) / 10}h) not
+                counted in Earned.
+              </span>{" "}
+              Nobody clocked out and the system capped the hours — the
+              recorded time is a ceiling, not an observation.{" "}
+              <Link
+                href="/app/timesheets"
+                className="font-semibold underline underline-offset-2"
+              >
+                Confirm or correct them on Timesheets
+              </Link>{" "}
+              and they&apos;ll count here.
+            </div>
+          )}
+
           <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
             <StatTile
               label="Earned"
