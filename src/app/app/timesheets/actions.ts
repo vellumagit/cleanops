@@ -118,6 +118,40 @@ async function isSubcontractorMember(
   return data?.engagement === "subcontractor";
 }
 
+/**
+ * Best-effort PTO balance adjustment via the increment_pto_used RPC.
+ *
+ * Two traps live here, and production hit the second (SOLLOS3-K):
+ * the RPC may not exist in an environment, and supabase.rpc() returns a
+ * lazy query BUILDER — a thenable with .then() but NO .catch(), so the
+ * old `.catch(() => {})` swallow idiom itself threw
+ * "rpc(...).catch is not a function" AFTER the main write had already
+ * succeeded. Await inside try/catch instead: PostgREST failures resolve
+ * with {error} (ignored), and anything genuinely thrown is swallowed.
+ */
+async function adjustPtoBalance(
+  supabase: { rpc: unknown },
+  employeeId: string,
+  startDate: string,
+  hoursDelta: number,
+): Promise<void> {
+  if (!hoursDelta) return;
+  try {
+    await (
+      supabase.rpc as (
+        name: string,
+        args: Record<string, unknown>,
+      ) => PromiseLike<unknown>
+    )("increment_pto_used", {
+      p_employee_id: employeeId,
+      p_year: new Date(startDate).getFullYear(),
+      p_hours: hoursDelta,
+    });
+  } catch {
+    // RPC may not exist yet — non-critical.
+  }
+}
+
 export async function createPtoRequestAction(
   formData: FormData,
 ): Promise<Result> {
@@ -162,22 +196,9 @@ export async function createPtoRequestAction(
 
   if (error) return { ok: false, error: error.message };
 
-  // Update PTO balance — RPC may not exist yet, so we cast loosely and
-  // swallow the error instead of requiring the RPC to be defined.
-  // (0 hours for subcontractors: unavailability never touches a balance.)
-  const year = new Date(start_date).getFullYear();
-  await (
-    supabase.rpc as unknown as (
-      name: string,
-      args: Record<string, unknown>,
-    ) => Promise<unknown>
-  )("increment_pto_used", {
-    p_employee_id: employee_id,
-    p_year: year,
-    p_hours: hours,
-  }).catch(() => {
-    // RPC may not exist yet — non-critical
-  });
+  // Update PTO balance — best-effort; 0 hours for subcontractors, and
+  // unavailability never touches a balance.
+  await adjustPtoBalance(supabase, employee_id, start_date, hours);
 
   revalidatePath("/app/timesheets", "page");
   return { ok: true };
@@ -288,18 +309,12 @@ export async function updatePtoStatusAction(
       : before.status === "approved" && status !== "approved"
         ? -Number(before.hours)
         : 0;
-  if (balanceDelta !== 0) {
-    await (
-      supabase.rpc as unknown as (
-        name: string,
-        args: Record<string, unknown>,
-      ) => Promise<unknown>
-    )("increment_pto_used", {
-      p_employee_id: before.employee_id,
-      p_year: new Date(before.start_date).getFullYear(),
-      p_hours: balanceDelta,
-    }).catch(() => {});
-  }
+  await adjustPtoBalance(
+    supabase,
+    before.employee_id,
+    before.start_date,
+    balanceDelta,
+  );
 
   // Fire-and-forget email to the employee about the decision.
   notifyPtoStatus(id);
@@ -378,16 +393,12 @@ export async function updatePtoRequestAction(
 
   // An approved request's hours moved — move the cached balance with them.
   if (before.status === "approved" && Number(before.hours) !== fields.hours) {
-    await (
-      supabase.rpc as unknown as (
-        name: string,
-        args: Record<string, unknown>,
-      ) => Promise<unknown>
-    )("increment_pto_used", {
-      p_employee_id: before.employee_id,
-      p_year: new Date(before.start_date).getFullYear(),
-      p_hours: fields.hours - Number(before.hours),
-    }).catch(() => {});
+    await adjustPtoBalance(
+      supabase,
+      before.employee_id,
+      before.start_date,
+      fields.hours - Number(before.hours),
+    );
   }
 
   // Tell the person their time off changed under them.
@@ -471,16 +482,12 @@ export async function cancelSelfPtoRequestAction(
 
   // Refund the cached balance if the cancelled request was approved.
   if (before.status === "approved") {
-    await (
-      supabase.rpc as unknown as (
-        name: string,
-        args: Record<string, unknown>,
-      ) => Promise<unknown>
-    )("increment_pto_used", {
-      p_employee_id: before.employee_id,
-      p_year: new Date(before.start_date).getFullYear(),
-      p_hours: -Number(before.hours),
-    }).catch(() => {});
+    await adjustPtoBalance(
+      supabase,
+      before.employee_id,
+      before.start_date,
+      -Number(before.hours),
+    );
   }
 
   // The schedule just got days back — management should hear about it.
@@ -594,16 +601,12 @@ export async function updateSelfPtoRequestAction(
 
   // The approval (and its spent hours) is revoked until re-approved.
   if (wasApproved) {
-    await (
-      supabase.rpc as unknown as (
-        name: string,
-        args: Record<string, unknown>,
-      ) => Promise<unknown>
-    )("increment_pto_used", {
-      p_employee_id: before.employee_id,
-      p_year: new Date(before.start_date).getFullYear(),
-      p_hours: -Number(before.hours),
-    }).catch(() => {});
+    await adjustPtoBalance(
+      supabase,
+      before.employee_id,
+      before.start_date,
+      -Number(before.hours),
+    );
   }
 
   try {
@@ -999,20 +1002,15 @@ export async function deletePtoRequestAction(
     )) as unknown as { error: { message: string } | null };
   if (error) return { ok: false, error: error.message };
 
-  // Reverse the PTO balance if the deleted request was approved. RPC may
-  // not exist yet, so swallow errors — the row is gone either way.
+  // Reverse the PTO balance if the deleted request was approved — the row
+  // is gone either way.
   if (before.status === "approved") {
-    const year = new Date(before.start_date).getFullYear();
-    await (
-      supabase.rpc as unknown as (
-        name: string,
-        args: Record<string, unknown>,
-      ) => Promise<unknown>
-    )("increment_pto_used", {
-      p_employee_id: before.employee_id,
-      p_year: year,
-      p_hours: -Number(before.hours),
-    }).catch(() => {});
+    await adjustPtoBalance(
+      supabase,
+      before.employee_id,
+      before.start_date,
+      -Number(before.hours),
+    );
   }
 
   revalidatePath("/app/timesheets", "page");
