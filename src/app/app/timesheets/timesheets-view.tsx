@@ -19,6 +19,7 @@ import {
   Trash2,
   Clock,
   TriangleAlert,
+  MapPin,
 } from "lucide-react";
 import {
   formatDateTime,
@@ -219,6 +220,50 @@ function generateCSV(entries: TimesheetEntry[], orgTz: string): string {
   );
 
   return [header, ...rows].join("\n");
+}
+
+/**
+ * Where a punch physically happened. Clock in/out capture browser
+ * geolocation (consented; null when denied) — these coordinates were
+ * stored from day one and read by nothing until now.
+ *
+ * With a job address we link DIRECTIONS from the punch to the job, so
+ * "did they actually clock in on site?" is answered by the distance
+ * Google draws — no geocoding on our side. Without one (off-job time),
+ * a plain pin drop.
+ */
+function PunchPin({
+  lat,
+  lng,
+  jobAddress,
+  label,
+}: {
+  lat: number | null;
+  lng: number | null;
+  jobAddress: string | null;
+  label: "in" | "out";
+}) {
+  if (lat == null || lng == null) return null;
+  const href = jobAddress
+    ? `https://www.google.com/maps/dir/?api=1&origin=${lat},${lng}&destination=${encodeURIComponent(jobAddress)}`
+    : `https://www.google.com/maps?q=${lat},${lng}`;
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      onClick={(e) => e.stopPropagation()}
+      title={
+        jobAddress
+          ? `Where they clocked ${label} — opens directions to the job address`
+          : `Where they clocked ${label}`
+      }
+      className="text-muted-foreground transition-colors hover:text-primary"
+      aria-label={`Punch ${label} location`}
+    >
+      <MapPin className="h-3 w-3" />
+    </a>
+  );
 }
 
 export function TimesheetsView({
@@ -893,6 +938,12 @@ export function TimesheetsView({
                               <td className="px-4 py-2.5 tabular-nums">
                                 <div className="flex items-center gap-1.5">
                                   {formatDateTime(r.clock_in_at, orgTz)}
+                                  <PunchPin
+                                    lat={r.clock_in_lat}
+                                    lng={r.clock_in_lng}
+                                    jobAddress={r.booking_address}
+                                    label="in"
+                                  />
                                   {r.is_manual && (
                                     <span
                                       title="Manually entered"
@@ -935,7 +986,15 @@ export function TimesheetsView({
                                     In progress
                                   </span>
                                 ) : (
-                                  formatDateTime(r.clock_out_at, orgTz)
+                                  <span className="inline-flex items-center gap-1.5">
+                                    {formatDateTime(r.clock_out_at, orgTz)}
+                                    <PunchPin
+                                      lat={r.clock_out_lat}
+                                      lng={r.clock_out_lng}
+                                      jobAddress={r.booking_address}
+                                      label="out"
+                                    />
+                                  </span>
                                 )}
                               </td>
                               <td className="px-4 py-2.5 font-medium tabular-nums">
@@ -1072,7 +1131,15 @@ export function TimesheetsView({
                       </div>
                     </td>
                     <td className="px-4 py-2.5 tabular-nums">
-                      {formatDateTime(r.clock_in_at, orgTz)}
+                      <span className="inline-flex items-center gap-1.5">
+                        {formatDateTime(r.clock_in_at, orgTz)}
+                        <PunchPin
+                          lat={r.clock_in_lat}
+                          lng={r.clock_in_lng}
+                          jobAddress={r.booking_address}
+                          label="in"
+                        />
+                      </span>
                     </td>
                     <td className="px-4 py-2.5 tabular-nums">
                       {r.is_open ? (
@@ -1081,7 +1148,15 @@ export function TimesheetsView({
                           In progress
                         </span>
                       ) : (
-                        formatDateTime(r.clock_out_at, orgTz)
+                        <span className="inline-flex items-center gap-1.5">
+                          {formatDateTime(r.clock_out_at, orgTz)}
+                          <PunchPin
+                            lat={r.clock_out_lat}
+                            lng={r.clock_out_lng}
+                            jobAddress={r.booking_address}
+                            label="out"
+                          />
+                        </span>
                       )}
                     </td>
                     <td className="px-4 py-2.5 font-medium tabular-nums">

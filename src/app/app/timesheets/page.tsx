@@ -94,6 +94,10 @@ export default async function TimesheetsPage({
           work_category,
           needs_review,
           auto_closed_at,
+          clock_in_lat,
+          clock_in_lng,
+          clock_out_lat,
+          clock_out_lng,
           employee:memberships!time_entries_employee_id_fkey (
             id,
             display_name,
@@ -107,6 +111,7 @@ export default async function TimesheetsPage({
             total_cents,
             hourly_rate_cents,
             status,
+            address,
             client:clients ( name )
           )
         `,
@@ -126,6 +131,10 @@ export default async function TimesheetsPage({
           work_category: string | null;
           needs_review: boolean | null;
           auto_closed_at: string | null;
+          clock_in_lat: number | null;
+          clock_in_lng: number | null;
+          clock_out_lat: number | null;
+          clock_out_lng: number | null;
           employee: {
             id: string;
             display_name: string | null;
@@ -139,6 +148,7 @@ export default async function TimesheetsPage({
             total_cents: number;
             hourly_rate_cents: number | null;
             status: string;
+            address: string | null;
             client: { name: string | null } | null;
           } | null;
         }> | null;
@@ -339,6 +349,11 @@ export default async function TimesheetsPage({
       scheduled_at: scheduledAt,
       estimated_minutes: estimatedMinutes,
       booking_total_cents: e.booking?.total_cents ?? null,
+      booking_address: e.booking?.address ?? null,
+      clock_in_lat: e.clock_in_lat ?? null,
+      clock_in_lng: e.clock_in_lng ?? null,
+      clock_out_lat: e.clock_out_lat ?? null,
+      clock_out_lng: e.clock_out_lng ?? null,
       // Analysis
       punctuality,
       punctuality_minutes: punctualityMinutes,

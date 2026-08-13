@@ -25,6 +25,15 @@ export type TimesheetEntry = {
   scheduled_at: string | null;
   estimated_minutes: number | null;
   booking_total_cents: number | null;
+  /** Job address — the destination for the punch-location directions link. */
+  booking_address: string | null;
+  // Where the punches physically happened (browser geolocation, consented;
+  // null when denied/unavailable). Captured since day one — these fields
+  // are what finally makes them readable.
+  clock_in_lat: number | null;
+  clock_in_lng: number | null;
+  clock_out_lat: number | null;
+  clock_out_lng: number | null;
   // Analysis
   punctuality: "early" | "on_time" | "late" | null;
   punctuality_minutes: number;
