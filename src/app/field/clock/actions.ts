@@ -56,13 +56,14 @@ export async function clockInAction(
   const admin = createSupabaseAdminClient();
   const { data: rateRow } = (await admin
     .from("memberships")
-    .select("pay_rate_cents")
+    .select("pay_rate_cents, engagement")
     .eq("id", membership.id)
     .eq("organization_id", membership.organization_id)
     .maybeSingle()) as unknown as {
-    data: { pay_rate_cents: number | null } | null;
+    data: { pay_rate_cents: number | null; engagement: string | null } | null;
   };
 
+  const { toEngagement } = await import("@/lib/engagement");
   const { error } = await supabase.from("time_entries").insert({
     organization_id: membership.organization_id,
     employee_id: membership.id,
@@ -71,6 +72,10 @@ export async function clockInAction(
     clock_in_lat: lat,
     clock_in_lng: lng,
     pay_rate_cents_snapshot: rateRow?.pay_rate_cents ?? null,
+    // Like the rate: which pay system this shift belongs to is decided
+    // now, not re-derived later — an engagement flip must never re-route
+    // hours already worked.
+    engagement_snapshot: toEngagement(rateRow?.engagement),
     work_category: workCategory,
   } as never);
   if (error) {

@@ -116,13 +116,17 @@ export async function startJobAction(
   const adminForRate = createSupabaseAdminClient();
   const { data: rateRow } = (await adminForRate
     .from("memberships")
-    .select("pay_rate_cents")
+    .select("pay_rate_cents, engagement")
     .eq("id", membership.id)
     .eq("organization_id", membership.organization_id)
     .maybeSingle()) as unknown as {
-    data: { pay_rate_cents: number | null } | null;
+    data: { pay_rate_cents: number | null; engagement: string | null } | null;
   };
   const payRateSnapshot = rateRow?.pay_rate_cents ?? null;
+  // Which pay system this shift belongs to, decided at clock-in like the
+  // rate — an engagement flip must never re-route hours already worked.
+  const { toEngagement } = await import("@/lib/engagement");
+  const engagementSnapshot = toEngagement(rateRow?.engagement);
 
   if (anyOpenEntry) {
     if (
@@ -153,7 +157,8 @@ export async function startJobAction(
           clock_in_lat: lat,
           clock_in_lng: lng,
           pay_rate_cents_snapshot: payRateSnapshot,
-        });
+          engagement_snapshot: engagementSnapshot,
+        } as never);
       if (insertError) {
         const code = (insertError as { code?: string }).code;
         if (code === "23505") {
@@ -172,7 +177,8 @@ export async function startJobAction(
       clock_in_lat: lat,
       clock_in_lng: lng,
       pay_rate_cents_snapshot: payRateSnapshot,
-    });
+      engagement_snapshot: engagementSnapshot,
+    } as never);
     if (insertError) {
       const code = (insertError as { code?: string }).code;
       if (code === "23505") {

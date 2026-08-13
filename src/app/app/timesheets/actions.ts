@@ -740,13 +740,14 @@ export async function createManualTimeEntryAction(
   const rateAdmin = createAdminForRate();
   const { data: manualRateRow } = (await rateAdmin
     .from("memberships")
-    .select("pay_rate_cents")
+    .select("pay_rate_cents, engagement")
     .eq("id", parsed.employee_id)
     .eq("organization_id", membership.organization_id)
     .maybeSingle()) as unknown as {
-    data: { pay_rate_cents: number | null } | null;
+    data: { pay_rate_cents: number | null; engagement: string | null } | null;
   };
 
+  const { toEngagement } = await import("@/lib/engagement");
   const { data: inserted, error } = await supabase
     .from("time_entries")
     .insert({
@@ -759,9 +760,12 @@ export async function createManualTimeEntryAction(
       // plaintext rows still display correctly until they're next saved.
       notes: encryptField(parsed.notes),
       pay_rate_cents_snapshot: manualRateRow?.pay_rate_cents ?? null,
+      // Same current-state rule as the rate, same reason: which pay system
+      // the hours belong to is fixed when the entry is recorded.
+      engagement_snapshot: toEngagement(manualRateRow?.engagement),
       created_manually: true,
       created_by: membership.id,
-    })
+    } as never)
     .select("id")
     .single();
 

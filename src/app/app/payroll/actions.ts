@@ -63,6 +63,9 @@ export async function createPayrollRunAction(
     .is("payroll_run_id", null)
     .gte("clock_in_at", fromIso)
     .lt("clock_in_at", toIso)
+    // Employee-era entries only — a subcontractor's capped shift is
+    // Subcontractor pay's problem and must not block an employee run.
+    .or("engagement_snapshot.eq.employee,engagement_snapshot.is.null")
     .eq("needs_review" as never, true as never)) as unknown as {
     count: number | null;
   };
@@ -79,12 +82,16 @@ export async function createPayrollRunAction(
       supabase
         .from("time_entries")
         .select(
-          "id, employee_id, clock_in_at, clock_out_at, pay_rate_cents_snapshot, booking:bookings ( hourly_rate_cents, total_cents )",
+          "id, employee_id, clock_in_at, clock_out_at, pay_rate_cents_snapshot, engagement_snapshot, booking:bookings ( hourly_rate_cents, total_cents )" as never,
         )
         .eq("organization_id", membership.organization_id)
         .is("payroll_run_id", null) // not already in a run
         .gte("clock_in_at", fromIso)
         .lt("clock_in_at", toIso)
+        // Entries WORKED under the employee engagement. A NULL snapshot
+        // (legacy / missed writer) falls through to the bucket gate below,
+        // which resolves it by current engagement — the old behavior.
+        .or("engagement_snapshot.eq.employee,engagement_snapshot.is.null")
         .not("clock_out_at", "is", null) as unknown as Promise<{
         data: Array<{
           id: string;
@@ -92,6 +99,7 @@ export async function createPayrollRunAction(
           clock_in_at: string | null;
           clock_out_at: string | null;
           pay_rate_cents_snapshot: number | null;
+          engagement_snapshot: string | null;
           booking: { hourly_rate_cents: number | null; total_cents: number } | null;
         }> | null;
       }>,
@@ -176,6 +184,55 @@ export async function createPayrollRunAction(
     });
   }
 
+  // Entries WORKED as an employee whose owner has since been flipped to
+  // subcontractor still belong to payroll — that is the whole point of the
+  // snapshot. Give those owners a bucket too, but an HOURS-ONLY one: their
+  // current-era PTO and bonuses belong to whatever system they are in now,
+  // not to this run.
+  const hoursOnly = new Set<string>();
+  {
+    const flippedIds = Array.from(
+      new Set(
+        (entries ?? [])
+          .filter(
+            (e) =>
+              (e as { engagement_snapshot?: string | null })
+                .engagement_snapshot === "employee" &&
+              e.employee_id &&
+              !buckets.has(e.employee_id),
+          )
+          .map((e) => e.employee_id as string),
+      ),
+    );
+    if (flippedIds.length > 0) {
+      const { data: flipped } = (await createSupabaseAdminClient()
+        .from("memberships")
+        .select("id, pay_rate_cents, display_name, profile:profiles ( full_name )")
+        .in("id", flippedIds)
+        .eq("organization_id", membership.organization_id)) as unknown as {
+        data: Array<{
+          id: string;
+          pay_rate_cents: number | null;
+          display_name: string | null;
+          profile: { full_name: string | null } | null;
+        }> | null;
+      };
+      for (const m of flipped ?? []) {
+        hoursOnly.add(m.id);
+        buckets.set(m.id, {
+          employeeName:
+            m.display_name?.trim() || m.profile?.full_name?.trim() || "Unknown",
+          minutes: 0,
+          regularCents: 0,
+          bonusCents: 0,
+          ptoHours: 0,
+          ptoCents: 0,
+          payRateCents: m.pay_rate_cents ?? 0,
+        });
+      }
+    }
+  }
+
   // Sum hours worked
   for (const e of entries ?? []) {
     if (!e.employee_id || !e.clock_in_at || !e.clock_out_at) continue;
@@ -210,6 +267,9 @@ export async function createPayrollRunAction(
   // Sum bonuses
   for (const b of bonuses ?? []) {
     if (!b.employee_id) continue;
+    // Hours-only buckets exist to pay a flipped person's employee-era
+    // HOURS; their bonuses/PTO follow their current engagement.
+    if (hoursOnly.has(b.employee_id)) continue;
     const bucket = buckets.get(b.employee_id);
     if (!bucket) continue;
     countedBonuses.push({ id: b.id, employeeId: b.employee_id });
@@ -222,6 +282,7 @@ export async function createPayrollRunAction(
     employee_id: string;
     hours: number;
   }>) {
+    if (hoursOnly.has(p.employee_id)) continue;
     const bucket = buckets.get(p.employee_id);
     if (!bucket) continue;
     countedPto.push({ id: p.id, employeeId: p.employee_id });

@@ -178,29 +178,74 @@ export async function getSubcontractorPayables(
   };
   const subById = new Map((subs ?? []).map((m) => [m.id, m]));
 
-  if (subById.size > 0) {
-    const { data: entries } = (await admin
-      .from("time_entries")
-      .select(
-        "employee_id, clock_in_at, clock_out_at, pay_rate_cents_snapshot, booking:bookings ( hourly_rate_cents )",
-      )
-      .eq("organization_id", organizationId)
-      .is("payroll_run_id", null)
-      .not("clock_out_at", "is", null)
-      .in("employee_id", [...subById.keys()])) as unknown as {
-      data: Array<{
-        employee_id: string | null;
-        clock_in_at: string | null;
-        clock_out_at: string | null;
-        pay_rate_cents_snapshot: number | null;
-        booking: { hourly_rate_cents: number | null } | null;
-      }> | null;
+  {
+    type HourEntry = {
+      employee_id: string | null;
+      clock_in_at: string | null;
+      clock_out_at: string | null;
+      pay_rate_cents_snapshot: number | null;
+      booking: { hourly_rate_cents: number | null } | null;
     };
+    const ENTRY_COLS =
+      "employee_id, clock_in_at, clock_out_at, pay_rate_cents_snapshot, booking:bookings ( hourly_rate_cents )";
 
-    for (const e of entries ?? []) {
+    // Two fetches, one meaning: hours WORKED under the subcontractor
+    // engagement. The snapshot (not the person's current engagement) is
+    // what routes an entry here — someone flipped to employee since still
+    // has their sub-era hours owed through THIS system, never payroll.
+    // NULL snapshots (legacy/missed writer) fall back to the old rule:
+    // counted only while the owner is currently a subcontractor.
+    const [{ data: eraEntries }, nullRes] = await Promise.all([
+      admin
+        .from("time_entries")
+        .select(ENTRY_COLS as never)
+        .eq("organization_id", organizationId)
+        .is("payroll_run_id", null)
+        .not("clock_out_at", "is", null)
+        .eq("engagement_snapshot" as never, "subcontractor" as never) as unknown as Promise<{
+        data: HourEntry[] | null;
+      }>,
+      subById.size > 0
+        ? (admin
+            .from("time_entries")
+            .select(ENTRY_COLS as never)
+            .eq("organization_id", organizationId)
+            .is("payroll_run_id", null)
+            .not("clock_out_at", "is", null)
+            .is("engagement_snapshot" as never, null as never)
+            .in("employee_id", [...subById.keys()]) as unknown as Promise<{
+            data: HourEntry[] | null;
+          }>)
+        : Promise.resolve({ data: [] as HourEntry[] }),
+    ]);
+    const entries = [...(eraEntries ?? []), ...(nullRes.data ?? [])];
+
+    // Flipped owners aren't in the sub roster fetch above but still need a
+    // rate fallback for their legacy-rate rows.
+    const missingIds = Array.from(
+      new Set(
+        entries
+          .map((e) => e.employee_id)
+          .filter((id): id is string => !!id && !subById.has(id)),
+      ),
+    );
+    const rateById = new Map<string, number | null>(
+      [...subById.entries()].map(([id, m]) => [id, m.pay_rate_cents]),
+    );
+    if (missingIds.length > 0) {
+      const { data: extraMembers } = (await admin
+        .from("memberships")
+        .select("id, pay_rate_cents")
+        .in("id", missingIds)
+        .eq("organization_id", organizationId)) as unknown as {
+        data: Array<{ id: string; pay_rate_cents: number | null }> | null;
+      };
+      for (const m of extraMembers ?? []) rateById.set(m.id, m.pay_rate_cents);
+    }
+
+    for (const e of entries) {
       if (!e.employee_id || !e.clock_in_at || !e.clock_out_at) continue;
-      const member = subById.get(e.employee_id);
-      if (!member) continue;
+      if (!rateById.has(e.employee_id)) continue;
       const mins = Math.max(
         0,
         Math.round(
@@ -213,7 +258,7 @@ export async function getSubcontractorPayables(
       const rate =
         e.booking?.hourly_rate_cents ??
         e.pay_rate_cents_snapshot ??
-        member.pay_rate_cents ??
+        rateById.get(e.employee_id) ??
         0;
       const k = payeeKey({ kind: "membership", id: e.employee_id });
       earned.set(k, (earned.get(k) ?? 0) + Math.round((mins * rate) / 60));
@@ -465,31 +510,38 @@ export async function getSubcontractorLedger(
   // list and the detail page will show different numbers for one person.
   let hourEarnedCents = 0;
   if (isMember) {
-    const [{ data: member }, { data: entries }] = await Promise.all([
-      admin
-        .from("memberships")
-        .select("pay_rate_cents")
-        .eq("id", payee.id)
-        .maybeSingle() as unknown as Promise<{
-        data: { pay_rate_cents: number | null } | null;
-      }>,
-      admin
-        .from("time_entries")
-        .select(
-          "clock_in_at, clock_out_at, pay_rate_cents_snapshot, booking:bookings ( hourly_rate_cents )",
-        )
-        .eq("organization_id", organizationId)
-        .eq("employee_id", payee.id)
-        .is("payroll_run_id", null)
-        .not("clock_out_at", "is", null) as unknown as Promise<{
-        data: Array<{
-          clock_in_at: string | null;
-          clock_out_at: string | null;
-          pay_rate_cents_snapshot: number | null;
-          booking: { hourly_rate_cents: number | null } | null;
-        }> | null;
-      }>,
-    ]);
+    // Member first: whether NULL-snapshot (legacy) entries count depends on
+    // their CURRENT engagement — the same rule the org-wide list applies —
+    // while subcontractor-era entries count no matter what they are now.
+    const { data: member } = (await admin
+      .from("memberships")
+      .select("pay_rate_cents, engagement")
+      .eq("id", payee.id)
+      .maybeSingle()) as unknown as {
+      data: { pay_rate_cents: number | null; engagement: string | null } | null;
+    };
+    const countNullSnapshots = member?.engagement === "subcontractor";
+    const { data: entries } = (await admin
+      .from("time_entries")
+      .select(
+        "clock_in_at, clock_out_at, pay_rate_cents_snapshot, booking:bookings ( hourly_rate_cents )" as never,
+      )
+      .eq("organization_id", organizationId)
+      .eq("employee_id", payee.id)
+      .is("payroll_run_id", null)
+      .not("clock_out_at", "is", null)
+      .or(
+        countNullSnapshots
+          ? "engagement_snapshot.eq.subcontractor,engagement_snapshot.is.null"
+          : "engagement_snapshot.eq.subcontractor",
+      )) as unknown as {
+      data: Array<{
+        clock_in_at: string | null;
+        clock_out_at: string | null;
+        pay_rate_cents_snapshot: number | null;
+        booking: { hourly_rate_cents: number | null } | null;
+      }> | null;
+    };
     for (const e of entries ?? []) {
       if (!e.clock_in_at || !e.clock_out_at) continue;
       const mins = Math.max(
