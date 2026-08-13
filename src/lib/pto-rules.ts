@@ -57,18 +57,27 @@ export function statusAfterWorkerEdit(prev: PtoStatus): "pending" {
   return "pending";
 }
 
-/** Shared field validation for create AND both edit paths. */
-export function validatePtoFields(fields: {
-  start_date: string;
-  end_date: string;
-  hours: number;
-}): string | null {
+/** Shared field validation for create AND both edit paths.
+ *
+ * `allowZeroHours` is the subcontractor mode: their time off is unpaid
+ * unavailability, so hours are forced to 0 by the caller and must not
+ * fail validation — offering paid-looking PTO to a contractor is the
+ * misclassification paper engagement.ts exists to prevent. */
+export function validatePtoFields(
+  fields: {
+    start_date: string;
+    end_date: string;
+    hours: number;
+  },
+  opts?: { allowZeroHours?: boolean },
+): string | null {
   if (!fields.start_date || !fields.end_date) {
     return "Start date and end date are required.";
   }
   if (fields.end_date < fields.start_date) {
     return "End date must be on or after start date.";
   }
+  if (opts?.allowZeroHours && fields.hours === 0) return null;
   if (!Number.isFinite(fields.hours) || fields.hours <= 0 || fields.hours > 200) {
     return "Hours must be between 1 and 200.";
   }

@@ -3,6 +3,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { PageShell } from "@/components/page-shell";
 import { memberDisplayName } from "@/lib/member-display";
+import { toEngagement } from "@/lib/engagement";
 import {
   closedEntryOverrunMinutes,
   expectedEndMs,
@@ -171,12 +172,24 @@ export default async function TimesheetsPage({
           role,
           pay_rate_cents,
           display_name,
+          engagement,
           profile:profiles ( full_name )
         `,
         )
         .eq("status", "active")
         .eq("organization_id", membership.organization_id)
-        .limit(500),
+        // Cast because generated types lack `engagement` (types.ts is
+        // hand-maintained; same pattern as the employees page).
+        .limit(500) as unknown as Promise<{
+        data: Array<{
+          id: string;
+          role: string;
+          pay_rate_cents: number | null;
+          display_name: string | null;
+          engagement: string | null;
+          profile: { full_name: string | null } | null;
+        }> | null;
+      }>,
       // Use admin client: role is already gated above (owner/admin/manager),
       // and RLS on pto_requests may not cover admins viewing others' rows.
       createSupabaseAdminClient()
@@ -219,6 +232,9 @@ export default async function TimesheetsPage({
       role: emp.role,
       pay_rate_cents: emp.pay_rate_cents ?? 0,
       pay_type: "hourly" as const,
+      engagement: toEngagement(
+        (emp as { engagement?: string | null }).engagement,
+      ),
     };
   }
 
@@ -456,6 +472,7 @@ export default async function TimesheetsPage({
     hours: Number(p.hours),
     status: p.status as "pending" | "approved" | "declined" | "cancelled",
     reason: p.reason,
+    engagement: empMeta[p.employee_id]?.engagement ?? "employee",
   }));
 
   return (

@@ -72,6 +72,9 @@ export type EmployeeMeta = {
   role: string;
   pay_rate_cents: number;
   pay_type: "hourly" | "flat" | "percent";
+  /** Which pay system they're in NOW — gates PTO hour summaries (a
+   *  subcontractor's time off is unpaid unavailability, never PTO pay). */
+  engagement: "employee" | "subcontractor";
 };
 
 /** Picker option for the Log-hours form. */
@@ -91,6 +94,9 @@ export type PtoEntry = {
   hours: number;
   status: "pending" | "approved" | "declined" | "cancelled";
   reason: string | null;
+  /** Subcontractor requests are unpaid unavailability: the approval panel
+   *  badges them and hides hours, so nobody approves contractor "PTO". */
+  engagement: "employee" | "subcontractor";
 };
 
 /**

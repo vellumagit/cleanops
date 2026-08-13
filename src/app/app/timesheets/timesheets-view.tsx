@@ -94,9 +94,12 @@ function buildSummaries(
     map.set(e.employee_id, existing);
   }
 
-  // Add PTO hours
+  // Add PTO hours — employees only. A subcontractor's approved time off is
+  // unpaid unavailability; folding its hours into a payroll-shaped summary
+  // is exactly the paid-PTO-for-a-contractor paper trail to avoid.
   for (const p of ptoEntries) {
     if (p.status !== "approved") continue;
+    if (p.engagement === "subcontractor") continue;
     const existing = map.get(p.employee_id);
     if (existing) {
       existing.ptoHours += p.hours;
@@ -406,11 +409,17 @@ export function TimesheetsView({
     (sum, e) => sum + e.earned_cents,
     0,
   );
+  // Paid PTO hours only — subcontractor unavailability carries no hours.
   const filteredPto =
     empFilter === "all"
-      ? ptoEntries.filter((p) => p.status === "approved")
+      ? ptoEntries.filter(
+          (p) => p.status === "approved" && p.engagement !== "subcontractor",
+        )
       : ptoEntries.filter(
-          (p) => p.status === "approved" && p.employee_id === empFilter,
+          (p) =>
+            p.status === "approved" &&
+            p.engagement !== "subcontractor" &&
+            p.employee_id === empFilter,
         );
   const totalPtoHours = filteredPto.reduce((sum, p) => sum + p.hours, 0);
 

@@ -9,7 +9,13 @@ import { submitSelfPtoRequestAction } from "@/app/app/timesheets/actions";
 
 type Result = { ok: true } | { ok: false; error: string } | null;
 
-export function PtoRequestForm() {
+export function PtoRequestForm({
+  isSubcontractor = false,
+}: {
+  /** Subcontractor time off is unpaid unavailability — no hours asked, the
+   *  server stores 0 regardless. */
+  isSubcontractor?: boolean;
+}) {
   const [isPending, startTransition] = useTransition();
   const [result, setResult] = useState<Result>(null);
 
@@ -61,22 +67,28 @@ export function PtoRequestForm() {
         </div>
       </div>
 
-      <div>
-        <label htmlFor="hours" className="mb-1 block text-xs font-medium">
-          Hours requested
-        </label>
-        <Input
-          id="hours"
-          name="hours"
-          type="number"
-          min={1}
-          max={200}
-          step={0.5}
-          defaultValue={8}
-          required
-          disabled={isPending}
-        />
-      </div>
+      {isSubcontractor ? (
+        // Unpaid unavailability has no hours. The server forces 0 for
+        // subcontractors no matter what a form posts.
+        <input type="hidden" name="hours" value="0" />
+      ) : (
+        <div>
+          <label htmlFor="hours" className="mb-1 block text-xs font-medium">
+            Hours requested
+          </label>
+          <Input
+            id="hours"
+            name="hours"
+            type="number"
+            min={1}
+            max={200}
+            step={0.5}
+            defaultValue={8}
+            required
+            disabled={isPending}
+          />
+        </div>
+      )}
 
       <div>
         <label htmlFor="reason" className="mb-1 block text-xs font-medium">

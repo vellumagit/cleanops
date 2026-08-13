@@ -94,6 +94,30 @@ export async function fetchTimeEntryHistoryAction(
 
 // ── PTO request management ────────────────────────────────────
 
+/**
+ * Subcontractor time off is unpaid unavailability. Whatever hours the form
+ * posted are forced to 0 for a subcontractor — accruesPto() is false for a
+ * reason: paid-looking PTO on a contractor's record is the documentary
+ * evidence engagement.ts warns decides a CRA misclassification review.
+ */
+async function isSubcontractorMember(
+  memberId: string,
+  organizationId: string,
+): Promise<boolean> {
+  const { createSupabaseAdminClient: createAdmin } = await import(
+    "@/lib/supabase/admin"
+  );
+  const { data } = (await createAdmin()
+    .from("memberships")
+    .select("engagement" as never)
+    .eq("id", memberId)
+    .eq("organization_id", organizationId)
+    .maybeSingle()) as unknown as {
+    data: { engagement: string | null } | null;
+  };
+  return data?.engagement === "subcontractor";
+}
+
 export async function createPtoRequestAction(
   formData: FormData,
 ): Promise<Result> {
@@ -105,7 +129,7 @@ export async function createPtoRequestAction(
   const employee_id = String(formData.get("employee_id") ?? "");
   const start_date = String(formData.get("start_date") ?? "");
   const end_date = String(formData.get("end_date") ?? "");
-  const hours = Number(formData.get("hours") ?? 8);
+  const postedHours = Number(formData.get("hours") ?? 8);
   const reason = String(formData.get("reason") ?? "").trim();
 
   if (!employee_id || !start_date || !end_date) {
@@ -115,6 +139,12 @@ export async function createPtoRequestAction(
   if (new Date(end_date) < new Date(start_date)) {
     return { ok: false, error: "End date must be on or after start date." };
   }
+
+  const isSub = await isSubcontractorMember(
+    employee_id,
+    membership.organization_id,
+  );
+  const hours = isSub ? 0 : postedHours;
 
   const { error } = await (supabase
     .from("pto_requests")
@@ -134,6 +164,7 @@ export async function createPtoRequestAction(
 
   // Update PTO balance — RPC may not exist yet, so we cast loosely and
   // swallow the error instead of requiring the RPC to be defined.
+  // (0 hours for subcontractors: unavailability never touches a balance.)
   const year = new Date(start_date).getFullYear();
   await (
     supabase.rpc as unknown as (
@@ -160,7 +191,7 @@ export async function submitSelfPtoRequestAction(
 
   const start_date = String(formData.get("start_date") ?? "");
   const end_date = String(formData.get("end_date") ?? "");
-  const hours = Number(formData.get("hours") ?? 8);
+  const postedHours = Number(formData.get("hours") ?? 8);
   const reason = String(formData.get("reason") ?? "").trim();
 
   if (!start_date || !end_date) {
@@ -171,9 +202,14 @@ export async function submitSelfPtoRequestAction(
     return { ok: false, error: "End date must be on or after start date." };
   }
 
-  if (hours <= 0 || hours > 200) {
+  const isSub = await isSubcontractorMember(
+    membership.id,
+    membership.organization_id,
+  );
+  if (!isSub && (postedHours <= 0 || postedHours > 200)) {
     return { ok: false, error: "Hours must be between 1 and 200." };
   }
+  const hours = isSub ? 0 : postedHours;
 
   const { error } = await (supabase
     .from("pto_requests")
@@ -299,10 +335,6 @@ export async function updatePtoRequestAction(
   const reason = String(formData.get("reason") ?? "").trim();
   if (!id) return { ok: false, error: "Missing request id." };
 
-  const { validatePtoFields } = await import("@/lib/pto-rules");
-  const invalid = validatePtoFields(fields);
-  if (invalid) return { ok: false, error: invalid };
-
   const { data: before } = (await supabase
     .from("pto_requests")
     .select("status, employee_id, hours, start_date")
@@ -317,6 +349,16 @@ export async function updatePtoRequestAction(
     } | null;
   };
   if (!before) return { ok: false, error: "Request not found." };
+
+  const isSub = await isSubcontractorMember(
+    before.employee_id,
+    membership.organization_id,
+  );
+  if (isSub) fields.hours = 0;
+
+  const { validatePtoFields } = await import("@/lib/pto-rules");
+  const invalid = validatePtoFields(fields, { allowZeroHours: isSub });
+  if (invalid) return { ok: false, error: invalid };
 
   const { error } = await (supabase
     .from("pto_requests")
@@ -490,7 +532,12 @@ export async function updateSelfPtoRequestAction(
 
   const [{ validatePtoFields, workerCanEdit, statusAfterWorkerEdit }, { zonedYmd }] =
     await Promise.all([import("@/lib/pto-rules"), import("@/lib/wall-clock")]);
-  const invalid = validatePtoFields(fields);
+  const isSub = await isSubcontractorMember(
+    membership.id,
+    membership.organization_id,
+  );
+  if (isSub) fields.hours = 0;
+  const invalid = validatePtoFields(fields, { allowZeroHours: isSub });
   if (invalid) return { ok: false, error: invalid };
 
   const { createSupabaseAdminClient } = await import("@/lib/supabase/admin");

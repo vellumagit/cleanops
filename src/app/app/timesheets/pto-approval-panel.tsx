@@ -145,12 +145,20 @@ function PtoRow({
       <div className="min-w-0 flex-1">
         <div className="text-sm font-medium">
           {request.employee_name ?? "Employee"}
+          {request.engagement === "subcontractor" && (
+            <span
+              title="Subcontractor — approving marks them unavailable. No PTO hours, no pay attaches."
+              className="ml-2 rounded-full bg-muted px-1.5 py-0.5 text-[9px] font-semibold uppercase text-muted-foreground"
+            >
+              Subcontractor · unpaid
+            </span>
+          )}
           <span className="ml-2 text-xs font-normal text-muted-foreground">
             {request.start_date}
             {request.start_date !== request.end_date &&
               ` → ${request.end_date}`}
-            {" · "}
-            {request.hours}h
+            {request.engagement !== "subcontractor" &&
+              ` · ${request.hours}h`}
           </span>
         </div>
         {request.reason && (
@@ -304,25 +312,31 @@ function PtoEditDialog({
               />
             </div>
           </div>
-          <div>
-            <label
-              htmlFor="pto-edit-hours"
-              className="mb-1 block text-xs font-medium"
-            >
-              Hours
-            </label>
-            <Input
-              id="pto-edit-hours"
-              name="hours"
-              type="number"
-              min={1}
-              max={200}
-              step={0.5}
-              required
-              defaultValue={request.hours}
-              disabled={isPending}
-            />
-          </div>
+          {request.engagement === "subcontractor" ? (
+            // Unpaid unavailability — hours don't exist for a contractor's
+            // time off. The server forces 0 regardless of what's posted.
+            <input type="hidden" name="hours" value="0" />
+          ) : (
+            <div>
+              <label
+                htmlFor="pto-edit-hours"
+                className="mb-1 block text-xs font-medium"
+              >
+                Hours
+              </label>
+              <Input
+                id="pto-edit-hours"
+                name="hours"
+                type="number"
+                min={1}
+                max={200}
+                step={0.5}
+                required
+                defaultValue={request.hours}
+                disabled={isPending}
+              />
+            </div>
+          )}
           <div>
             <label
               htmlFor="pto-edit-reason"

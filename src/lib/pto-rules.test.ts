@@ -83,4 +83,13 @@ describe("validatePtoFields", () => {
     expect(validatePtoFields({ ...ok, hours: NaN })).toMatch(/between/);
     expect(validatePtoFields({ ...ok, hours: 200 })).toBeNull();
   });
+
+  it("subcontractor mode: exactly 0 hours passes, everything else still bounded", () => {
+    const zero = { allowZeroHours: true };
+    expect(validatePtoFields({ ...ok, hours: 0 }, zero)).toBeNull();
+    expect(validatePtoFields({ ...ok, hours: 201 }, zero)).toMatch(/between/);
+    expect(
+      validatePtoFields({ ...ok, end_date: "2026-08-16", hours: 0 }, zero),
+    ).toMatch(/on or after/);
+  });
 });

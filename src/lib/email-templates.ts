@@ -982,10 +982,10 @@ export function employeePtoStatusEmail(args: {
         <td style="font-size:13px;color:#71717a;padding:12px 0;border-bottom:1px solid #f4f4f5;">Dates</td>
         <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;font-weight:600;border-bottom:1px solid #f4f4f5;">${escapeHtml(dateRange)}</td>
       </tr>
-      <tr>
+      ${args.hours > 0 ? `<tr>
         <td style="font-size:13px;color:#71717a;padding:12px 0;${args.reason ? "border-bottom:1px solid #f4f4f5;" : ""}">Hours</td>
         <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;${args.reason ? "border-bottom:1px solid #f4f4f5;" : ""}">${args.hours}</td>
-      </tr>
+      </tr>` : ""}
       ${args.reason ? `<tr>
         <td style="font-size:13px;color:#71717a;padding:12px 0;vertical-align:top;">Reason</td>
         <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;">${escapeHtml(args.reason)}</td>
@@ -996,10 +996,12 @@ export function employeePtoStatusEmail(args: {
     {
       sollosHeader: true,
       orgName: args.orgName,
-      preheader: `${dateRange} · ${args.hours}h — ${label}`,
+      // Subcontractor time off is unpaid unavailability — 0 hours, and
+      // saying "0h" would read as a bug, so hours only appear when real.
+      preheader: `${dateRange}${args.hours > 0 ? ` · ${args.hours}h` : ""} — ${label}`,
     },
   );
-  const text = `Your time-off request was ${label} — ${args.orgName}\n\nDates: ${dateRange}\nHours: ${args.hours}${args.reason ? `\nReason: ${args.reason}` : ""}\n\nOpen: ${args.dashboardUrl}`;
+  const text = `Your time-off request was ${label} — ${args.orgName}\n\nDates: ${dateRange}${args.hours > 0 ? `\nHours: ${args.hours}` : ""}${args.reason ? `\nReason: ${args.reason}` : ""}\n\nOpen: ${args.dashboardUrl}`;
   return { subject, html, text };
 }
 

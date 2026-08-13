@@ -41,9 +41,13 @@ export type PtoHistoryRow = {
 export function PtoHistory({
   rows,
   todayYmd,
+  hideHours = false,
 }: {
   rows: PtoHistoryRow[];
   todayYmd: string;
+  /** Subcontractors: time off is unpaid unavailability — hours aren't shown
+   *  or editable (the server stores 0 for them regardless). */
+  hideHours?: boolean;
 }) {
   const [editing, setEditing] = useState<PtoHistoryRow | null>(null);
 
@@ -60,12 +64,17 @@ export function PtoHistory({
             key={req.id}
             req={req}
             todayYmd={todayYmd}
+            hideHours={hideHours}
             onEdit={() => setEditing(req)}
           />
         ))}
       </ul>
       {editing && (
-        <SelfEditDialog request={editing} onClose={() => setEditing(null)} />
+        <SelfEditDialog
+          request={editing}
+          hideHours={hideHours}
+          onClose={() => setEditing(null)}
+        />
       )}
     </>
   );
@@ -74,10 +83,12 @@ export function PtoHistory({
 function HistoryRow({
   req,
   todayYmd,
+  hideHours,
   onEdit,
 }: {
   req: PtoHistoryRow;
   todayYmd: string;
+  hideHours: boolean;
   onEdit: () => void;
 }) {
   const [isPending, startTransition] = useTransition();
@@ -119,7 +130,9 @@ function HistoryRow({
             {req.start_date !== req.end_date && ` → ${req.end_date}`}
           </div>
           <div className="text-muted-foreground">
-            {req.hours}h{req.reason && ` · ${req.reason}`}
+            {hideHours
+              ? (req.reason ?? "Unavailable")
+              : `${req.hours}h${req.reason ? ` · ${req.reason}` : ""}`}
           </div>
         </div>
         <div className="flex items-center gap-1.5">
@@ -166,9 +179,11 @@ function HistoryRow({
 
 function SelfEditDialog({
   request,
+  hideHours,
   onClose,
 }: {
   request: PtoHistoryRow;
+  hideHours: boolean;
   onClose: () => void;
 }) {
   const [isPending, startTransition] = useTransition();
@@ -228,25 +243,29 @@ function SelfEditDialog({
               />
             </div>
           </div>
-          <div>
-            <label
-              htmlFor="self-pto-hours"
-              className="mb-1 block text-xs font-medium"
-            >
-              Hours
-            </label>
-            <Input
-              id="self-pto-hours"
-              name="hours"
-              type="number"
-              min={1}
-              max={200}
-              step={0.5}
-              required
-              defaultValue={request.hours}
-              disabled={isPending}
-            />
-          </div>
+          {hideHours ? (
+            <input type="hidden" name="hours" value="0" />
+          ) : (
+            <div>
+              <label
+                htmlFor="self-pto-hours"
+                className="mb-1 block text-xs font-medium"
+              >
+                Hours
+              </label>
+              <Input
+                id="self-pto-hours"
+                name="hours"
+                type="number"
+                min={1}
+                max={200}
+                step={0.5}
+                required
+                defaultValue={request.hours}
+                disabled={isPending}
+              />
+            </div>
+          )}
           <div>
             <label
               htmlFor="self-pto-reason"

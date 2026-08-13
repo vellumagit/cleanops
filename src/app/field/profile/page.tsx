@@ -19,6 +19,7 @@ import { CalendarScopeForm } from "./calendar-scope-form";
 import { PtoRequestForm } from "./pto-request-form";
 import { PtoHistory } from "./pto-history";
 import { zonedYmd } from "@/lib/wall-clock";
+import { toEngagement } from "@/lib/engagement";
 import { PushToggle } from "@/components/push-prompt";
 import { formatDateTime } from "@/lib/format";
 import {
@@ -41,19 +42,23 @@ export default async function FieldProfilePage() {
     .eq("id", membership.profile_id)
     .maybeSingle();
 
-  // Personal calendar scope + highlight color (managers can mirror the whole org).
+  // Personal calendar scope + highlight color (managers can mirror the whole
+  // org) — plus engagement, which decides whether time off is paid PTO
+  // (employee) or unpaid unavailability (subcontractor).
   const { data: calPrefs } = (await supabase
     .from("memberships")
-    .select("calendar_scope, calendar_color")
+    .select("calendar_scope, calendar_color, engagement" as never)
     .eq("id", membership.id)
     .maybeSingle()) as unknown as {
     data: {
       calendar_scope: string | null;
       calendar_color: string | null;
+      engagement: string | null;
     } | null;
   };
   const calScope = calPrefs?.calendar_scope ?? "mine";
   const calColor = calPrefs?.calendar_color ?? "6";
+  const isSubcontractor = toEngagement(calPrefs?.engagement) === "subcontractor";
   const isManagerPlus = ["owner", "admin", "manager"].includes(membership.role);
 
   // PTO history — start_date desc puts upcoming requests (the editable
@@ -302,9 +307,11 @@ export default async function FieldProfilePage() {
           Request time off
         </h2>
         <p className="mb-4 text-xs text-muted-foreground">
-          Submit a request for your manager to approve.
+          {isSubcontractor
+            ? "Marks you unavailable so nothing gets scheduled on you. Unpaid — your manager approves it."
+            : "Submit a request for your manager to approve."}
         </p>
-        <PtoRequestForm />
+        <PtoRequestForm isSubcontractor={isSubcontractor} />
 
         <PtoHistory
           rows={(ptoHistory ?? []).map((req) => ({
@@ -316,6 +323,7 @@ export default async function FieldProfilePage() {
             reason: req.reason,
           }))}
           todayYmd={zonedYmd(new Date(), tz)}
+          hideHours={isSubcontractor}
         />
       </div>
 
