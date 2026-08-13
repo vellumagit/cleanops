@@ -66,16 +66,49 @@ export default async function ClientJobPage({
   const admin = createSupabaseAdminClient();
 
   // Who is coming. Read past RLS because a client has no read on memberships,
-  // and only the display name is used — never contact details.
+  // and only the person's NAME is used — never contact details. The profile
+  // join matters: display_name is the office-typed label for shadow members,
+  // and NULL for anyone who signed up themselves — which was every real
+  // cleaner, so "who's coming" silently vanished from the one page a client
+  // checks before letting someone into their house.
   const { data: crew } = (await admin
     .from("booking_assignees")
-    .select("membership:memberships ( display_name )")
+    .select(
+      "membership:memberships ( id, display_name, profile:profiles ( full_name ) )",
+    )
     .eq("booking_id", booking.id)) as unknown as {
-    data: Array<{ membership: { display_name: string | null } | null }> | null;
+    data: Array<{
+      membership: {
+        id: string;
+        display_name: string | null;
+        profile: { full_name: string | null } | null;
+      } | null;
+    }> | null;
   };
-  const crewNames = (crew ?? [])
-    .map((r) => r.membership?.display_name)
-    .filter((n): n is string => Boolean(n));
+  const { memberDisplayName } = await import("@/lib/member-display");
+  let crewNames = Array.from(
+    new Set(
+      (crew ?? [])
+        .map((r) => (r.membership ? memberDisplayName(r.membership) : null))
+        .filter((n): n is string => Boolean(n) && n !== "Unknown"),
+    ),
+  );
+  // Assigned but no crew rows (legacy bookings predate the invariant that a
+  // primary assignee always has one) — resolve the primary directly.
+  if (crewNames.length === 0 && booking.assigned_to) {
+    const { data: primary } = (await admin
+      .from("memberships")
+      .select("display_name, profile:profiles ( full_name )")
+      .eq("id", booking.assigned_to)
+      .maybeSingle()) as unknown as {
+      data: {
+        display_name: string | null;
+        profile: { full_name: string | null } | null;
+      } | null;
+    };
+    const name = primary ? memberDisplayName(primary) : null;
+    if (name && name !== "Unknown") crewNames = [name];
+  }
 
   // What this client has already said about this visit, so the page can show
   // "you asked us to…" rather than letting them wonder if it went through.

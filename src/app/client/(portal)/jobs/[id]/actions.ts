@@ -78,10 +78,12 @@ async function assigneeIds(bookingId: string, primary: string | null) {
 /**
  * A note for one visit — "skip the bathroom this week".
  *
- * Goes to the crew, not to the office. The cleaner is the one who has to act
- * on it, and a note about a bathroom is exactly the kind of thing the portal
- * exists to keep off the owner's phone. It still appears on the booking for
- * the office, silently.
+ * Goes to the crew AND to the office. The cleaner is the one who has to act
+ * on it, so their push carries the field link. The office gets an FYI with
+ * the booking link — originally this was deliberately silent to keep notes
+ * off the owner's phone, but an owner who finds out at invoice time that a
+ * visit was quietly renegotiated trusts the portal less, not more. Awareness
+ * is not workload.
  */
 export async function leaveJobNoteAction(
   _prev: ClientJobActionState,
@@ -129,12 +131,16 @@ export async function leaveJobNoteAction(
   } as never)) as unknown as { error: { message: string } | null };
   if (error) return { error: error.message };
 
-  // The crew, not the office. Deferred so the client's tap returns straight
-  // away — notify() sends a push, and none of that is theirs to wait for.
+  // Deferred so the client's tap returns straight away — notify() sends
+  // pushes, and none of that is theirs to wait for.
   after(async () => {
-    const crew = await assigneeIds(booking.id, booking.assigned_to);
-    if (crew.length === 0) return;
     const when = formatDateTime(booking.scheduled_at, tz);
+    const service =
+      booking.service_type_label ?? booking.service_type.replace(/_/g, " ");
+    const excerpt = `${body.slice(0, 160)}${body.length > 160 ? "…" : ""}`;
+
+    // The crew acts on it — their link opens the field job.
+    const crew = await assigneeIds(booking.id, booking.assigned_to);
     for (const membershipId of crew) {
       await notify({
         organizationId: booking.organization_id,
@@ -142,10 +148,22 @@ export async function leaveJobNoteAction(
         membershipId,
         type: "client_request",
         title: `Note from ${client.name}`,
-        body: `${body.slice(0, 160)}${body.length > 160 ? "…" : ""} — for ${when}.`,
+        body: `${excerpt} — for ${when}.`,
         href: `/field/jobs/${booking.id}`,
       });
     }
+
+    // The office hears about it — their link opens the booking. Also the
+    // only alert anyone gets when the visit has no crew assigned yet, in
+    // which case somebody in the office HAS to carry the note forward.
+    await notify({
+      organizationId: booking.organization_id,
+      audience: "org-management",
+      type: "client_request",
+      title: `New note from ${client.name}`,
+      body: `"${excerpt}" — ${service} on ${when}.`,
+      href: `/app/bookings/${booking.id}`,
+    });
   });
 
   revalidatePath(`/client/jobs/${booking.id}`);
