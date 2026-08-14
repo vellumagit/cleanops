@@ -15,6 +15,7 @@ import {
   formatCurrencyCents,
   formatDate,
   formatDateTime,
+  formatDurationMinutes,
   humanizeEnum,
 } from "@/lib/format";
 import { getOrgCurrency } from "@/lib/org-currency";
@@ -152,6 +153,44 @@ export default async function SubcontractorLedgerPage({
             />
           </div>
         </div>
+
+        {/* ── Pay-period statements ── */}
+        {ledger.statements.length > 0 && (
+          <Section
+            title="Statements"
+            subtitle="Frozen pay periods. Unpaid ones are included in Earned above; manage them from the Subcontractor pay page."
+          >
+            <ul className="divide-y divide-border">
+              {ledger.statements.map((s) => (
+                <li
+                  key={s.id}
+                  className="flex flex-wrap items-center justify-between gap-2 px-5 py-3 text-sm"
+                >
+                  <span className="tabular-nums">
+                    {s.periodStart} → {s.periodEnd}
+                    <span className="ml-2 text-xs text-muted-foreground">
+                      {formatDurationMinutes(s.minutes)}
+                    </span>
+                  </span>
+                  <span className="flex items-center gap-2">
+                    <span
+                      className={
+                        s.status === "paid"
+                          ? "rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-400"
+                          : "rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-400"
+                      }
+                    >
+                      {s.status === "paid" ? "Paid" : "Owed"}
+                    </span>
+                    <span className="font-semibold tabular-nums">
+                      {formatCurrencyCents(s.totalCents, currency)}
+                    </span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </Section>
+        )}
 
         {/* ── Jobs ── */}
         <Section

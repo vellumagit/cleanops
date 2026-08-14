@@ -4,19 +4,34 @@ import { requireMembership } from "@/lib/auth";
 import { PageShell } from "@/components/page-shell";
 import { formatCurrencyCents } from "@/lib/format";
 import { getOrgCurrency } from "@/lib/org-currency";
+import { getOrgTimezone } from "@/lib/org-timezone";
+import { zonedDayStartUtc, zonedYmd } from "@/lib/wall-clock";
 import {
   getSubcontractorPayables,
+  getSubcontractorRuns,
   encodePayeeParam,
 } from "@/lib/subcontractor-payables";
+import { StatementsCard } from "./statements-card";
 
 export const metadata = { title: "Subcontractor pay" };
 
 export default async function SubcontractorPayablesPage() {
   const membership = await requireMembership(["owner", "admin", "manager"]);
-  const [{ rows, totalOutstandingCents }, currency] = await Promise.all([
-    getSubcontractorPayables(membership.organization_id),
-    getOrgCurrency(membership.organization_id),
-  ]);
+  const [{ rows, totalOutstandingCents }, currency, runs, orgTz] =
+    await Promise.all([
+      getSubcontractorPayables(membership.organization_id),
+      getOrgCurrency(membership.organization_id),
+      getSubcontractorRuns(membership.organization_id),
+      getOrgTimezone(membership.organization_id),
+    ]);
+
+  // Default period: the last 14 org-local days ending today — computed here
+  // so the browser's timezone can't shift the suggestion (the payroll form's
+  // old browser-UTC default bug).
+  const now = new Date();
+  const defaultEnd = zonedYmd(now, orgTz);
+  const defaultStart = zonedYmd(zonedDayStartUtc(now, orgTz, -13), orgTz);
+  const canManage = ["owner", "admin"].includes(membership.role);
 
   return (
     <PageShell
@@ -42,9 +57,19 @@ export default async function SubcontractorPayablesPage() {
             {formatCurrencyCents(totalOutstandingCents, currency)}
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Total still owed across all subcontractors.
+            Total still owed across all subcontractors — floating hours plus
+            unpaid statements.
           </p>
         </div>
+
+        {/* ── Pay-period statements ── */}
+        <StatementsCard
+          runs={runs}
+          currency={currency}
+          defaultStart={defaultStart}
+          defaultEnd={defaultEnd}
+          canManage={canManage}
+        />
 
         {/* ── Rows ── */}
         {rows.length === 0 ? (

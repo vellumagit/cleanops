@@ -115,6 +115,17 @@ export type SubcontractorLedger = {
    *  on Timesheets. Roster subcontractors only — claims can't be capped. */
   unreviewedCount: number;
   unreviewedMinutes: number;
+  /** Pay-period statements this payee appears on, newest first. Unpaid ones
+   *  are already included in earnedCents; paid ones are history. */
+  statements: Array<{
+    id: string;
+    periodStart: string;
+    periodEnd: string;
+    totalCents: number;
+    minutes: number;
+    status: "finalized" | "paid";
+    paidAt: string | null;
+  }>;
 };
 
 /**
@@ -212,6 +223,9 @@ export async function getSubcontractorPayables(
         .select(ENTRY_COLS as never)
         .eq("organization_id", organizationId)
         .is("payroll_run_id", null)
+        // Consumed by a pay-period statement — the statement carries the
+        // amount now (counted below while unpaid), not the floating pool.
+        .is("subcontractor_run_id" as never, null as never)
         .not("clock_out_at", "is", null)
         .eq("engagement_snapshot" as never, "subcontractor" as never) as unknown as Promise<{
         data: HourEntry[] | null;
@@ -222,6 +236,7 @@ export async function getSubcontractorPayables(
             .select(ENTRY_COLS as never)
             .eq("organization_id", organizationId)
             .is("payroll_run_id", null)
+            .is("subcontractor_run_id" as never, null as never)
             .not("clock_out_at", "is", null)
             .is("engagement_snapshot" as never, null as never)
             .in("employee_id", [...subById.keys()]) as unknown as Promise<{
@@ -281,6 +296,30 @@ export async function getSubcontractorPayables(
         0;
       earned.set(k, (earned.get(k) ?? 0) + Math.round((mins * rate) / 60));
       jobCount.set(k, (jobCount.get(k) ?? 0) + 1);
+    }
+  }
+
+  // Generated-but-unpaid statements still count as owed: freezing a period
+  // into a document is not paying it. Marking the run paid retires these in
+  // one step (and payouts are for AD-HOC payments — recording one against a
+  // statement AND marking it paid would double-reduce the balance).
+  {
+    const { data: openItems } = (await admin
+      .from("subcontractor_pay_items" as never)
+      .select("membership_id, total_cents, entry_count, run:subcontractor_pay_runs ( status )")
+      .eq("organization_id" as never, organizationId as never)) as unknown as {
+      data: Array<{
+        membership_id: string;
+        total_cents: number;
+        entry_count: number;
+        run: { status: string } | null;
+      }> | null;
+    };
+    for (const item of openItems ?? []) {
+      if (item.run?.status !== "finalized") continue;
+      const k = payeeKey({ kind: "membership", id: item.membership_id });
+      earned.set(k, (earned.get(k) ?? 0) + (item.total_cents ?? 0));
+      jobCount.set(k, (jobCount.get(k) ?? 0) + (item.entry_count ?? 0));
     }
   }
 
@@ -555,6 +594,7 @@ export async function getSubcontractorLedger(
       .eq("organization_id", organizationId)
       .eq("employee_id", payee.id)
       .is("payroll_run_id", null)
+      .is("subcontractor_run_id" as never, null as never)
       .not("clock_out_at", "is", null)
       .or(
         countNullSnapshots
@@ -596,8 +636,51 @@ export async function getSubcontractorLedger(
     }
   }
 
+  // This payee's pay-period statements. Unpaid ones count as owed — the
+  // hours left the floating pool when they were stamped, and the statement
+  // carries the amount until it's marked paid.
+  let statements: SubcontractorLedger["statements"] = [];
+  if (isMember) {
+    const { data: stmtRows } = (await admin
+      .from("subcontractor_pay_items" as never)
+      .select(
+        "total_cents, minutes, run:subcontractor_pay_runs ( id, period_start, period_end, status, paid_at )",
+      )
+      .eq("organization_id" as never, organizationId as never)
+      .eq("membership_id" as never, payee.id as never)) as unknown as {
+      data: Array<{
+        total_cents: number;
+        minutes: number;
+        run: {
+          id: string;
+          period_start: string;
+          period_end: string;
+          status: string;
+          paid_at: string | null;
+        } | null;
+      }> | null;
+    };
+    statements = (stmtRows ?? [])
+      .filter((r) => r.run != null)
+      .map((r) => ({
+        id: r.run!.id,
+        periodStart: r.run!.period_start,
+        periodEnd: r.run!.period_end,
+        totalCents: r.total_cents ?? 0,
+        minutes: r.minutes ?? 0,
+        status: r.run!.status === "paid" ? ("paid" as const) : ("finalized" as const),
+        paidAt: r.run!.paid_at,
+      }))
+      .sort((a, b) => b.periodStart.localeCompare(a.periodStart));
+  }
+  const openStatementCents = statements
+    .filter((s) => s.status === "finalized")
+    .reduce((s, r) => s + r.totalCents, 0);
+
   const earnedCents =
-    jobs.reduce((s, j) => s + j.payCents, 0) + hourEarnedCents;
+    jobs.reduce((s, j) => s + j.payCents, 0) +
+    hourEarnedCents +
+    openStatementCents;
   const paidCents = payouts.reduce((s, p) => s + p.amountCents, 0);
 
   return {
@@ -617,5 +700,76 @@ export async function getSubcontractorLedger(
     outstandingCents: earnedCents - paidCents,
     unreviewedCount,
     unreviewedMinutes,
+    statements,
   };
+}
+
+/**
+ * All pay-period statements for an org, items included — the payables page's
+ * Statements section. Service-role read; callers gate access.
+ */
+export type PayRunSummary = {
+  id: string;
+  periodStart: string;
+  periodEnd: string;
+  status: "finalized" | "paid";
+  totalCents: number;
+  paidAt: string | null;
+  createdAt: string;
+  items: Array<{
+    membershipId: string;
+    payeeName: string;
+    minutes: number;
+    entryCount: number;
+    totalCents: number;
+  }>;
+};
+
+export async function getSubcontractorRuns(
+  organizationId: string,
+): Promise<PayRunSummary[]> {
+  const admin = createSupabaseAdminClient();
+  const { data } = (await admin
+    .from("subcontractor_pay_runs" as never)
+    .select(
+      "id, period_start, period_end, status, total_cents, paid_at, created_at, items:subcontractor_pay_items ( membership_id, payee_name, minutes, entry_count, total_cents )",
+    )
+    .eq("organization_id" as never, organizationId as never)
+    .order("period_start" as never, { ascending: false } as never)
+    .limit(26)) as unknown as {
+    data: Array<{
+      id: string;
+      period_start: string;
+      period_end: string;
+      status: string;
+      total_cents: number;
+      paid_at: string | null;
+      created_at: string;
+      items: Array<{
+        membership_id: string;
+        payee_name: string;
+        minutes: number;
+        entry_count: number;
+        total_cents: number;
+      }> | null;
+    }> | null;
+  };
+  return (data ?? []).map((r) => ({
+    id: r.id,
+    periodStart: r.period_start,
+    periodEnd: r.period_end,
+    status: r.status === "paid" ? "paid" : "finalized",
+    totalCents: r.total_cents,
+    paidAt: r.paid_at,
+    createdAt: r.created_at,
+    items: (r.items ?? [])
+      .map((i) => ({
+        membershipId: i.membership_id,
+        payeeName: i.payee_name,
+        minutes: i.minutes,
+        entryCount: i.entry_count,
+        totalCents: i.total_cents,
+      }))
+      .sort((a, b) => b.totalCents - a.totalCents),
+  }));
 }
