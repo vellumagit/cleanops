@@ -375,24 +375,65 @@ export async function createPayrollRunAction(
     .filter((c) => included.has(c.employeeId))
     .map((c) => c.id);
 
+  // CLAIM-guarded stamps: `.is("payroll_run_id", null)` makes each stamp
+  // first-writer-wins. Two admins generating the same period concurrently
+  // used to both read the same unstamped rows and both pay the full total
+  // (last stamp silently won) — every employee paid twice. Now the loser
+  // claims fewer rows than it priced, and a run whose items don't match
+  // its claims must not exist: unwind it completely.
   const stampDb = createSupabaseAdminClient();
+  const expectedClaims =
+    stampEntryIds.length + stampBonusIds.length + stampPtoIds.length;
+  let claims = 0;
   if (stampEntryIds.length > 0) {
-    await (stampDb
+    const { data: got } = (await stampDb
       .from("time_entries")
       .update({ payroll_run_id: run.id })
-      .in("id", stampEntryIds) as unknown as Promise<unknown>);
+      .is("payroll_run_id", null)
+      .in("id", stampEntryIds)
+      .select("id")) as unknown as { data: Array<{ id: string }> | null };
+    claims += got?.length ?? 0;
   }
   if (stampBonusIds.length > 0) {
-    await (stampDb
+    const { data: got } = (await stampDb
       .from("bonuses")
       .update({ payroll_run_id: run.id })
-      .in("id", stampBonusIds) as unknown as Promise<unknown>);
+      .is("payroll_run_id", null)
+      .in("id", stampBonusIds)
+      .select("id")) as unknown as { data: Array<{ id: string }> | null };
+    claims += got?.length ?? 0;
   }
   if (stampPtoIds.length > 0) {
-    await (stampDb
+    const { data: got } = (await stampDb
       .from("pto_requests")
       .update({ payroll_run_id: run.id } as never)
-      .in("id", stampPtoIds) as unknown as Promise<unknown>);
+      .is("payroll_run_id" as never, null as never)
+      .in("id", stampPtoIds)
+      .select("id")) as unknown as { data: Array<{ id: string }> | null };
+    claims += got?.length ?? 0;
+  }
+  if (claims !== expectedClaims) {
+    // Release whatever this run did claim, then remove the run (items
+    // cascade). The concurrent winner's stamps are untouched — its guard
+    // means ours never overwrote them.
+    await (stampDb
+      .from("time_entries")
+      .update({ payroll_run_id: null })
+      .eq("payroll_run_id", run.id) as unknown as Promise<unknown>);
+    await (stampDb
+      .from("bonuses")
+      .update({ payroll_run_id: null })
+      .eq("payroll_run_id", run.id) as unknown as Promise<unknown>);
+    await (stampDb
+      .from("pto_requests")
+      .update({ payroll_run_id: null } as never)
+      .eq("payroll_run_id" as never, run.id as never) as unknown as Promise<unknown>);
+    await supabase.from("payroll_runs").delete().eq("id", run.id);
+    return {
+      ok: false,
+      error:
+        "Another payroll run consumed some of these hours at the same moment — check the runs list before trying again.",
+    };
   }
 
   await logAuditEvent({

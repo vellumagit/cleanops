@@ -19,6 +19,7 @@ import {
   parseISO,
 } from "date-fns";
 import { localInputToUtcIso } from "@/lib/validators/common";
+import { FALLBACK_TZ } from "@/lib/format";
 
 export type RecurrencePattern =
   | "weekly"
@@ -177,6 +178,32 @@ export function nthWeekdayOfMonth(
 }
 
 /**
+ * The ORG-LOCAL calendar day an instant falls on, as a stepping cursor.
+ *
+ * Every stepper in this module works in "cursor space": a Date whose
+ * getFullYear/getMonth/getDate name the intended calendar day (server runs
+ * UTC, so server-local getters == UTC getters), which applyTime then pins
+ * to the org's wall clock. Seeding that space with a raw booking INSTANT
+ * broke evening series: Tue 7:00 PM Edmonton is Wed 01:00 UTC, so the
+ * cursor's day-label said Wednesday and a weekly series drifted one weekday
+ * late — permanently, because the next extension anchored off the drifted
+ * row. A month-end evening series could skip a whole month the same way.
+ * The instant must be translated to the org's calendar day FIRST.
+ */
+function dayCursorFromInstant(instant: Date, tz: string | undefined): Date {
+  // Same fallback applyTime inherits via localInputToUtcIso — the day
+  // derivation and the time application must agree on the zone or the
+  // mismatch this function exists to fix comes straight back.
+  const ymd = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz || FALLBACK_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(instant); // YYYY-MM-DD
+  return parseISO(ymd);
+}
+
+/**
  * Apply HH:MM time to a date in the given timezone and return a proper
  * UTC Date. Uses localInputToUtcIso so recurring bookings get the right
  * wall-clock time regardless of server timezone.
@@ -215,7 +242,7 @@ export function generateOccurrences(
 
   // For standard patterns: weekly/bi_weekly/tri_weekly/monthly
   // The recurrence is anchored to the start date's day of week (or day of month)
-  let cursor = after ? new Date(after) : new Date(startDate);
+  let cursor = after ? dayCursorFromInstant(after, rule.tz) : new Date(startDate);
 
   // If we have an "after" date, advance to the next occurrence
   if (after) {
@@ -360,8 +387,12 @@ function generateCustomWeekly(
   const endDate = rule.ends_at ? parseISO(rule.ends_at) : null;
   const startDate = parseISO(rule.starts_at);
 
-  // Start scanning from the start date (or the day after "after")
-  let cursor = after ? addDays(after, 1) : new Date(startDate);
+  // Start scanning from the start date (or the day after "after" — the
+  // org-local day, or an evening visit pushes the scan start a day late
+  // and the immediately-following weekday gets skipped).
+  let cursor = after
+    ? addDays(dayCursorFromInstant(after, rule.tz), 1)
+    : new Date(startDate);
 
   // Safety: don't generate more than 365 days out
   const maxIterations = 365;

@@ -4031,9 +4031,18 @@ export async function autoExtendRecurringSeries(): Promise<number> {
         series_id: s.id,
       }));
 
+      // Upsert with ignoreDuplicates against bookings_series_occurrence_uidx:
+      // this cron racing itself (overlapping invocations) or a concurrent
+      // series edit used to insert the same dates twice — two confirmed
+      // visits, each auto-completing and auto-invoicing separately. Skipped
+      // duplicates are excluded from `inserted`, so crew/calendar follow-ups
+      // only run for rows this invocation actually created.
       const { data: inserted } = await (db
         .from("bookings")
-        .insert(rows)
+        .upsert(rows, {
+          onConflict: "series_id,scheduled_at",
+          ignoreDuplicates: true,
+        })
         .select("id, scheduled_at") as unknown as Promise<{
         data: Array<{ id: string; scheduled_at: string }> | null;
       }>);
@@ -5553,7 +5562,9 @@ export async function sendWeeklyEmployeeSchedules(): Promise<{
         dayMap.set(localKey, []);
       }
       for (const r of resolved) {
-        const localKey = r.win.start.toLocaleDateString("en-CA", {});
+        const localKey = r.win.start.toLocaleDateString("en-CA", {
+          timeZone: orgTz,
+        });
         const bucket = dayMap.get(localKey) ?? [];
         bucket.push(r);
         dayMap.set(localKey, bucket);

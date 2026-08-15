@@ -200,19 +200,38 @@ export async function generateSubcontractorRunAction(
     return { ok: false, error: itemsErr.message };
   }
 
-  // Stamp ONLY the entries the items actually priced.
+  // Stamp ONLY the entries the items actually priced — and CLAIM-guarded
+  // (`.is(..., null)`), so a concurrent generate for the same period can't
+  // have both statements price the same hours: the loser claims fewer rows
+  // than it billed and unwinds completely instead of double-charging.
   const entryIds = items.flatMap((i) => i.entryIds);
-  const { error: stampErr } = (await admin
+  const { data: claimedRows, error: stampErr } = (await admin
     .from("time_entries")
     .update({ subcontractor_run_id: run.id } as never)
-    .in("id", entryIds)) as unknown as { error: { message: string } | null };
-  if (stampErr) {
-    // Unwind rather than leave a statement whose hours can be double-paid.
+    .is("subcontractor_run_id" as never, null as never)
+    .in("id", entryIds)
+    .select("id")) as unknown as {
+    data: Array<{ id: string }> | null;
+    error: { message: string } | null;
+  };
+  if (stampErr || (claimedRows?.length ?? 0) !== entryIds.length) {
+    // Release our partial claims, then remove the run (items cascade). The
+    // concurrent winner's stamps are untouched — the guard means we never
+    // overwrote them.
+    await admin
+      .from("time_entries")
+      .update({ subcontractor_run_id: null } as never)
+      .eq("subcontractor_run_id" as never, run.id as never);
     await admin
       .from("subcontractor_pay_runs" as never)
       .delete()
       .eq("id" as never, run.id as never);
-    return { ok: false, error: stampErr.message };
+    return {
+      ok: false,
+      error:
+        stampErr?.message ??
+        "Another statement consumed some of these hours at the same moment — check the statements list before trying again.",
+    };
   }
 
   await logAuditEvent({

@@ -1008,9 +1008,16 @@ export async function createRecurringBookingAction(
     series_id: series.id,
   }));
 
+  // ignoreDuplicates against bookings_series_occurrence_uidx: the nightly
+  // extend cron racing this exact window could otherwise double-insert the
+  // same dates. Skipped rows are excluded from the returned set, so the
+  // crew/calendar follow-ups below only touch what this call created.
   const { data: insertedBookings, error: bookingsErr } = await (supabase
     .from("bookings")
-    .insert(bookingRows)
+    .upsert(bookingRows, {
+      onConflict: "series_id,scheduled_at",
+      ignoreDuplicates: true,
+    })
     .select("id, scheduled_at") as unknown as {
     data: { id: string; scheduled_at: string }[] | null;
     error: { message: string } | null;
@@ -1139,6 +1146,16 @@ export async function updateBookingAction(
   if (!parsed.ok) return { errors: parsed.errors, values: raw };
 
   const { membership, supabase } = await getActionContext();
+  // The single-row update below fails SILENTLY for unauthorized roles (RLS
+  // filters to 0 rows, no error), after which execution would still reach
+  // the ADMIN-client series propagation — letting a field employee rewrite
+  // prices, assignee, and schedule across a whole series. Gate up front.
+  if (!["owner", "admin", "manager"].includes(membership.role)) {
+    return {
+      errors: { _form: "You don't have permission to edit bookings." },
+      values: raw,
+    };
+  }
 
   // Validated before it touches a payload: the id came from a browser and
   // points at a row holding door codes, so it must be proved to belong to
@@ -1584,9 +1601,15 @@ export async function updateBookingAction(
             series_id: seriesId,
           }));
 
+          // ignoreDuplicates: regeneration racing the nightly extend cron
+          // must not produce the same occurrence twice (each duplicate
+          // would auto-complete and auto-invoice separately).
           const { data: regenerated } = (await admin
             .from("bookings")
-            .insert(bookingRows)
+            .upsert(bookingRows, {
+              onConflict: "series_id,scheduled_at",
+              ignoreDuplicates: true,
+            })
             .select("id, scheduled_at")) as unknown as {
             data: Array<{ id: string; scheduled_at: string }> | null;
           };
@@ -2074,9 +2097,15 @@ export async function convertBookingToRecurringAction(
       property_id: booking.property_id,
     }));
 
+    // ignoreDuplicates: converting to recurring races the nightly extend
+    // cron the moment the series row exists — same-date double inserts
+    // must skip, not double-book (and double-invoice).
     const { data: inserted } = (await supabase
       .from("bookings")
-      .insert(rows as never)
+      .upsert(rows as never, {
+        onConflict: "series_id,scheduled_at",
+        ignoreDuplicates: true,
+      })
       .select("id, scheduled_at")) as unknown as {
       data: Array<{ id: string; scheduled_at: string }> | null;
     };
@@ -2457,6 +2486,11 @@ export async function deleteBookingAction(formData: FormData) {
   if (!id) return;
   const cascade = String(formData.get("cascade_series") ?? "") === "true";
   const { membership, supabase } = await getActionContext();
+  // Server actions are POST endpoints any signed-in member can invoke —
+  // the UI hiding the button is not a gate. The single-delete branch below
+  // is protected by RLS, but the cascade branch runs on the ADMIN client,
+  // so without this check a field employee could wipe a whole series.
+  if (!["owner", "admin", "manager"].includes(membership.role)) return;
 
   // Fetch the Google Calendar event ID + series_id + this occurrence's time
   // before deleting. scheduled_at bounds the cascade so we never touch PAST
