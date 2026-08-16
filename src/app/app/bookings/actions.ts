@@ -2478,6 +2478,12 @@ export async function setBookingStatusAction(
 
   revalidatePath("/app/bookings");
   revalidatePath(`/app/bookings/${id}`);
+  // Every board this status is visible on. The dropdown now lives on the
+  // scheduler too, and a status changed there has to survive a navigation
+  // away and back — router.refresh() only repaints the caller's own screen.
+  revalidatePath("/app/scheduling");
+  revalidatePath("/app/calendar");
+  revalidatePath("/app");
   return { ok: true };
 }
 

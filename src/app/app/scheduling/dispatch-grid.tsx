@@ -92,6 +92,9 @@ export function DispatchGrid({
   bookings,
   employees,
   canEdit,
+  /** Owner/admin/manager. Wider than canEdit (which gates drag-reschedule),
+   *  matching setBookingStatusAction and the bookings list. */
+  canEditStatus = false,
   tz,
   offDays = {},
   colorBy = "employee",
@@ -101,6 +104,7 @@ export function DispatchGrid({
   bookings: ScheduleBooking[];
   employees: ScheduleEmployee[];
   canEdit: boolean;
+  canEditStatus?: boolean;
   tz: string;
   /** Employee → YYYY-MM-DD list they're off. If the current `date` is
    *  in an employee's list, their whole column is visually shaded +
@@ -398,6 +402,7 @@ export function DispatchGrid({
           open={!!quickViewId}
           onOpenChange={(o) => !o && setQuickViewId(null)}
           tz={tz}
+          canEditStatus={canEditStatus}
         />
       </DndContext>
     </WarningProvider>

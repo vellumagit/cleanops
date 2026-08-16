@@ -24,7 +24,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { StatusBadge, bookingStatusTone } from "@/components/status-badge";
+import { BookingStatusDropdown } from "@/app/app/bookings/booking-status-dropdown";
 import { humanizeEnum } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { ScheduleBooking, ScheduleEmployee } from "./data";
@@ -74,12 +74,16 @@ export function BookingQuickView({
   open,
   onOpenChange,
   tz,
+  canEditStatus = false,
 }: {
   booking: ScheduleBooking | null;
   employees: ScheduleEmployee[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
   tz: string;
+  /** Owner/admin/manager may drive the status straight from here; anyone
+   *  else sees the same badge this dialog always showed. */
+  canEditStatus?: boolean;
 }) {
   // Every link out of this dialog carries the scheduler board we are on, so
   // saving or cancelling returns to the same week/day instead of the list.
@@ -167,9 +171,17 @@ export function BookingQuickView({
             <DialogTitle className="text-base">
               {booking.client_name}
             </DialogTitle>
-            <StatusBadge tone={bookingStatusTone(booking.status)}>
-              {humanizeEnum(booking.status)}
-            </StatusBadge>
+            {/* Editable in place. Marking a job in progress or done is the
+                commonest thing an owner wants from the board they are
+                already looking at, and sending them to the bookings list
+                to do it costs them their week/day position. Falls back to
+                the read-only badge without permission, and for terminal
+                statuses, exactly as the bookings list does. */}
+            <BookingStatusDropdown
+              bookingId={booking.id}
+              status={booking.status}
+              canEdit={canEditStatus}
+            />
           </div>
           {booking.service_type && (
             <p className="text-xs text-muted-foreground">

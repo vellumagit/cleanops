@@ -41,6 +41,7 @@ export function SchedulerShell({
   employees,
   offDays,
   canEdit,
+  canEditStatus,
   tz,
   savedViews,
   currency = "CAD",
@@ -51,6 +52,8 @@ export function SchedulerShell({
   employees: ScheduleEmployee[];
   offDays: Record<string, string[]>;
   canEdit: boolean;
+  /** Owner/admin/manager — wider than canEdit (which gates rescheduling). */
+  canEditStatus: boolean;
   tz: string;
   savedViews: SchedulerView[];
   currency?: CurrencyCode;
@@ -336,6 +339,7 @@ export function SchedulerShell({
           employees={filteredEmployees}
           warnings={warnings}
           canEdit={canEdit}
+          canEditStatus={canEditStatus}
           tz={tz}
           offDays={offDays}
           colorBy={filters.colorBy}
@@ -347,6 +351,7 @@ export function SchedulerShell({
           employees={filteredEmployees}
           warnings={warnings}
           canEdit={canEdit}
+          canEditStatus={canEditStatus}
           view={view}
           tz={tz}
           offDays={offDays}

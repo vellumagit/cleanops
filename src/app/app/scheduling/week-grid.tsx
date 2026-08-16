@@ -76,6 +76,9 @@ export function WeekGrid({
   bookings,
   employees,
   canEdit,
+  /** Owner/admin/manager. Wider than canEdit (which gates drag-reschedule),
+   *  matching setBookingStatusAction and the bookings list. */
+  canEditStatus = false,
   /** "week" shows all 7 days, "day" collapses to just the first day of
    *  the range. The parent picks which via a toggle in the page header. */
   view = "week",
@@ -99,6 +102,7 @@ export function WeekGrid({
   bookings: ScheduleBooking[];
   employees: ScheduleEmployee[];
   canEdit: boolean;
+  canEditStatus?: boolean;
   view?: "week" | "day";
   tz: string;
   offDays?: Record<string, string[]>;
@@ -342,6 +346,7 @@ export function WeekGrid({
             if (!o) setQuickViewId(null);
           }}
           tz={tz}
+          canEditStatus={canEditStatus}
         />
       </DndContext>
     </WarningProvider>

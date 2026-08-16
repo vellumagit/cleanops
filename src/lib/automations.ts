@@ -5938,7 +5938,13 @@ export async function runJobWatch(): Promise<{
               ? "A job finished with no clock-in"
               : `${toFlag.length} jobs finished with no clock-in`,
           body: `${names}${toFlag.length > 3 ? ` and ${toFlag.length - 3} more` : ""} — somebody was assigned and the time has passed, but nobody ever clocked in. Confirm the work happened before it's completed and billed, or cancel it.`,
-          href: "/app/bookings",
+          // One job → open THAT job. The alert asks for a decision about a
+          // specific booking, and landing on a list of hundreds makes the
+          // reader do the search the notification already did.
+          href:
+            toFlag.length === 1
+              ? `/app/bookings/${toFlag[0].id}`
+              : "/app/bookings",
           // Money is about to move on the strength of no evidence. Email it.
           channels: { email: true },
         });
@@ -6835,7 +6841,10 @@ export async function autoCompletePastBookings(): Promise<{
             ? "A pending job's date has passed"
             : `${stalePending.length} pending jobs have passed their date`,
         body: `${names}${stalePending.length > 3 ? ` and ${stalePending.length - 3} more` : ""} — still marked Pending, so nobody confirmed them and the time has gone by. Confirm them if they happened, or cancel them.`,
-        href: "/app/bookings?status=pending",
+        href:
+          stalePending.length === 1
+            ? `/app/bookings/${stalePending[0].id}`
+            : "/app/bookings?status=pending",
         channels: { email: true },
       });
     }
@@ -6898,8 +6907,12 @@ export async function autoCompletePastBookings(): Promise<{
           unstaffed.length === 1
             ? "A past job was never staffed"
             : `${unstaffed.length} past jobs were never staffed`,
-        body: `${names}${unstaffed.length > 3 ? ` and ${unstaffed.length - 3} more` : ""} — nobody was assigned and the time has passed. These were NOT completed or invoiced. Check what happened, then close them out by hand.`,
-        href: "/app/bookings",
+        body: `${unstaffed.length > 3 ? `${names} and ${unstaffed.length - 3} more` : names} — nobody was assigned and the time has passed. These were NOT completed or invoiced. Check what happened, then close them out by hand.`,
+        // Straight to the job when there's only one to look at.
+        href:
+          unstaffed.length === 1
+            ? `/app/bookings/${unstaffed[0].id}`
+            : "/app/bookings",
         // Work that never happened and was never billed. Email it.
         channels: { email: true },
       });

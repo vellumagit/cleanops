@@ -74,6 +74,13 @@ export default async function SchedulingPage({
 }) {
   const membership = await requireMembership();
   const canEdit = membership.role === "owner" || membership.role === "admin";
+  // Deliberately WIDER than canEdit, and matched to setBookingStatusAction's
+  // own gate (owner/admin/manager) — the same rule the bookings list applies
+  // to the same control. Managers reschedule nothing here, but marking a job
+  // in progress or cancelled is squarely their work, and a control that
+  // renders on one screen and not another for the same person is the role
+  // drift this codebase keeps paying for.
+  const canEditStatus = ["owner", "admin", "manager"].includes(membership.role);
   const tz = await getOrgTimezone(membership.organization_id);
   const { week, view: viewRaw } = await searchParams;
   const view = parseView(viewRaw);
@@ -315,6 +322,7 @@ export default async function SchedulingPage({
           employees={employees}
           offDays={offDays}
           canEdit={canEdit}
+          canEditStatus={canEditStatus}
           tz={tz}
           savedViews={savedViews}
           currency={currency}
