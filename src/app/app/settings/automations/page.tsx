@@ -248,6 +248,20 @@ const STAGES: Stage[] = [
         trigger: "Every 30 minutes",
       },
       {
+        key: "job_not_started_nudge",
+        title: "Nobody clocked in yet",
+        description:
+          "Nudges the assigned cleaner when a job's start time has passed and nobody has clocked in — while showing up is still possible. Goes to the crew, not to you; someone running fifteen minutes late isn't news. Sent once per job.",
+        trigger: "15 minutes after a job's start time",
+      },
+      {
+        key: "no_clock_in_alert",
+        title: "Job finished with no clock-in",
+        description:
+          "Tells you when a job's whole window has passed with somebody assigned but no clock-in at all — no evidence the work happened. Arrives before auto-complete turns it into an invoice, so you can confirm or cancel it first. One alert covering every such job, sent once each. Silent if your team doesn't use clock-in.",
+        trigger: "30 minutes after a job's expected end",
+      },
+      {
         key: "auto_complete_past_bookings",
         title: "Auto-complete past bookings",
         description:

@@ -5757,6 +5757,213 @@ export async function sendOvertimeWarnings(): Promise<{ emailsSent: number }> {
 // hardcoded 120/30 survive as the defaults, so an org that never touches the
 // setting behaves exactly as before.
 
+// ─────────────────────────────────────────────────────────────────
+// 33b. Job watch — the job that passed in silence
+//
+// Sibling of the clock-OUT guardrail above, watching the other end of the
+// shift. Sollos already notices a job nobody was assigned to, and a shift
+// nobody clocked out of. Nothing noticed the job that was assigned, came and
+// went, and produced no evidence anyone did it: no clock-in, no status change,
+// no human touch. Auto-complete then flips it and drafts an invoice, so the
+// first person to discover nothing happened is the client reading the bill.
+//
+// Two words, each said once (src/lib/job-watch.ts holds the decision):
+//   late start   → nudge the crew while showing up is still possible
+//   no clock-in  → ask the office, before the money moves
+//
+// Silent for orgs that don't clock in at all — otherwise every job they book
+// would raise a flag, and an alert that is always on is invisible.
+// ─────────────────────────────────────────────────────────────────
+
+export async function runJobWatch(): Promise<{
+  considered: number;
+  nudged: number;
+  flagged: number;
+  /** Orgs skipped because they have no recent clock-in activity at all. */
+  orgsWithoutClockIn: string[];
+}> {
+  const db = admin();
+  const { notify } = await import("@/lib/notify");
+  const { classifyJob, orgUsesClockIn } = await import("@/lib/job-watch");
+  const { resolveBookingCoverage } = await import("@/lib/booking-coverage");
+  const { getOrgTimezone } = await import("@/lib/org-timezone");
+  const { formatDateTime } = await import("@/lib/format");
+
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  // Three days back: far enough to catch a weekend of silence, short enough
+  // that switching this on doesn't dredge up months of history in one alert.
+  const sinceIso = new Date(nowMs - 3 * 24 * 60 * 60 * 1000).toISOString();
+
+  const { data: candidates } = (await db
+    .from("bookings")
+    .select(
+      `id, organization_id, scheduled_at, duration_minutes, status, assigned_to,
+       no_show_nudge_sent_at, no_clock_in_flagged_at,
+       client:clients ( name )`,
+    )
+    .in("status", ["confirmed", "in_progress"])
+    .gte("scheduled_at", sinceIso)
+    .lte("scheduled_at", nowIso)
+    .limit(500)) as unknown as {
+    data: Array<{
+      id: string;
+      organization_id: string;
+      scheduled_at: string;
+      duration_minutes: number | null;
+      status: string;
+      assigned_to: string | null;
+      no_show_nudge_sent_at: string | null;
+      no_clock_in_flagged_at: string | null;
+      client: { name: string | null } | null;
+    }> | null;
+  };
+
+  const considered = candidates?.length ?? 0;
+  let nudged = 0;
+  let flagged = 0;
+  const orgsWithoutClockIn: string[] = [];
+  if (!candidates || candidates.length === 0) {
+    return { considered, nudged, flagged, orgsWithoutClockIn };
+  }
+
+  // Staffing (assignee OR crew OR claimed offer) and clock-in evidence, both
+  // in one pass for every candidate rather than per-booking round trips.
+  const ids = candidates.map((b) => b.id);
+  const [coverage, { data: entryRows }] = await Promise.all([
+    resolveBookingCoverage(ids),
+    db
+      .from("time_entries")
+      .select("booking_id")
+      .in("booking_id", ids) as unknown as Promise<{
+      data: Array<{ booking_id: string | null }> | null;
+    }>,
+  ]);
+  const clockedBookings = new Set(
+    (entryRows ?? []).map((r) => r.booking_id).filter(Boolean) as string[],
+  );
+
+  const byOrg = new Map<string, typeof candidates>();
+  for (const b of candidates) {
+    const list = byOrg.get(b.organization_id) ?? [];
+    list.push(b);
+    byOrg.set(b.organization_id, list);
+  }
+
+  for (const [orgId, jobs] of byOrg) {
+    try {
+      const [nudgeOn, alertOn] = await Promise.all([
+        isAutomationEnabled(orgId, "job_not_started_nudge"),
+        isAutomationEnabled(orgId, "no_clock_in_alert"),
+      ]);
+      if (!nudgeOn && !alertOn) continue;
+
+      // Does this org clock in at all? An org running on paper would flag
+      // every job it books.
+      const { count: recentEntries } = (await db
+        .from("time_entries")
+        .select("id", { count: "exact", head: true })
+        .eq("organization_id", orgId)
+        .gte(
+          "clock_in_at",
+          new Date(nowMs - 30 * 24 * 60 * 60 * 1000).toISOString(),
+        )) as unknown as { count: number | null };
+      if (!orgUsesClockIn(recentEntries ?? 0)) {
+        orgsWithoutClockIn.push(orgId);
+        continue;
+      }
+
+      const toFlag: typeof jobs = [];
+
+      for (const b of jobs) {
+        const verdict = classifyJob({
+          scheduledAtMs: new Date(b.scheduled_at).getTime(),
+          durationMinutes: b.duration_minutes,
+          status: b.status,
+          staffed: Boolean(coverage.get(b.id)?.staffed),
+          hasClockIn: clockedBookings.has(b.id),
+          nowMs,
+          nudgedAtMs: b.no_show_nudge_sent_at
+            ? new Date(b.no_show_nudge_sent_at).getTime()
+            : null,
+          flaggedAtMs: b.no_clock_in_flagged_at
+            ? new Date(b.no_clock_in_flagged_at).getTime()
+            : null,
+        });
+
+        if (verdict.kind === "late_start" && nudgeOn) {
+          // Straight to the people who can still fix it. The office is not
+          // told yet — someone running fifteen minutes late is not news.
+          const crew = coverage.get(b.id)?.employeeIds ?? [];
+          const targets = new Set(crew);
+          if (b.assigned_to) targets.add(b.assigned_to);
+          if (targets.size === 0) continue;
+
+          const orgTz = await getOrgTimezone(orgId);
+          const when = formatDateTime(b.scheduled_at, orgTz);
+          for (const membershipId of targets) {
+            await notify({
+              organizationId: orgId,
+              audience: "membership",
+              membershipId,
+              type: "job_not_started",
+              title: "You're not clocked in",
+              body: `${b.client?.name ?? "A job"} started at ${when} and nobody has clocked in. Open the job to clock in, or tell the office if you can't make it.`,
+              href: `/field/jobs/${b.id}`,
+            });
+          }
+          await db
+            .from("bookings")
+            .update({ no_show_nudge_sent_at: nowIso } as never)
+            .eq("id", b.id);
+          nudged++;
+        } else if (verdict.kind === "no_clock_in" && alertOn) {
+          toFlag.push(b);
+        }
+      }
+
+      // ONE alert for the office listing every silent job, not one per job —
+      // the same shape unstaffed_past_booking uses, for the same reason.
+      if (toFlag.length > 0) {
+        const names = toFlag
+          .slice(0, 3)
+          .map((b) => b.client?.name ?? "a client")
+          .join(", ");
+        await notify({
+          organizationId: orgId,
+          audience: "org-management",
+          type: "job_no_clock_in",
+          title:
+            toFlag.length === 1
+              ? "A job finished with no clock-in"
+              : `${toFlag.length} jobs finished with no clock-in`,
+          body: `${names}${toFlag.length > 3 ? ` and ${toFlag.length - 3} more` : ""} — somebody was assigned and the time has passed, but nobody ever clocked in. Confirm the work happened before it's completed and billed, or cancel it.`,
+          href: "/app/bookings",
+          // Money is about to move on the strength of no evidence. Email it.
+          channels: { email: true },
+        });
+        await db
+          .from("bookings")
+          .update({ no_clock_in_flagged_at: nowIso } as never)
+          .in(
+            "id",
+            toFlag.map((b) => b.id),
+          );
+        flagged += toFlag.length;
+      }
+    } catch (err) {
+      console.error(`[auto] job watch failed for org ${orgId}:`, err);
+    }
+  }
+
+  if (nudged > 0 || flagged > 0) {
+    console.log(
+      `[auto] job watch: ${nudged} late-start nudge(s), ${flagged} no-clock-in flag(s) across ${byOrg.size} org(s)`,
+    );
+  }
+  return { considered, nudged, flagged, orgsWithoutClockIn };
+}
+
 export async function sendShiftClockOutReminders(): Promise<{
   considered: number;
   reminded: number;
@@ -6570,11 +6777,28 @@ export async function autoCompletePastBookings(): Promise<{
   };
 
   for (const org of orgs ?? []) {
-    if (!(await isAutomationEnabled(org.id, "auto_complete_past_bookings")))
-      continue;
-    if (org.booking_auto_complete_hours == null) continue; // blank = disabled (T5)
-    const hours = org.booking_auto_complete_hours;
-    if (hours < 1) continue;
+    // Two different questions, and they used to share one gate:
+    //
+    //   "should I flip statuses and draft invoices?"  — the toggle below
+    //   "should I tell someone this job looks wrong?" — never optional
+    //
+    // The watchdog notifications (stale pending, unstaffed past) sat INSIDE
+    // the auto-complete gate, so an owner who turned auto-complete off — or
+    // just blanked the threshold — silently lost the warnings too, which is
+    // precisely backwards: an org that doesn't auto-complete has MORE past
+    // jobs drifting, not fewer. The alerts now run regardless; only the
+    // status flip honours the toggle.
+    const completionEnabled =
+      (await isAutomationEnabled(org.id, "auto_complete_past_bookings")) &&
+      org.booking_auto_complete_hours != null &&
+      org.booking_auto_complete_hours >= 1;
+
+    // Threshold for "past enough to be worth mentioning". When completion is
+    // off there is no configured threshold, so fall back to a day — long
+    // enough that this evening's jobs aren't nagged about tonight.
+    const hours = completionEnabled
+      ? (org.booking_auto_complete_hours as number)
+      : 24;
 
     const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
 
@@ -6684,6 +6908,9 @@ export async function autoCompletePastBookings(): Promise<{
       );
     }
 
+    // Everything above is watchdog reporting and runs for every org. Only the
+    // status flip + invoicing below is the auto-complete FEATURE.
+    if (!completionEnabled) continue;
     if (staffedIds.length === 0) continue;
 
     const { data, error } = (await db

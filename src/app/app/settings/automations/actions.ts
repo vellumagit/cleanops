@@ -40,6 +40,11 @@ export type AutomationKey =
   // Nudges an employee still clocked in past their job's end, then caps the
   // shift at +2h and alerts management. Guards against forgotten clock-outs.
   | "shift_clock_out_reminder"
+  // The other end of the same shift: a job whose start passed with nobody
+  // clocked in (crew nudge), and one whose whole window passed in silence
+  // (office alert, before auto-complete bills it).
+  | "job_not_started_nudge"
+  | "no_clock_in_alert"
   | "booking_cancelled_email"
   | "rebooking_prompt_email"
   | "estimate_followup_email"
@@ -110,6 +115,8 @@ const VALID_AUTOMATION_KEYS = new Set<AutomationKey>([
   "auto_recurring_invoices",
   "invoice_review_digest",
   "shift_clock_out_reminder",
+  "job_not_started_nudge",
+  "no_clock_in_alert",
   "booking_cancelled_email",
   "rebooking_prompt_email",
   "estimate_followup_email",
