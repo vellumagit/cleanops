@@ -1064,6 +1064,11 @@ export function BookingForm({
             htmlFor="status"
             required
             error={state.errors?.status}
+            hint={
+              currentStatus === "pending"
+                ? "Pending = penciled in, not agreed yet. It shows amber everywhere and is never auto-completed or invoiced until you confirm it."
+                : undefined
+            }
           >
             <FormSelect id="status" name="status" defaultValue={currentStatus}>
               {statusOptions.map((o) => (

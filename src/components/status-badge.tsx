@@ -6,11 +6,17 @@ import { cn } from "@/lib/utils";
  * the ops console.
  *
  * Color meanings:
- *   green  — done, paid, confirmed, active, completed
- *   blue   — in progress, sent, scheduled
+ *   green  — done, paid, active, completed
+ *   blue   — scheduled, sent, locked in
+ *   violet — happening right now (a job under way)
  *   amber  — pending, needs attention, below threshold, draft
  *   red    — overdue, cancelled, urgent, failed
  *   neutral — generic / default
+ *
+ * Colour is never the ONLY signal — every badge also spells the status out,
+ * which is what keeps this readable for colour-blind users. The hues are
+ * still chosen to survive the common forms: amber/violet/blue separate by
+ * lightness as well as hue, so they stay distinguishable in greyscale.
  */
 
 const statusBadgeVariants = cva(
@@ -21,6 +27,8 @@ const statusBadgeVariants = cva(
         green:
           "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-300",
         blue: "border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900/40 dark:bg-sky-950/30 dark:text-sky-300",
+        violet:
+          "border-violet-200 bg-violet-50 text-violet-700 dark:border-violet-900/40 dark:bg-violet-950/30 dark:text-violet-300",
         amber:
           "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-300",
         red: "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-900/40 dark:bg-rose-950/30 dark:text-rose-300",
@@ -66,14 +74,23 @@ export function bookingStatusTone(
     | "cancelled",
 ): StatusTone {
   switch (status) {
-    case "completed":
-      return "green";
-    case "confirmed":
-    case "en_route":
-    case "in_progress":
-      return "blue";
+    // Not confirmed by anyone yet — the one status that is a question rather
+    // than a fact, so it wears the colour the rest of the app uses for
+    // "needs a human".
     case "pending":
       return "amber";
+    // Agreed and on the schedule.
+    case "confirmed":
+      return "blue";
+    // Under way right now. Distinct from confirmed on purpose: those two used
+    // to share one blue, which made the single most useful glance on the
+    // scheduling grid — what is happening NOW versus what is merely booked —
+    // impossible to make without reading every badge.
+    case "in_progress":
+    case "en_route":
+      return "violet";
+    case "completed":
+      return "green";
     case "cancelled":
       return "red";
   }
