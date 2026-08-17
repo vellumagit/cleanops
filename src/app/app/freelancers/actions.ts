@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
+import { can } from "@/lib/auth";
 import { logAuditEvent, type AuditEntity } from "@/lib/audit";
 import {
   FreelancerContactSchema,
@@ -230,6 +231,18 @@ export async function createJobOfferAction(
   }
 
   const { membership, supabase } = await getActionContext();
+  // Sending an offer spends money — SMS out, and subcontractor pay owed if
+  // someone claims it. Reachable from a booking as well as from On-call, so
+  // the check belongs here rather than only on the page.
+  if (!can(membership, "subcontractors")) {
+    return {
+      errors: {
+        contact_ids:
+          "Sending shift offers isn't part of your access. Ask an owner to turn it on.",
+      },
+      values: raw,
+    };
+  }
 
   // Sanity-check the booking is ours + fetch the fields we need for SMS.
   const { data: booking, error: bookingErr } = await supabase

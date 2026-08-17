@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CheckCircle2, Copy, Pencil, Send } from "lucide-react";
-import { requireMembership } from "@/lib/auth";
+import { requireMembership, can } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
@@ -219,8 +219,17 @@ export default async function BookingDetailPage({
         .limit(1)
         .maybeSingle()
     : { data: null };
+  // Bookings stay open to every manager — the job list is context anyone
+  // running a day needs. But two buttons on this page reach INTO capabilities
+  // gated elsewhere: one drafts an invoice, the other spends money texting
+  // subcontractors. A manager with those switched off gets no door here
+  // either, or /app/invoices bouncing them would be theatre.
   const showGenerateInvoice =
-    canEdit && bookingStatus === "completed" && !existingInvoice;
+    canEdit &&
+    bookingStatus === "completed" &&
+    !existingInvoice &&
+    can(membership, "invoicing");
+  const showOfferShift = can(membership, "subcontractors");
 
   // Photos are read-visible to any org member (RLS enforces that). Upload
   // + delete UI only shows for owner/admin/manager on the admin side.
@@ -403,13 +412,15 @@ export default async function BookingDetailPage({
                 label={booking.assigned ? "Change crew" : "Assign crew"}
               />
             )}
-            <Link
-              href={`/app/bookings/${booking.id}/offer`}
-              className={buttonVariants({ variant: "outline" })}
-            >
-              <Send className="h-4 w-4" />
-              Offer shift
-            </Link>
+            {showOfferShift && (
+              <Link
+                href={`/app/bookings/${booking.id}/offer`}
+                className={buttonVariants({ variant: "outline" })}
+              >
+                <Send className="h-4 w-4" />
+                Offer shift
+              </Link>
+            )}
             <Link
               href={editHref}
               className={buttonVariants({ variant: "default" })}
@@ -633,7 +644,7 @@ export default async function BookingDetailPage({
           </div>
 
           {/* Offer history */}
-          {canEdit && (
+          {canEdit && showOfferShift && (
             <div className="rounded-lg border border-border bg-card">
               <div className="flex items-center justify-between border-b border-border px-6 py-3">
                 <p className="sollos-label">Subcontractor offers</p>

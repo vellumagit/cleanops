@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
-import { requireMembership } from "@/lib/auth";
+import { requireMembership, requireCapability } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
@@ -23,6 +23,9 @@ export default async function NewJobOfferPage({
   params: Promise<{ id: string }>;
 }) {
   const membership = await requireMembership(["owner", "admin", "manager"]);
+  // Reached from a booking, so it needs its own gate — the On-call section's
+  // page check never sees this route.
+  requireCapability(membership, "subcontractors");
   const tz = await getOrgTimezone(membership.organization_id);
   const { id: bookingId } = await params;
   const supabase = await createSupabaseServerClient();

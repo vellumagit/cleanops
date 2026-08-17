@@ -10,6 +10,7 @@ import {
 import { lifecycleByAssignee, withPriorLifecycle } from "@/lib/crew-sync";
 import { after } from "next/server";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
+import { can } from "@/lib/auth";
 import type { Database, Json } from "@/lib/supabase/types";
 
 type ServiceTypeEnum = Database["public"]["Enums"]["service_type"];
@@ -2900,6 +2901,14 @@ export async function generateInvoiceFromBookingAction(
   const { membership } = await getActionContext();
   if (!["owner", "admin", "manager"].includes(membership.role)) {
     return { error: "Only owners, admins, or managers can generate invoices." };
+  }
+  // The page hides this button without the capability; this is the same rule
+  // stated where it's actually enforced, so the button being hidden is a
+  // courtesy rather than the whole guard.
+  if (!can(membership, "invoicing")) {
+    return {
+      error: "Invoicing isn't part of your access. Ask an owner to turn it on.",
+    };
   }
 
   const result = await autoInvoiceOnJobComplete(id, { force: true });
