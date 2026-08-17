@@ -7,7 +7,9 @@ import { Input } from "@/components/ui/input";
 import { buttonVariants } from "@/components/ui/button";
 import { FormError, FormField, FormSelect } from "@/components/form-field";
 import { SubmitButton } from "@/components/submit-button";
-import { SetupReturnField } from "@/components/setup-return-field";
+// Superset of SetupReturnField: carries an explicit `?_return=` (a client's
+// page, a filtered list) as well as onboarding's `?from=setup`.
+import { ReturnToField } from "@/components/return-to-field";
 import {
   formatCurrencyCents,
   humanizeEnum,
@@ -368,7 +370,7 @@ export function InvoiceForm({
 
   return (
     <form action={formAction} className="space-y-5">
-      <SetupReturnField />
+      <ReturnToField />
       <FormError message={state.errors?._form} />
 
       {/* Hidden inputs carry the combobox selections to the server */}

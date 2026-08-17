@@ -16,6 +16,7 @@ import { generateClaimToken } from "@/lib/claim-token";
 import { autoOnInvoicePaid } from "@/lib/automations";
 import { canCreateData } from "@/lib/subscription";
 import { redirectAfterSetup } from "@/lib/setup-return";
+import { redirectBack } from "@/lib/return-to";
 import { computeTax, parseTaxRate } from "@/lib/invoice-tax";
 import { pushInvoiceToSage } from "@/lib/sage";
 import { pushInvoiceToQuickBooks } from "@/lib/quickbooks";
@@ -244,7 +245,12 @@ export async function updateInvoiceAction(
   revalidatePath("/app/invoices");
   revalidatePath(`/app/invoices/${id}/edit`);
   revalidatePath("/app");
-  redirect("/app/invoices");
+  // Back where they came from — a client's page, a filtered list — and
+  // failing that, the invoice they just edited. It used to land on the
+  // unfiltered list of every invoice in the business, so editing one
+  // invoice for one client threw away the context you were working in and
+  // left you filtering your way back to it.
+  redirectBack(formData, `/app/invoices/${id}`);
 }
 
 // -----------------------------------------------------------------------------
@@ -864,7 +870,9 @@ export async function deleteInvoiceAction(formData: FormData) {
   });
 
   revalidatePath("/app/invoices");
-  redirect("/app/invoices");
+  // The deleted invoice's own page is gone, so the list is the right
+  // fallback — but if they came from a client, that is where they belong.
+  redirectBack(formData, "/app/invoices");
 }
 
 /**

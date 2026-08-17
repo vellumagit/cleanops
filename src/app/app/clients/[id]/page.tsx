@@ -548,7 +548,11 @@ export default async function ClientDetailPage({
           <Section
             title="Recent invoices"
             emptyText="No invoices yet."
-            viewAllHref={`/app/invoices`}
+            // Scoped to THIS client, like the bookings section above it.
+            // "View all" from inside a client meant every invoice in the
+            // business, so following it lost the person you were reading
+            // about and left you filtering your way back.
+            viewAllHref={`/app/invoices?client=${id}`}
           >
             {invoices.map((inv) => (
               <Link

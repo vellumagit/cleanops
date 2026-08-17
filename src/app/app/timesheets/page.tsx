@@ -273,7 +273,23 @@ export default async function TimesheetsPage({
         : 0;
 
     const scheduledAt = e.booking?.scheduled_at ?? null;
-    const estimatedMinutes = e.booking?.duration_minutes ?? null;
+    const empId = e.employee_id ?? e.employee?.id ?? "";
+    // This member's own window on this job: their split segment, or their
+    // share of a divided team job. Resolved BEFORE completion because
+    // completion has to judge them against it — see below.
+    const shiftWindow =
+      e.booking?.id && scheduledAt
+        ? shiftWindows.get(shiftWindowKey(e.booking.id, empId))
+        : undefined;
+
+    // What this person was expected to work — not what the JOB was expected
+    // to take. Two cleaners on a 3h job owe 90 minutes each; comparing
+    // either of them against the full 3h reported both as finishing an hour
+    // and a half early, on every team job, forever. The over-allotted flag
+    // and the clock-out cron already measured the share; this was the last
+    // number still measuring the whole.
+    const estimatedMinutes =
+      shiftWindow?.allottedMinutes ?? e.booking?.duration_minutes ?? null;
 
     // Punctuality: compare clock_in_at vs booking.scheduled_at
     let punctuality: "early" | "on_time" | "late" | null = null;
@@ -294,7 +310,7 @@ export default async function TimesheetsPage({
       }
     }
 
-    // Completion: compare actual vs estimated duration
+    // Completion: compare actual vs what THIS person was allotted.
     let completion: "under" | "on_target" | "over" | null = null;
     let completionDiffMinutes = 0;
     if (estimatedMinutes && actualMinutes > 0) {
@@ -318,12 +334,6 @@ export default async function TimesheetsPage({
     // The snapshot path fixes the "raise this month silently re-prices
     // last month's payroll" bug. Legacy entries without a snapshot fall
     // through to the current-rate path, matching old behavior.
-    const empId = e.employee_id ?? e.employee?.id ?? "";
-    // This member's own window on this job (split segment, or their share).
-    const shiftWindow =
-      e.booking?.id && scheduledAt
-        ? shiftWindows.get(shiftWindowKey(e.booking.id, empId))
-        : undefined;
     const meta = empMeta[empId];
     const entryRow = e as { pay_rate_cents_snapshot?: number | null };
     const payRateCents =
