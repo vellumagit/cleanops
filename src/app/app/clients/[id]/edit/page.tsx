@@ -23,13 +23,14 @@ export default async function EditClientPage({
     supabase
       .from("clients")
       .select(
-        "id, name, email, phone, address, notes, preferred_contact, contact_preference, contact_overrides, preferred_cleaner_id, sms_opted_in, profile_id, portal_invited_at, portal_accepted_at, portal_invite_expires_at, billing_cadence, billing_type, flat_rate_cents, referred_by_client_id",
+        "id, name, company_name, email, phone, address, notes, preferred_contact, contact_preference, contact_overrides, preferred_cleaner_id, sms_opted_in, profile_id, portal_invited_at, portal_accepted_at, portal_invite_expires_at, billing_cadence, billing_type, flat_rate_cents, referred_by_client_id",
       )
       .eq("id", id)
       .maybeSingle() as unknown as Promise<{
       data: {
         id: string;
         name: string;
+        company_name: string | null;
         email: string | null;
         phone: string | null;
         address: string | null;
@@ -74,6 +75,7 @@ export default async function EditClientPage({
             orgSmsEnabled={orgCtx.smsEnabled}
             defaults={{
               name: client.name,
+              company_name: client.company_name ?? "",
               email: client.email,
               phone: client.phone,
               address: client.address,

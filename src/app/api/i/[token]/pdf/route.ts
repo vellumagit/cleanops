@@ -13,6 +13,10 @@ import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
 import { renderInvoicePdf, type InvoicePdfData } from "@/lib/invoice-pdf";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { formatTaxRate } from "@/lib/invoice-tax";
+import {
+  clientBillingName,
+  clientBillingAttn,
+} from "@/lib/client-billing-name";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -48,7 +52,7 @@ export async function GET(
   const { data: invoice } = (await admin
     .from("invoices")
     .select(
-      "id, number, due_date, amount_cents, tax_rate_bps, tax_amount_cents, tax_label, organization_id, client:clients ( name, email )",
+      "id, number, due_date, amount_cents, tax_rate_bps, tax_amount_cents, tax_label, organization_id, client:clients ( name, company_name, email )",
     )
     .eq("public_token" as never, token as never)
     .maybeSingle()) as unknown as {
@@ -113,7 +117,8 @@ export async function GET(
     dueDate: formatDueDate(invoice.due_date),
     orgName: org?.name ?? "Invoice",
     brandColorHex: org?.brand_color ?? null,
-    clientName: invoice.client?.name ?? "Customer",
+    clientName: clientBillingName(invoice.client),
+    clientAttn: clientBillingAttn(invoice.client),
     clientEmail: invoice.client?.email ?? null,
     currency,
     lineItems,

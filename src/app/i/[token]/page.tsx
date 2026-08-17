@@ -13,6 +13,10 @@ import {
   startSquareCheckoutAction,
   startStripeCheckoutAction,
 } from "./pay-actions";
+import {
+  clientBillingName,
+  clientBillingAttn,
+} from "@/lib/client-billing-name";
 
 export const metadata: Metadata = {
   title: "Invoice",
@@ -62,7 +66,7 @@ export default async function PublicInvoicePage({
         id, number, status, amount_cents, due_date, sent_at, paid_at,
         voided_at, payment_instructions, created_at,
         organization:organizations ( id, name, default_payment_instructions ),
-        client:clients ( name, email ),
+        client:clients ( name, company_name, email ),
         line_items:invoice_line_items (
           id, label, quantity, unit_price_cents, sort_order
         ),
@@ -279,7 +283,12 @@ export default async function PublicInvoicePage({
                   {invoice.number ?? "—"}
                 </h1>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  For {invoice.client?.name ?? "—"}
+                  For {clientBillingName(invoice.client)}
+                  {clientBillingAttn(invoice.client) ? (
+                    <span className="block">
+                      Attn: {clientBillingAttn(invoice.client)}
+                    </span>
+                  ) : null}
                 </p>
               </div>
               <div className="text-right">

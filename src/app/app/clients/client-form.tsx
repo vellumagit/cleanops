@@ -24,6 +24,7 @@ const empty: ClientFormState = {};
 
 type Defaults = {
   name?: string;
+  company_name?: string | null;
   email?: string | null;
   phone?: string | null;
   address?: string | null;
@@ -93,6 +94,21 @@ export function ClientForm({
           name="name"
           required
           defaultValue={v.name ?? ""}
+          autoComplete="off"
+        />
+      </FormField>
+
+      <FormField
+        label="Company name"
+        htmlFor="company_name"
+        error={state.errors?.company_name}
+        hint="Optional. For a client who runs a business — invoices, statements and receipts are addressed to the company, with the name above as the contact. Everything else (bookings, the schedule, texts) keeps using their name."
+      >
+        <Input
+          id="company_name"
+          name="company_name"
+          defaultValue={v.company_name ?? ""}
+          placeholder="e.g. Riverbend Consulting Ltd."
           autoComplete="off"
         />
       </FormField>

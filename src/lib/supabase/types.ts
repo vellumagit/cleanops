@@ -1151,6 +1151,7 @@ export type Database = {
           balance_cents: number
           billing_cadence: string
           billing_type: string
+          company_name?: string | null
           created_at: string
           email: string | null
           flat_rate_cents: number | null
@@ -1189,6 +1190,7 @@ export type Database = {
           balance_cents?: number
           billing_cadence?: string
           billing_type?: string
+          company_name?: string | null
           created_at?: string
           email?: string | null
           flat_rate_cents?: number | null
@@ -1227,6 +1229,7 @@ export type Database = {
           balance_cents?: number
           billing_cadence?: string
           billing_type?: string
+          company_name?: string | null
           created_at?: string
           email?: string | null
           flat_rate_cents?: number | null

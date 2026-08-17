@@ -54,7 +54,7 @@ export async function deliverInvoiceEmailCore(
   const { data: prev } = await db
     .from("invoices")
     .select(
-      "id, number, status, sent_at, public_token, amount_cents, due_date, organization_id, client:clients ( name, email )",
+      "id, number, status, sent_at, public_token, amount_cents, due_date, organization_id, client:clients ( name, company_name, email )",
     )
     .eq("id", invoiceId)
     .maybeSingle();

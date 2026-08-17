@@ -46,6 +46,12 @@ const optionalCents = z
 
 export const ClientSchema = z.object({
   name: requiredText("Name", 200),
+  /**
+   * Business to invoice under, for clients who run one. Optional and blank
+   * for almost everyone. When set, money documents bill the company and name
+   * this person as the contact; nothing else in the app changes.
+   */
+  company_name: optionalText,
   email: optionalText.refine(
     (s) => !s || /\S+@\S+\.\S+/.test(s),
     "Enter a valid email",

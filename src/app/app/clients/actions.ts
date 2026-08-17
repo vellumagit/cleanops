@@ -32,6 +32,7 @@ export type ClientFormState = ActionState<Field>;
 function readFormValues(formData: FormData) {
   return {
     name: String(formData.get("name") ?? ""),
+    company_name: String(formData.get("company_name") ?? ""),
     email: String(formData.get("email") ?? ""),
     // Normalise to E.164 on the way in — Twilio requires this format and
     // the opt-in gate in sendOrgSms matches by stored phone number.
@@ -127,6 +128,7 @@ export async function createClientAction(
     .insert({
       organization_id: membership.organization_id,
       name: parsed.data.name,
+      company_name: parsed.data.company_name ?? null,
       email: parsed.data.email ?? null,
       phone: parsed.data.phone ?? null,
       address: parsed.data.address ?? null,
@@ -252,6 +254,7 @@ export async function updateClientAction(
     .from("clients")
     .update({
       name: parsed.data.name,
+      company_name: parsed.data.company_name ?? null,
       email: parsed.data.email ?? null,
       phone: parsed.data.phone ?? null,
       address: parsed.data.address ?? null,

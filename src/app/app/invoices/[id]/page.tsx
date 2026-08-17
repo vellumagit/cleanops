@@ -26,6 +26,11 @@ import { AutoSendNotice } from "./auto-send-notice";
 import { ResendInvoiceButton } from "./resend-invoice-button";
 import { SyncSageButton } from "./sync-sage-button";
 import { SyncQuickBooksButton } from "./sync-quickbooks-button";
+import {
+  clientBillingName,
+  clientBillingAttn,
+  clientBillingLine,
+} from "@/lib/client-billing-name";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
 import { getOrgTimezone } from "@/lib/org-timezone";
@@ -96,7 +101,7 @@ export default async function InvoiceDetailPage({
       `
         id, number, public_token, status, amount_cents, due_date,
         sent_at, paid_at, voided_at, payment_instructions, created_at,
-        client:clients ( id, name, email, phone, address ),
+        client:clients ( id, name, company_name, email, phone, address ),
         booking:bookings!booking_id ( id, scheduled_at, service_type ),
         line_items:invoice_line_items ( id, label, quantity, unit_price_cents, sort_order ),
         payments:invoice_payments (
@@ -237,7 +242,7 @@ export default async function InvoiceDetailPage({
   return (
     <PageShell
       title={invoice.number ?? "Invoice"}
-      description={`For ${invoice.client?.name ?? "—"}`}
+      description={`For ${clientBillingLine(invoice.client)}`}
       actions={
         <div className="flex items-center gap-2">
           <Link
@@ -275,7 +280,13 @@ export default async function InvoiceDetailPage({
                     {invoice.number ?? "—"}
                   </h2>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    {invoice.client?.name ?? "—"}
+                    {clientBillingName(invoice.client)}
+                    {clientBillingAttn(invoice.client) && (
+                      <>
+                        {" · Attn: "}
+                        <span>{clientBillingAttn(invoice.client)}</span>
+                      </>
+                    )}
                     {invoice.client?.address && (
                       <>
                         {" · "}
@@ -579,7 +590,13 @@ export default async function InvoiceDetailPage({
           <div className="rounded-lg border border-border bg-card p-4">
             <p className="sollos-label">Client</p>
             <dl className="mt-3 space-y-2 text-xs">
-              <Row label="Name" value={invoice.client?.name ?? "—"} />
+              <Row label="Billed to" value={clientBillingName(invoice.client)} />
+              {clientBillingAttn(invoice.client) && (
+                <Row
+                  label="Attn"
+                  value={clientBillingAttn(invoice.client) as string}
+                />
+              )}
               <Row label="Email" value={invoice.client?.email ?? "—"} />
               <Row label="Phone" value={invoice.client?.phone ?? "—"} />
             </dl>

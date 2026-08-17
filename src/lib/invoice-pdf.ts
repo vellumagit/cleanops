@@ -26,6 +26,8 @@ export type InvoicePdfData = {
   orgName: string;
   brandColorHex?: string | null;
   clientName: string;
+  /** Contact person, when the invoice is billed to a company. */
+  clientAttn?: string | null;
   clientEmail?: string | null;
   currency: CurrencyCode;
   lineItems: InvoicePdfLine[];
@@ -125,6 +127,12 @@ export async function renderInvoicePdf(data: InvoicePdfData): Promise<Buffer> {
   text(data.clientName, M, 11, bold, ink);
   textR(data.dueDate ?? "-", RIGHT, 11, bold, ink);
   y -= 13;
+  // Billed to a company: name the person inside it, so the invoice reaches
+  // a desk rather than a reception pile.
+  if (data.clientAttn) {
+    text(`Attn: ${data.clientAttn}`, M, 9, font, muted);
+    y -= 12;
+  }
   if (data.clientEmail) text(data.clientEmail, M, 9, font, muted);
   y -= 30;
 
