@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Plus, CalendarRange, TriangleAlert } from "lucide-react";
-import { requireMembership } from "@/lib/auth";
+import { requireMembership, requireCapability } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { fetchOrgNotificationContext } from "@/app/app/clients/org-contact-default";
@@ -20,6 +20,7 @@ export default async function InvoicesPage({
   searchParams: Promise<{ archived?: string }>;
 }) {
   const membership = await requireMembership();
+  requireCapability(membership, "invoicing");
   const canEdit = membership.role === "owner" || membership.role === "admin";
   const supabase = await createSupabaseServerClient();
   const currency = await getOrgCurrency(membership.organization_id);

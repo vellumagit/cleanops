@@ -38,6 +38,11 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { NotificationBell } from "@/components/notification-bell";
+import {
+  hasCapability,
+  type CapabilityKey,
+  type CapabilityMap,
+} from "@/lib/capabilities";
 
 /**
  * Sollos 3 ops-console sidebar — responsive: hamburger on mobile,
@@ -52,6 +57,10 @@ type NavItem = {
   icon: React.ComponentType<{ className?: string }>;
   /** Roles that can see this item. If omitted, visible to all. */
   roles?: string[];
+  /** Manager capability this item needs. Owners/admins always pass; a
+   *  manager without it never sees the link, so the nav matches what the
+   *  page would actually let them open. */
+  capability?: CapabilityKey;
 };
 
 type NavSection = {
@@ -76,10 +85,10 @@ const NAV_SECTIONS: NavSection[] = [
     activeBg: "bg-sky-500/10",
     items: [
       { href: "/app/bookings", label: "Bookings", icon: CalendarCheck },
-      { href: "/app/calendar", label: "Calendar", icon: CalendarDays },
-      { href: "/app/scheduling", label: "Scheduling", icon: Calendar, roles: ["owner", "admin", "manager"] },
+      { href: "/app/calendar", label: "Calendar", icon: CalendarDays , capability: "scheduling" as const },
+      { href: "/app/scheduling", label: "Scheduling", icon: Calendar, roles: ["owner", "admin", "manager"] , capability: "scheduling" as const },
       { href: "/app/bookings/requests", label: "Requests", icon: Inbox, roles: ["owner", "admin", "manager"] },
-      { href: "/app/estimates", label: "Estimates", icon: FileText, roles: ["owner", "admin", "manager"] },
+      { href: "/app/estimates", label: "Estimates", icon: FileText, roles: ["owner", "admin", "manager"] , capability: "invoicing" as const },
       { href: "/app/contracts", label: "Contracts", icon: ScrollText, roles: ["owner", "admin", "manager"] },
       { href: "/app/packages", label: "Packages", icon: Package, roles: ["owner", "admin", "manager"] },
       { href: "/app/checklists", label: "Checklists", icon: ClipboardCheck, roles: ["owner", "admin", "manager"] },
@@ -92,10 +101,10 @@ const NAV_SECTIONS: NavSection[] = [
     accent: "text-violet-400",
     activeBg: "bg-violet-500/10",
     items: [
-      { href: "/app/clients", label: "Clients", icon: Users, roles: ["owner", "admin", "manager"] },
+      { href: "/app/clients", label: "Clients", icon: Users, roles: ["owner", "admin", "manager"] , capability: "clients" as const },
       { href: "/app/employees", label: "Employees", icon: UserRound, roles: ["owner", "admin"] },
       { href: "/app/applicants", label: "Applicants", icon: ClipboardList, roles: ["owner", "admin"] },
-      { href: "/app/timesheets", label: "Timesheets", icon: Clock, roles: ["owner", "admin", "manager"] },
+      { href: "/app/timesheets", label: "Timesheets", icon: Clock, roles: ["owner", "admin", "manager"] , capability: "timesheets" as const },
       // Subcontractor pay lives INSIDE this section — it's a view of the same
       // people, not a separate area of the app, and two adjacent
       // "Subcontractor …" rows made the sidebar read like two features.
@@ -103,7 +112,7 @@ const NAV_SECTIONS: NavSection[] = [
       // "Outsourcing" read like a service Sollos sells. This is the on-call
       // pool — external emergency coverage. Roster subcontractors live under
       // Employees (and get shift offers through the same Offer flow).
-      { href: "/app/freelancers", label: "On-call pool", icon: UserPlus, roles: ["owner", "admin", "manager"] },
+      { href: "/app/freelancers", label: "On-call pool", icon: UserPlus, roles: ["owner", "admin", "manager"] , capability: "subcontractors" as const },
       { href: "/app/reviews", label: "Reviews", icon: Star },
       { href: "/app/bonuses", label: "Bonuses", icon: Award },
       { href: "/app/training", label: "Training", icon: GraduationCap },
@@ -114,7 +123,7 @@ const NAV_SECTIONS: NavSection[] = [
     accent: "text-emerald-400",
     activeBg: "bg-emerald-500/10",
     items: [
-      { href: "/app/invoices", label: "Invoices", icon: Receipt, roles: ["owner", "admin", "manager"] },
+      { href: "/app/invoices", label: "Invoices", icon: Receipt, roles: ["owner", "admin", "manager"] , capability: "invoicing" as const },
       { href: "/app/reports", label: "Reports", icon: BarChart3, roles: ["owner", "admin"] },
       { href: "/app/payroll", label: "Payroll", icon: Banknote, roles: ["owner", "admin"] },
     ],
@@ -149,6 +158,8 @@ const BADGE_LABELS: Record<string, string> = {
 type Props = {
   organizationName: string;
   role: string;
+  /** Per-manager capability switches; see src/lib/capabilities.ts. */
+  capabilities?: CapabilityMap;
   userName: string | null;
   showSetup?: boolean;
   logoUrl?: string | null;
@@ -165,6 +176,7 @@ type Props = {
 export function AppSidebar({
   organizationName,
   role,
+  capabilities = null,
   userName,
   showSetup,
   logoUrl,
@@ -201,7 +213,12 @@ export function AppSidebar({
   const visibleNavSections = NAV_SECTIONS.map((section) => ({
     ...section,
     items: section.items.filter(
-      (item) => feedEnabled || item.href !== "/app/feed",
+      (item) =>
+        (feedEnabled || item.href !== "/app/feed") &&
+        // A link to a page this manager cannot open is worse than no link:
+        // they click it and get bounced with no explanation.
+        (!item.capability ||
+          hasCapability(role, capabilities, item.capability)),
     ),
   }));
 

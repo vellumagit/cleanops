@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { requireMembership } from "@/lib/auth";
+import { requireMembership, requireCapability } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { taxRateBpsToPercentString } from "@/lib/org-tax";
@@ -18,6 +18,7 @@ export default async function EditInvoicePage({
   params: Promise<{ id: string }>;
 }) {
   const membership = await requireMembership(["owner", "admin", "manager"]);
+  requireCapability(membership, "invoicing");
   const { id } = await params;
   const supabase = await createSupabaseServerClient();
   const currency = await getOrgCurrency(membership.organization_id);

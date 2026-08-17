@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Plus, Upload } from "lucide-react";
-import { requireMembership } from "@/lib/auth";
+import { requireMembership, requireCapability } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
@@ -16,6 +16,7 @@ export default async function ClientsPage({
   searchParams: Promise<{ archived?: string }>;
 }) {
   const membership = await requireMembership();
+  requireCapability(membership, "clients");
   const canEdit = membership.role === "owner" || membership.role === "admin";
   const supabase = await createSupabaseServerClient();
   const { archived } = await searchParams;

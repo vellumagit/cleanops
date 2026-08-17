@@ -24,6 +24,12 @@ import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { createSupabaseServerClient } from "./supabase/server";
 import type { Database } from "./supabase/types";
+import {
+  hasCapability,
+  parseCapabilities,
+  type CapabilityKey,
+  type CapabilityMap,
+} from "./capabilities";
 
 export type MembershipRole = Database["public"]["Enums"]["membership_role"];
 export type MembershipStatus =
@@ -36,6 +42,9 @@ export type CurrentMembership = {
   role: MembershipRole;
   status: MembershipStatus;
   profile_id: string;
+  /** Per-manager capability switches. NULL = unrestricted. Owners/admins
+   *  ignore it entirely; see src/lib/capabilities.ts. */
+  capabilities: CapabilityMap;
 };
 
 const ACTIVE_ORG_COOKIE = "cleanops_active_org";
@@ -93,7 +102,7 @@ export async function getCurrentMembership(): Promise<CurrentMembership | null> 
   const { data, error } = await supabase
     .from("memberships")
     .select(
-      "id, organization_id, role, status, profile_id, organizations!inner(name)",
+      "id, organization_id, role, status, profile_id, capabilities, organizations!inner(name)",
     )
     .eq("profile_id", userId)
     .eq("status", "active")
@@ -116,7 +125,41 @@ export async function getCurrentMembership(): Promise<CurrentMembership | null> 
     // query above filters .eq("profile_id", userId), so a matching row
     // always has a real profile_id. Safe to assert non-null here.
     profile_id: chosen.profile_id!,
+    capabilities: parseCapabilities(
+      (chosen as { capabilities?: unknown }).capabilities,
+    ),
   };
+}
+
+/**
+ * Server-side guard for a manager capability.
+ *
+ * Owners and admins always pass. A manager passes when the capability is on
+ * for them (absent = on, so nobody loses access the day a new key ships).
+ * Anyone else is bounced the same way a role mismatch is — to their own
+ * surface, not to an error.
+ *
+ * Pair with requireMembership at the top of a page:
+ *
+ *   const membership = await requireMembership(["owner","admin","manager"]);
+ *   requireCapability(membership, "invoicing");
+ */
+export function requireCapability(
+  membership: CurrentMembership,
+  key: CapabilityKey,
+): void {
+  if (hasCapability(membership.role, membership.capabilities, key)) return;
+  if (membership.role === "employee") redirect("/field");
+  redirect("/app");
+}
+
+/** Non-redirecting form, for hiding navigation and buttons. */
+export function can(
+  membership: CurrentMembership | null | undefined,
+  key: CapabilityKey,
+): boolean {
+  if (!membership) return false;
+  return hasCapability(membership.role, membership.capabilities, key);
 }
 
 /**

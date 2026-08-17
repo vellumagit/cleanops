@@ -6,6 +6,7 @@ import { z } from "zod";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
 import { logAuditEvent } from "@/lib/audit";
 import { toEngagement } from "@/lib/engagement";
+import { capabilitiesFromForm } from "@/lib/capabilities";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { InvitationSchema } from "@/lib/validators/invitations";
 
@@ -412,6 +413,17 @@ export async function updateMemberAction(
   // profiles.full_name (their login identity) is left untouched.
   const updatePayload: Record<string, unknown> = {};
   if (parsed.data.role) updatePayload.role = parsed.data.role;
+  // ABSENCE MUST SURVIVE, same discipline as engagement above: three forms
+  // call this action and only the employees edit dialog carries capability
+  // switches. Without the marker, saving a phone number from the Settings ›
+  // Members table would read "no boxes ticked" and silently strip a
+  // manager's access. The hidden capabilities_present field is the form
+  // saying "I am the one that owns this decision".
+  if (formData.has("capabilities_present")) {
+    updatePayload.capabilities = capabilitiesFromForm(
+      formData.getAll("capabilities").map((v) => String(v)),
+    );
+  }
   if (raw.engagement) updatePayload.engagement = raw.engagement;
   if (parsed.data.status) updatePayload.status = parsed.data.status;
   if (parsed.data.pay_rate !== undefined)

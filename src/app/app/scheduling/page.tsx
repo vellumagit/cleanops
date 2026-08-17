@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { requireMembership } from "@/lib/auth";
+import { requireMembership, requireCapability } from "@/lib/auth";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -73,6 +73,7 @@ export default async function SchedulingPage({
   searchParams: Promise<{ week?: string; view?: string }>;
 }) {
   const membership = await requireMembership();
+  requireCapability(membership, "scheduling");
   const canEdit = membership.role === "owner" || membership.role === "admin";
   // Deliberately WIDER than canEdit, and matched to setBookingStatusAction's
   // own gate (owner/admin/manager) — the same rule the bookings list applies

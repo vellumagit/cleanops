@@ -1,4 +1,4 @@
-import { requireMembership } from "@/lib/auth";
+import { requireMembership, requireCapability } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { PageShell } from "@/components/page-shell";
@@ -38,6 +38,7 @@ export default async function TimesheetsPage({
   searchParams: Promise<{ from?: string; to?: string }>;
 }) {
   const membership = await requireMembership(["owner", "admin", "manager"]);
+  requireCapability(membership, "timesheets");
   const supabase = await createSupabaseServerClient();
   const params = await searchParams;
 

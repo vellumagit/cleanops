@@ -2742,6 +2742,7 @@ export type Database = {
       memberships: {
         Row: {
           address: string | null
+          capabilities?: Json | null
           contact_email: string | null
           contact_phone: string | null
           created_at: string
@@ -2758,6 +2759,7 @@ export type Database = {
         }
         Insert: {
           address?: string | null
+          capabilities?: Json | null
           contact_email?: string | null
           contact_phone?: string | null
           created_at?: string
@@ -2774,6 +2776,7 @@ export type Database = {
         }
         Update: {
           address?: string | null
+          capabilities?: Json | null
           contact_email?: string | null
           contact_phone?: string | null
           created_at?: string

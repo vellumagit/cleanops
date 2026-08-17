@@ -177,6 +177,7 @@ export default async function AppLayout({
       <AppSidebar
         organizationName={membership.organization_name}
         role={membership.role}
+        capabilities={membership.capabilities}
         userName={profile?.full_name ?? null}
         showSetup={showSetup}
         logoUrl={org?.logo_url ?? null}

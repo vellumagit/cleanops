@@ -8,7 +8,7 @@ import {
   Star,
   TriangleAlert,
 } from "lucide-react";
-import { requireMembership } from "@/lib/auth";
+import { requireMembership, requireCapability } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { netPaidCents, outstandingBalanceCents } from "@/lib/invoice-balance";
@@ -71,6 +71,7 @@ export default async function InvoiceDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const membership = await requireMembership(["owner", "admin", "manager"]);
+  requireCapability(membership, "invoicing");
   const tz = await getOrgTimezone(membership.organization_id);
   const { id } = await params;
   const supabase = await createSupabaseServerClient();

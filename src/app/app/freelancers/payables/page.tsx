@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { ChevronLeft } from "lucide-react";
-import { requireMembership } from "@/lib/auth";
+import { requireMembership, requireCapability } from "@/lib/auth";
 import { PageShell } from "@/components/page-shell";
 import { formatCurrencyCents } from "@/lib/format";
 import { getOrgCurrency } from "@/lib/org-currency";
@@ -17,6 +17,7 @@ export const metadata = { title: "Subcontractor pay" };
 
 export default async function SubcontractorPayablesPage() {
   const membership = await requireMembership(["owner", "admin", "manager"]);
+  requireCapability(membership, "subcontractors");
   const [{ rows, totalOutstandingCents }, currency, runs, orgTz] =
     await Promise.all([
       getSubcontractorPayables(membership.organization_id),

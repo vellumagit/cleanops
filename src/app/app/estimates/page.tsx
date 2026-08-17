@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Plus } from "lucide-react";
-import { requireMembership } from "@/lib/auth";
+import { requireMembership, requireCapability } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
@@ -16,6 +16,7 @@ export default async function EstimatesPage({
   searchParams: Promise<{ archived?: string }>;
 }) {
   const membership = await requireMembership();
+  requireCapability(membership, "invoicing");
   const tz = await getOrgTimezone(membership.organization_id);
   const canEdit = membership.role === "owner" || membership.role === "admin";
   const supabase = await createSupabaseServerClient();

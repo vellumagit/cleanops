@@ -25,6 +25,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { updateMemberAction, type UpdateMemberState } from "./actions";
+import {
+  MANAGER_CAPABILITIES,
+  hasCapability,
+  type CapabilityMap,
+} from "@/lib/capabilities";
 
 type Props = {
   member: {
@@ -37,6 +42,7 @@ type Props = {
     is_shadow: boolean;
     contact_email?: string | null;
     contact_phone?: string | null;
+    capabilities?: CapabilityMap;
   };
   /** Role of the currently-signed-in user — only owners can change roles. */
   viewerRole: string;
@@ -54,6 +60,9 @@ const initialState: UpdateMemberState = {};
 export function EditEmployeeDialog({ member, viewerRole, isSelf }: Props) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  // Controlled so the capability switches appear the moment somebody picks
+  // Manager, rather than after a save-and-reopen.
+  const [role, setRole] = useState(member.role);
 
   const boundAction = updateMemberAction.bind(null, member.id);
   const [state, formAction, pending] = useActionState(
@@ -190,7 +199,7 @@ export function EditEmployeeDialog({ member, viewerRole, isSelf }: Props) {
           {canChangeRole && (
             <div className="space-y-1.5">
               <Label htmlFor={`role-${member.id}`}>Role</Label>
-              <Select name="role" defaultValue={member.role}>
+              <Select name="role" value={role} onValueChange={(v) => setRole(v as typeof role)}>
                 <SelectTrigger id={`role-${member.id}`}>
                   <SelectValue />
                 </SelectTrigger>
@@ -206,6 +215,51 @@ export function EditEmployeeDialog({ member, viewerRole, isSelf }: Props) {
                   {state.errors.role}
                 </p>
               )}
+            </div>
+          )}
+
+          {/* What THIS manager does. Owners and admins always have
+              everything, so the switches would be a lie for them; employees
+              work out of the field app, which is gated elsewhere. Only a
+              manager has a meaningful answer here. */}
+          {canChangeRole && role === "manager" && (
+            <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3">
+              <div>
+                <Label>What they can open</Label>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  Untick anything that isn&rsquo;t their job. Everything stays
+                  on unless you say otherwise.
+                </p>
+              </div>
+              {MANAGER_CAPABILITIES.map((cap) => (
+                <label
+                  key={cap.key}
+                  className="flex cursor-pointer items-start gap-2.5"
+                >
+                  <input
+                    type="checkbox"
+                    name="capabilities"
+                    value={cap.key}
+                    defaultChecked={hasCapability(
+                      "manager",
+                      member.capabilities ?? null,
+                      cap.key,
+                    )}
+                    className="mt-0.5 h-4 w-4 rounded border-input"
+                  />
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium">
+                      {cap.label}
+                    </span>
+                    <span className="block text-xs text-muted-foreground">
+                      {cap.description}
+                    </span>
+                  </span>
+                </label>
+              ))}
+              {/* Marks the form as having submitted the set, so an unticked
+                  box is stored as a decision rather than read as "absent". */}
+              <input type="hidden" name="capabilities_present" value="1" />
             </div>
           )}
 

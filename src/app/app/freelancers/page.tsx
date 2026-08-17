@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Plus, Send } from "lucide-react";
-import { requireMembership } from "@/lib/auth";
+import { requireMembership, requireCapability } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
@@ -20,6 +20,7 @@ export const metadata = { title: "On-call pool" };
 
 export default async function FreelancersPage() {
   const membership = await requireMembership(["owner", "admin", "manager"]);
+  requireCapability(membership, "subcontractors");
   const tz = await getOrgTimezone(membership.organization_id);
   const canEdit = true;
   const supabase = await createSupabaseServerClient();

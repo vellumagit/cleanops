@@ -5,6 +5,7 @@ import {
   toEngagement,
   ENGAGEMENT_LABEL,
 } from "@/lib/engagement";
+import type { CapabilityMap } from "@/lib/capabilities";
 
 import { useMemo } from "react";
 import { useRouter } from "next/navigation";
@@ -20,6 +21,7 @@ export type EmployeeRow = {
   status: "active" | "invited" | "disabled";
   pay_rate_cents: number | null;
   engagement: string;
+  capabilities?: CapabilityMap;
   created_at: string;
   full_name: string;
   phone: string | null;

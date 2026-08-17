@@ -1,4 +1,4 @@
-import { requireMembership } from "@/lib/auth";
+import { requireMembership, requireCapability } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
 import { CalendarView } from "./calendar-view";
@@ -114,6 +114,7 @@ function getInvoiceColor(status: string): string {
 
 export default async function CalendarPage() {
   const membership = await requireMembership(["owner", "admin", "manager"]);
+  requireCapability(membership, "scheduling");
   const supabase = await createSupabaseServerClient();
 
   // Fetch a 3-month window (prev, current, next) so client can navigate

@@ -1,4 +1,5 @@
 import { toEngagement } from "@/lib/engagement";
+import { parseCapabilities } from "@/lib/capabilities";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -33,6 +34,7 @@ export default async function EmployeesPage() {
         status,
         pay_rate_cents,
         engagement,
+        capabilities,
         created_at,
         profile_id,
         display_name,
@@ -57,6 +59,7 @@ export default async function EmployeesPage() {
     status: "active" | "invited" | "disabled";
     pay_rate_cents: number | null;
     engagement: string | null;
+    capabilities: unknown;
     created_at: string;
     profile_id: string | null;
     display_name: string | null;
@@ -71,6 +74,7 @@ export default async function EmployeesPage() {
     status: m.status,
     pay_rate_cents: m.pay_rate_cents,
     engagement: toEngagement(m.engagement),
+    capabilities: parseCapabilities(m.capabilities),
     created_at: m.created_at,
     full_name: memberDisplayName(m),
     phone: m.contact_phone ?? m.profile?.phone ?? null,
