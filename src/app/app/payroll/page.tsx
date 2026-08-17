@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Plus, Wallet, ChevronRight } from "lucide-react";
+import { Plus, Wallet, ChevronRight, HandCoins } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { PageShell } from "@/components/page-shell";
@@ -8,6 +8,8 @@ import { StatusBadge } from "@/components/status-badge";
 import { formatCurrencyCents, formatDate } from "@/lib/format";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { NewPayrollRunForm } from "./new-run-form";
+import { markTipsPaidAction } from "./actions";
+import { getTipsOwed } from "@/lib/invoice-tips";
 import { getSubcontractorPayables } from "@/lib/subcontractor-payables";
 import { getOrgTimezone } from "@/lib/org-timezone";
 
@@ -48,6 +50,11 @@ export default async function PayrollPage() {
   const { rows: subRows, totalOutstandingCents: subOutstandingCents } =
     await getSubcontractorPayables(membership.organization_id);
   const subOwedCount = subRows.filter((r) => r.outstandingCents > 0).length;
+
+  // Tips are the same shape of problem as subcontractor pay: money the
+  // business is holding that belongs to a specific person, settled outside a
+  // payroll run. It belongs on the page that answers "what am I paying out".
+  const tipsOwed = await getTipsOwed(membership.organization_id);
 
   return (
     <PageShell
@@ -145,6 +152,62 @@ export default async function PayrollPage() {
                 contractors, so their pay is never part of a run total.
               </p>
             </Link>
+
+            {/* Tips held on behalf of cleaners. Only rendered when there ARE
+                any — an empty card would be a permanent reminder of a feature
+                most orgs never switch on. */}
+            {tipsOwed.rows.length > 0 && (
+              <div className="rounded-lg border border-border bg-card p-5">
+                <h2 className="flex items-center gap-2 text-sm font-semibold">
+                  <HandCoins className="h-4 w-4" />
+                  Tips to pass on
+                </h2>
+                <p className="mt-2 text-2xl font-bold tabular-nums text-amber-600 dark:text-amber-400">
+                  {formatCurrencyCents(tipsOwed.totalCents, currency)}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Clients tipped this by card. It landed in your Stripe balance
+                  along with the invoice, so it&rsquo;s yours to hand on.
+                </p>
+
+                <ul className="mt-3 space-y-1.5">
+                  {tipsOwed.rows.map((r) => (
+                    <li
+                      key={r.membershipId ?? "unattributed"}
+                      className="flex items-center justify-between gap-3 rounded-md border border-border/60 px-3 py-2"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium">{r.name}</p>
+                        <p className="text-[11px] text-muted-foreground">
+                          {r.tipCount} tip{r.tipCount === 1 ? "" : "s"}
+                          {r.membershipId === null
+                            ? " — nobody was assigned to these jobs"
+                            : ""}
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <span className="text-sm font-semibold tabular-nums">
+                          {formatCurrencyCents(r.amountCents, currency)}
+                        </span>
+                        <form action={markTipsPaidAction}>
+                          <input
+                            type="hidden"
+                            name="membership_id"
+                            value={r.membershipId ?? ""}
+                          />
+                          <button
+                            type="submit"
+                            className="rounded-md border border-border px-2 py-1 text-[11px] font-medium transition-colors hover:bg-muted"
+                          >
+                            Mark paid
+                          </button>
+                        </form>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         </aside>
       </div>

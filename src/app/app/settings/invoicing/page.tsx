@@ -4,6 +4,8 @@ import { requireMembership } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { PageShell } from "@/components/page-shell";
 import { InvoicingForm } from "./invoicing-form";
+import { TippingForm } from "./tipping-form";
+import { parseTippingSettings } from "@/lib/tip-split";
 
 export const metadata = { title: "Invoicing" };
 
@@ -18,19 +20,46 @@ export default async function InvoicingSettingsPage() {
   const membership = await requireMembership(["owner", "admin"]);
   const admin = createSupabaseAdminClient();
 
-  const { data } = await admin
-    .from("organizations")
-    .select(
-      "invoice_auto_send_enabled, invoice_auto_send_hour, invoice_auto_send_consolidated",
-    )
-    .eq("id", membership.organization_id)
-    .maybeSingle();
+  // Two queries, deliberately. tipping_settings is a newer column, and
+  // PostgREST fails the WHOLE select if any one column is unknown — folding it
+  // into the query above would mean a schema-cache hiccup renders auto-send as
+  // OFF with no error shown, which is precisely the "my setting didn't save"
+  // report this file already carries scar tissue for.
+  const [{ data }, { data: tipData }] = await Promise.all([
+    admin
+      .from("organizations")
+      .select(
+        "invoice_auto_send_enabled, invoice_auto_send_hour, invoice_auto_send_consolidated",
+      )
+      .eq("id", membership.organization_id)
+      .maybeSingle(),
+    (async () => {
+      try {
+        return (await admin
+          .from("organizations")
+          .select("tipping_settings, stripe_account_id, stripe_charges_enabled")
+          .eq("id", membership.organization_id)
+          .maybeSingle()) as unknown as {
+          data: {
+            tipping_settings: unknown;
+            stripe_account_id: string | null;
+            stripe_charges_enabled: boolean | null;
+          } | null;
+        };
+      } catch {
+        // Tipping section degrades to "off"; auto-send above is untouched.
+        return { data: null };
+      }
+    })(),
+  ]);
 
   const org = data as {
     invoice_auto_send_enabled: boolean;
     invoice_auto_send_hour: number | null;
     invoice_auto_send_consolidated: boolean;
   } | null;
+
+  const tipping = parseTippingSettings(tipData?.tipping_settings);
 
   return (
     <PageShell
@@ -58,6 +87,23 @@ export default async function InvoicingSettingsPage() {
           enabled={Boolean(org?.invoice_auto_send_enabled)}
           sendHour={org?.invoice_auto_send_hour ?? 17}
           consolidated={org?.invoice_auto_send_consolidated ?? true}
+        />
+      </section>
+
+      <section className="mt-10 border-t border-border pt-8">
+        <h2 className="text-sm font-semibold">Tips</h2>
+        <p className="mb-4 mt-0.5 text-xs text-muted-foreground">
+          Stripe has no tipping for invoice links &mdash; its built-in tipping
+          is for in-person card readers &mdash; so this is ours. When it&rsquo;s
+          on, clients paying by card can add a tip, and we record who it&rsquo;s
+          owed to so you can pay it out. Off by default.
+        </p>
+        <TippingForm
+          enabled={tipping.enabled}
+          presets={tipping.presets}
+          stripeConnected={Boolean(
+            tipData?.stripe_account_id && tipData?.stripe_charges_enabled,
+          )}
         />
       </section>
     </PageShell>

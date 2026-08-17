@@ -17,6 +17,9 @@ import {
   clientBillingName,
   clientBillingAttn,
 } from "@/lib/client-billing-name";
+import { parseTippingSettings, tipPresetAmounts } from "@/lib/tip-split";
+import { resolveInvoiceTipRecipients } from "@/lib/invoice-tip-recipients";
+import { TipPicker } from "./tip-picker";
 
 export const metadata: Metadata = {
   title: "Invoice",
@@ -232,6 +235,57 @@ export default async function PublicInvoicePage({
       ? "stripe"
       : null;
 
+  // ── Tipping ────────────────────────────────────────────────────────────
+  // Off unless the owner turned it on, and Stripe-only: the tip rides as a
+  // second line item on the Checkout Session and is unwound in the Connect
+  // webhook. Square has no equivalent path here (and is disconnected on every
+  // org), so offering a tip on that button would take money nothing records.
+  const tipping =
+    orgId && activeProcessor === "stripe" && !isPdf && balanceCents > 0
+      ? await (async () => {
+          // Every read here is inside the try: this page's job is letting a
+          // client PAY, and a tip prompt is decoration on top of that. If the
+          // tipping column is missing, the schema cache is cold, or attribution
+          // falls over, the payer must still get a working Pay button. (The
+          // repo's query-guard THROWS on schema errors outside production, so
+          // this is not hypothetical — without the catch, a missing column
+          // takes the whole payment page down.)
+          try {
+            const { data: orgTip } = (await admin
+              .from("organizations")
+              .select("tipping_settings")
+              .eq("id", orgId)
+              .maybeSingle()) as unknown as {
+              data: { tipping_settings: unknown } | null;
+            };
+            const settings = parseTippingSettings(orgTip?.tipping_settings);
+            if (!settings.enabled) return null;
+
+            const presets = tipPresetAmounts(balanceCents, settings.presets);
+            if (presets.length === 0) return null;
+
+            const { soleRecipient } = await resolveInvoiceTipRecipients(
+              invoice.id,
+            );
+            return {
+              presets,
+              recipientName: soleRecipient?.name ?? null,
+              // Money formatting stays on the server so the picker never has
+              // to know about currency codes or locales.
+              currencyFormat: Object.fromEntries(
+                presets.map((p) => [
+                  p.cents,
+                  formatCurrencyCents(p.cents, currency),
+                ]),
+              ) as Record<number, string>,
+            };
+          } catch (err) {
+            console.error("[tips] public invoice tip prompt suppressed:", err);
+            return null;
+          }
+        })()
+      : null;
+
   const brandCss = orgBranding.brand_color
     ? {
         "--brand": `#${orgBranding.brand_color}`,
@@ -429,6 +483,13 @@ export default async function PublicInvoicePage({
                       }
                     >
                       <input type="hidden" name="token" value={token} />
+                      {tipping && (
+                        <TipPicker
+                          presets={tipping.presets}
+                          recipientName={tipping.recipientName}
+                          currencyFormat={tipping.currencyFormat}
+                        />
+                      )}
                       <button
                         type="submit"
                         className="mt-3 inline-flex w-full items-center justify-center rounded-md px-4 py-3 text-sm font-semibold text-white transition-opacity hover:opacity-90"

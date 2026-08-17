@@ -221,6 +221,12 @@ export async function createInvoiceCheckoutSession(args: {
   invoiceId: string;
   successUrl: string;
   cancelUrl: string;
+  /**
+   * Optional gratuity, already normalized by the caller. Rides along as a
+   * SECOND line item so the payer sees it broken out on Stripe's page rather
+   * than an invoice total that mysteriously doesn't match the invoice.
+   */
+  tipCents?: number | null;
 }): Promise<{ url: string; sessionId: string } | null> {
   const admin = createSupabaseAdminClient();
 
@@ -290,10 +296,30 @@ export async function createInvoiceCheckoutSession(args: {
     .maybeSingle();
 
   // Platform fee in cents, clamped to non-negative.
+  //
+  // Computed on the INVOICE BALANCE ONLY — deliberately not on the tip. The
+  // tip is a client thanking a cleaner; taking a platform cut of it would be
+  // noticed, and rightly. Keeping this expression on balanceCents rather than
+  // the charge total is the whole mechanism, so don't "fix" it to use the
+  // grand total later.
   const feeCents = Math.max(
     0,
     Math.round((balanceCents * orgRow.stripe_application_fee_bps) / 10000),
   );
+
+  // Who the tip is for, resolved now so it can be named on Stripe's page and
+  // carried in metadata for the webhook to allocate against. Never blocks the
+  // payment: a failure here degrades to an unnamed tip.
+  const tipCents =
+    args.tipCents && args.tipCents > 0 ? Math.round(args.tipCents) : 0;
+  let tipLabel = "Tip";
+  if (tipCents > 0) {
+    const { resolveInvoiceTipRecipients } = await import(
+      "@/lib/invoice-tip-recipients"
+    );
+    const { soleRecipient } = await resolveInvoiceTipRecipients(invoice.id);
+    tipLabel = soleRecipient ? `Tip for ${soleRecipient.name}` : "Tip for the team";
+  }
 
   // Charge in the org's own currency — not a hardcoded USD. A CAD org billing
   // a CAD invoice must collect CAD, or the customer is over/under-charged and
@@ -317,30 +343,61 @@ export async function createInvoiceCheckoutSession(args: {
           },
           quantity: 1,
         },
+        ...(tipCents > 0
+          ? [
+              {
+                price_data: {
+                  currency,
+                  unit_amount: tipCents,
+                  product_data: {
+                    name: tipLabel,
+                    description: "Gratuity — goes to the cleaner",
+                  },
+                },
+                quantity: 1,
+              },
+            ]
+          : []),
       ],
       payment_intent_data: {
         application_fee_amount: feeCents,
         transfer_data: { destination: orgRow.stripe_account_id },
+        // tip_cents on the PI as well as the session: the webhook records
+        // payment from BOTH checkout.session.completed and
+        // payment_intent.succeeded, and whichever arrives first must be able
+        // to subtract the tip. Metadata on only one of them means the other
+        // event books the tip as invoice payment and overpays the invoice.
         metadata: {
           invoice_id: invoice.id,
           organization_id: orgRow.id,
+          tip_cents: String(tipCents),
         },
       },
       metadata: {
         invoice_id: invoice.id,
         organization_id: orgRow.id,
+        tip_cents: String(tipCents),
       },
       success_url: args.successUrl,
       cancel_url: args.cancelUrl,
     },
     // Scope the session to the org id + invoice id so repeated clicks on
     // "Send payment link" produce the same session instead of piling up.
+    //
+    // tipCents is part of the key for the same reason balanceCents is: without
+    // it, a payer who picks 18%, goes back, and picks 20% gets handed the
+    // CACHED 18% session and is charged the old amount with no sign anything
+    // was ignored.
     {
-      idempotencyKey: `invoice_checkout_${invoice.id}_${balanceCents}`,
+      idempotencyKey: `invoice_checkout_${invoice.id}_${balanceCents}_${tipCents}`,
     },
   );
 
-  if (session.url) {
+  // Only the UNTIPPED session is the invoice's canonical payment link. A
+  // tipped session belongs to the one payer who chose that tip — caching it
+  // here would hand the next person (and the owner's own "copy payment link")
+  // a URL with a stranger's gratuity baked in.
+  if (session.url && tipCents === 0) {
     await admin
       .from("invoices")
       .update({

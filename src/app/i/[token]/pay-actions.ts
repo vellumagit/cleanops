@@ -7,6 +7,7 @@ import { createInvoiceCheckoutLink } from "@/lib/square";
 import { createInvoiceCheckoutSession } from "@/lib/stripe-connect";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { outstandingBalanceCents } from "@/lib/invoice-balance";
+import { normalizeTipCents, parseTippingSettings } from "@/lib/tip-split";
 
 /**
  * Public server action: mint a Square hosted-checkout URL for the invoice
@@ -166,12 +167,41 @@ export async function startStripeCheckoutAction(formData: FormData) {
   const siteUrl =
     process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
 
+  // The tip arrives from a public, unauthenticated form, so it is re-derived
+  // here rather than trusted: normalizeTipCents floors it at nothing and caps
+  // it, and the org toggle is re-read server-side. A hand-crafted POST to a
+  // tipping-disabled org must not produce a charge with a tip on it.
+  //
+  // Wrapped, and this is the most important catch in the feature: everything
+  // below is the client's actual attempt to PAY. Failing their payment because
+  // the optional gratuity lookup went wrong would be the worst possible
+  // trade — better to drop the tip and take the money the invoice is for.
+  const tipRequested = normalizeTipCents(formData.get("tip_cents"));
+  let tipCents: number | null = null;
+  if (tipRequested) {
+    try {
+      const { data: orgTip } = (await admin
+        .from("invoices")
+        .select("organization:organizations ( tipping_settings )")
+        .eq("id", invoice.id)
+        .maybeSingle()) as unknown as {
+        data: { organization: { tipping_settings: unknown } | null } | null;
+      };
+      if (parseTippingSettings(orgTip?.organization?.tipping_settings).enabled) {
+        tipCents = tipRequested;
+      }
+    } catch (err) {
+      console.error("[tips] tip dropped, proceeding with payment:", err);
+    }
+  }
+
   let session: { url: string; sessionId: string } | null;
   try {
     session = await createInvoiceCheckoutSession({
       invoiceId: invoice.id,
       successUrl: `${siteUrl}/pay/${invoice.id}/success?token=${token}&provider=stripe`,
       cancelUrl: `${siteUrl}/i/${token}?pay_error=cancelled`,
+      tipCents,
     });
   } catch (err) {
     console.error("[stripe] checkout creation failed:", err);

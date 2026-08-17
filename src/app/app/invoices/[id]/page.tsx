@@ -13,6 +13,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { netPaidCents, outstandingBalanceCents } from "@/lib/invoice-balance";
 import { getOrgCurrency } from "@/lib/org-currency";
+import { getInvoiceTips } from "@/lib/invoice-tips";
 import { fetchOrgNotificationContext } from "@/app/app/clients/org-contact-default";
 import {
   invoiceDeliveryNote,
@@ -76,6 +77,7 @@ export default async function InvoiceDetailPage({
   const { id } = await params;
   const supabase = await createSupabaseServerClient();
   const currency = await getOrgCurrency(membership.organization_id);
+  const invoiceTips = await getInvoiceTips(id);
 
   // Check Stripe Connect status on the org — payment link only makes sense
   // if the org has charges enabled.
@@ -582,6 +584,38 @@ export default async function InvoiceDetailPage({
                   </li>
                 ))}
               </ul>
+            )}
+
+            {/* Why the card charge was bigger than the invoice.
+                Without this, a $141.75 Stripe payout against a $120 invoice
+                looks like a billing error rather than a client being kind. */}
+            {invoiceTips.totalCents > 0 && (
+              <div className="mt-4 rounded-md border border-border bg-muted/20 p-3">
+                <p className="text-xs font-semibold">
+                  Tip: {formatCurrencyCents(invoiceTips.totalCents, currency)}
+                </p>
+                <p className="mt-0.5 text-[11px] text-muted-foreground">
+                  Added by the client at checkout. Charged on top of the
+                  invoice, so it isn&rsquo;t counted as payment against the
+                  balance.
+                </p>
+                <ul className="mt-2 space-y-0.5">
+                  {invoiceTips.rows.map((t, i) => (
+                    <li
+                      key={`${t.name}-${i}`}
+                      className="flex items-center justify-between gap-2 text-[11px]"
+                    >
+                      <span className="truncate">
+                        {t.name}
+                        {t.paidOut ? "" : " — not yet paid out"}
+                      </span>
+                      <span className="shrink-0 tabular-nums">
+                        {formatCurrencyCents(t.amountCents, currency)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             )}
           </div>
         </div>

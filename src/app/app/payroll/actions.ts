@@ -572,3 +572,57 @@ export async function deletePayrollRunAction(formData: FormData) {
   revalidatePath("/app/payroll", "page");
   redirect("/app/payroll");
 }
+
+/**
+ * Settle a cleaner's outstanding tips.
+ *
+ * Records that the money has left the business and reached the person — it
+ * does NOT move any money itself. The tip was collected on a card into the
+ * org's own Stripe balance, so the actual handover happens however this
+ * business already pays people: in the next payroll run, in cash, on the spot.
+ * This is the acknowledgement of that, so the same $20 isn't paid twice or,
+ * worse, forgotten.
+ *
+ * Claim-then-act on paid_out_at: the update only matches rows still NULL, so
+ * two owners clicking at once settle the same tips exactly once between them.
+ */
+export async function markTipsPaidAction(formData: FormData): Promise<void> {
+  const { membership } = await getActionContext();
+  if (!["owner", "admin"].includes(membership.role)) return;
+
+  const raw = String(formData.get("membership_id") ?? "").trim();
+  const admin = createSupabaseAdminClient();
+
+  let q = admin
+    .from("invoice_tips" as never)
+    .update({ paid_out_at: new Date().toISOString() } as never)
+    .eq("organization_id" as never, membership.organization_id as never)
+    .is("paid_out_at" as never, null as never);
+
+  // Empty means the unattributed bucket — those rows have a NULL membership,
+  // and `.eq(col, "")` would match nothing at all rather than matching them.
+  q = raw
+    ? q.eq("membership_id" as never, raw as never)
+    : q.is("membership_id" as never, null as never);
+
+  const { data: settled } = (await q.select("id, amount_cents")) as unknown as {
+    data: Array<{ id: string; amount_cents: number }> | null;
+  };
+
+  const rows = settled ?? [];
+  if (rows.length === 0) return;
+
+  await logAuditEvent({
+    membership,
+    action: "update",
+    entity: "settings",
+    entity_id: raw || membership.organization_id,
+    after: {
+      tips_marked_paid: rows.length,
+      total_cents: rows.reduce((s, r) => s + r.amount_cents, 0),
+      membership_id: raw || null,
+    },
+  });
+
+  revalidatePath("/app/payroll", "page");
+}

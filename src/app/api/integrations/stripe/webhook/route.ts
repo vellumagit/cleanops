@@ -34,6 +34,109 @@ export const dynamic = "force-dynamic";
  * only the first insert sticks. The fee (only on the PI event) backfills onto
  * an already-recorded row.
  */
+/**
+ * Turn a paid gratuity into the rows that say who it's owed to.
+ *
+ * The money itself has already landed in the org's Stripe balance — a
+ * destination charge sweeps the whole net there, cleaner's share included.
+ * These rows are the only thing that makes the tip reach a person, so a
+ * failure to write them is a failure to pay someone, and it says so loudly in
+ * the log rather than returning quietly.
+ *
+ * Deliberately tolerant about attribution: if nobody can be resolved (jobs
+ * with no assignee, or a manual invoice with no bookings behind it) the tip is
+ * recorded with a NULL membership rather than dropped. The client paid it; it
+ * belongs in the books either way, and the app can ask the owner who it was
+ * meant for.
+ */
+async function recordInvoiceTip(
+  admin: ReturnType<typeof createSupabaseAdminClient>,
+  args: {
+    invoiceId: string;
+    organizationId: string;
+    tipCents: number;
+    piId: string;
+  },
+): Promise<void> {
+  try {
+    // Cheap pre-check. The partial unique indexes on invoice_tips are the
+    // real guard — checkout.session.completed and payment_intent.succeeded
+    // race, and whichever loses hits the index rather than double-paying.
+    const { data: already } = (await admin
+      .from("invoice_tips" as never)
+      .select("id")
+      .eq("provider" as never, "stripe" as never)
+      .eq("provider_payment_id" as never, args.piId as never)
+      .limit(1)
+      .maybeSingle()) as unknown as { data: { id: string } | null };
+    if (already) return;
+
+    const { resolveInvoiceTipRecipients, toTipShares } = await import(
+      "@/lib/invoice-tip-recipients"
+    );
+    const { splitTipByMinutes } = await import("@/lib/tip-split");
+
+    const { recipients } = await resolveInvoiceTipRecipients(args.invoiceId);
+    const allocations = splitTipByMinutes(
+      args.tipCents,
+      toTipShares(recipients),
+    );
+
+    const rows =
+      allocations.length > 0
+        ? allocations.map((a) => ({
+            organization_id: args.organizationId,
+            invoice_id: args.invoiceId,
+            membership_id: a.membershipId,
+            amount_cents: a.amountCents,
+            share_minutes: a.shareMinutes,
+            provider: "stripe",
+            provider_payment_id: args.piId,
+          }))
+        : [
+            {
+              organization_id: args.organizationId,
+              invoice_id: args.invoiceId,
+              membership_id: null,
+              amount_cents: args.tipCents,
+              share_minutes: null,
+              provider: "stripe",
+              provider_payment_id: args.piId,
+            },
+          ];
+
+    const { error } = (await admin
+      .from("invoice_tips" as never)
+      .insert(rows as never)) as unknown as {
+      error: { message: string; code?: string } | null;
+    };
+
+    // 23505 = the race above resolving correctly. Anything else means a tip
+    // was paid and nobody is recorded as owed it.
+    if (error && error.code !== "23505") {
+      console.error(
+        `[stripe connect] FAILED to record ${args.tipCents}c tip for invoice ${args.invoiceId}:`,
+        error.message,
+      );
+    }
+  } catch (err) {
+    console.error(
+      `[stripe connect] FAILED to record ${args.tipCents}c tip for invoice ${args.invoiceId}:`,
+      err,
+    );
+  }
+}
+
+/** Read the tip out of Stripe event metadata, defensively. */
+function tipFromMetadata(
+  metadata: Stripe.Metadata | null | undefined,
+): number {
+  const raw = metadata?.tip_cents;
+  if (!raw) return 0;
+  const n = Math.round(Number(raw));
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
 async function recordStripeInvoicePayment(
   admin: ReturnType<typeof createSupabaseAdminClient>,
   args: {
@@ -42,9 +145,22 @@ async function recordStripeInvoicePayment(
     amountCents: number;
     piId: string | null;
     feeCents: number | null;
+    /** Gratuity included in amountCents, from the event metadata. */
+    tipCents?: number;
   },
 ): Promise<void> {
   if (!args.piId || !args.amountCents || args.amountCents <= 0) return;
+
+  // THE TIP IS NOT INVOICE PAYMENT.
+  //
+  // amount_total (session) and amount_received (PI) are the whole charge, tip
+  // included. Booking that straight into invoice_payments would credit the
+  // invoice with money that was never owed on it: the balance goes negative,
+  // the ledger shows an overpayment that never happened, and every report
+  // downstream inherits it. Subtract first, then record what the invoice was
+  // actually paid.
+  const tipCents = Math.max(0, Math.round(args.tipCents ?? 0));
+  const invoiceAmountCents = Math.max(0, args.amountCents - tipCents);
 
   const { data: invoice } = (await admin
     .from("invoices")
@@ -62,6 +178,18 @@ async function recordStripeInvoicePayment(
   // connected account this event arrived on.
   if (invoice.organization_id !== args.ownerOrgId) return;
   if (invoice.voided_at) return;
+
+  // Before the payment dedupe, not after. The two Stripe events race, and if
+  // the payment row already exists this function returns early — a tip written
+  // inside that branch would be lost whenever the OTHER event won.
+  if (tipCents > 0) {
+    await recordInvoiceTip(admin, {
+      invoiceId: invoice.id,
+      organizationId: invoice.organization_id,
+      tipCents,
+      piId: args.piId,
+    });
+  }
 
   const { data: dup } = (await admin
     .from("invoice_payments" as never)
@@ -83,10 +211,15 @@ async function recordStripeInvoicePayment(
     return;
   }
 
+  // A charge that was ENTIRELY tip has nothing to book against the invoice.
+  // Can't happen today (checkout requires an outstanding balance) but the
+  // guard costs nothing and beats inserting a zero-amount payment row.
+  if (invoiceAmountCents <= 0) return;
+
   await (admin.from("invoice_payments" as never).insert({
     organization_id: invoice.organization_id,
     invoice_id: invoice.id,
-    amount_cents: args.amountCents,
+    amount_cents: invoiceAmountCents,
     method: "card",
     reference: "Stripe",
     received_at: new Date().toISOString(),
@@ -229,6 +362,7 @@ export async function POST(req: NextRequest) {
                 ? session.payment_intent
                 : session.payment_intent?.id ?? null,
             feeCents: null, // not present on the session; the PI event has it
+            tipCents: tipFromMetadata(session.metadata),
           });
         }
         break;
@@ -251,6 +385,7 @@ export async function POST(req: NextRequest) {
             amountCents: pi.amount_received ?? 0,
             piId: pi.id,
             feeCents: pi.application_fee_amount ?? null,
+            tipCents: tipFromMetadata(pi.metadata),
           });
         }
         break;

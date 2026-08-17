@@ -5,6 +5,52 @@ import { getActionContext } from "@/lib/actions";
 import { logAuditEvent } from "@/lib/audit";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
+export type TippingFormState = {
+  errors?: Partial<Record<"_form", string>>;
+  success?: boolean;
+};
+
+/**
+ * Turn client tipping on or off, and choose what percentages are suggested.
+ *
+ * Owner/admin only, like every other money setting — this changes what a
+ * client sees on a document sent in the business's name, so it isn't a
+ * manager-capability decision.
+ */
+export async function saveTippingAction(
+  _prev: TippingFormState,
+  formData: FormData,
+): Promise<TippingFormState> {
+  const { membership } = await getActionContext();
+  if (!["owner", "admin"].includes(membership.role)) {
+    return { errors: { _form: "You don't have permission." } };
+  }
+
+  const { tippingSettingsFromForm } = await import("@/lib/tip-split");
+  const settings = tippingSettingsFromForm(
+    formData.get("enabled") === "on",
+    formData.getAll("presets").map((v) => String(v)),
+  );
+
+  const admin = createSupabaseAdminClient();
+  const { error } = await admin
+    .from("organizations")
+    .update({ tipping_settings: settings } as never)
+    .eq("id", membership.organization_id);
+  if (error) return { errors: { _form: error.message } };
+
+  await logAuditEvent({
+    membership,
+    action: "update",
+    entity: "settings",
+    entity_id: membership.organization_id,
+    after: { tipping_settings: settings },
+  });
+
+  revalidatePath("/app/settings/invoicing");
+  return { success: true };
+}
+
 export type InvoicingFormState = {
   errors?: Partial<Record<"_form" | "hour", string>>;
   success?: boolean;
