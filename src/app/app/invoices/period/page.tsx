@@ -10,7 +10,11 @@ import { bookingLineLabel } from "@/lib/invoice-line-label";
 import { centsToDollarString } from "@/lib/validators/common";
 import { humanizeEnum } from "@/lib/format";
 import { fetchInvoiceFormOptions } from "../options";
-import { PeriodInvoiceEditor, type InitialLine } from "./period-invoice-editor";
+import {
+  PeriodInvoiceEditor,
+  type InitialLine,
+  type BilledElsewhere,
+} from "./period-invoice-editor";
 
 export const metadata = { title: "Bill for a period" };
 
@@ -31,6 +35,7 @@ export default async function PeriodInvoicePage({
   const loaded = Boolean(client_id && validRange);
 
   let lines: InitialLine[] = [];
+  let alreadyBilled: BilledElsewhere[] = [];
   let count = 0;
   if (loaded) {
     // Candidate bookings for the client in the date range (not cancelled).
@@ -63,31 +68,74 @@ export default async function PeriodInvoicePage({
     // Exclude bookings already billed — either as a single-booking invoice
     // (invoices.booking_id) or on a prior consolidated one
     // (invoice_line_items.booking_id) — ignoring voided invoices.
-    const billed = new Set<string>();
+    // booking id → the invoice already billing it. Details, not a bare set:
+    // silently dropping those bookings is what made a period invoice come
+    // back short with nothing on screen to explain it. The owner needs to
+    // SEE which jobs are spoken for, and by which invoice, to decide whether
+    // to fold a stray draft in or leave a sent one alone.
+    const billedBy = new Map<
+      string,
+      { id: string; number: number | null; status: string; amountCents: number }
+    >();
+    const noteBilled = (
+      bookingId: string | null | undefined,
+      inv: {
+        id: string;
+        number: number | null;
+        status: string;
+        amount_cents: number | null;
+      } | null,
+    ) => {
+      if (!bookingId || !inv || inv.status === "void") return;
+      if (billedBy.has(bookingId)) return; // first one found wins
+      billedBy.set(bookingId, {
+        id: inv.id,
+        number: inv.number,
+        status: inv.status,
+        amountCents: inv.amount_cents ?? 0,
+      });
+    };
+
     if (candidateIds.length > 0) {
       const { data: invRows } = (await supabase
         .from("invoices")
-        .select("booking_id")
+        .select("id, number, status, amount_cents, booking_id")
         .neq("status", "void")
         .in("booking_id", candidateIds)) as unknown as {
-        data: Array<{ booking_id: string | null }> | null;
+        data: Array<{
+          id: string;
+          number: number | null;
+          status: string;
+          amount_cents: number | null;
+          booking_id: string | null;
+        }> | null;
       };
       for (const r of invRows ?? []) {
-        if (r.booking_id) billed.add(r.booking_id);
+        noteBilled(r.booking_id, {
+          id: r.id,
+          number: r.number,
+          status: r.status,
+          amount_cents: r.amount_cents,
+        });
       }
 
       const { data: liRows } = (await supabase
         .from("invoice_line_items")
-        .select("booking_id, invoice:invoices!inner ( status )")
+        .select(
+          "booking_id, invoice:invoices!inner ( id, number, status, amount_cents )",
+        )
         .in("booking_id" as never, candidateIds as never)) as unknown as {
         data: Array<{
           booking_id: string | null;
-          invoice: { status: string } | null;
+          invoice: {
+            id: string;
+            number: number | null;
+            status: string;
+            amount_cents: number | null;
+          } | null;
         }> | null;
       };
-      for (const r of liRows ?? []) {
-        if (r.booking_id && r.invoice?.status !== "void") billed.add(r.booking_id);
-      }
+      for (const r of liRows ?? []) noteBilled(r.booking_id, r.invoice);
 
       // Third signal: the booking's own stamp. The two above both hang off
       // invoice_line_items.booking_id, so they agree — and they were BOTH
@@ -98,17 +146,62 @@ export default async function PeriodInvoicePage({
       // invite a second invoice.
       const { data: stamped } = (await supabase
         .from("bookings")
-        .select("id, invoice:invoices!bookings_billing_invoice_id_fkey ( status )")
+        .select(
+          "id, invoice:invoices!bookings_billing_invoice_id_fkey ( id, number, status, amount_cents )",
+        )
         .in("id", candidateIds)
         .not("billing_invoice_id", "is", null)) as unknown as {
-        data: Array<{ id: string; invoice: { status: string } | null }> | null;
+        data: Array<{
+          id: string;
+          invoice: {
+            id: string;
+            number: number | null;
+            status: string;
+            amount_cents: number | null;
+          } | null;
+        }> | null;
       };
-      for (const r of stamped ?? []) {
-        if (r.invoice?.status !== "void") billed.add(r.id);
-      }
+      for (const r of stamped ?? []) noteBilled(r.id, r.invoice);
     }
 
-    const unbilled = candidates.filter((b) => !billed.has(b.id));
+    const lineFor = (b: (typeof candidates)[number]) => ({
+      label: bookingLineLabel({
+        serviceLabel: b.service_type_label ?? humanizeEnum(b.service_type),
+        scheduledAt: b.scheduled_at,
+        durationMinutes: b.duration_minutes ?? null,
+        address: b.address ?? null,
+        propertyLabel:
+          (b as { property?: { label?: string } | null }).property?.label ??
+          null,
+        fallbackAddress: b.client?.address ?? null,
+        tz,
+      }),
+      quantity: "1",
+      unitPriceDollars:
+        b.total_cents != null ? centsToDollarString(b.total_cents) : "",
+      bookingId: b.id,
+    });
+
+    // Already spoken for. A DRAFT can be folded into this invoice — nobody
+    // has seen it — and doing so voids it, which is the whole point: one
+    // invoice instead of five. A SENT or PAID one cannot be quietly absorbed;
+    // the client already has it, so it is shown and left alone.
+    alreadyBilled = candidates
+      .filter((b) => billedBy.has(b.id))
+      .map((b) => {
+        const inv = billedBy.get(b.id)!;
+        return {
+          ...lineFor(b),
+          scheduledAt: b.scheduled_at,
+          invoiceId: inv.id,
+          invoiceNumber: inv.number,
+          invoiceStatus: inv.status,
+          invoiceAmountCents: inv.amountCents,
+          canConsolidate: inv.status === "draft",
+        };
+      });
+
+    const unbilled = candidates.filter((b) => !billedBy.has(b.id));
     count = unbilled.length;
     lines = unbilled.map((b) => ({
       // Same helper the two automatic paths use, so a client sees one
@@ -211,6 +304,7 @@ export default async function PeriodInvoicePage({
                 <PeriodInvoiceEditor
                   clientId={client_id as string}
                   initialLines={[]}
+                  alreadyBilled={alreadyBilled}
                   currency={currency}
                 />
               </div>
@@ -226,6 +320,7 @@ export default async function PeriodInvoicePage({
               <PeriodInvoiceEditor
                 clientId={client_id as string}
                 initialLines={lines}
+                alreadyBilled={alreadyBilled}
                 currency={currency}
               />
             </div>

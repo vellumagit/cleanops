@@ -1105,6 +1105,75 @@ export async function createPeriodInvoiceAction(
     }
   }
 
+  // Fold in the per-job drafts this invoice replaces.
+  //
+  // Auto-invoicing raises a draft as each job finishes, so billing a period
+  // afterwards means most of it is already spoken for. Those jobs used to be
+  // filtered out in silence — the invoice came back short and nothing said
+  // why. The builder now lists them and lets the owner tick the DRAFTS to
+  // consolidate; their lines are already in this invoice, so the drafts must
+  // now be voided or the work is billed twice.
+  //
+  // Only drafts, only this client, only this org — re-proved here rather than
+  // trusted from the form, because voiding is money and the ids arrived in a
+  // POST body. A sent or paid invoice is never absorbed: the client already
+  // has it, and quietly voiding it would erase something they can see.
+  let absorbIds: string[] = [];
+  try {
+    const raw = JSON.parse(String(formData.get("absorb_invoice_ids") ?? "[]"));
+    if (Array.isArray(raw)) {
+      absorbIds = raw.filter((v): v is string => typeof v === "string");
+    }
+  } catch {
+    absorbIds = [];
+  }
+  let absorbed = 0;
+  if (absorbIds.length > 0) {
+    const { data: voidable } = (await supabase
+      .from("invoices")
+      .select("id")
+      .in("id", absorbIds)
+      .eq("client_id", clientId)
+      .eq("organization_id", membership.organization_id)
+      .eq("status", "draft")
+      .neq("id", inv.id)) as unknown as { data: Array<{ id: string }> | null };
+
+    const ids = (voidable ?? []).map((r) => r.id);
+    if (ids.length > 0) {
+      const nowIso = new Date().toISOString();
+      const { error: voidErr } = await supabase
+        .from("invoices")
+        .update({ status: "void", voided_at: nowIso })
+        .in("id", ids);
+      if (voidErr) {
+        console.error(
+          `[invoices] period invoice ${inv.id}: consolidating drafts failed (invoice still created):`,
+          voidErr.message,
+        );
+      } else {
+        absorbed = ids.length;
+        // Point the freed bookings at the invoice that now bills them. The
+        // stamp above only claimed bookings that were still unstamped, so
+        // these were skipped precisely BECAUSE the draft held them.
+        await supabase
+          .from("bookings")
+          .update({ billing_invoice_id: inv.id } as never)
+          .in("billing_invoice_id" as never, ids as never)
+          .eq("organization_id", membership.organization_id);
+        for (const voidedId of ids) {
+          await logAuditEvent({
+            membership,
+            action: "status_change",
+            entity: "invoice",
+            entity_id: voidedId,
+            before: { status: "draft" },
+            after: { status: "void", consolidated_into: inv.id },
+          });
+        }
+      }
+    }
+  }
+
   await logAuditEvent({
     membership,
     action: "create",
@@ -1115,6 +1184,7 @@ export async function createPeriodInvoiceAction(
       amount_cents: tax.totalCents,
       lines: lineRows.length,
       billed_bookings: billedBookingIds.length,
+      consolidated_drafts: absorbed,
     },
   });
 

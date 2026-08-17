@@ -20,6 +20,25 @@ export type InitialLine = {
   bookingId: string | null;
 };
 
+/**
+ * A job inside the chosen period that some OTHER invoice already bills.
+ *
+ * These used to be filtered out in silence, which is how a "Jul 15 – Aug 15"
+ * invoice came back with four of the five jobs on it and nothing on screen to
+ * say why. Auto-invoicing drafts one per job as it completes, so by the time
+ * anyone bills a period most of it is already spoken for — the common case,
+ * not the edge case.
+ */
+export type BilledElsewhere = InitialLine & {
+  scheduledAt: string;
+  invoiceId: string;
+  invoiceNumber: number | null;
+  invoiceStatus: string;
+  invoiceAmountCents: number;
+  /** Drafts only. A sent or paid invoice is in the client's hands already. */
+  canConsolidate: boolean;
+};
+
 type Line = InitialLine & { key: string };
 
 const empty: PeriodInvoiceState = {};
@@ -33,10 +52,12 @@ function lineCents(l: Line): number {
 export function PeriodInvoiceEditor({
   clientId,
   initialLines,
+  alreadyBilled = [],
   currency = "CAD",
 }: {
   clientId: string;
   initialLines: InitialLine[];
+  alreadyBilled?: BilledElsewhere[];
   currency?: CurrencyCode;
 }) {
   const [state, formAction] = useActionState(createPeriodInvoiceAction, empty);
@@ -44,6 +65,22 @@ export function PeriodInvoiceEditor({
   const [lines, setLines] = useState<Line[]>(() =>
     initialLines.map((l) => ({ ...l, key: crypto.randomUUID() })),
   );
+  // Drafts the owner has ticked to fold into this invoice. Held apart from
+  // `lines` so the decision stays reversible right up to submit, and so the
+  // invoices to void travel with it.
+  const [absorbed, setAbsorbed] = useState<Set<string>>(new Set());
+  const consolidatable = alreadyBilled.filter((b) => b.canConsolidate);
+  const locked = alreadyBilled.filter((b) => !b.canConsolidate);
+  const absorbedLines = consolidatable.filter((b) => absorbed.has(b.invoiceId));
+
+  function toggleAbsorb(invoiceId: string) {
+    setAbsorbed((prev) => {
+      const next = new Set(prev);
+      if (next.has(invoiceId)) next.delete(invoiceId);
+      else next.add(invoiceId);
+      return next;
+    });
+  }
   const [dueDate, setDueDate] = useState("");
   const [taxEnabled, setTaxEnabled] = useState(false);
   const [rateText, setRateText] = useState("");
@@ -70,7 +107,19 @@ export function PeriodInvoiceEditor({
     );
   }
 
-  const subtotalCents = lines.reduce((s, l) => s + lineCents(l), 0);
+  // Absorbed drafts are billed by THIS invoice, so they count toward the
+  // total the owner is looking at before they commit.
+  const submittedLines = [
+    ...lines,
+    ...absorbedLines.map((b) => ({
+      key: b.invoiceId,
+      label: b.label,
+      quantity: b.quantity,
+      unitPriceDollars: b.unitPriceDollars,
+      bookingId: b.bookingId,
+    })),
+  ];
+  const subtotalCents = submittedLines.reduce((s, l) => s + lineCents(l), 0);
   const rateBps = taxEnabled ? parseTaxRate(rateText) : null;
   const tax = computeTax(subtotalCents, { rateBps });
 
@@ -90,7 +139,7 @@ export function PeriodInvoiceEditor({
         type="hidden"
         name="line_items_json"
         value={JSON.stringify(
-          lines.map((l) => ({
+          submittedLines.map((l) => ({
             label: l.label,
             quantity: l.quantity,
             unit_price_dollars: l.unitPriceDollars,
@@ -98,6 +147,80 @@ export function PeriodInvoiceEditor({
           })),
         )}
       />
+      {/* The drafts this invoice replaces. Voided server-side once it exists,
+          so the work is billed exactly once. */}
+      <input
+        type="hidden"
+        name="absorb_invoice_ids"
+        value={JSON.stringify([...absorbed])}
+      />
+
+      {/* Jobs already carried by another invoice */}
+      {alreadyBilled.length > 0 && (
+        <div className="rounded-xl border border-amber-300 bg-amber-50/60 p-4 dark:border-amber-900/50 dark:bg-amber-950/20">
+          <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+            {alreadyBilled.length} job{alreadyBilled.length === 1 ? "" : "s"} in
+            this period {alreadyBilled.length === 1 ? "is" : "are"} already on
+            another invoice
+          </p>
+          <p className="mt-1 text-xs text-amber-900/80 dark:text-amber-200/80">
+            They are not in the list below. Auto-invoicing drafts one per job
+            as it finishes, so most of a period is usually spoken for by the
+            time you bill it.
+          </p>
+
+          {consolidatable.length > 0 && (
+            <ul className="mt-3 space-y-1.5">
+              {consolidatable.map((b) => (
+                <li key={b.invoiceId}>
+                  <label className="flex cursor-pointer items-start gap-2 text-xs text-amber-900 dark:text-amber-200">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 h-3.5 w-3.5 rounded border-amber-400"
+                      checked={absorbed.has(b.invoiceId)}
+                      onChange={() => toggleAbsorb(b.invoiceId)}
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="font-medium">
+                        {b.invoiceNumber
+                          ? `INV-${b.invoiceNumber}`
+                          : "Draft invoice"}
+                      </span>{" "}
+                      (draft) — {b.label}
+                      <span className="ml-1 tabular-nums">
+                        {formatCurrencyCents(b.invoiceAmountCents, currency)}
+                      </span>
+                    </span>
+                  </label>
+                </li>
+              ))}
+              <li className="pt-1 text-[11px] text-amber-900/80 dark:text-amber-200/80">
+                Ticking one adds it to this invoice and voids the draft, so the
+                job is billed once.
+              </li>
+            </ul>
+          )}
+
+          {locked.length > 0 && (
+            <div className="mt-3 border-t border-amber-300/60 pt-2 dark:border-amber-900/40">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-amber-900/70 dark:text-amber-200/70">
+                Cannot be folded in — the client already has these
+              </p>
+              <ul className="mt-1 space-y-0.5">
+                {locked.map((b) => (
+                  <li
+                    key={b.invoiceId}
+                    className="text-xs text-amber-900/80 dark:text-amber-200/80"
+                  >
+                    {b.invoiceNumber ? `INV-${b.invoiceNumber}` : "Invoice"} (
+                    {b.invoiceStatus}) — {b.label}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Line items */}
       <div className="overflow-hidden rounded-xl border border-border">
