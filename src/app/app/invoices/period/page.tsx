@@ -88,6 +88,24 @@ export default async function PeriodInvoicePage({
       for (const r of liRows ?? []) {
         if (r.booking_id && r.invoice?.status !== "void") billed.add(r.booking_id);
       }
+
+      // Third signal: the booking's own stamp. The two above both hang off
+      // invoice_line_items.booking_id, so they agree — and they were BOTH
+      // blind wherever that link had been stripped by an invoice edit (the
+      // defect fixed alongside this). The stamp is written independently by
+      // the consolidated builder and the billing-cycle cron, so reading it
+      // too means one lost link no longer makes a job look unbilled and
+      // invite a second invoice.
+      const { data: stamped } = (await supabase
+        .from("bookings")
+        .select("id, invoice:invoices!bookings_billing_invoice_id_fkey ( status )")
+        .in("id", candidateIds)
+        .not("billing_invoice_id", "is", null)) as unknown as {
+        data: Array<{ id: string; invoice: { status: string } | null }> | null;
+      };
+      for (const r of stamped ?? []) {
+        if (r.invoice?.status !== "void") billed.add(r.id);
+      }
     }
 
     const unbilled = candidates.filter((b) => !billed.has(b.id));

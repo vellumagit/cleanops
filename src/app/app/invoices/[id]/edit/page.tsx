@@ -27,7 +27,7 @@ export default async function EditInvoicePage({
     .select(
       `id, client_id, booking_id, status, amount_cents, due_date,
        tax_rate_bps, tax_amount_cents, tax_label,
-       line_items:invoice_line_items ( id, label, quantity, unit_price_cents, sort_order )`,
+       line_items:invoice_line_items ( id, label, quantity, unit_price_cents, sort_order, booking_id )`,
     )
     .eq("id", id)
     .maybeSingle()) as unknown as {
@@ -49,6 +49,7 @@ export default async function EditInvoicePage({
                 quantity: number;
                 unit_price_cents: number;
                 sort_order: number;
+                booking_id: string | null;
               }>
             | null;
         }

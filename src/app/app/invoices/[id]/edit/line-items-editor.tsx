@@ -20,6 +20,19 @@ type LineItem = {
   label: string;
   quantity: string;
   unitPriceDollars: string;
+  /**
+   * Which booking this line bills, carried through the round trip.
+   *
+   * Not editable and not shown — it exists so that saving this form cannot
+   * DESTROY it. The save reconciles by delete-then-reinsert, and the payload
+   * used to omit booking_id entirely, so any re-inserted line came back
+   * orphaned. That link is the only record that a job on a consolidated
+   * invoice has been billed: the period builder's "already billed" filter
+   * reads it, and so does the billing-cycle cron (via the booking stamp
+   * derived from it). Losing it silently re-arms the same work to be
+   * invoiced a second time.
+   */
+  bookingId: string | null;
 };
 
 const empty: LineItemsFormState = {};
@@ -31,6 +44,8 @@ function newBlank(): LineItem {
     label: "",
     quantity: "1",
     unitPriceDollars: "",
+    // A hand-added line bills no particular job until someone says so.
+    bookingId: null,
   };
 }
 
@@ -44,6 +59,8 @@ export type ExistingLineItem = {
   quantity: number;
   unit_price_cents: number;
   sort_order: number;
+  /** The job this line bills, if any. Round-tripped, never edited here. */
+  booking_id?: string | null;
 };
 
 export function LineItemsEditor({
@@ -73,6 +90,7 @@ export function LineItemsEditor({
         label: e.label,
         quantity: String(e.quantity),
         unitPriceDollars: centsToDollars(e.unit_price_cents),
+        bookingId: e.booking_id ?? null,
       }));
   });
 
@@ -129,6 +147,9 @@ export function LineItemsEditor({
           quantity: item.quantity,
           unit_price_dollars: item.unitPriceDollars,
           sort_order: idx,
+          // Carried so the save can preserve it. Omitting it is what
+          // orphaned 53 live line items from the jobs they bill.
+          booking_id: item.bookingId,
         })),
       )} />
       {/* Tax — read by saveLineItemsAction and applied on top of the items. */}

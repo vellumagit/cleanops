@@ -22,6 +22,12 @@ const LineItemRowSchema = z.object({
     })
     .refine((c) => c != null && c > 0, "Price must be > 0"),
   sort_order: z.number(),
+  /**
+   * The job this line bills. Round-tripped from the editor, never entered by
+   * hand. Optional so an older cached client that doesn't send it still
+   * saves — such a save leaves the link as the editor knew it (null).
+   */
+  booking_id: z.string().nullable().optional(),
 });
 
 const LineItemsPayloadSchema = z.array(LineItemRowSchema).min(1, "Add at least one line item");
@@ -116,6 +122,13 @@ export async function saveLineItemsAction(
       quantity: row.quantity as number,
       unit_price_cents: row.unit_price_dollars as number, // already converted to cents
       sort_order: row.sort_order,
+      // MUST be written on the INSERT branch. This reconciler deletes rows
+      // missing from the payload and re-inserts anything without a db_id, so
+      // a payload without booking_id silently orphaned every re-inserted
+      // line from the job it bills — and that link is the only record a
+      // consolidated invoice keeps of having billed the work. Khual's
+      // Jul 31 job was billed twice off the back of exactly this.
+      booking_id: row.booking_id ?? null,
     };
 
     if (row.db_id && existingIds.has(row.db_id)) {
