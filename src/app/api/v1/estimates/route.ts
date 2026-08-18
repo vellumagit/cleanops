@@ -107,12 +107,22 @@ export async function POST(request: NextRequest) {
         { status: 400 },
       );
     }
-    clientId = (await findOrCreateClient(admin, auth.organizationId, {
-      name: clientName.trim(),
-      email: (body.client_email as string)?.trim(),
-      phone: (body.client_phone as string)?.trim(),
-      address: (body.client_address as string)?.trim(),
-    })) ?? undefined;
+    // A brand-new name arriving here is an INQUIRY, not a customer — this is
+    // the endpoint Svitlana's website form posts to. Creating them as a lead is
+    // what stops the client list filling up with people who only ever asked a
+    // price. An existing client who requests another quote is untouched.
+    clientId =
+      (await findOrCreateClient(
+        admin,
+        auth.organizationId,
+        {
+          name: clientName.trim(),
+          email: (body.client_email as string)?.trim(),
+          phone: (body.client_phone as string)?.trim(),
+          address: (body.client_address as string)?.trim(),
+        },
+        { createAs: "lead" },
+      )) ?? undefined;
     if (!clientId) {
       return NextResponse.json({ error: "Failed to resolve client" }, { status: 500 });
     }

@@ -74,7 +74,13 @@ export default async function ReportsPage({
       .gte("submitted_at", fromIso)
       .lte("submitted_at", toIso)
       .limit(REVIEW_LIMIT),
-    supabase.from("clients").select("id, name, created_at"),
+    // Customers only. This feeds the "New clients" KPI, and counting website
+    // inquiries as won business would flatter the number — a quarter of this
+    // table was non-customers before leads had anywhere else to live.
+    supabase
+      .from("clients")
+      .select("id, name, created_at")
+      .eq("lifecycle" as never, "client" as never),
     supabase
       .from("invoices")
       .select("amount_cents, client_id, clients ( name )")

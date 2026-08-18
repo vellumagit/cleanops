@@ -815,9 +815,15 @@ export async function createBookingAction(
     }).catch(() => {});
   }
 
+  // Scheduling work for someone means they said yes — promote them out of the
+  // leads list so nobody has to remember to.
+  const { convertLeadOnBooking } = await import("@/lib/lead-conversion");
+  await convertLeadOnBooking(parsed.data.client_id);
+
   revalidatePath("/app/bookings");
   revalidatePath("/app/calendar");
   revalidatePath("/app");
+  revalidatePath("/app/leads");
 
   // When the form is embedded in the calendar Sheet, return a done
   // signal instead of redirecting so the sheet can close without
@@ -1123,9 +1129,16 @@ export async function createRecurringBookingAction(
     );
   }
 
+  // A recurring booking is the strongest possible "yes" — same promotion.
+  const { convertLeadOnBooking: convertOnRecurring } = await import(
+    "@/lib/lead-conversion"
+  );
+  await convertOnRecurring(parsed.data.client_id);
+
   revalidatePath("/app/bookings");
   revalidatePath("/app/calendar");
   revalidatePath("/app");
+  revalidatePath("/app/leads");
 
   // When the form is embedded in the calendar Sheet, return a done
   // signal instead of redirecting so the sheet can close without

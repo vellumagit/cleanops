@@ -71,6 +71,7 @@ export default async function AppLayout({
     { count: pendingRequests },
     { count: overdueTasks },
     { count: newApplicants },
+    { count: newLeads },
   ] = await (async () => {
     // Capture once — used as the lower bound on two time-windowed counts.
     // eslint-disable-next-line react-hooks/purity
@@ -157,6 +158,18 @@ export default async function AppLayout({
         .eq("status" as never, "new" as never) as unknown as {
         count: number | null;
       },
+      // Leads nobody has replied to yet. Counted at stage 'new' rather than all
+      // open leads: a badge that shows every lead in the pipeline never clears,
+      // and a number that never changes stops being read.
+      supabase
+        .from("clients")
+        .select("id", { count: "exact", head: true })
+        .eq("organization_id", membership.organization_id)
+        .eq("lifecycle" as never, "lead" as never)
+        .eq("lead_stage" as never, "new" as never)
+        .is("archived_at" as never, null as never) as unknown as {
+        count: number | null;
+      },
     ]);
   })();
 
@@ -193,6 +206,7 @@ export default async function AppLayout({
           "/app/reviews": newReviews ?? 0,
           "/app/tasks": overdueTasks ?? 0,
           "/app/applicants": newApplicants ?? 0,
+          "/app/leads": newLeads ?? 0,
         }}
       />
       {/* pt-14 on mobile for the fixed top bar, lg:pt-0 when sidebar is visible */}

@@ -35,6 +35,12 @@ export default async function ClientsPage({
     ? query.not("archived_at" as never, "is" as never, null as never)
     : query.is("archived_at" as never, null as never);
 
+  // Leads and lost leads are client ROWS but not customers — they live at
+  // /app/leads. This is the cost of modelling lifecycle as a column instead of
+  // a second table, and it is one line here rather than a permanent tax on
+  // every feature that touches a client.
+  query = query.eq("lifecycle" as never, "client" as never);
+
   const { data, error } = await query
     .order("created_at", { ascending: false })
     .limit(500);

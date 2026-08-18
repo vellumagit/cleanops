@@ -136,6 +136,10 @@ export default async function DashboardPage() {
       data: { logo_url: string | null; brand_color: string | null } | null;
     },
     // Used only to decide whether to auto-redirect fresh orgs to setup.
+    // NOT filtered to lifecycle='client', deliberately: an org with a website
+    // inquiry sitting in Leads has clearly started using the product, and
+    // bouncing them back to onboarding would be wrong. This asks "is anything
+    // here yet", not "how many customers".
     supabase.from("clients").select("id", { count: "exact", head: true }),
   ]);
 

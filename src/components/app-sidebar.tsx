@@ -101,6 +101,9 @@ const NAV_SECTIONS: NavSection[] = [
     accent: "text-violet-400",
     activeBg: "bg-violet-500/10",
     items: [
+      // Leads sits ABOVE Clients: it's the same people one step earlier, and
+      // the order matches the direction they travel.
+      { href: "/app/leads", label: "Leads", icon: UserPlus, roles: ["owner", "admin", "manager"] , capability: "clients" as const },
       { href: "/app/clients", label: "Clients", icon: Users, roles: ["owner", "admin", "manager"] , capability: "clients" as const },
       { href: "/app/employees", label: "Employees", icon: UserRound, roles: ["owner", "admin"] },
       { href: "/app/applicants", label: "Applicants", icon: ClipboardList, roles: ["owner", "admin"] },
