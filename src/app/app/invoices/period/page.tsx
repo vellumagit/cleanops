@@ -7,6 +7,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { bookingLineLabel } from "@/lib/invoice-line-label";
+import { resolveBilledBookings } from "@/lib/billed-bookings";
 import { centsToDollarString } from "@/lib/validators/common";
 import { humanizeEnum } from "@/lib/format";
 import { fetchInvoiceFormOptions } from "../options";
@@ -65,104 +66,16 @@ export default async function PeriodInvoicePage({
     const candidates = bookings ?? [];
     const candidateIds = candidates.map((b) => b.id);
 
-    // Exclude bookings already billed — either as a single-booking invoice
-    // (invoices.booking_id) or on a prior consolidated one
-    // (invoice_line_items.booking_id) — ignoring voided invoices.
-    // booking id → the invoice already billing it. Details, not a bare set:
-    // silently dropping those bookings is what made a period invoice come
-    // back short with nothing on screen to explain it. The owner needs to
-    // SEE which jobs are spoken for, and by which invoice, to decide whether
-    // to fold a stray draft in or leave a sent one alone.
-    const billedBy = new Map<
-      string,
-      { id: string; number: number | null; status: string; amountCents: number }
-    >();
-    const noteBilled = (
-      bookingId: string | null | undefined,
-      inv: {
-        id: string;
-        number: number | null;
-        status: string;
-        amount_cents: number | null;
-      } | null,
-    ) => {
-      if (!bookingId || !inv || inv.status === "void") return;
-      if (billedBy.has(bookingId)) return; // first one found wins
-      billedBy.set(bookingId, {
-        id: inv.id,
-        number: inv.number,
-        status: inv.status,
-        amountCents: inv.amount_cents ?? 0,
-      });
-    };
-
-    if (candidateIds.length > 0) {
-      const { data: invRows } = (await supabase
-        .from("invoices")
-        .select("id, number, status, amount_cents, booking_id")
-        .neq("status", "void")
-        .in("booking_id", candidateIds)) as unknown as {
-        data: Array<{
-          id: string;
-          number: number | null;
-          status: string;
-          amount_cents: number | null;
-          booking_id: string | null;
-        }> | null;
-      };
-      for (const r of invRows ?? []) {
-        noteBilled(r.booking_id, {
-          id: r.id,
-          number: r.number,
-          status: r.status,
-          amount_cents: r.amount_cents,
-        });
-      }
-
-      const { data: liRows } = (await supabase
-        .from("invoice_line_items")
-        .select(
-          "booking_id, invoice:invoices!inner ( id, number, status, amount_cents )",
-        )
-        .in("booking_id" as never, candidateIds as never)) as unknown as {
-        data: Array<{
-          booking_id: string | null;
-          invoice: {
-            id: string;
-            number: number | null;
-            status: string;
-            amount_cents: number | null;
-          } | null;
-        }> | null;
-      };
-      for (const r of liRows ?? []) noteBilled(r.booking_id, r.invoice);
-
-      // Third signal: the booking's own stamp. The two above both hang off
-      // invoice_line_items.booking_id, so they agree — and they were BOTH
-      // blind wherever that link had been stripped by an invoice edit (the
-      // defect fixed alongside this). The stamp is written independently by
-      // the consolidated builder and the billing-cycle cron, so reading it
-      // too means one lost link no longer makes a job look unbilled and
-      // invite a second invoice.
-      const { data: stamped } = (await supabase
-        .from("bookings")
-        .select(
-          "id, invoice:invoices!bookings_billing_invoice_id_fkey ( id, number, status, amount_cents )",
-        )
-        .in("id", candidateIds)
-        .not("billing_invoice_id", "is", null)) as unknown as {
-        data: Array<{
-          id: string;
-          invoice: {
-            id: string;
-            number: number | null;
-            status: string;
-            amount_cents: number | null;
-          } | null;
-        }> | null;
-      };
-      for (const r of stamped ?? []) noteBilled(r.id, r.invoice);
-    }
+    // Which of these are already spoken for. THE shared rule — see
+    // src/lib/billed-bookings.ts. It used to live inline here, and a second
+    // copy of "is this job billed" is exactly how a client gets charged twice
+    // or never, so any screen asking the question calls that helper.
+    //
+    // Details, not a bare set: silently dropping billed bookings is what made
+    // a period invoice come back short with nothing on screen to explain it.
+    // The owner needs to SEE which jobs are spoken for, and by which invoice,
+    // to decide whether to fold a stray draft in or leave a sent one alone.
+    const billedBy = await resolveBilledBookings(supabase, candidateIds);
 
     const lineFor = (b: (typeof candidates)[number]) => ({
       label: bookingLineLabel({

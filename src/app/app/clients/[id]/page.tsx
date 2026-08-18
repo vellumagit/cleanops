@@ -13,7 +13,8 @@ import {
   ClipboardList,
   UserCheck,
 } from "lucide-react";
-import { requireMembership } from "@/lib/auth";
+import { requireMembership, can } from "@/lib/auth";
+import { getUnbilledCompletedBookings } from "@/lib/billed-bookings";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { PageShell } from "@/components/page-shell";
@@ -245,6 +246,14 @@ export default async function ClientDetailPage({
     membership.role === "admin" ||
     membership.role === "manager";
 
+  // How much of this client's finished work is still unbilled. Cheap enough to
+  // compute here, and it's what turns "New invoice" from a blank form into an
+  // answer — the count rides on the button so she knows what's outstanding
+  // BEFORE clicking, rather than having to hold it in her head.
+  const unbilledCount = can(membership, "invoicing")
+    ? (await getUnbilledCompletedBookings(supabase, id)).length
+    : 0;
+
   // Preconditions for Reset / Force-resend on the GBP review panel.
   // The cron requires the client to have an email AND the org to
   // have google_review_url set. If either is missing the cron
@@ -291,6 +300,28 @@ export default async function ClientDetailPage({
               portalInvitedAt={client.portal_invited_at}
               portalInviteExpiresAt={client.portal_invite_expires_at}
             />
+          )}
+          {canEdit && can(membership, "invoicing") && (
+            <Link
+              href={`/app/invoices/new?client_id=${id}`}
+              className={buttonVariants({ variant: "outline", size: "sm" })}
+              title={
+                unbilledCount > 0
+                  ? `${unbilledCount} completed job${unbilledCount === 1 ? "" : "s"} with no invoice linked to them`
+                  : "Every completed job is linked to an invoice"
+              }
+            >
+              <Receipt className="h-3.5 w-3.5" />
+              New invoice
+              {/* The count is the point. Landing on a blank invoice form and
+                  having to remember what's outstanding is how July 24 and 31
+                  got missed off the Qual invoice. */}
+              {unbilledCount > 0 && (
+                <span className="ml-1 rounded-full bg-amber-100 px-1.5 text-[10px] font-semibold text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                  {unbilledCount}
+                </span>
+              )}
+            </Link>
           )}
           {canEdit && (
             <Link
