@@ -130,8 +130,8 @@ export async function recordPayoutAction(formData: FormData): Promise<Result> {
     after: { subcontractor_payout_cents: amountCents, method },
   });
 
-  revalidatePath(`/app/freelancers/payables/${encodePayeeParam(payee)}`);
-  revalidatePath(`/app/freelancers/payables`);
+  revalidatePath(`/app/payroll/contractors/${encodePayeeParam(payee)}`);
+  revalidatePath(`/app/payroll/contractors`);
   return { ok: true };
 }
 
@@ -168,8 +168,8 @@ export async function deletePayoutAction(formData: FormData): Promise<Result> {
   if (error) return { ok: false, error: error.message };
 
   const param = paramForRow(row);
-  if (param) revalidatePath(`/app/freelancers/payables/${param}`);
-  revalidatePath(`/app/freelancers/payables`);
+  if (param) revalidatePath(`/app/payroll/contractors/${param}`);
+  revalidatePath(`/app/payroll/contractors`);
   return { ok: true };
 }
 
@@ -223,8 +223,8 @@ export async function uploadBillAction(formData: FormData): Promise<Result> {
     return { ok: false, error: insErr.message };
   }
 
-  revalidatePath(`/app/freelancers/payables/${encodePayeeParam(payee)}`);
-  revalidatePath(`/app/freelancers/payables`);
+  revalidatePath(`/app/payroll/contractors/${encodePayeeParam(payee)}`);
+  revalidatePath(`/app/payroll/contractors`);
   return { ok: true };
 }
 
@@ -263,8 +263,8 @@ export async function deleteBillAction(formData: FormData): Promise<Result> {
   if (error) return { ok: false, error: error.message };
 
   const param = paramForRow(row);
-  if (param) revalidatePath(`/app/freelancers/payables/${param}`);
-  revalidatePath(`/app/freelancers/payables`);
+  if (param) revalidatePath(`/app/payroll/contractors/${param}`);
+  revalidatePath(`/app/payroll/contractors`);
   return { ok: true };
 }
 

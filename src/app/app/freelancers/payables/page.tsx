@@ -1,154 +1,17 @@
-import Link from "next/link";
-import { ChevronLeft } from "lucide-react";
-import { requireMembership, requireCapability } from "@/lib/auth";
-import { PageShell } from "@/components/page-shell";
-import { formatCurrencyCents } from "@/lib/format";
-import { getOrgCurrency } from "@/lib/org-currency";
-import { getOrgTimezone } from "@/lib/org-timezone";
-import { zonedDayStartUtc, zonedYmd } from "@/lib/wall-clock";
-import {
-  getSubcontractorPayables,
-  getSubcontractorRuns,
-  encodePayeeParam,
-} from "@/lib/subcontractor-payables";
-import { StatementsCard } from "./statements-card";
+import { redirect } from "next/navigation";
 
-export const metadata = { title: "Subcontractor pay" };
-
-export default async function SubcontractorPayablesPage() {
-  const membership = await requireMembership(["owner", "admin", "manager"]);
-  requireCapability(membership, "subcontractors");
-  const [{ rows, totalOutstandingCents }, currency, runs, orgTz] =
-    await Promise.all([
-      getSubcontractorPayables(membership.organization_id),
-      getOrgCurrency(membership.organization_id),
-      getSubcontractorRuns(membership.organization_id),
-      getOrgTimezone(membership.organization_id),
-    ]);
-
-  // Default period: the last 14 org-local days ending today — computed here
-  // so the browser's timezone can't shift the suggestion (the payroll form's
-  // old browser-UTC default bug).
-  const now = new Date();
-  const defaultEnd = zonedYmd(now, orgTz);
-  const defaultStart = zonedYmd(zonedDayStartUtc(now, orgTz, -13), orgTz);
-  const canManage = ["owner", "admin"].includes(membership.role);
-
-  return (
-    <PageShell
-      title="Subcontractor pay"
-      description="What you owe each subcontractor for completed jobs."
-      actions={
-        <Link
-          href="/app/freelancers"
-          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-        >
-          <ChevronLeft className="h-3.5 w-3.5" />
-          On-call pool
-        </Link>
-      }
-    >
-      <div className="space-y-6">
-        {/* ── Total outstanding ── */}
-        <div className="rounded-lg border border-border bg-card p-5">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Outstanding
-          </p>
-          <p className="mt-1 text-3xl font-bold tabular-nums text-amber-600 dark:text-amber-400">
-            {formatCurrencyCents(totalOutstandingCents, currency)}
-          </p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Total still owed across all subcontractors — floating hours plus
-            unpaid statements.
-          </p>
-        </div>
-
-        {/* ── Pay-period statements ── */}
-        <StatementsCard
-          runs={runs}
-          currency={currency}
-          defaultStart={defaultStart}
-          defaultEnd={defaultEnd}
-          canManage={canManage}
-        />
-
-        {/* ── Rows ── */}
-        {rows.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-border bg-card px-6 py-16 text-center">
-            <p className="text-sm font-medium text-foreground">
-              No subcontractor pay yet
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Once a subcontractor claims a shift offer and its booking is
-              completed, what you owe them shows up here.
-            </p>
-          </div>
-        ) : (
-          <div className="overflow-hidden rounded-lg border border-border bg-card">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                    <th className="px-4 py-2.5 font-medium">Subcontractor</th>
-                    <th className="px-4 py-2.5 text-right font-medium">Jobs</th>
-                    <th className="px-4 py-2.5 text-right font-medium">Earned</th>
-                    <th className="px-4 py-2.5 text-right font-medium">Paid</th>
-                    <th className="px-4 py-2.5 text-right font-medium">
-                      Outstanding
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border/50">
-                  {rows.map((r) => (
-                    <tr
-                      key={r.contactId}
-                      className="transition-colors hover:bg-muted/50"
-                    >
-                      <td className="px-4 py-2.5">
-                        <div className="flex items-center gap-2">
-                          <Link
-                            href={`/app/freelancers/payables/${encodePayeeParam(r.payee)}`}
-                            className="font-medium text-foreground hover:underline underline-offset-2"
-                          >
-                            {r.name}
-                          </Link>
-                          {r.unreviewedCount > 0 && (
-                            <Link
-                              href="/app/timesheets"
-                              title={`${r.unreviewedCount} capped shift${r.unreviewedCount === 1 ? "" : "s"} not counted in Earned — nobody clocked out and the system capped the hours. Confirm or correct them on Timesheets and they'll appear here.`}
-                              className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold text-amber-800 hover:bg-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:hover:bg-amber-950/60"
-                            >
-                              {r.unreviewedCount} REVIEW
-                            </Link>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">
-                        {r.jobCount}
-                      </td>
-                      <td className="px-4 py-2.5 text-right tabular-nums">
-                        {formatCurrencyCents(r.earnedCents, currency)}
-                      </td>
-                      <td className="px-4 py-2.5 text-right tabular-nums">
-                        {formatCurrencyCents(r.paidCents, currency)}
-                      </td>
-                      <td
-                        className={`px-4 py-2.5 text-right font-semibold tabular-nums ${
-                          r.outstandingCents > 0
-                            ? "text-amber-600 dark:text-amber-400"
-                            : "text-emerald-600 dark:text-emerald-400"
-                        }`}
-                      >
-                        {formatCurrencyCents(r.outstandingCents, currency)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-      </div>
-    </PageShell>
-  );
+/**
+ * Subcontractor pay moved to /app/payroll/contractors.
+ *
+ * It used to live here, under the On-call pool, which filed a PAYING concept
+ * inside a SOURCING one. A roster subcontractor who has never been near the
+ * bench still had their pay sitting under "who can I text tonight" — and at
+ * Svit that was 11 of 13 people, hidden two clicks inside a recruiting tool
+ * while Payroll's front page showed pay periods for the 2 employees.
+ *
+ * Kept as a redirect rather than deleted: this path has been live, and an
+ * emailed link or a bookmark should land somewhere useful rather than 404.
+ */
+export default function LegacyPayablesRedirect() {
+  redirect("/app/payroll/contractors");
 }

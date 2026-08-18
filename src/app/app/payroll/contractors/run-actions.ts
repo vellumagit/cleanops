@@ -249,7 +249,7 @@ export async function generateSubcontractorRunAction(
     },
   });
 
-  revalidatePath("/app/freelancers/payables");
+  revalidatePath("/app/payroll/contractors");
   return { ok: true };
 }
 
@@ -322,7 +322,7 @@ export async function markSubcontractorRunPaidAction(
     after: { entity_name: "subcontractor_pay_run", status: "paid" },
   });
 
-  revalidatePath("/app/freelancers/payables");
+  revalidatePath("/app/payroll/contractors");
   return { ok: true };
 }
 
@@ -381,6 +381,6 @@ export async function deleteSubcontractorRunAction(
     },
   });
 
-  revalidatePath("/app/freelancers/payables");
+  revalidatePath("/app/payroll/contractors");
   return { ok: true };
 }

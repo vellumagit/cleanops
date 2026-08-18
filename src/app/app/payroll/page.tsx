@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Plus, Wallet, ChevronRight, HandCoins } from "lucide-react";
+import { Plus, Wallet, ChevronRight, HandCoins, Users } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { PageShell } from "@/components/page-shell";
@@ -7,6 +7,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { StatusBadge } from "@/components/status-badge";
 import { formatCurrencyCents, formatDate } from "@/lib/format";
 import { getOrgCurrency } from "@/lib/org-currency";
+import { paySystemFor } from "@/lib/engagement";
 import { NewPayrollRunForm } from "./new-run-form";
 import { markTipsPaidAction } from "./actions";
 import { getTipsOwed } from "@/lib/invoice-tips";
@@ -51,6 +52,31 @@ export default async function PayrollPage() {
     await getSubcontractorPayables(membership.organization_id);
   const subOwedCount = subRows.filter((r) => r.outstandingCents > 0).length;
 
+  // Head-count per PAY SYSTEM, not per source.
+  //
+  // The split that matters is engagement, because it's an accounting fact:
+  // a contractor inside a payroll run misstates both the run and the tax
+  // treatment. Where someone was SOURCED — your own roster, or the on-call
+  // bench — changes nothing about how they're paid, so it isn't a division
+  // here. paySystemFor is the same rule the rest of the app routes on.
+  const { data: rosterRows } = (await admin
+    .from("memberships")
+    .select("engagement")
+    .eq("organization_id", membership.organization_id)
+    .eq("status", "active")) as unknown as {
+    data: Array<{ engagement: string | null }> | null;
+  };
+  const roster = rosterRows ?? [];
+  const employeeCount = roster.filter(
+    (r) => paySystemFor(r.engagement) === "payroll",
+  ).length;
+  const rosterContractorCount = roster.length - employeeCount;
+  // Bench people are contractors too — same pay system, different doorway in.
+  const benchContractorCount = subRows.filter((r) => !r.isRoster).length;
+  const contractorCount = rosterContractorCount + benchContractorCount;
+
+  const lastPaidRun = runs.find((r) => r.status === "paid");
+
   // Tips are the same shape of problem as subcontractor pay: money the
   // business is holding that belongs to a specific person, settled outside a
   // payroll run. It belongs on the page that answers "what am I paying out".
@@ -59,8 +85,74 @@ export default async function PayrollPage() {
   return (
     <PageShell
       title="Payroll"
-      description="Snapshot hours, bonuses, and PTO into pay periods. Export or mark paid when ready."
+      description="Everyone you pay, split by how you pay them."
     >
+      {/* ── The two pay systems, as peers ──────────────────────────────────
+          Subcontractor pay used to be a link in the sidebar of this page,
+          under the On-call pool. At Svit that hid the card covering 11 of 13
+          people behind a recruiting tool, while the front page showed pay
+          periods for the other 2. These are the same size of thing and now
+          look it. */}
+      <div className="mb-6 grid gap-3 sm:grid-cols-2">
+        <div className="rounded-xl border border-border bg-card p-5">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="flex items-center gap-2 text-sm font-semibold">
+              <Users className="h-4 w-4" />
+              Employees
+            </h2>
+            <span className="text-xs text-muted-foreground">
+              {employeeCount}
+            </span>
+          </div>
+          <p className="mt-2 text-2xl font-bold tabular-nums">
+            {lastPaidRun
+              ? formatCurrencyCents(lastPaidRun.total_cents, currency)
+              : "—"}
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {lastPaidRun
+              ? `Last pay period, paid ${formatDate(lastPaidRun.paid_at ?? lastPaidRun.period_end, tz)}.`
+              : "No pay period has been run yet."}{" "}
+            Paid in periods, with hours, PTO and bonuses rolled in.
+          </p>
+        </div>
+
+        <Link
+          href="/app/payroll/contractors"
+          className="rounded-xl border border-border bg-card p-5 transition-colors hover:bg-muted/40"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="flex items-center gap-2 text-sm font-semibold">
+              <Wallet className="h-4 w-4" />
+              Contractors
+            </h2>
+            <span className="flex items-center gap-1 text-xs text-muted-foreground">
+              {contractorCount}
+              <ChevronRight className="h-3.5 w-3.5" />
+            </span>
+          </div>
+          <p
+            className={
+              subOutstandingCents > 0
+                ? "mt-2 text-2xl font-bold tabular-nums text-amber-600 dark:text-amber-400"
+                : "mt-2 text-2xl font-bold tabular-nums text-muted-foreground"
+            }
+          >
+            {formatCurrencyCents(subOutstandingCents, currency)}
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {subOutstandingCents > 0
+              ? `Outstanding to ${subOwedCount} of them.`
+              : "Nothing outstanding."}{" "}
+            Paid per job, never inside a payroll run
+            {benchContractorCount > 0
+              ? ` — your own roster and the on-call bench together`
+              : ""}
+            .
+          </p>
+        </Link>
+      </div>
+
       <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
         {/* Runs list */}
         <div>
@@ -113,7 +205,7 @@ export default async function PayrollPage() {
           )}
         </div>
 
-        {/* New run form + subcontractor payables */}
+        {/* New run form + tips held for cleaners */}
         <aside className="space-y-4">
           <div className="sticky top-4 space-y-4">
             <div className="rounded-lg border border-border bg-card p-5">
@@ -123,35 +215,6 @@ export default async function PayrollPage() {
               </h2>
               <NewPayrollRunForm />
             </div>
-
-            <Link
-              href="/app/freelancers/payables"
-              className="block rounded-lg border border-border bg-card p-5 transition-colors hover:bg-muted/40"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <h2 className="flex items-center gap-2 text-sm font-semibold">
-                  <Wallet className="h-4 w-4" />
-                  Subcontractor pay
-                </h2>
-                <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
-              </div>
-              <p
-                className={
-                  subOutstandingCents > 0
-                    ? "mt-2 text-2xl font-bold tabular-nums text-amber-600 dark:text-amber-400"
-                    : "mt-2 text-2xl font-bold tabular-nums text-muted-foreground"
-                }
-              >
-                {formatCurrencyCents(subOutstandingCents, currency)}
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {subOutstandingCents > 0
-                  ? `Outstanding to ${subOwedCount} subcontractor${subOwedCount === 1 ? "" : "s"}.`
-                  : "Nothing outstanding."}{" "}
-                Paid separately from payroll runs — subcontractors are
-                contractors, so their pay is never part of a run total.
-              </p>
-            </Link>
 
             {/* Tips held on behalf of cleaners. Only rendered when there ARE
                 any — an empty card would be a permanent reminder of a feature

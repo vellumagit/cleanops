@@ -108,13 +108,18 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/app/employees", label: "Employees", icon: UserRound, roles: ["owner", "admin"] },
       { href: "/app/applicants", label: "Applicants", icon: ClipboardList, roles: ["owner", "admin"] },
       { href: "/app/timesheets", label: "Timesheets", icon: Clock, roles: ["owner", "admin", "manager"] , capability: "timesheets" as const },
-      // Subcontractor pay lives INSIDE this section — it's a view of the same
-      // people, not a separate area of the app, and two adjacent
-      // "Subcontractor …" rows made the sidebar read like two features.
-      // "Subcontractors" sent owners here looking for their own crew; then
-      // "Outsourcing" read like a service Sollos sells. This is the on-call
-      // pool — external emergency coverage. Roster subcontractors live under
-      // Employees (and get shift offers through the same Offer flow).
+      // PURELY A SOURCING TOOL: "who can I text tonight". Contractor pay used
+      // to hang off this entry, which filed a paying concept inside a hiring
+      // one — a roster subcontractor who had never touched the bench still had
+      // their pay living here. It now sits under Payroll as a peer of
+      // employee pay, which is the split that actually matters (engagement,
+      // and therefore tax treatment). Where someone was sourced changes
+      // nothing about how they are paid.
+      //
+      // The naming still earns its keep: "Subcontractors" sent owners here
+      // looking for their own crew, and "Outsourcing" read like a service
+      // Sollos sells. Roster subcontractors live under Employees and get shift
+      // offers through the same Offer flow.
       { href: "/app/freelancers", label: "On-call pool", icon: UserPlus, roles: ["owner", "admin", "manager"] , capability: "subcontractors" as const },
       { href: "/app/reviews", label: "Reviews", icon: Star },
       { href: "/app/bonuses", label: "Bonuses", icon: Award },

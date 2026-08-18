@@ -28,7 +28,7 @@ export function payeeKey(p: PayeeRef): string {
 /**
  * The payee as a URL segment.
  *
- * Bare uuid means a bench contact, so every /app/freelancers/payables/<uuid>
+ * Bare uuid means a bench contact, so every /app/payroll/contractors/<uuid>
  * link that exists today — in bookmarks, in emails, in the audit log — keeps
  * resolving to the same person. Roster subcontractors get an "m-" prefix.
  */
