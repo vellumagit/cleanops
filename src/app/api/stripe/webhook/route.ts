@@ -28,6 +28,12 @@ import {
   releaseClaim,
   getPlanFromPriceId,
 } from "@/lib/stripe";
+import {
+  recordStripeInvoicePayment,
+  tipFromMetadata,
+  orgFromMetadata,
+  invoiceFromMetadata,
+} from "@/lib/stripe-invoice-payment";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
@@ -110,8 +116,53 @@ export async function POST(req: NextRequest) {
 
   try {
     switch (event.type) {
+      // A cleaning company's CUSTOMER paying an invoice by card.
+      //
+      // This endpoint used to handle only our own SaaS billing, which was the
+      // bug: invoice checkouts are DESTINATION CHARGES, so their PaymentIntent
+      // lives on the platform account and the event lands here, not on the
+      // Connect endpoint where the recording code was. Every card payment a
+      // client ever made was silently dropped — see src/lib/stripe-invoice-
+      // payment.ts for the full account.
+      //
+      // Both events are handled because either can arrive first; the shared
+      // recorder dedupes on the PaymentIntent id.
+      case "payment_intent.succeeded": {
+        const pi = event.data.object as Stripe.PaymentIntent;
+        const invoiceId = invoiceFromMetadata(pi.metadata);
+        if (invoiceId) {
+          await recordStripeInvoicePayment({
+            invoiceId,
+            amountCents: pi.amount_received ?? 0,
+            piId: pi.id,
+            feeCents: pi.application_fee_amount ?? null,
+            tipCents: tipFromMetadata(pi.metadata),
+            expectedOrgId: orgFromMetadata(pi.metadata),
+          });
+        }
+        break;
+      }
+
       case "checkout.session.completed": {
         const session = event.data.object as Stripe.Checkout.Session;
+
+        // Client invoice checkout — same reasoning as above.
+        const clientInvoiceId = invoiceFromMetadata(session.metadata);
+        if (clientInvoiceId && session.payment_status === "paid") {
+          await recordStripeInvoicePayment({
+            invoiceId: clientInvoiceId,
+            amountCents: session.amount_total ?? 0,
+            piId:
+              typeof session.payment_intent === "string"
+                ? session.payment_intent
+                : (session.payment_intent?.id ?? null),
+            feeCents: null, // not on the session; the PI event backfills it
+            tipCents: tipFromMetadata(session.metadata),
+            expectedOrgId: orgFromMetadata(session.metadata),
+          });
+          break;
+        }
+
         const organization_id =
           (session.metadata && session.metadata.organization_id) || null;
         if (organization_id && session.subscription) {
