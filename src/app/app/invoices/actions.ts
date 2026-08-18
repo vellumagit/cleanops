@@ -12,6 +12,7 @@ import {
   type PAYMENT_METHODS,
 } from "@/lib/validators/invoice-payment";
 import { localInputToUtcIso, parseDollarsToCents } from "@/lib/validators/common";
+import { normalizeTipCents } from "@/lib/tip-split";
 import { generateClaimToken } from "@/lib/claim-token";
 import { autoOnInvoicePaid } from "@/lib/automations";
 import { canCreateData } from "@/lib/subscription";
@@ -328,6 +329,31 @@ export async function recordInvoicePaymentAction(
     return { errors: { _form: error?.message ?? "Insert failed" }, values: raw };
   }
 
+  // A tip that arrived alongside this payment — an e-transfer for more than
+  // the invoice, or cash. Deliberately NOT part of amount_cents: the payment
+  // row records what the invoice was paid, exactly as on the card path, so a
+  // tip can never drive the balance negative or read as an overpayment.
+  const tipCents = normalizeTipCents(formData.get("tip_cents"));
+  let tipError: string | undefined;
+  if (tipCents) {
+    const custody =
+      String(formData.get("tip_custody") ?? "held") === "direct"
+        ? "direct"
+        : "held";
+    const { recordManualTip } = await import("@/lib/manual-tip");
+    const res = await recordManualTip(supabase, {
+      invoiceId: invoice.id,
+      organizationId: invoice.organization_id,
+      tipCents,
+      custody,
+      method: parsed.data.method,
+      paymentId: inserted.id,
+    });
+    // The payment is already saved and correct. A failed tip must not
+    // masquerade as a failed payment, so this surfaces separately.
+    if (!res.ok) tipError = res.error ?? "The payment saved, but the tip did not.";
+  }
+
   await logAuditEvent({
     membership,
     action: "mark_paid",
@@ -338,12 +364,14 @@ export async function recordInvoicePaymentAction(
       amount_cents: parsed.data.amount_dollars,
       method: parsed.data.method,
       reference: parsed.data.reference ?? null,
+      tip_cents: tipCents ?? 0,
     },
   });
 
   revalidatePath(`/app/invoices/${invoice.id}`);
   revalidatePath("/app/invoices");
   revalidatePath("/app");
+  revalidatePath("/app/payroll");
 
   // Check if the invoice is now fully paid (trigger recomputes status async,
   // so we check the amounts ourselves)
@@ -353,7 +381,7 @@ export async function recordInvoicePaymentAction(
     autoOnInvoicePaid(invoice.id);
   }
 
-  return {};
+  return tipError ? { errors: { _form: tipError } } : {};
 }
 
 /**
