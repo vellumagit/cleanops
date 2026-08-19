@@ -66,12 +66,17 @@ export async function recordManualTip(
       organization_id: args.organizationId,
       invoice_id: args.invoiceId,
       provider: args.method,
-      // No provider_payment_id: that column is Stripe's idempotency key, and
-      // the partial unique indexes only bite when it is non-null. A manual tip
-      // is entered deliberately by a person, so there is no retry to dedupe
-      // against — and reusing the payment id here would make a legitimate
-      // second tip on the same invoice fail.
-      provider_payment_id: null,
+      // The PAYMENT row this tip arrived with.
+      //
+      // I first left this null, reasoning that a manual tip has no retry to
+      // dedupe against and that reusing the id would block a second tip on the
+      // same invoice. Both halves were wrong. A second tip arrives with a
+      // SECOND payment and therefore a different id, so nothing legitimate is
+      // blocked — and without the link a tip outlives its payment. Correcting
+      // a mistyped amount means deleting the payment and re-recording it,
+      // which left the first tip in place and added another: $20 given, $40
+      // owed to the cleaner. The link is what lets the delete clean up.
+      provider_payment_id: args.paymentId,
       paid_out_at: settledAt,
     };
 

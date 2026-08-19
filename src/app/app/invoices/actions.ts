@@ -351,7 +351,11 @@ export async function recordInvoicePaymentAction(
     });
     // The payment is already saved and correct. A failed tip must not
     // masquerade as a failed payment, so this surfaces separately.
-    if (!res.ok) tipError = res.error ?? "The payment saved, but the tip did not.";
+    if (!res.ok) {
+      tipError = `The payment saved, but the tip did not: ${
+        res.error ?? "unknown error"
+      }. Record it again once that is fixed.`;
+    }
   }
 
   await logAuditEvent({
@@ -509,6 +513,20 @@ export async function deleteInvoicePaymentAction(formData: FormData) {
       "Processor payments can't be removed manually. Issue a refund through the processor instead.",
     );
   }
+
+  // A tip recorded alongside this payment goes with it.
+  //
+  // The only reason to delete a payment is that it was entered wrong, and the
+  // fix is to re-record it — which records the tip again. Leaving the first
+  // one behind means $20 given and $40 owed to the cleaner. Deleted BEFORE the
+  // payment so a failure here can't strand a tip whose payment is already
+  // gone; a tip that outlives its payment is money we'd pay out twice.
+  await (supabase
+    .from("invoice_tips" as never)
+    .delete()
+    .eq("invoice_id" as never, invoiceId as never)
+    .eq("provider_payment_id" as never, paymentId as never)
+    .is("paid_out_at" as never, null as never) as unknown as Promise<unknown>);
 
   const { error } = await supabase
     .from("invoice_payments")
