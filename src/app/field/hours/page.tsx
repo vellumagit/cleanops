@@ -204,18 +204,32 @@ export default async function FieldHoursPage({
         <p className="mt-1 text-3xl font-bold tabular-nums">
           {(totalMinutes / 60).toFixed(1)}h
         </p>
+        {/* ONE text node, wrapped in an element — not four bare siblings.
+            A browser translator (Google Translate, which this crew may well be
+            using: the field app is English and they are not) rewrites text
+            nodes into <font> wrappers. React still holds a reference to the
+            ORIGINAL node, so the next update calls parent.removeChild on a
+            node that is no longer the parent's child, and throws NotFoundError
+            — reported from this page on 2026-08-18 while someone clicked
+            between period filters. Removing an ELEMENT is safe: the translator
+            wraps the text INSIDE it and leaves the element where React put it.
+
+            NOT fixed with translate="no". Blocking translation would keep the
+            DOM stable and make the page unreadable for the people it is for. */}
         <p className="mt-1 text-sm text-muted-foreground">
-          {enriched.length} shift{enriched.length === 1 ? "" : "s"}
-          {openCount > 0 ? ` · ${openCount} still running` : ""}
+          <span>
+            {`${enriched.length} shift${enriched.length === 1 ? "" : "s"}`}
+            {openCount > 0 ? ` · ${openCount} still running` : ""}
+          </span>
         </p>
         {/* Say it plainly rather than leaving them to find out at payday. */}
         {flaggedCount > 0 && (
           <p className="mt-3 flex items-start gap-2 rounded-md bg-amber-500/15 px-2 py-1.5 text-xs font-medium text-amber-800 dark:text-amber-300">
             <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <span>
-              {flaggedCount} shift{flaggedCount === 1 ? "" : "s"} flagged for
-              your manager to confirm. Your hours haven&rsquo;t been changed —
-              if something looks wrong, tell them what actually happened.
+              {`${flaggedCount} shift${flaggedCount === 1 ? "" : "s"} flagged for your manager to confirm.`}{" "}
+              Your hours haven&rsquo;t been changed — if something looks wrong,
+              tell them what actually happened.
             </span>
           </p>
         )}
@@ -253,12 +267,15 @@ export default async function FieldHoursPage({
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0 flex-1">
                           <p className="truncate text-base font-semibold">
-                            {r.booking?.client?.name ??
-                              (r.work_category
-                                ? humanizeEnum(r.work_category)
-                                : "Shift")}
+                            <span>
+                              {r.booking?.client?.name ??
+                                (r.work_category
+                                  ? humanizeEnum(r.work_category)
+                                  : "Shift")}
+                            </span>
                           </p>
                           <p className="mt-0.5 text-sm text-muted-foreground">
+                            <span>
                             {new Date(r.clock_in_at).toLocaleTimeString(
                               "en-US",
                               {
@@ -281,6 +298,7 @@ export default async function FieldHoursPage({
                             {r.booking?.service_type
                               ? ` · ${humanizeEnum(r.booking.service_type)}`
                               : ""}
+                            </span>
                           </p>
                         </div>
                         <span className="shrink-0 text-base font-bold tabular-nums">

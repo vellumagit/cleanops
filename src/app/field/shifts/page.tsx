@@ -50,9 +50,16 @@ export default async function FieldShiftsPage() {
       {pendingCount > 0 && (
         <div className="mb-4 flex items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
           <CalendarClock className="h-4 w-4 shrink-0" />
-          {pendingCount} shift{pendingCount === 1 ? "" : "s"} need
-          {pendingCount === 1 ? "s" : ""} your confirmation — tap a highlighted
-          shift to accept.
+          {/* Built as ONE string inside an element rather than five bare text
+              siblings. This count drops the moment a shift is accepted, and a
+              browser translator will have rewrapped these nodes by then — see
+              the note on /field/hours. Removing an element is safe; removing a
+              text node the translator has moved is the NotFoundError. */}
+          <span>
+            {`${pendingCount} shift${pendingCount === 1 ? "" : "s"} need${
+              pendingCount === 1 ? "s" : ""
+            } your confirmation — tap a highlighted shift to accept.`}
+          </span>
         </div>
       )}
 
