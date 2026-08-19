@@ -362,6 +362,16 @@ export async function createInvoiceCheckoutSession(args: {
       payment_intent_data: {
         application_fee_amount: feeCents,
         transfer_data: { destination: orgRow.stripe_account_id },
+        // THE MERCHANT THE CLIENT SEES. Without this, a destination charge is
+        // branded by the account that owns it — the PLATFORM — so Svit's
+        // clients hit a checkout page saying "Velluma" and a card statement
+        // saying the same: a stranger's name on a cleaning bill, which is how
+        // "unrecognized charge" disputes start. on_behalf_of makes the
+        // connected account the settlement merchant: their checkout branding
+        // ("Svit Cleaning Company"), their statement descriptor, their
+        // settlement currency. Requires the card_payments capability, which
+        // every OAuth-connected Standard account has.
+        on_behalf_of: orgRow.stripe_account_id,
         // tip_cents on the PI as well as the session: the webhook records
         // payment from BOTH checkout.session.completed and
         // payment_intent.succeeded, and whichever arrives first must be able
@@ -389,7 +399,12 @@ export async function createInvoiceCheckoutSession(args: {
     // CACHED 18% session and is charged the old amount with no sign anything
     // was ignored.
     {
-      idempotencyKey: `invoice_checkout_${invoice.id}_${balanceCents}_${tipCents}`,
+      // _v2: on_behalf_of changed the session params. Stripe keeps idempotency
+      // keys for 24h and errors on same-key-different-params — so without the
+      // version bump, any invoice whose session was minted just before this
+      // deploy would refuse to mint again until the old key expired, and its
+      // Pay button would 500 for a day.
+      idempotencyKey: `invoice_checkout_v2_${invoice.id}_${balanceCents}_${tipCents}`,
     },
   );
 
