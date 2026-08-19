@@ -293,3 +293,132 @@ export async function recordStripeInvoicePayment(
     console.error("[stripe] post-payment automation failed:", err);
   }
 }
+
+/**
+ * Reconcile a Stripe refund — the sibling of recordStripeInvoicePayment, with
+ * the same disease and the same cure. charge.refunded was handled only in the
+ * Connect webhook, but a destination charge lives on the PLATFORM account, so
+ * its refund event arrives at the platform endpoint — which claimed the event
+ * id and fell through `default: break`. The first time Svitlana refunded a
+ * card payment from her Stripe dashboard, the invoice would have stayed
+ * "paid", revenue never reversed, and any tip still owed to a cleaner for
+ * money the client took back. Caught before any real refund existed.
+ *
+ * TIPS: the payment row is NET of tip; Stripe's amount_refunded is GROSS and
+ * cumulative. splitRefund attributes invoice-first (the policy and its why
+ * live in tip-split.ts). The tip share claws back UNPAID tip rows — largest
+ * first, deleting rows that hit zero because the check constraint forbids
+ * zero-amount rows. Tips already paid out are never touched: the business
+ * handed that money to a person, and deleting the record of it wouldn't
+ * bring it back — it says so loudly in the log instead.
+ */
+export async function recordStripeRefund(args: {
+  piId: string | null;
+  /** Stripe's cumulative amount_refunded from the charge object. */
+  amountRefundedCents: number;
+  expectedOrgId: string | null;
+}): Promise<void> {
+  if (!args.piId || args.amountRefundedCents <= 0) return;
+  const admin = createSupabaseAdminClient();
+
+  const { data: payment } = (await admin
+    .from("invoice_payments" as never)
+    .select("id, amount_cents, organization_id, invoice_id")
+    .eq("provider" as never, "stripe" as never)
+    .eq("provider_payment_id" as never, args.piId as never)
+    .maybeSingle()) as unknown as {
+    data: {
+      id: string;
+      amount_cents: number;
+      organization_id: string;
+      invoice_id: string;
+    } | null;
+  };
+
+  if (!payment) {
+    // A refund for a payment we never recorded — nothing to reverse. Ack
+    // (don't 500-loop Stripe) and log for manual reconciliation.
+    console.warn(
+      `[stripe] charge.refunded: no recorded payment for PI ${args.piId}; nothing to reconcile`,
+    );
+    return;
+  }
+  if (args.expectedOrgId && payment.organization_id !== args.expectedOrgId) {
+    console.warn(
+      `[stripe] refund PI ${args.piId} is not in org ${args.expectedOrgId}, skipping`,
+    );
+    return;
+  }
+
+  const { splitRefund } = await import("@/lib/tip-split");
+  const { invoiceRefundCents, tipRefundCents } = splitRefund(
+    args.amountRefundedCents,
+    payment.amount_cents,
+  );
+
+  // Cumulative write, clamped — idempotent across partial-refund events and
+  // webhook retries, and it can never drive net-paid negative.
+  const { error: refundErr } = await (admin
+    .from("invoice_payments" as never)
+    .update({ refunded_cents: invoiceRefundCents } as never)
+    .eq("id" as never, payment.id as never) as unknown as Promise<{
+    error: { message: string } | null;
+  }>);
+  if (refundErr) {
+    // Throw so the webhook 500s and Stripe retries — a dropped refund is
+    // money silently wrong in the books.
+    throw new Error(`refund ledger update failed: ${refundErr.message}`);
+  }
+  console.log(
+    `[stripe] refund reconciled: ${invoiceRefundCents}c on invoice ${payment.invoice_id}` +
+      (tipRefundCents > 0 ? `, ${tipRefundCents}c against the tip` : ""),
+  );
+
+  if (tipRefundCents <= 0) return;
+
+  // ── Claw the tip share back from what's still owed ──────────────────────
+  const { data: tipRows } = (await admin
+    .from("invoice_tips" as never)
+    .select("id, amount_cents, paid_out_at")
+    .eq("provider" as never, "stripe" as never)
+    .eq("provider_payment_id" as never, args.piId as never)) as unknown as {
+    data: Array<{
+      id: string;
+      amount_cents: number;
+      paid_out_at: string | null;
+    }> | null;
+  };
+
+  const unpaid = (tipRows ?? [])
+    .filter((t) => !t.paid_out_at)
+    .sort((a, b) => b.amount_cents - a.amount_cents);
+  const paidOutTotal = (tipRows ?? [])
+    .filter((t) => t.paid_out_at)
+    .reduce((s, t) => s + t.amount_cents, 0);
+
+  let remaining = tipRefundCents;
+  for (const row of unpaid) {
+    if (remaining <= 0) break;
+    const take = Math.min(remaining, row.amount_cents);
+    remaining -= take;
+    if (take >= row.amount_cents) {
+      await (admin
+        .from("invoice_tips" as never)
+        .delete()
+        .eq("id" as never, row.id as never) as unknown as Promise<unknown>);
+    } else {
+      await (admin
+        .from("invoice_tips" as never)
+        .update({ amount_cents: row.amount_cents - take } as never)
+        .eq("id" as never, row.id as never) as unknown as Promise<unknown>);
+    }
+  }
+
+  if (remaining > 0) {
+    console.warn(
+      `[stripe] refund clawed back ${tipRefundCents - remaining}c of tip on PI ${args.piId}; ` +
+        `${remaining}c could not be recovered — ${paidOutTotal}c was already paid out to the cleaner. ` +
+        `The business absorbed it.`,
+    );
+  }
+}

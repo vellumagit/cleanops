@@ -30,6 +30,7 @@ import {
 } from "@/lib/stripe";
 import {
   recordStripeInvoicePayment,
+  recordStripeRefund,
   tipFromMetadata,
   orgFromMetadata,
   invoiceFromMetadata,
@@ -180,6 +181,26 @@ export async function POST(req: NextRequest) {
           const sub = await stripe.subscriptions.retrieve(subId);
           await upsertSubscriptionFromStripe(sub);
         }
+        break;
+      }
+
+      case "charge.refunded": {
+        // The refund sibling of the payment routing bug: a destination
+        // charge's refund fires HERE, on the platform account, not on the
+        // Connect endpoint where the old handler lived. Without this case the
+        // event was claimed, fell through default, and the invoice stayed
+        // "paid" after Svitlana gave the money back. No org in charge
+        // metadata — the PI id (from a signature-verified event) is the
+        // lookup key, and it only matches a payment we recorded ourselves.
+        const charge = event.data.object as Stripe.Charge;
+        await recordStripeRefund({
+          piId:
+            typeof charge.payment_intent === "string"
+              ? charge.payment_intent
+              : (charge.payment_intent?.id ?? null),
+          amountRefundedCents: charge.amount_refunded ?? 0,
+          expectedOrgId: null,
+        });
         break;
       }
 

@@ -21,6 +21,7 @@ import { sendPayoutNotification } from "@/lib/automations";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
   recordStripeInvoicePayment,
+  recordStripeRefund,
   tipFromMetadata,
 } from "@/lib/stripe-invoice-payment";
 
@@ -185,70 +186,28 @@ export async function POST(req: NextRequest) {
       }
 
       case "charge.refunded": {
+        // Kept for completeness, but for destination charges this event
+        // arrives at the PLATFORM endpoint (the charge lives there — the same
+        // routing that silently ate every card payment). The shared recorder
+        // is the single implementation; this endpoint only ever sees the
+        // event for a charge created directly on a connected account.
         const charge = event.data.object as Stripe.Charge;
         const piId =
           typeof charge.payment_intent === "string"
             ? charge.payment_intent
             : charge.payment_intent?.id ?? null;
-        const amountRefunded = charge.amount_refunded ?? 0;
-        if (piId && amountRefunded > 0) {
-          // PI ids are globally unique (not guessable) so the cross-tenant
-          // forgery risk is lower, but we still enforce the org filter
-          // defensively in case an attacker has observed a legitimate PI id.
-          const ownerOrgId = await ownerOrgForAccount(accountId);
-          if (!ownerOrgId) {
-            console.warn(
-              `[stripe connect] charge.refunded for unknown account ${accountId}, skipping`,
-            );
-            break;
-          }
-
-          // Reconcile through the payments ledger — the single source of truth
-          // for invoice status. The previous code filtered invoices by
-          // `stripe_payment_intent_id`, a column this checkout path never
-          // writes, so every refund matched 0 rows: the invoice stayed "paid"
-          // and revenue was never reversed. Instead, find the invoice_payments
-          // row we recorded for this PI and stamp refunded_cents; the
-          // invoice_payments_sync_totals trigger then recomputes the invoice
-          // status ('refunded' when fully refunded, 'partially_paid' otherwise)
-          // and reverses the paid total in reports.
-          const { data: payment } = (await admin
-            .from("invoice_payments" as never)
-            .select("id, amount_cents")
-            .eq("provider" as never, "stripe" as never)
-            .eq("provider_payment_id" as never, piId as never)
-            .eq("organization_id" as never, ownerOrgId as never)
-            .maybeSingle()) as unknown as {
-            data: { id: string; amount_cents: number } | null;
-          };
-
-          if (!payment) {
-            // Refund for a payment we never recorded — nothing to reverse.
-            // Ack (don't 500-loop) and log for manual reconciliation.
-            console.warn(
-              `[stripe connect] charge.refunded: no recorded payment for PI ${piId} (org ${ownerOrgId}); nothing to reconcile`,
-            );
-            break;
-          }
-
-          // Stripe's amount_refunded is CUMULATIVE, so writing it directly
-          // (clamped to the captured amount) is idempotent across multiple
-          // partial-refund events and safe on webhook retries.
-          const refundedCents = Math.min(amountRefunded, payment.amount_cents);
-          const { error: refundErr } = await (admin
-            .from("invoice_payments" as never)
-            .update({ refunded_cents: refundedCents } as never)
-            .eq("id" as never, payment.id as never) as unknown as Promise<{
-            error: { message: string } | null;
-          }>);
-          if (refundErr) {
-            console.error(
-              "[stripe connect] charge.refunded ledger update failed:",
-              refundErr.message,
-            );
-            return NextResponse.json({ error: "DB update failed" }, { status: 500 });
-          }
+        const ownerOrgId = await ownerOrgForAccount(accountId);
+        if (!ownerOrgId) {
+          console.warn(
+            `[stripe connect] charge.refunded for unknown account ${accountId}, skipping`,
+          );
+          break;
         }
+        await recordStripeRefund({
+          piId,
+          amountRefundedCents: charge.amount_refunded ?? 0,
+          expectedOrgId: ownerOrgId,
+        });
         break;
       }
 

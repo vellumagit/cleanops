@@ -3,6 +3,7 @@ import {
   parseTippingSettings,
   mergeTippingSettings,
   normalizeTipInstructions,
+  splitRefund,
   tippingSettingsFromForm,
   tipPresetAmounts,
   normalizeTipCents,
@@ -266,5 +267,37 @@ describe("instructions, and the two forms that share one column", () => {
     expect(normalizeTipInstructions("x".repeat(900))).toHaveLength(500);
     expect(normalizeTipInstructions("   ")).toBeNull();
     expect(normalizeTipInstructions(null)).toBeNull();
+  });
+});
+
+describe("splitRefund", () => {
+  it("attributes a partial refund to the invoice before touching the tip", () => {
+    // $140 invoice + $20 tip, $50 refunded: all invoice, tip untouched.
+    expect(splitRefund(5000, 14000)).toEqual({
+      invoiceRefundCents: 5000,
+      tipRefundCents: 0,
+    });
+  });
+
+  it("only a refund past the whole invoice portion reaches the tip", () => {
+    // $150 refunded on a $140 invoice: $140 invoice, $10 of the tip.
+    expect(splitRefund(15000, 14000)).toEqual({
+      invoiceRefundCents: 14000,
+      tipRefundCents: 1000,
+    });
+  });
+
+  it("a full refund returns both portions exactly", () => {
+    // Brian's live test: $1.05 invoice + $0.05 tip, $1.10 back.
+    expect(splitRefund(110, 105)).toEqual({
+      invoiceRefundCents: 105,
+      tipRefundCents: 5,
+    });
+  });
+
+  it("never invents money on junk input", () => {
+    expect(splitRefund(0, 14000)).toEqual({ invoiceRefundCents: 0, tipRefundCents: 0 });
+    expect(splitRefund(-50, 14000)).toEqual({ invoiceRefundCents: 0, tipRefundCents: 0 });
+    expect(splitRefund(5000, -10)).toEqual({ invoiceRefundCents: 0, tipRefundCents: 5000 });
   });
 });

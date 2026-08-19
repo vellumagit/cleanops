@@ -259,3 +259,25 @@ export function splitTipByMinutes(
 
   return allocations;
 }
+
+/**
+ * How a refund divides between the invoice and the tip that rode with it.
+ *
+ * A card charge with a tip is invoice + tip in ONE Stripe charge, and Stripe's
+ * amount_refunded is a single cumulative gross number — nothing says which part
+ * the merchant meant to give back. Somebody has to pick an order, and the pick
+ * is INVOICE FIRST: refunds are almost always "undo the job's bill", and a
+ * partial refund that silently took a cleaner's tip before touching the
+ * invoice would be wrong in the way that gets noticed at payday.
+ *
+ * Only a refund larger than the whole invoice portion reaches the tip.
+ */
+export function splitRefund(
+  amountRefundedCents: number,
+  invoicePortionCents: number,
+): { invoiceRefundCents: number; tipRefundCents: number } {
+  const gross = Math.max(0, Math.round(amountRefundedCents));
+  const invoicePortion = Math.max(0, Math.round(invoicePortionCents));
+  const invoiceRefundCents = Math.min(gross, invoicePortion);
+  return { invoiceRefundCents, tipRefundCents: gross - invoiceRefundCents };
+}
