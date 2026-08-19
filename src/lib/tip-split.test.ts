@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   parseTippingSettings,
+  mergeTippingSettings,
+  normalizeTipInstructions,
   tippingSettingsFromForm,
   tipPresetAmounts,
   normalizeTipCents,
@@ -29,7 +31,7 @@ describe("parseTippingSettings", () => {
 
   it("keeps enabled true with sane presets", () => {
     expect(parseTippingSettings({ enabled: true, presets: [10, 15, 20] })).toEqual(
-      { enabled: true, presets: [10, 15, 20] },
+      { enabled: true, presets: [10, 15, 20], instructions: null },
     );
   });
 
@@ -59,6 +61,7 @@ describe("parseTippingSettings", () => {
     expect(tippingSettingsFromForm(true, ["18", "20", "25"])).toEqual({
       enabled: true,
       presets: [18, 20, 25],
+      instructions: null,
     });
     expect(tippingSettingsFromForm(false, ["18"]).enabled).toBe(false);
   });
@@ -213,5 +216,55 @@ describe("splitTipByMinutes", () => {
     expect(splitTipByMinutes(-500, [{ membershipId: "a", minutes: 60 }])).toEqual(
       [],
     );
+  });
+});
+
+describe("instructions, and the two forms that share one column", () => {
+  it("reads and trims the public blurb", () => {
+    expect(
+      parseTippingSettings({ enabled: true, instructions: "  Add 15% please " })
+        .instructions,
+    ).toBe("Add 15% please");
+  });
+
+  it("treats blank or non-string as no instructions", () => {
+    for (const v of ["", "   ", 42, null, {}]) {
+      expect(parseTippingSettings({ instructions: v }).instructions).toBeNull();
+    }
+  });
+
+  it("saving the TOGGLE does not wipe the instructions", () => {
+    // The whole reason mergeTippingSettings exists. Settings › Invoicing owns
+    // enabled+presets; Settings › Payment instructions owns the wording. Either
+    // writing the object wholesale would silently erase the other's field.
+    const stored = {
+      enabled: false,
+      presets: [15],
+      instructions: "E-transfer any extra and we'll pass it to your cleaner.",
+    };
+    const after = tippingSettingsFromForm(true, ["18", "20"], stored);
+    expect(after.enabled).toBe(true);
+    expect(after.presets).toEqual([18, 20]);
+    expect(after.instructions).toBe(stored.instructions);
+  });
+
+  it("saving the INSTRUCTIONS does not wipe the toggle or presets", () => {
+    const stored = { enabled: true, presets: [10, 25], instructions: null };
+    const after = mergeTippingSettings(stored, { instructions: "Cash is fine." });
+    expect(after.enabled).toBe(true);
+    expect(after.presets).toEqual([10, 25]);
+    expect(after.instructions).toBe("Cash is fine.");
+  });
+
+  it("merging onto a never-written column still yields safe defaults", () => {
+    const after = mergeTippingSettings(null, { instructions: "Thanks!" });
+    expect(after.enabled).toBe(false);
+    expect(after.instructions).toBe("Thanks!");
+  });
+
+  it("caps a runaway blurb — this sits on an invoice, not a brochure", () => {
+    expect(normalizeTipInstructions("x".repeat(900))).toHaveLength(500);
+    expect(normalizeTipInstructions("   ")).toBeNull();
+    expect(normalizeTipInstructions(null)).toBeNull();
   });
 });

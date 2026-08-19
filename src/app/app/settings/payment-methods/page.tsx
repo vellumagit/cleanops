@@ -6,6 +6,8 @@ import { maybeDecryptField } from "@/lib/field-encryption";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
 import { PaymentMethodsForm } from "./payment-methods-form";
+import { TipInstructionsForm } from "./tip-instructions-form";
+import { parseTippingSettings } from "@/lib/tip-split";
 
 export const metadata = { title: "Payment instructions" };
 
@@ -33,6 +35,25 @@ export default async function PaymentMethodsPage() {
   const plainInstructions = maybeDecryptField(
     org?.default_payment_instructions ?? null,
   );
+
+  // Separate query, and wrapped. tipping_settings is newer than the generated
+  // types, and PostgREST fails the WHOLE select if one column is unknown —
+  // folding it in above would blank the payment instructions on a schema-cache
+  // hiccup, which is the exact failure this page exists to avoid.
+  const tipping = await (async () => {
+    try {
+      const { data } = (await supabase
+        .from("organizations")
+        .select("tipping_settings")
+        .eq("id", membership.organization_id)
+        .maybeSingle()) as unknown as {
+        data: { tipping_settings: unknown } | null;
+      };
+      return parseTippingSettings(data?.tipping_settings);
+    } catch {
+      return parseTippingSettings(null);
+    }
+  })();
 
   return (
     <PageShell
@@ -63,6 +84,25 @@ export default async function PaymentMethodsPage() {
         <div className="rounded-lg border border-border bg-card p-6">
           <PaymentMethodsForm
             defaultInstructions={plainInstructions ?? ""}
+          />
+        </div>
+
+        {/* Tipping wording sits BENEATH payment instructions because that is
+            what it is — more text a client reads while working out how to pay.
+            The card checkout can offer buttons; a bank transfer has nothing to
+            attach a button to, so words are the only lever that channel has,
+            and it is the channel nearly every payment here arrives through. */}
+        <div className="rounded-lg border border-border bg-card p-6">
+          <h2 className="text-sm font-semibold">Tipping</h2>
+          <p className="mb-4 mt-0.5 text-xs text-muted-foreground">
+            Shown under your payment instructions on the invoice. Clients
+            paying by card get tip buttons at checkout; anyone paying by
+            e-transfer or cash only has what you write here. Leave it blank to
+            say nothing.
+          </p>
+          <TipInstructionsForm
+            defaultInstructions={tipping.instructions ?? ""}
+            tippingEnabled={tipping.enabled}
           />
         </div>
       </div>

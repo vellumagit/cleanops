@@ -12,6 +12,13 @@
 export type TippingSettings = {
   enabled: boolean;
   presets: number[];
+  /**
+   * Public text shown on the invoice page for clients paying WITHOUT a card.
+   * A bank transfer has no checkout to hang a tip picker on, so the only
+   * lever left is saying so in words — and at this client 21 of 23 payments
+   * arrive that way, which makes this the channel that matters most.
+   */
+  instructions: string | null;
 };
 
 /**
@@ -25,6 +32,7 @@ export type TippingSettings = {
 export const TIPPING_DEFAULT: TippingSettings = {
   enabled: false,
   presets: [15, 18, 20],
+  instructions: null,
 };
 
 /** Guardrails on what an owner can configure. */
@@ -65,23 +73,54 @@ export function parseTippingSettings(raw: unknown): TippingSettings {
         .slice(0, MAX_PRESETS)
     : [];
 
+  const rawInstructions =
+    typeof obj.instructions === "string" ? obj.instructions.trim() : "";
+
   // Enabled with no usable presets would render a tip row with nothing in it.
   // Fall back to the defaults rather than showing an empty prompt.
   return {
     enabled,
     presets: presets.length > 0 ? presets : [...TIPPING_DEFAULT.presets],
+    instructions: rawInstructions.length > 0 ? rawInstructions : null,
   };
+}
+
+/**
+ * Merge one form's fields into the stored settings.
+ *
+ * Two separate screens write this single JSONB column — the toggle and
+ * presets live under Invoicing, the public wording lives under Payment
+ * instructions — so each MUST preserve what the other owns. Writing the whole
+ * object from either form would silently wipe the other's field, which is the
+ * same "absence must survive" trap the manager capabilities needed.
+ */
+export function mergeTippingSettings(
+  current: unknown,
+  patch: Partial<TippingSettings>,
+): TippingSettings {
+  const base = parseTippingSettings(current);
+  return parseTippingSettings({ ...base, ...patch });
 }
 
 /** Normalize an owner's checkbox/number input back into the stored shape. */
 export function tippingSettingsFromForm(
   enabled: boolean,
   rawPresets: readonly string[],
+  current?: unknown,
 ): TippingSettings {
-  return parseTippingSettings({
+  return mergeTippingSettings(current, {
     enabled,
-    presets: rawPresets.map((p) => Number(p)),
+    presets: rawPresets.map((p) => Number(p)) as number[],
   });
+}
+
+/** Cap on the public tipping blurb — it sits on an invoice, not a brochure. */
+export const MAX_TIP_INSTRUCTIONS = 500;
+
+export function normalizeTipInstructions(raw: unknown): string | null {
+  const s = String(raw ?? "").trim();
+  if (!s) return null;
+  return s.slice(0, MAX_TIP_INSTRUCTIONS);
 }
 
 export type TipPreset = {

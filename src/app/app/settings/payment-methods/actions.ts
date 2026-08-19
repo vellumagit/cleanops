@@ -88,3 +88,64 @@ export async function savePaymentInstructionsAction(
 
   return { values: raw };
 }
+
+export type TipInstructionsState = {
+  errors?: Partial<Record<"_form" | "instructions", string>>;
+  success?: boolean;
+};
+
+/**
+ * The public wording that invites a tip from someone paying WITHOUT a card.
+ *
+ * Lives beside payment instructions because that's what it is: text a client
+ * reads on the invoice when working out how to pay. A bank transfer has no
+ * checkout to hang a tip picker on, and at this client 21 of 23 payments
+ * arrive that way — so words are the only lever that channel has.
+ *
+ * Writes into the same tipping_settings JSONB the Invoicing screen owns, and
+ * MERGES rather than overwrites, or saving here would switch tipping off.
+ */
+export async function saveTipInstructionsAction(
+  _prev: TipInstructionsState,
+  formData: FormData,
+): Promise<TipInstructionsState> {
+  const { membership } = await getActionContext();
+  if (!["owner", "admin"].includes(membership.role)) {
+    return { errors: { _form: "You don't have permission." } };
+  }
+
+  const { mergeTippingSettings, normalizeTipInstructions } = await import(
+    "@/lib/tip-split"
+  );
+  const instructions = normalizeTipInstructions(formData.get("instructions"));
+
+  const admin = createSupabaseAdminClient();
+  const { data: current } = (await admin
+    .from("organizations")
+    .select("tipping_settings")
+    .eq("id", membership.organization_id)
+    .maybeSingle()) as unknown as {
+    data: { tipping_settings: unknown } | null;
+  };
+
+  const settings = mergeTippingSettings(current?.tipping_settings, {
+    instructions,
+  });
+
+  const { error } = await admin
+    .from("organizations")
+    .update({ tipping_settings: settings } as never)
+    .eq("id", membership.organization_id);
+  if (error) return { errors: { _form: error.message } };
+
+  await logAuditEvent({
+    membership,
+    action: "update",
+    entity: "settings",
+    entity_id: membership.organization_id,
+    after: { tipping_instructions: instructions },
+  });
+
+  revalidatePath("/app/settings/payment-methods");
+  return { success: true };
+}

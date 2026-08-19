@@ -286,6 +286,29 @@ export default async function PublicInvoicePage({
         })()
       : null;
 
+  // Read separately from the card tip picker above, which is gated on Stripe
+  // being the processor and on there being a balance. This note is for people
+  // NOT using the card button, so it must survive both of those being false.
+  const tipNote =
+    orgId && !isPdf && !isPaid && !isVoid
+      ? await (async () => {
+          try {
+            const { data } = (await admin
+              .from("organizations")
+              .select("tipping_settings")
+              .eq("id", orgId)
+              .maybeSingle()) as unknown as {
+              data: { tipping_settings: unknown } | null;
+            };
+            const s = parseTippingSettings(data?.tipping_settings);
+            return s.enabled ? s.instructions : null;
+          } catch (err) {
+            console.error("[tips] tipping note suppressed:", err);
+            return null;
+          }
+        })()
+      : null;
+
   const brandCss = orgBranding.brand_color
     ? {
         "--brand": `#${orgBranding.brand_color}`,
@@ -515,6 +538,24 @@ export default async function PublicInvoicePage({
                       <div className="mt-2 whitespace-pre-wrap rounded-md border border-border bg-card p-3 text-sm text-foreground">
                         {paymentInstructions}
                       </div>
+                    </div>
+                  )}
+
+                  {/* Tipping, for the client who isn't paying by card.
+                      There's no checkout to attach buttons to on a bank
+                      transfer, so this is the only prompt that channel gets —
+                      and it's the channel nearly every payment arrives
+                      through. Shown even when the card button is present:
+                      someone reading the instructions has already decided not
+                      to use it. */}
+                  {tipNote && (
+                    <div className={cardPayAvailable ? "mt-4" : "mt-3"}>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        Tipping
+                      </p>
+                      <p className="mt-2 whitespace-pre-wrap rounded-md border border-dashed border-border bg-card p-3 text-sm text-foreground">
+                        {tipNote}
+                      </p>
                     </div>
                   )}
                 </div>
