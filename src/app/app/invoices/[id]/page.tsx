@@ -50,6 +50,7 @@ import { voidInvoiceAction, generateReviewTokenAction } from "../actions";
 import { SubmitButton } from "@/components/submit-button";
 import { RecordPaymentForm } from "./record-payment-form";
 import { PaymentRowActions } from "./payment-row-actions";
+import { RefundPaymentButton } from "./refund-payment-button";
 import { humanizePaymentMethod } from "@/lib/validators/invoice-payment";
 
 export const metadata = { title: "Invoice" };
@@ -78,6 +79,8 @@ export default async function InvoiceDetailPage({
   const supabase = await createSupabaseServerClient();
   const currency = await getOrgCurrency(membership.organization_id);
   const invoiceTips = await getInvoiceTips(id);
+  // Money OUT — owner/admin, the same line every other money control draws.
+  const canRefund = ["owner", "admin"].includes(membership.role);
 
   // Check Stripe Connect status on the org — payment link only makes sense
   // if the org has charges enabled.
@@ -581,6 +584,25 @@ export default async function InvoiceDetailPage({
                         }}
                       />
                     )}
+                    {/* Card payments can't be edited or deleted like manual
+                        rows — the money genuinely moved — but they CAN be
+                        refunded, and only from here: the charge lives on the
+                        platform's Stripe account, so the owner has no
+                        dashboard of their own to do it from. Owner/admin,
+                        matching every other money-out control. */}
+                    {p.provider === "stripe" &&
+                      canRefund &&
+                      p.amount_cents - (p.refunded_cents ?? 0) > 0 && (
+                        <RefundPaymentButton
+                          paymentId={p.id}
+                          invoiceId={invoice.id}
+                          remainingCents={p.amount_cents - (p.refunded_cents ?? 0)}
+                          remainingLabel={formatCurrencyCents(
+                            p.amount_cents - (p.refunded_cents ?? 0),
+                            currency,
+                          )}
+                        />
+                      )}
                   </li>
                 ))}
               </ul>

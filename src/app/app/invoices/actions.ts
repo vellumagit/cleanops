@@ -394,6 +394,72 @@ export async function recordInvoicePaymentAction(
  * etc.) can't be edited this way — they have to come back through a
  * refund/adjustment webhook or they'll desync with the processor.
  */
+export type RefundPaymentState = {
+  error?: string;
+  ok?: boolean;
+};
+
+/**
+ * Refund a card payment — the button a destination-charge architecture owes
+ * its merchants. The charge lives on the PLATFORM's Stripe account, so no
+ * Sollos owner can refund their own client from their own dashboard; this is
+ * the only door. Money OUT, so owner/admin, same as recording money in.
+ *
+ * The ledger is deliberately NOT written here: issuing the refund makes
+ * Stripe emit charge.refunded, and the webhook is the single writer that
+ * reconciles the payment row and claws back any unpaid tip — the same path a
+ * platform-dashboard refund takes, so both roads produce identical books.
+ */
+export async function refundStripePaymentAction(
+  _prev: RefundPaymentState,
+  formData: FormData,
+): Promise<RefundPaymentState> {
+  const { membership } = await getActionContext();
+  if (!["owner", "admin"].includes(membership.role)) {
+    return { error: "Only owners and admins can issue refunds." };
+  }
+
+  const paymentId = String(formData.get("payment_id") ?? "");
+  const invoiceId = String(formData.get("invoice_id") ?? "");
+  if (!paymentId || !invoiceId) return { error: "Missing payment." };
+
+  const full = String(formData.get("mode") ?? "") === "full";
+  let amountCents: number | null = null;
+  if (!full) {
+    const parsed = parseDollarsToCents(String(formData.get("amount_dollars") ?? ""));
+    if (parsed === null || parsed <= 0) {
+      return { error: "Enter an amount to refund." };
+    }
+    amountCents = parsed;
+  }
+
+  const { issueStripeRefund } = await import("@/lib/stripe-refunds");
+  const result = await issueStripeRefund({
+    organizationId: membership.organization_id,
+    paymentId,
+    amountCents,
+    requestedBy: membership.id,
+  });
+  if (!result.ok) return { error: result.error };
+
+  await logAuditEvent({
+    membership,
+    action: "update",
+    entity: "invoice",
+    entity_id: invoiceId,
+    after: {
+      refund_issued_cents: result.refundedCents,
+      full_refund: result.full,
+      payment_id: paymentId,
+    },
+  });
+
+  revalidatePath(`/app/invoices/${invoiceId}`);
+  revalidatePath("/app/invoices");
+  revalidatePath("/app/payroll");
+  return { ok: true };
+}
+
 export async function updateInvoicePaymentAction(
   formData: FormData,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
