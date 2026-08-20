@@ -172,6 +172,13 @@ export default async function PublicInvoicePage({
   const balanceCents = outstandingBalanceCents(invoice.amount_cents, payments);
   const isVoid = !!invoice.voided_at;
   const isPaid = invoice.status === "paid" || balanceCents === 0;
+  // A FULL refund re-raises the balance, so without this flag the client who
+  // was just deliberately given their money back would see "amount due" and a
+  // live Pay button. The net-of-refunds comment below describes the OTHER
+  // case — partial refunds reopening for the remainder — and the status
+  // column is what tells them apart: the trigger only writes REFUNDED when
+  // the whole payment came back.
+  const isRefunded = invoice.status === "refunded";
   // Transparently decrypt the org's default payment_instructions
   // before rendering. Legacy plaintext rows pass through unchanged.
   //
@@ -241,7 +248,11 @@ export default async function PublicInvoicePage({
   // webhook. Square has no equivalent path here (and is disconnected on every
   // org), so offering a tip on that button would take money nothing records.
   const tipping =
-    orgId && activeProcessor === "stripe" && !isPdf && balanceCents > 0
+    orgId &&
+    activeProcessor === "stripe" &&
+    !isPdf &&
+    !isRefunded &&
+    balanceCents > 0
       ? await (async () => {
           // Every read here is inside the try: this page's job is letting a
           // client PAY, and a tip prompt is decoration on top of that. If the
@@ -290,7 +301,7 @@ export default async function PublicInvoicePage({
   // being the processor and on there being a balance. This note is for people
   // NOT using the card button, so it must survive both of those being false.
   const tipNote =
-    orgId && !isPdf && !isPaid && !isVoid
+    orgId && !isPdf && !isPaid && !isVoid && !isRefunded
       ? await (async () => {
           try {
             const { data } = (await admin
@@ -381,7 +392,7 @@ export default async function PublicInvoicePage({
                 >
                   {formatCurrencyCents(balanceCents, currency)}
                 </p>
-                {invoice.due_date && !isVoid && !isPaid && (
+                {invoice.due_date && !isVoid && !isPaid && !isRefunded && (
                   <p className="mt-0.5 text-xs text-muted-foreground">
                     Due {formatDate(invoice.due_date, tz)}
                   </p>
@@ -393,6 +404,12 @@ export default async function PublicInvoicePage({
             {isVoid ? (
               <Banner tone="neutral">
                 This invoice has been voided. No payment is required.
+              </Banner>
+            ) : isRefunded ? (
+              <Banner tone="neutral">
+                This invoice was refunded. No payment is required — the money
+                is on its way back to your card and typically arrives within
+                5&ndash;10 business days.
               </Banner>
             ) : isPaid ? (
               <Banner tone="green">
@@ -493,6 +510,7 @@ export default async function PublicInvoicePage({
               taunting the client with a disabled "not enabled" button. */}
             {!isVoid &&
               !isPaid &&
+              !isRefunded &&
               (cardPayAvailable || paymentInstructions) && (
                 <div className="mt-6 rounded-lg border border-border bg-muted/20 p-5">
                   <p className="sollos-label">How to pay</p>

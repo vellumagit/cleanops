@@ -56,7 +56,13 @@ import { humanizePaymentMethod } from "@/lib/validators/invoice-payment";
 export const metadata = { title: "Invoice" };
 
 type InvoiceStatus =
-  "draft" | "sent" | "partially_paid" | "paid" | "overdue" | "void";
+  | "draft"
+  | "sent"
+  | "partially_paid"
+  | "paid"
+  | "overdue"
+  | "void"
+  | "refunded";
 
 /**
  * Invoice detail page — Phase 12 rework.
@@ -550,6 +556,15 @@ export default async function InvoiceDetailPage({
                         <StatusBadge tone="neutral">
                           {humanizePaymentMethod(p.method)}
                         </StatusBadge>
+                        {(p.refunded_cents ?? 0) > 0 && (
+                          <StatusBadge tone="amber">
+                            {formatCurrencyCents(
+                              p.refunded_cents ?? 0,
+                              currency,
+                            )}{" "}
+                            refunded
+                          </StatusBadge>
+                        )}
                         {p.provider && (
                           <StatusBadge tone="blue">
                             via {p.provider}

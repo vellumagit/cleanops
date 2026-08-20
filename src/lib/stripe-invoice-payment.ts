@@ -323,13 +323,14 @@ export async function recordStripeRefund(args: {
 
   const { data: payment } = (await admin
     .from("invoice_payments" as never)
-    .select("id, amount_cents, organization_id, invoice_id")
+    .select("id, amount_cents, refunded_cents, organization_id, invoice_id")
     .eq("provider" as never, "stripe" as never)
     .eq("provider_payment_id" as never, args.piId as never)
     .maybeSingle()) as unknown as {
     data: {
       id: string;
       amount_cents: number;
+      refunded_cents: number | null;
       organization_id: string;
       invoice_id: string;
     } | null;
@@ -373,6 +374,40 @@ export async function recordStripeRefund(args: {
     `[stripe] refund reconciled: ${invoiceRefundCents}c on invoice ${payment.invoice_id}` +
       (tipRefundCents > 0 ? `, ${tipRefundCents}c against the tip` : ""),
   );
+
+  // Money left the account; the owners hear about it — the same courtesy the
+  // payout notification extends to money arriving. Guarded on the DELTA, not
+  // the event: this function deliberately runs twice per in-app refund (sync
+  // reconcile + webhook), and only the run that actually moved refunded_cents
+  // forward may speak — exactly one notification, whichever writer wins.
+  // Brian's first live refund produced silence, and silence around money
+  // reads as "did that work?".
+  const previousRefunded = payment.refunded_cents ?? 0;
+  if (invoiceRefundCents > previousRefunded) {
+    try {
+      const { data: inv } = (await admin
+        .from("invoices")
+        .select("number")
+        .eq("id", payment.invoice_id)
+        .maybeSingle()) as unknown as {
+        data: { number: string | null } | null;
+      };
+      const { notify } = await import("@/lib/notify");
+      const deltaCents = invoiceRefundCents - previousRefunded + tipRefundCents;
+      await notify({
+        organizationId: payment.organization_id,
+        audience: "org-admins",
+        type: "billing",
+        title: "Refund issued",
+        body: `$${(deltaCents / 100).toFixed(2)} returned to the client on ${
+          inv?.number ?? "an invoice"
+        }${tipRefundCents > 0 ? ", tip included" : ""}. It comes out of your Stripe balance.`,
+        href: `/app/invoices/${payment.invoice_id}`,
+      });
+    } catch (err) {
+      console.error("[stripe] refund notification failed:", err);
+    }
+  }
 
   if (tipRefundCents <= 0) return;
 

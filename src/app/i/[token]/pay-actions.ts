@@ -63,7 +63,11 @@ export async function startSquareCheckoutAction(formData: FormData) {
   if (!invoice) {
     redirect("/?pay_error=not_found");
   }
-  if (invoice.voided_at || invoice.status === "paid") {
+  if (
+    invoice.voided_at ||
+    invoice.status === "paid" ||
+    invoice.status === "refunded"
+  ) {
     redirect(`/i/${token}?pay_error=already_settled`);
   }
   if (!invoice.amount_cents || invoice.amount_cents <= 0) {
@@ -157,7 +161,11 @@ export async function startStripeCheckoutAction(formData: FormData) {
   if (!invoice) {
     redirect("/?pay_error=not_found");
   }
-  if (invoice.voided_at || invoice.status === "paid") {
+  if (
+    invoice.voided_at ||
+    invoice.status === "paid" ||
+    invoice.status === "refunded"
+  ) {
     redirect(`/i/${token}?pay_error=already_settled`);
   }
   if (!invoice.amount_cents || invoice.amount_cents <= 0) {

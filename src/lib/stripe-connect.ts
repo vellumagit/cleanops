@@ -247,7 +247,9 @@ export async function createInvoiceCheckoutSession(args: {
   } | null;
 
   if (!invoice) return null;
-  if (invoice.status === "paid") return null;
+  // A refunded invoice is deliberately CLOSED, not unpaid — minting a session
+  // for it would recharge a client the business just paid back.
+  if (invoice.status === "paid" || invoice.status === "refunded") return null;
   if (!invoice.amount_cents || invoice.amount_cents <= 0) return null;
 
   // Charge the OUTSTANDING balance, not the full invoice — otherwise a
