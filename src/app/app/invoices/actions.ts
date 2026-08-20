@@ -587,12 +587,28 @@ export async function deleteInvoicePaymentAction(formData: FormData) {
   // one behind means $20 given and $40 owed to the cleaner. Deleted BEFORE the
   // payment so a failure here can't strand a tip whose payment is already
   // gone; a tip that outlives its payment is money we'd pay out twice.
-  await (supabase
+  // .select() so the delete REPORTS what it removed. This exact statement
+  // shipped fire-and-forget and silently deleted nothing for a day — RLS had
+  // no DELETE policy on invoice_tips, and Postgres renders that as "no rows
+  // match", not an error. A count in the log is the difference between that
+  // bug being invisible and being one grep away.
+  const { data: cleanedTips, error: tipCleanupErr } = (await supabase
     .from("invoice_tips" as never)
     .delete()
     .eq("invoice_id" as never, invoiceId as never)
     .eq("provider_payment_id" as never, paymentId as never)
-    .is("paid_out_at" as never, null as never) as unknown as Promise<unknown>);
+    .is("paid_out_at" as never, null as never)
+    .select("id" as never)) as unknown as {
+    data: Array<{ id: string }> | null;
+    error: { message: string } | null;
+  };
+  if (tipCleanupErr) {
+    console.error("[tips] cleanup on payment delete failed:", tipCleanupErr.message);
+  } else if ((cleanedTips ?? []).length > 0) {
+    console.log(
+      `[tips] removed ${(cleanedTips ?? []).length} unpaid tip row(s) with payment ${paymentId}`,
+    );
+  }
 
   const { error } = await supabase
     .from("invoice_payments")
@@ -865,10 +881,24 @@ export async function voidInvoiceAction(formData: FormData) {
 
   const { data: prev } = await supabase
     .from("invoices")
-    .select("id, status, voided_at")
+    .select("id, status, voided_at, payments:invoice_payments ( amount_cents, refunded_cents )")
     .eq("id", id)
     .maybeSingle();
   if (!prev || prev.voided_at) return;
+
+  // Void is for invoices that were never really owed — a duplicate, a
+  // mistake. An invoice with money actually received on it is a different
+  // animal: voiding it makes the public page tell the client "no payment
+  // required" while their money stays taken, with no refund ever issued and
+  // the payment rows orphaned under a void. Undo the money first (refund the
+  // card payment, or delete a mistyped manual row), then void.
+  const netPaid = netPaidCents(
+    (prev as { payments?: Array<{ amount_cents: number; refunded_cents: number | null }> })
+      .payments ?? [],
+  );
+  if (netPaid > 0) {
+    redirect(`/app/invoices/${id}?error=void_has_payments`);
+  }
 
   const { error } = await supabase
     .from("invoices")

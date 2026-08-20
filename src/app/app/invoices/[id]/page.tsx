@@ -75,9 +75,12 @@ type InvoiceStatus =
  */
 export default async function InvoiceDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams?: Promise<{ error?: string }>;
 }) {
+  const errorFlag = (await searchParams)?.error;
   const membership = await requireMembership(["owner", "admin", "manager"]);
   requireCapability(membership, "invoicing");
   const tz = await getOrgTimezone(membership.organization_id);
@@ -274,6 +277,14 @@ export default async function InvoiceDetailPage({
         </div>
       }
     >
+      {errorFlag === "void_has_payments" && (
+        <div className="mb-4 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+          This invoice has recorded payments, so it can&rsquo;t be voided —
+          that would tell the client no payment was required while keeping
+          their money. Refund the card payment (or delete a mistyped manual
+          one) first; the invoice can be voided once nothing is paid on it.
+        </div>
+      )}
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div className="space-y-6">
           {/* Header card — brand accent */}
