@@ -12,7 +12,7 @@ import {
   Star,
   TrendingUp,
 } from "lucide-react";
-import { requireMembership } from "@/lib/auth";
+import { requireMembership, can } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getOrgCurrency } from "@/lib/org-currency";
 import {
@@ -157,6 +157,12 @@ export default async function DashboardPage() {
     redirect("/app/setup");
   }
 
+  // Money on the dashboard answers to the same switch as the Invoices page.
+  // The capability shipped hiding /app/invoices from a restricted manager —
+  // and left "This week's revenue" on the page they land on first. Olha's
+  // complaint was never a URL; it was the numbers.
+  const canMoney = can(membership, "invoicing");
+
   // -------- Compute derived metrics --------
   const todaysJobsList = todaysJobs.data ?? [];
   const todaysRevenue = sumCompleted(todaysJobsList);
@@ -257,6 +263,11 @@ export default async function DashboardPage() {
     .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
     .slice(0, 10);
 
+  // The feed prices jobs and announces paid invoices — money again.
+  const visibleActivity = canMoney
+    ? activity
+    : activity.filter((a) => a.kind !== "invoice_paid");
+
   const brandHex = orgBranding.data?.brand_color ?? null;
   const orgLogo = orgBranding.data?.logo_url ?? null;
 
@@ -311,40 +322,60 @@ export default async function DashboardPage() {
         </Link>
       )}
 
-      {/* HERO METRIC CARDS */}
-      <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <HeroCard
-          icon={<DollarSign className="h-4 w-4" />}
-          label="Today's revenue"
-          value={formatCurrencyCents(todaysRevenue, currency)}
-          sub={`${todaysJobsList.length} job${
-            todaysJobsList.length === 1 ? "" : "s"
-          } scheduled`}
-        />
-        <HeroCard
-          icon={<Calendar className="h-4 w-4" />}
-          label="This week's jobs"
-          value={String(thisWeekJobsCount)}
-          delta={pctDelta(thisWeekJobsCount, lastWeekJobsCount)}
-          sub="vs last 7 days"
-        />
-        <HeroCard
-          icon={<TrendingUp className="h-4 w-4" />}
-          label="This week's revenue"
-          value={formatCurrencyCents(thisWeekRevenue, currency)}
-          delta={pctDelta(thisWeekRevenue, lastWeekRevenue)}
-          sub="completed jobs only"
-        />
-        <HeroCard
-          icon={<Receipt className="h-4 w-4" />}
-          label="Outstanding invoices"
-          value={formatCurrencyCents(openInvoicesTotal, currency)}
-          sub={`${openInv.length} open · ${
-            overdueInvoiceCount.count ?? 0
-          } overdue`}
-          tone={(overdueInvoiceCount.count ?? 0) > 0 ? "warning" : "default"}
-        />
-      </div>
+      {/* HERO METRIC CARDS — three of the four are money, and money answers
+          to the invoicing capability. A restricted manager gets the operational
+          pair instead: what is happening today, and this week. */}
+      {canMoney ? (
+        <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <HeroCard
+            icon={<DollarSign className="h-4 w-4" />}
+            label="Today's revenue"
+            value={formatCurrencyCents(todaysRevenue, currency)}
+            sub={`${todaysJobsList.length} job${
+              todaysJobsList.length === 1 ? "" : "s"
+            } scheduled`}
+          />
+          <HeroCard
+            icon={<Calendar className="h-4 w-4" />}
+            label="This week's jobs"
+            value={String(thisWeekJobsCount)}
+            delta={pctDelta(thisWeekJobsCount, lastWeekJobsCount)}
+            sub="vs last 7 days"
+          />
+          <HeroCard
+            icon={<TrendingUp className="h-4 w-4" />}
+            label="This week's revenue"
+            value={formatCurrencyCents(thisWeekRevenue, currency)}
+            delta={pctDelta(thisWeekRevenue, lastWeekRevenue)}
+            sub="completed jobs only"
+          />
+          <HeroCard
+            icon={<Receipt className="h-4 w-4" />}
+            label="Outstanding invoices"
+            value={formatCurrencyCents(openInvoicesTotal, currency)}
+            sub={`${openInv.length} open · ${
+              overdueInvoiceCount.count ?? 0
+            } overdue`}
+            tone={(overdueInvoiceCount.count ?? 0) > 0 ? "warning" : "default"}
+          />
+        </div>
+      ) : (
+        <div className="mb-6 grid gap-4 sm:grid-cols-2">
+          <HeroCard
+            icon={<Calendar className="h-4 w-4" />}
+            label="Today's jobs"
+            value={String(todaysJobsList.length)}
+            sub="scheduled today"
+          />
+          <HeroCard
+            icon={<TrendingUp className="h-4 w-4" />}
+            label="This week's jobs"
+            value={String(thisWeekJobsCount)}
+            delta={pctDelta(thisWeekJobsCount, lastWeekJobsCount)}
+            sub="vs last 7 days"
+          />
+        </div>
+      )}
 
       {/* SECONDARY: avg rating + top performers + today's jobs + activity */}
       <div className="grid gap-4 lg:grid-cols-3">
@@ -482,14 +513,14 @@ export default async function DashboardPage() {
 
         {/* Activity feed */}
         <Panel title="Recent activity" subtitle="Latest 10 events">
-          {activity.length === 0 ? (
+          {visibleActivity.length === 0 ? (
             <EmptyMini
               icon={<CheckCircle2 className="h-4 w-4" />}
               text="No activity yet."
             />
           ) : (
             <ul className="space-y-2.5">
-              {activity.map((a, idx) => (
+              {visibleActivity.map((a, idx) => (
                 <li key={`${a.kind}-${idx}`}>
                   <Link
                     href={a.href}

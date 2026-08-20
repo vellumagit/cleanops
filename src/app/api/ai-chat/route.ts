@@ -112,13 +112,17 @@ export async function POST(request: NextRequest) {
   const admin = createSupabaseAdminClient();
   const { data: membership } = (await admin
     .from("memberships")
-    .select("id, organization_id, display_name, profile:profiles(full_name)")
+    .select(
+      "id, organization_id, role, capabilities, display_name, profile:profiles(full_name)",
+    )
     .eq("profile_id", user.id)
     .eq("status", "active")
     .maybeSingle()) as unknown as {
     data: {
       id: string;
       organization_id: string;
+      role: string;
+      capabilities: unknown;
       display_name: string | null;
       profile: { full_name: string | null } | null;
     } | null;
@@ -148,6 +152,14 @@ export async function POST(request: NextRequest) {
 
   // Live org context snapshot (lightweight — all count queries)
   const orgId = membership.organization_id;
+  // The assistant's context is a surface like any page: a manager with
+  // invoicing switched off doesn't get invoice counts whispered to them here.
+  const { hasCapability, parseCapabilities } = await import("@/lib/capabilities");
+  const canSeeMoney = hasCapability(
+    membership.role as "owner" | "admin" | "manager" | "employee",
+    parseCapabilities(membership.capabilities),
+    "invoicing",
+  );
   const now = new Date().toISOString();
   const weekEnd = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
 
@@ -186,7 +198,7 @@ export async function POST(request: NextRequest) {
 - Current page in the app: ${currentPage}
 - Bookings this week (upcoming): ${bookingsWeek.count ?? "N/A"}
 - Total clients: ${allClients.count ?? "N/A"}
-- Invoices awaiting payment: ${unpaidInvoices.count ?? "N/A"}
+${canSeeMoney ? `- Invoices awaiting payment: ${unpaidInvoices.count ?? "N/A"}` : ""}
 - Open tasks: ${(openTasks as { count: number | null }).count ?? "N/A"}`;
 
   const systemPrompt = BASE_SYSTEM_PROMPT.replace("{ORG_CONTEXT}", orgContext);

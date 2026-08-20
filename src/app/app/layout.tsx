@@ -222,7 +222,11 @@ export default async function AppLayout({
           organizationId={membership.organization_id}
         />
         {children}
-        <QuickActions role={membership.role} hasAssistant />
+        <QuickActions
+          role={membership.role}
+          capabilities={membership.capabilities}
+          hasAssistant
+        />
         <AIWidget />
       </div>
     </BrandProvider>

@@ -1,5 +1,6 @@
 "use client";
 
+import { hasCapability, type CapabilityKey, type CapabilityMap } from "@/lib/capabilities";
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Command } from "cmdk";
@@ -24,6 +25,9 @@ type Action = {
   icon: React.ComponentType<{ className?: string }>;
   href: string;
   keywords?: string;
+  /** Hide the shortcut from managers whose capability toggle is off — a
+   *  shortcut to a page that bounces you is worse than no shortcut. */
+  capability?: CapabilityKey;
 };
 
 const ACTIONS: Action[] = [
@@ -37,6 +41,7 @@ const ACTIONS: Action[] = [
   },
   {
     id: "new-client",
+    capability: "clients" as CapabilityKey,
     label: "New client",
     description: "Add a client to your roster",
     icon: UserPlus,
@@ -45,6 +50,7 @@ const ACTIONS: Action[] = [
   },
   {
     id: "new-estimate",
+    capability: "invoicing" as CapabilityKey,
     label: "New estimate",
     description: "Send a quote to a lead",
     icon: FileText,
@@ -53,6 +59,7 @@ const ACTIONS: Action[] = [
   },
   {
     id: "new-invoice",
+    capability: "invoicing" as CapabilityKey,
     label: "New invoice",
     description: "Bill a client",
     icon: Receipt,
@@ -61,6 +68,7 @@ const ACTIONS: Action[] = [
   },
   {
     id: "go-calendar",
+    capability: "scheduling" as CapabilityKey,
     label: "Open calendar",
     description: "View your schedule",
     icon: CalendarDays,
@@ -69,6 +77,7 @@ const ACTIONS: Action[] = [
   },
   {
     id: "go-clients",
+    capability: "clients" as CapabilityKey,
     label: "Clients",
     icon: Users,
     href: "/app/clients",
@@ -76,6 +85,7 @@ const ACTIONS: Action[] = [
   },
   {
     id: "go-scheduling",
+    capability: "scheduling" as CapabilityKey,
     label: "Scheduling / dispatch",
     icon: ClipboardList,
     href: "/app/scheduling",
@@ -93,18 +103,25 @@ const ACTIONS: Action[] = [
 
 export function QuickActions({
   role,
+  capabilities = null,
   /** When the AI assistant widget is also on screen (bottom-right), lift
    *  this button so the two stack vertically instead of overlapping. */
   hasAssistant = false,
 }: {
   role: string;
+  capabilities?: CapabilityMap | null;
   hasAssistant?: boolean;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
 
+  // Same rule as the sidebar: a shortcut to a page that will bounce you is
+  // worse than no shortcut. Items without a capability stay for everyone the
+  // role filter admits.
   const actions = ACTIONS.filter(
+    (a) => !a.capability || hasCapability(role as never, capabilities, a.capability),
+  ).filter(
     (a) =>
       !["new-estimate", "new-invoice", "go-scheduling", "new-task"].includes(a.id) ||
       ["owner", "admin", "manager"].includes(role),
