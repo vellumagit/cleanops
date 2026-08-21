@@ -561,20 +561,27 @@ export async function runInvoiceAutoSend(): Promise<{
       continue;
     }
 
-    // Re-check it's still a scheduled draft — the owner may have sent it,
-    // held it, or voided it in the window between the query and now.
-    const { data: fresh } = (await db
+    // CLAIM before delivering, not after. The old shape re-checked state and
+    // then sent — so two overlapping cron runs (retry, redeploy overlap,
+    // manual trigger) could both pass the check and the client got the same
+    // invoice twice. The claim flips scheduled→held atomically; whoever
+    // loses the race gets zero rows and walks away.
+    //
+    // 'held' as the claim state is deliberate — it's already in the UI's
+    // vocabulary, and it makes the failure direction AT-MOST-ONCE: if we
+    // crash mid-send, the draft sits visibly held for the owner instead of
+    // silently re-sending next pass. For money email, a held draft beats a
+    // duplicate in the client's inbox. The cost: transient failures no
+    // longer auto-retry hourly — they wait for a human, which is what the
+    // hold/re-arm controls exist for.
+    const { data: claimed } = (await db
       .from("invoices")
-      .select("status, auto_send_state")
+      .update({ auto_send_state: "held" } as never)
       .eq("id", inv.id)
-      .maybeSingle()) as unknown as {
-      data: { status: string; auto_send_state: string | null } | null;
-    };
-    if (
-      !fresh ||
-      fresh.status !== "draft" ||
-      fresh.auto_send_state !== "scheduled"
-    ) {
+      .eq("status", "draft")
+      .eq("auto_send_state" as never, "scheduled" as never)
+      .select("id")) as unknown as { data: Array<{ id: string }> | null };
+    if (!claimed || claimed.length === 0) {
       continue;
     }
 

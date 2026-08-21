@@ -24,7 +24,6 @@ import {
   formatCurrencyCents,
   formatDate,
   formatDateTime,
-  FALLBACK_TZ,
 } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { memberDisplayName } from "@/lib/member-display";
@@ -42,8 +41,8 @@ export default async function DashboardPage() {
   // On Vercel the server clock is UTC. We need "today" to mean today in the
   // org's timezone (e.g. America/New_York) so that "today's jobs" is correct.
   const now = new Date();
-  const todayStart = startOfDayInTz(now);
-  const todayEnd = endOfDayInTz(now);
+  const todayStart = startOfDayInTz(now, tz);
+  const todayEnd = endOfDayInTz(now, tz);
   const thisWeekStart = addDays(todayStart, -6); // last 7 days incl today
   const lastWeekStart = addDays(todayStart, -13);
   const lastWeekEnd = addDays(todayStart, -7);
@@ -295,7 +294,7 @@ export default async function DashboardPage() {
             weekday: "long",
             month: "long",
             day: "numeric",
-            timeZone: FALLBACK_TZ,
+            timeZone: tz,
           })}
         </p>
       </div>
@@ -702,31 +701,18 @@ function endOfDay(d: Date): Date {
  * not midnight Eastern. We format the current wall-clock date in the target
  * timezone, compute the UTC offset, then return midnight-in-TZ as a UTC Date.
  */
-function startOfDayInTz(d: Date): Date {
-  // 1. What date is it in the target timezone right now?
-  const dateStr = new Intl.DateTimeFormat("en-CA", {
-    timeZone: FALLBACK_TZ,
-  }).format(d); // "2026-04-13"
-
-  // 2. Midnight UTC for that calendar date
+function startOfDayInTz(d: Date, tz: string): Date {
+  const dateStr = new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(d);
   const utcMidnight = new Date(`${dateStr}T00:00:00Z`);
-
-  // 3. Compute the TZ offset at that moment
   const utcRepr = new Date(
     utcMidnight.toLocaleString("en-US", { timeZone: "UTC" }),
   );
-  const tzRepr = new Date(
-    utcMidnight.toLocaleString("en-US", { timeZone: FALLBACK_TZ }),
-  );
-  const offsetMs = utcRepr.getTime() - tzRepr.getTime();
-
-  // 4. Shift: midnight-in-TZ = UTC midnight + offset
-  return new Date(utcMidnight.getTime() + offsetMs);
+  const tzRepr = new Date(utcMidnight.toLocaleString("en-US", { timeZone: tz }));
+  return new Date(utcMidnight.getTime() + (utcRepr.getTime() - tzRepr.getTime()));
 }
 
-function endOfDayInTz(d: Date): Date {
-  const start = startOfDayInTz(d);
-  return new Date(start.getTime() + 24 * 60 * 60 * 1000 - 1);
+function endOfDayInTz(d: Date, tz: string): Date {
+  return new Date(startOfDayInTz(d, tz).getTime() + 24 * 60 * 60 * 1000 - 1);
 }
 
 function addDays(d: Date, days: number): Date {

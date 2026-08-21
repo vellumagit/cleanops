@@ -11,7 +11,8 @@ import { AutomationsOffBanner } from "@/components/automations-off-banner";
 import { SetupReturnBanner } from "@/components/setup-return-banner";
 import { QuickActions } from "@/components/quick-actions";
 import { AIWidget } from "@/components/ai-assistant/ai-widget";
-import { FALLBACK_TZ } from "@/lib/format";
+import { getOrgTimezone } from "@/lib/org-timezone";
+import { zonedDayBoundsUtc } from "@/lib/wall-clock";
 import { isFeedVisible } from "@/lib/feed-visibility";
 
 export default async function AppLayout({
@@ -43,21 +44,14 @@ export default async function AppLayout({
     );
   }
 
-  // Compute today's boundaries in the org's timezone
-  const now = new Date();
-  const dateStr = new Intl.DateTimeFormat("en-CA", {
-    timeZone: FALLBACK_TZ,
-  }).format(now);
-  const utcMidnight = new Date(`${dateStr}T00:00:00Z`);
-  const utcRepr = new Date(
-    utcMidnight.toLocaleString("en-US", { timeZone: "UTC" }),
-  );
-  const tzRepr = new Date(
-    utcMidnight.toLocaleString("en-US", { timeZone: FALLBACK_TZ }),
-  );
-  const offsetMs = utcRepr.getTime() - tzRepr.getTime();
-  const todayStart = new Date(utcMidnight.getTime() + offsetMs);
-  const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000 - 1);
+  // Today's boundaries in the ORG'S timezone. The comment here always said
+  // that; the code used FALLBACK_TZ — fine for one Edmonton tenant, wrong for
+  // every org that signs up anywhere else, whose "today's jobs" badge would
+  // tick over at another country's midnight.
+  const orgTz = await getOrgTimezone(membership.organization_id);
+  const dayBounds = zonedDayBoundsUtc(new Date(), orgTz, 0);
+  const todayStart = dayBounds.start;
+  const todayEnd = new Date(dayBounds.end.getTime() - 1);
 
   const [
     { data: profile },

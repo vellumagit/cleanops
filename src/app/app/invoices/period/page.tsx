@@ -6,6 +6,7 @@ import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { getOrgTimezone } from "@/lib/org-timezone";
+import { zonedMidnightUtc } from "@/lib/wall-clock";
 import { bookingLineLabel } from "@/lib/invoice-line-label";
 import { resolveBilledBookings } from "@/lib/billed-bookings";
 import { centsToDollarString } from "@/lib/validators/common";
@@ -18,6 +19,12 @@ import {
 } from "./period-invoice-editor";
 
 export const metadata = { title: "Bill for a period" };
+
+/** The calendar day after a YYYY-MM-DD, for an exclusive upper bound. */
+function nextYmd(ymd: string): string {
+  const [y, m, d] = ymd.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10);
+}
 
 export default async function PeriodInvoicePage({
   searchParams,
@@ -46,8 +53,13 @@ export default async function PeriodInvoicePage({
         "id, scheduled_at, service_type, service_type_label, total_cents, address, duration_minutes, property:client_properties ( label ), client:clients ( address )",
       )
       .eq("client_id", client_id as string)
-      .gte("scheduled_at", `${from}T00:00:00`)
-      .lte("scheduled_at", `${to}T23:59:59.999`)
+      // Org-local day bounds, NOT bare timestamps. `${from}T00:00:00` has no
+      // zone, so PostgREST reads it as UTC — and an Edmonton 8 PM job on the
+      // period's last day lives at 2 AM UTC the NEXT day, silently dropped
+      // from the batch. This is the screen Svitlana builds period invoices
+      // on; a job it drops is a job that never gets billed.
+      .gte("scheduled_at", zonedMidnightUtc(from as string, tz).toISOString())
+      .lt("scheduled_at", zonedMidnightUtc(nextYmd(to as string), tz).toISOString())
       .neq("status", "cancelled")
       .is("archived_at" as never, null as never)
       .order("scheduled_at", { ascending: true })) as unknown as {

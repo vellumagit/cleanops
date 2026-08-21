@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
+import { can } from "@/lib/auth";
 import { EstimateSchema } from "@/lib/validators/estimates";
 import {
   autoBookingOnEstimateApproval,
@@ -96,6 +97,18 @@ export async function createEstimateAction(
 
   const { membership, supabase } = await getActionContext();
 
+  // Estimates are money documents in a client's inbox. Page gates bounce the
+  // wrong ROLES, but actions are callable directly — and nothing here checked
+  // at all, so an employee-role member could create or send one. Same line
+  // the invoice actions draw: owner/admin/manager, with the invoicing
+  // capability.
+  if (
+    !["owner", "admin", "manager"].includes(membership.role) ||
+    !can(membership, "invoicing")
+  ) {
+    return { errors: { _form: "Estimates aren't part of your access." }, values: raw };
+  }
+
   if (!(await canCreateData(membership.organization_id))) {
     return { errors: { _form: "Your subscription has expired. Subscribe to create new estimates." }, values: raw };
   }
@@ -152,6 +165,13 @@ export async function updateEstimateAction(
   if (!parsed.ok) return { errors: parsed.errors, values: raw };
 
   const { membership, supabase } = await getActionContext();
+
+  if (
+    !["owner", "admin", "manager"].includes(membership.role) ||
+    !can(membership, "invoicing")
+  ) {
+    return { errors: { _form: "Estimates aren't part of your access." }, values: raw };
+  }
 
   // Pull previous timestamps so we don't overwrite an earlier sent_at.
   const { data: prev } = await supabase
@@ -240,6 +260,12 @@ export async function sendEstimateAction(
   // the service-role client, so without it any member of any org could
   // force-send another org's estimate by UUID (audit G2).
   const { membership } = await getActionContext();
+  if (
+    !["owner", "admin", "manager"].includes(membership.role) ||
+    !can(membership, "invoicing")
+  ) {
+    return { error: "Estimates aren't part of your access." };
+  }
 
   // manualSend:true tells the automation to bypass the platform
   // CLIENT_EMAILS_PAUSED kill switch — an owner clicking "Send" is
@@ -277,6 +303,12 @@ export async function ensureEstimatePublicTokenAction(
   if (!estimateId) return { ok: false, error: "Missing estimate id" };
 
   const { membership } = await getActionContext();
+  if (
+    !["owner", "admin", "manager"].includes(membership.role) ||
+    !can(membership, "invoicing")
+  ) {
+    return { ok: false, error: "Estimates aren't part of your access." };
+  }
 
   // Admin client because the existing send path also writes via admin
   // (token mint isn't a user-driven column). We strictly scope to the
@@ -329,6 +361,12 @@ export async function deleteEstimateAction(formData: FormData) {
   const id = String(formData.get("id") ?? "");
   if (!id) return;
   const { membership, supabase } = await getActionContext();
+  if (
+    !["owner", "admin", "manager"].includes(membership.role) ||
+    !can(membership, "invoicing")
+  ) {
+    return;
+  }
 
   // Clean up PDF from storage
   await removeEstimatePdf(membership.organization_id, id).catch(() => {});
