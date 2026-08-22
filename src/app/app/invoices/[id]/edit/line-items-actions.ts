@@ -6,6 +6,7 @@ import { getActionContext, type ActionState } from "@/lib/actions";
 import { logAuditEvent } from "@/lib/audit";
 import { parseDollarsToCents } from "@/lib/validators/common";
 import { computeTax, parseTaxRate } from "@/lib/invoice-tax";
+import { netPaidCents } from "@/lib/invoice-balance";
 
 const LineItemRowSchema = z.object({
   db_id: z.string().nullable(),
@@ -88,6 +89,22 @@ export async function saveLineItemsAction(
 
   if (!invoice) {
     return { errors: { _form: "Invoice not found" } };
+  }
+
+  // Same closed-record gate as the invoice edit form — this editor owns
+  // amount_cents, which makes it the more dangerous of the two doors.
+  // Editing a refunded invoice's items used to recompute it straight back
+  // to "paid" from gross payment rows; editing a void one rewrote the
+  // total on a record that's supposed to be dead.
+  if (invoice.status === "void" || invoice.status === "refunded") {
+    return {
+      errors: {
+        _form:
+          invoice.status === "void"
+            ? "This invoice is void. A voided invoice is a closed record — create a new invoice instead."
+            : "This invoice was refunded. That's a closed record of money that moved both ways — create a new invoice instead.",
+      },
+    };
   }
 
   // Get existing line item IDs
@@ -177,16 +194,15 @@ export async function saveLineItemsAction(
   // line-items editor must not change a draft/sent invoice's lifecycle.
   const { data: payRows } = (await supabase
     .from("invoice_payments")
-    .select("amount_cents")
+    .select("amount_cents, refunded_cents")
     .eq("invoice_id", invoiceId)) as unknown as {
-    data: Array<{ amount_cents: number }> | null;
+    data: Array<{ amount_cents: number; refunded_cents: number | null }> | null;
   };
-  const totalPaid = (payRows ?? []).reduce(
-    (s, p) => s + (p.amount_cents ?? 0),
-    0,
-  );
+  // NET of refunds, and void/refunded are already refused above — so this
+  // branch only ever recomputes live invoices from money actually held.
+  const totalPaid = netPaidCents(payRows ?? []);
   let statusFields: Record<string, unknown> = {};
-  if (totalPaid > 0 && invoice.status !== "void") {
+  if (totalPaid > 0) {
     const now = new Date().toISOString();
     const newStatus = totalPaid >= tax.totalCents ? "paid" : "partially_paid";
     statusFields = {
