@@ -93,6 +93,7 @@ export default async function TimesheetsPage({
           employee_id,
           created_manually,
           pay_rate_cents_snapshot,
+          engagement_snapshot,
           work_category,
           needs_review,
           auto_closed_at,
@@ -343,6 +344,10 @@ export default async function TimesheetsPage({
       meta?.pay_rate_cents ??
       0;
     const payType = meta?.pay_type ?? "hourly";
+    const entryEngagement = toEngagement(
+      (e as { engagement_snapshot?: string | null }).engagement_snapshot ??
+        meta?.engagement,
+    );
 
     let earnedCents = 0;
     if (payType === "hourly") {
@@ -418,6 +423,7 @@ export default async function TimesheetsPage({
       pay_rate_cents: payRateCents,
       pay_type: payType,
       earned_cents: earnedCents,
+      engagement: entryEngagement,
     };
   });
 

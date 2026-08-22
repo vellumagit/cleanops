@@ -475,7 +475,7 @@ export async function finalizePayrollRunAction(formData: FormData) {
   await logAuditEvent({
     membership,
     action: "status_change",
-    entity: "bonus",
+    entity: "payroll_run",
     entity_id: id,
     after: { status: "finalized" },
   });
@@ -493,8 +493,12 @@ export async function markPayrollPaidAction(formData: FormData) {
   const { membership, supabase } = await getActionContext();
   if (!["owner", "admin"].includes(membership.role)) return;
 
-  // Only a finalized run can be marked paid (atomic state-machine guard).
-  await (supabase
+  // Only a finalized run can be marked paid (atomic state-machine guard) —
+  // and the claim has to be CHECKED, not just attempted. A second click used
+  // to no-op this update but still run everything below it: bonuses
+  // re-marked, a duplicate audit entry, and another "you were paid" text to
+  // every employee on the run.
+  const { data: claimed } = (await supabase
     .from("payroll_runs")
     .update({
       status: "paid",
@@ -502,7 +506,9 @@ export async function markPayrollPaidAction(formData: FormData) {
     })
     .eq("id", id)
     .eq("organization_id", membership.organization_id)
-    .eq("status", "finalized") as unknown as Promise<unknown>);
+    .eq("status", "finalized")
+    .select("id")) as unknown as { data: Array<{ id: string }> | null };
+  if (!claimed || claimed.length === 0) return;
 
   // Mark the bonuses consumed by this run as paid, so they reflect as paid
   // in the bonuses list and can't be separately marked paid again.
@@ -518,7 +524,7 @@ export async function markPayrollPaidAction(formData: FormData) {
   await logAuditEvent({
     membership,
     action: "mark_paid",
-    entity: "bonus",
+    entity: "payroll_run",
     entity_id: id,
   });
 

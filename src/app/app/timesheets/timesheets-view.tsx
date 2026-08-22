@@ -202,6 +202,7 @@ function generateCSV(entries: TimesheetEntry[], orgTz: string): string {
     "Pay Rate",
     "Pay Type",
     "Earned",
+    "Pay System",
   ].join(",");
 
   const rows = entries.map((e) =>
@@ -219,6 +220,7 @@ function generateCSV(entries: TimesheetEntry[], orgTz: string): string {
       (e.pay_rate_cents / 100).toFixed(2),
       e.pay_type,
       (e.earned_cents / 100).toFixed(2),
+      e.engagement === "subcontractor" ? "Contractor statement" : "Payroll",
     ].join(","),
   );
 
@@ -446,7 +448,10 @@ export function TimesheetsView({
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `payroll-report-${from}-to-${to}.csv`;
+    // "timesheet", not "payroll": the file contains BOTH pay systems' hours
+    // (see the Pay System column). Paying everyone in it through payroll
+    // double-pays the contractor rows — their money moves via statements.
+    a.download = `timesheet-report-${from}-to-${to}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   }

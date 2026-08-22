@@ -325,6 +325,33 @@ export async function recordInvoicePaymentAction(
     };
   }
 
+  // Double-submit guard. A double-click or a browser retry posts the SAME
+  // form — same invoice, amount, method, and (crucially) the same typed
+  // received_at down to the second — and used to record the payment twice.
+  // An exact quadruple match means "this exact recording already happened";
+  // a genuine second payment of the same amount arrives with its own time.
+  const receivedAtIso = localInputToUtcIso(parsed.data.received_at);
+  {
+    const { data: identical } = await supabase
+      .from("invoice_payments")
+      .select("id")
+      .eq("invoice_id", invoice.id)
+      .eq("amount_cents", parsed.data.amount_dollars)
+      .eq("method", parsed.data.method)
+      .eq("received_at", receivedAtIso)
+      .limit(1)
+      .maybeSingle();
+    if (identical) {
+      return {
+        errors: {
+          _form:
+            "This exact payment is already recorded (same amount, method, and time) — likely a double-click. If the client truly paid twice, change the received time to when the second payment arrived.",
+        },
+        values: raw,
+      };
+    }
+  }
+
   const { data: inserted, error } = await supabase
     .from("invoice_payments")
     .insert({
@@ -334,7 +361,7 @@ export async function recordInvoicePaymentAction(
       method: parsed.data.method as (typeof PAYMENT_METHODS)[number],
       reference: parsed.data.reference ?? null,
       notes: parsed.data.notes ?? null,
-      received_at: localInputToUtcIso(parsed.data.received_at),
+      received_at: receivedAtIso,
       recorded_by: membership.id,
     })
     .select("id")

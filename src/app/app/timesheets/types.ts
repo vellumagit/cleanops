@@ -62,6 +62,11 @@ export type TimesheetEntry = {
   pay_rate_cents: number;
   pay_type: "hourly" | "flat" | "percent";
   earned_cents: number;
+  /** Which pay system these hours belong to (era snapshot, falling back to
+   *  the person's current engagement) — payroll runs vs contractor
+   *  statements. The CSV export prints it so a payroll-shaped file can't
+   *  silently mix in hours the statement system also pays. */
+  engagement: "employee" | "subcontractor";
 };
 
 export type EmployeeMeta = {
