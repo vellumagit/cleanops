@@ -180,6 +180,31 @@ export async function createPtoRequestAction(
   );
   const hours = isSub ? 0 : postedHours;
 
+  // This inserts as approved directly, so it needs the same fence as
+  // approving: paid time off dated into a period a run already covers
+  // would never be gathered. Zero-hour unavailability carries no pay and
+  // passes freely.
+  if (hours > 0) {
+    const [{ runCoveringWindow }, { createSupabaseAdminClient }] =
+      await Promise.all([
+        import("@/lib/pay-period-fence"),
+        import("@/lib/supabase/admin"),
+      ]);
+    const covering = await runCoveringWindow(
+      createSupabaseAdminClient(),
+      membership.organization_id,
+      start_date,
+      end_date,
+      "payroll_runs",
+    );
+    if (covering) {
+      return {
+        ok: false,
+        error: `A payroll run already covers ${covering.period_start} – ${covering.period_end}. Delete that pay period and create it again so this time off is included in the pay.`,
+      };
+    }
+  }
+
   const { error } = await (supabase
     .from("pto_requests")
     .insert({
@@ -303,7 +328,11 @@ export async function updatePtoStatusAction(
   // orphan it: runs gather only approved requests at generation time and
   // never re-read the period, and no future run's window reaches back. It
   // would read "approved" forever while never being paid.
-  if (status === "approved" && before.status !== "approved") {
+  if (
+    status === "approved" &&
+    before.status !== "approved" &&
+    Number(before.hours) > 0
+  ) {
     const [{ runCoveringWindow }, { createSupabaseAdminClient }] =
       await Promise.all([
         import("@/lib/pay-period-fence"),
@@ -426,6 +455,31 @@ export async function updatePtoRequestAction(
   const { validatePtoFields } = await import("@/lib/pto-rules");
   const invalid = validatePtoFields(fields, { allowZeroHours: isSub });
   if (invalid) return { ok: false, error: invalid };
+
+  // Moving an APPROVED request's dates into a period a run already covers
+  // orphans it exactly like approving one there would — the run predates
+  // the move and nothing re-reads the period. (A pending request can move
+  // freely: the approve fence catches it at decision time.)
+  if (before.status === "approved" && fields.hours > 0) {
+    const [{ runCoveringWindow }, { createSupabaseAdminClient }] =
+      await Promise.all([
+        import("@/lib/pay-period-fence"),
+        import("@/lib/supabase/admin"),
+      ]);
+    const covering = await runCoveringWindow(
+      createSupabaseAdminClient(),
+      membership.organization_id,
+      fields.start_date,
+      fields.end_date,
+      "payroll_runs",
+    );
+    if (covering) {
+      return {
+        ok: false,
+        error: `A payroll run already covers ${covering.period_start} – ${covering.period_end}. Delete that pay period and create it again so this time off is included in the pay.`,
+      };
+    }
+  }
 
   const { error } = await (supabase
     .from("pto_requests")
@@ -976,7 +1030,7 @@ export async function updateTimeEntryAction(
   const { data: before } = (await supabase
     .from("time_entries")
     .select(
-      "clock_in_at, clock_out_at, employee_id, booking_id, payroll_run_id, subcontractor_run_id",
+      "clock_in_at, clock_out_at, employee_id, booking_id, payroll_run_id, subcontractor_run_id, engagement_snapshot",
     )
     .eq("id", id)
     .eq("organization_id", membership.organization_id)
@@ -988,6 +1042,7 @@ export async function updateTimeEntryAction(
       booking_id: string | null;
       payroll_run_id: string | null;
       subcontractor_run_id: string | null;
+      engagement_snapshot: string | null;
     } | null;
   };
 
@@ -1015,6 +1070,35 @@ export async function updateTimeEntryAction(
   const start_at =
     preserveSubSecond(parsed.start_at, before?.clock_in_at) ?? parsed.start_at;
   const end_at = preserveSubSecond(parsed.end_at, before?.clock_out_at);
+
+  // The create fence's sibling: this entry isn't stamped (the freeze above
+  // already returned if it were), so if its times land inside a period a
+  // pay run covers, no run will ever gather it — moved there or already
+  // sitting there, the hours would look recorded and never be paid.
+  {
+    const [{ runCoveringWindow }, { zonedYmd }, { createSupabaseAdminClient }] =
+      await Promise.all([
+        import("@/lib/pay-period-fence"),
+        import("@/lib/wall-clock"),
+        import("@/lib/supabase/admin"),
+      ]);
+    const isSubEntry = before?.engagement_snapshot === "subcontractor";
+    const covering = await runCoveringWindow(
+      createSupabaseAdminClient(),
+      membership.organization_id,
+      zonedYmd(new Date(start_at), orgTz),
+      zonedYmd(new Date(end_at ?? start_at), orgTz),
+      isSubEntry ? "subcontractor_pay_runs" : "payroll_runs",
+    );
+    if (covering) {
+      return {
+        ok: false,
+        error: isSubEntry
+          ? `A contractor statement already covers ${covering.period_start} – ${covering.period_end}. Delete that statement first, fix the entry, then generate it again.`
+          : `A payroll run already covers ${covering.period_start} – ${covering.period_end}. Delete that pay period first, fix the entry, then create it again.`,
+      };
+    }
+  }
 
   // Overlap check — excludes the entry being edited so the entry doesn't
   // flag against itself.
@@ -1335,12 +1419,19 @@ export async function closeOpenShiftAction(
     return { ok: false, error: "Invalid end time." };
   }
 
-  const { data: before } = await supabase
+  const { data: before } = (await supabase
     .from("time_entries")
-    .select("clock_in_at, clock_out_at, employee_id")
+    .select("clock_in_at, clock_out_at, employee_id, engagement_snapshot")
     .eq("id", id)
     .eq("organization_id", membership.organization_id)
-    .maybeSingle();
+    .maybeSingle()) as unknown as {
+    data: {
+      clock_in_at: string;
+      clock_out_at: string | null;
+      employee_id: string;
+      engagement_snapshot: string | null;
+    } | null;
+  };
   if (!before) return { ok: false, error: "Entry not found." };
   if (before.clock_out_at) {
     return { ok: false, error: "This shift was already closed." };
@@ -1357,6 +1448,36 @@ export async function closeOpenShiftAction(
       ok: false,
       error: "End time can't be more than 24 hours from now.",
     };
+  }
+
+  // Run gathering skips open shifts (no clock-out, no hours to count). So a
+  // shift that stayed open across a run's generation is not in that run —
+  // and closing it now would strand it: recorded, unstamped, in a period no
+  // future run re-reads. Refuse and put the close INSIDE the unlock, so the
+  // hours actually get paid.
+  {
+    const [{ runCoveringWindow }, { zonedYmd }, { createSupabaseAdminClient }] =
+      await Promise.all([
+        import("@/lib/pay-period-fence"),
+        import("@/lib/wall-clock"),
+        import("@/lib/supabase/admin"),
+      ]);
+    const isSubEntry = before.engagement_snapshot === "subcontractor";
+    const covering = await runCoveringWindow(
+      createSupabaseAdminClient(),
+      membership.organization_id,
+      zonedYmd(new Date(before.clock_in_at), orgTz),
+      zonedYmd(new Date(endUtc), orgTz),
+      isSubEntry ? "subcontractor_pay_runs" : "payroll_runs",
+    );
+    if (covering) {
+      return {
+        ok: false,
+        error: isSubEntry
+          ? `This shift was open when the ${covering.period_start} – ${covering.period_end} contractor statement was generated, so it isn't in it. Delete that statement, close the shift, then generate it again — otherwise these hours would never be paid.`
+          : `This shift was open when the ${covering.period_start} – ${covering.period_end} payroll run was generated, so it isn't in it. Delete that pay period, close the shift, then create it again — otherwise these hours would never be paid.`,
+      };
+    }
   }
 
   const { error } = await supabase
