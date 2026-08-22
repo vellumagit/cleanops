@@ -408,6 +408,42 @@ export async function deleteClientAction(formData: FormData) {
     .eq("organization_id" as never, membership.organization_id as never)
     .maybeSingle();
 
+  // Every money-adjacent FK to clients (bookings, invoices, estimates,
+  // contracts) is ON DELETE RESTRICT, so a client with history was never
+  // actually deletable -- but the refusal surfaced as a raw Postgres
+  // constraint string. Count first and refuse in English, so the owner
+  // knows exactly what's holding the door and what to do about it.
+  const [bk, inv, est, ctr] = await Promise.all([
+    supabase
+      .from("bookings")
+      .select("id", { count: "exact", head: true })
+      .eq("client_id", id),
+    supabase
+      .from("invoices")
+      .select("id", { count: "exact", head: true })
+      .eq("client_id", id),
+    supabase
+      .from("estimates")
+      .select("id", { count: "exact", head: true })
+      .eq("client_id", id),
+    supabase
+      .from("contracts")
+      .select("id", { count: "exact", head: true })
+      .eq("client_id", id),
+  ]);
+  const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
+  const holds = [
+    bk.count ? plural(bk.count, "booking") : null,
+    inv.count ? plural(inv.count, "invoice") : null,
+    est.count ? plural(est.count, "estimate") : null,
+    ctr.count ? plural(ctr.count, "contract") : null,
+  ].filter(Boolean);
+  if (holds.length > 0) {
+    throw new Error(
+      `This client has ${holds.join(", ")} on record, and those records keep the books whole. If this is a junk or duplicate entry, delete those first; if it's a real client you're done with, leave them -- history costs nothing.`,
+    );
+  }
+
   const { error } = await supabase
     .from("clients")
     .delete()

@@ -449,10 +449,34 @@ export async function updateBonusAction(formData: FormData): Promise<Result> {
 
   const { data: before } = await supabase
     .from("bonuses")
-    .select("employee_id, amount_cents, reason")
+    .select("employee_id, amount_cents, reason, status, payroll_run_id")
     .eq("id", id)
     .eq("organization_id", membership.organization_id)
     .maybeSingle();
+
+  // Same freeze as time entries: a bonus a payroll run has swallowed is part
+  // of that run's total. Editing it here changes the bonus row without
+  // changing the run -- two numbers for the same money, and whichever a
+  // person checks second looks wrong. Paid bonuses are harder still: that's
+  // a record of money that already moved.
+  const lock = before as {
+    status?: string | null;
+    payroll_run_id?: string | null;
+  } | null;
+  if (lock?.payroll_run_id) {
+    return {
+      ok: false,
+      error:
+        "This bonus is inside a payroll run. Delete that pay period to unlock it, adjust the bonus, then create the period again.",
+    };
+  }
+  if (lock?.status === "paid") {
+    return {
+      ok: false,
+      error:
+        "This bonus is marked paid -- it's a record of money that already moved, not a draft.",
+    };
+  }
 
   const { error } = await supabase
     .from("bonuses")
@@ -492,10 +516,30 @@ export async function deleteBonusAction(formData: FormData): Promise<Result> {
 
   const { data: before } = await supabase
     .from("bonuses")
-    .select("employee_id, amount_cents, status, reason, bonus_type")
+    .select("employee_id, amount_cents, status, reason, bonus_type, payroll_run_id")
     .eq("id", id)
     .eq("organization_id", membership.organization_id)
     .maybeSingle();
+
+  // Deleting is the harsher version of editing -- same freeze, same reasons.
+  const lock = before as {
+    status?: string | null;
+    payroll_run_id?: string | null;
+  } | null;
+  if (lock?.payroll_run_id) {
+    return {
+      ok: false,
+      error:
+        "This bonus is inside a payroll run. Delete that pay period first to unlock it.",
+    };
+  }
+  if (lock?.status === "paid") {
+    return {
+      ok: false,
+      error:
+        "This bonus is marked paid -- it's a record of money that already moved, not a draft.",
+    };
+  }
 
   const { error } = await supabase
     .from("bonuses")

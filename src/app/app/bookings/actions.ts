@@ -1213,6 +1213,44 @@ export async function updateBookingAction(
     } | null;
   };
 
+  // The dropdown proves every move against BOOKING_STATUS_TRANSITIONS; this
+  // form wrote whatever status the <select> posted. Same door, no lock --
+  // completed -> confirmed through here un-completes a job an invoice may
+  // already bill, and cancelled -> anything quietly resurrects a booking the
+  // client was told is off. Enforce the same table. Same-status saves skip
+  // the check so a cancelled booking's notes stay editable.
+  if (existing?.status && parsed.data.status !== existing.status) {
+    const allowed =
+      BOOKING_STATUS_TRANSITIONS[
+        existing.status as keyof typeof BOOKING_STATUS_TRANSITIONS
+      ] ?? [];
+    if (!allowed.includes(parsed.data.status)) {
+      return {
+        errors: {
+          status: `Can't change a ${existing.status.replace("_", " ")} booking to ${parsed.data.status.replace("_", " ")} here.`,
+        },
+        values: raw,
+      };
+    }
+
+    // Un-completing is allowed, but not out from under an invoice -- the
+    // exact guard the status dropdown enforces. Without this twin, the edit
+    // form is the bypass.
+    if (existing.status === "completed" && parsed.data.status === "cancelled") {
+      const { resolveBilledBookings } = await import("@/lib/billed-bookings");
+      const billed = await resolveBilledBookings(supabase, [id]);
+      const inv = billed.get(id);
+      if (inv) {
+        return {
+          errors: {
+            status: `Invoice ${inv.number ?? ""} (${inv.status}) bills this job. Void or fix that invoice first, then cancel the booking.`,
+          },
+          values: raw,
+        };
+      }
+    }
+  }
+
   // Fetch the booking's PREVIOUS assignees so we can later diff against
   // the new set and notify only NEW additions (not existing ones).
   // Includes split-segment employees because booking_assignees is now
@@ -1803,8 +1841,16 @@ export async function updateBookingAction(
   }
 
   // If the status flipped TO cancelled (not already cancelled), push the
-  // assigned employee AND email the client.
-  if (existing?.status !== "cancelled" && parsed.data.status === "cancelled") {
+  // assigned employee AND email the client -- EXCEPT when un-completing.
+  // Cancelling a job that already read "completed" is a bookkeeping
+  // correction (nobody went, auto-complete lied); texting the client
+  // "your cleaning has been cancelled" about a date weeks past would only
+  // confuse. Same gate as setBookingStatusAction.
+  if (
+    existing?.status !== "cancelled" &&
+    existing?.status !== "completed" &&
+    parsed.data.status === "cancelled"
+  ) {
     notifyBookingCancelledToEmployee(id);
     sendBookingCancelledToClient(id);
   }

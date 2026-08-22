@@ -564,7 +564,7 @@ export async function deletePayrollRunAction(formData: FormData) {
   await logAuditEvent({
     membership,
     action: "delete",
-    entity: "bonus",
+    entity: "payroll_run",
     entity_id: id,
     before: { status: run.status },
   });
