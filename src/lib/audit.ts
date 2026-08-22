@@ -35,11 +35,11 @@ export type AuditEntity =
   | "inventory_item"
   | "bonus"
   | "bonus_rule"
+  | "payroll_run"
   | "membership"
   | "settings"
   | "api_key"
   | "time_entry"
-  | "training_assignment"
   | "service_type"
   | "webhook_subscription";
 
