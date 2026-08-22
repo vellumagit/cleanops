@@ -2426,6 +2426,23 @@ export async function setBookingStatusAction(
   if (!booking) return { ok: false, error: "Booking not found." };
 
   if (booking.status === target) return { ok: true };
+
+  // Un-completing is allowed, but not out from under an invoice. If a live
+  // invoice bills this job, cancelling the booking would leave the client
+  // charged for a visit the system says never happened — the money has to be
+  // undone first (void the draft, or refund), then the status follows.
+  if (booking.status === "completed" && target === "cancelled") {
+    const { resolveBilledBookings } = await import("@/lib/billed-bookings");
+    const billed = await resolveBilledBookings(supabase, [id]);
+    const inv = billed.get(id);
+    if (inv) {
+      return {
+        ok: false,
+        error: `Invoice ${inv.number ?? ""} (${inv.status}) bills this job. Void or fix that invoice first, then cancel the booking.`,
+      };
+    }
+  }
+
   const allowed = BOOKING_STATUS_TRANSITIONS[booking.status] ?? [];
   if (!allowed.includes(target)) {
     return {

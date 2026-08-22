@@ -1488,7 +1488,12 @@ export function BookingForm({
         ordinary booking is the kind of noise that gets ignored — including on
         the rare booking where it matters.
       */}
-      {selectedClientProperties.length > 1 ? (
+      {/* Shown from ONE property up, not two. It used to hide for a single
+          property and auto-select invisibly — correct data, invisible magic —
+          and Svitlana read the silence as "it doesn't show up". A picker with
+          one option is mild noise; a feature the owner can't see working is
+          a support call. */}
+      {selectedClientProperties.length >= 1 ? (
         <FormField label="Property" htmlFor="property_id">
           <FormSelect
             id="property_id"

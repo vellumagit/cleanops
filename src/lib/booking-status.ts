@@ -92,6 +92,14 @@ export const BOOKING_STATUS_TRANSITIONS: Record<string, readonly string[]> = {
   pending: ["confirmed", "cancelled"],
   confirmed: ["in_progress", "completed", "cancelled"],
   in_progress: ["completed", "cancelled"],
+  // Completed is no longer a locked door. Svitlana's July 17: the cleaner was
+  // sick, nobody went, auto-complete marked it done anyway — and there was no
+  // way back, so the books said a cancelled visit happened. Worse since
+  // anchored billing: a phantom "completed" job is exactly what the catch-all
+  // sweep bills next period. The ACTION still refuses when an invoice already
+  // bills the job — undo the money first, then the status. Cancelled stays
+  // terminal: nothing ever un-cancels silently.
+  completed: ["cancelled"],
 };
 
 /** What the dropdown shows for a booking at `status`: itself, then where it

@@ -132,6 +132,22 @@ export default async function ClientJobPage({
   const state = clientBookingActions(booking);
   const service = booking.service_type_label ?? humanizeEnum(booking.service_type);
 
+  // Google Calendar template link — UTC basic timestamps; Google localizes
+  // on display, so the client sees their own wall-clock time.
+  const gcalStamp = (d: Date) =>
+    d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+  const gcalStart = new Date(booking.scheduled_at);
+  const gcalEnd = new Date(
+    gcalStart.getTime() + (booking.duration_minutes ?? 120) * 60_000,
+  );
+  const googleCalendarUrl =
+    "https://calendar.google.com/calendar/render?action=TEMPLATE" +
+    `&text=${encodeURIComponent(`Cleaning — ${client.organization_name}`)}` +
+    `&dates=${gcalStamp(gcalStart)}/${gcalStamp(gcalEnd)}` +
+    (booking.address
+      ? `&location=${encodeURIComponent(booking.address)}`
+      : "");
+
   return (
     <div className="space-y-5">
       <Link
@@ -161,6 +177,28 @@ export default async function ClientJobPage({
               <div className="text-sm text-muted-foreground">
                 About {formatDurationMinutes(booking.duration_minutes)}
               </div>
+              {/* "I forgot the cleaner is coming" — the visit can live in the
+                  client's own calendar. Google gets a template link; the .ics
+                  covers Apple and Outlook natively. Only for visits that are
+                  still happening. */}
+              {booking.status !== "cancelled" && (
+                <div className="mt-2 flex flex-wrap gap-3 text-sm">
+                  <a
+                    href={googleCalendarUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-medium text-primary underline underline-offset-2"
+                  >
+                    Add to Google Calendar
+                  </a>
+                  <a
+                    href={`/api/client-calendar/${booking.id}`}
+                    className="font-medium text-primary underline underline-offset-2"
+                  >
+                    Apple / Outlook (.ics)
+                  </a>
+                </div>
+              )}
             </div>
           </div>
 

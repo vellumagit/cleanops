@@ -131,8 +131,19 @@ describe("statusDropdownOptions", () => {
     }
   });
 
-  it("gives terminal statuses nothing — they render as a plain badge", () => {
-    expect(statusDropdownOptions("completed")).toEqual([]);
+  it("completed can still become cancelled — the July 17 lesson", () => {
+    // A cleaner called in sick, nobody went, auto-complete stamped the job
+    // done anyway — and the old terminal map made that unfixable, leaving a
+    // phantom visit for anchored billing's catch-all sweep to invoice. The
+    // ACTION still refuses when an invoice bills the job; the map just stops
+    // pretending the door doesn't exist.
+    expect(statusDropdownOptions("completed")).toEqual([
+      "completed",
+      "cancelled",
+    ]);
+  });
+
+  it("cancelled stays terminal — nothing un-cancels silently", () => {
     expect(statusDropdownOptions("cancelled")).toEqual([]);
   });
 
@@ -146,11 +157,12 @@ describe("statusDropdownOptions", () => {
 });
 
 describe("rendersAsStaticBadge", () => {
-  it("a finished job shows a badge, not an empty dropdown", () => {
-    // The regression this exists for: `[]` is truthy, so a guard written as
-    // `!options` stopped firing and every completed booking on the list
-    // rendered a select with no options in it.
-    expect(rendersAsStaticBadge("completed", true)).toBe(true);
+  it("a cancelled job shows a badge, a completed one keeps its dropdown", () => {
+    // The regression the badge rule exists for: `[]` is truthy, so a guard
+    // written as `!options` stopped firing and terminal bookings rendered a
+    // select with no options in it. Cancelled is still that case. Completed
+    // no longer is — it has somewhere to go.
+    expect(rendersAsStaticBadge("completed", true)).toBe(false);
     expect(rendersAsStaticBadge("cancelled", true)).toBe(true);
   });
 
