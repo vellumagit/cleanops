@@ -4210,9 +4210,21 @@ export async function autoComputeReviewBonuses(): Promise<number> {
       }
 
       if (toCreate.length > 0) {
-        await (db
+        // The insert's verdict decides everything below — swallowing it
+        // used to count the bonuses as created and tell the admins
+        // "awarded" even when the write failed and no rows existed.
+        const { error: bonusInsertErr } = await (db
           .from("bonuses")
-          .insert(toCreate) as unknown as Promise<unknown>);
+          .insert(toCreate) as unknown as Promise<{
+          error: { message: string } | null;
+        }>);
+        if (bonusInsertErr) {
+          console.error(
+            `[auto] review-bonus insert failed for org ${r.organization_id}:`,
+            bonusInsertErr.message,
+          );
+          continue;
+        }
         totalCreated += toCreate.length;
 
         // Owner/admin-only — payroll/bonus info is management-facing.

@@ -38,6 +38,14 @@ export async function generateSubcontractorRunAction(
   if (!period_start || !period_end) {
     return { ok: false, error: "Period start and end are required." };
   }
+  // Malformed dates used to sail through to zonedMidnightUtc and throw a
+  // RangeError — a 500 where a form error belongs.
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(period_start) ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(period_end)
+  ) {
+    return { ok: false, error: "Dates must be valid calendar dates." };
+  }
   if (period_end < period_start) {
     return { ok: false, error: "Period end must be on or after start." };
   }

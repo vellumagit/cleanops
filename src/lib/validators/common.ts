@@ -35,6 +35,10 @@ export function parseDollarsToCents(input: string | null | undefined): number | 
   if (cleaned === "") return null;
   const n = Number(cleaned);
   if (!Number.isFinite(n) || n < 0) return null;
+  // Ceiling: $1,000,000. Above it is either a fat-fingered extra digit or
+  // deliberate garbage, and past ~$21M the cents overflow int4 anyway —
+  // better a form error than a database one.
+  if (n > 1_000_000) return null;
   return Math.round(n * 100);
 }
 

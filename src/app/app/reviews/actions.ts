@@ -94,8 +94,8 @@ export async function updateReviewAction(
   const comment = String(formData.get("comment") ?? "").trim();
 
   const rating = Number(ratingRaw);
-  if (!Number.isFinite(rating) || rating < 1 || rating > 5) {
-    return { ok: false, error: "Rating must be between 1 and 5." };
+  if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+    return { ok: false, error: "Rating must be a whole number from 1 to 5." };
   }
   if (comment.length > 4000) {
     return { ok: false, error: "Keep the comment under 4,000 characters." };

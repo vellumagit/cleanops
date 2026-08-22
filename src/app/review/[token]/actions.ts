@@ -32,7 +32,7 @@ export async function submitReviewAction(
   if (!token || !sourceId || !["booking", "invoice"].includes(source)) {
     return { success: false, error: "Invalid form data." };
   }
-  if (!rating || rating < 1 || rating > 5) {
+  if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
     return { success: false, error: "Please select a rating." };
   }
   // Server-side comment length cap. Defends against blob-DoS attempts
