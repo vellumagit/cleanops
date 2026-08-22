@@ -854,12 +854,14 @@ export async function pushInvoiceToSage(
     );
   }
 
-  const invoiceDate = new Date(invoice.created_at)
-    .toISOString()
-    .slice(0, 10);
+  // Same rule as QuickBooks: books dates are the business's calendar days,
+  // not UTC's.
+  const { getOrgTimezone } = await import("@/lib/org-timezone");
+  const { zonedYmd } = await import("@/lib/wall-clock");
+  const orgTz = await getOrgTimezone(conn.organization_id);
+  const invoiceDate = zonedYmd(new Date(invoice.created_at), orgTz);
   const dueDate =
-    invoice.due_date ??
-    new Date(Date.now() + 14 * 86400_000).toISOString().slice(0, 10);
+    invoice.due_date ?? zonedYmd(new Date(Date.now() + 14 * 86400_000), orgTz);
 
   try {
     // Sage requires a sales ledger account on every invoice line. Resolve (and

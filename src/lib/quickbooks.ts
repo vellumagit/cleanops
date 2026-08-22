@@ -642,10 +642,15 @@ export async function pushInvoiceToQuickBooks(
       },
     }));
 
-    const txnDate = new Date(invoice.created_at).toISOString().slice(0, 10);
+    // Books dates are calendar dates in the BUSINESS's timezone. The UTC
+    // slice put an evening invoice on the next day's books.
+    const { getOrgTimezone } = await import("@/lib/org-timezone");
+    const { zonedYmd } = await import("@/lib/wall-clock");
+    const orgTz = await getOrgTimezone(conn.organization_id);
+    const txnDate = zonedYmd(new Date(invoice.created_at), orgTz);
     const dueDate =
       invoice.due_date ??
-      new Date(Date.now() + 14 * 86_400_000).toISOString().slice(0, 10);
+      zonedYmd(new Date(Date.now() + 14 * 86_400_000), orgTz);
 
     const created = await qbFetch<{ Invoice: { Id: string } }>(
       conn,

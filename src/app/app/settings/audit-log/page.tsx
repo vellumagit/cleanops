@@ -5,6 +5,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
 import { memberDisplayName } from "@/lib/member-display";
 import { getOrgTimezone } from "@/lib/org-timezone";
+import { zonedMidnightUtc } from "@/lib/wall-clock";
 import { AuditExportButton, type AuditExportRow } from "./audit-export-button";
 
 export const metadata = { title: "Audit log" };
@@ -108,8 +109,18 @@ export default async function AuditLogPage({
     .limit(hasFilters ? EXPORT_LIMIT : 200);
 
   if (actionFilter) query = query.eq("action", actionFilter);
-  if (fromFilter) query = query.gte("created_at", `${fromFilter}T00:00:00`);
-  if (toFilter) query = query.lte("created_at", `${toFilter}T23:59:59.999`);
+  // Filter by the ORG's calendar days, not the database's. The bare
+  // `T00:00:00` strings parsed as UTC midnight, so a Brasilia admin
+  // filtering "Aug 22" got a window starting at 9 PM Aug 21 and cutting off
+  // 3 hours before Aug 22 actually ended.
+  if (fromFilter)
+    query = query.gte("created_at", zonedMidnightUtc(fromFilter, tz).toISOString());
+  if (toFilter) {
+    const nextYmd = new Date(Date.parse(`${toFilter}T12:00:00Z`) + 86_400_000)
+      .toISOString()
+      .slice(0, 10);
+    query = query.lt("created_at", zonedMidnightUtc(nextYmd, tz).toISOString());
+  }
 
   const { data, error } = await query;
 

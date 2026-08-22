@@ -750,7 +750,11 @@ export async function autoBookingOnEstimateApproval(estimateId: string) {
     // announced to the client as a real 3 AM visit (audit B4).
     const { getOrgTimezone } = await import("@/lib/org-timezone");
     const orgTz = await getOrgTimezone(estimate.organization_id);
+    // timeZone matters: without it this formats the SERVER's tomorrow —
+    // late evening in the org's timezone, UTC has already rolled over, and
+    // the placeholder lands a day late.
     const tomorrowLocalDate = new Intl.DateTimeFormat("en-CA", {
+      timeZone: orgTz,
       year: "numeric",
       month: "2-digit",
       day: "2-digit",

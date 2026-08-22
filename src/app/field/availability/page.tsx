@@ -1,4 +1,6 @@
 import { requireMembership } from "@/lib/auth";
+import { getOrgTimezone } from "@/lib/org-timezone";
+import { zonedYmd } from "@/lib/wall-clock";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { FieldHeader } from "@/components/field-shell";
 import { AvailabilityEditor } from "./availability-editor";
@@ -24,6 +26,7 @@ type OverrideRow = {
 export default async function FieldAvailabilityPage() {
   const membership = await requireMembership();
   const supabase = await createSupabaseServerClient();
+  const orgTz = await getOrgTimezone(membership.organization_id);
 
   const [{ data: slots }, { data: overrides }] = await Promise.all([
     supabase
@@ -43,7 +46,10 @@ export default async function FieldAvailabilityPage() {
       .from("availability_overrides" as never)
       .select("id, date, kind, start_time, end_time, reason")
       .eq("membership_id" as never, membership.id as never)
-      .gte("date" as never, new Date().toISOString().slice(0, 10) as never)
+      // Org-local today. The UTC slice hid TODAY's override from a
+      // Brasilia cleaner every evening after 9 PM, when UTC had already
+      // moved on to tomorrow.
+      .gte("date" as never, zonedYmd(new Date(), orgTz) as never)
       .order(
         "date" as never,
         {
