@@ -153,6 +153,22 @@ export async function updateInvoiceAction(
     .eq("id", id)
     .maybeSingle();
 
+  // Void and refunded invoices are closed records, and this form predates
+  // both states. Without the gate, editing a void invoice silently un-voids
+  // it (the form's status just gets written), and editing a refunded one
+  // recomputed it straight back to "paid" from its gross payment rows.
+  if (prev?.status === "void" || prev?.status === "refunded") {
+    return {
+      errors: {
+        _form:
+          prev.status === "void"
+            ? "This invoice is void. A voided invoice is a closed record — create a new invoice instead."
+            : "This invoice was refunded. That's a closed record of money that moved both ways — create a new invoice instead.",
+      },
+      values: raw,
+    };
+  }
+
   const tax = computeTax(parsed.data.subtotal_cents, {
     rateBps: parsed.data.tax_rate_bps,
   });
@@ -173,19 +189,18 @@ export async function updateInvoiceAction(
   // "mark paid" for a cash invoice still works.
   const { data: payRows } = (await supabase
     .from("invoice_payments")
-    .select("amount_cents")
+    .select("amount_cents, refunded_cents")
     .eq("invoice_id", id)) as unknown as {
-    data: Array<{ amount_cents: number }> | null;
+    data: Array<{ amount_cents: number; refunded_cents: number | null }> | null;
   };
-  const totalPaid = (payRows ?? []).reduce(
-    (s, p) => s + (p.amount_cents ?? 0),
-    0,
-  );
+  // NET of refunds — a $100 payment with $40 refunded holds $60 against
+  // this invoice, so an edit must land it on partially_paid, not paid.
+  const totalPaid = netPaidCents(payRows ?? []);
 
   // Widen to the DB invoice_status (the form enum lacks partially_paid).
   let effectiveStatus: string = parsed.data.status;
   let stamps: { sent_at: string | null; paid_at: string | null };
-  if (totalPaid > 0 && prev?.status !== "void") {
+  if (totalPaid > 0) {
     const now = new Date().toISOString();
     effectiveStatus = totalPaid >= effectiveTotal ? "paid" : "partially_paid";
     stamps = {

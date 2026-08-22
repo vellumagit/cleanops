@@ -393,6 +393,31 @@ export async function createAdHocBonusAction(
     return { ok: false, error: "Employee not found in this organization." };
   }
 
+  // Runs pick bonuses up by period_end at generation time and never
+  // re-read the period. A bonus dated into a period a run already covers
+  // would sit "pending" forever — no future run's window reaches back.
+  // Refuse rather than orphan it.
+  {
+    const [{ runCoveringWindow }, { createSupabaseAdminClient }] =
+      await Promise.all([
+        import("@/lib/pay-period-fence"),
+        import("@/lib/supabase/admin"),
+      ]);
+    const covering = await runCoveringWindow(
+      createSupabaseAdminClient(),
+      membership.organization_id,
+      end,
+      end,
+      "payroll_runs",
+    );
+    if (covering) {
+      return {
+        ok: false,
+        error: `A payroll run already covers ${covering.period_start} – ${covering.period_end}. Date the bonus in the current period, or delete that pay period and create it again with this bonus included.`,
+      };
+    }
+  }
+
   const { data: inserted, error } = await supabase
     .from("bonuses")
     .insert({

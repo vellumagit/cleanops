@@ -272,7 +272,7 @@ export async function updatePtoStatusAction(
   // Prior state decides the balance side-effect below.
   const { data: before } = (await supabase
     .from("pto_requests")
-    .select("status, employee_id, hours, start_date")
+    .select("status, employee_id, hours, start_date, end_date, payroll_run_id")
     .eq("id", id)
     .eq("organization_id", membership.organization_id)
     .maybeSingle()) as unknown as {
@@ -281,9 +281,48 @@ export async function updatePtoStatusAction(
       employee_id: string;
       hours: number;
       start_date: string;
+      end_date: string;
+      payroll_run_id: string | null;
     } | null;
   };
   if (!before) return { ok: false, error: "Request not found." };
+
+  // Time off a payroll run has swallowed is frozen, same as hours and
+  // bonuses: the run's total includes it, so changing it here would leave
+  // the run saying one thing and this record another. The unlock is the
+  // same too: delete that pay period, fix the request, create it again.
+  if (before.payroll_run_id) {
+    return {
+      ok: false,
+      error:
+        "This time off is inside a payroll run. Delete that pay period to unlock it first.",
+    };
+  }
+
+  // Approving time off whose days a payroll run already covers would
+  // orphan it: runs gather only approved requests at generation time and
+  // never re-read the period, and no future run's window reaches back. It
+  // would read "approved" forever while never being paid.
+  if (status === "approved" && before.status !== "approved") {
+    const [{ runCoveringWindow }, { createSupabaseAdminClient }] =
+      await Promise.all([
+        import("@/lib/pay-period-fence"),
+        import("@/lib/supabase/admin"),
+      ]);
+    const covering = await runCoveringWindow(
+      createSupabaseAdminClient(),
+      membership.organization_id,
+      before.start_date,
+      before.end_date,
+      "payroll_runs",
+    );
+    if (covering) {
+      return {
+        ok: false,
+        error: `A payroll run already covers ${covering.period_start} – ${covering.period_end}. Delete that pay period and create it again so this time off is included in the pay.`,
+      };
+    }
+  }
 
   const { error } = await (supabase
     .from("pto_requests")
@@ -352,7 +391,7 @@ export async function updatePtoRequestAction(
 
   const { data: before } = (await supabase
     .from("pto_requests")
-    .select("status, employee_id, hours, start_date")
+    .select("status, employee_id, hours, start_date, payroll_run_id")
     .eq("id", id)
     .eq("organization_id", membership.organization_id)
     .maybeSingle()) as unknown as {
@@ -361,9 +400,22 @@ export async function updatePtoRequestAction(
       employee_id: string;
       hours: number;
       start_date: string;
+      payroll_run_id: string | null;
     } | null;
   };
   if (!before) return { ok: false, error: "Request not found." };
+
+  // Time off a payroll run has swallowed is frozen, same as hours and
+  // bonuses: the run's total includes it, so changing it here would leave
+  // the run saying one thing and this record another. The unlock is the
+  // same too: delete that pay period, fix the request, create it again.
+  if (before.payroll_run_id) {
+    return {
+      ok: false,
+      error:
+        "This time off is inside a payroll run. Delete that pay period to unlock it, fix the request, then create the period again.",
+    };
+  }
 
   const isSub = await isSubcontractorMember(
     before.employee_id,
@@ -441,7 +493,9 @@ export async function cancelSelfPtoRequestAction(
 
   const { data: before } = (await admin
     .from("pto_requests")
-    .select("id, employee_id, start_date, end_date, hours, status")
+    .select(
+      "id, employee_id, start_date, end_date, hours, status, payroll_run_id",
+    )
     .eq("id", id)
     .eq("organization_id", membership.organization_id)
     .maybeSingle()) as unknown as {
@@ -452,11 +506,23 @@ export async function cancelSelfPtoRequestAction(
       end_date: string;
       hours: number;
       status: "pending" | "approved" | "declined" | "cancelled";
+      payroll_run_id: string | null;
     } | null;
   };
 
   if (!before || before.employee_id !== membership.id) {
     return { ok: false, error: "Request not found." };
+  }
+
+  // Already paid out in a payroll run — cancelling it now would refund
+  // hours the run has already counted. Only unwinding the run itself can
+  // change this, and that's a manager's move.
+  if (before.payroll_run_id) {
+    return {
+      ok: false,
+      error:
+        "This time off is already included in a payroll run — ask your manager if it needs to change.",
+    };
   }
 
   const [{ workerCanCancel }, { zonedYmd }] = await Promise.all([
@@ -552,7 +618,9 @@ export async function updateSelfPtoRequestAction(
 
   const { data: before } = (await admin
     .from("pto_requests")
-    .select("id, employee_id, start_date, end_date, hours, status")
+    .select(
+      "id, employee_id, start_date, end_date, hours, status, payroll_run_id",
+    )
     .eq("id", id)
     .eq("organization_id", membership.organization_id)
     .maybeSingle()) as unknown as {
@@ -563,11 +631,21 @@ export async function updateSelfPtoRequestAction(
       end_date: string;
       hours: number;
       status: "pending" | "approved" | "declined" | "cancelled";
+      payroll_run_id: string | null;
     } | null;
   };
 
   if (!before || before.employee_id !== membership.id) {
     return { ok: false, error: "Request not found." };
+  }
+
+  // Same freeze as cancelling: a run already paid these hours.
+  if (before.payroll_run_id) {
+    return {
+      ok: false,
+      error:
+        "This time off is already included in a payroll run — ask your manager if it needs to change.",
+    };
   }
 
   const orgTz = await getOrgTimezone(membership.organization_id);
@@ -798,6 +876,39 @@ export async function createManualTimeEntryAction(
   };
 
   const { toEngagement } = await import("@/lib/engagement");
+
+  // Backfilling hours into a period a pay run already covers would orphan
+  // them: the run was generated before this entry existed and nothing ever
+  // re-reads the period. The hours would look recorded while never being
+  // paid. Refuse and point at the unlock instead.
+  {
+    const [{ runCoveringWindow }, { zonedYmd }] = await Promise.all([
+      import("@/lib/pay-period-fence"),
+      import("@/lib/wall-clock"),
+    ]);
+    const engagement = toEngagement(manualRateRow?.engagement);
+    const startYmd = zonedYmd(new Date(parsed.start_at), orgTz);
+    const endYmd = zonedYmd(new Date(parsed.end_at ?? parsed.start_at), orgTz);
+    const covering = await runCoveringWindow(
+      rateAdmin,
+      membership.organization_id,
+      startYmd,
+      endYmd,
+      engagement === "subcontractor"
+        ? "subcontractor_pay_runs"
+        : "payroll_runs",
+    );
+    if (covering) {
+      return {
+        ok: false,
+        error:
+          engagement === "subcontractor"
+            ? `A contractor statement already covers ${covering.period_start} – ${covering.period_end}. Delete that statement first, add the entry, then generate it again.`
+            : `A payroll run already covers ${covering.period_start} – ${covering.period_end}. Delete that pay period first, add the entry, then create it again.`,
+      };
+    }
+  }
+
   const { data: inserted, error } = await supabase
     .from("time_entries")
     .insert({
@@ -1000,7 +1111,7 @@ export async function deletePtoRequestAction(
 
   const { data: before } = (await admin
     .from("pto_requests")
-    .select("id, employee_id, start_date, hours, status")
+    .select("id, employee_id, start_date, hours, status, payroll_run_id")
     .eq("id", id)
     .eq(
       "organization_id",
@@ -1013,10 +1124,22 @@ export async function deletePtoRequestAction(
       start_date: string;
       hours: number;
       status: string;
+      payroll_run_id: string | null;
     } | null;
   };
 
   if (!before) return { ok: false, error: "Request not found." };
+
+  // Deleting is the harsher version of editing — same freeze as hours and
+  // bonuses. The run paid these hours; erase the request and the run total
+  // stops adding up to anything on record.
+  if (before.payroll_run_id) {
+    return {
+      ok: false,
+      error:
+        "This time off is inside a payroll run. Delete that pay period first to unlock it.",
+    };
+  }
 
   const { error } = (await admin
     .from("pto_requests")
