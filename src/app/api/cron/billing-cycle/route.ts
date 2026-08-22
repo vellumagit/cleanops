@@ -34,7 +34,13 @@
 
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { requireCronAuth } from "@/lib/cron-auth";
-import { humanizeEnum } from "@/lib/format";
+import { humanizeEnum, FALLBACK_TZ } from "@/lib/format";
+import { zonedYmd } from "@/lib/wall-clock";
+import {
+  monthlyAnchorPeriodEnding,
+  biweeklyAnchorPeriodEnding,
+  type AnchoredPeriod,
+} from "@/lib/billing-anchor";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -49,6 +55,7 @@ type OrgMeta = {
   name: string;
   default_tax_rate_bps: number | null;
   default_tax_label: string | null;
+  timezone: string | null;
 };
 
 type ClientRow = {
@@ -58,6 +65,8 @@ type ClientRow = {
   /** Fallback service location when a booking has no address of its own. */
   address: string | null;
   billing_cadence: "on_demand" | "biweekly" | "monthly";
+  billing_anchor_day: number | null;
+  billing_anchor_date: string | null;
   billing_type: "itemized" | "flat_rate";
   flat_rate_cents: number | null;
   organization_id: string;
@@ -149,12 +158,23 @@ async function generateClientInvoice(
   client: ClientRow,
   org: OrgMeta,
   runDate: Date,
+  /** Anchored clients only: the exact period that just closed. Legacy
+   *  clients pass nothing and every date, label and key derives from
+   *  runDate precisely as it always has. */
+  anchored?: AnchoredPeriod,
 ): Promise<{ invoiceId: string; number: string | null } | null> {
   const cadence = client.billing_cadence;
   if (cadence === "on_demand") return null; // shouldn't be called, guard anyway
 
-  // Cutoff: bookings scheduled strictly before midnight UTC on the cron date.
-  const cutoff = runDate.toISOString().split("T")[0]; // "YYYY-MM-DD"
+  // Cutoff: bookings scheduled strictly before the period boundary. For
+  // anchored clients that is their own org-local cycle end; legacy keeps the
+  // original midnight-UTC-on-run-date semantics untouched. In BOTH modes the
+  // sweep is deliberately catch-all below the cutoff (billing_invoice_id is
+  // null, no lower bound) so an old unbilled straggler is picked up rather
+  // than orphaned between periods.
+  const cutoff = anchored
+    ? anchored.endYmdExclusive
+    : runDate.toISOString().split("T")[0]; // "YYYY-MM-DD"
 
   // ── Fetch unbilled bookings ──────────────────────────────────────────────
   const { data: bookingsRaw } = (await db
@@ -184,7 +204,7 @@ async function generateClientInvoice(
 
   // ── Compute amounts ──────────────────────────────────────────────────────
   const completedBookings = bookings.filter((b) => b.status === "completed");
-  const period = periodLabel(runDate, cadence);
+  const period = anchored ? anchored.label : periodLabel(runDate, cadence);
 
   let subtotalCents: number;
   let lineItemLabel: string;
@@ -230,8 +250,10 @@ async function generateClientInvoice(
   // fail with 23505 — so if a prior run crashed AFTER this insert but BEFORE
   // stamping bookings (Vercel timeout mid-loop), the retry skips here instead
   // of billing the client a second time.
-  const periodKey =
-    cadence === "monthly"
+  const periodKey = anchored
+    ? anchored.key // "anchor-monthly:<start>" / "anchor-biweekly:<start>" —
+    //               prefixed so it can never collide with a legacy key
+    : cadence === "monthly"
       ? `monthly:${cutoff.slice(0, 7)}` // e.g. "monthly:2026-07"
       : `biweekly:${cutoff}`; //           e.g. "biweekly:2026-07-15"
 
@@ -448,12 +470,11 @@ export async function GET(request: Request) {
       activeCadences.push("monthly", "biweekly");
     } else if (dayOfMonth === 15) {
       activeCadences.push("biweekly");
-    } else {
-      console.log(
-        `[billing-cycle] day=${dayOfMonth} — no cadences active today, skipping.`,
-      );
-      return Response.json({ skipped: true, day: dayOfMonth, invoices: 0 });
     }
+    // No early return on other days any more: legacy clients only bill on
+    // the 1st/15th (activeCadences stays empty otherwise), but ANCHORED
+    // clients can turn over on any day of the month, so the cron now runs
+    // daily and asks each anchor whether today is its boundary.
 
     // ── Fetch all orgs (we need their tax config) ──────────────────────────
     // Skip orgs that have been deleted OR are pending deletion — they're
@@ -461,7 +482,7 @@ export async function GET(request: Request) {
     const { data: orgsRaw } = (await db
       .from("organizations")
       .select(
-        "id, name, default_tax_rate_bps, default_tax_label",
+        "id, name, default_tax_rate_bps, default_tax_label, timezone",
       )
       .is("deleted_at", null)
       .is("deletion_scheduled_at", null)) as unknown as {
@@ -477,9 +498,9 @@ export async function GET(request: Request) {
     const { data: clientsRaw } = (await db
       .from("clients")
       .select(
-        "id, name, email, address, billing_cadence, billing_type, flat_rate_cents, organization_id",
+        "id, name, email, address, billing_cadence, billing_type, flat_rate_cents, billing_anchor_day, billing_anchor_date, organization_id",
       )
-      .in("billing_cadence", activeCadences)
+      .in("billing_cadence", ["biweekly", "monthly"])
       .is("archived_at" as never, null as never)) as unknown as {
       data: ClientRow[] | null;
     };
@@ -495,6 +516,47 @@ export async function GET(request: Request) {
         console.warn(
           `[billing-cycle] org ${client.organization_id} not found for client ${client.id} — skipping`,
         );
+        clientsSkipped++;
+        continue;
+      }
+
+      // ── Anchored vs legacy — decided per client, not per run ──────────
+      // An anchor moves the client onto their OWN calendar: monthly turns
+      // over on their chosen day, biweekly every 14 days from their chosen
+      // date, both measured against the ORG'S today, so a cycle boundary is
+      // the business's midnight and not the server's.
+      const anchorDay =
+        client.billing_cadence === "monthly" ? client.billing_anchor_day : null;
+      const anchorDate =
+        client.billing_cadence === "biweekly"
+          ? client.billing_anchor_date
+          : null;
+
+      if (anchorDay != null || anchorDate != null) {
+        const orgToday = zonedYmd(runDate, org.timezone ?? FALLBACK_TZ);
+        const period =
+          anchorDay != null
+            ? monthlyAnchorPeriodEnding(orgToday, anchorDay)
+            : biweeklyAnchorPeriodEnding(orgToday, anchorDate as string);
+        if (!period) {
+          clientsSkipped++;
+          continue; // not their boundary day — the daily run asks again tomorrow
+        }
+        const created = await generateClientInvoice(db, client, org, runDate, period);
+        if (created) {
+          invoicesCreated++;
+          console.log(
+            `[billing-cycle] anchored invoice ${created.number ?? created.invoiceId} for client ${client.id} (${period.label})`,
+          );
+        } else {
+          clientsSkipped++;
+        }
+        continue;
+      }
+
+      // Legacy client: only on the 1st (monthly + biweekly) / 15th (biweekly),
+      // exactly as before the anchors existed.
+      if (!activeCadences.includes(client.billing_cadence as "biweekly" | "monthly")) {
         clientsSkipped++;
         continue;
       }

@@ -128,6 +128,32 @@ export const ClientSchema = z.object({
   /** Fixed amount (in cents) per billing period. Only used when
    *  billing_type = 'flat_rate'. Leave blank for itemized clients. */
   flat_rate_cents: optionalCents,
+  /** Monthly cadence only: day of month (1-28) the cycle turns over.
+   *  Capped at 28 so February needs no clamping rule. Blank = the 1st. */
+  billing_anchor_day: z.preprocess(
+    (v) => {
+      const s = String(v ?? "").trim();
+      return s === "" ? null : Number(s);
+    },
+    z
+      .number()
+      .int("Billing day must be a whole number")
+      .min(1, "Billing day must be between 1 and 28")
+      .max(28, "Billing day must be between 1 and 28")
+      .nullable(),
+  ),
+  /** Biweekly cadence only: exact 14-day cycles from this date.
+   *  Blank = legacy 1st & 15th. */
+  billing_anchor_date: z.preprocess(
+    (v) => {
+      const s = String(v ?? "").trim();
+      return s === "" ? null : s;
+    },
+    z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, "Pick a date")
+      .nullable(),
+  ),
   /** Client id of the person who referred this client. Blank → null. */
   referred_by_client_id: optionalClientId,
 });

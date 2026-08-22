@@ -153,11 +153,7 @@
     },
     {
       "path": "/api/cron/billing-cycle",
-      "schedule": "0 7 1 * *"
-    },
-    {
-      "path": "/api/cron/billing-cycle",
-      "schedule": "0 7 15 * *"
+      "schedule": "0 7 * * *"
     },
     {
       "path": "/api/cron/task-reminders",

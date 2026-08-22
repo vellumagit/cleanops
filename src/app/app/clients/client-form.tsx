@@ -43,6 +43,8 @@ type Defaults = {
   billing_cadence?: string | null;
   billing_type?: string | null;
   flat_rate_cents?: number | null;
+  billing_anchor_day?: number | string | null;
+  billing_anchor_date?: string | null;
   referred_by_client_id?: string | null;
 };
 
@@ -288,9 +290,45 @@ export function ClientForm({
             defaultValue={v.billing_cadence ?? "on_demand"}
           >
             <option value="on_demand">On demand — one invoice per job</option>
-            <option value="biweekly">Biweekly — 1st &amp; 15th of month</option>
-            <option value="monthly">Monthly — 1st of month</option>
+            <option value="biweekly">Biweekly — every two weeks</option>
+            <option value="monthly">Monthly</option>
           </FormSelect>
+        </FormField>
+
+        {/* Anchor fields — always rendered, like flat_rate_cents below, so a
+            value isn't lost when the cadence select toggles. Each one says
+            plainly which cadence it belongs to; the server stores both and
+            the billing cron reads only the one that matches. */}
+        <FormField
+          label="Monthly billing day"
+          htmlFor="billing_anchor_day"
+          error={state.errors?.billing_anchor_day}
+          hint="Monthly clients only. The cycle turns over on this day — 15 bills the 15th through the 14th. Blank = calendar month from the 1st. 1–28, so February never needs a special rule."
+        >
+          <Input
+            id="billing_anchor_day"
+            name="billing_anchor_day"
+            type="number"
+            min="1"
+            max="28"
+            step="1"
+            placeholder="1"
+            defaultValue={v.billing_anchor_day ?? ""}
+          />
+        </FormField>
+
+        <FormField
+          label="Biweekly cycle start"
+          htmlFor="billing_anchor_date"
+          error={state.errors?.billing_anchor_date}
+          hint="Biweekly clients only. Exact 14-day cycles counted from this date; the first invoice goes out one full cycle after it. Blank = the 1st and 15th."
+        >
+          <Input
+            id="billing_anchor_date"
+            name="billing_anchor_date"
+            type="date"
+            defaultValue={v.billing_anchor_date ?? ""}
+          />
         </FormField>
 
         <FormField

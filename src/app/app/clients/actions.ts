@@ -44,6 +44,8 @@ function readFormValues(formData: FormData) {
     contact_overrides: String(formData.get("contact_overrides") ?? "{}"),
     preferred_cleaner_id: String(formData.get("preferred_cleaner_id") ?? ""),
     billing_cadence: String(formData.get("billing_cadence") ?? "on_demand"),
+    billing_anchor_day: String(formData.get("billing_anchor_day") ?? ""),
+    billing_anchor_date: String(formData.get("billing_anchor_date") ?? ""),
     billing_type: String(formData.get("billing_type") ?? "itemized"),
     referred_by_client_id: String(formData.get("referred_by_client_id") ?? ""),
     // Form input is in dollars (user-facing); convert to cents for storage.
@@ -146,6 +148,8 @@ export async function createClientAction(
           }
         : {}),
       billing_cadence: parsed.data.billing_cadence,
+      billing_anchor_day: parsed.data.billing_anchor_day ?? null,
+      billing_anchor_date: parsed.data.billing_anchor_date ?? null,
       billing_type: parsed.data.billing_type,
       flat_rate_cents: parsed.data.flat_rate_cents ?? null,
       referred_by_client_id: parsed.data.referred_by_client_id ?? null,
@@ -266,6 +270,8 @@ export async function updateClientAction(
       sms_opted_in: smsOptedIn,
       ...consentPatch,
       billing_cadence: parsed.data.billing_cadence,
+      billing_anchor_day: parsed.data.billing_anchor_day ?? null,
+      billing_anchor_date: parsed.data.billing_anchor_date ?? null,
       billing_type: parsed.data.billing_type,
       flat_rate_cents: parsed.data.flat_rate_cents ?? null,
       referred_by_client_id: parsed.data.referred_by_client_id ?? null,

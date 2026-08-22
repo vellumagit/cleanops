@@ -1151,6 +1151,8 @@ export type Database = {
           balance_cents: number
           billing_cadence: string
           billing_type: string
+          billing_anchor_date?: string | null
+          billing_anchor_day?: number | null
           company_name?: string | null
           created_at: string
           email: string | null
@@ -1190,6 +1192,8 @@ export type Database = {
           balance_cents?: number
           billing_cadence?: string
           billing_type?: string
+          billing_anchor_date?: string | null
+          billing_anchor_day?: number | null
           company_name?: string | null
           created_at?: string
           email?: string | null
@@ -1229,6 +1233,8 @@ export type Database = {
           balance_cents?: number
           billing_cadence?: string
           billing_type?: string
+          billing_anchor_date?: string | null
+          billing_anchor_day?: number | null
           company_name?: string | null
           created_at?: string
           email?: string | null
