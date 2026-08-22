@@ -2499,12 +2499,23 @@ export async function setBookingStatusAction(
     // sent NOTHING: the cleaner still drove out, the client was never told
     // (audit B2). Mirrors the edit-form calls; both are internally gated and
     // deduped.
-    notifyBookingCancelledToEmployee(id).catch((e) =>
-      console.error("[auto] status-cancel employee push failed:", e),
-    );
-    sendBookingCancelledToClient(id).catch((e) =>
-      console.error("[auto] status-cancel client notice failed:", e),
-    );
+    //
+    // EXCEPT when un-completing. These notices exist so a cleaner doesn't
+    // drive out and a client isn't left waiting — news about a visit that
+    // ISN'T going to happen. A completed job already happened; flipping it to
+    // cancelled is correcting the record (July 17: the cleaner was sick,
+    // auto-complete stamped it done anyway), and texting the client "your
+    // cleaning was cancelled" five weeks after the date would read as
+    // nonsense at best and an accidental cancellation of something real at
+    // worst. booking.status still holds the PRE-update status here.
+    if (booking.status !== "completed") {
+      notifyBookingCancelledToEmployee(id).catch((e) =>
+        console.error("[auto] status-cancel employee push failed:", e),
+      );
+      sendBookingCancelledToClient(id).catch((e) =>
+        console.error("[auto] status-cancel client notice failed:", e),
+      );
+    }
   }
 
   revalidatePath("/app/bookings");
