@@ -35,7 +35,7 @@
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { requireCronAuth } from "@/lib/cron-auth";
 import { humanizeEnum, FALLBACK_TZ } from "@/lib/format";
-import { zonedYmd } from "@/lib/wall-clock";
+import { zonedYmd, zonedMidnightUtc } from "@/lib/wall-clock";
 import {
   monthlyAnchorPeriodEnding,
   biweeklyAnchorPeriodEnding,
@@ -158,10 +158,11 @@ async function generateClientInvoice(
   client: ClientRow,
   org: OrgMeta,
   runDate: Date,
-  /** Anchored clients only: the exact period that just closed. Legacy
-   *  clients pass nothing and every date, label and key derives from
-   *  runDate precisely as it always has. */
-  anchored?: AnchoredPeriod,
+  /** Anchored clients only: the exact period that just closed, plus the
+   *  UTC instant of its org-local end. Legacy clients pass nothing and
+   *  every date, label and key derives from runDate precisely as it
+   *  always has. */
+  anchored?: AnchoredPeriod & { endUtcIso: string },
 ): Promise<{ invoiceId: string; number: string | null } | null> {
   const cadence = client.billing_cadence;
   if (cadence === "on_demand") return null; // shouldn't be called, guard anyway
@@ -172,9 +173,14 @@ async function generateClientInvoice(
   // sweep is deliberately catch-all below the cutoff (billing_invoice_id is
   // null, no lower bound) so an old unbilled straggler is picked up rather
   // than orphaned between periods.
-  const cutoff = anchored
-    ? anchored.endYmdExclusive
-    : runDate.toISOString().split("T")[0]; // "YYYY-MM-DD"
+  const cutoff = runDate.toISOString().split("T")[0]; // "YYYY-MM-DD"
+  // The sweep's upper bound. For anchored clients this is the UTC instant of
+  // the ORG-LOCAL period end — a bare YYYY-MM-DD here would be read as UTC
+  // midnight, and an Edmonton 8 PM job on the period's last day lives past
+  // UTC midnight, so it would slide into the NEXT period: the same
+  // wrong-window disease the period-invoice page had, reintroduced at the
+  // moment anchors were born. Caught the same day, hunting my own commit.
+  const sweepBefore = anchored ? anchored.endUtcIso : cutoff;
 
   // ── Fetch unbilled bookings ──────────────────────────────────────────────
   const { data: bookingsRaw } = (await db
@@ -184,7 +190,7 @@ async function generateClientInvoice(
     )
     .eq("client_id", client.id)
     .is("billing_invoice_id", null)
-    .lt("scheduled_at", cutoff)
+    .lt("scheduled_at", sweepBefore)
     .in(
       "status",
       client.billing_type === "flat_rate"
@@ -219,10 +225,12 @@ async function generateClientInvoice(
 
     // Build notes: list all bookings so the client can see what was covered.
     const lines = bookings.map((b) => {
+      // Org-local, because the CLIENT reads this list: an evening visit
+      // rendered in UTC shows up dated the following day.
       const date = new Date(b.scheduled_at).toLocaleDateString("en-US", {
         month: "short",
         day: "numeric",
-        timeZone: "UTC",
+        timeZone: org.timezone ?? FALLBACK_TZ,
       });
       const svc = b.service_type ? humanizeEnum(b.service_type) : "Service";
       const status = b.status === "cancelled" ? " (cancelled)" : "";
@@ -542,7 +550,13 @@ export async function GET(request: Request) {
           clientsSkipped++;
           continue; // not their boundary day — the daily run asks again tomorrow
         }
-        const created = await generateClientInvoice(db, client, org, runDate, period);
+        const created = await generateClientInvoice(db, client, org, runDate, {
+          ...period,
+          endUtcIso: zonedMidnightUtc(
+            period.endYmdExclusive,
+            org.timezone ?? FALLBACK_TZ,
+          ).toISOString(),
+        });
         if (created) {
           invoicesCreated++;
           console.log(
