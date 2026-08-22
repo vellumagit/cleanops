@@ -77,7 +77,11 @@ export default async function ClientDashboardPage() {
             {(upcoming.data ?? []).map((b) => (
               <li key={b.id}>
                 <Link
-                  href={`/client/jobs`}
+                  // The row IS one specific visit — it goes to that visit, not
+                  // the list. The template literal was already here with its
+                  // interpolation missing: the fossil of this link meaning to
+                  // be dynamic, caught by Brian clicking it on his phone.
+                  href={`/client/jobs/${b.id}`}
                   className="tap-row flex items-center gap-3 rounded-lg border border-border bg-card p-4 hover:border-foreground/30"
                 >
                   <div className="min-w-0 flex-1">
