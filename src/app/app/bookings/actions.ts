@@ -2555,6 +2555,23 @@ export async function deleteBookingAction(formData: FormData) {
     } | null;
   };
 
+  // A billed booking is evidence, not clutter. Deleting it severs
+  // invoice_line_items.booking_id — manufacturing exactly the stripped-link
+  // damage this codebase has spent a week paying down — and leaves an invoice
+  // billing a visit the system no longer remembers. Same rule as
+  // un-completing: undo the money first, then the record can move.
+  {
+    const { resolveBilledBookings } = await import("@/lib/billed-bookings");
+    const billed = await resolveBilledBookings(supabase, [id]);
+    const inv = billed.get(id);
+    if (inv) {
+      console.warn(
+        `[bookings] refused delete of ${id} — billed by invoice ${inv.id} (${inv.status})`,
+      );
+      return;
+    }
+  }
+
   // Cascade: remove THIS occurrence and every FUTURE one in the series, but
   // KEEP past/completed visits — they're the client's history and may be
   // unbilled. (The UI only ever promises "every future occurrence"; a prior

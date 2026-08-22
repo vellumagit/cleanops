@@ -996,9 +996,27 @@ export async function deleteInvoiceAction(formData: FormData) {
 
   const { data: prev } = await supabase
     .from("invoices")
-    .select("status, amount_cents, client_id")
+    .select(
+      "status, amount_cents, client_id, payments:invoice_payments ( amount_cents, refunded_cents )",
+    )
     .eq("id", id)
     .maybeSingle();
+
+  // The void guard's twin — and delete is the harsher door. Two days ago
+  // voiding an invoice with money on it was blocked; deleting one was not,
+  // and deleting erases the PAYMENT ROWS with it: recorded money, gone from
+  // the books entirely. Same rule, same exit: undo the money first (refund
+  // the card payment, delete a mistyped manual row), then this works.
+  const paidCents = netPaidCents(
+    (prev as {
+      payments?: Array<{ amount_cents: number; refunded_cents: number | null }>;
+    } | null)?.payments ?? [],
+  );
+  if (paidCents > 0) {
+    throw new Error(
+      "This invoice has recorded payments. Refund or remove the payments first — deleting it now would erase money from the books.",
+    );
+  }
 
   const { error } = await supabase.from("invoices").delete().eq("id", id);
   if (error) throw error;

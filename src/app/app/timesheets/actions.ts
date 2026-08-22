@@ -862,12 +862,38 @@ export async function updateTimeEntryAction(
   const parsed = readManualTimeFormValues(formData, orgTz);
   if ("_error" in parsed) return { ok: false, error: parsed._error };
 
-  const { data: before } = await supabase
+  const { data: before } = (await supabase
     .from("time_entries")
-    .select("clock_in_at, clock_out_at, employee_id, booking_id")
+    .select(
+      "clock_in_at, clock_out_at, employee_id, booking_id, payroll_run_id, subcontractor_run_id",
+    )
     .eq("id", id)
     .eq("organization_id", membership.organization_id)
-    .maybeSingle();
+    .maybeSingle()) as unknown as {
+    data: {
+      clock_in_at: string;
+      clock_out_at: string | null;
+      employee_id: string;
+      booking_id: string | null;
+      payroll_run_id: string | null;
+      subcontractor_run_id: string | null;
+    } | null;
+  };
+
+  // Hours a pay run has swallowed are frozen. Editing an entry AFTER a
+  // payroll run or subcontractor statement snapshotted it changes the hours
+  // without changing the money — the run says one number, the timesheet
+  // another, and whichever a person checks second looks wrong. The unlock is
+  // deliberate and loud: delete the run or statement (which releases its
+  // entries), fix the hours, regenerate.
+  if (before?.payroll_run_id || before?.subcontractor_run_id) {
+    return {
+      ok: false,
+      error: before.payroll_run_id
+        ? "This entry is part of a payroll run. Delete that pay period to unlock it, fix the hours, then create the period again."
+        : "This entry is on a subcontractor statement. Delete that statement to unlock it, fix the hours, then generate again.",
+    };
+  }
 
   // The edit form round-trips seconds; the stored punch has milliseconds. A
   // field that comes back as the stored instant truncated to the second was
@@ -1101,6 +1127,26 @@ export async function bulkDeleteTimeEntriesAction(
     return { ok: false, error: "Select at most 100 entries at a time." };
   }
 
+  // Refuse the whole batch if any selected entry is frozen inside a pay run
+  // or statement — a partial "deleted 7 of 9" leaves the owner guessing which
+  // two survived and why. All-or-nothing keeps the refusal explainable.
+  {
+    const { data: frozen } = (await supabase
+      .from("time_entries")
+      .select("id, payroll_run_id, subcontractor_run_id")
+      .in("id", rawIds)
+      .eq("organization_id", membership.organization_id)
+      .or("payroll_run_id.not.is.null,subcontractor_run_id.not.is.null")) as unknown as {
+      data: Array<{ id: string }> | null;
+    };
+    if (frozen && frozen.length > 0) {
+      return {
+        ok: false,
+        error: `${frozen.length} of the selected entries are locked inside a pay run or statement. Delete that run/statement first, or deselect them.`,
+      };
+    }
+  }
+
   // Pull the rows we're about to remove so we can stamp full snapshots
   // into the audit log.
   const { data: before } = (await supabase
@@ -1225,12 +1271,34 @@ export async function deleteTimeEntryAction(
   const id = String(formData.get("id") ?? "");
   if (!id) return { ok: false, error: "Missing entry id." };
 
-  const { data: before } = await supabase
+  const { data: before } = (await supabase
     .from("time_entries")
-    .select("employee_id, booking_id, clock_in_at, clock_out_at")
+    .select(
+      "employee_id, booking_id, clock_in_at, clock_out_at, payroll_run_id, subcontractor_run_id",
+    )
     .eq("id", id)
     .eq("organization_id", membership.organization_id)
-    .maybeSingle();
+    .maybeSingle()) as unknown as {
+    data: {
+      employee_id: string;
+      booking_id: string | null;
+      clock_in_at: string;
+      clock_out_at: string | null;
+      payroll_run_id: string | null;
+      subcontractor_run_id: string | null;
+    } | null;
+  };
+
+  // Same freeze as updateTimeEntryAction — deleting a paid entry is the
+  // harsher version of editing one.
+  if (before?.payroll_run_id || before?.subcontractor_run_id) {
+    return {
+      ok: false,
+      error: before.payroll_run_id
+        ? "This entry is part of a payroll run. Delete that pay period first to unlock it."
+        : "This entry is on a subcontractor statement. Delete that statement first to unlock it.",
+    };
+  }
 
   const { error } = await supabase
     .from("time_entries")
