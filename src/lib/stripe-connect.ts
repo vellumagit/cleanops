@@ -248,8 +248,15 @@ export async function createInvoiceCheckoutSession(args: {
 
   if (!invoice) return null;
   // A refunded invoice is deliberately CLOSED, not unpaid — minting a session
-  // for it would recharge a client the business just paid back.
-  if (invoice.status === "paid" || invoice.status === "refunded") return null;
+  // for it would recharge a client the business just paid back. Void is the
+  // same family: the public page hides the button and its action refuses,
+  // but this is the chokepoint every caller goes through.
+  if (
+    invoice.status === "paid" ||
+    invoice.status === "refunded" ||
+    invoice.status === "void"
+  )
+    return null;
   if (!invoice.amount_cents || invoice.amount_cents <= 0) return null;
 
   // Charge the OUTSTANDING balance, not the full invoice — otherwise a

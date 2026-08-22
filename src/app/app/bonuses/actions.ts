@@ -320,6 +320,25 @@ export async function markBonusPaidAction(
     return { ok: false, error: "Only owners and admins can mark bonuses paid." };
   }
 
+  // A bonus inside a pay run is paid BY the run — marking it paid here too
+  // means it's handed over twice: once in cash off this button, once in the
+  // run's total when that gets paid out.
+  const { data: row } = (await supabase
+    .from("bonuses")
+    .select("payroll_run_id")
+    .eq("id", id)
+    .eq("organization_id", membership.organization_id)
+    .maybeSingle()) as unknown as {
+    data: { payroll_run_id: string | null } | null;
+  };
+  if (row?.payroll_run_id) {
+    return {
+      ok: false,
+      error:
+        "This bonus is inside a pay period — it gets marked paid when that payroll run is paid. To pay it separately, delete the run first.",
+    };
+  }
+
   const { error } = await supabase
     .from("bonuses")
     .update({ status: "paid", paid_at: new Date().toISOString() })

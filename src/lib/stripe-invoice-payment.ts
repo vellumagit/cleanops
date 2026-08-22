@@ -197,12 +197,13 @@ export async function recordStripeInvoicePayment(
 
   const { data: invoice } = (await admin
     .from("invoices")
-    .select("id, organization_id, voided_at")
+    .select("id, organization_id, number, voided_at")
     .eq("id", args.invoiceId)
     .maybeSingle()) as unknown as {
     data: {
       id: string;
       organization_id: string;
+      number: string | null;
       voided_at: string | null;
     } | null;
   };
@@ -218,7 +219,15 @@ export async function recordStripeInvoicePayment(
     );
     return;
   }
-  if (invoice.voided_at) return;
+  // A voided invoice can still get paid: a checkout session minted before
+  // the void stays live for 24 hours, and the client's card doesn't know the
+  // invoice died. Dropping the event here (the old behavior) made the money
+  // invisible — charged in Stripe, nothing in Sollos, nobody told. Record it
+  // truthfully instead: the ledger trigger forces status back to 'void'
+  // whatever the payment rows sum to, so this can't resurrect the invoice,
+  // and a recorded payment is one the in-app refund flow can actually
+  // return. The notification below (fresh-insert path only, so it fires
+  // exactly once) tells the owner to do exactly that.
 
   // Before the payment dedupe, not after. The two Stripe events race, and if
   // the payment row already exists this function returns early — a tip written
@@ -272,6 +281,24 @@ export async function recordStripeInvoicePayment(
       tipCents ? ` + ${tipCents}c tip` : ""
     } on invoice ${invoice.id}`,
   );
+
+  if (invoice.voided_at) {
+    try {
+      const { notify } = await import("@/lib/notify");
+      await notify({
+        organizationId: invoice.organization_id,
+        audience: "org-admins",
+        type: "billing",
+        title: "Payment on a voided invoice",
+        body: `A client just paid $${(args.amountCents / 100).toFixed(2)} on ${
+          invoice.number ?? "an invoice"
+        } — which is void. Their checkout link was created before the void. The money is in your Stripe balance with no open invoice behind it; refund the payment from the invoice page.`,
+        href: `/app/invoices/${invoice.id}`,
+      });
+    } catch (err) {
+      console.error("[stripe] void-payment notification failed:", err);
+    }
+  }
 
   // If that payment completed the invoice (the ledger trigger flips paid_at),
   // fire the receipt + review-request bundle. Online payers previously never
