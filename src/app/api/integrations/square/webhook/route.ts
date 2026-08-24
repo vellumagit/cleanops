@@ -10,16 +10,34 @@ import { verifyWebhookSignature } from "@/lib/square";
  *
  *   1. Verify the HMAC signature against SQUARE_WEBHOOK_SIGNATURE_KEY —
  *      reject anything unsigned or with a wrong signature.
- *   2. Idempotency: skip events we've already recorded in
- *      `integration_events`.
- *   3. On payment.updated with status=COMPLETED, look up the matching
- *      Sollos invoice via square_order_id, then insert a row into
- *      invoice_payments. The `invoice_payments_sync_totals` trigger will
- *      flip the invoice's status automatically.
+ *   2. Claim the event in `integration_events` (UNIQUE on provider +
+ *      provider_event_id), so retries and concurrent deliveries collapse
+ *      to one handling.
+ *   3. Hand payment.updated / payment.created to the shared recorder.
+ *
+ * Rebuilt to the standard the Stripe hardening set:
+ *
+ *   - THE CLAIM ROLLS BACK ON FAILURE. The old handler claimed the event,
+ *     then discarded the ledger insert's error — one network blip and the
+ *     payment was lost forever, because Square's retry deduped against the
+ *     claim of the failed attempt. Now a handler failure deletes the claim
+ *     and returns 500, so Square retries with backoff (it keeps trying for
+ *     ~72 hours) and the retry actually runs.
+ *
+ *   - REFUNDS ARE HANDLED, NOT FILED. Square fires payment.updated again
+ *     when a refund completes, carrying refunded_money — the CUMULATIVE
+ *     total, which plugs straight into the same clamped reconciler Stripe
+ *     uses (tip clawback and the one-notification rule included). Without
+ *     this, a refund issued from the Square dashboard left the invoice
+ *     "paid" forever. The refund.* events themselves stay recorded-but-
+ *     ignored: the payment object is the cumulative source of truth.
+ *
+ *   - TIPS ARE SUBTRACTED. total_money is GROSS. Booking it whole would
+ *     overpay the invoice on paper and owe the cleaner nothing.
  *
  * We return 200 for all "processed" outcomes (including "already seen")
- * so Square stops retrying. Only return 4xx on verification failure so
- * a misconfigured key shows up loudly in the dashboard.
+ * so Square stops retrying; 4xx only on verification failure; 500 only
+ * when handling failed and a retry is genuinely wanted.
  */
 export async function POST(request: NextRequest) {
   // The raw body is required for HMAC verification — we read text()
@@ -64,6 +82,8 @@ export async function POST(request: NextRequest) {
           status?: string;
           order_id?: string;
           total_money?: { amount?: number; currency?: string };
+          tip_money?: { amount?: number };
+          refunded_money?: { amount?: number };
           receipt_url?: string;
           card_details?: { card?: { last_4?: string } };
           created_at?: string;
@@ -87,18 +107,6 @@ export async function POST(request: NextRequest) {
 
   const admin = createSupabaseAdminClient();
 
-  // Idempotency guard: if we've already logged this event, drop.
-  const { data: existing } = (await admin
-    .from("integration_events" as never)
-    .select("id")
-    .eq("provider" as never, "square" as never)
-    .eq("provider_event_id" as never, eventId as never)
-    .maybeSingle()) as unknown as { data: { id: string } | null };
-
-  if (existing) {
-    return NextResponse.json({ ok: true, deduped: true });
-  }
-
   // Resolve org by merchant_id so we can scope writes correctly.
   const { data: conn } = (await admin
     .from("integration_connections" as never)
@@ -110,140 +118,90 @@ export async function POST(request: NextRequest) {
   };
   const orgId = conn?.organization_id ?? null;
 
-  // Record the event up front so we're idempotent even if the handler
-  // below partially fails. `integration_events_provider_event_uidx` has
-  // a UNIQUE on (provider, provider_event_id).
-  await admin.from("integration_events" as never).insert({
-    organization_id: orgId,
-    provider: "square",
-    provider_event_id: eventId,
-    event_type: eventType,
-    payload: event,
-  } as never);
-
-  // We only care about a narrow slice of events for now: completed
-  // payments. Everything else is recorded and ignored.
-  if (
-    eventType === "payment.updated" ||
-    eventType === "payment.created"
-  ) {
-    const payment = event.data?.object?.payment;
-    if (
-      payment?.status === "COMPLETED" &&
-      payment.order_id &&
-      payment.total_money?.amount != null &&
-      orgId
-    ) {
-      await recordCompletedPayment(admin, {
-        orgId,
-        orderId: payment.order_id,
-        amountCents: payment.total_money.amount,
-        paymentId: payment.id ?? eventId,
-        last4: payment.card_details?.card?.last_4 ?? null,
-        receivedAt: payment.created_at ?? new Date().toISOString(),
-      });
+  // Claim the event. The UNIQUE index on (provider, provider_event_id) is
+  // the real dedupe — a concurrent duplicate delivery hits 23505 here and
+  // acks without double-handling.
+  const { error: claimErr } = (await admin
+    .from("integration_events" as never)
+    .insert({
+      organization_id: orgId,
+      provider: "square",
+      provider_event_id: eventId,
+      event_type: eventType,
+      payload: event,
+    } as never)) as unknown as {
+    error: { message: string; code?: string } | null;
+  };
+  if (claimErr) {
+    if (claimErr.code === "23505") {
+      return NextResponse.json({ ok: true, deduped: true });
     }
+    // Couldn't even record the event — let Square retry.
+    console.error("[square/webhook] event claim failed:", claimErr.message);
+    return NextResponse.json({ error: "claim_failed" }, { status: 500 });
+  }
+
+  try {
+    if (eventType === "payment.updated" || eventType === "payment.created") {
+      const payment = event.data?.object?.payment;
+
+      if (payment && !orgId) {
+        // A payment event from a merchant we have no connection for —
+        // misconfigured webhook or a foreign merchant. Money may be moving
+        // with nowhere to book it; say so loudly.
+        console.error(
+          `[square/webhook] payment event from unknown merchant ${merchantId} — no org connection matches`,
+        );
+      }
+
+      if (
+        payment?.status === "COMPLETED" &&
+        payment.order_id &&
+        payment.total_money?.amount != null &&
+        orgId
+      ) {
+        const { recordSquareInvoicePayment } = await import(
+          "@/lib/square-invoice-payment"
+        );
+        await recordSquareInvoicePayment({
+          orderId: payment.order_id,
+          squarePaymentId: payment.id ?? eventId,
+          totalCents: payment.total_money.amount,
+          tipCents: payment.tip_money?.amount ?? 0,
+          last4: payment.card_details?.card?.last_4 ?? null,
+          receivedAt: payment.created_at ?? new Date().toISOString(),
+          expectedOrgId: orgId,
+        });
+      }
+
+      // Cumulative refund state rides on the payment object itself.
+      if (
+        payment?.id &&
+        (payment.refunded_money?.amount ?? 0) > 0 &&
+        orgId
+      ) {
+        const { recordProviderRefund } = await import(
+          "@/lib/stripe-invoice-payment"
+        );
+        await recordProviderRefund({
+          provider: "square",
+          piId: payment.id,
+          amountRefundedCents: payment.refunded_money?.amount ?? 0,
+          expectedOrgId: orgId,
+        });
+      }
+    }
+  } catch (err) {
+    // Roll the claim back so Square's retry isn't deduped into silence,
+    // then 500 to ask for that retry.
+    console.error(`[square/webhook] handling ${eventType} failed:`, err);
+    await admin
+      .from("integration_events" as never)
+      .delete()
+      .eq("provider" as never, "square" as never)
+      .eq("provider_event_id" as never, eventId as never);
+    return NextResponse.json({ error: "handler_failed" }, { status: 500 });
   }
 
   return NextResponse.json({ ok: true });
-}
-
-/**
- * Find the Sollos invoice that this Square payment is for (match on
- * square_order_id) and insert an invoice_payments row. The DB trigger
- * invoice_payments_sync_totals picks it up and flips the invoice's
- * status.
- */
-async function recordCompletedPayment(
-  admin: ReturnType<typeof createSupabaseAdminClient>,
-  args: {
-    orgId: string;
-    orderId: string;
-    amountCents: number;
-    paymentId: string;
-    last4: string | null;
-    receivedAt: string;
-  },
-): Promise<void> {
-  const { data: invoice } = (await admin
-    .from("invoices" as never)
-    .select("id, organization_id, status, voided_at")
-    .eq("square_order_id" as never, args.orderId as never)
-    .maybeSingle()) as unknown as {
-    data: {
-      id: string;
-      organization_id: string;
-      status: string;
-      voided_at: string | null;
-    } | null;
-  };
-
-  if (!invoice) {
-    console.error(
-      "[square/webhook] payment had no matching invoice; order_id=",
-      args.orderId,
-    );
-    return;
-  }
-  if (invoice.organization_id !== args.orgId) {
-    // Cross-tenant guard — the merchant + invoice's orgs must agree.
-    console.error(
-      "[square/webhook] org mismatch on payment; dropping. order_id=",
-      args.orderId,
-    );
-    return;
-  }
-  if (invoice.voided_at) {
-    // Payment came in on a voided invoice. Don't record — would confuse
-    // the trigger. Real-world: the org voided right as the client paid.
-    // Operator handles the refund out of band.
-    console.warn(
-      "[square/webhook] payment on a voided invoice; dropping. invoice_id=",
-      invoice.id,
-    );
-    return;
-  }
-
-  // Defensive: skip if we've already inserted a payment with the same
-  // provider_payment_id (Square can retry the same payment.updated event
-  // and our own idempotency guard above covers events — this covers
-  // same-payment-via-different-events).
-  const { data: dup } = (await admin
-    .from("invoice_payments" as never)
-    .select("id")
-    .eq("provider" as never, "square" as never)
-    .eq("provider_payment_id" as never, args.paymentId as never)
-    .maybeSingle()) as unknown as { data: { id: string } | null };
-  if (dup) return;
-
-  await admin.from("invoice_payments" as never).insert({
-    organization_id: invoice.organization_id,
-    invoice_id: invoice.id,
-    amount_cents: args.amountCents,
-    method: "card",
-    reference: args.last4 ? `card ending ${args.last4}` : null,
-    notes: null,
-    received_at: args.receivedAt,
-    provider: "square",
-    provider_payment_id: args.paymentId,
-  } as never);
-
-  // Receipt + review request when this payment completed the invoice — same
-  // wiring as the Stripe Connect webhook (audit P2). Idempotent via the
-  // CAS claim on invoices.receipt_sent_at inside autoOnInvoicePaid.
-  try {
-    const { data: after } = (await admin
-      .from("invoices")
-      .select("paid_at")
-      .eq("id", invoice.id)
-      .maybeSingle()) as unknown as { data: { paid_at: string | null } | null };
-    if (after?.paid_at) {
-      const { autoOnInvoicePaid } = await import("@/lib/automations");
-      autoOnInvoicePaid(invoice.id).catch((err) =>
-        console.error("[square-webhook] autoOnInvoicePaid failed:", err),
-      );
-    }
-  } catch (err) {
-    console.error("[square-webhook] paid-check failed:", err);
-  }
 }

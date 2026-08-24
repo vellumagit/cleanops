@@ -452,6 +452,58 @@ export type RefundPaymentState = {
  * reconciles the payment row and claws back any unpaid tip — the same path a
  * platform-dashboard refund takes, so both roads produce identical books.
  */
+export async function refundSquarePaymentAction(
+  _prev: RefundPaymentState,
+  formData: FormData,
+): Promise<RefundPaymentState> {
+  const { membership } = await getActionContext();
+  if (!["owner", "admin"].includes(membership.role)) {
+    return { error: "Only owners and admins can issue refunds." };
+  }
+
+  const paymentId = String(formData.get("payment_id") ?? "");
+  const invoiceId = String(formData.get("invoice_id") ?? "");
+  if (!paymentId || !invoiceId) return { error: "Missing payment." };
+
+  const full = String(formData.get("mode") ?? "") === "full";
+  let amountCents: number | null = null;
+  if (!full) {
+    const parsed = parseDollarsToCents(
+      String(formData.get("amount_dollars") ?? ""),
+    );
+    if (parsed === null || parsed <= 0) {
+      return { error: "Enter an amount to refund." };
+    }
+    amountCents = parsed;
+  }
+
+  const { issueSquareRefund } = await import("@/lib/square-refunds");
+  const result = await issueSquareRefund({
+    organizationId: membership.organization_id,
+    paymentId,
+    amountCents,
+    requestedBy: membership.id,
+  });
+  if (!result.ok) return { error: result.error };
+
+  await logAuditEvent({
+    membership,
+    action: "update",
+    entity: "invoice",
+    entity_id: invoiceId,
+    after: {
+      refund_issued_cents: result.refundedCents,
+      full_refund: result.full,
+      payment_id: paymentId,
+      provider: "square",
+    },
+  });
+
+  revalidatePath(`/app/invoices/${invoiceId}`);
+  revalidatePath("/app/invoices");
+  return { ok: true };
+}
+
 export async function refundStripePaymentAction(
   _prev: RefundPaymentState,
   formData: FormData,

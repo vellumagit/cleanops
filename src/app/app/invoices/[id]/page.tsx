@@ -616,12 +616,13 @@ export default async function InvoiceDetailPage({
                         platform's Stripe account, so the owner has no
                         dashboard of their own to do it from. Owner/admin,
                         matching every other money-out control. */}
-                    {p.provider === "stripe" &&
+                    {(p.provider === "stripe" || p.provider === "square") &&
                       canRefund &&
                       p.amount_cents - (p.refunded_cents ?? 0) > 0 && (
                         <RefundPaymentButton
                           paymentId={p.id}
                           invoiceId={invoice.id}
+                          provider={p.provider}
                           remainingCents={p.amount_cents - (p.refunded_cents ?? 0)}
                           remainingLabel={formatCurrencyCents(
                             p.amount_cents - (p.refunded_cents ?? 0),

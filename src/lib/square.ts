@@ -74,7 +74,7 @@ export function squareApiBase(): string {
 }
 
 /** Square-Version header value — pin to a known-good version. */
-const SQUARE_API_VERSION = "2024-10-17";
+export const SQUARE_API_VERSION = "2024-10-17";
 
 // -----------------------------------------------------------------------------
 // CSRF state token
@@ -568,13 +568,49 @@ export async function createInvoiceCheckoutLink(args: {
   const conn = await loadConnection(args.organizationId);
   if (!conn?.locationId) return null;
 
+  const admin = createSupabaseAdminClient();
+
+  // Chokepoint refusals, same list as the Stripe minter: paid and refunded
+  // are settled, void is dead. The public action refuses these too, but
+  // every caller shares THIS door.
+  const { data: invRow } = (await admin
+    .from("invoices")
+    .select("status")
+    .eq("id", args.invoiceId)
+    .maybeSingle()) as unknown as { data: { status: string } | null };
+  if (
+    !invRow ||
+    invRow.status === "paid" ||
+    invRow.status === "refunded" ||
+    invRow.status === "void"
+  ) {
+    return null;
+  }
+
+  // Square-hosted tipping, keyed to the SAME org toggle as Stripe checkout.
+  // The webhook subtracts payment.tip_money before booking the invoice
+  // portion and records the tip through the shared split/custody path.
+  const { data: orgRow } = (await admin
+    .from("organizations")
+    .select("tipping_settings")
+    .eq("id", args.organizationId)
+    .maybeSingle()) as unknown as {
+    data: { tipping_settings: unknown } | null;
+  };
+  const { parseTippingSettings } = await import("@/lib/tip-split");
+  const tippingEnabled = parseTippingSettings(orgRow?.tipping_settings).enabled;
+
   // Default to CAD (the product default) rather than USD — a missing currency
   // must not silently charge a CAD org's customer in US dollars.
   const currency = (args.currency ?? "CAD").toUpperCase();
 
   const body = {
-    // Scoped to (org, invoice) so repeated calls produce the same link.
-    idempotency_key: `sollos-invoice-${args.invoiceId}`,
+    // Scoped to (invoice, amount): the same outstanding balance reuses the
+    // same link, and a CHANGED balance (partial payment, edited invoice)
+    // mints a fresh one. The old key had no amount in it, so the first
+    // partial payment made every later mint collide with Square's
+    // same-key-different-body rule and fail forever.
+    idempotency_key: `sollos-invoice-${args.invoiceId}-${args.amountCents}`,
     quick_pay: {
       name: `Invoice ${args.invoiceNumber} — ${args.orgName}`,
       price_money: {
@@ -590,7 +626,7 @@ export async function createInvoiceCheckoutLink(args: {
     checkout_options: {
       redirect_url: args.successUrl,
       ask_for_shipping_address: false,
-      allow_tipping: false,
+      allow_tipping: tippingEnabled,
     },
     payment_note: `Sollos invoice ${args.invoiceId}`,
   };
@@ -618,7 +654,6 @@ export async function createInvoiceCheckoutLink(args: {
   }
 
   // Stash the link id + order id on the invoice so the webhook can find us.
-  const admin = createSupabaseAdminClient();
   await admin
     .from("invoices")
     .update({

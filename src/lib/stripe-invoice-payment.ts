@@ -89,15 +89,19 @@ export function invoiceFromMetadata(
  * recorded with a NULL membership rather than dropped. The client paid it; it
  * belongs in the books either way.
  */
-async function recordInvoiceTip(
+export async function recordInvoiceTip(
   admin: ReturnType<typeof createSupabaseAdminClient>,
   args: {
     invoiceId: string;
     organizationId: string;
     tipCents: number;
     piId: string;
+    /** Which processor collected it. Square checkout tips land here too —
+     *  same table, same split, same custody rules. */
+    provider?: "stripe" | "square";
   },
 ): Promise<void> {
+  const provider = args.provider ?? "stripe";
   try {
     // Cheap pre-check. The partial unique indexes on invoice_tips are the real
     // guard — checkout.session.completed and payment_intent.succeeded race, and
@@ -105,7 +109,7 @@ async function recordInvoiceTip(
     const { data: already } = (await admin
       .from("invoice_tips" as never)
       .select("id")
-      .eq("provider" as never, "stripe" as never)
+      .eq("provider" as never, provider as never)
       .eq("provider_payment_id" as never, args.piId as never)
       .limit(1)
       .maybeSingle()) as unknown as { data: { id: string } | null };
@@ -130,7 +134,7 @@ async function recordInvoiceTip(
             membership_id: a.membershipId,
             amount_cents: a.amountCents,
             share_minutes: a.shareMinutes,
-            provider: "stripe",
+            provider,
             provider_payment_id: args.piId,
           }))
         : [
@@ -140,7 +144,7 @@ async function recordInvoiceTip(
               membership_id: null,
               amount_cents: args.tipCents,
               share_minutes: null,
-              provider: "stripe",
+              provider,
               provider_payment_id: args.piId,
             },
           ];
@@ -339,19 +343,25 @@ export async function recordStripeInvoicePayment(
  * handed that money to a person, and deleting the record of it wouldn't
  * bring it back — it says so loudly in the log instead.
  */
-export async function recordStripeRefund(args: {
+export async function recordProviderRefund(args: {
+  /** Processor payment id — Stripe PI or Square payment id. */
   piId: string | null;
-  /** Stripe's cumulative amount_refunded from the charge object. */
+  /** The processor's CUMULATIVE refunded amount for this payment. */
   amountRefundedCents: number;
   expectedOrgId: string | null;
+  /** Everything in here is provider-agnostic except the row lookup —
+   *  Square reuses the clamp, the tip clawback, and the delta-guarded
+   *  notification verbatim instead of re-earning their bugs. */
+  provider?: "stripe" | "square";
 }): Promise<void> {
   if (!args.piId || args.amountRefundedCents <= 0) return;
+  const provider = args.provider ?? "stripe";
   const admin = createSupabaseAdminClient();
 
   const { data: payment } = (await admin
     .from("invoice_payments" as never)
     .select("id, amount_cents, refunded_cents, organization_id, invoice_id")
-    .eq("provider" as never, "stripe" as never)
+    .eq("provider" as never, provider as never)
     .eq("provider_payment_id" as never, args.piId as never)
     .maybeSingle()) as unknown as {
     data: {
@@ -367,13 +377,13 @@ export async function recordStripeRefund(args: {
     // A refund for a payment we never recorded — nothing to reverse. Ack
     // (don't 500-loop Stripe) and log for manual reconciliation.
     console.warn(
-      `[stripe] charge.refunded: no recorded payment for PI ${args.piId}; nothing to reconcile`,
+      `[${provider}] refund event: no recorded payment for ${args.piId}; nothing to reconcile`,
     );
     return;
   }
   if (args.expectedOrgId && payment.organization_id !== args.expectedOrgId) {
     console.warn(
-      `[stripe] refund PI ${args.piId} is not in org ${args.expectedOrgId}, skipping`,
+      `[${provider}] refund ${args.piId} is not in org ${args.expectedOrgId}, skipping`,
     );
     return;
   }
@@ -398,7 +408,7 @@ export async function recordStripeRefund(args: {
     throw new Error(`refund ledger update failed: ${refundErr.message}`);
   }
   console.log(
-    `[stripe] refund reconciled: ${invoiceRefundCents}c on invoice ${payment.invoice_id}` +
+    `[${provider}] refund reconciled: ${invoiceRefundCents}c on invoice ${payment.invoice_id}` +
       (tipRefundCents > 0 ? `, ${tipRefundCents}c against the tip` : ""),
   );
 
@@ -428,11 +438,11 @@ export async function recordStripeRefund(args: {
         title: "Refund issued",
         body: `$${(deltaCents / 100).toFixed(2)} returned to the client on ${
           inv?.number ?? "an invoice"
-        }${tipRefundCents > 0 ? ", tip included" : ""}. It comes out of your Stripe balance.`,
+        }${tipRefundCents > 0 ? ", tip included" : ""}. It comes out of your ${provider === "square" ? "Square" : "Stripe"} balance.`,
         href: `/app/invoices/${payment.invoice_id}`,
       });
     } catch (err) {
-      console.error("[stripe] refund notification failed:", err);
+      console.error(`[${provider}] refund notification failed:`, err);
     }
   }
 
@@ -442,7 +452,7 @@ export async function recordStripeRefund(args: {
   const { data: tipRows } = (await admin
     .from("invoice_tips" as never)
     .select("id, amount_cents, paid_out_at")
-    .eq("provider" as never, "stripe" as never)
+    .eq("provider" as never, provider as never)
     .eq("provider_payment_id" as never, args.piId as never)) as unknown as {
     data: Array<{
       id: string;
@@ -484,3 +494,5 @@ export async function recordStripeRefund(args: {
     );
   }
 }
+
+export const recordStripeRefund = recordProviderRefund;

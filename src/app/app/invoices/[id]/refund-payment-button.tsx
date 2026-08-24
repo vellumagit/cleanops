@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { SubmitButton } from "@/components/submit-button";
 import {
   refundStripePaymentAction,
+  refundSquarePaymentAction,
   type RefundPaymentState,
 } from "../actions";
 
@@ -25,6 +26,7 @@ export function RefundPaymentButton({
   invoiceId,
   remainingCents,
   remainingLabel,
+  provider = "stripe",
 }: {
   paymentId: string;
   invoiceId: string;
@@ -32,8 +34,13 @@ export function RefundPaymentButton({
   remainingCents: number;
   /** The same, formatted server-side ("$140.00"). */
   remainingLabel: string;
+  /** Which processor holds the charge — picks the refund action. */
+  provider?: "stripe" | "square" | string | null;
 }) {
-  const [state, formAction] = useActionState(refundStripePaymentAction, empty);
+  const [state, formAction] = useActionState(
+    provider === "square" ? refundSquarePaymentAction : refundStripePaymentAction,
+    empty,
+  );
   const [full, setFull] = useState(false);
   const [amount, setAmount] = useState((remainingCents / 100).toFixed(2));
 
@@ -41,7 +48,7 @@ export function RefundPaymentButton({
     return (
       <p className="flex items-center gap-1.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-300">
         <CheckCircle2 className="h-3.5 w-3.5" />
-        Refund issued — the ledger updates as Stripe confirms it, usually
+        Refund issued — the ledger updates as the processor confirms it, usually
         within seconds. The client sees the money in 5–10 business days.
       </p>
     );
