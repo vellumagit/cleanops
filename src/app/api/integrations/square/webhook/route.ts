@@ -11,8 +11,8 @@ import { verifyWebhookSignature } from "@/lib/square";
  *   1. Verify the HMAC signature against SQUARE_WEBHOOK_SIGNATURE_KEY —
  *      reject anything unsigned or with a wrong signature.
  *   2. Claim the event in `integration_events` (UNIQUE on provider +
- *      provider_event_id), so retries and concurrent deliveries collapse
- *      to one handling.
+ *      event_id), so retries and concurrent deliveries collapse to one
+ *      handling.
  *   3. Hand payment.updated / payment.created to the shared recorder.
  *
  * Rebuilt to the standard the Stripe hardening set:
@@ -118,7 +118,7 @@ export async function POST(request: NextRequest) {
   };
   const orgId = conn?.organization_id ?? null;
 
-  // Claim the event. The UNIQUE index on (provider, provider_event_id) is
+  // Claim the event. The UNIQUE index on (provider, event_id) is
   // the real dedupe — a concurrent duplicate delivery hits 23505 here and
   // acks without double-handling.
   const { error: claimErr } = (await admin
@@ -126,7 +126,7 @@ export async function POST(request: NextRequest) {
     .insert({
       organization_id: orgId,
       provider: "square",
-      provider_event_id: eventId,
+      event_id: eventId,
       event_type: eventType,
       payload: event,
     } as never)) as unknown as {
@@ -199,7 +199,7 @@ export async function POST(request: NextRequest) {
       .from("integration_events" as never)
       .delete()
       .eq("provider" as never, "square" as never)
-      .eq("provider_event_id" as never, eventId as never);
+      .eq("event_id" as never, eventId as never);
     return NextResponse.json({ error: "handler_failed" }, { status: 500 });
   }
 
