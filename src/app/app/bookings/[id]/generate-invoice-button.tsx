@@ -22,8 +22,11 @@ const EMPTY: GenerateInvoiceState = {};
  */
 export function GenerateInvoiceButton({
   bookingId,
+  totalCents,
 }: {
   bookingId: string;
+  /** The booking's price — a zero here means the draft will open at $0. */
+  totalCents: number;
 }) {
   const [state, action] = useActionState<GenerateInvoiceState, FormData>(
     generateInvoiceFromBookingAction,
@@ -39,6 +42,13 @@ export function GenerateInvoiceButton({
           Generate invoice
         </SubmitButton>
       </form>
+      {totalCents === 0 && !state.ok && (
+        <p className="text-[11px] text-amber-700 dark:text-amber-400">
+          This job has no price, so the invoice will start at $0. Set the
+          price on the booking first (Edit), or fill in the amount on the
+          draft after generating.
+        </p>
+      )}
       {state.error && <FormError message={state.error} />}
       {state.ok && state.invoiceId && (
         <div className="rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-400">

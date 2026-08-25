@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { CheckCircle2, Copy, Pencil, Send } from "lucide-react";
+import { CheckCircle2, Copy, Pencil, Receipt, Send } from "lucide-react";
 import { requireMembership, can } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
@@ -211,14 +211,26 @@ export default async function BookingDetailPage({
   // hatch so the owner doesn't have to pick through Vercel logs when
   // the auto-run didn't fire (migration not applied, automation
   // toggle off, etc.).
-  const { data: existingInvoice } = canEdit
+  // Voided invoices don't count — that work is billable again, and the
+  // generator's own dedupe already ignores them. Without the filter here, a
+  // voided invoice hid this button forever while the action would have
+  // happily re-invoiced.
+  const { data: existingInvoice } = (canEdit
     ? await supabase
         .from("invoices")
-        .select("id")
+        .select("id, number, status, amount_cents")
         .eq("booking_id", id)
+        .is("voided_at", null)
         .limit(1)
         .maybeSingle()
-    : { data: null };
+    : { data: null }) as {
+    data: {
+      id: string;
+      number: string | null;
+      status: string;
+      amount_cents: number;
+    } | null;
+  };
   // Bookings stay open to every manager — the job list is context anyone
   // running a day needs. But two buttons on this page reach INTO capabilities
   // gated elsewhere: one drafts an invoice, the other spends money texting
@@ -367,8 +379,32 @@ export default async function BookingDetailPage({
         canEdit ? (
           <div className="flex flex-wrap items-center gap-2">
             {showGenerateInvoice && (
-              <GenerateInvoiceButton bookingId={booking.id} />
+              <GenerateInvoiceButton
+                bookingId={booking.id}
+                totalCents={booking.total_cents ?? 0}
+              />
             )}
+            {/* The door must never just vanish. Once an invoice exists the
+                generate button hides — and before this link, the page showed
+                NOTHING in its place. Svitlana generated a draft from a
+                zero-priced job, came back, found no button and no trace, and
+                reasonably concluded she "couldn't create an invoice". The
+                amount is shown because a $0 draft IS the problem worth
+                seeing. */}
+            {bookingStatus === "completed" &&
+              existingInvoice &&
+              can(membership, "invoicing") && (
+                <Link
+                  href={`/app/invoices/${existingInvoice.id}`}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/40 px-3 py-1.5 text-xs font-medium hover:bg-muted"
+                >
+                  <Receipt className="h-3.5 w-3.5" />
+                  {existingInvoice.number ?? "Invoice"} ·{" "}
+                  {formatCurrencyCents(existingInvoice.amount_cents)} ·{" "}
+                  {existingInvoice.status}
+                  <span className="text-muted-foreground">— open</span>
+                </Link>
+              )}
             {/* Pending excluded alongside the terminal statuses: completing
                 also drafts an invoice, and billing a client for a job nobody
                 confirmed is the wrong end of that mistake to discover. Confirm
