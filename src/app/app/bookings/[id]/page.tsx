@@ -503,7 +503,13 @@ export default async function BookingDetailPage({
               <div>
                 <dt className="text-xs text-muted-foreground">Total</dt>
                 <dd className="mt-0.5 font-semibold tabular-nums text-foreground">
-                  {formatCurrencyCents(booking.total_cents)}
+                  {booking.total_cents ? (
+                    formatCurrencyCents(booking.total_cents)
+                  ) : (
+                    <span className="inline-flex items-center rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400">
+                      No price — set it in Edit
+                    </span>
+                  )}
                 </dd>
               </div>
               <div>

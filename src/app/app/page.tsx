@@ -28,6 +28,7 @@ import {
 import { cn } from "@/lib/utils";
 import { memberDisplayName } from "@/lib/member-display";
 import { getOrgTimezone } from "@/lib/org-timezone";
+import { NeedsAttention } from "./needs-attention";
 
 export const metadata = { title: "Dashboard" };
 
@@ -375,6 +376,11 @@ export default async function DashboardPage() {
           />
         </div>
       )}
+
+      {/* The app saying what it knows before it becomes a support text —
+          money-shaped loose ends with the click that fixes each. Gated to
+          money-visible roles: every bucket is prices and invoices. */}
+      {canMoney && <NeedsAttention tz={tz} />}
 
       {/* SECONDARY: avg rating + top performers + today's jobs + activity */}
       <div className="grid gap-4 lg:grid-cols-3">

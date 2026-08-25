@@ -698,7 +698,15 @@ function TableView({
                   />
                 </td>
                 <td className="px-3 py-2.5 text-right tabular-nums font-medium">
-                  {formatCurrencyCents(r.total_cents)}
+                  {/* "$0.00" reads like a legitimate free visit; "No price"
+                      reads like the loose end it usually is. */}
+                  {r.total_cents ? (
+                    formatCurrencyCents(r.total_cents)
+                  ) : (
+                    <span className="inline-flex items-center rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400">
+                    No price
+                  </span>
+                  )}
                 </td>
               </tr>
             ))}
@@ -861,7 +869,13 @@ function CardsView({
 
                 <div className="mt-auto flex items-center justify-between gap-2 pt-1 border-t border-border">
                   <span className="text-sm font-semibold tabular-nums">
-                    {formatCurrencyCents(r.total_cents)}
+                    {r.total_cents ? (
+                      formatCurrencyCents(r.total_cents)
+                    ) : (
+                      <span className="inline-flex items-center rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400">
+                    No price
+                  </span>
+                    )}
                   </span>
                   {canEdit && employees.length > 0 && (
                     <span onClick={(e) => e.stopPropagation()}>
