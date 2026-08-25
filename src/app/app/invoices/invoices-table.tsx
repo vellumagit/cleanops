@@ -21,6 +21,7 @@ export type InvoiceRow = {
     | "overdue"
     | "void"
     | "refunded";
+  number: string | null;
   amount_cents: number;
   due_date: string | null;
   sent_at: string | null;
@@ -47,6 +48,16 @@ export function InvoicesTable({
 }) {
   const router = useRouter();
   const columns: DataTableColumn<InvoiceRow>[] = [
+    {
+      key: "number",
+      header: "Invoice",
+      render: (r) => (
+        <span className="font-medium tabular-nums">{r.number ?? "—"}</span>
+      ),
+      // Searchable so typing "0127" (or the full INV-2026-0127) finds it —
+      // the number is how invoices get referred to in email and on paper.
+      searchValue: (r) => r.number ?? "",
+    },
     {
       key: "client",
       header: "Client",
@@ -130,7 +141,7 @@ export function InvoicesTable({
       data={rows}
       columns={columns}
       getRowId={(r) => r.id}
-      searchPlaceholder="Search by client…"
+      searchPlaceholder="Search by client or invoice #…"
       onRowClick={
         canEdit ? (r) => router.push(`/app/invoices/${r.id}`) : undefined
       }

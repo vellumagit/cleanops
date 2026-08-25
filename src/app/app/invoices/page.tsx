@@ -30,6 +30,7 @@ export default async function InvoicesPage({
   let query = supabase.from("invoices").select(
     `
         id,
+        number,
         status,
         amount_cents,
         due_date,
@@ -51,6 +52,7 @@ export default async function InvoicesPage({
     .limit(200)) as unknown as {
     data: Array<{
       id: string;
+      number: string | null;
       status: InvoiceRow["status"];
       amount_cents: number;
       due_date: string | null;
@@ -82,6 +84,7 @@ export default async function InvoicesPage({
 
   const rows: InvoiceRow[] = (data ?? []).map((i) => ({
     id: i.id,
+    number: i.number,
     status: i.status,
     amount_cents: i.amount_cents,
     due_date: i.due_date,
