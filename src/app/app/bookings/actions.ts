@@ -2721,14 +2721,14 @@ export async function deleteBookingAction(formData: FormData) {
       ),
     ]);
   } else {
-    // PROTECT PAST VISITS: never delete a booking dated in the past. They're
-    // the client's history (and may be unbilled). A past booking reaching this
-    // path is either a stale form or a direct POST — no-op and send them back
-    // to the booking rather than destroying a record.
-    if (existing && existing.scheduled_at < new Date().toISOString()) {
-      // Replace: this is a refusal, not a step forward.
-      redirect(`/app/bookings/${id}`, RedirectType.replace);
-    }
+    // Past visits are deletable since 4269b17 — Brian's ruling: "I don't
+    // mind the recommendation, but it must be removable." The client-side
+    // wall was removed then; THIS was its server-side twin, still bouncing
+    // every past-booking delete to the detail page with no explanation —
+    // "it kind of just broke the page and didn't delete the booking." The
+    // protections that remain are the right ones: the billed guard above
+    // (loud, with the unlock), and the cascade clamp that keeps past
+    // SIBLINGS out of series deletes.
 
     // Single-booking delete. CRITICAL: clean up personal calendar events
     // BEFORE deleting the booking row. booking_member_calendar_events has
@@ -2798,8 +2798,14 @@ export async function skipBookingOccurrenceAction(formData: FormData) {
   // past date. Skipping only makes sense for an upcoming visit (holiday, client
   // away); a past occurrence already happened and is a kept record.
   if (booking.scheduled_at < new Date().toISOString()) {
-    // Replace: a refusal, same as the delete guard above.
-    redirect(`/app/bookings/${id}`, RedirectType.replace);
+    // Loud, not a silent bounce: skip is the wrong tool for a past date and
+    // the refusal should say so — Delete works on past visits now.
+    redirect(
+      `/app/bookings/${id}/edit?delete_error=${encodeURIComponent(
+        "That visit already happened — skip is for upcoming dates (holidays, client away). To remove a past visit from the records, use Delete instead.",
+      )}`,
+      RedirectType.replace,
+    );
   }
 
   // Key the skip on the occurrence's ORG-LOCAL calendar date — that's what
