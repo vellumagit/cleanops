@@ -118,6 +118,25 @@ export async function POST(
     return corsJson({ error: "Unknown form" }, 404);
   }
 
+  // The token already says what kind of form this is — the URL path
+  // shouldn't be able to disagree with it. First live cutover: the site
+  // was wired to /api/intake/<contact-token> and every submission 404'd
+  // on a path technicality. Any intake-family token posted to any
+  // intake-family path lands where the TOKEN says. Delegation happens
+  // BEFORE parseBody — a request body reads once.
+  if (form.type === "contact") {
+    const { POST: contactPost } = await import(
+      "../../contact-request/[token]/route"
+    );
+    return contactPost(req, { params: Promise.resolve({ token }) });
+  }
+  if (form.type === "estimate_request") {
+    const { POST: estimatePost } = await import(
+      "../../estimate-request/[token]/route"
+    );
+    return estimatePost(req, { params: Promise.resolve({ token }) });
+  }
+
   const body = await parseBody(req);
 
   if (form.type === "job_application") {
