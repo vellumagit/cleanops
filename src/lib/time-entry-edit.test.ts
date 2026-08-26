@@ -1,53 +1,58 @@
 import { describe, it, expect } from "vitest";
-import { preserveSubSecond, endsAfterStart } from "./time-entry-edit";
+import { preserveWithinMinute, endsAfterStart } from "./time-entry-edit";
 import { zonedMidnightUtc, zonedDayStartUtc, zonedYmd } from "./wall-clock";
 import { localInputToUtcIso } from "./validators/common";
 
 const EDM = "America/Edmonton"; // MDT (UTC-6) summer / MST (UTC-7) winter
 
-describe("preserveSubSecond", () => {
+describe("preserveWithinMinute", () => {
   // Olha's entry edfc74a8: clock_in 2026-08-04T18:56:56.289Z, 0.332s after
-  // the previous punch's clock_out at 18:56:55.957Z.
+  // the previous punch's clock_out at 18:56:55.957Z. The minute-precision
+  // form posts 18:56:00.000Z for an untouched field.
   const STORED = "2026-08-04T18:56:56.289Z";
 
-  it("keeps the stored instant when the form returns it truncated to the second", () => {
-    expect(preserveSubSecond("2026-08-04T18:56:56.000Z", STORED)).toBe(STORED);
+  it("keeps the stored instant when the form returns its minute untouched", () => {
+    expect(preserveWithinMinute("2026-08-04T18:56:00.000Z", STORED)).toBe(
+      STORED,
+    );
   });
 
-  it("passes a real edit through unchanged", () => {
+  it("passes a real edit (different minute) through unchanged", () => {
     const edited = "2026-08-04T19:30:00.000Z";
-    expect(preserveSubSecond(edited, STORED)).toBe(edited);
+    expect(preserveWithinMinute(edited, STORED)).toBe(edited);
   });
 
-  it("does not treat a one-second edit as an unchanged field", () => {
-    const edited = "2026-08-04T18:56:57.000Z";
-    expect(preserveSubSecond(edited, STORED)).toBe(edited);
+  it("does not treat a one-minute edit as an unchanged field", () => {
+    const edited = "2026-08-04T18:57:00.000Z";
+    expect(preserveWithinMinute(edited, STORED)).toBe(edited);
   });
 
-  it("truncates toward the past, so a .999 stored value still matches", () => {
-    const stored = "2026-08-04T18:56:56.999Z";
-    expect(preserveSubSecond("2026-08-04T18:56:56.000Z", stored)).toBe(stored);
+  it("truncates toward the past, so a :59.999 stored value still matches", () => {
+    const stored = "2026-08-04T18:56:59.999Z";
+    expect(preserveWithinMinute("2026-08-04T18:56:00.000Z", stored)).toBe(
+      stored,
+    );
   });
 
   it("accepts the +00:00 offset PostgREST returns, not just Z", () => {
     const stored = "2026-08-04T18:56:56.289+00:00";
-    expect(preserveSubSecond("2026-08-04T18:56:56.000Z", stored)).toBe(stored);
+    expect(preserveWithinMinute("2026-08-04T18:56:00.000Z", stored)).toBe(
+      stored,
+    );
   });
 
   it("returns the submitted value when there is no stored one (create)", () => {
-    expect(preserveSubSecond("2026-08-04T18:56:56.000Z", null)).toBe(
-      "2026-08-04T18:56:56.000Z",
+    expect(preserveWithinMinute("2026-08-04T18:56:00.000Z", null)).toBe(
+      "2026-08-04T18:56:00.000Z",
     );
   });
 
-  it("passes null through (clearing an open shift's end)", () => {
-    expect(preserveSubSecond(null, STORED)).toBeNull();
+  it("returns null through for a cleared optional end", () => {
+    expect(preserveWithinMinute(null, STORED)).toBe(null);
   });
 
-  it("falls back to the submitted value on an unparseable stored timestamp", () => {
-    expect(preserveSubSecond("2026-08-04T18:56:56.000Z", "not-a-date")).toBe(
-      "2026-08-04T18:56:56.000Z",
-    );
+  it("hands back garbage submissions untouched for the validator to reject", () => {
+    expect(preserveWithinMinute("banana", STORED)).toBe("banana");
   });
 });
 

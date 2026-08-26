@@ -68,15 +68,16 @@ type Props = {
 // prefill edit forms correctly. On submit, the server converts back to UTC
 // via localInputToUtcIso.
 //
-// SECONDS ARE LOAD-BEARING. A clock punch is recorded to the millisecond, and
-// the field app produces back-to-back punches — clock out of one job and into
-// the next a fraction of a second apart. Prefilling at minute precision meant
-// opening an entry and saving it unchanged rewound its start by up to 59
-// seconds, into the previous entry, and the overlap guard then refused the
-// save. It was unescapable from the UI: a minute-precision box cannot express
-// 12:56:56. The inputs carry step="1" so the browser keeps the seconds it is
-// given, and the server restores the milliseconds for any field left alone
-// (preserveSubSecond).
+// MINUTES IN THE UI, MILLISECONDS IN THE VAULT. A clock punch is recorded to
+// the millisecond, and back-to-back punches land fractions apart — so an
+// untouched field must never be truncated on save (that used to rewind a
+// start into the previous entry and trip the overlap guard). The old answer
+// was step="1" seconds inputs; the seconds spinner then ate Svitlana's
+// keystrokes (20:30:30, 23:10:10 where she typed :00). Now the inputs are
+// plain minute-precision and the server compares at MINUTE granularity
+// (preserveWithinMinute): same minute means untouched, keep the stored
+// instant with all its precision; a new minute is a real edit and lands
+// exactly as typed.
 
 function utcIsoToLocalInput(utc: string, tz: string): string {
   const d = new Date(utc);
@@ -88,12 +89,11 @@ function utcIsoToLocalInput(utc: string, tz: string): string {
     day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
-    second: "2-digit",
     hour12: false,
   }).formatToParts(d);
   const get = (type: string) =>
     parts.find((p) => p.type === type)?.value ?? "00";
-  return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}:${get("second")}`;
+  return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}`;
 }
 
 /** "6h 30m" from two datetime-local strings, or null if not both valid. */
@@ -333,7 +333,6 @@ export function ManualEntryDialog({
                 id="start_at"
                 name="start_at"
                 type="datetime-local"
-                step="1"
                 value={startAt}
                 onChange={(e) => setStartAt(e.target.value)}
                 required
@@ -350,7 +349,6 @@ export function ManualEntryDialog({
                 id="end_at"
                 name="end_at"
                 type="datetime-local"
-                step="1"
                 value={endAt}
                 onChange={(e) => setEndAt(e.target.value)}
               />

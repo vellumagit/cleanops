@@ -6,7 +6,7 @@ import { logAuditEvent } from "@/lib/audit";
 import { notifyPtoStatus } from "@/lib/automations";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { localInputToUtcIso } from "@/lib/validators/common";
-import { endsAfterStart, preserveSubSecond } from "@/lib/time-entry-edit";
+import { endsAfterStart, preserveWithinMinute } from "@/lib/time-entry-edit";
 import { encryptField } from "@/lib/field-encryption";
 
 type Result = { ok: true } | { ok: false; error: string };
@@ -1068,8 +1068,8 @@ export async function updateTimeEntryAction(
   // to land inside the previous back-to-back punch, which the overlap check
   // below then refused, with no way past it from the UI.
   const start_at =
-    preserveSubSecond(parsed.start_at, before?.clock_in_at) ?? parsed.start_at;
-  const end_at = preserveSubSecond(parsed.end_at, before?.clock_out_at);
+    preserveWithinMinute(parsed.start_at, before?.clock_in_at) ?? parsed.start_at;
+  const end_at = preserveWithinMinute(parsed.end_at, before?.clock_out_at);
 
   // The create fence's sibling: this entry isn't stamped (the freeze above
   // already returned if it were), so if its times land inside a period a

@@ -15,12 +15,19 @@
  * Keep the stored instant when the submitted one is just a lower-precision
  * reading of it.
  *
- * The form hands back whatever precision the input supports. If that value is
- * exactly the stored timestamp truncated to the second, the field was not
- * edited — so return the original and keep its milliseconds. Any genuine edit
- * lands on a different second and passes through untouched.
+ * The edit form's inputs are MINUTE-granular on purpose. They used to carry
+ * step="1" so the browser kept seconds — which also rendered a third
+ * spinner, and Svitlana's keystrokes spilled into it: an evening of edits
+ * left 20:30:30, 23:10:10, 17:29:31 where she typed :00, and a "3:30" that
+ * read back 3:31. Minute inputs kill the spinner; this helper keeps the
+ * original protection: a submitted value equal to the stored timestamp
+ * truncated to the MINUTE means the field wasn't edited, so the stored
+ * instant survives with its full sub-second precision (back-to-back punches
+ * land fractions apart — truncating them used to trip the overlap guard).
+ * Any genuine edit lands on a different minute and passes through exactly
+ * as typed.
  */
-export function preserveSubSecond(
+export function preserveWithinMinute(
   submitted: string | null,
   stored: string | null | undefined,
 ): string | null {
@@ -30,7 +37,7 @@ export function preserveSubSecond(
   if (!Number.isFinite(storedMs) || !Number.isFinite(submittedMs)) {
     return submitted;
   }
-  return Math.floor(storedMs / 1000) * 1000 === submittedMs
+  return Math.floor(storedMs / 60_000) * 60_000 === submittedMs
     ? stored
     : submitted;
 }
