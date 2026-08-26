@@ -19,6 +19,8 @@ import {
 export type LeadFormState = {
   error?: string;
   success?: string;
+  /** Set by updateLeadAction on success — the edit dialog closes on it. */
+  savedAt?: number;
   /**
    * The new lead's id. Carried back purely so the form can key off something
    * UNIQUE to clear itself — the success message isn't, and adding two leads
@@ -191,6 +193,46 @@ export async function convertLeadAction(formData: FormData): Promise<void> {
 }
 
 /** They went elsewhere. Kept, not deleted — a lost lead is worth knowing about. */
+/**
+ * Quick-edit a lead in place — the dialog on the leads page. Four fields
+ * and the note; scoped to lifecycle=lead so it can never rewrite a real
+ * client from this surface. Clients get edited in the clients section;
+ * leads get edited here. They are not the same thing.
+ */
+export async function updateLeadAction(
+  _prev: LeadFormState,
+  formData: FormData,
+): Promise<LeadFormState> {
+  const { membership, supabase } = await getActionContext();
+  if (!["owner", "admin", "manager"].includes(membership.role)) {
+    return { error: "Not authorized." };
+  }
+  const id = String(formData.get("id") ?? "");
+  const name = String(formData.get("name") ?? "").trim().slice(0, 200);
+  if (!id || !name) return { error: "A name is required." };
+  const phone = String(formData.get("phone") ?? "").trim().slice(0, 40) || null;
+  const email = String(formData.get("email") ?? "").trim().slice(0, 320) || null;
+  const address =
+    String(formData.get("address") ?? "").trim().slice(0, 300) || null;
+  const lead_note =
+    String(formData.get("lead_note") ?? "").trim().slice(0, 4000) || null;
+
+  const { data: updated, error } = await supabase
+    .from("clients")
+    .update({ name, phone, email, address, lead_note } as never)
+    .eq("id", id)
+    .eq("organization_id", membership.organization_id)
+    .eq("lifecycle" as never, "lead" as never)
+    .select("id");
+  if (error) return { error: error.message };
+  if (!updated || updated.length === 0) {
+    return { error: "This lead no longer exists (it may have been converted)." };
+  }
+
+  revalidatePath("/app/leads");
+  return { savedAt: Date.now() };
+}
+
 export async function markLeadLostAction(formData: FormData): Promise<void> {
   const g = await guard();
   if (!g.ok) return;

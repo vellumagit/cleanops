@@ -13,6 +13,7 @@ import {
 } from "@/lib/lead-pipeline";
 import { QuickAddLead } from "./quick-add";
 import { LeadRowActions } from "./lead-row-actions";
+import { LeadEditDialog } from "./lead-edit-dialog";
 
 export const metadata = { title: "Leads" };
 
@@ -27,6 +28,7 @@ type LeadRecord = {
   name: string;
   phone: string | null;
   email: string | null;
+  address: string | null;
   lead_stage: string | null;
   lead_source: string | null;
   lead_note: string | null;
@@ -50,7 +52,7 @@ export default async function LeadsPage({
   const { data, error } = (await supabase
     .from("clients")
     .select(
-      "id, name, phone, email, lead_stage, lead_source, lead_note, created_at",
+      "id, name, phone, email, address, lead_stage, lead_source, lead_note, created_at",
     )
     .eq("lifecycle" as never, (showLost ? "lost" : "lead") as never)
     .is("archived_at" as never, null as never)
@@ -145,14 +147,11 @@ function LeadList({
         >
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-baseline gap-2">
-              {/* Links to the CLIENT record — a lead is one, which is exactly
-                  why estimates and notes work on them already. */}
-              <Link
-                href={`/app/clients/${l.id}`}
-                className="text-sm font-medium hover:underline underline-offset-2"
-              >
-                {l.name}
-              </Link>
+              {/* Plain text, not a link into client-land. Brian: "it still
+                  goes to the fucking client profile... they're not clients
+                  yet." Editing happens in the dialog on THIS page; the only
+                  door to the clients section is Make client. */}
+              <span className="text-sm font-medium">{l.name}</span>
               <span className="text-[11px] text-muted-foreground">
                 {sourceLabel(parseLeadSource(l.lead_source))} ·{" "}
                 {formatDate(l.created_at, tz)}
@@ -172,11 +171,21 @@ function LeadList({
             </div>
           </div>
 
-          <LeadRowActions
-            id={l.id}
-            stage={parseLeadStage(l.lead_stage)}
-            lost={lost}
-          />
+          <div className="flex flex-wrap items-center gap-1.5">
+            <LeadEditDialog
+              id={l.id}
+              name={l.name}
+              phone={l.phone}
+              email={l.email}
+              address={l.address}
+              note={l.lead_note}
+            />
+            <LeadRowActions
+              id={l.id}
+              stage={parseLeadStage(l.lead_stage)}
+              lost={lost}
+            />
+          </div>
         </li>
       ))}
     </ul>

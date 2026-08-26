@@ -64,21 +64,15 @@ export function LeadRowActions({
         ))}
       </div>
 
-      <a
-        href={`/app/clients/${id}/edit`}
-        className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] font-medium hover:bg-muted"
-      >
-        Edit
-      </a>
       <form action={convertLeadAction}>
         <input type="hidden" name="id" value={id} />
         <button
           type="submit"
-          title="They said yes — make them a client"
+          title="They said yes — this makes them a client and resolves their requests"
           className="inline-flex items-center gap-1 rounded-md bg-emerald-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-emerald-700"
         >
           <Check className="h-3 w-3" />
-          Won
+          Make client
         </button>
       </form>
 
