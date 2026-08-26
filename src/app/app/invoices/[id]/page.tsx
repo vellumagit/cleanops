@@ -35,6 +35,7 @@ import {
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
 import { getOrgTimezone } from "@/lib/org-timezone";
+import { HoursCheckCard } from "./hours-check-card";
 import {
   StatusBadge,
   invoiceStatusTone,
@@ -527,6 +528,9 @@ export default async function InvoiceDetailPage({
               </dl>
             )}
           </div>
+
+          {/* Billed time vs clocked time — Svitlana's cross-check. */}
+          <HoursCheckCard invoiceId={id} tz={tz} />
 
           {/* Payments */}
           <div className="rounded-lg border border-border bg-card">
