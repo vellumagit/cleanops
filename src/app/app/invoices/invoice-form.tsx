@@ -6,6 +6,7 @@ import { Search, X, ChevronDown, Check } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { buttonVariants } from "@/components/ui/button";
 import { FormError, FormField, FormSelect } from "@/components/form-field";
+import { Tip } from "@/components/tip";
 import { SubmitButton } from "@/components/submit-button";
 // Superset of SetupReturnField: carries an explicit `?_return=` (a client's
 // page, a filtered list) as well as onboarding's `?from=setup`.
@@ -378,7 +379,11 @@ export function InvoiceForm({
       <input type="hidden" name="booking_id" value={bookingId} />
 
       <FormField
-        label="Client"
+        label={
+          <>
+            Client <Tip k="select-typeahead" />
+          </>
+        }
         htmlFor="client_id_select"
         required
         error={state.errors?.client_id}

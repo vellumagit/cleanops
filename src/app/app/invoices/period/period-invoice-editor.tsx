@@ -1,5 +1,6 @@
 "use client";
 
+import { Tip } from "@/components/tip";
 import { useActionState, useState } from "react";
 import { Plus, Trash2, FileText } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -225,7 +226,9 @@ export function PeriodInvoiceEditor({
       {/* Line items */}
       <div className="overflow-hidden rounded-xl border border-border">
         <div className="hidden grid-cols-[1fr_5rem_7rem_6rem_2rem] gap-2 border-b border-border bg-muted/40 px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground sm:grid">
-          <span>Description</span>
+          <span className="normal-case">
+            Description <Tip k="period-amounts" />
+          </span>
           <span className="text-right">Qty</span>
           <span className="text-right">Unit ({currency})</span>
           <span className="text-right">Amount</span>

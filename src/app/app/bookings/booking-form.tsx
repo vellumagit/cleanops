@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { buttonVariants } from "@/components/ui/button";
 import { FormError, FormField, FormSelect } from "@/components/form-field";
+import { Tip } from "@/components/tip";
 import { SubmitButton } from "@/components/submit-button";
 import { DurationInput } from "@/components/duration-input";
 import { ReturnToField } from "@/components/return-to-field";
@@ -719,7 +720,11 @@ export function BookingForm({
 
       <div className="grid gap-5 sm:grid-cols-2">
         <FormField
-          label="Client"
+          label={
+            <>
+              Client <Tip k="select-typeahead" />
+            </>
+          }
           htmlFor="client_id"
           required
           error={state.errors?.client_id}

@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
  * helper text, and field-level error message are all consistent.
  */
 type Props = {
-  label: string;
+  label: React.ReactNode;
   htmlFor: string;
   error?: string;
   /** Hint can be plain text or a small JSX snippet (for inline links

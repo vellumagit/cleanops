@@ -2,6 +2,7 @@ import Link from "next/link";
 import {
   Award,
   Banknote,
+  Lightbulb,
   ChevronRight,
   Coins,
   CreditCard,
@@ -47,6 +48,19 @@ type Section = {
 };
 
 const SECTIONS: Section[] = [
+  {
+    title: "Learn",
+    description: "The fast paths.",
+    items: [
+      {
+        href: "/app/settings/tips",
+        icon: Lightbulb,
+        title: "Tips & shortcuts",
+        description:
+          "Every trick the app supports — type-to-jump dropdowns, batch billing, one-tap fixes — and the toggle for inline tips.",
+      },
+    ],
+  },
   {
     title: "Business",
     description: "What shows up on invoices, emails, and public pages.",
