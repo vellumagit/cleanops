@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState } from "react";
 import { CheckCircle2, Plus } from "lucide-react";
 import { FormError } from "@/components/form-field";
 import { SubmitButton } from "@/components/submit-button";
@@ -20,7 +20,6 @@ const empty: LeadFormState = {};
  */
 export function QuickAddLead() {
   const [state, formAction] = useActionState(addLeadAction, empty);
-  const [expanded, setExpanded] = useState(false);
 
   // Clear after a save so the next lead can go straight in. Done by REMOUNTING
   // the form via its key rather than calling formRef.current.reset() — reading
@@ -98,10 +97,11 @@ export function QuickAddLead() {
         </SubmitButton>
       </div>
 
-      {/* The rest, behind one click. Keeping email and the note out of the
-          default view is what keeps the common case to a single line. */}
-      {expanded ? (
-        <div className="mt-3 flex flex-wrap gap-2">
+      {/* These used to hide behind "+ email and what they want". Brian's
+          call: always visible — a collapsed field is a field that doesn't
+          get filled, and "what do they want" is the whole point of writing
+          the lead down. */}
+      <div className="mt-3 flex flex-wrap gap-2">
           <div className="min-w-[180px] flex-1">
             <label htmlFor="lead-email" className="text-[11px] font-medium">
               Email
@@ -126,16 +126,7 @@ export function QuickAddLead() {
               className="mt-1 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
             />
           </div>
-        </div>
-      ) : (
-        <button
-          type="button"
-          onClick={() => setExpanded(true)}
-          className="mt-2 text-[11px] font-medium text-muted-foreground hover:text-foreground"
-        >
-          + email and what they want
-        </button>
-      )}
+      </div>
     </form>
   );
 }
