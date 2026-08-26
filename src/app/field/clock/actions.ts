@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { getActionContext } from "@/lib/actions";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { encryptField } from "@/lib/field-encryption";
 
 export type ClockResult = { ok: true } | { ok: false; error: string };
 
@@ -27,6 +28,28 @@ export async function clockInAction(
   const rawCategory = String(formData.get("work_category") ?? "").trim();
   const ALLOWED = new Set(["manager", "admin", "training", "travel", "supplies", "other"]);
   const workCategory = ALLOWED.has(rawCategory) ? rawCategory : null;
+
+  // EVERY punch declares what it's for. The old behavior quietly accepted a
+  // bare clock-in (category fell through to null) — and before that,
+  // defaulted it to "manager", which put twelve phantom admin rows on a
+  // cleaner's timesheet. Job punches go through startJobAction; this action
+  // is only for off-job time, and off-job time has a reason or it doesn't
+  // start.
+  if (!workCategory) {
+    return {
+      ok: false,
+      error: "Pick what this shift is for — one of today's jobs, or a category.",
+    };
+  }
+
+  // "Other" is one step from arbitrary — a few words keep it intentional.
+  const rawNote = String(formData.get("note") ?? "").trim().slice(0, 500);
+  if (workCategory === "other" && rawNote.length < 3) {
+    return {
+      ok: false,
+      error: "Say a few words about what this shift is for.",
+    };
+  }
 
   const { membership, supabase } = await getActionContext();
 
@@ -77,6 +100,7 @@ export async function clockInAction(
     // hours already worked.
     engagement_snapshot: toEngagement(rateRow?.engagement),
     work_category: workCategory,
+    notes: rawNote ? encryptField(rawNote) : null,
   } as never);
   if (error) {
     // Postgres unique_violation — partial index rejected a concurrent

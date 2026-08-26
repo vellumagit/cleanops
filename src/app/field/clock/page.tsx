@@ -23,6 +23,63 @@ export default async function FieldClockPage() {
   const since = new Date();
   since.setDate(since.getDate() - 7);
 
+  // Today's assigned jobs, so clocking in is a one-tap intentional choice
+  // instead of an arbitrary punch. Primary assignment and crew-junction
+  // both count — the second cleaner on a split shift is just as assigned.
+  const { zonedDayBoundsUtc } = await import("@/lib/wall-clock");
+  const { start: dayStart, end: dayEnd } = zonedDayBoundsUtc(new Date(), tz, 0);
+  const [{ data: primaryJobs }, { data: crewRows }] = await Promise.all([
+    supabase
+      .from("bookings")
+      .select(
+        "id, scheduled_at, service_type, service_type_label, status, client:clients ( name )",
+      )
+      .eq("assigned_to", membership.id)
+      .gte("scheduled_at", dayStart.toISOString())
+      .lt("scheduled_at", dayEnd.toISOString())
+      .in("status", ["pending", "confirmed", "in_progress"]),
+    supabase
+      .from("booking_assignees" as never)
+      .select(
+        "booking:bookings ( id, scheduled_at, service_type, service_type_label, status, client:clients ( name ) )",
+      )
+      .eq("membership_id" as never, membership.id as never),
+  ]);
+  type JobRow = {
+    id: string;
+    scheduled_at: string;
+    service_type: string | null;
+    service_type_label: string | null;
+    status: string;
+    client: { name: string } | null;
+  };
+  const jobMap = new Map<string, JobRow>();
+  for (const b of (primaryJobs ?? []) as unknown as JobRow[]) {
+    jobMap.set(b.id, b);
+  }
+  for (const r of (crewRows ?? []) as unknown as Array<{
+    booking: JobRow | null;
+  }>) {
+    const b = r.booking;
+    if (!b) continue;
+    if (b.scheduled_at < dayStart.toISOString()) continue;
+    if (b.scheduled_at >= dayEnd.toISOString()) continue;
+    if (!["pending", "confirmed", "in_progress"].includes(b.status)) continue;
+    jobMap.set(b.id, b);
+  }
+  const todaysJobs = [...jobMap.values()]
+    .sort((a, b) => a.scheduled_at.localeCompare(b.scheduled_at))
+    .map((b) => ({
+      id: b.id,
+      clientName: b.client?.name ?? "Job",
+      serviceLabel: b.service_type_label ?? b.service_type ?? "",
+      timeLabel: new Date(b.scheduled_at).toLocaleTimeString("en-US", {
+        hour: "numeric",
+        minute: "2-digit",
+        timeZone: tz,
+      }),
+    }));
+
   const [{ data: open }, { data: history }] = await Promise.all([
     supabase
       .from("time_entries")
@@ -57,11 +114,8 @@ export default async function FieldClockPage() {
       />
 
       <ClockCard
-        defaultCategory={
-          ["owner", "admin", "manager"].includes(membership.role)
-            ? "manager"
-            : "other"
-        }
+        elevated={["owner", "admin", "manager"].includes(membership.role)}
+        todaysJobs={todaysJobs}
         tz={tz}
         isClockedIn={Boolean(open)}
         openSinceIso={open?.clock_in_at ?? null}
