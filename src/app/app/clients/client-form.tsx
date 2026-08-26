@@ -29,6 +29,7 @@ type Defaults = {
   phone?: string | null;
   address?: string | null;
   notes?: string | null;
+  lead_note?: string | null;
   preferred_contact?: string;
   preferred_cleaner_id?: string | null;
   sms_opted_in?: boolean | null;
@@ -241,6 +242,20 @@ export function ClientForm({
           id="notes"
           name="notes"
           defaultValue={v.notes ?? ""}
+          rows={4}
+        />
+      </FormField>
+
+      <FormField
+        label="What do they want?"
+        htmlFor="lead_note"
+        error={state.errors?.lead_note}
+        hint="The lead's story — filled by quick-add and the website form, editable here."
+      >
+        <Textarea
+          id="lead_note"
+          name="lead_note"
+          defaultValue={v.lead_note ?? ""}
           rows={4}
         />
       </FormField>

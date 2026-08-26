@@ -23,7 +23,7 @@ export default async function EditClientPage({
     supabase
       .from("clients")
       .select(
-        "id, name, company_name, email, phone, address, notes, preferred_contact, contact_preference, contact_overrides, preferred_cleaner_id, sms_opted_in, profile_id, portal_invited_at, portal_accepted_at, portal_invite_expires_at, billing_cadence, billing_type, flat_rate_cents, billing_anchor_day, billing_anchor_date, referred_by_client_id",
+        "id, name, company_name, email, phone, address, notes, lead_note, preferred_contact, contact_preference, contact_overrides, preferred_cleaner_id, sms_opted_in, profile_id, portal_invited_at, portal_accepted_at, portal_invite_expires_at, billing_cadence, billing_type, flat_rate_cents, billing_anchor_day, billing_anchor_date, referred_by_client_id",
       )
       .eq("id", id)
       .maybeSingle() as unknown as Promise<{
@@ -35,6 +35,7 @@ export default async function EditClientPage({
         phone: string | null;
         address: string | null;
         notes: string | null;
+        lead_note: string | null;
         preferred_contact: string;
         contact_preference: string | null;
         contact_overrides: Record<string, string> | null;
@@ -80,6 +81,7 @@ export default async function EditClientPage({
               phone: client.phone,
               address: client.address,
               notes: client.notes,
+              lead_note: client.lead_note,
               preferred_contact: client.preferred_contact,
               contact_preference: client.contact_preference,
               contact_overrides: client.contact_overrides,

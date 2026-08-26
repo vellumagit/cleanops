@@ -63,6 +63,11 @@ export const ClientSchema = z.object({
   notes: optionalText.refine(noCardNumber, {
     message: CARD_DETECTED_MESSAGE,
   }),
+  // "What do they want" — the lead's story, captured by quick-add and the
+  // website intake, editable here so it doesn't fossilize. Same PCI guard.
+  lead_note: optionalText.refine(noCardNumber, {
+    message: CARD_DETECTED_MESSAGE,
+  }),
   /**
    * Superseded by contact_preference below (it was never read by any send
    * path). Optional now so the form can stop submitting it; the column is

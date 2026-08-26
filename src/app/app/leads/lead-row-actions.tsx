@@ -64,6 +64,12 @@ export function LeadRowActions({
         ))}
       </div>
 
+      <a
+        href={`/app/clients/${id}/edit`}
+        className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] font-medium hover:bg-muted"
+      >
+        Edit
+      </a>
       <form action={convertLeadAction}>
         <input type="hidden" name="id" value={id} />
         <button
