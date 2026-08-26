@@ -173,6 +173,23 @@ export async function POST(
   }
   await admin.from("clients").update(patch).eq("id", clientId);
 
+  // Also a REQUEST — same inbox as portal asks, auto-resolved when the
+  // lead converts or goes lost.
+  {
+    const { error: reqErr } = (await admin
+      .from("client_job_requests" as never)
+      .insert({
+        organization_id: orgId,
+        client_id: clientId,
+        kind: "job_note",
+        body: `Website inquiry\n${detailBlock || "(no message)"}`.slice(0, 4000),
+        status: "open",
+      } as never)) as unknown as { error: { message: string } | null };
+    if (reqErr) {
+      console.error("[contact-request] request insert failed:", reqErr.message);
+    }
+  }
+
   const sender = await getOrgSender(orgId);
   const { data: orgRow } = (await admin
     .from("organizations")

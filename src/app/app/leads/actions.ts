@@ -182,6 +182,10 @@ export async function convertLeadAction(formData: FormData): Promise<void> {
     after: { lifecycle: "client", converted_from_lead: true },
   });
 
+  // Their inquiry is answered by definition — they're a client now.
+  const { resolveOpenClientRequests } = await import("@/lib/lead-conversion");
+  await resolveOpenClientRequests(id);
+
   revalidatePath("/app/leads");
   revalidatePath("/app/clients");
 }
@@ -208,6 +212,12 @@ export async function markLeadLostAction(formData: FormData): Promise<void> {
     entity_id: id,
     after: { lifecycle: "lost" },
   });
+
+  // Lost is also an answer — their open requests leave the inbox with them.
+  {
+    const { resolveOpenClientRequests } = await import("@/lib/lead-conversion");
+    await resolveOpenClientRequests(String(formData.get("id") ?? ""));
+  }
 
   revalidatePath("/app/leads");
 }

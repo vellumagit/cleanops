@@ -140,6 +140,8 @@ export default async function IntakeFormsPage() {
                 className="h-9 rounded-md border border-input bg-background px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
               >
                 <option value="job_application">Job application</option>
+                <option value="estimate_request">Estimate calculator</option>
+                <option value="contact">Contact form</option>
               </select>
             </div>
             <Button type="submit">
@@ -167,6 +169,45 @@ export default async function IntakeFormsPage() {
             <li><code>availability</code></li>
             <li><code>message</code> / <code>cover_letter</code></li>
             <li><code>resume_url</code> / <code>resume</code></li>
+          </ul>
+
+          <h2 className="mb-2 mt-6 text-sm font-semibold">
+            Estimate calculator — fields we recognize
+          </h2>
+          <p className="mb-3 text-xs text-muted-foreground">
+            One submission creates a lead, a draft estimate, a request, a
+            confirmation email to the client, and notifies you. JSON,
+            form-encoded, or multipart all work; only a name is required.
+          </p>
+          <ul className="grid gap-1.5 text-xs sm:grid-cols-2">
+            <li><code>fullName</code> / <code>name</code></li>
+            <li><code>email</code>, <code>phone</code></li>
+            <li><code>address</code>, <code>city</code></li>
+            <li><code>bedrooms</code>, <code>bathrooms</code>, <code>kitchens</code></li>
+            <li><code>pets</code>, <code>oven</code>, <code>fridge</code>, <code>windows</code>, <code>blinds</code>, <code>carpets</code></li>
+            <li><code>schedule</code>, <code>cleaningDate</code></li>
+            <li><code>priceInitialHigh</code>, <code>priceRecurringHigh</code>, <code>travelFee</code></li>
+            <li><code>hearAboutUs</code>, <code>notes</code></li>
+          </ul>
+
+          <h2 className="mb-2 mt-6 text-sm font-semibold">
+            Contact form — fields we recognize
+          </h2>
+          <p className="mb-3 text-xs text-muted-foreground">
+            One submission creates a lead and a request, confirms to the
+            sender, and notifies you. The <code>website</code> field is a
+            honeypot — leave it hidden and empty; bots that fill it are
+            silently dropped. Add <code>?redirect=https://…</code> to the URL
+            to send plain HTML forms to a thank-you page.
+          </p>
+          <ul className="grid gap-1.5 text-xs sm:grid-cols-2">
+            <li><code>name</code> / <code>fullName</code></li>
+            <li><code>email</code>, <code>phone</code></li>
+            <li><code>city</code></li>
+            <li><code>urgency</code></li>
+            <li><code>notes</code> / <code>message</code></li>
+            <li><code>page_url</code>, <code>referrer</code></li>
+            <li><code>website</code> (honeypot — keep empty)</li>
           </ul>
         </div>
       </div>

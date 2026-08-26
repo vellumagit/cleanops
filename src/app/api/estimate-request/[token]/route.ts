@@ -230,6 +230,26 @@ export async function POST(
     );
   }
 
+  // ── 2b. It's also a REQUEST — Svitlana's ask: inquiries live in the same
+  // inbox as portal requests, because "please quote me" is a client asking
+  // for something. kind job_note fits the existing CHECK constraint (a note
+  // from a client needing an answer); resolving happens automatically when
+  // the lead converts or is marked lost.
+  {
+    const { error: reqErr } = (await admin
+      .from("client_job_requests" as never)
+      .insert({
+        organization_id: orgId,
+        client_id: clientId,
+        kind: "job_note",
+        body: `Website estimate request\n${detailBlock || "(no details)"}`.slice(0, 4000),
+        status: "open",
+      } as never)) as unknown as { error: { message: string } | null };
+    if (reqErr) {
+      console.error("[estimate-request] request insert failed:", reqErr.message);
+    }
+  }
+
   // ── 3. Confirmation to the client ───────────────────────────────────────
   const sender = await getOrgSender(orgId);
   const { data: orgRow } = (await admin

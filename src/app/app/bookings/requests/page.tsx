@@ -124,7 +124,7 @@ export default async function BookingRequestsPage({
   return (
     <PageShell
       title="Booking requests"
-      description="Requests submitted by clients from the portal. Review, reply, and convert to a real booking."
+      description="Requests from portal clients and website inquiries. Review, reply, and convert to a real booking — converting a lead resolves their requests automatically."
       actions={
         <Link
           href="/app/bookings"

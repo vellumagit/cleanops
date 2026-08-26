@@ -14,7 +14,13 @@ function ensureAdmin(role: string): boolean {
 
 export async function createIntakeFormAction(formData: FormData): Promise<void> {
   const name = String(formData.get("name") ?? "").trim() || "Untitled form";
-  const type = String(formData.get("type") ?? "job_application").trim();
+  const rawType = String(formData.get("type") ?? "job_application").trim();
+  const ALLOWED_TYPES = new Set([
+    "job_application",
+    "estimate_request",
+    "contact",
+  ]);
+  const type = ALLOWED_TYPES.has(rawType) ? rawType : "job_application";
   const { membership, supabase } = await getActionContext();
   if (!ensureAdmin(membership.role)) return;
 

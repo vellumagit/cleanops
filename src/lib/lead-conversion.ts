@@ -19,6 +19,40 @@ import { conversionPatch } from "@/lib/lead-pipeline";
  * until someone presses Won, which is exactly where we were before this
  * existed.
  */
+/**
+ * A lead's open website inquiries resolve themselves the moment the lead
+ * stops being a question. Converted to a client (they booked) or marked
+ * lost — either way, "please get back to me" has been answered, and an
+ * answered request sitting open in the inbox is noise that trains
+ * Svitlana to ignore the inbox.
+ */
+export async function resolveOpenClientRequests(
+  clientId: string | null | undefined,
+): Promise<void> {
+  if (!clientId) return;
+  try {
+    const admin = createSupabaseAdminClient();
+    const { data } = (await admin
+      .from("client_job_requests" as never)
+      .update({
+        status: "resolved",
+        resolved_at: new Date().toISOString(),
+      } as never)
+      .eq("client_id" as never, clientId as never)
+      .eq("status" as never, "open" as never)
+      .select("id" as never)) as unknown as {
+      data: Array<{ id: string }> | null;
+    };
+    if (data && data.length > 0) {
+      console.log(
+        `[leads] resolved ${data.length} open request(s) for client ${clientId}`,
+      );
+    }
+  } catch (err) {
+    console.error("[leads] resolveOpenClientRequests failed:", err);
+  }
+}
+
 export async function convertLeadOnBooking(
   clientId: string | null | undefined,
 ): Promise<void> {
@@ -34,6 +68,7 @@ export async function convertLeadOnBooking(
 
     if (data && data.length > 0) {
       console.log(`[leads] ${clientId} converted to client on booking`);
+      await resolveOpenClientRequests(clientId);
     }
   } catch (err) {
     console.error("[leads] convertLeadOnBooking failed:", err);
