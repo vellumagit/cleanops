@@ -820,6 +820,33 @@ export async function createBookingAction(
   const { convertLeadOnBooking } = await import("@/lib/lead-conversion");
   await convertLeadOnBooking(parsed.data.client_id);
 
+  // Booking created via "Create booking" on a portal request → the booking
+  // IS the response. Mark the request scheduled and link it, so it leaves
+  // the Requests badge without a second manual "Mark scheduled" click.
+  // Only claims a still-pending row: a request someone else already
+  // declined or handled keeps its answer.
+  const fromRequestId = String(formData.get("from_request") ?? "");
+  if (fromRequestId) {
+    const { error: reqErr } = await createSupabaseAdminClient()
+      .from("booking_requests" as never)
+      .update({
+        status: "scheduled",
+        booking_id: booking.id,
+        responded_at: new Date().toISOString(),
+        responded_by: membership.id,
+      } as never)
+      .eq("id" as never, fromRequestId as never)
+      .eq("organization_id" as never, membership.organization_id as never)
+      .eq("status" as never, "pending" as never);
+    if (reqErr) {
+      console.error(
+        "[booking] mark request scheduled failed:",
+        reqErr.message,
+      );
+    }
+    revalidatePath("/app/bookings/requests");
+  }
+
   revalidatePath("/app/bookings");
   revalidatePath("/app/calendar");
   revalidatePath("/app");

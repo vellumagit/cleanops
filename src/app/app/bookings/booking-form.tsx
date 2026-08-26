@@ -56,6 +56,9 @@ export type BookingFormDefaults = {
   address?: string | null;
   property_id?: string | null;
   notes?: string | null;
+  /** Portal booking-request id when the form was opened via "Create
+   *  booking" on Requests — the create action marks it scheduled. */
+  from_request?: string;
   series_id?: string | null;
   /** Series schedule fields — passed when editing a recurring booking so the
    *  "Edit recurring schedule" section can be pre-filled. */
@@ -649,6 +652,9 @@ export function BookingForm({
       {/* Signal the server action to return a done-state instead of
           redirecting when we're embedded inside a Sheet / drawer. */}
       {onSuccess && <input type="hidden" name="_source" value="calendar" />}
+      {mode === "create" && defaults?.from_request && (
+        <input type="hidden" name="from_request" value={defaults.from_request} />
+      )}
       <FormError message={state.errors?._form} />
 
       {/* Hidden scope + series fields for recurring edits */}

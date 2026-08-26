@@ -47,6 +47,82 @@ export default async function NewBookingPage({
   const tz = await getOrgTimezone(membership.organization_id);
   const params = await searchParams;
 
+  // "Create booking" on a portal request should arrive with everything
+  // the client already told us — their date, address, and notes. These
+  // are starting values, not decisions: the owner still confirms all of
+  // it before saving, same as the migration comment promised.
+  let fromRequest: {
+    client_id?: string;
+    address?: string;
+    scheduled_at_local?: string;
+    notes?: string;
+    service_type_id?: string;
+    id?: string;
+  } = {};
+  if (params.from_request) {
+    const supabase = await createSupabaseServerClient();
+    const { data: reqRow } = (await supabase
+      .from("booking_requests" as never)
+      .select(
+        "client_id, service_type, preferred_date, preferred_time_window, address, notes",
+      )
+      .eq("id" as never, params.from_request as never)
+      .eq("organization_id" as never, membership.organization_id as never)
+      .maybeSingle()) as unknown as {
+      data: {
+        client_id: string;
+        service_type: string | null;
+        preferred_date: string | null;
+        preferred_time_window: string | null;
+        address: string | null;
+        notes: string | null;
+      } | null;
+    };
+    if (reqRow) {
+      // The window is a range, not a time — seed a plausible start and
+      // repeat the window in the notes so the owner knows 9:00 is a guess.
+      const windowStart: Record<string, string> = {
+        morning: "09:00",
+        afternoon: "13:00",
+        evening: "17:00",
+      };
+      // The portal's "what do you need cleaned?" is free text, so it can
+      // only best-effort match a configured service. The raw text always
+      // survives in the notes; a miss just leaves the default service.
+      const svcText = (reqRow.service_type ?? "").trim();
+      const svcLower = svcText.toLowerCase();
+      const matched =
+        options.services.find((s) => s.label.toLowerCase() === svcLower) ??
+        options.services.find(
+          (s) =>
+            svcLower.length >= 4 &&
+            (svcLower.includes(s.label.toLowerCase()) ||
+              s.label.toLowerCase().includes(svcLower)),
+        );
+      const noteLines = [
+        svcText ? `Client asked for: ${svcText}` : null,
+        reqRow.preferred_time_window &&
+        reqRow.preferred_time_window !== "flexible"
+          ? `Preferred time: ${reqRow.preferred_time_window}`
+          : null,
+        reqRow.notes?.trim() || null,
+      ].filter(Boolean) as string[];
+      fromRequest = {
+        id: params.from_request,
+        client_id: reqRow.client_id,
+        address: reqRow.address?.trim() || undefined,
+        scheduled_at_local: reqRow.preferred_date
+          ? `${reqRow.preferred_date}T${
+              windowStart[reqRow.preferred_time_window ?? ""] ?? "09:00"
+            }`
+          : undefined,
+        notes: noteLines.length ? noteLines.join("\n") : undefined,
+        service_type_id: matched?.id,
+      };
+    }
+  }
+  const effectiveClientId = params.client_id ?? fromRequest.client_id;
+
   // Pre-fill from query params so click-empty-slot on the Dispatch
   // scheduler (and future deep links) lands on a half-filled form.
   // Any field can still be overridden by the user before saving.
@@ -57,20 +133,20 @@ export default async function NewBookingPage({
   // Same precedence as the live handler: a single property's address wins,
   // then the client's own.
   let prefillAddress: string | undefined;
-  if (params.client_id) {
+  if (effectiveClientId) {
     const supabase = await createSupabaseServerClient();
     const [{ data: client }, { data: props }] = await Promise.all([
       supabase
         .from("clients")
         .select("address")
-        .eq("id", params.client_id)
+        .eq("id", effectiveClientId)
         .maybeSingle() as unknown as Promise<{
         data: { address: string | null } | null;
       }>,
       supabase
         .from("client_properties" as never)
         .select("address")
-        .eq("client_id" as never, params.client_id as never) as unknown as Promise<{
+        .eq("client_id" as never, effectiveClientId as never) as unknown as Promise<{
         data: Array<{ address: string | null }> | null;
       }>,
     ]);
@@ -82,12 +158,16 @@ export default async function NewBookingPage({
   }
 
   const defaults: BookingFormDefaults = {
-    client_id: params.client_id,
+    client_id: effectiveClientId,
     assigned_to: params.assigned_to,
-    address: prefillAddress,
+    // The address the client typed on THIS request beats their saved one.
+    address: fromRequest.address ?? prefillAddress,
+    notes: fromRequest.notes,
+    service_type_id: fromRequest.service_type_id,
+    from_request: fromRequest.id,
     scheduled_at_local: params.scheduled_at
       ? isoToDatetimeLocal(params.scheduled_at, tz)
-      : undefined,
+      : fromRequest.scheduled_at_local,
   };
 
   return (
