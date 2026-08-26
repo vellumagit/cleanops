@@ -1067,9 +1067,26 @@ export async function updateTimeEntryAction(
   // this, opening an entry and saving it moved the start earlier — far enough
   // to land inside the previous back-to-back punch, which the overlap check
   // below then refused, with no way past it from the UI.
-  const start_at =
+  const preservedStart =
     preserveWithinMinute(parsed.start_at, before?.clock_in_at) ?? parsed.start_at;
-  const end_at = preserveWithinMinute(parsed.end_at, before?.clock_out_at);
+  const preservedEnd = preserveWithinMinute(parsed.end_at, before?.clock_out_at);
+
+  // Did this save MOVE either time? Preservation returns the stored value
+  // for an untouched field and the submitted one for a real edit.
+  const timesTouched =
+    preservedStart !== (before?.clock_in_at ?? null) ||
+    preservedEnd !== (before?.clock_out_at ?? null);
+
+  // Svitlana's 3:14 -> 3:15 that "didn't take": she moved the end one
+  // minute, but the UNTOUCHED start kept its hidden punch seconds
+  // (14:00:38), so the duration went 3h14m14s -> 3h14m22s and still
+  // displayed 3:14. When a save touches either time, the person is doing
+  // minute-arithmetic on the numbers the form SHOWS — so both ends align
+  // to those minute-clean values and the duration becomes exactly what
+  // they computed. Only a save that touches neither time (notes, employee)
+  // keeps the punches' full precision.
+  const start_at = timesTouched ? parsed.start_at : preservedStart;
+  const end_at = timesTouched ? parsed.end_at : preservedEnd;
 
   // The create fence's sibling: this entry isn't stamped (the freeze above
   // already returned if it were), so if its times land inside a period a
