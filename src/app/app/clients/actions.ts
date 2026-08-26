@@ -442,8 +442,15 @@ export async function deleteClientAction(formData: FormData) {
     ctr.count ? plural(ctr.count, "contract") : null,
   ].filter(Boolean);
   if (holds.length > 0) {
-    throw new Error(
-      `This client has ${holds.join(", ")} on record, and those records keep the books whole. If this is a junk or duplicate entry, delete those first; if it's a real client you're done with, leave them -- history costs nothing.`,
+    // Refuse ON SCREEN. This used to throw, and a thrown server action
+    // renders the generic "Something went wrong" page with the message
+    // swallowed — Brian got an error ID instead of the sentence written
+    // for him. Same lesson as the booking delete: the rule may stand,
+    // but it has to say its own name where the person is standing.
+    redirect(
+      `/app/clients/${id}/edit?delete_error=${encodeURIComponent(
+        `This client has ${holds.join(", ")} on record, and those records keep the books whole. If this is a junk or duplicate entry, delete those records first (estimates delete from the Estimates page); if it's a real client you're done with, just leave them — history costs nothing.`,
+      )}`,
     );
   }
 
