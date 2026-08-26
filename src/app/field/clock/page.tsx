@@ -41,9 +41,17 @@ export default async function FieldClockPage() {
     supabase
       .from("booking_assignees" as never)
       .select(
-        "booking:bookings ( id, scheduled_at, service_type, service_type_label, status, client:clients ( name ) )",
+        "booking:bookings!inner ( id, scheduled_at, service_type, service_type_label, status, client:clients ( name ) )",
       )
-      .eq("membership_id" as never, membership.id as never),
+      .eq("membership_id" as never, membership.id as never)
+      // !inner + nested filters: without them this fetched the member's
+      // ENTIRE assignment history with bookings nested, on every clock load.
+      .gte("booking.scheduled_at" as never, dayStart.toISOString() as never)
+      .lt("booking.scheduled_at" as never, dayEnd.toISOString() as never)
+      .in(
+        "booking.status" as never,
+        ["pending", "confirmed", "in_progress"] as never,
+      ),
   ]);
   type JobRow = {
     id: string;

@@ -71,9 +71,14 @@ export async function matchStrayEntries(
     db
       .from("booking_assignees" as never)
       .select(
-        "membership_id, booking:bookings ( id, assigned_to, scheduled_at, duration_minutes, service_type, service_type_label, status, client:clients ( name ) )",
+        "membership_id, booking:bookings!inner ( id, assigned_to, scheduled_at, duration_minutes, service_type, service_type_label, status, client:clients ( name ) )",
       )
-      .in("membership_id" as never, employeeIds as never) as unknown as Promise<{
+      .in("membership_id" as never, employeeIds as never)
+      // Bounded at the database — the JS re-filter below is belt, this is
+      // braces. Unbounded, this pulled every assignment the person ever had.
+      .gte("booking.scheduled_at" as never, windowStart as never)
+      .lte("booking.scheduled_at" as never, windowEnd as never)
+      .neq("booking.status" as never, "cancelled" as never) as unknown as Promise<{
       data: Array<{ membership_id: string; booking: BookingRow | null }> | null;
     }>,
   ]);
@@ -115,6 +120,9 @@ export async function matchStrayEntries(
     const jobs = byEmployee.get(e.employee_id) ?? [];
     const inMs = Date.parse(e.clock_in_at);
     const outMs = Date.parse(e.clock_out_at as string);
+    // A reversed or zero-length entry would make the overlap bar trivially
+    // clearable (max(1, negative) = 1 minute) — skip rather than suggest.
+    if (!(outMs > inMs)) continue;
     const entryMin = Math.max(1, (outMs - inMs) / 60_000);
 
     let best: AttachCandidate | null = null;
