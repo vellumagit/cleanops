@@ -49,6 +49,37 @@ function yn(v: unknown): string {
   return s(v, 40);
 }
 
+
+/**
+ * Read the submission however the browser sent it. The estimate page posts
+ * JSON; a plain HTML form posts urlencoded; some builders post multipart.
+ * The first live cutover taught this the honest way: the contact form's
+ * posts bounced with invalid_json while the endpoint insisted on one
+ * content type. A public intake endpoint takes what it's given.
+ */
+async function readBody(request: NextRequest): Promise<Record<string, unknown>> {
+  const ct = (request.headers.get("content-type") ?? "").toLowerCase();
+  try {
+    if (ct.includes("multipart/form-data")) {
+      const fd = await request.formData();
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of fd.entries()) out[k] = typeof v === "string" ? v : "";
+      return out;
+    }
+    const raw = await request.text();
+    if (!raw) return {};
+    try {
+      return JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of new URLSearchParams(raw).entries()) out[k] = v;
+      return out;
+    }
+  } catch {
+    return {};
+  }
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ token: string }> },
@@ -84,15 +115,7 @@ export async function POST(
   }
   const orgId = form.organization_id;
 
-  let body: Record<string, unknown>;
-  try {
-    body = (await request.json()) as Record<string, unknown>;
-  } catch {
-    return NextResponse.json(
-      { error: "invalid_json" },
-      { status: 400, headers: CORS },
-    );
-  }
+  const body = await readBody(request);
 
   const fullName = s(body.fullName ?? body.name, 200);
   if (!fullName) {
@@ -336,6 +359,17 @@ ${address ? `<div style="font-size:13px;color:#374151;margin-bottom:12px;">${add
     }
   } catch (err) {
     console.error("[estimate-request] internal notify failed:", err);
+  }
+
+  // Plain HTML forms navigate to the response. Give them somewhere real to
+  // land: ?redirect=<https url> (or a `redirect` field) turns success into a
+  // 303 back to the site's thank-you page instead of a page of raw JSON.
+  const redirectTo = s(
+    (body.redirect as string) ?? request.nextUrl.searchParams.get("redirect"),
+    300,
+  );
+  if (/^https:\/\//.test(redirectTo)) {
+    return NextResponse.redirect(redirectTo, 303);
   }
 
   return NextResponse.json(
