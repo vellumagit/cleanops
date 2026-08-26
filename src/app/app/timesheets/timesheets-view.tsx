@@ -372,6 +372,29 @@ export function TimesheetsView({
   const [empFilter, setEmpFilter] = useState<string>("all");
   const [manualOnly, setManualOnly] = useState(false);
 
+  const [attachPending, setAttachPending] = useState(false);
+  async function handleAttach(
+    entryId: string,
+    s: NonNullable<TimesheetEntry["attach_suggestion"]>,
+  ) {
+    setAttachPending(true);
+    try {
+      const { attachEntryToBookingAction } = await import("./actions");
+      const fd = new FormData();
+      fd.set("id", entryId);
+      fd.set("booking_id", s.bookingId);
+      const result = await attachEntryToBookingAction(fd);
+      if (result.ok) {
+        toast.success(`Attached to ${s.clientName}`);
+        router.refresh();
+      } else {
+        toast.error(result.error);
+      }
+    } finally {
+      setAttachPending(false);
+    }
+  }
+
   const filteredEntries = entries.filter((e) => {
     if (empFilter !== "all" && e.employee_id !== empFilter) return false;
     if (manualOnly && !e.is_manual) return false;
@@ -1185,6 +1208,26 @@ export function TimesheetsView({
                     </td>
                     <td className="px-4 py-2.5 hidden sm:table-cell text-muted-foreground">
                       {r.client_name ?? categoryLabel(r.work_category)}
+                      {r.attach_suggestion && (
+                        <button
+                          type="button"
+                          disabled={attachPending}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleAttach(r.id, r.attach_suggestion!);
+                          }}
+                          title={
+                            r.attach_suggestion.candidateCount > 1
+                              ? `Best of ${r.attach_suggestion.candidateCount} overlapping jobs`
+                              : undefined
+                          }
+                          className="mt-1 block rounded-full bg-sky-500/10 px-2 py-0.5 text-left text-[10px] font-medium text-sky-700 hover:bg-sky-500/20 dark:text-sky-400"
+                        >
+                          Looks like {r.attach_suggestion.clientName} ·{" "}
+                          {formatDateTime(r.attach_suggestion.scheduledAt, orgTz)}{" "}
+                          — attach
+                        </button>
+                      )}
                     </td>
                     <td className="px-4 py-2.5 hidden md:table-cell">
                       <PunctualityBadge

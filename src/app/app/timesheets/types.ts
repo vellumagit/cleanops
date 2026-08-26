@@ -67,6 +67,14 @@ export type TimesheetEntry = {
    *  statements. The CSV export prints it so a payroll-shaped file can't
    *  silently mix in hours the statement system also pays. */
   engagement: "employee" | "subcontractor";
+  /** Best assigned-job match for a stray (off-job) punch, if one clears the
+   *  overlap bar — rendered as a one-tap "attach" chip. Never auto-applied. */
+  attach_suggestion: {
+    bookingId: string;
+    clientName: string;
+    scheduledAt: string;
+    candidateCount: number;
+  } | null;
 };
 
 export type EmployeeMeta = {

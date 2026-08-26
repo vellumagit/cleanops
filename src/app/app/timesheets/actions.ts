@@ -1318,6 +1318,112 @@ async function findOverlap(
  * Limits to 100 ids per call so a runaway client can't wipe a whole
  * org's history in one shot.
  */
+/**
+ * Attach a stray punch to the job it evidently belongs to. Suggestion-shaped
+ * by design: the UI only offers jobs the person was ASSIGNED to whose window
+ * overlaps the punch, and this action re-verifies both — so a hand-crafted
+ * request can't attach hours to an arbitrary booking. Frozen entries stay
+ * frozen: pay-run hours don't change owners.
+ */
+export async function attachEntryToBookingAction(
+  formData: FormData,
+): Promise<Result> {
+  const { membership, supabase } = await getActionContext();
+  if (!["owner", "admin", "manager"].includes(membership.role)) {
+    return { ok: false, error: "Not authorized." };
+  }
+  const id = String(formData.get("id") ?? "");
+  const bookingId = String(formData.get("booking_id") ?? "");
+  if (!id || !bookingId) return { ok: false, error: "Missing ids." };
+
+  const { data: entry } = (await supabase
+    .from("time_entries")
+    .select(
+      "id, employee_id, booking_id, clock_in_at, clock_out_at, work_category, payroll_run_id, subcontractor_run_id",
+    )
+    .eq("id", id)
+    .eq("organization_id", membership.organization_id)
+    .maybeSingle()) as unknown as {
+    data: {
+      id: string;
+      employee_id: string;
+      booking_id: string | null;
+      clock_in_at: string;
+      clock_out_at: string | null;
+      work_category: string | null;
+      payroll_run_id: string | null;
+      subcontractor_run_id: string | null;
+    } | null;
+  };
+  if (!entry) return { ok: false, error: "Entry not found." };
+  if (entry.booking_id) {
+    return { ok: false, error: "This entry is already attached to a job." };
+  }
+  if (entry.payroll_run_id || entry.subcontractor_run_id) {
+    return {
+      ok: false,
+      error: entry.payroll_run_id
+        ? "This entry is part of a payroll run. Delete that pay period to unlock it first."
+        : "This entry is on a subcontractor statement. Delete that statement to unlock it first.",
+    };
+  }
+
+  const { data: booking } = (await supabase
+    .from("bookings")
+    .select("id, assigned_to, status, organization_id")
+    .eq("id", bookingId)
+    .eq("organization_id", membership.organization_id)
+    .maybeSingle()) as unknown as {
+    data: {
+      id: string;
+      assigned_to: string | null;
+      status: string;
+      organization_id: string;
+    } | null;
+  };
+  if (!booking) return { ok: false, error: "Job not found." };
+  if (booking.status === "cancelled") {
+    return { ok: false, error: "That job was cancelled — hours can't attach to it." };
+  }
+
+  // The person must actually be assigned — primary slot or crew junction.
+  if (booking.assigned_to !== entry.employee_id) {
+    const { data: crew } = (await supabase
+      .from("booking_assignees" as never)
+      .select("membership_id")
+      .eq("booking_id" as never, bookingId as never)
+      .eq("membership_id" as never, entry.employee_id as never)
+      .limit(1)
+      .maybeSingle()) as unknown as { data: { membership_id: string } | null };
+    if (!crew) {
+      return {
+        ok: false,
+        error:
+          "They aren't assigned to that job. Assign them to it first, then attach the hours.",
+      };
+    }
+  }
+
+  const { error } = await supabase
+    .from("time_entries")
+    .update({ booking_id: bookingId, work_category: null } as never)
+    .eq("id", id)
+    .eq("organization_id", membership.organization_id);
+  if (error) return { ok: false, error: error.message };
+
+  await logAuditEvent({
+    membership,
+    action: "update",
+    entity: "time_entry",
+    entity_id: id,
+    before: { booking_id: null, work_category: entry.work_category },
+    after: { booking_id: bookingId, work_category: null },
+  });
+
+  revalidatePath("/app/timesheets", "page");
+  return { ok: true };
+}
+
 export async function bulkDeleteTimeEntriesAction(
   formData: FormData,
 ): Promise<Result & { deleted?: number }> {

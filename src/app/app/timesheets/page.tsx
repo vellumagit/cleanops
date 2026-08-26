@@ -424,8 +424,40 @@ export default async function TimesheetsPage({
       pay_type: payType,
       earned_cents: earnedCents,
       engagement: entryEngagement,
+      attach_suggestion: null as import("./types").TimesheetEntry["attach_suggestion"],
     };
   });
+
+  // Stray punches: closed entries with no job. Offer the assigned job whose
+  // window they evidently sat inside — Svitlana taps once, the hours land
+  // where they belong, and the hours-check on the invoice starts adding up.
+  {
+    const { matchStrayEntries } = await import("@/lib/stray-punch-match");
+    const strays = rows.filter((e) => !e.booking_id && e.clock_out_at);
+    if (strays.length > 0) {
+      const matches = await matchStrayEntries(
+        supabase,
+        strays.map((e) => ({
+          id: e.id,
+          employee_id: e.employee_id,
+          clock_in_at: e.clock_in_at,
+          clock_out_at: e.clock_out_at,
+          booking_id: e.booking_id,
+        })),
+      );
+      for (const e of rows) {
+        const m = matches.get(e.id);
+        if (m) {
+          e.attach_suggestion = {
+            bookingId: m.bookingId,
+            clientName: m.clientName,
+            scheduledAt: m.scheduledAt,
+            candidateCount: m.candidateCount,
+          };
+        }
+      }
+    }
+  }
 
   // Booking options for the manual-entry picker.
   const bookingOptions: BookingOption[] = (recentBookings ?? []).map((b) => ({

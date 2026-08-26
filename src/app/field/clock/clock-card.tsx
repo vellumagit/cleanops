@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { clockInAction, clockOutAction } from "./actions";
-import { startJobAction } from "../jobs/actions";
+import { startJobAction, completeJobAction } from "../jobs/actions";
 import { JobCardComplete } from "../jobs/job-card-complete";
 import { useElapsed, formatElapsed, STALE_SHIFT_MS } from "../use-elapsed";
 
@@ -97,6 +97,7 @@ export function ClockCard({
   tz,
   elevated,
   todaysJobs,
+  nextJob,
 }: {
   /** Org IANA timezone. Without it this rendered in the PHONE's zone, which
    *  is accidentally right for a local cleaner and wrong for anyone whose
@@ -113,6 +114,9 @@ export function ClockCard({
   elevated: boolean;
   /** The member's assigned jobs today — the one-tap right answers. */
   todaysJobs: TodayJob[];
+  /** While clocked into a job: the next assigned job whose start has
+   *  arrived, offered as one tap that finishes this one and starts it. */
+  nextJob: TodayJob | null;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -140,6 +144,30 @@ export function ClockCard({
       } else {
         toast.error(result.error);
       }
+    });
+  }
+
+  function handleRollover(next: TodayJob) {
+    if (!openBookingId) return;
+    startTransition(async () => {
+      const coords = await getCoords();
+      const done = buildFormData(coords);
+      done.set("booking_id", openBookingId);
+      const finish = await completeJobAction(done);
+      if (!finish.ok) {
+        toast.error(finish.error);
+        return;
+      }
+      const start = buildFormData(coords);
+      start.set("booking_id", next.id);
+      const started = await startJobAction(start);
+      if (started.ok) {
+        toast.success(`Done — clocked in at ${next.clientName}`);
+      } else {
+        // The finish landed; only the next clock-in failed. Say exactly that.
+        toast.error(`Job finished, but couldn't start ${next.clientName}: ${started.error}`);
+      }
+      router.refresh();
     });
   }
 
@@ -309,6 +337,26 @@ export function ClockCard({
            * that look equivalent and aren't.
            */
           <div className="flex flex-col gap-2">
+            {nextJob && (
+              <button
+                type="button"
+                disabled={isPending}
+                onClick={() => handleRollover(nextJob)}
+                className="flex h-12 w-full items-center justify-between gap-3 rounded-lg border border-sky-300/60 bg-sky-500/10 px-3 text-left transition-colors hover:bg-sky-500/20 disabled:opacity-50 dark:border-sky-900/50"
+              >
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-semibold text-sky-800 dark:text-sky-300">
+                    Done here? Start {nextJob.clientName}
+                  </span>
+                  <span className="block truncate text-[11px] text-sky-800/70 dark:text-sky-300/70">
+                    {nextJob.serviceLabel
+                      ? `${nextJob.serviceLabel} · `
+                      : ""}
+                    {nextJob.timeLabel} — finishes this job first
+                  </span>
+                </span>
+              </button>
+            )}
             <JobCardComplete bookingId={openBookingId} size="full" />
             <Button
               type="button"

@@ -67,7 +67,12 @@ export default async function FieldClockPage() {
     if (!["pending", "confirmed", "in_progress"].includes(b.status)) continue;
     jobMap.set(b.id, b);
   }
-  const todaysJobs = [...jobMap.values()]
+  // Rollover prompt: while clocked into job A, the next assigned job whose
+  // start has (nearly) arrived gets offered as "finish & start". Only jobs
+  // nobody has started — pending/confirmed — qualify as "next".
+  const rawJobs = [...jobMap.values()];
+
+  const todaysJobs = rawJobs
     .sort((a, b) => a.scheduled_at.localeCompare(b.scheduled_at))
     .map((b) => ({
       id: b.id,
@@ -106,6 +111,30 @@ export default async function FieldClockPage() {
   const openBookingLabel = open?.booking?.client?.name ?? null;
   const openBookingId = open?.booking?.id ?? null;
 
+  const soonMs = Date.now() + 10 * 60_000;
+  const nextJobRow = openBookingId
+    ? rawJobs
+        .filter(
+          (b) =>
+            b.id !== openBookingId &&
+            ["pending", "confirmed"].includes(b.status) &&
+            Date.parse(b.scheduled_at) <= soonMs,
+        )
+        .sort((a, b) => a.scheduled_at.localeCompare(b.scheduled_at))[0] ?? null
+    : null;
+  const nextJob = nextJobRow
+    ? {
+        id: nextJobRow.id,
+        clientName: nextJobRow.client?.name ?? "Job",
+        serviceLabel:
+          nextJobRow.service_type_label ?? nextJobRow.service_type ?? "",
+        timeLabel: new Date(nextJobRow.scheduled_at).toLocaleTimeString(
+          "en-US",
+          { hour: "numeric", minute: "2-digit", timeZone: tz },
+        ),
+      }
+    : null;
+
   return (
     <>
       <FieldHeader
@@ -116,6 +145,7 @@ export default async function FieldClockPage() {
       <ClockCard
         elevated={["owner", "admin", "manager"].includes(membership.role)}
         todaysJobs={todaysJobs}
+        nextJob={nextJob}
         tz={tz}
         isClockedIn={Boolean(open)}
         openSinceIso={open?.clock_in_at ?? null}
