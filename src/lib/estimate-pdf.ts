@@ -10,6 +10,10 @@
  * Keeps the old signature — renderEstimatePdf({ publicToken }) — so both
  * callers (the /api/e/[token]/pdf route and sendEstimateToClient's email
  * attachment) stay untouched: this module fetches its own data by token.
+ *
+ * The regexes in clean() use unicode ESCAPES, not literal glyphs: the first
+ * version transcribed an invisible control-band character class from
+ * terminal output and shipped a hyphen-eater.
  */
 
 import "server-only";
@@ -38,11 +42,11 @@ function hexToRgb(hex?: string | null): RGB {
  *  unicode glyph (emoji, smart quote, CJK) never throws mid-render. */
 function clean(s: string): string {
   return (s ?? "")
-    .replace(/[—–]/g, "-")
-    .replace(/[‘’]/g, "'")
-    .replace(/[“”]/g, '"')
-    .replace(/[-]/g, "")
-    .replace(/[^ -ÿ]/g, "");
+    .replace(/[\u2014\u2013]/g, "-") // em / en dash -> hyphen
+    .replace(/[\u2018\u2019]/g, "'") // curly single quotes
+    .replace(/[\u201c\u201d]/g, '"') // curly double quotes
+    .replace(/[\u0080-\u009f]/g, "") // CP1252 control band (undefined glyphs)
+    .replace(/[^ -\u00ff]/g, ""); // keep printable ASCII + Latin-1
 }
 
 export async function renderEstimatePdf(opts: {
@@ -131,12 +135,14 @@ export async function renderEstimatePdf(opts: {
       color,
     });
   }
-  /** Word-wrap into lines that fit; newlines in the source are respected —
-   *  the intake endpoints write multi-line detail blocks and every line of
-   *  the lead's story belongs on the quote. */
+  /** Word-wrap into lines that fit. Newlines split BEFORE cleaning — the
+   *  intake endpoints write multi-line detail blocks, clean() strips
+   *  control characters, and a newline is one: cleaning first glued the
+   *  whole details block into a single endless line. */
   function wrap(s: string, size: number, maxWidth: number): string[] {
     const out: string[] = [];
-    for (const rawLine of clean(s).split("\n")) {
+    for (const sourceLine of s.split("\n")) {
+      const rawLine = clean(sourceLine);
       const words = rawLine.split(/\s+/).filter(Boolean);
       if (words.length === 0) {
         out.push("");
@@ -172,19 +178,21 @@ export async function renderEstimatePdf(opts: {
         })
       : null;
 
-  // ── Header ───────────────────────────────────────────────────────────────
+  // -- Header ---------------------------------------------------------------
   text(orgName, M, 18, bold, brand);
   textR("ESTIMATE", RIGHT, 18, bold, ink);
   y -= 16;
   textR(dateFmt(est.created_at) ?? "", RIGHT, 11, font, muted);
   y -= 34;
 
-  // ── Prepared for ─────────────────────────────────────────────────────────
+  // -- Prepared for ---------------------------------------------------------
   text("PREPARED FOR", M, 8, bold, muted);
   if (est.expires_at) textR("VALID UNTIL", RIGHT, 8, bold, muted);
   y -= 15;
   text(est.client?.name ?? "-", M, 11, bold, ink);
-  if (est.expires_at) textR(dateFmt(est.expires_at) ?? "-", RIGHT, 11, bold, ink);
+  if (est.expires_at) {
+    textR(dateFmt(est.expires_at) ?? "-", RIGHT, 11, bold, ink);
+  }
   y -= 13;
   if (est.client?.email) {
     text(est.client.email, M, 9, font, muted);
@@ -192,19 +200,23 @@ export async function renderEstimatePdf(opts: {
   }
   y -= 18;
 
-  // ── Service ──────────────────────────────────────────────────────────────
+  // -- Service --------------------------------------------------------------
   hline(1, brand);
   y -= 16;
   text("SERVICE", M, 8, bold, muted);
   y -= 14;
-  for (const line of wrap(est.service_description || "Cleaning service", 11, BODY_MAX)) {
+  for (const line of wrap(
+    est.service_description || "Cleaning service",
+    11,
+    BODY_MAX,
+  )) {
     ensureRoom(110);
     text(line, M, 11, font, ink);
     y -= 15;
   }
   y -= 6;
 
-  // ── Details (the lead's story — property, add-ons, schedule) ─────────────
+  // -- Details (the lead's story: property, add-ons, schedule) --------------
   if (est.notes) {
     ensureRoom(140);
     text("DETAILS", M, 8, bold, muted);
@@ -217,7 +229,7 @@ export async function renderEstimatePdf(opts: {
     y -= 6;
   }
 
-  // ── Total ────────────────────────────────────────────────────────────────
+  // -- Total ----------------------------------------------------------------
   ensureRoom(130);
   y -= 4;
   page.drawLine({
@@ -231,14 +243,14 @@ export async function renderEstimatePdf(opts: {
   textR(formatCurrencyCents(est.total_cents, currency), RIGHT, 13, bold, brand);
   y -= 24;
   text(
-    "This is an estimate, not an invoice — the final price is confirmed before any work begins.",
+    "This is an estimate, not an invoice - the final price is confirmed before any work begins.",
     M,
     8,
     font,
     muted,
   );
 
-  // ── Footer ───────────────────────────────────────────────────────────────
+  // -- Footer ---------------------------------------------------------------
   page.drawText(clean(`${orgName} - Estimate`), {
     x: M,
     y: 38,
