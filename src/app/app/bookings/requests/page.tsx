@@ -10,6 +10,7 @@ import { formatDateTime, humanizeEnum } from "@/lib/format";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { updateRequestStatusAction } from "./actions";
 import { OpenSkipRequests } from "./open-skip-requests";
+import { OpenInquiries, type OpenInquiryRow } from "./open-inquiries";
 
 export const metadata = { title: "Booking requests" };
 
@@ -91,6 +92,7 @@ export default async function BookingRequestsPage({
     .limit(50)) as unknown as {
     data: Array<{
       id: string;
+
       booking_id: string | null;
       body: string | null;
       created_at: string;
@@ -113,6 +115,31 @@ export default async function BookingRequestsPage({
       : "visit no longer on the schedule",
     askedLabel: formatDateTime(r.created_at, tz),
   }));
+  // The other half of client_job_requests: website inquiries + client job
+  // notes. This page listed only skips — Brian's first live contact test
+  // produced a lead, a request, emails, a notification, and an inbox that
+  // looked empty.
+  const { data: inquiryRows } = (await supabase
+    .from("client_job_requests" as never)
+    .select("id, body, created_at, client:clients ( id, name )")
+    .eq("kind" as never, "job_note" as never)
+    .eq("status" as never, "open" as never)
+    .order("created_at" as never, { ascending: false } as never)) as unknown as {
+    data: Array<{
+      id: string;
+      body: string | null;
+      created_at: string;
+      client: { id: string; name: string | null } | null;
+    }> | null;
+  };
+  const openInquiries: OpenInquiryRow[] = (inquiryRows ?? []).map((r) => ({
+    id: r.id,
+    clientId: r.client?.id ?? "",
+    clientName: r.client?.name ?? "A client",
+    body: r.body ?? "",
+    askedLabel: formatDateTime(r.created_at, tz),
+  }));
+
 
   const tabLinkClass = (active: boolean) =>
     `rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${
@@ -135,6 +162,7 @@ export default async function BookingRequestsPage({
         </Link>
       }
     >
+      <OpenInquiries rows={openInquiries} />
       <OpenSkipRequests rows={openSkips} />
 
       <div className="mb-4 inline-flex items-center gap-1 rounded-lg border border-border bg-muted/30 p-1">
