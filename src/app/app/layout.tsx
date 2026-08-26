@@ -63,6 +63,7 @@ export default async function AppLayout({
     { data: unreadChat },
     { count: newReviews },
     { count: pendingRequests },
+    { count: openJobRequests },
     { count: overdueTasks },
     { count: newApplicants },
     { count: newLeads },
@@ -136,6 +137,16 @@ export default async function AppLayout({
         .select("id", { count: "exact", head: true })
         .eq("organization_id", membership.organization_id)
         .eq("status", "pending") as unknown as { count: number | null },
+      // Open skips + inquiries (client_job_requests) — the badge counted
+      // only portal booking requests, so website inquiries arrived to a
+      // nav item that looked quiet. The counter is the clear picture.
+      supabase
+        .from("client_job_requests" as never)
+        .select("id", { count: "exact", head: true })
+        .eq("organization_id" as never, membership.organization_id as never)
+        .eq("status" as never, "open" as never) as unknown as {
+        count: number | null;
+      },
       // Overdue + today tasks (incomplete, due <= now)
       supabase
         .from("tasks" as never)
@@ -193,7 +204,8 @@ export default async function AppLayout({
         feedEnabled={feedEnabled}
         tabBadges={{
           "/app/bookings": todayBookings ?? 0,
-          "/app/bookings/requests": pendingRequests ?? 0,
+          "/app/bookings/requests":
+            (pendingRequests ?? 0) + (openJobRequests ?? 0),
           "/app/invoices": overdueInvoices ?? 0,
           "/app/estimates": pendingEstimates ?? 0,
           "/app/chat": Number(unreadChat ?? 0),
