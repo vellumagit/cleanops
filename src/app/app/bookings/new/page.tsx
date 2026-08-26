@@ -1,6 +1,7 @@
 import { requireMembership } from "@/lib/auth";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { getOrgTimezone } from "@/lib/org-timezone";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
 import { BookingForm, type BookingFormDefaults } from "../booking-form";
 import { fetchBookingFormOptions } from "../options";
@@ -49,9 +50,41 @@ export default async function NewBookingPage({
   // Pre-fill from query params so click-empty-slot on the Dispatch
   // scheduler (and future deep links) lands on a half-filled form.
   // Any field can still be overridden by the user before saving.
+  // A preselected client should arrive with their address already filled.
+  // The form's client-change handler does this on a live pick, but it never
+  // fires for a client set via defaults — so "+Book" from a client's page
+  // landed on a form that knew the client and blanked the address anyway.
+  // Same precedence as the live handler: a single property's address wins,
+  // then the client's own.
+  let prefillAddress: string | undefined;
+  if (params.client_id) {
+    const supabase = await createSupabaseServerClient();
+    const [{ data: client }, { data: props }] = await Promise.all([
+      supabase
+        .from("clients")
+        .select("address")
+        .eq("id", params.client_id)
+        .maybeSingle() as unknown as Promise<{
+        data: { address: string | null } | null;
+      }>,
+      supabase
+        .from("client_properties" as never)
+        .select("address")
+        .eq("client_id" as never, params.client_id as never) as unknown as Promise<{
+        data: Array<{ address: string | null }> | null;
+      }>,
+    ]);
+    const propRows = props ?? [];
+    prefillAddress =
+      (propRows.length === 1 ? propRows[0].address : null) ??
+      client?.address ??
+      undefined;
+  }
+
   const defaults: BookingFormDefaults = {
     client_id: params.client_id,
     assigned_to: params.assigned_to,
+    address: prefillAddress,
     scheduled_at_local: params.scheduled_at
       ? isoToDatetimeLocal(params.scheduled_at, tz)
       : undefined,
