@@ -2611,10 +2611,15 @@ export async function deleteBookingAction(formData: FormData) {
     const billed = await resolveBilledBookings(supabase, [id]);
     const inv = billed.get(id);
     if (inv) {
-      console.warn(
-        `[bookings] refused delete of ${id} — billed by invoice ${inv.id} (${inv.status})`,
+      // Refuse LOUDLY. This used to console.warn and silently return — the
+      // owner clicked delete, nothing happened, no explanation. The rule
+      // stands (deleting a billed booking manufactures stripped links), but
+      // a rule that won't say its own name is just a broken button.
+      redirect(
+        `/app/bookings/${id}/edit?delete_error=${encodeURIComponent(
+          `Invoice ${inv.number ?? inv.id.slice(0, 8)} (${inv.status}) bills this job. Void or delete that invoice first — then this booking can be deleted.`,
+        )}`,
       );
-      return;
     }
   }
 
