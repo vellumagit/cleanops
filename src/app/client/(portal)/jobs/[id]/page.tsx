@@ -142,7 +142,7 @@ export default async function ClientJobPage({
   );
   const googleCalendarUrl =
     "https://calendar.google.com/calendar/render?action=TEMPLATE" +
-    `&text=${encodeURIComponent(`Cleaning — ${client.organization_name}`)}` +
+    `&text=${encodeURIComponent(`${service} — ${client.organization_name}`)}` +
     `&dates=${gcalStamp(gcalStart)}/${gcalStamp(gcalEnd)}` +
     (booking.address
       ? `&location=${encodeURIComponent(booking.address)}`

@@ -33,7 +33,7 @@ export async function GET(
   const admin = createSupabaseAdminClient();
   const { data: booking } = (await admin
     .from("bookings")
-    .select("id, client_id, scheduled_at, duration_minutes, address, status")
+    .select("id, client_id, scheduled_at, duration_minutes, address, status, service_type, service_type_label")
     .eq("id", id)
     .eq("client_id", client.id)
     .maybeSingle()) as unknown as {
@@ -64,6 +64,16 @@ export async function GET(
   const esc = (s: string) =>
     s.replace(/\\/g, "\\\\").replace(/[,;]/g, (m) => `\\${m}`);
 
+  const bk = booking as unknown as {
+    service_type: string | null;
+    service_type_label: string | null;
+  };
+  const serviceLabel =
+    bk.service_type_label ??
+    (bk.service_type
+      ? bk.service_type.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase())
+      : "Cleaning");
+
   const lines = [
     "BEGIN:VCALENDAR",
     "VERSION:2.0",
@@ -73,7 +83,7 @@ export async function GET(
     `DTSTAMP:${stamp(new Date())}`,
     `DTSTART:${stamp(start)}`,
     `DTEND:${stamp(end)}`,
-    `SUMMARY:${esc(`Cleaning — ${orgName}`)}`,
+    `SUMMARY:${esc(`${serviceLabel} — ${orgName}`)}`,
     ...(booking.address ? [`LOCATION:${esc(booking.address)}`] : []),
     `DESCRIPTION:${esc(`Your cleaning with ${orgName}. Details and changes: your client portal.`)}`,
     "END:VEVENT",
