@@ -34,12 +34,19 @@ export function JobActionButtons({
   bookingId,
   status,
   youCompleted = false,
+  myOpenEntryHere = false,
 }: {
   bookingId: string;
   status: string;
   /** This cleaner finished their own segment of a split shift, but the booking
    *  isn't fully complete yet (later segments are still outstanding). */
   youCompleted?: boolean;
+  /** THIS cleaner has an open time entry on THIS job. The start button keys
+   *  off this, not the booking's status — "in progress" only means SOMEONE
+   *  started it. Gating on status alone hid Start from the whole crew the
+   *  moment the lead clocked in, leaving the second cleaner with nothing but
+   *  a Complete button for a job she hadn't started. */
+  myOpenEntryHere?: boolean;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -96,7 +103,7 @@ export function JobActionButtons({
 
   return (
     <div className="flex flex-col gap-3">
-      {!isStarted ? (
+      {!isDone && !youCompleted && !myOpenEntryHere ? (
         <Button
           type="button"
           size="lg"
@@ -105,7 +112,11 @@ export function JobActionButtons({
           disabled={isPending}
         >
           <Play className="mr-2 h-5 w-5" />
-          {isPending ? "Starting…" : "Start job"}
+          {isPending
+            ? "Starting…"
+            : isStarted
+              ? "Clock in — job in progress"
+              : "Start job"}
         </Button>
       ) : null}
       {isStarted ? (

@@ -59,6 +59,19 @@ export default async function FieldJobDetailPage({
   const supabase = await createSupabaseServerClient();
   const tz = await getOrgTimezone(membership.organization_id);
 
+  // Does THIS cleaner have an open punch on THIS job? Drives the start
+  // button: the second cleaner on a crew must be able to clock in after the
+  // lead already has.
+  const supabaseEarly = await createSupabaseServerClient();
+  const { data: myOpenEntryHere } = await supabaseEarly
+    .from("time_entries")
+    .select("id")
+    .eq("employee_id", membership.id)
+    .eq("booking_id", id)
+    .is("clock_out_at", null)
+    .limit(1)
+    .maybeSingle();
+
   const { data: bookingRow, error } = await supabase
     .from("bookings")
     .select(
@@ -632,6 +645,7 @@ export default async function FieldJobDetailPage({
             bookingId={booking.id}
             status={booking.status}
             youCompleted={crewRow?.completed_at != null}
+            myOpenEntryHere={Boolean(myOpenEntryHere)}
           />
           {booking.status !== "completed" && (
             <ManageShift

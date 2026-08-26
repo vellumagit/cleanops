@@ -418,6 +418,34 @@ async function effectiveEventMinutes(booking: {
   };
 }
 
+/** All crew names on a booking (junction), for the event description. */
+async function resolveCrewNames(bookingId: string): Promise<string[]> {
+  try {
+    const admin = createSupabaseAdminClient();
+    const { data } = (await admin
+      .from("booking_assignees" as never)
+      .select(
+        "member:memberships ( display_name, profile:profiles ( full_name ) )",
+      )
+      .eq("booking_id" as never, bookingId as never)) as unknown as {
+      data: Array<{
+        member: {
+          display_name: string | null;
+          profile: { full_name: string | null } | null;
+        } | null;
+      }> | null;
+    };
+    return (data ?? [])
+      .map(
+        (r) =>
+          r.member?.display_name ?? r.member?.profile?.full_name ?? null,
+      )
+      .filter((n): n is string => Boolean(n));
+  } catch {
+    return [];
+  }
+}
+
 function buildBookingEventContent(
   b: {
     id: string;
@@ -430,6 +458,9 @@ function buildBookingEventContent(
   /** When > 1, the job's hours are divided across this many cleaners (team job
    *  with "divide hours" on) — tag it so the shortened window is understood. */
   dividedCrew = 0,
+  /** Every crew member's name (junction). Svitlana's ask: the calendar
+   *  showed only the first cleaner on team jobs. */
+  crewNames: string[] = [],
 ): { summary: string; description: string } {
   const isSplit = (b.split_count ?? 0) > 1;
   const isDivided = dividedCrew > 1;
@@ -451,7 +482,12 @@ function buildBookingEventContent(
       `${dividedCrew} cleaners working together — hours divided evenly (each on site for the shown window).`,
     );
   }
-  if (b.employee_name) parts.push(`Assigned to: ${b.employee_name}`);
+  const crew = [
+    ...(b.employee_name ? [b.employee_name] : []),
+    ...crewNames.filter((n) => n && n !== b.employee_name),
+  ];
+  if (crew.length > 1) parts.push(`Crew: ${crew.join(", ")}`);
+  else if (crew.length === 1) parts.push(`Assigned to: ${crew[0]}`);
   if (b.notes) parts.push(`Notes: ${b.notes}`);
   parts.push(`\nManaged by Sollos — /app/bookings/${b.id}`);
 
@@ -485,9 +521,11 @@ export async function createCalendarEvent(
   const { minutes, dividedCrew } = await effectiveEventMinutes(booking);
   const end = new Date(start.getTime() + minutes * 60_000);
 
+  const crewNames = await resolveCrewNames(booking.id);
   const { summary, description } = buildBookingEventContent(
     booking,
     dividedCrew,
+    crewNames,
   );
 
   const event: CalendarEvent = {
@@ -558,9 +596,11 @@ export async function updateCalendarEvent(
   const { minutes, dividedCrew } = await effectiveEventMinutes(booking);
   const end = new Date(start.getTime() + minutes * 60_000);
 
+  const crewNames = await resolveCrewNames(booking.id);
   const { summary, description } = buildBookingEventContent(
     booking,
     dividedCrew,
+    crewNames,
   );
 
   const event: CalendarEvent = {
