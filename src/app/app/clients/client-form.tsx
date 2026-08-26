@@ -57,12 +57,17 @@ export function ClientForm({
   referralClients = [],
   orgContactDefault = "email",
   orgSmsEnabled = true,
+  isLead = false,
 }: {
   mode: "create" | "edit";
   id?: string;
   defaults?: Defaults;
   /** The org's house default, shown + used by the notification control. */
   orgContactDefault?: OrgContactDefault;
+  /** Still a lead — hides the client-only machinery (billing cadence,
+   *  anchors, flat rate). "The edit button takes me to a client edit page.
+   *  They aren't clients yet, so this doesn't make sense." Right. */
+  isLead?: boolean;
   /** organizations.sms_enabled — with it off, texts silently skip. */
   orgSmsEnabled?: boolean;
   /** Active memberships for the "Preferred cleaner" dropdown. Passing
@@ -282,7 +287,9 @@ export function ClientForm({
         </FormField>
       )}
 
-      {/* ── Billing cadence ───────────────────────────────────────────────── */}
+      {/* ── Billing cadence — clients only. A lead has nothing to bill; the
+          section reappears the moment they convert. ── */}
+      {!isLead && (
       <div className="rounded-md border border-border bg-muted/20 px-4 py-4 space-y-4">
         <div>
           <p className="text-sm font-medium leading-none">Billing cadence</p>
@@ -392,6 +399,7 @@ export function ClientForm({
           </div>
         </FormField>
       </div>
+      )}
 
       <div className="flex items-center justify-end gap-2 pt-2">
         <Link

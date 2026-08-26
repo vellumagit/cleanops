@@ -23,7 +23,7 @@ export default async function EditClientPage({
     supabase
       .from("clients")
       .select(
-        "id, name, company_name, email, phone, address, notes, lead_note, preferred_contact, contact_preference, contact_overrides, preferred_cleaner_id, sms_opted_in, profile_id, portal_invited_at, portal_accepted_at, portal_invite_expires_at, billing_cadence, billing_type, flat_rate_cents, billing_anchor_day, billing_anchor_date, referred_by_client_id",
+        "id, name, company_name, email, phone, address, notes, lead_note, lifecycle, preferred_contact, contact_preference, contact_overrides, preferred_cleaner_id, sms_opted_in, profile_id, portal_invited_at, portal_accepted_at, portal_invite_expires_at, billing_cadence, billing_type, flat_rate_cents, billing_anchor_day, billing_anchor_date, referred_by_client_id",
       )
       .eq("id", id)
       .maybeSingle() as unknown as Promise<{
@@ -36,6 +36,7 @@ export default async function EditClientPage({
         address: string | null;
         notes: string | null;
         lead_note: string | null;
+        lifecycle: string | null;
         preferred_contact: string;
         contact_preference: string | null;
         contact_overrides: Record<string, string> | null;
@@ -64,10 +65,18 @@ export default async function EditClientPage({
   if (!client) notFound();
 
   return (
-    <PageShell title="Edit client" description={client.name}>
+    <PageShell
+      title={client.lifecycle === "lead" ? "Edit lead" : "Edit client"}
+      description={
+        client.lifecycle === "lead"
+          ? `${client.name} — not a client yet; convert from the Leads page when they book.`
+          : client.name
+      }
+    >
       <div className="max-w-2xl space-y-6">
         <div className="rounded-lg border border-border bg-card p-6">
           <ClientForm
+            isLead={client.lifecycle === "lead"}
             mode="edit"
             id={client.id}
             cleaners={cleaners}
