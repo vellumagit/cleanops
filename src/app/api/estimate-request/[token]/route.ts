@@ -273,7 +273,10 @@ ${cta}
     await notify({
       organizationId: orgId,
       audience: "org-admins",
-      type: "lead",
+      // "general" — the notification_type enum has no "lead" value, and an
+      // invalid enum makes the insert vanish into a caught error. The title
+      // carries the meaning; the enum just has to not reject the row.
+      type: "general",
       title: "New estimate request",
       body: `${fullName}${city ? ` (${city})` : ""} — ${
         schedule || "estimate"
