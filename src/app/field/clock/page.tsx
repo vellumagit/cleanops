@@ -57,6 +57,11 @@ export default async function FieldClockPage() {
       />
 
       <ClockCard
+        defaultCategory={
+          ["owner", "admin", "manager"].includes(membership.role)
+            ? "manager"
+            : "other"
+        }
         tz={tz}
         isClockedIn={Boolean(open)}
         openSinceIso={open?.clock_in_at ?? null}

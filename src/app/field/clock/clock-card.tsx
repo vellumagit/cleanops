@@ -70,6 +70,7 @@ export function ClockCard({
   openBookingLabel,
   openBookingId,
   tz,
+  defaultCategory,
 }: {
   /** Org IANA timezone. Without it this rendered in the PHONE's zone, which
    *  is accidentally right for a local cleaner and wrong for anyone whose
@@ -81,10 +82,15 @@ export function ClockCard({
   openBookingLabel: string | null;
   /** Set when the open shift belongs to a job — changes what "done" means. */
   openBookingId: string | null;
+  /** Off-job clock-ins default their category by who's clocking: managers
+   *  really are doing admin work; a cleaner off-job is almost never. The old
+   *  hardcoded "manager" default put twelve phantom "Manager / admin" rows on
+   *  one cleaner's timesheet and a very confused owner in Brian's inbox. */
+  defaultCategory: string;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
-  const [category, setCategory] = useState("manager");
+  const [category, setCategory] = useState(defaultCategory);
 
   const elapsedMs = useElapsed(isClockedIn ? openSinceIso : null);
   useAppBadge(elapsedMs == null ? null : Math.floor(elapsedMs / 3_600_000));
