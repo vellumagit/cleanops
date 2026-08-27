@@ -19,17 +19,18 @@ export default async function EditChecklistTemplatePage({
   const { id } = await params;
   const supabase = await createSupabaseServerClient();
 
-  const [{ data: tpl }, { data: items }] = await Promise.all([
+  const [{ data: tpl }, { data: items }, { data: serviceRows }] =
+    await Promise.all([
     supabase
       .from("checklist_templates" as never)
-      .select("id, name, description, applies_to_service_type")
+      .select("id, name, description, applies_to_service_type_id")
       .eq("id" as never, id as never)
       .maybeSingle() as unknown as Promise<{
       data: {
         id: string;
         name: string;
         description: string | null;
-        applies_to_service_type: string | null;
+        applies_to_service_type_id: string | null;
       } | null;
     }>,
     supabase
@@ -47,9 +48,23 @@ export default async function EditChecklistTemplatePage({
         is_required: boolean;
       }> | null;
     }>,
+    supabase
+      .from("service_types" as never)
+      .select("id, name")
+      .eq("organization_id" as never, membership.organization_id as never)
+      .eq("is_active" as never, true as never)
+      .order("sort_order" as never, { ascending: true } as never)
+      .order("name" as never, { ascending: true } as never) as unknown as Promise<{
+      data: Array<{ id: string; name: string }> | null;
+    }>,
   ]);
 
   if (!tpl) notFound();
+
+  const services = (serviceRows ?? []).map((s) => ({
+    id: s.id,
+    label: s.name,
+  }));
 
   // Clients for the assign control (+ which already use this template).
   const { data: clientRows } = (await supabase
@@ -99,7 +114,8 @@ export default async function EditChecklistTemplatePage({
           templateId={tpl.id}
           initialName={tpl.name}
           initialDescription={tpl.description ?? ""}
-          initialServiceType={tpl.applies_to_service_type ?? ""}
+          initialServiceTypeId={tpl.applies_to_service_type_id ?? ""}
+          services={services}
           initialItems={initialItems}
         />
       </div>

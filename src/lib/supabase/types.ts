@@ -1106,6 +1106,7 @@ export type Database = {
       checklist_templates: {
         Row: {
           applies_to_service_type: string | null
+          applies_to_service_type_id: string | null
           created_at: string
           description: string | null
           id: string
@@ -1116,6 +1117,7 @@ export type Database = {
         }
         Insert: {
           applies_to_service_type?: string | null
+          applies_to_service_type_id?: string | null
           created_at?: string
           description?: string | null
           id?: string
@@ -1126,6 +1128,7 @@ export type Database = {
         }
         Update: {
           applies_to_service_type?: string | null
+          applies_to_service_type_id?: string | null
           created_at?: string
           description?: string | null
           id?: string

@@ -33,6 +33,27 @@ function readItemsFromForm(formData: FormData) {
   return parsed;
 }
 
+/**
+ * The auto-attach target must be one of THIS org's services — the id comes
+ * from a browser select, so it's proved before it's written. A bad id
+ * degrades to null (manual-only) rather than failing the save.
+ */
+async function readServiceTypeId(
+  supabase: Awaited<ReturnType<typeof getActionContext>>["supabase"],
+  orgId: string,
+  formData: FormData,
+): Promise<string | null> {
+  const raw = String(formData.get("applies_to_service_type_id") ?? "").trim();
+  if (!raw) return null;
+  const { data } = (await supabase
+    .from("service_types" as never)
+    .select("id")
+    .eq("id" as never, raw as never)
+    .eq("organization_id" as never, orgId as never)
+    .maybeSingle()) as unknown as { data: { id: string } | null };
+  return data ? raw : null;
+}
+
 export async function createChecklistTemplateAction(
   formData: FormData,
 ): Promise<Result> {
@@ -43,7 +64,11 @@ export async function createChecklistTemplateAction(
 
   const name = String(formData.get("name") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim();
-  const service_type = String(formData.get("applies_to_service_type") ?? "").trim();
+  const service_type_id = await readServiceTypeId(
+    supabase,
+    membership.organization_id,
+    formData,
+  );
   if (!name) return { ok: false, error: "Template name is required." };
 
   const items = readItemsFromForm(formData);
@@ -54,7 +79,7 @@ export async function createChecklistTemplateAction(
       organization_id: membership.organization_id,
       name,
       description: description || null,
-      applies_to_service_type: service_type || null,
+      applies_to_service_type_id: service_type_id,
       is_active: true,
     })
     .select("id")
@@ -88,6 +113,14 @@ export async function createChecklistTemplateAction(
     after: { name, item_count: items.length, checklist_template: true },
   });
 
+  // Occurrences are generated up to a year ahead — without this, a new
+  // service checklist wouldn't appear on any recurring job for months.
+  if (service_type_id) {
+    await supabase.rpc("backfill_service_checklist" as never, {
+      p_template: tpl.id,
+    } as never);
+  }
+
   revalidatePath("/app/checklists");
   return { ok: true, id: tpl.id };
 }
@@ -103,7 +136,11 @@ export async function updateChecklistTemplateAction(
 
   const name = String(formData.get("name") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim();
-  const service_type = String(formData.get("applies_to_service_type") ?? "").trim();
+  const service_type_id = await readServiceTypeId(
+    supabase,
+    membership.organization_id,
+    formData,
+  );
   if (!name) return { ok: false, error: "Template name is required." };
 
   const items = readItemsFromForm(formData);
@@ -113,7 +150,7 @@ export async function updateChecklistTemplateAction(
     .update({
       name,
       description: description || null,
-      applies_to_service_type: service_type || null,
+      applies_to_service_type_id: service_type_id,
       updated_at: new Date().toISOString(),
     })
     .eq("id", templateId)
@@ -144,6 +181,16 @@ export async function updateChecklistTemplateAction(
     await (supabase
       .from("checklist_template_items")
       .insert(rows) as unknown as Promise<unknown>);
+  }
+
+  // After the wipe-and-recreate above so the backfill copies the items the
+  // owner just saved, not the ones they just replaced. Bookings that already
+  // carry this template keep their frozen copy — that's the system's rule
+  // (edits never rewrite what was actually checked on past jobs).
+  if (service_type_id) {
+    await supabase.rpc("backfill_service_checklist" as never, {
+      p_template: templateId,
+    } as never);
   }
 
   revalidatePath("/app/checklists");

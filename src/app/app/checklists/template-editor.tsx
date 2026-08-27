@@ -27,17 +27,12 @@ type Props = {
   templateId?: string;
   initialName?: string;
   initialDescription?: string;
-  initialServiceType?: string;
+  /** service_types.id this template auto-attaches to, "" = none. */
+  initialServiceTypeId?: string;
+  /** The org's real service catalog — not the legacy hardcoded enum. */
+  services: Array<{ id: string; label: string }>;
   initialItems?: Item[];
 };
-
-const SERVICE_TYPES = [
-  { value: "", label: "Any service type" },
-  { value: "standard", label: "Standard" },
-  { value: "deep", label: "Deep clean" },
-  { value: "move_out", label: "Move-out" },
-  { value: "recurring", label: "Recurring" },
-];
 
 function emptyItem(): Item {
   return {
@@ -53,14 +48,15 @@ export function TemplateEditor({
   templateId,
   initialName = "",
   initialDescription = "",
-  initialServiceType = "",
+  initialServiceTypeId = "",
+  services,
   initialItems,
 }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [name, setName] = useState(initialName);
   const [description, setDescription] = useState(initialDescription);
-  const [serviceType, setServiceType] = useState(initialServiceType);
+  const [serviceTypeId, setServiceTypeId] = useState(initialServiceTypeId);
   const [items, setItems] = useState<Item[]>(
     initialItems && initialItems.length > 0 ? initialItems : [emptyItem()],
   );
@@ -94,7 +90,7 @@ export function TemplateEditor({
     const fd = new FormData();
     fd.set("name", name);
     fd.set("description", description);
-    fd.set("applies_to_service_type", serviceType);
+    fd.set("applies_to_service_type_id", serviceTypeId);
     for (const it of trimmedItems) {
       fd.append(
         "items",
@@ -146,21 +142,22 @@ export function TemplateEditor({
           />
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="applies_to">Service type</Label>
+          <Label htmlFor="applies_to">Auto-add to a service</Label>
           <FormSelect
             id="applies_to"
-            value={serviceType}
-            onChange={(e) => setServiceType(e.target.value)}
+            value={serviceTypeId}
+            onChange={(e) => setServiceTypeId(e.target.value)}
           >
-            {SERVICE_TYPES.map((s) => (
-              <option key={s.value} value={s.value}>
-                {s.label}
+            <option value="">No — attach by hand or per client</option>
+            {services.map((s) => (
+              <option key={s.id} value={s.id}>
+                Every {s.label} booking
               </option>
             ))}
           </FormSelect>
           <p className="text-[11px] text-muted-foreground">
-            Hint for the owner when attaching — doesn&rsquo;t auto-apply
-            yet.
+            Pick a service and this checklist lands on every new booking of
+            it — including recurring visits and the ones already scheduled.
           </p>
         </div>
       </div>

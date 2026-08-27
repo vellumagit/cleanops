@@ -13,7 +13,7 @@ type TemplateRow = {
   id: string;
   name: string;
   description: string | null;
-  applies_to_service_type: string | null;
+  service_name: string | null;
   is_active: boolean;
   item_count: number;
 };
@@ -22,10 +22,14 @@ export default async function ChecklistsPage() {
   await requireMembership(["owner", "admin", "manager"]);
   const supabase = await createSupabaseServerClient();
 
+  // The old `applies_to_service_type` enum tag is deliberately NOT shown —
+  // the UI used to print "auto-applies to X" off it while nothing ever
+  // auto-applied. Only the real, wired FK earns the label now.
   const { data } = (await supabase
     .from("checklist_templates" as never)
     .select(
-      `id, name, description, applies_to_service_type, is_active,
+      `id, name, description, is_active,
+       service:service_types!checklist_templates_applies_to_service_type_id_fkey ( name ),
        items:checklist_template_items ( id )`,
     )
     .order("created_at" as never, {
@@ -35,8 +39,8 @@ export default async function ChecklistsPage() {
       id: string;
       name: string;
       description: string | null;
-      applies_to_service_type: string | null;
       is_active: boolean;
+      service: { name: string } | null;
       items: Array<{ id: string }> | null;
     }> | null;
   };
@@ -45,7 +49,7 @@ export default async function ChecklistsPage() {
     id: t.id,
     name: t.name,
     description: t.description,
-    applies_to_service_type: t.applies_to_service_type,
+    service_name: t.service?.name ?? null,
     is_active: t.is_active,
     item_count: t.items?.length ?? 0,
   }));
@@ -104,8 +108,8 @@ export default async function ChecklistsPage() {
                   )}
                   <p className="mt-1 text-[11px] text-muted-foreground">
                     {t.item_count} item{t.item_count === 1 ? "" : "s"}
-                    {t.applies_to_service_type
-                      ? ` · auto-applies to ${t.applies_to_service_type.replace(/_/g, " ")}`
+                    {t.service_name
+                      ? ` · auto-added to every ${t.service_name} booking`
                       : ""}
                   </p>
                 </div>
