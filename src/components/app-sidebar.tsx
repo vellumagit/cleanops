@@ -29,6 +29,7 @@ import {
   Settings,
   LogOut,
   Bell,
+  LifeBuoy,
   BarChart3,
   Banknote,
   Inbox,
@@ -148,6 +149,7 @@ const NAV_SECTIONS: NavSection[] = [
 ];
 
 const FOOTER_NAV: NavItem[] = [
+  { href: "/app/help", label: "Help", icon: LifeBuoy },
   { href: "/app/notifications", label: "Notifications", icon: Bell },
   { href: "/app/settings", label: "Settings", icon: Settings, roles: ["owner", "admin"] },
 ];
