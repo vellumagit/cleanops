@@ -631,6 +631,9 @@ export default async function BookingDetailPage({
                 className="mt-3 rounded-md border border-border bg-muted/20 p-3"
               >
                 <input type="hidden" name="booking_id" value={booking.id} />
+                {returnTo && (
+                  <input type="hidden" name="_return" value={returnTo} />
+                )}
                 <p className="sollos-label mb-1">
                   Client note for this visit
                 </p>

@@ -159,8 +159,11 @@ export async function createChecklistTemplateAction(
 
   // Occurrences are generated up to a year ahead — without this, a new
   // service checklist wouldn't appear on any recurring job for months.
+  // Admin client on purpose: the backfill functions are being locked to
+  // service_role so no logged-in user can invoke them with a foreign
+  // template id.
   if (service_type_id) {
-    await supabase.rpc("backfill_service_checklist" as never, {
+    await createSupabaseAdminClient().rpc("backfill_service_checklist" as never, {
       p_template: tpl.id,
     } as never);
   }
@@ -249,12 +252,16 @@ export async function updateChecklistTemplateAction(
     });
   }
 
-  // After the wipe-and-recreate above so the backfill copies the items the
-  // owner just saved, not the ones they just replaced. Bookings that already
-  // carry this template keep their frozen copy — that's the system's rule
-  // (edits never rewrite what was actually checked on past jobs).
+  // Sweep-then-backfill the CURRENT service so unstarted future bookings
+  // reflect the items the owner just saved — otherwise an edited template
+  // never reached tomorrow's booking (the backfill guard skips bookings
+  // already carrying it). Frozen copies remain the rule only where
+  // checking has meaning: past, in-progress, and completed jobs.
   if (service_type_id) {
-    await supabase.rpc("backfill_service_checklist" as never, {
+    await sweepUpcomingTemplateCopies(membership.organization_id, templateId, {
+      serviceTypeId: service_type_id,
+    });
+    await createSupabaseAdminClient().rpc("backfill_service_checklist" as never, {
       p_template: templateId,
     } as never);
   }
@@ -379,6 +386,17 @@ export async function assignChecklistToClientAction(
     return { ok: false, error: "Pick a client to assign." };
   }
 
+  // The template id arrives from a browser — prove it's THIS org's before
+  // it becomes a client default and the admin-client backfill copies its
+  // items into this org's bookings.
+  const { data: ownTemplate } = (await supabase
+    .from("checklist_templates")
+    .select("id")
+    .eq("id", template_id)
+    .eq("organization_id", membership.organization_id)
+    .maybeSingle()) as unknown as { data: { id: string } | null };
+  if (!ownTemplate) return { ok: false, error: "Template not found." };
+
   const { error } = (await supabase
     .from("clients")
     .update({ default_checklist_template_id: template_id } as never)
@@ -389,7 +407,8 @@ export async function assignChecklistToClientAction(
   if (error) return { ok: false, error: error.message };
 
   // Backfill upcoming bookings that don't already have a checklist.
-  await supabase.rpc("backfill_client_checklist" as never, {
+  // Admin client — see the service backfill call for why.
+  await createSupabaseAdminClient().rpc("backfill_client_checklist" as never, {
     p_client: client_id,
     p_template: template_id,
   } as never);

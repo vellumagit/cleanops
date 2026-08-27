@@ -844,7 +844,11 @@ export async function createBookingAction(
       } as never)
       .eq("id" as never, fromRequestId as never)
       .eq("organization_id" as never, membership.organization_id as never)
-      .eq("status" as never, "pending" as never);
+      .eq("status" as never, "pending" as never)
+      // The owner can retarget the form to a different client before
+      // saving — that booking is NOT this request's answer, so the
+      // request must stay pending rather than silently claim it.
+      .eq("client_id" as never, parsed.data.client_id as never);
     if (reqErr) {
       console.error(
         "[booking] mark request scheduled failed:",
@@ -1168,6 +1172,38 @@ export async function createRecurringBookingAction(
     "@/lib/lead-conversion"
   );
   await convertOnRecurring(parsed.data.client_id);
+
+  // Same request-resolution as the single-booking path: a series created
+  // from "Create booking" on a portal request answers it too. Bug-hunt
+  // find — toggling Recurring on that form used to leave the request
+  // pending forever. Linked to the earliest occurrence.
+  {
+    const seriesFromRequest = String(formData.get("from_request") ?? "");
+    const earliest = [...(insertedBookings ?? [])].sort((a, b) =>
+      a.scheduled_at < b.scheduled_at ? -1 : 1,
+    )[0];
+    if (seriesFromRequest && earliest) {
+      const { error: reqErr } = await createSupabaseAdminClient()
+        .from("booking_requests" as never)
+        .update({
+          status: "scheduled",
+          booking_id: earliest.id,
+          responded_at: new Date().toISOString(),
+          responded_by: membership.id,
+        } as never)
+        .eq("id" as never, seriesFromRequest as never)
+        .eq("organization_id" as never, membership.organization_id as never)
+        .eq("status" as never, "pending" as never)
+        .eq("client_id" as never, parsed.data.client_id as never);
+      if (reqErr) {
+        console.error(
+          "[booking] mark request scheduled (series) failed:",
+          reqErr.message,
+        );
+      }
+      revalidatePath("/app/bookings/requests");
+    }
+  }
 
   revalidatePath("/app/bookings");
   revalidatePath("/app/calendar");
@@ -3346,9 +3382,17 @@ export async function relayVisitNoteAction(formData: FormData): Promise<void> {
   const { membership, supabase } = await getActionContext();
   if (!["owner", "admin", "manager"].includes(membership.role)) return;
 
-  const back = `/app/bookings/${bookingId}`;
+  // Keep the scheduler breadcrumb through the round-trip — without it,
+  // adding a note from a scheduler-opened booking lost the way back to
+  // the board.
+  const returnTo = String(formData.get("_return") ?? "");
+  const back = returnTo
+    ? `/app/bookings/${bookingId}?_return=${encodeURIComponent(returnTo)}`
+    : `/app/bookings/${bookingId}`;
   const refuse = (msg: string): never =>
-    redirect(`${back}?note_error=${encodeURIComponent(msg)}`);
+    redirect(
+      `${back}${back.includes("?") ? "&" : "?"}note_error=${encodeURIComponent(msg)}`,
+    );
 
   if (!body) refuse("Write the note first.");
   if (body.length > 1000) refuse("Keep it under 1,000 characters.");
