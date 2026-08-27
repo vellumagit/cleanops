@@ -290,7 +290,6 @@ export async function getSubcontractorPayables(
       );
       if (mins === 0) continue;
       const rate =
-        e.booking?.hourly_rate_cents ??
         e.pay_rate_cents_snapshot ??
         rateById.get(e.employee_id) ??
         0;
@@ -628,7 +627,6 @@ export async function getSubcontractorLedger(
       }
       if (mins === 0) continue;
       const rate =
-        e.booking?.hourly_rate_cents ??
         e.pay_rate_cents_snapshot ??
         member?.pay_rate_cents ??
         0;

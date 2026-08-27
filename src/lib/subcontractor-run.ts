@@ -59,7 +59,6 @@ export function groupEntriesForRun(
     if (mins === 0) continue;
 
     const rate =
-      e.booking?.hourly_rate_cents ??
       e.pay_rate_cents_snapshot ??
       fallbackRateByMember.get(e.employee_id) ??
       0;

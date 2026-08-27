@@ -1458,6 +1458,11 @@ export function BookingForm({
         </div>
       )}
 
+      {/* The "Hourly rate" field that used to sit beside Total is gone.
+          It was the CLIENT'S time-and-materials price, but the pay code
+          treated it as a per-booking wage override — a $35/hr-billed job
+          paid the cleaner $35. One box, two meanings; Brian: "remove it
+          entirely." Price a job with Total; wages live on the person. */}
       <div className="grid gap-5 sm:grid-cols-2">
         <FormField
           label={`Total (${currency})`}
@@ -1473,22 +1478,6 @@ export function BookingForm({
             required
             value={totalValue}
             onChange={(e) => setTotalValue(e.target.value)}
-          />
-        </FormField>
-
-        <FormField
-          label={`Hourly rate (${currency})`}
-          htmlFor="hourly_rate_cents"
-          error={state.errors?.hourly_rate_cents}
-          hint="Optional — for time-and-materials jobs"
-        >
-          <Input
-            id="hourly_rate_cents"
-            name="hourly_rate_cents"
-            inputMode="decimal"
-            defaultValue={
-              v.hourly_rate_cents ?? defaults?.hourly_rate_dollars ?? ""
-            }
           />
         </FormField>
       </div>

@@ -329,17 +329,21 @@ export default async function TimesheetsPage({
     }
 
     // Pay calculation. Precedence (first non-null wins):
-    //   1. booking.hourly_rate_cents — owner-set per-booking override
-    //   2. time_entries.pay_rate_cents_snapshot — locked at clock-in time
-    //   3. memberships.pay_rate_cents — current rate (legacy fallback)
+    //   1. time_entries.pay_rate_cents_snapshot — locked at clock-in time
+    //   2. memberships.pay_rate_cents — current rate (legacy fallback)
     //
+    // The booking's hourly rate is the CLIENT'S billing rate (the form's
+    // time-and-materials price) and was never a wage. It sat first in this
+    // precedence, so a $35/hr-billed job paid the cleaner $35 instead of
+    // their $21 — Svit's displayed pay ran $3,087 hot before any run existed.
+    // Pay comes from the wage snapshot, then the current wage. A bench
+    // offer's flat pay_cents rides its own rails and is untouched.
     // The snapshot path fixes the "raise this month silently re-prices
     // last month's payroll" bug. Legacy entries without a snapshot fall
     // through to the current-rate path, matching old behavior.
     const meta = empMeta[empId];
     const entryRow = e as { pay_rate_cents_snapshot?: number | null };
     const payRateCents =
-      e.booking?.hourly_rate_cents ??
       entryRow.pay_rate_cents_snapshot ??
       meta?.pay_rate_cents ??
       0;

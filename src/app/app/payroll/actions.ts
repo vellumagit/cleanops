@@ -256,9 +256,14 @@ export async function createPayrollRunAction(
     // The snapshot fixes the "raise this month silently re-prices last
     // month's payroll" bug — historical hours stay at their original
     // rate even when memberships.pay_rate_cents changes later.
+    // The booking's hourly rate is the CLIENT'S billing rate (the form's
+    // time-and-materials price) and was never a wage. It sat first in this
+    // precedence, so a $35/hr-billed job paid the cleaner $35 instead of
+    // their $21 — Svit's displayed pay ran $3,087 hot before any run existed.
+    // Pay comes from the wage snapshot, then the current wage. A bench
+    // offer's flat pay_cents rides its own rails and is untouched.
     const entry = e as { pay_rate_cents_snapshot?: number | null };
     const rate =
-      e.booking?.hourly_rate_cents ??
       entry.pay_rate_cents_snapshot ??
       bucket.payRateCents;
     bucket.regularCents += Math.round((mins * rate) / 60);

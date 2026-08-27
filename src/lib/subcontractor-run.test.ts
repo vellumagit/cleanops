@@ -18,17 +18,21 @@ const entry = (over: Partial<RunnableEntry>): RunnableEntry => ({
 const rates = (pairs: Array<[string, number | null]>) => new Map(pairs);
 
 describe("groupEntriesForRun", () => {
-  it("prices with the payroll precedence: booking → snapshot → member rate", () => {
+  it("prices with the pay precedence: snapshot → member rate — the booking's billing rate never pays anyone", () => {
     const items = groupEntriesForRun(
       [
-        entry({ id: "a", booking: { hourly_rate_cents: 3000 } }), // 180m @ $30
+        // The booking's $30/hr is the CLIENT'S price. It used to sit first
+        // in this precedence and quietly paid crew the billing rate —
+        // Svit's displayed pay ran $3,087 hot. Now it's ignored: this
+        // entry prices at the member rate ($20), not the booking's $30.
+        entry({ id: "a", booking: { hourly_rate_cents: 3000 } }), // 180m @ member $20
         entry({ id: "b", pay_rate_cents_snapshot: 2400 }), // 180m @ $24
         entry({ id: "c" }), // 180m @ member $20
       ],
       rates([["olha", 2000]]),
     );
     expect(items).toHaveLength(1);
-    expect(items[0].totalCents).toBe(9000 + 7200 + 6000);
+    expect(items[0].totalCents).toBe(6000 + 7200 + 6000);
     expect(items[0].minutes).toBe(540);
     expect(items[0].entryCount).toBe(3);
     expect(items[0].entryIds).toEqual(["a", "b", "c"]);
