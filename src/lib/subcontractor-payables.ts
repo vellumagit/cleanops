@@ -172,9 +172,8 @@ export async function getSubcontractorPayables(
    * Roster subcontractors earn from CLOCKED HOURS, priced with payroll's exact
    * precedence — duplicated deliberately rather than approximated:
    *
-   *   1. booking.hourly_rate_cents            per-booking override
-   *   2. time_entries.pay_rate_cents_snapshot locked at clock-in
-   *   3. memberships.pay_rate_cents           current rate
+   *   1. time_entries.pay_rate_cents_snapshot locked at clock-in
+   *   2. memberships.pay_rate_cents           current rate
    *
    * The snapshot is what stops a raise silently re-pricing last month, and a
    * contractor deserves that guarantee as much as an employee. Get the order
@@ -206,10 +205,9 @@ export async function getSubcontractorPayables(
       clock_out_at: string | null;
       pay_rate_cents_snapshot: number | null;
       needs_review: boolean | null;
-      booking: { hourly_rate_cents: number | null } | null;
     };
     const ENTRY_COLS =
-      "employee_id, clock_in_at, clock_out_at, pay_rate_cents_snapshot, needs_review, booking:bookings ( hourly_rate_cents )";
+      "employee_id, clock_in_at, clock_out_at, pay_rate_cents_snapshot, needs_review";
 
     // Two fetches, one meaning: hours WORKED under the subcontractor
     // engagement. The snapshot (not the person's current engagement) is
@@ -588,7 +586,7 @@ export async function getSubcontractorLedger(
     const { data: entries } = (await admin
       .from("time_entries")
       .select(
-        "clock_in_at, clock_out_at, pay_rate_cents_snapshot, needs_review, booking:bookings ( hourly_rate_cents )" as never,
+        "clock_in_at, clock_out_at, pay_rate_cents_snapshot, needs_review" as never,
       )
       .eq("organization_id", organizationId)
       .eq("employee_id", payee.id)
@@ -605,8 +603,7 @@ export async function getSubcontractorLedger(
         clock_out_at: string | null;
         pay_rate_cents_snapshot: number | null;
         needs_review: boolean | null;
-        booking: { hourly_rate_cents: number | null } | null;
-      }> | null;
+        }> | null;
     };
     for (const e of entries ?? []) {
       if (!e.clock_in_at || !e.clock_out_at) continue;

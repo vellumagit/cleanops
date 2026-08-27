@@ -82,7 +82,7 @@ export async function createPayrollRunAction(
       supabase
         .from("time_entries")
         .select(
-          "id, employee_id, clock_in_at, clock_out_at, pay_rate_cents_snapshot, engagement_snapshot, booking:bookings ( hourly_rate_cents, total_cents )" as never,
+          "id, employee_id, clock_in_at, clock_out_at, pay_rate_cents_snapshot, engagement_snapshot" as never,
         )
         .eq("organization_id", membership.organization_id)
         .is("payroll_run_id", null) // not already in a run
@@ -100,7 +100,6 @@ export async function createPayrollRunAction(
           clock_out_at: string | null;
           pay_rate_cents_snapshot: number | null;
           engagement_snapshot: string | null;
-          booking: { hourly_rate_cents: number | null; total_cents: number } | null;
         }> | null;
       }>,
       // Include every active EMPLOYEE — owners who work shifts, and
@@ -249,9 +248,8 @@ export async function createPayrollRunAction(
     );
     bucket.minutes += mins;
     // Rate precedence (first non-null wins):
-    //   1. booking.hourly_rate_cents — owner-set per-booking override
-    //   2. time_entries.pay_rate_cents_snapshot — locked at clock-in
-    //   3. memberships.pay_rate_cents — current (legacy fallback)
+    //   1. time_entries.pay_rate_cents_snapshot — locked at clock-in
+    //   2. memberships.pay_rate_cents — current (legacy fallback)
     //
     // The snapshot fixes the "raise this month silently re-prices last
     // month's payroll" bug — historical hours stay at their original

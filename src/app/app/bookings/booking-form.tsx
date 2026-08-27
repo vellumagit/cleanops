@@ -52,7 +52,6 @@ export type BookingFormDefaults = {
   service_type_id?: string | null;
   status?: string;
   total_dollars?: string;
-  hourly_rate_dollars?: string;
   address?: string | null;
   property_id?: string | null;
   notes?: string | null;

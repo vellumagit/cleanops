@@ -105,7 +105,7 @@ export async function generateSubcontractorRunAction(
   const { data: entries } = (await admin
     .from("time_entries")
     .select(
-      "id, employee_id, clock_in_at, clock_out_at, pay_rate_cents_snapshot, booking:bookings ( hourly_rate_cents )" as never,
+      "id, employee_id, clock_in_at, clock_out_at, pay_rate_cents_snapshot" as never,
     )
     .eq("organization_id", membership.organization_id)
     .is("payroll_run_id", null)
@@ -121,7 +121,6 @@ export async function generateSubcontractorRunAction(
       clock_in_at: string | null;
       clock_out_at: string | null;
       pay_rate_cents_snapshot: number | null;
-      booking: { hourly_rate_cents: number | null } | null;
     }> | null;
   };
 

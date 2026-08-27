@@ -112,7 +112,6 @@ export default async function TimesheetsPage({
             duration_minutes,
             service_type,
             total_cents,
-            hourly_rate_cents,
             status,
             address,
             client:clients ( name )
@@ -149,7 +148,6 @@ export default async function TimesheetsPage({
             duration_minutes: number;
             service_type: string;
             total_cents: number;
-            hourly_rate_cents: number | null;
             status: string;
             address: string | null;
             client: { name: string | null } | null;

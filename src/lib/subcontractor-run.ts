@@ -4,7 +4,8 @@
  *
  * Pricing MUST match payroll and the payables screens exactly:
  *
- *   booking.hourly_rate_cents  ->  pay_rate_cents_snapshot  ->  member rate
+ *   pay_rate_cents_snapshot  ->  member rate (the booking's hourly rate
+ *   is the client's price and never pays anyone — removed 2026-08-27)
  *
  * "The same shift must not be worth two different amounts depending on which
  * screen you open" (subcontractor-payables.ts) — and a statement is the
@@ -17,7 +18,6 @@ export type RunnableEntry = {
   clock_in_at: string | null;
   clock_out_at: string | null;
   pay_rate_cents_snapshot: number | null;
-  booking: { hourly_rate_cents: number | null } | null;
 };
 
 export type RunItemDraft = {

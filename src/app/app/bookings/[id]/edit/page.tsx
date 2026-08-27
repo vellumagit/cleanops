@@ -31,7 +31,7 @@ export default async function EditBookingPage({
       supabase
         .from("bookings")
         .select(
-          "id, client_id, package_id, assigned_to, scheduled_at, duration_minutes, service_type, service_type_id, status, total_cents, hourly_rate_cents, address, notes, series_id, splits, divide_hours_evenly, property_id",
+          "id, client_id, package_id, assigned_to, scheduled_at, duration_minutes, service_type, service_type_id, status, total_cents, address, notes, series_id, splits, divide_hours_evenly, property_id",
         )
         .eq("id", id)
         .maybeSingle() as unknown as Promise<{
@@ -46,7 +46,6 @@ export default async function EditBookingPage({
           service_type_id: string | null;
           status: string;
           total_cents: number;
-          hourly_rate_cents: number | null;
           address: string | null;
           notes: string | null;
           series_id: string | null;
@@ -133,9 +132,6 @@ export default async function EditBookingPage({
               service_type_id: booking.service_type_id,
               status: booking.status,
               total_dollars: centsToDollarString(booking.total_cents),
-              hourly_rate_dollars: centsToDollarString(
-                booking.hourly_rate_cents,
-              ),
               address: booking.address,
               notes: booking.notes,
               // Without this, every save of this form wrote property_id =

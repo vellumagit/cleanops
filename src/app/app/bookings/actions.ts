@@ -60,7 +60,6 @@ function readFormValues(formData: FormData) {
     service_type: String(formData.get("service_type") ?? "standard"),
     status: String(formData.get("status") ?? "confirmed"),
     total_cents: String(formData.get("total_cents") ?? ""),
-    hourly_rate_cents: String(formData.get("hourly_rate_cents") ?? ""),
     address: String(formData.get("address") ?? ""),
     notes: String(formData.get("notes") ?? ""),
     divide_hours_evenly: String(formData.get("divide_hours_evenly") ?? ""),
@@ -150,7 +149,6 @@ function readRecurringFormValues(formData: FormData) {
     duration_minutes: String(formData.get("duration_minutes") ?? ""),
     service_type: String(formData.get("service_type") ?? "recurring"),
     total_cents: String(formData.get("total_cents") ?? ""),
-    hourly_rate_cents: String(formData.get("hourly_rate_cents") ?? ""),
     address: String(formData.get("address") ?? ""),
     notes: String(formData.get("notes") ?? ""),
   };

@@ -111,7 +111,6 @@ export const BookingSchema = z.object({
   service_type: ServiceTypeEnum,
   status: BookingStatusEnum,
   total_cents: dollarStringToCents,
-  hourly_rate_cents: optionalDollarStringToCents,
   address: optionalText,
   notes: cardSafeOptionalText,
   // Checkbox: show each cleaner their share (duration ÷ crew) in the field app
@@ -198,7 +197,6 @@ export const RecurringBookingSchema = z.object({
     ),
   service_type: ServiceTypeEnum,
   total_cents: dollarStringToCents,
-  hourly_rate_cents: optionalDollarStringToCents,
   address: optionalText,
   notes: cardSafeOptionalText,
 });
