@@ -30,6 +30,8 @@ import {
 } from "@/app/app/checklists/booking-checklist";
 import { AttachTemplateButton } from "@/app/app/checklists/attach-template-button";
 import { AssignCrewButton } from "@/app/app/bookings/assign-crew-button";
+import { SubmitButton } from "@/components/submit-button";
+import { relayVisitNoteAction } from "../actions";
 import {
   duplicateBookingAction,
   markBookingCompleteAction,
@@ -65,7 +67,7 @@ export default async function BookingDetailPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ _return?: string }>;
+  searchParams: Promise<{ _return?: string; note_error?: string }>;
 }) {
   const membership = await requireMembership();
   const canEdit = membership.role === "owner" || membership.role === "admin";
@@ -73,7 +75,7 @@ export default async function BookingDetailPage({
   // This page is itself reachable from the scheduler, so forward whatever
   // origin brought us here. Otherwise scheduler -> details -> edit -> save
   // would lose the board on the last hop.
-  const returnTo = (await searchParams)._return;
+  const { _return: returnTo, note_error: noteError } = await searchParams;
   const editHref = returnTo
     ? `/app/bookings/${id}/edit?_return=${encodeURIComponent(returnTo)}`
     : `/app/bookings/${id}/edit`;
@@ -618,6 +620,38 @@ export default async function BookingDetailPage({
                   </div>
                 ))}
               </div>
+            )}
+
+            {/* The phone is a portal too. A client who calls instead of
+                tapping gets their words into the SAME per-visit channel,
+                shown to the crew in the same highlighted card. */}
+            {["owner", "admin", "manager"].includes(membership.role) && (
+              <form
+                action={relayVisitNoteAction}
+                className="mt-3 rounded-md border border-border bg-muted/20 p-3"
+              >
+                <input type="hidden" name="booking_id" value={booking.id} />
+                <p className="sollos-label mb-1">
+                  Client note for this visit
+                </p>
+                {noteError && (
+                  <p className="mb-2 text-xs font-medium text-amber-700 dark:text-amber-400">
+                    {noteError}
+                  </p>
+                )}
+                <textarea
+                  name="body"
+                  rows={2}
+                  maxLength={1000}
+                  placeholder="Client phoned something in? Type it here — the crew sees it exactly like a note left in the app."
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-xs"
+                />
+                <div className="mt-2 flex justify-end">
+                  <SubmitButton size="sm" pendingLabel="Adding…">
+                    Add note
+                  </SubmitButton>
+                </div>
+              </form>
             )}
 
             {booking.notes && (

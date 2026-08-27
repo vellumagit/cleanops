@@ -531,21 +531,25 @@ export default async function FieldJobDetailPage({
               </div>
             </div>
           ) : null}
+          {/* The one note that changes what happens TODAY — boxed and amber
+              so it can't be scrolled past as one more gray row. */}
           {clientNotes.length > 0 ? (
-            <div className="flex items-start gap-3">
-              <MessageSquare className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
-              <div className="min-w-0">
-                <p className="text-xs font-semibold uppercase tracking-wide text-primary">
-                  From the client, for today
-                </p>
-                {clientNotes.map((n) => (
-                  <p
-                    key={n.id}
-                    className="mt-0.5 whitespace-pre-wrap text-sm font-medium text-foreground"
-                  >
-                    {n.body}
+            <div className="rounded-lg border border-amber-400 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/30">
+              <div className="flex items-start gap-3">
+                <MessageSquare className="mt-0.5 h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" />
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-300">
+                    From the client, for today
                   </p>
-                ))}
+                  {clientNotes.map((n) => (
+                    <p
+                      key={n.id}
+                      className="mt-0.5 whitespace-pre-wrap text-sm font-medium text-amber-950 dark:text-amber-100"
+                    >
+                      {n.body}
+                    </p>
+                  ))}
+                </div>
               </div>
             </div>
           ) : null}

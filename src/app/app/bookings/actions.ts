@@ -39,6 +39,13 @@ import { getOrgTimezone } from "@/lib/org-timezone";
 import { localInputToUtcIso } from "@/lib/validators/common";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { redirectAfterSetup } from "@/lib/setup-return";
+import { notify } from "@/lib/notify";
+import { formatDateTime } from "@/lib/format";
+import { occurrenceDate } from "@/lib/client-job-requests";
+import {
+  detectCardNumber,
+  CARD_DETECTED_MESSAGE,
+} from "@/lib/card-detection";
 
 type Field = keyof typeof BookingSchema.shape;
 export type BookingFormState = ActionState<Field & string>;
@@ -3317,4 +3324,107 @@ export async function assignBookingCrewAction(
   revalidatePath("/app/scheduling");
   revalidatePath("/app");
   return { ok: true };
+}
+
+/**
+ * The office writes a client's words into the SAME per-visit channel the
+ * portal uses. Clients who aren't on the app phone their instructions in,
+ * and those deserve the identical highlighted card the cleaner already
+ * watches — not a rewrite of bookings.notes, which a "this and future"
+ * edit promotes to the series note and turns "just this week" into a
+ * standing instruction.
+ *
+ * The row is inserted exactly as the portal inserts it (resolved,
+ * auto_applied — nothing to triage) so every downstream surface treats
+ * both identically; resolved_by alone records that the office relayed it.
+ */
+export async function relayVisitNoteAction(formData: FormData): Promise<void> {
+  const bookingId = String(formData.get("booking_id") ?? "");
+  const body = String(formData.get("body") ?? "").trim();
+  if (!bookingId) return;
+
+  const { membership, supabase } = await getActionContext();
+  if (!["owner", "admin", "manager"].includes(membership.role)) return;
+
+  const back = `/app/bookings/${bookingId}`;
+  const refuse = (msg: string): never =>
+    redirect(`${back}?note_error=${encodeURIComponent(msg)}`);
+
+  if (!body) refuse("Write the note first.");
+  if (body.length > 1000) refuse("Keep it under 1,000 characters.");
+  if (detectCardNumber(body)) refuse(CARD_DETECTED_MESSAGE);
+
+  const { data: noteBooking } = (await supabase
+    .from("bookings")
+    .select(
+      "id, organization_id, client_id, series_id, scheduled_at, assigned_to, client:clients ( name )",
+    )
+    .eq("id", bookingId)
+    .eq("organization_id", membership.organization_id)
+    .maybeSingle()) as unknown as {
+    data: {
+      id: string;
+      organization_id: string;
+      client_id: string;
+      series_id: string | null;
+      scheduled_at: string;
+      assigned_to: string | null;
+      client: { name: string | null } | null;
+    } | null;
+  };
+  if (!noteBooking) {
+    refuse("This booking no longer exists.");
+    return;
+  }
+  // The after() closure below doesn't inherit narrowing — hand it an
+  // already-proved const instead.
+  const nb = noteBooking;
+
+  const tz = await getOrgTimezone(membership.organization_id);
+  const admin = createSupabaseAdminClient();
+  const { error } = (await admin.from("client_job_requests" as never).insert({
+    organization_id: nb.organization_id,
+    client_id: nb.client_id,
+    booking_id: nb.id,
+    series_id: nb.series_id,
+    occurrence_date: occurrenceDate(nb.scheduled_at, tz),
+    kind: "job_note",
+    body,
+    status: "resolved",
+    resolved_at: new Date().toISOString(),
+    resolved_by: membership.id,
+    auto_applied: true,
+  } as never)) as unknown as { error: { message: string } | null };
+  if (error) refuse(error.message);
+
+  // Crew gets the same push a portal note sends. No org-management echo —
+  // the office just typed it themselves.
+  after(async () => {
+    const clientName = nb.client?.name ?? "the client";
+    const excerpt = `${body.slice(0, 160)}${body.length > 160 ? "…" : ""}`;
+    const when = formatDateTime(nb.scheduled_at, tz);
+    const { data: crewRows } = (await admin
+      .from("booking_assignees")
+      .select("membership_id")
+      .eq("booking_id", nb.id)) as unknown as {
+      data: Array<{ membership_id: string }> | null;
+    };
+    const ids = new Set((crewRows ?? []).map((r) => r.membership_id));
+    if (nb.assigned_to) ids.add(nb.assigned_to);
+    for (const membershipId of ids) {
+      await notify({
+        organizationId: nb.organization_id,
+        audience: "membership",
+        membershipId,
+        type: "client_request",
+        title: `Note from ${clientName}`,
+        body: `${excerpt} — for ${when}.`,
+        href: `/field/jobs/${nb.id}`,
+      });
+    }
+  });
+
+  revalidatePath(back);
+  revalidatePath(`/field/jobs/${nb.id}`);
+  redirect(back);
 }
