@@ -25,9 +25,14 @@ export default async function AppLayout({
   const membership = await requireMembership(["owner", "admin", "manager"]);
 
   const supabase = await createSupabaseServerClient();
-  const subscriptionInfo = await getSubscriptionInfo(
-    membership.organization_id,
-  );
+  // Independent org-scoped lookups — one round-trip instead of three
+  // sequential ones. This layout is the front door of every /app render;
+  // waterfalls here tax every single page.
+  const [subscriptionInfo, orgTz, feedEnabled] = await Promise.all([
+    getSubscriptionInfo(membership.organization_id),
+    getOrgTimezone(membership.organization_id),
+    isFeedVisible(membership.organization_id),
+  ]);
 
   // Hard wall: an expired org (trial elapsed, or past-due grace run out) gets
   // the subscribe screen INSTEAD of the app — the single chokepoint every
@@ -48,7 +53,6 @@ export default async function AppLayout({
   // that; the code used FALLBACK_TZ — fine for one Edmonton tenant, wrong for
   // every org that signs up anywhere else, whose "today's jobs" badge would
   // tick over at another country's midnight.
-  const orgTz = await getOrgTimezone(membership.organization_id);
   const dayBounds = zonedDayBoundsUtc(new Date(), orgTz, 0);
   const todayStart = dayBounds.start;
   const todayEnd = new Date(dayBounds.end.getTime() - 1);
@@ -185,7 +189,6 @@ export default async function AppLayout({
   // Per-org feature gate — feed defaults to OFF. Sidebar uses this
   // to hide the Feed link entirely; the page itself also checks and
   // 404s if a bookmarked URL is hit.
-  const feedEnabled = await isFeedVisible(membership.organization_id);
 
   return (
     <BrandProvider

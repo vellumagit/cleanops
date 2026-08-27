@@ -20,6 +20,7 @@
 
 import "server-only";
 
+import { cache } from "react";
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { createSupabaseServerClient } from "./supabase/server";
@@ -52,13 +53,16 @@ const ACTIVE_ORG_COOKIE = "cleanops_active_org";
 /**
  * Returns the current authenticated user's claims, or null if not signed in.
  * Validated against the JWKS endpoint — safe for authorization decisions.
+ *
+ * React cache(): the layout and the page each check auth in the same
+ * request; only the first call does the work.
  */
-export async function getCurrentClaims() {
+export const getCurrentClaims = cache(async function getCurrentClaims() {
   const supabase = await createSupabaseServerClient();
   const { data } = await supabase.auth.getClaims();
   if (!data?.claims?.sub) return null;
   return data.claims;
-}
+});
 
 /**
  * Returns the current authenticated user's id (auth.uid()), or null.
@@ -91,7 +95,8 @@ export async function getCurrentUser() {
  *
  * Returns null when no user is signed in.
  */
-export async function getCurrentMembership(): Promise<CurrentMembership | null> {
+export const getCurrentMembership = cache(
+  async function getCurrentMembership(): Promise<CurrentMembership | null> {
   const userId = await getCurrentUserId();
   if (!userId) return null;
 
@@ -129,7 +134,8 @@ export async function getCurrentMembership(): Promise<CurrentMembership | null> 
       (chosen as { capabilities?: unknown }).capabilities,
     ),
   };
-}
+  },
+);
 
 /**
  * Server-side guard for a manager capability.

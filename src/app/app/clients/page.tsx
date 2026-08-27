@@ -19,6 +19,10 @@ export default async function ClientsPage({
   requireCapability(membership, "clients");
   const canEdit = membership.role === "owner" || membership.role === "admin";
   const supabase = await createSupabaseServerClient();
+  // Fired, not awaited — resolves while the clients query runs.
+  const contactDefaultPromise = fetchOrgContactDefault(
+    membership.organization_id,
+  );
   const { archived } = await searchParams;
   const showArchived = archived === "1";
 
@@ -50,9 +54,7 @@ export default async function ClientsPage({
   // contact_preference/sms_opted_in aren't in the generated types yet — cast
   // (same convention as the other new columns).
   const rows = (data ?? []) as unknown as ClientRow[];
-  const orgContactDefault = await fetchOrgContactDefault(
-    membership.organization_id,
-  );
+  const orgContactDefault = await contactDefaultPromise;
 
   return (
     <PageShell

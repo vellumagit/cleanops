@@ -23,7 +23,12 @@ export default async function InvoicesPage({
   requireCapability(membership, "invoicing");
   const canEdit = membership.role === "owner" || membership.role === "admin";
   const supabase = await createSupabaseServerClient();
-  const currency = await getOrgCurrency(membership.organization_id);
+  // Fired, not awaited — all three resolve while the invoices query runs.
+  const currencyPromise = getOrgCurrency(membership.organization_id);
+  const notifCtxPromise = fetchOrgNotificationContext(
+    membership.organization_id,
+  );
+  const tzPromise = getOrgTimezone(membership.organization_id);
   const { archived } = await searchParams;
   const showArchived = archived === "1";
 
@@ -77,10 +82,9 @@ export default async function InvoicesPage({
   // Surface auto-send misses ("skipped"/"held" drafts) with a live-computed
   // reason — the "silence is never a mystery" rule. Pure function, no extra
   // queries per row.
-  const { orgDefault, smsEnabled } = await fetchOrgNotificationContext(
-    membership.organization_id,
-  );
-  const orgTz = await getOrgTimezone(membership.organization_id);
+  const currency = await currencyPromise;
+  const { orgDefault, smsEnabled } = await notifCtxPromise;
+  const orgTz = await tzPromise;
 
   const rows: InvoiceRow[] = (data ?? []).map((i) => ({
     id: i.id,

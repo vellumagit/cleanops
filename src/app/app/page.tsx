@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import {
@@ -34,9 +35,11 @@ export const metadata = { title: "Dashboard" };
 
 export default async function DashboardPage() {
   const membership = await requireMembership();
-  const tz = await getOrgTimezone(membership.organization_id);
   const supabase = await createSupabaseServerClient();
-  const currency = await getOrgCurrency(membership.organization_id);
+  const [tz, currency] = await Promise.all([
+    getOrgTimezone(membership.organization_id),
+    getOrgCurrency(membership.organization_id),
+  ]);
 
   // -------- Time windows in the org's display timezone --------
   // On Vercel the server clock is UTC. We need "today" to mean today in the
@@ -380,7 +383,13 @@ export default async function DashboardPage() {
       {/* The app saying what it knows before it becomes a support text —
           money-shaped loose ends with the click that fixes each. Gated to
           money-visible roles: every bucket is prices and invoices. */}
-      {canMoney && <NeedsAttention tz={tz} />}
+      {/* Suspense: the card runs four scans of its own; the dashboard
+          paints without waiting and the card streams in when ready. */}
+      {canMoney && (
+        <Suspense fallback={null}>
+          <NeedsAttention tz={tz} />
+        </Suspense>
+      )}
 
       {/* SECONDARY: avg rating + top performers + today's jobs + activity */}
       <div className="grid gap-4 lg:grid-cols-3">

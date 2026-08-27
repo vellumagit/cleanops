@@ -20,7 +20,8 @@ export default async function BookingsPage({
   const membership = await requireMembership();
   const canEdit = membership.role === "owner" || membership.role === "admin" || membership.role === "manager";
   const supabase = await createSupabaseServerClient();
-  const tz = await getOrgTimezone(membership.organization_id);
+  // Fired, not awaited — resolves while the main bookings query runs.
+  const tzPromise = getOrgTimezone(membership.organization_id);
   const { archived } = await searchParams;
   const showArchived = archived === "1";
 
@@ -54,6 +55,24 @@ export default async function BookingsPage({
     ? query.not("archived_at" as never, "is" as never, null as never)
     : query.is("archived_at" as never, null as never);
 
+  // Active employees for the org — feeds the per-row "Assign" popup.
+  // Promise.resolve subscribes the lazy builder NOW so it runs in
+  // parallel with the main query instead of after it.
+  const employeesPromise = Promise.resolve(
+    supabase
+      .from("memberships")
+      .select("id, display_name, profile:profiles ( full_name )")
+      .eq("status", "active")
+      .in("role", ["employee", "admin", "owner", "manager"])
+      .order("display_name", { ascending: true }),
+  ) as unknown as Promise<{
+    data: Array<{
+      id: string;
+      display_name: string | null;
+      profile: { full_name: string | null } | null;
+    }> | null;
+  }>;
+
   const { data, error } = await (query
     .order("scheduled_at", { ascending: false })
     .limit(1000) as unknown as Promise<{
@@ -82,22 +101,8 @@ export default async function BookingsPage({
 
   if (error) throw error;
 
-  // Active employees for the org — feeds the per-row "Assign" popup so
-  // owners can change the crew without leaving the bookings list. RLS
-  // already scopes memberships to the current org, so no explicit
-  // org_id filter is needed.
-  const { data: employeesData } = (await supabase
-    .from("memberships")
-    .select("id, display_name, profile:profiles ( full_name )")
-    .eq("status", "active")
-    .in("role", ["employee", "admin", "owner", "manager"])
-    .order("display_name", { ascending: true })) as unknown as {
-    data: Array<{
-      id: string;
-      display_name: string | null;
-      profile: { full_name: string | null } | null;
-    }> | null;
-  };
+  const tz = await tzPromise;
+  const { data: employeesData } = await employeesPromise;
   const flaggedCrew = await getFlaggedCrewIds(
     (employeesData ?? []).map((m) => m.id),
   );
