@@ -46,8 +46,10 @@ export const BookingStatusEnum = z.enum([
  *     individual segments that exceed 24h; the per-booking duration
  *     is also uncapped for the same reason. See 2026-06-02 chat.)
  *
- * Optional fields (id, hourly_rate_cents) are preserved as-is into the
- * bookings.splits JSONB but not strictly enforced here.
+ * Optional id is preserved as-is into the bookings.splits JSONB.
+ * (A per-segment hourly_rate_cents used to live here too — decorative
+ * only, nothing ever paid from it; dropped 2026-08-27, and zod strips
+ * the stale key from old rows on their next resave.)
  */
 export const SplitSegmentSchema = z.object({
   id: z.string().optional(),
@@ -58,7 +60,6 @@ export const SplitSegmentSchema = z.object({
     .number()
     .int()
     .positive("Segment duration must be greater than zero"),
-  hourly_rate_cents: z.number().int().nonnegative().optional(),
 });
 
 /**

@@ -53,7 +53,6 @@ export default async function EditBookingPage({
             id: string;
             assigned_to: string;
             duration_minutes: number;
-            hourly_rate_cents: number;
           }> | null;
           divide_hours_evenly: boolean | null;
           property_id: string | null;

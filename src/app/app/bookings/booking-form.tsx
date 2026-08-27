@@ -79,7 +79,6 @@ export type BookingFormDefaults = {
 type Option = {
   id: string;
   label: string;
-  pay_rate_cents?: number | null;
   /** Cleaner has an accommodation / health note on file — surfaces a flag in
    * the crew pickers so the assigner checks the employee file first. */
   hasAccommodations?: boolean;
@@ -103,7 +102,6 @@ type SplitSegment = {
   id: string;
   assigned_to: string;
   duration_minutes: number;
-  hourly_rate_cents: number;
 };
 
 /**
@@ -368,7 +366,6 @@ export function BookingForm({
         id: crypto.randomUUID(),
         assigned_to: "",
         duration_minutes: 120,
-        hourly_rate_cents: 0,
       },
     ]);
   }
@@ -1247,13 +1244,11 @@ export function BookingForm({
                       id: crypto.randomUUID(),
                       assigned_to: "",
                       duration_minutes: Math.round(defaultMinutes / 2) || 120,
-                      hourly_rate_cents: 0,
                     },
                     {
                       id: crypto.randomUUID(),
                       assigned_to: "",
                       duration_minutes: Math.round(defaultMinutes / 2) || 120,
-                      hourly_rate_cents: 0,
                     },
                   ]);
                 }
@@ -1310,25 +1305,16 @@ export function BookingForm({
                       )}
                     </div>
 
-                    <div className="grid gap-2 sm:grid-cols-3">
-                      <div className="sm:col-span-1">
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <div>
                         <label className="mb-1 block text-xs text-muted-foreground">
                           Assigned to
                         </label>
                         <select
                           value={seg.assigned_to}
-                          onChange={(e) => {
-                            const emp = employees.find(
-                              (em) => em.id === e.target.value,
-                            );
-                            updateSplit(seg.id, {
-                              assigned_to: e.target.value,
-                              // Pre-fill rate from employee profile if not set
-                              hourly_rate_cents:
-                                seg.hourly_rate_cents ||
-                                (emp?.pay_rate_cents ?? 0),
-                            });
-                          }}
+                          onChange={(e) =>
+                            updateSplit(seg.id, { assigned_to: e.target.value })
+                          }
                           className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm"
                         >
                           <option value="">Select employee…</option>
@@ -1390,25 +1376,6 @@ export function BookingForm({
                         </div>
                       </div>
 
-                      <div>
-                        <label className="mb-1 block text-xs text-muted-foreground">
-                          Rate ($/hr)
-                        </label>
-                        <input
-                          type="number"
-                          min={0}
-                          step={0.5}
-                          value={(seg.hourly_rate_cents / 100).toFixed(2)}
-                          onChange={(e) =>
-                            updateSplit(seg.id, {
-                              hourly_rate_cents: Math.round(
-                                Number(e.target.value) * 100,
-                              ),
-                            })
-                          }
-                          className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm"
-                        />
-                      </div>
                     </div>
                   </div>
                 );
@@ -1423,18 +1390,13 @@ export function BookingForm({
                 Add segment
               </button>
 
-              {/* Summary row */}
+              {/* Summary row. The "$X estimated cost" that used to sit here
+                  multiplied a per-segment rate nobody was ever paid — each
+                  cleaner's clocked time is priced at their own wage. */}
               {splits.length > 0 &&
                 (() => {
                   const totalSplitMins = splits.reduce(
                     (s, seg) => s + seg.duration_minutes,
-                    0,
-                  );
-                  const totalSplitCost = splits.reduce(
-                    (s, seg) =>
-                      s +
-                      (seg.hourly_rate_cents / 100) *
-                        (seg.duration_minutes / 60),
                     0,
                   );
                   return (
@@ -1446,9 +1408,7 @@ export function BookingForm({
                           ? ` ${totalSplitMins % 60}m`
                           : ""}
                       </strong>{" "}
-                      across {splits.length} employees ·{" "}
-                      <strong>${totalSplitCost.toFixed(2)}</strong> estimated
-                      cost
+                      across {splits.length} employees
                     </p>
                   );
                 })()}

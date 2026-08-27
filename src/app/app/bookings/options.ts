@@ -60,20 +60,20 @@ export async function fetchBookingFormOptions() {
       .eq("is_active", true)
       .order("name"),
     // Every active membership is assignable — owners, admins, and shadow
-    // (manually-added) members included. pay_rate_cents is used to
-    // pre-fill split-shift hourly rates. Admin client because the
-    // column is RLS-locked from end-user JWTs; explicit org filter
-    // keeps the bypass narrow.
+    // (manually-added) members included. Admin client so shadow members
+    // (no profile row) list too; explicit org filter keeps the bypass
+    // narrow. This deliberately does NOT select pay_rate_cents — it used
+    // to, solely to pre-fill the decorative split-segment rate, which
+    // serialized every crew member's wage into the form's props.
     admin
       .from("memberships")
-      .select("id, display_name, profile:profiles ( full_name ), pay_rate_cents")
+      .select("id, display_name, profile:profiles ( full_name )")
       .eq("status", "active")
       .eq("organization_id", membership.organization_id) as unknown as Promise<{
       data: Array<{
         id: string;
         display_name: string | null;
         profile: { full_name: string | null } | null;
-        pay_rate_cents: number | null;
       }> | null;
     }>,
     // Active service catalog for this org. RLS scopes by membership so we
@@ -171,7 +171,6 @@ export async function fetchBookingFormOptions() {
       (employees.data?.map((m) => ({
         id: m.id,
         label: memberDisplayName(m),
-        pay_rate_cents: m.pay_rate_cents ?? null,
         hasAccommodations: flaggedCrew.has(m.id),
       })) ?? []).sort((a, b) => a.label.localeCompare(b.label)),
     services:
