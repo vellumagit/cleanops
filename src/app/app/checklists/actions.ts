@@ -4,8 +4,52 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getActionContext } from "@/lib/actions";
 import { logAuditEvent } from "@/lib/audit";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 type Result = { ok: true; id?: string } | { ok: false; error: string };
+
+/**
+ * Revoking a template retracts its copies from work that hasn't started.
+ *
+ * Copies exist so template edits never rewrite what a cleaner actually
+ * checked on a finished job — but Brian deleted a template and watched its
+ * items keep sitting on tomorrow's booking next to the replacement's
+ * (the FK just went null and the rows stayed). Frozen history is for
+ * history: past, in-progress, and completed jobs keep their copy;
+ * untouched upcoming ones give it back.
+ *
+ * Runs BEFORE the template row is deleted — after that the FK is null and
+ * the copies can no longer be told apart from any other orphan.
+ */
+const UNSTARTED_STATUSES = ["pending", "confirmed", "en_route"] as const;
+async function sweepUpcomingTemplateCopies(
+  orgId: string,
+  templateId: string,
+  scope: { clientId?: string; serviceTypeId?: string } = {},
+): Promise<void> {
+  const admin = createSupabaseAdminClient();
+  let q = admin
+    .from("bookings")
+    .select("id")
+    .eq("organization_id", orgId)
+    .gte("scheduled_at", new Date().toISOString())
+    .in("status", UNSTARTED_STATUSES);
+  if (scope.clientId) q = q.eq("client_id", scope.clientId);
+  if (scope.serviceTypeId) {
+    q = q.eq("service_type_id" as never, scope.serviceTypeId as never);
+  }
+  const { data } = (await q) as unknown as {
+    data: Array<{ id: string }> | null;
+  };
+  const ids = (data ?? []).map((b) => b.id);
+  for (let i = 0; i < ids.length; i += 200) {
+    await (admin
+      .from("booking_checklist_items")
+      .delete()
+      .eq("source_template_id", templateId)
+      .in("booking_id", ids.slice(i, i + 200)) as unknown as Promise<unknown>);
+  }
+}
 
 /**
  * Read the repeated "items" field the editor posts. Each item is a JSON
@@ -145,6 +189,18 @@ export async function updateChecklistTemplateAction(
 
   const items = readItemsFromForm(formData);
 
+  // Detect an auto-attach retarget: pointing the template away from a
+  // service should take its items back off that service's unstarted
+  // bookings, the same way deleting the template would.
+  const { data: before } = (await supabase
+    .from("checklist_templates")
+    .select("applies_to_service_type_id")
+    .eq("id", templateId)
+    .eq("organization_id", membership.organization_id)
+    .maybeSingle()) as unknown as {
+    data: { applies_to_service_type_id: string | null } | null;
+  };
+
   const { error: upErr } = (await supabase
     .from("checklist_templates")
     .update({
@@ -183,6 +239,16 @@ export async function updateChecklistTemplateAction(
       .insert(rows) as unknown as Promise<unknown>);
   }
 
+  // Auto-attach moved off a service (cleared, or switched to another) —
+  // retract from the OLD service's unstarted bookings. Scoped to that
+  // service so hand- and client-attached copies elsewhere survive.
+  const previousServiceId = before?.applies_to_service_type_id ?? null;
+  if (previousServiceId && previousServiceId !== service_type_id) {
+    await sweepUpcomingTemplateCopies(membership.organization_id, templateId, {
+      serviceTypeId: previousServiceId,
+    });
+  }
+
   // After the wipe-and-recreate above so the backfill copies the items the
   // owner just saved, not the ones they just replaced. Bookings that already
   // carry this template keep their frozen copy — that's the system's rule
@@ -205,6 +271,9 @@ export async function deleteChecklistTemplateAction(
   if (!id) return;
   const { membership, supabase } = await getActionContext();
   if (!["owner", "admin", "manager"].includes(membership.role)) return;
+
+  // Retract from unstarted future work first — see sweepUpcomingTemplateCopies.
+  await sweepUpcomingTemplateCopies(membership.organization_id, id);
 
   await (supabase
     .from("checklist_templates")
@@ -355,6 +424,14 @@ export async function unassignChecklistFromClientAction(
     error: { message: string } | null;
   };
   if (error) return { ok: false, error: error.message };
+
+  // Assigning backfills the client's upcoming bookings; unassigning takes
+  // them back — only theirs, and only jobs that haven't started.
+  if (template_id) {
+    await sweepUpcomingTemplateCopies(membership.organization_id, template_id, {
+      clientId: client_id,
+    });
+  }
 
   revalidatePath(`/app/checklists/${template_id}`);
   revalidatePath(`/app/clients/${client_id}`);
