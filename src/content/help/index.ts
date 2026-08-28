@@ -6,6 +6,7 @@ import { body as invoicing } from "./invoicing";
 import { body as timesheetsAndPayroll } from "./timesheets-and-payroll";
 import { body as websiteForms } from "./website-forms";
 import { body as clientPortal } from "./client-portal";
+import { body as automations } from "./automations";
 
 /**
  * The in-app Help library. Plain typed modules, on purpose:
@@ -63,6 +64,13 @@ export const HELP_ARTICLES: HelpArticle[] = [
     blurb: "The lifecycle from inquiry to client, and everything that converts automatically.",
     section: "Day to day",
     body: leadsAndClients,
+  },
+  {
+    slug: "automations",
+    title: "Automations",
+    blurb: "The fixed set of switches, who actually receives what, and the cadence knobs.",
+    section: "Day to day",
+    body: automations,
   },
   {
     slug: "invoicing",
