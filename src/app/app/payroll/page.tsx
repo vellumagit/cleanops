@@ -14,7 +14,8 @@ import { formatCurrencyCents, formatDate } from "@/lib/format";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { paySystemFor } from "@/lib/engagement";
 import { StartRunCard } from "./start-run-card";
-import { PayScheduleDialog } from "./pay-schedule-dialog";
+import { CalendarClock } from "lucide-react";
+import { PAY_SCHEDULE_LABELS } from "@/lib/pay-schedule";
 import { suggestedPayPeriod, type PaySchedule } from "@/lib/pay-schedule";
 import { periodHref } from "@/lib/pay-period";
 import { markTipsPaidAction } from "./actions";
@@ -320,7 +321,28 @@ export default async function PayrollPage() {
           />
         )}
 
-        <PayScheduleDialog schedule={paySchedule} anchor={payAnchor} />
+        {/* The schedule is EDITED in Settings now (Brian: "move that
+            setting to the settings page"); this row just states it and
+            points there. */}
+        <Link
+          href="/app/settings/payroll"
+          className="inline-flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <CalendarClock className="h-3.5 w-3.5" />
+          {paySchedule ? (
+            <>
+              Periods follow:{" "}
+              <span className="font-medium text-foreground">
+                {PAY_SCHEDULE_LABELS[paySchedule]}
+              </span>
+            </>
+          ) : (
+            "Set a pay schedule — stop picking dates by hand"
+          )}
+          <span className="underline underline-offset-2">
+            Change in Settings
+          </span>
+        </Link>
 
         {/* ── The two pay systems, as peers ──────────────────────────────
             Employees are paid in periods; contractors per job, never inside

@@ -155,6 +155,13 @@ const SECTIONS: Section[] = [
           "Toggle which automations fire — client emails, team notifications, owner alerts, housekeeping.",
       },
       {
+        href: "/app/settings/payroll",
+        icon: Banknote,
+        title: "Payroll & timesheets",
+        description:
+          "The pay-period calendar — drives Payroll's suggested periods, the morning autodraft, and the Timesheets view.",
+      },
+      {
         href: "/app/settings/invoicing",
         icon: CreditCard,
         title: "Invoicing",
