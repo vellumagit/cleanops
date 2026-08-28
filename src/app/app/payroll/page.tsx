@@ -14,6 +14,8 @@ import { formatCurrencyCents, formatDate } from "@/lib/format";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { paySystemFor } from "@/lib/engagement";
 import { StartRunCard } from "./start-run-card";
+import { PayScheduleDialog } from "./pay-schedule-dialog";
+import { suggestedPayPeriod, type PaySchedule } from "@/lib/pay-schedule";
 import { markTipsPaidAction } from "./actions";
 import { getTipsOwed } from "@/lib/invoice-tips";
 import { getSubcontractorPayables } from "@/lib/subcontractor-payables";
@@ -173,13 +175,35 @@ export default async function PayrollPage() {
   ).padStart(2, "0")}m`;
 
   // ── The suggested next period ─────────────────────────────────────────
-  // Picks up the day after the last run ended (any status — a draft still
-  // claims its window); first-ever run defaults to the last 14 org-days.
+  // With a pay schedule set (Brian's "1st–15th and 16th–end of month"),
+  // periods follow the org's calendar: the last completed window, or the
+  // in-progress one when that's already been run. Without a schedule, the
+  // old heuristic: day after the last run ended, through today.
+  const { data: orgSchedule } = (await admin
+    .from("organizations")
+    .select("pay_schedule, pay_anchor" as never)
+    .eq("id", membership.organization_id)
+    .maybeSingle()) as unknown as {
+    data: { pay_schedule: string | null; pay_anchor: string | null } | null;
+  };
+  const paySchedule = (orgSchedule?.pay_schedule ?? null) as PaySchedule | null;
+  const payAnchor = orgSchedule?.pay_anchor ?? null;
+
   const today = todayInTz(tz);
   const latestEnd = runs[0]?.period_end ?? null;
-  let suggestedStart = latestEnd ? addDays(latestEnd, 1) : addDays(today, -13);
-  if (suggestedStart > today) suggestedStart = today;
-  const suggestedEnd = today;
+  let suggestedStart: string;
+  let suggestedEnd: string;
+  let periodEndsAhead: string | null = null;
+  if (paySchedule) {
+    const p = suggestedPayPeriod(paySchedule, payAnchor, today, latestEnd);
+    suggestedStart = p.start;
+    suggestedEnd = p.end;
+    if (!p.complete) periodEndsAhead = shortDate(p.end);
+  } else {
+    suggestedStart = latestEnd ? addDays(latestEnd, 1) : addDays(today, -13);
+    if (suggestedStart > today) suggestedStart = today;
+    suggestedEnd = today;
+  }
   const sinceLabel = latestEnd
     ? `since ${shortDate(latestEnd)}`
     : "all unpaid time";
@@ -241,8 +265,11 @@ export default async function PayrollPage() {
             unpaidPeople={unpaidPeople.size}
             flaggedCount={flaggedCount}
             sinceLabel={sinceLabel}
+            endsAhead={periodEndsAhead}
           />
         )}
+
+        <PayScheduleDialog schedule={paySchedule} anchor={payAnchor} />
 
         {/* ── The two pay systems, as peers ──────────────────────────────
             Employees are paid in periods; contractors per job, never inside

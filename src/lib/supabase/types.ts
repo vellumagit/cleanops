@@ -2895,6 +2895,8 @@ export type Database = {
           logo_url: string | null
           name: string
           onboarding_completed_at: string | null
+          pay_anchor: string | null
+          pay_schedule: string | null
           overtime_threshold_hours: number
           sender_email: string | null
           sender_email_token: string | null
@@ -2940,6 +2942,8 @@ export type Database = {
           logo_url?: string | null
           name: string
           onboarding_completed_at?: string | null
+          pay_anchor?: string | null
+          pay_schedule?: string | null
           overtime_threshold_hours?: number
           sender_email?: string | null
           sender_email_token?: string | null
@@ -2985,6 +2989,8 @@ export type Database = {
           logo_url?: string | null
           name?: string
           onboarding_completed_at?: string | null
+          pay_anchor?: string | null
+          pay_schedule?: string | null
           overtime_threshold_hours?: number
           sender_email?: string | null
           sender_email_token?: string | null

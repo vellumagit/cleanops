@@ -17,7 +17,9 @@ Opens on the current pay period; date filters reach anywhere. Each person shows 
 
 ## Paying employees: Payroll runs
 
-The Payroll page leads with one next step: an **Up next** card suggesting the next period (it picks up the day after the last one ended) with the unpaid hours and estimated wages waiting in it — or, if a run is already in flight, a **Finish what's started** card pointing at it. Flagged shifts show as a warning there and are left out of the totals until confirmed.
+The Payroll page leads with one next step: an **Up next** card suggesting the next period, with the unpaid hours and estimated wages waiting in it — or, if a run is already in flight, a **Finish what's started** card pointing at it. Flagged shifts show as a warning there and are left out of the totals until confirmed.
+
+Set a **pay schedule** (the row under that card) and suggested periods follow your calendar — semi-monthly (1st–15th & 16th–end), every 2 weeks, weekly, or monthly — so nobody types dates again. Without one, the suggestion simply picks up the day after your last run ended.
 
 1. **Start this run** (dates are pre-filled; "Different dates?" if you need a custom window) — it starts as a *draft*.
 2. **Review** each line (hours + bonuses). Fix entries on Timesheets, or delete the draft freely and start over.

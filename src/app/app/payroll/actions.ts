@@ -635,3 +635,51 @@ export async function markTipsPaidAction(formData: FormData): Promise<void> {
 
   revalidatePath("/app/payroll", "page");
 }
+
+/**
+ * Set the org's pay period calendar. Meeting deliverable #3, defined by
+ * Brian as "1st to the 15th and 16th to end of month" — the Up next card
+ * computes its suggested period from this instead of guessing from the
+ * last run. Clearing back to manual is always allowed.
+ */
+export async function updatePayScheduleAction(
+  formData: FormData,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { membership } = await getActionContext();
+  if (!["owner", "admin"].includes(membership.role)) {
+    return { ok: false, error: "Only owners and admins can set the pay schedule." };
+  }
+
+  const raw = String(formData.get("pay_schedule") ?? "").trim();
+  const anchorRaw = String(formData.get("pay_anchor") ?? "").trim();
+
+  const schedule =
+    raw === "" ? null : (raw as "semimonthly" | "biweekly" | "weekly" | "monthly");
+  if (
+    schedule !== null &&
+    !["semimonthly", "biweekly", "weekly", "monthly"].includes(schedule)
+  ) {
+    return { ok: false, error: "Pick a schedule from the list." };
+  }
+
+  // Weekly/biweekly count exact cycles from a real period start.
+  let anchor: string | null = null;
+  if (schedule === "weekly" || schedule === "biweekly") {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(anchorRaw)) {
+      return {
+        ok: false,
+        error: "Pick the date a pay period started — cycles are counted from it.",
+      };
+    }
+    anchor = anchorRaw;
+  }
+
+  const { error } = await createSupabaseAdminClient()
+    .from("organizations")
+    .update({ pay_schedule: schedule, pay_anchor: anchor } as never)
+    .eq("id", membership.organization_id);
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath("/app/payroll");
+  return { ok: true };
+}

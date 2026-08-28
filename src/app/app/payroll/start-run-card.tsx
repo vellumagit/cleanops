@@ -28,6 +28,7 @@ export function StartRunCard({
   unpaidPeople,
   flaggedCount,
   sinceLabel,
+  endsAhead = null,
 }: {
   suggestedStart: string;
   suggestedEnd: string;
@@ -41,6 +42,8 @@ export function StartRunCard({
   flaggedCount: number;
   /** e.g. "since Aug 14" or "all time" */
   sinceLabel: string;
+  /** Set when the suggested period hasn't finished yet — its end date. */
+  endsAhead?: string | null;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -69,6 +72,11 @@ export function StartRunCard({
           <CalendarRange className="h-5 w-5 text-muted-foreground" />
           Pay period {periodLabel}
         </h2>
+        {endsAhead && (
+          <span className="text-xs font-medium text-muted-foreground">
+            Still running — ends {endsAhead}. Start it early, or wait.
+          </span>
+        )}
       </div>
 
       {/* The bucket: what's sitting unpaid, right now. */}
