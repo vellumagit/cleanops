@@ -93,7 +93,7 @@
     },
     {
       "path": "/api/cron/weekly-ops-digest",
-      "schedule": "0 23 * * 5"
+      "schedule": "0 8 * * 1"
     },
     {
       "path": "/api/cron/monthly-ops-digest",
