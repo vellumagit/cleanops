@@ -53,7 +53,6 @@ export type BookingFormState = ActionState<Field & string>;
 function readFormValues(formData: FormData) {
   return {
     client_id: String(formData.get("client_id") ?? ""),
-    package_id: String(formData.get("package_id") ?? ""),
     assigned_to: String(formData.get("assigned_to") ?? ""),
     scheduled_at: String(formData.get("scheduled_at") ?? ""),
     duration_minutes: String(formData.get("duration_minutes") ?? ""),
@@ -136,7 +135,6 @@ async function propertyBelongsToClient(
 function readRecurringFormValues(formData: FormData) {
   return {
     client_id: String(formData.get("client_id") ?? ""),
-    package_id: String(formData.get("package_id") ?? ""),
     assigned_to: String(formData.get("assigned_to") ?? ""),
     recurrence_pattern: String(formData.get("recurrence_pattern") ?? "weekly"),
     custom_days: String(formData.get("custom_days") ?? ""),
@@ -702,7 +700,6 @@ export async function createBookingAction(
     .insert({
       organization_id: membership.organization_id,
       client_id: parsed.data.client_id,
-      package_id: parsed.data.package_id ?? null,
       assigned_to: effectiveAssignedTo,
       scheduled_at: parsed.data.scheduled_at,
       duration_minutes: parsed.data.duration_minutes,
@@ -978,7 +975,6 @@ export async function createRecurringBookingAction(
       // instead of the org's custom service name.
       service_type_id: recurringServiceExtras.service_type_id,
       service_type_label: recurringServiceExtras.service_type_label,
-      package_id: parsed.data.package_id ?? null,
       assigned_to: parsed.data.assigned_to ?? null,
       total_cents: parsed.data.total_cents,
       address: parsed.data.address ?? null,
@@ -1031,7 +1027,6 @@ export async function createRecurringBookingAction(
   const bookingRows = occurrences.map((scheduled_at) => ({
     organization_id: membership.organization_id,
     client_id: parsed.data.client_id,
-    package_id: parsed.data.package_id ?? null,
     assigned_to: parsed.data.assigned_to ?? null,
     scheduled_at,
     duration_minutes: parsed.data.duration_minutes,
@@ -1416,7 +1411,6 @@ export async function updateBookingAction(
     .from("bookings")
     .update({
       client_id: parsed.data.client_id,
-      package_id: parsed.data.package_id ?? null,
       assigned_to: updateEffectiveAssignedTo,
       scheduled_at: parsed.data.scheduled_at,
       duration_minutes: parsed.data.duration_minutes,
@@ -1698,8 +1692,7 @@ export async function updateBookingAction(
           const bookingRows = occurrences.map((scheduled_at) => ({
             organization_id: membership.organization_id,
             client_id: parsed.data.client_id,
-            package_id: parsed.data.package_id ?? null,
-            // Segment-0 employee for splits; form primary otherwise.
+                  // Segment-0 employee for splits; form primary otherwise.
             assigned_to: updateEffectiveAssignedTo,
             scheduled_at,
             duration_minutes: parsed.data.duration_minutes,

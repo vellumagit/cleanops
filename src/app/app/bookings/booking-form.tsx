@@ -34,7 +34,6 @@ const empty: BookingFormState = {};
 
 export type BookingFormDefaults = {
   client_id?: string;
-  package_id?: string | null;
   assigned_to?: string | null;
   /** Additional crew members on this booking (excludes the primary).
    *  Used to seed the multi-select when editing. */
@@ -203,13 +202,6 @@ export type ClientOption = Option & {
   preferred_cleaner_id: string | null;
 };
 
-/** Package option carries price + duration so selecting a package can
- *  pre-fill the total + duration. */
-export type PackageOption = Option & {
-  price_cents: number;
-  duration_minutes: number;
-};
-
 const DAY_LABELS = [
   { value: 0, label: "Sun" },
   { value: 1, label: "Mon" },
@@ -225,7 +217,6 @@ export function BookingForm({
   id,
   defaults,
   clients,
-  packages,
   employees,
   services,
   currency = "CAD",
@@ -236,7 +227,6 @@ export function BookingForm({
   id?: string;
   defaults?: BookingFormDefaults;
   clients: ClientOption[];
-  packages: PackageOption[];
   employees: Option[];
   services: ServiceOption[];
   currency?: "CAD" | "USD";
@@ -456,7 +446,7 @@ export function BookingForm({
   }, [state.values, onSuccess]);
 
   // Controlled values for the fields that auto-populate from client +
-  // package selection. We only pre-fill when the field is empty so we
+  // service selection. We only pre-fill when the field is empty so we
   // never overwrite something the user already typed. Initializers use
   // `defaults` (not `v`) so that on remount we seed from the edit record;
   // validation-error re-submits preserve whatever was typed via the
@@ -488,13 +478,13 @@ export function BookingForm({
   );
   // DurationInput is uncontrolled internally — to pre-fill after mount
   // we swap its `key` so it remounts with a new defaultMinutes. Only
-  // kicked when the user picks a package AND duration is still empty.
+  // kicked when a service prefill lands AND duration is still empty.
   const [durationSeed, setDurationSeed] = useState<number>(defaultMinutes);
   const [durationKey, setDurationKey] = useState<number>(0);
   // Tracks whether the user has typed in the duration input themselves.
   // DurationInput is uncontrolled so the parent doesn't see its value;
-  // we set this ref via the onUserInput callback. The package + service
-  // prefill paths gate on this so they don't silently overwrite what
+  // we set this ref via the onUserInput callback. The service
+  // prefill path gates on this so they don't silently overwrite what
   // the user just typed. Reset to false when we deliberately remount
   // DurationInput via durationKey.
   const durationTouched = useRef<boolean>(false);
@@ -535,37 +525,11 @@ export function BookingForm({
     }
   }
 
-  function handlePackageChange(packageId: string) {
-    const p = packages.find((x) => x.id === packageId);
-    if (!p) return;
-    // Package price fills Total when blank.
-    if (!totalValue && p.price_cents > 0) {
-      setTotalValue((p.price_cents / 100).toFixed(2));
-    }
-    // Duration only swaps in when the user hasn't typed anything yet
-    // AND the seed is still the original blank value. The touched
-    // ref catches user-typed values (DurationInput is uncontrolled so
-    // the seed wouldn't otherwise reflect them).
-    if (
-      !durationTouched.current &&
-      durationSeed === 0 &&
-      p.duration_minutes > 0
-    ) {
-      setDurationSeed(p.duration_minutes);
-      setDurationKey((k) => k + 1);
-    }
-  }
-
   /**
-   * Service selection pre-fill. Mirrors handlePackageChange exactly —
-   * only fills blank fields, never clobbers something the user typed.
-   *
-   * Precedence with packages: whichever is touched last wins on a blank
-   * field, both are no-ops on a populated field. Picking a package
-   * first then a service won't override the package's values; picking
-   * a service first then a package won't override the service's
-   * values. This matches the principle that the form never silently
-   * loses user input.
+   * Service selection pre-fill — only fills blank fields, never clobbers
+   * something the user typed. (Packages used to share this job with a
+   * whichever-was-touched-last rule; retired 2026-08-29, services are the
+   * one source of defaults now.)
    *
    * Called from the service dropdown's onChange — not on initial mount
    * — so editing an existing booking never triggers an unexpected
@@ -747,25 +711,6 @@ export function BookingForm({
           </FormSelect>
         </FormField>
 
-        <FormField
-          label="Package"
-          htmlFor="package_id"
-          error={state.errors?.package_id}
-        >
-          <FormSelect
-            id="package_id"
-            name="package_id"
-            defaultValue={v.package_id ?? defaults?.package_id ?? ""}
-            onChange={(e) => handlePackageChange(e.target.value)}
-          >
-            <option value="">No package</option>
-            {packages.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.label}
-              </option>
-            ))}
-          </FormSelect>
-        </FormField>
       </div>
 
       {/* Recurrence settings — only when recurring + create */}

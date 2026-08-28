@@ -7,7 +7,7 @@ import { getFlaggedCrewIds } from "@/lib/crew-accommodations";
 import { resolveAutomationEnabled } from "@/lib/automation-defaults";
 
 /**
- * Fetch the option lists every booking form needs (clients / packages /
+ * Fetch the option lists every booking form needs (clients /
  * employees), plus enough metadata on each client and package to auto-fill
  * the booking form when one is selected. Pre-fill rules are handled by
  * the form itself — here we just ship the data.
@@ -30,7 +30,7 @@ export async function fetchBookingFormOptions() {
   // explicitly to the caller's org.
   const membership = await requireMembership(["owner", "admin", "manager"]);
   const admin = createSupabaseAdminClient();
-  const [clients, packages, employees, services] = await Promise.all([
+  const [clients, employees, services] = await Promise.all([
     // preferred_cleaner_id lets the form auto-fill the primary
     // assignee when a client is picked — one fewer click when the
     // client always wants the same cleaner. Column isn't in generated
@@ -54,11 +54,6 @@ export async function fetchBookingFormOptions() {
           }>
         | null;
     }>,
-    supabase
-      .from("packages")
-      .select("id, name, price_cents, duration_minutes")
-      .eq("is_active", true)
-      .order("name"),
     // Every active membership is assignable — owners, admins, and shadow
     // (manually-added) members included. Admin client so shadow members
     // (no profile row) list too; explicit org filter keeps the bypass
@@ -159,13 +154,6 @@ export async function fetchBookingFormOptions() {
         notes: c.notes ?? null,
         preferred_cleaner_id: c.preferred_cleaner_id ?? null,
         properties: propertiesByClient.get(c.id) ?? [],
-      })) ?? [],
-    packages:
-      packages.data?.map((p) => ({
-        id: p.id,
-        label: p.name,
-        price_cents: p.price_cents,
-        duration_minutes: p.duration_minutes,
       })) ?? [],
     employees:
       (employees.data?.map((m) => ({

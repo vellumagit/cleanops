@@ -114,7 +114,6 @@ export default async function BookingDetailPage({
         total_cents, hourly_rate_cents, address, notes, created_at,
         estimate_id, series_id,
         client:clients ( id, name, phone, email, address, notes ),
-        package:packages ( id, name ),
         assigned:memberships!bookings_assigned_to_fkey (
           id, display_name, profile:profiles ( full_name )
         )
@@ -144,7 +143,6 @@ export default async function BookingDetailPage({
         /** Standing profile note, read live — not the per-job `notes` above. */
         notes: string | null;
       } | null;
-      package: { id: string; name: string } | null;
       assigned: {
         id: string;
         display_name: string | null;
@@ -583,11 +581,6 @@ export default async function BookingDetailPage({
               </div>
             )}
 
-            {booking.package?.name && (
-              <p className="mt-4 text-xs text-muted-foreground">
-                Package: {booking.package.name}
-              </p>
-            )}
 
             {clientSaid.length > 0 && (
               <div className="mt-5 space-y-2">

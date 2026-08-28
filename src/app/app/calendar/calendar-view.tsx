@@ -53,7 +53,6 @@ import {
   BookingForm,
   type BookingFormDefaults,
   type ClientOption,
-  type PackageOption,
   type ServiceOption,
 } from "@/app/app/bookings/booking-form";
 
@@ -68,7 +67,6 @@ type Props = {
   hasGoogleCalendar?: boolean;
   formOptions: {
     clients: ClientOption[];
-    packages: PackageOption[];
     employees: EmployeeOption[];
     services: ServiceOption[];
   };
@@ -447,7 +445,6 @@ export function CalendarView({
               currency={currency}
               defaults={bookingDefaults}
               clients={formOptions.clients}
-              packages={formOptions.packages}
               employees={formOptions.employees}
               services={formOptions.services}
               onSuccess={() => setSheetOpen(false)}

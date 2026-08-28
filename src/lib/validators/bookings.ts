@@ -89,10 +89,6 @@ export const RecurrencePatternEnum = z.enum([
 
 export const BookingSchema = z.object({
   client_id: z.string().uuid("Pick a client"),
-  package_id: z
-    .string()
-    .transform((s) => (s && s !== "" ? s : undefined))
-    .optional(),
   assigned_to: z
     .string()
     .transform((s) => (s && s !== "" ? s : undefined))
@@ -127,10 +123,6 @@ export type BookingInput = z.infer<typeof BookingSchema>;
 /** Schema for creating a recurring booking series. */
 export const RecurringBookingSchema = z.object({
   client_id: z.string().uuid("Pick a client"),
-  package_id: z
-    .string()
-    .transform((s) => (s && s !== "" ? s : undefined))
-    .optional(),
   assigned_to: z
     .string()
     .transform((s) => (s && s !== "" ? s : undefined))
