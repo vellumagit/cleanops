@@ -278,7 +278,7 @@ export default async function BookingRequestsPage({
                 {r.status === "pending" && r.client?.id && (
                   <div className="flex shrink-0 flex-col items-stretch gap-2 sm:flex-row">
                     {/* Quick jump to pre-fill the booking form with this
-                        client. The owner still picks package / price / time. */}
+                        client. The owner still confirms service / price / time. */}
                     <Link
                       href={`/app/bookings/new?client_id=${r.client.id}&from_request=${r.id}`}
                       className={buttonVariants({ size: "sm" })}

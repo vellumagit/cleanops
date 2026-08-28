@@ -8,7 +8,7 @@ import { resolveAutomationEnabled } from "@/lib/automation-defaults";
 
 /**
  * Fetch the option lists every booking form needs (clients /
- * employees), plus enough metadata on each client and package to auto-fill
+ * employees), plus enough metadata on each client and service to auto-fill
  * the booking form when one is selected. Pre-fill rules are handled by
  * the form itself — here we just ship the data.
  */
