@@ -150,9 +150,9 @@ const SECTIONS: Section[] = [
       {
         href: "/app/settings/automations",
         icon: Zap,
-        title: "Automations",
+        title: "Client automations",
         description:
-          "Toggle which automations fire — client emails, team notifications, owner alerts, housekeeping.",
+          "Every message a client can receive, in journey order — plus team alerts & housekeeping. Invoicing and payroll machinery live on their own pages below.",
       },
       {
         href: "/app/settings/payroll",

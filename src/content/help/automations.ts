@@ -3,12 +3,12 @@ Automations are Sollos doing the remembering: confirmations, reminders, review a
 
 ## The switches
 
-Everything lives at **Settings → Automations**, and everything starts **off**. A master switch at the top must be on for anything to run — flipping it off also pauses invoice auto-send. Two one-click presets get you going: **The essentials** (8 core automations) and **Full service** (19). Presets only ever turn things *on*; they never disable what you've chosen.
+The client-journey switches live at **Settings → Client automations**; the machinery moved next to what it acts on — invoicing automations on **Settings → Invoicing**, the recurring-invoice switch on **Settings → Recurring invoices**, and payroll/timesheet automations (including the clock-out auto-cap thresholds) on **Settings → Payroll & timesheets**. One master switch on the Client automations page still governs all of them, wherever they live — flipping it off pauses everything, invoice auto-send included. Everything starts **off**. Two one-click presets get you going: **The essentials** (8 core automations) and **Full service** (19). Presets only ever turn things *on*; they never disable what you've chosen.
 
 The page has two permanent sections:
 
 - **Client automations** — every message a client can receive, in the order of their journey: winning the work (estimate follow-ups, expiry), when a job is booked (confirmations, reschedule notices, crew assignment), the day before (24h reminder), job done & getting paid (review ask, overdue reminders, receipts), growing the business (Google review asks, rebooking nudges).
-- **Internal automations** — team alerts and back-office housekeeping that never reach a client: crew schedules, digests, payroll and PTO emails, auto-complete and auto-archive timers.
+- **Team alerts & housekeeping** — internal notifications and background bookkeeping that never reach a client: crew schedules, digests, training reminders, auto-complete and auto-archive timers. (Payroll, PTO, and invoicing machinery live on their own settings pages.)
 
 ## Who actually receives a client message
 

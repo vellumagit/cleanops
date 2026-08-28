@@ -6,6 +6,8 @@ import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
 import type { PaySchedule } from "@/lib/pay-schedule";
 import { PayScheduleForm } from "./pay-schedule-form";
+import { SatelliteAutomations } from "@/app/app/settings/automations/satellite-automations";
+import { PAYROLL_AUTOMATIONS } from "@/app/app/settings/automations/satellite-registry";
 
 export const metadata = { title: "Payroll & timesheets" };
 
@@ -95,6 +97,11 @@ export default async function PayrollSettingsPage() {
             </li>
           </ul>
         </section>
+
+        <SatelliteAutomations
+          title="Payroll & timesheet automations"
+          items={PAYROLL_AUTOMATIONS}
+        />
       </div>
     </PageShell>
   );

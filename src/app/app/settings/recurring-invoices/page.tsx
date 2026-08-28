@@ -1,3 +1,5 @@
+import { SatelliteAutomations } from "@/app/app/settings/automations/satellite-automations";
+import { RECURRING_INVOICE_AUTOMATIONS } from "@/app/app/settings/automations/satellite-registry";
 import Link from "next/link";
 import { ArrowLeft, Plus, Pause, Play, Pencil, Trash2 } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
@@ -186,6 +188,13 @@ export default async function RecurringInvoicesPage() {
           })()}
         </ul>
       )}
+
+      <div className="mt-8">
+        <SatelliteAutomations
+          title="Recurring invoice automation"
+          items={RECURRING_INVOICE_AUTOMATIONS}
+        />
+      </div>
     </PageShell>
   );
 }

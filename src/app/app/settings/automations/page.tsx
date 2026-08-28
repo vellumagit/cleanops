@@ -15,8 +15,6 @@ import {
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { PageShell } from "@/components/page-shell";
-import { resolveClockOutThresholds } from "@/lib/shift-overrun";
-import { ClockOutThresholds } from "./clock-out-thresholds";
 import { SubmitButton } from "@/components/submit-button";
 import {
   resolveAutomationEnabled,
@@ -249,13 +247,6 @@ const STAGES: Stage[] = [
     icon: Receipt,
     automations: [
       {
-        key: "shift_clock_out_reminder",
-        title: "Forgotten clock-out reminders",
-        description:
-          "Reminds a cleaner who is still clocked in past their job's expected end, then repeats. Once your grace period is up, the shift is capped, flagged for review, and your managers are notified (plus a text to the owner). Hours are never silently reduced — you confirm or correct the flagged shift yourself. Set both intervals below.",
-        trigger: "Every 30 minutes",
-      },
-      {
         key: "job_not_started_nudge",
         title: "Nobody clocked in yet",
         description:
@@ -277,27 +268,6 @@ const STAGES: Stage[] = [
         trigger: "Daily at 02:00 UTC",
       },
       {
-        key: "auto_invoice_on_job_complete",
-        title: "Auto-draft invoice on job complete",
-        description:
-          "Creates a draft invoice for the client automatically when a booking is marked completed. Pair with auto-send (Settings → Invoicing) to also email it at a set time the next day — or review and send each one yourself.",
-        trigger: "Booking → Completed",
-      },
-      {
-        key: "invoice_review_digest",
-        title: "Morning invoice review digest",
-        description:
-          "Emails owners/admins each morning with yesterday's completed jobs and any invoices auto-sending later today — your window to fix or hold anything before a client sees it. Silent on days with nothing to report. The companion to auto-send in Settings → Invoicing.",
-        trigger: "Daily, early morning",
-      },
-      {
-        key: "auto_recurring_invoices",
-        title: "Auto-generate recurring invoices",
-        description:
-          "Generates invoices on a schedule for contract clients. Set up via Settings → Recurring Invoices. Supports weekly, biweekly, monthly, and quarterly cadences.",
-        trigger: "Daily at 06:30 UTC",
-      },
-      {
         key: "invoice_overdue_reminder",
         title: "Overdue invoice reminder",
         description:
@@ -310,13 +280,6 @@ const STAGES: Stage[] = [
         description:
           "Sends the client a payment receipt and a link to leave a review after their invoice is marked paid.",
         trigger: "Invoice → Paid",
-      },
-      {
-        key: "auto_void_overdue_invoices",
-        title: "Auto-void long-overdue invoices",
-        description:
-          "Flips invoices to Void after 90 days past due with no payment activity. Stops the overdue reminder cron from continuing to email the client. Threshold configurable per-org.",
-        trigger: "Daily at 03:30 UTC",
       },
     ],
   },
@@ -352,7 +315,7 @@ const STAGES: Stage[] = [
   },
   {
     id: "office",
-    label: "Team & back office",
+    label: "Team alerts & housekeeping",
     outcome:
       "Crew schedules, owner digests, and housekeeping. None of these touch your clients — safe to turn on as a bundle.",
     icon: Users,
@@ -378,27 +341,6 @@ const STAGES: Stage[] = [
         description:
           "Sunday-night preview of the week ahead for each cleaner. Sets expectations before Monday morning.",
         trigger: "Sundays at 18:00 UTC",
-      },
-      {
-        key: "overtime_warning",
-        title: "Overtime warning",
-        description:
-          "Friday email to any employee whose week-to-date hours are within 20% of your overtime threshold (default 40h, configurable).",
-        trigger: "Fridays at 15:00 UTC",
-      },
-      {
-        key: "pto_status_notify",
-        title: "PTO request decision email",
-        description:
-          "Emails the employee when their time-off request is approved, declined, or cancelled.",
-        trigger: "PTO → Approved / Declined / Cancelled",
-      },
-      {
-        key: "payroll_paid_receipt",
-        title: "Payroll paid receipt",
-        description:
-          "Emails each employee a receipt when a payroll run is marked paid, showing amount, hours, regular/bonus/PTO breakdown.",
-        trigger: "Payroll Run → Marked Paid",
       },
       {
         key: "training_assigned_notify",
@@ -429,13 +371,6 @@ const STAGES: Stage[] = [
         trigger: "Review → Submitted (rating ≤ 3)",
       },
       {
-        key: "stripe_payout_alert",
-        title: "Stripe payout notification",
-        description:
-          "Emails owners when Stripe sends a payout to your bank account, with the amount and expected arrival date.",
-        trigger: "Stripe → payout.paid webhook",
-      },
-      {
         key: "weekly_ops_digest",
         title: "Weekly operations digest",
         description:
@@ -462,13 +397,6 @@ const STAGES: Stage[] = [
         description:
           "When on, the Feed tab appears in both the admin and field apps with a shared activity stream. When off, the feed routes 404 and nav links are hidden.",
         trigger: "Feed feature toggle",
-      },
-      {
-        key: "divide_crew_hours",
-        title: "Divide team-job hours across the crew",
-        description:
-          "When two or more cleaners work a job together, show each of them their share of the hours (job length ÷ crew) in the field app. Does not change the visit window, pay, or the client's bill.",
-        trigger: "Applies to any job with 2+ crew",
       },
       {
         key: "product_changelog_email",
@@ -545,9 +473,6 @@ export default async function AutomationsPage() {
   };
 
   const settings = org?.automation_settings ?? {};
-  const clockOutThresholds = resolveClockOutThresholds(
-    org?.automation_settings ?? null,
-  );
   const contactDefault = org?.default_contact_preference ?? "email";
   const masterOn = org?.automations_enabled === true;
   const smsEnabled = org?.sms_enabled === true;
@@ -702,18 +627,6 @@ export default async function AutomationsPage() {
                           </SubmitButton>
                         </form>
                       </div>
-                      {/* Configuration that belongs to one automation lives
-                          under it, not on a separate settings page — the
-                          numbers only mean anything next to the description
-                          that explains them. */}
-                      {a.key === "shift_clock_out_reminder" && on && (
-                        <ClockOutThresholds
-                          graceMinutes={clockOutThresholds.graceMinutes}
-                          reminderIntervalMinutes={
-                            clockOutThresholds.reminderIntervalMinutes
-                          }
-                        />
-                      )}
                     </li>
                   );
                 })}
@@ -728,7 +641,7 @@ export default async function AutomationsPage() {
   return (
     <PageShell
       title="Automations"
-      description="What Sollos does for you automatically, at every stage of a job."
+      description="Client messages in journey order, plus team alerts & housekeeping. Invoicing and payroll machinery live on their own settings pages."
       actions={
         <Link
           href="/app/settings"

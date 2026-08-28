@@ -1,3 +1,5 @@
+import { SatelliteAutomations } from "@/app/app/settings/automations/satellite-automations";
+import { INVOICING_AUTOMATIONS } from "@/app/app/settings/automations/satellite-registry";
 import Link from "next/link";
 import { ChevronLeft } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
@@ -104,6 +106,13 @@ export default async function InvoicingSettingsPage() {
           stripeConnected={Boolean(
             tipData?.stripe_account_id && tipData?.stripe_charges_enabled,
           )}
+        />
+      </section>
+
+      <section className="mt-10 border-t border-border pt-8">
+        <SatelliteAutomations
+          title="Invoicing automations"
+          items={INVOICING_AUTOMATIONS}
         />
       </section>
     </PageShell>
