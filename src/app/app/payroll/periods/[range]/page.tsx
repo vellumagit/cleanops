@@ -78,6 +78,56 @@ export default async function PayPeriodPage({
   const payrollRun = payrollRuns?.[0] ?? null;
   const subRun = subRuns?.[0] ?? null;
 
+  // ── On-call bench, inside the period ─────────────────────────────────
+  // Brian: "there's always gonna be subcontractors even from the bench
+  // ... they should all fall under August first to the fifteenth." Bench
+  // pay is flat per claimed offer and settles through each contact's
+  // running ledger — but it EARNS inside a window, so the window shows
+  // it: claims whose completed booking was scheduled in this period.
+  const { data: benchClaims } = (await admin
+    .from("job_offer_claims" as never)
+    .select(
+      "contact_id, contact:freelancer_contacts ( id, full_name ), offer:job_offers ( pay_cents, booking:bookings ( status, scheduled_at, organization_id ) )",
+    )
+    .not("contact_id", "is", null)) as unknown as {
+    data: Array<{
+      contact_id: string | null;
+      contact: { id: string; full_name: string | null } | null;
+      offer: {
+        pay_cents: number | null;
+        booking: {
+          status: string;
+          scheduled_at: string;
+          organization_id: string;
+        } | null;
+      } | null;
+    }> | null;
+  };
+  const benchByContact = new Map<
+    string,
+    { name: string; jobs: number; cents: number }
+  >();
+  for (const c of benchClaims ?? []) {
+    const b = c.offer?.booking;
+    if (!c.contact_id || !b) continue;
+    if (b.organization_id !== membership.organization_id) continue;
+    if (b.status !== "completed") continue;
+    const day = b.scheduled_at.slice(0, 10);
+    if (day < periodStart || day > periodEnd) continue;
+    const row = benchByContact.get(c.contact_id) ?? {
+      name: c.contact?.full_name ?? "On-call cleaner",
+      jobs: 0,
+      cents: 0,
+    };
+    row.jobs += 1;
+    row.cents += c.offer?.pay_cents ?? 0;
+    benchByContact.set(c.contact_id, row);
+  }
+  const benchRows = [...benchByContact.entries()]
+    .map(([id, r]) => ({ id, ...r }))
+    .sort((a, b) => b.cents - a.cents);
+  const benchTotal = benchRows.reduce((s2, r) => s2 + r.cents, 0);
+
   const [{ data: payrollItems }, { data: subItems }] = await Promise.all([
     payrollRun
       ? (admin
@@ -117,7 +167,7 @@ export default async function PayPeriodPage({
   ]);
 
   const combined =
-    (payrollRun?.total_cents ?? 0) + (subRun?.total_cents ?? 0);
+    (payrollRun?.total_cents ?? 0) + (subRun?.total_cents ?? 0) + benchTotal;
 
   const tone = (status: string) =>
     status === "paid" ? "green" : status === "finalized" ? "blue" : "neutral";
@@ -127,7 +177,7 @@ export default async function PayPeriodPage({
       title={`Pay period ${shortDate(periodStart)} → ${shortDate(periodEnd)}`}
       description={
         combined > 0
-          ? `${formatCurrencyCents(combined, currency)} owed across both pay systems this period.`
+          ? `${formatCurrencyCents(combined, currency)} earned across employees, contractors, and the bench this period.`
           : "Nothing was owed in this period."
       }
       actions={
@@ -262,11 +312,59 @@ export default async function PayPeriodPage({
               ))}
             </ul>
             <p className="border-t border-border px-5 py-2 text-[11px] text-muted-foreground">
-              Contractors settle through statements, never inside a payroll
-              run — different tax treatment, same period.
+              Contractors are part of every pay period — they settle through
+              their statement rather than the employee run only because the
+              tax treatment differs. Same window, same page.
             </p>
           </section>
         )}
+        {benchRows.length > 0 && (
+          <section className="rounded-xl border border-border bg-card">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
+              <h2 className="flex items-center gap-2 text-sm font-semibold">
+                <Wallet className="h-4 w-4" />
+                On-call bench
+              </h2>
+              <span className="text-lg font-bold tabular-nums">
+                {formatCurrencyCents(benchTotal, currency)}
+              </span>
+            </div>
+            <ul className="divide-y divide-border/60">
+              {benchRows.map((r) => (
+                <li
+                  key={r.id}
+                  className="flex items-center justify-between gap-3 px-5 py-2.5 text-sm"
+                >
+                  <span className="min-w-0 truncate font-medium">{r.name}</span>
+                  <span className="flex shrink-0 items-center gap-4 text-xs text-muted-foreground">
+                    <span className="tabular-nums">
+                      {r.jobs} job{r.jobs === 1 ? "" : "s"}
+                    </span>
+                    <span className="text-sm font-semibold tabular-nums text-foreground">
+                      {formatCurrencyCents(r.cents, currency)}
+                    </span>
+                    <Link
+                      href={`/app/payroll/contractors/${r.id}`}
+                      className={buttonVariants({
+                        size: "sm",
+                        variant: "outline",
+                      })}
+                    >
+                      Ledger
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    </Link>
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <p className="border-t border-border px-5 py-2 text-[11px] text-muted-foreground">
+              Flat pay per claimed job, earned in this window. Settled on each
+              cleaner&rsquo;s running ledger — record a payout there and the
+              balance carries across periods.
+            </p>
+          </section>
+        )}
+
         {!subRun && payrollRun && (
           <p className="text-xs text-muted-foreground">
             No unpaid contractor hours landed in this period. (On-call bench

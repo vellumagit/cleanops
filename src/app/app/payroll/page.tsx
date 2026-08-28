@@ -14,9 +14,14 @@ import { formatCurrencyCents, formatDate } from "@/lib/format";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { paySystemFor } from "@/lib/engagement";
 import { StartRunCard } from "./start-run-card";
+import { PreparePeriodButton } from "./prepare-period-button";
 import { CalendarClock } from "lucide-react";
 import { PAY_SCHEDULE_LABELS } from "@/lib/pay-schedule";
-import { suggestedPayPeriod, type PaySchedule } from "@/lib/pay-schedule";
+import {
+  suggestedPayPeriod,
+  periodContaining,
+  type PaySchedule,
+} from "@/lib/pay-schedule";
 import { periodHref } from "@/lib/pay-period";
 import { markTipsPaidAction } from "./actions";
 import { getTipsOwed } from "@/lib/invoice-tips";
@@ -262,6 +267,95 @@ export default async function PayrollPage() {
 
   const lastPaidRun = runs.find((r) => r.status === "paid") ?? null;
 
+  // ── Previous periods still owing ──────────────────────────────────────
+  // Periods are strictly their own window now, so old unpaid hours are
+  // settled by going BACK: walk the schedule up to 8 windows before the
+  // suggestion, estimate what's still unstamped inside each (employees at
+  // wage, roster contractors at their rate), and offer one-click Prepare
+  // on any window nothing covers yet.
+  type BackPeriod = {
+    start: string;
+    end: string;
+    empCents: number;
+    subCents: number;
+  };
+  const backPeriods: BackPeriod[] = [];
+  if (paySchedule && roster.length > 0) {
+    const windows: Array<{ start: string; end: string }> = [];
+    let cursor = suggestedStart;
+    for (let i = 0; i < 8; i++) {
+      const prev = periodContaining(
+        paySchedule,
+        payAnchor,
+        addDays(cursor, -1),
+      );
+      windows.push(prev);
+      cursor = prev.start;
+    }
+    const covered = new Set(
+      [...runs, ...subStatementRuns].map(
+        (r) => `${r.period_start}_${r.period_end}`,
+      ),
+    );
+    const open = windows.filter(
+      (w) => !covered.has(`${w.start}_${w.end}`),
+    );
+    if (open.length > 0) {
+      const oldestStart = open[open.length - 1].start;
+      const { data: oldEntries } = (await admin
+        .from("time_entries")
+        .select(
+          "employee_id, clock_in_at, clock_out_at, pay_rate_cents_snapshot, engagement_snapshot, needs_review",
+        )
+        .in(
+          "employee_id",
+          roster.map((r) => r.id),
+        )
+        .is("payroll_run_id", null)
+        .is("subcontractor_run_id" as never, null as never)
+        .not("clock_out_at", "is", null)
+        .gte("clock_in_at", `${oldestStart}T00:00:00Z`)
+        .lt("clock_in_at", `${suggestedStart}T23:59:59Z`)
+        .limit(3000)) as unknown as {
+        data: Array<{
+          employee_id: string;
+          clock_in_at: string;
+          clock_out_at: string;
+          pay_rate_cents_snapshot: number | null;
+          engagement_snapshot: string | null;
+          needs_review: boolean | null;
+        }> | null;
+      };
+      for (const w of open) {
+        let empCents = 0;
+        let subCents = 0;
+        for (const e of oldEntries ?? []) {
+          const d = e.clock_in_at.slice(0, 10);
+          if (d < w.start || d > w.end) continue;
+          if (e.needs_review) continue;
+          const mins = Math.max(
+            0,
+            Math.round(
+              (new Date(e.clock_out_at).getTime() -
+                new Date(e.clock_in_at).getTime()) /
+                60_000,
+            ),
+          );
+          const rate =
+            e.pay_rate_cents_snapshot ?? rateById.get(e.employee_id) ?? 0;
+          const cents = Math.round((mins * rate) / 60);
+          const engagement =
+            e.engagement_snapshot ?? engagementById.get(e.employee_id) ?? null;
+          if (paySystemFor(engagement) === "payroll") empCents += cents;
+          else subCents += cents;
+        }
+        if (empCents > 0 || subCents > 0) {
+          backPeriods.push({ start: w.start, end: w.end, empCents, subCents });
+        }
+      }
+    }
+  }
+
   // Tips: money the business is holding that belongs to a specific person,
   // settled outside a payroll run — same shape of problem as contractor pay.
   const tipsOwed = await getTipsOwed(membership.organization_id);
@@ -406,6 +500,45 @@ export default async function PayrollPage() {
             </p>
           </Link>
         </div>
+
+        {/* Old unpaid work, period by period — go back and settle each in
+            its own window instead of sweeping history into today. */}
+        {backPeriods.length > 0 && (
+          <div className="rounded-xl border border-amber-400/60 bg-card p-5 dark:border-amber-800/60">
+            <h2 className="text-sm font-semibold">
+              Previous periods still owing
+            </h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Unpaid hours from before the current period, settled where they
+              belong — each in its own window.
+            </p>
+            <ul className="mt-3 space-y-2">
+              {backPeriods.map((b) => (
+                <li
+                  key={`${b.start}_${b.end}`}
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border/60 px-3 py-2"
+                >
+                  <span className="text-sm font-medium">
+                    {shortDate(b.start)} → {shortDate(b.end)}
+                  </span>
+                  <span className="flex items-center gap-4 text-xs text-muted-foreground">
+                    {b.empCents > 0 && (
+                      <span className="tabular-nums">
+                        employees ~{formatCurrencyCents(b.empCents, currency)}
+                      </span>
+                    )}
+                    {b.subCents > 0 && (
+                      <span className="tabular-nums">
+                        contractors ~{formatCurrencyCents(b.subCents, currency)}
+                      </span>
+                    )}
+                    <PreparePeriodButton start={b.start} end={b.end} />
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {/* Tips held on behalf of cleaners — only rendered when there ARE
             any, so it never sits as an empty reminder. */}

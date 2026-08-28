@@ -23,7 +23,7 @@ The Payroll page leads with one next step: an **Up next** card suggesting the ne
 
 Set a **pay schedule** (Settings → Payroll & timesheets) and periods follow your calendar — semi-monthly (1st–15th & 16th–end), every 2 weeks, weekly, or monthly. Setting a schedule also turns on the automation: the morning after a period ends, Sollos prepares it and notifies you it's ready for review. Nothing is ever paid automatically.
 
-Preparing a period covers **both pay systems at once**: the employee run and the contractor statement for the same window, shown together on the period's page with the combined total. Older unpaid hours are swept in and labeled, never silently left behind. The **Pay periods** table at the bottom lists every period with employees and contractors side by side.
+Preparing a period covers **everyone at once**: the employee run, the contractor statement, and the on-call bench's flat-pay jobs for the same window, shown together on the period's page with the combined total. A period contains **only its own dates** — older unpaid hours are settled by going back: the Payroll page lists **previous periods still owing** with a one-click Prepare on each. The **Pay periods** table at the bottom lists every period with employees and contractors side by side.
 
 1. **Start this run** (dates are pre-filled; "Different dates?" if you need a custom window) — it starts as a *draft*.
 2. **Review** each line (hours + bonuses). Fix entries on Timesheets, or delete the draft freely and start over.

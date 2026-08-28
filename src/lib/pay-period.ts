@@ -10,9 +10,13 @@ import { createContractorRunForOrg } from "@/lib/contractor-run-create";
  *
  * Preparing a period creates the employee payroll run and the contractor
  * statement for the same window (each skipping cleanly when its side has
- * nothing to pay), pulling in older unpaid stragglers so nothing is ever
- * silently left behind. Flagged shifts on EITHER side block the whole
- * prepare — a period must not half-exist around unreviewed hours.
+ * nothing to pay). STRICTLY the window: the original straggler sweep
+ * vacuumed months of old unpaid hours into whatever period ran next —
+ * Olha showed 143h in a 15-day window ("clearly not taking just from
+ * August first to the fifteenth"). Brian's rule now: old hours get
+ * settled by going BACK and preparing their own period, which the
+ * Payroll page offers directly. Flagged shifts on EITHER side still
+ * block the whole prepare.
  */
 
 export type PreparedPeriod =
@@ -34,7 +38,7 @@ export async function preparePayPeriod(opts: {
   periodStart: string;
   periodEnd: string;
 }): Promise<PreparedPeriod> {
-  const base = { ...opts, includeStragglers: true };
+  const base = { ...opts, includeStragglers: false };
 
   const payroll = await createPayrollRunForOrg(base);
   if (!payroll.ok && !payroll.nothing) {
