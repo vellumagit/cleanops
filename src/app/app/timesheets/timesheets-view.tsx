@@ -371,6 +371,8 @@ export function TimesheetsView({
   // Row-level filters applied on top of the date-range page filter.
   const [empFilter, setEmpFilter] = useState<string>("all");
   const [manualOnly, setManualOnly] = useState(false);
+  // Banner-driven: show only flagged (needs_review / over-allotted) rows.
+  const [reviewOnly, setReviewOnly] = useState(false);
 
   const [attachPending, setAttachPending] = useState(false);
   async function handleAttach(
@@ -398,6 +400,8 @@ export function TimesheetsView({
   const filteredEntries = entries.filter((e) => {
     if (empFilter !== "all" && e.employee_id !== empFilter) return false;
     if (manualOnly && !e.is_manual) return false;
+    if (reviewOnly && !(e.needs_review || e.over_allotted_minutes > 0))
+      return false;
     return true;
   });
 
@@ -494,7 +498,23 @@ export function TimesheetsView({
         const flagged = filteredEntries.filter(
           (e) => e.needs_review || e.over_allotted_minutes > 0,
         );
-        if (flagged.length === 0) return null;
+        if (flagged.length === 0) {
+          if (!reviewOnly) return null;
+          // The filter is on but nothing flagged remains — say so instead
+          // of presenting an unexplained empty table.
+          return (
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3 text-sm">
+              <span>All flagged shifts in this range are resolved. 🎉</span>
+              <button
+                type="button"
+                onClick={() => setReviewOnly(false)}
+                className="text-xs font-medium underline underline-offset-2"
+              >
+                Show all entries
+              </button>
+            </div>
+          );
+        }
         const hrs =
           flagged.reduce((sum, e) => sum + (e.actual_minutes ?? 0), 0) / 60;
         const cappedCount = flagged.filter((e) => e.needs_review).length;
@@ -531,9 +551,29 @@ export function TimesheetsView({
                       been confirmed.{" "}
                     </>
                   )}
-                  Confirm or correct each one. Payroll will not run while capped
-                  shifts are awaiting review.
+                  Confirm or correct each one — everything counted here is
+                  inside the dates shown above. Payroll will not run while
+                  capped shifts are awaiting review.
                 </p>
+                <div className="pt-1">
+                  {!reviewOnly ? (
+                    <button
+                      type="button"
+                      onClick={() => setReviewOnly(true)}
+                      className="rounded-md border border-amber-400 bg-background px-2.5 py-1 text-[11px] font-semibold text-amber-900 hover:bg-amber-100 dark:border-amber-800 dark:text-amber-200 dark:hover:bg-amber-950/60"
+                    >
+                      Show only these {flagged.length}
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setReviewOnly(false)}
+                      className="rounded-md border border-amber-400 bg-background px-2.5 py-1 text-[11px] font-semibold text-amber-900 hover:bg-amber-100 dark:border-amber-800 dark:text-amber-200 dark:hover:bg-amber-950/60"
+                    >
+                      Showing flagged only — show all
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           </div>

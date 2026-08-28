@@ -13,7 +13,7 @@ Cleaners clock in and out on their job in the field app. A forgotten clock-out g
 
 ## Timesheets, day to day
 
-Opens on the current pay period; date filters reach anywhere. Each person shows hours and **Earned** (their rate × their minutes, computed live). Edit an entry to fix a time — edits are minute-exact, so a one-minute correction moves the total by exactly one minute. PTO lives here too: employee PTO carries paid hours; subcontractor time off blocks the schedule but is unpaid by design.
+Opens on the current pay period — the same calendar your pay schedule defines, with ‹ › arrows to step between periods; date filters still reach anywhere. The flagged-shifts banner has a **Show only these** button that filters the table to just the shifts needing review. Each person shows hours and **Earned** (their rate × their minutes, computed live). Edit an entry to fix a time — edits are minute-exact, so a one-minute correction moves the total by exactly one minute. PTO lives here too: employee PTO carries paid hours; subcontractor time off blocks the schedule but is unpaid by design.
 
 ## Paying employees: Payroll runs
 

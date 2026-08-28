@@ -43,8 +43,9 @@ function monthEnd(year: number, month0: number): string {
   return toYmd(new Date(Date.UTC(year, month0 + 1, 0)));
 }
 
-/** The period CONTAINING the given day. */
-function periodContaining(
+/** The period CONTAINING the given day. Exported for Timesheets, which
+ * browses the same calendar payroll pays on. */
+export function periodContaining(
   schedule: PaySchedule,
   anchor: string | null,
   ymd: string,

@@ -17,6 +17,7 @@ import {
 } from "@/lib/wall-clock";
 import { maybeDecryptField } from "@/lib/field-encryption";
 import { TimesheetsView } from "./timesheets-view";
+import { periodContaining, type PaySchedule } from "@/lib/pay-schedule";
 import type {
   TimesheetEntry,
   EmployeeMeta,
@@ -53,11 +54,82 @@ export default async function TimesheetsPage({
   // out of its own day, showed a date the picker disagreed with, and carried
   // its hours into the neighbouring pay period.
   //
-  // Default: current pay period (last 14 days), also in org-local days.
+  // Default window follows the org's PAY SCHEDULE when one is set — Brian:
+  // "everything should always fall inside of the pay period that we're
+  // working with." No schedule keeps the old last-14-days default. Explicit
+  // from/to params always win (custom ranges stay possible).
+  const { data: orgSched } = (await createSupabaseAdminClient()
+    .from("organizations")
+    .select("pay_schedule, pay_anchor" as never)
+    .eq("id", membership.organization_id)
+    .maybeSingle()) as unknown as {
+    data: { pay_schedule: string | null; pay_anchor: string | null } | null;
+  };
+  const paySchedule = (orgSched?.pay_schedule ?? null) as PaySchedule | null;
+  const payAnchor = orgSched?.pay_anchor ?? null;
+
   const now = new Date();
-  const to = params.to || zonedYmd(now, orgTz);
-  const from =
-    params.from || zonedYmd(zonedDayStartUtc(now, orgTz, -14), orgTz);
+  const todayYmd = zonedYmd(now, orgTz);
+  let from: string;
+  let to: string;
+  if (params.from || params.to) {
+    to = params.to || todayYmd;
+    from = params.from || zonedYmd(zonedDayStartUtc(now, orgTz, -14), orgTz);
+  } else if (paySchedule) {
+    const p = periodContaining(paySchedule, payAnchor, todayYmd);
+    from = p.start;
+    to = p.end;
+  } else {
+    to = todayYmd;
+    from = zonedYmd(zonedDayStartUtc(now, orgTz, -14), orgTz);
+  }
+
+  // Period pager (only meaningful with a schedule): the window's neighbours,
+  // and whether the current from/to IS a schedule period or a custom range.
+  const ymdAddDays = (ymd: string, n: number): string => {
+    const d = new Date(`${ymd}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + n);
+    return d.toISOString().slice(0, 10);
+  };
+  const shortYmd = (ymd: string): string =>
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: "UTC",
+      month: "short",
+      day: "numeric",
+    }).format(new Date(`${ymd}T00:00:00Z`));
+  let pager: {
+    aligned: boolean;
+    prev: { from: string; to: string; label: string };
+    next: { from: string; to: string; label: string } | null;
+    currentLabel: string;
+    resetHref: string | null;
+  } | null = null;
+  if (paySchedule) {
+    const cw = periodContaining(paySchedule, payAnchor, from);
+    const aligned = cw.start === from && cw.end === to;
+    const prevP = periodContaining(paySchedule, payAnchor, ymdAddDays(from, -1));
+    const nextP = periodContaining(paySchedule, payAnchor, ymdAddDays(to, 1));
+    pager = {
+      aligned,
+      prev: {
+        from: prevP.start,
+        to: prevP.end,
+        label: `${shortYmd(prevP.start)} – ${shortYmd(prevP.end)}`,
+      },
+      next:
+        nextP.start <= todayYmd
+          ? {
+              from: nextP.start,
+              to: nextP.end,
+              label: `${shortYmd(nextP.start)} – ${shortYmd(nextP.end)}`,
+            }
+          : null,
+      currentLabel: aligned
+        ? `Pay period ${shortYmd(from)} – ${shortYmd(to)}`
+        : `Custom range ${shortYmd(from)} – ${shortYmd(to)}`,
+      resetHref: aligned ? null : "/app/timesheets",
+    };
+  }
 
   // Half-open: [00:00 local on `from`, 00:00 local the day after `to`). An
   // inclusive 23:59:59 end drops the final second of the range.
@@ -531,6 +603,39 @@ export default async function TimesheetsPage({
       title="Timesheets"
       description="Employee hours, job performance, and pay calculations."
     >
+      {pager && (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-card px-4 py-2.5">
+          <a
+            href={`/app/timesheets?from=${pager.prev.from}&to=${pager.prev.to}`}
+            className="text-xs text-muted-foreground hover:text-foreground"
+          >
+            ‹ {pager.prev.label}
+          </a>
+          <span className="text-sm font-semibold">
+            {pager.currentLabel}
+            {pager.resetHref && (
+              <a
+                href={pager.resetHref}
+                className="ml-2 text-xs font-normal text-muted-foreground underline underline-offset-2 hover:text-foreground"
+              >
+                Back to current period
+              </a>
+            )}
+          </span>
+          {pager.next ? (
+            <a
+              href={`/app/timesheets?from=${pager.next.from}&to=${pager.next.to}`}
+              className="text-xs text-muted-foreground hover:text-foreground"
+            >
+              {pager.next.label} ›
+            </a>
+          ) : (
+            <span className="text-xs text-muted-foreground/50">
+              current period
+            </span>
+          )}
+        </div>
+      )}
       <TimesheetsView
         entries={rows}
         employees={empMeta}
