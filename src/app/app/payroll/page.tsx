@@ -16,6 +16,7 @@ import { paySystemFor } from "@/lib/engagement";
 import { StartRunCard } from "./start-run-card";
 import { PayScheduleDialog } from "./pay-schedule-dialog";
 import { suggestedPayPeriod, type PaySchedule } from "@/lib/pay-schedule";
+import { periodHref } from "@/lib/pay-period";
 import { markTipsPaidAction } from "./actions";
 import { getTipsOwed } from "@/lib/invoice-tips";
 import { getSubcontractorPayables } from "@/lib/subcontractor-payables";
@@ -78,8 +79,58 @@ export default async function PayrollPage() {
   const runs = rawRuns ?? [];
   // "In progress" = anything a human hasn't finished. Paid runs are history.
   const inProgress = runs.filter((r) => r.status !== "paid");
-  const paidRuns = runs.filter((r) => r.status === "paid");
   const currentRun = inProgress[0] ?? null;
+
+  // Contractor statements for the same table — one period, both systems.
+  const { data: rawSubRuns } = (await admin
+    .from("subcontractor_pay_runs" as never)
+    .select("id, period_start, period_end, status, total_cents, paid_at")
+    .eq("organization_id" as never, membership.organization_id as never)
+    .order("period_start" as never, { ascending: false } as never)
+    .limit(50)) as unknown as {
+    data: Array<{
+      id: string;
+      period_start: string;
+      period_end: string;
+      status: string;
+      total_cents: number;
+      paid_at: string | null;
+    }> | null;
+  };
+  const subStatementRuns = rawSubRuns ?? [];
+
+  // Merge both systems into period rows keyed by exact window.
+  type PeriodRow = {
+    start: string;
+    end: string;
+    emp: (typeof runs)[number] | null;
+    sub: (typeof subStatementRuns)[number] | null;
+  };
+  const periodMap = new Map<string, PeriodRow>();
+  for (const r of runs) {
+    const k = `${r.period_start}_${r.period_end}`;
+    periodMap.set(k, {
+      start: r.period_start,
+      end: r.period_end,
+      emp: r,
+      sub: null,
+    });
+  }
+  for (const r of subStatementRuns) {
+    const k = `${r.period_start}_${r.period_end}`;
+    const row = periodMap.get(k);
+    if (row) row.sub = r;
+    else
+      periodMap.set(k, {
+        start: r.period_start,
+        end: r.period_end,
+        emp: null,
+        sub: r,
+      });
+  }
+  const periodRows = [...periodMap.values()].sort((a, b) =>
+    a.start < b.start ? 1 : -1,
+  );
 
   // Subcontractors are paid outside payroll runs — they are contractors, not
   // employees, and rolling them into a run total would misstate both the run
@@ -208,7 +259,7 @@ export default async function PayrollPage() {
     ? `since ${shortDate(latestEnd)}`
     : "all unpaid time";
 
-  const lastPaidRun = paidRuns[0] ?? null;
+  const lastPaidRun = runs.find((r) => r.status === "paid") ?? null;
 
   // Tips: money the business is holding that belongs to a specific person,
   // settled outside a payroll run — same shape of problem as contractor pay.
@@ -248,10 +299,10 @@ export default async function PayrollPage() {
                 : "finalized — mark it paid once the money has actually gone out."}
             </p>
             <Link
-              href={`/app/payroll/${currentRun.id}`}
+              href={periodHref(currentRun.period_start, currentRun.period_end)}
               className="mt-4 inline-flex items-center gap-1.5 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
             >
-              Open this run
+              Open this period
               <ChevronRight className="h-4 w-4" />
             </Link>
           </div>
@@ -388,49 +439,19 @@ export default async function PayrollPage() {
           </div>
         )}
 
-        {/* Any further unfinished runs beyond the one in the hero — rare,
-            but they must not hide among paid history. */}
-        {inProgress.length > 1 && (
-          <div>
-            <h2 className="mb-2 text-sm font-semibold">
-              Also unfinished
-            </h2>
-            <ul className="space-y-2">
-              {inProgress.slice(1).map((r) => (
-                <li key={r.id}>
-                  <Link
-                    href={`/app/payroll/${r.id}`}
-                    className="flex items-center justify-between gap-3 rounded-lg border border-amber-400/60 bg-card p-3 transition-colors hover:bg-muted/40 dark:border-amber-800/60"
-                  >
-                    <span className="text-sm font-medium">
-                      {shortDate(r.period_start)} → {shortDate(r.period_end)}
-                    </span>
-                    <span className="flex items-center gap-3">
-                      <span className="font-mono text-sm font-semibold tabular-nums">
-                        {formatCurrencyCents(r.total_cents, currency)}
-                      </span>
-                      <StatusBadge
-                        tone={r.status === "finalized" ? "blue" : "neutral"}
-                      >
-                        {r.status}
-                      </StatusBadge>
-                    </span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        {/* ── History: paid, done, quiet ──────────────────────────────── */}
+        {/* ── Pay periods: one table, both systems ─────────────────────
+            Each row is a window; Employees and Contractors are columns, so
+            "what did that period cost" reads across, and clicking opens the
+            period page that breaks both halves down. */}
         <div>
           <h2 className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-muted-foreground">
             <CheckCircle2 className="h-4 w-4" />
-            Paid history
+            Pay periods
           </h2>
-          {paidRuns.length === 0 ? (
+          {periodRows.length === 0 ? (
             <p className="rounded-lg border border-dashed border-border bg-muted/20 p-6 text-center text-xs text-muted-foreground">
-              Runs you&rsquo;ve marked as paid will collect here.
+              Prepared periods collect here — employees and contractors side
+              by side.
             </p>
           ) : (
             <div className="overflow-x-auto rounded-lg border border-border">
@@ -438,33 +459,97 @@ export default async function PayrollPage() {
                 <thead>
                   <tr className="border-b border-border bg-muted/30 text-left text-xs text-muted-foreground">
                     <th className="px-4 py-2 font-medium">Period</th>
+                    <th className="px-4 py-2 text-right font-medium">
+                      Employees
+                    </th>
+                    <th className="px-4 py-2 text-right font-medium">
+                      Contractors
+                    </th>
                     <th className="px-4 py-2 text-right font-medium">Total</th>
-                    <th className="px-4 py-2 text-right font-medium">Paid</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {paidRuns.map((r) => (
-                    <tr
-                      key={r.id}
-                      className="border-b border-border/60 last:border-0"
-                    >
-                      <td className="px-4 py-2">
-                        <Link
-                          href={`/app/payroll/${r.id}`}
-                          className="font-medium hover:underline"
-                        >
-                          {shortDate(r.period_start)} →{" "}
-                          {shortDate(r.period_end)}
-                        </Link>
-                      </td>
-                      <td className="px-4 py-2 text-right font-mono tabular-nums">
-                        {formatCurrencyCents(r.total_cents, currency)}
-                      </td>
-                      <td className="px-4 py-2 text-right text-xs text-muted-foreground">
-                        {r.paid_at ? formatDate(r.paid_at, tz) : "—"}
-                      </td>
-                    </tr>
-                  ))}
+                  {periodRows.map((row) => {
+                    const unfinished =
+                      (row.emp && row.emp.status !== "paid") ||
+                      (row.sub && row.sub.status !== "paid");
+                    return (
+                      <tr
+                        key={`${row.start}_${row.end}`}
+                        className={
+                          unfinished
+                            ? "border-b border-border/60 bg-amber-50/50 last:border-0 dark:bg-amber-950/10"
+                            : "border-b border-border/60 last:border-0"
+                        }
+                      >
+                        <td className="px-4 py-2">
+                          <Link
+                            href={periodHref(row.start, row.end)}
+                            className="font-medium hover:underline"
+                          >
+                            {shortDate(row.start)} → {shortDate(row.end)}
+                          </Link>
+                        </td>
+                        <td className="px-4 py-2 text-right">
+                          {row.emp ? (
+                            <span className="inline-flex items-center gap-2">
+                              <span className="font-mono tabular-nums">
+                                {formatCurrencyCents(
+                                  row.emp.total_cents,
+                                  currency,
+                                )}
+                              </span>
+                              <StatusBadge
+                                tone={
+                                  row.emp.status === "paid"
+                                    ? "green"
+                                    : row.emp.status === "finalized"
+                                      ? "blue"
+                                      : "neutral"
+                                }
+                              >
+                                {row.emp.status}
+                              </StatusBadge>
+                            </span>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">
+                              —
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2 text-right">
+                          {row.sub ? (
+                            <span className="inline-flex items-center gap-2">
+                              <span className="font-mono tabular-nums">
+                                {formatCurrencyCents(
+                                  row.sub.total_cents,
+                                  currency,
+                                )}
+                              </span>
+                              <StatusBadge
+                                tone={
+                                  row.sub.status === "paid" ? "green" : "blue"
+                                }
+                              >
+                                {row.sub.status}
+                              </StatusBadge>
+                            </span>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">
+                              —
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2 text-right font-mono font-semibold tabular-nums">
+                          {formatCurrencyCents(
+                            (row.emp?.total_cents ?? 0) +
+                              (row.sub?.total_cents ?? 0),
+                            currency,
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

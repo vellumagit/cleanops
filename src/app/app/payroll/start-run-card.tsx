@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { createPayrollRunAction } from "./actions";
+import { preparePeriodAction } from "./actions";
 
 /**
  * The one next action, Gusto-style: the next period is pre-computed, the
@@ -53,9 +53,9 @@ export function StartRunCard({
   function submit(formData: FormData) {
     setError(null);
     startTransition(async () => {
-      const r = await createPayrollRunAction(formData);
+      const r = await preparePeriodAction(formData);
       if (r.ok) {
-        router.push(`/app/payroll/${r.id}`);
+        router.push(r.href);
       } else {
         setError(r.error);
       }
@@ -98,7 +98,7 @@ export function StartRunCard({
             {unpaidEstimate}
           </p>
           <p className="text-[11px] text-muted-foreground">
-            before PTO &amp; bonuses
+            employees — before PTO &amp; bonuses
           </p>
         </div>
         <div className="rounded-lg bg-muted/40 p-3">

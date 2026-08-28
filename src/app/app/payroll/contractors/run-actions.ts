@@ -4,10 +4,7 @@ import { revalidatePath } from "next/cache";
 import { getActionContext } from "@/lib/actions";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { logAuditEvent } from "@/lib/audit";
-import { getOrgTimezone } from "@/lib/org-timezone";
-import { zonedDayStartUtc, zonedMidnightUtc } from "@/lib/wall-clock";
-import { memberDisplayName } from "@/lib/member-display";
-import { groupEntriesForRun, runTotalCents } from "@/lib/subcontractor-run";
+import { createContractorRunForOrg } from "@/lib/contractor-run-create";
 
 // ── Pay-period statements (subcontractor pay runs) ───────────────────────────
 //
@@ -50,196 +47,19 @@ export async function generateSubcontractorRunAction(
     return { ok: false, error: "Period end must be on or after start." };
   }
 
-  const orgTz = await getOrgTimezone(membership.organization_id);
-  // Org-local calendar days, half-open — the #80 bug class. An evening shift
-  // on the period's last day belongs to THIS statement, not the next one.
-  const fromIso = zonedMidnightUtc(period_start, orgTz).toISOString();
-  const toIso = zonedDayStartUtc(
-    zonedMidnightUtc(period_end, orgTz),
-    orgTz,
-    1,
-  ).toISOString();
-
-  const admin = createSupabaseAdminClient();
-
-  // Current subs — the null-snapshot fallback arm and most rate lookups.
-  const { data: subs } = (await admin
-    .from("memberships")
-    .select("id, pay_rate_cents, display_name, profile:profiles ( full_name )")
-    .eq("organization_id", membership.organization_id)
-    .eq("engagement" as never, "subcontractor" as never)) as unknown as {
-    data: Array<{
-      id: string;
-      pay_rate_cents: number | null;
-      display_name: string | null;
-      profile: { full_name: string | null } | null;
-    }> | null;
-  };
-  const subIds = (subs ?? []).map((s) => s.id);
-  const eraFilter =
-    subIds.length > 0
-      ? `engagement_snapshot.eq.subcontractor,and(engagement_snapshot.is.null,employee_id.in.(${subIds.join(",")}))`
-      : "engagement_snapshot.eq.subcontractor";
-
-  // Same refusal payroll makes: capped hours are a ceiling, not an
-  // observation, and a statement must not turn them into money.
-  const { count: unreviewed } = (await admin
-    .from("time_entries")
-    .select("id", { count: "exact", head: true })
-    .eq("organization_id", membership.organization_id)
-    .is("payroll_run_id", null)
-    .is("subcontractor_run_id" as never, null as never)
-    .gte("clock_in_at", fromIso)
-    .lt("clock_in_at", toIso)
-    .or(eraFilter)
-    .eq("needs_review" as never, true as never)) as unknown as {
-    count: number | null;
-  };
-  if ((unreviewed ?? 0) > 0) {
-    return {
-      ok: false,
-      error: `${unreviewed} shift${unreviewed === 1 ? "" : "s"} in this period still need${unreviewed === 1 ? "s" : ""} review — nobody clocked out and the system capped the hours. Confirm or correct them on Timesheets, then generate.`,
-    };
-  }
-
-  const { data: entries } = (await admin
-    .from("time_entries")
-    .select(
-      "id, employee_id, clock_in_at, clock_out_at, pay_rate_cents_snapshot" as never,
-    )
-    .eq("organization_id", membership.organization_id)
-    .is("payroll_run_id", null)
-    .is("subcontractor_run_id" as never, null as never)
-    .eq("needs_review" as never, false as never)
-    .not("clock_out_at", "is", null)
-    .gte("clock_in_at", fromIso)
-    .lt("clock_in_at", toIso)
-    .or(eraFilter)) as unknown as {
-    data: Array<{
-      id: string;
-      employee_id: string | null;
-      clock_in_at: string | null;
-      clock_out_at: string | null;
-      pay_rate_cents_snapshot: number | null;
-    }> | null;
-  };
-
-  // Rates + names for every owner in the window — including people flipped
-  // to employee since (their sub-era hours still settle through here).
-  const rateById = new Map<string, number | null>(
-    (subs ?? []).map((s) => [s.id, s.pay_rate_cents]),
-  );
-  const nameById = new Map<string, string>(
-    (subs ?? []).map((s) => [s.id, memberDisplayName(s)]),
-  );
-  const missingIds = Array.from(
-    new Set(
-      (entries ?? [])
-        .map((e) => e.employee_id)
-        .filter((id): id is string => !!id && !rateById.has(id)),
-    ),
-  );
-  if (missingIds.length > 0) {
-    const { data: extras } = (await admin
-      .from("memberships")
-      .select("id, pay_rate_cents, display_name, profile:profiles ( full_name )")
-      .in("id", missingIds)
-      .eq("organization_id", membership.organization_id)) as unknown as {
-      data: Array<{
-        id: string;
-        pay_rate_cents: number | null;
-        display_name: string | null;
-        profile: { full_name: string | null } | null;
-      }> | null;
-    };
-    for (const m of extras ?? []) {
-      rateById.set(m.id, m.pay_rate_cents);
-      nameById.set(m.id, memberDisplayName(m));
-    }
-  }
-
-  const items = groupEntriesForRun(entries ?? [], rateById);
-  if (items.length === 0) {
-    return { ok: false, error: "No unpaid subcontractor hours in this period." };
-  }
-
-  const { data: run, error: runErr } = (await admin
-    .from("subcontractor_pay_runs" as never)
-    .insert({
-      organization_id: membership.organization_id,
-      period_start,
-      period_end,
-      status: "finalized",
-      total_cents: runTotalCents(items),
-      created_by: membership.id,
-    } as never)
-    .select("id")
-    .single()) as unknown as {
-    data: { id: string } | null;
-    error: { message: string } | null;
-  };
-  if (runErr || !run) {
-    return {
-      ok: false,
-      error: runErr?.message ?? "Could not create the statement.",
-    };
-  }
-
-  const { error: itemsErr } = (await admin
-    .from("subcontractor_pay_items" as never)
-    .insert(
-      items.map((i) => ({
-        run_id: run.id,
-        organization_id: membership.organization_id,
-        membership_id: i.membershipId,
-        payee_name: nameById.get(i.membershipId) ?? "Unknown",
-        minutes: i.minutes,
-        entry_count: i.entryCount,
-        total_cents: i.totalCents,
-      })) as never,
-    )) as unknown as { error: { message: string } | null };
-  if (itemsErr) {
-    // Entries not yet stamped — deleting the run leaves no trace.
-    await admin
-      .from("subcontractor_pay_runs" as never)
-      .delete()
-      .eq("id" as never, run.id as never);
-    return { ok: false, error: itemsErr.message };
-  }
-
-  // Stamp ONLY the entries the items actually priced — and CLAIM-guarded
-  // (`.is(..., null)`), so a concurrent generate for the same period can't
-  // have both statements price the same hours: the loser claims fewer rows
-  // than it billed and unwinds completely instead of double-charging.
-  const entryIds = items.flatMap((i) => i.entryIds);
-  const { data: claimedRows, error: stampErr } = (await admin
-    .from("time_entries")
-    .update({ subcontractor_run_id: run.id } as never)
-    .is("subcontractor_run_id" as never, null as never)
-    .in("id", entryIds)
-    .select("id")) as unknown as {
-    data: Array<{ id: string }> | null;
-    error: { message: string } | null;
-  };
-  if (stampErr || (claimedRows?.length ?? 0) !== entryIds.length) {
-    // Release our partial claims, then remove the run (items cascade). The
-    // concurrent winner's stamps are untouched — the guard means we never
-    // overwrote them.
-    await admin
-      .from("time_entries")
-      .update({ subcontractor_run_id: null } as never)
-      .eq("subcontractor_run_id" as never, run.id as never);
-    await admin
-      .from("subcontractor_pay_runs" as never)
-      .delete()
-      .eq("id" as never, run.id as never);
-    return {
-      ok: false,
-      error:
-        stampErr?.message ??
-        "Another statement consumed some of these hours at the same moment — check the statements list before trying again.",
-    };
-  }
+  // The machine lives in lib/contractor-run-create (shared with the
+  // period-prepare flow and the cron autodraft); this action is the gate
+  // + audit around it. Window-only here — the manual generate button keeps
+  // its historical strictness; straggler-sweeping belongs to Prepare.
+  const result = await createContractorRunForOrg({
+    organizationId: membership.organization_id,
+    createdByMembershipId: membership.id,
+    periodStart: period_start,
+    periodEnd: period_end,
+    includeStragglers: false,
+  });
+  if (!result.ok) return { ok: false, error: result.error };
+  const run = { id: result.id };
 
   await logAuditEvent({
     membership,
@@ -250,9 +70,7 @@ export async function generateSubcontractorRunAction(
       entity_name: "subcontractor_pay_run",
       period_start,
       period_end,
-      total_cents: runTotalCents(items),
-      payees: items.length,
-      entries: entryIds.length,
+      total_cents: result.totalCents,
     },
   });
 
