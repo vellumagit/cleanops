@@ -345,10 +345,53 @@ export function TimesheetsView({
     }
   }
 
+  /** "Now", as a datetime-local string in the ORG's timezone — the format
+   *  closeOpenShiftAction expects. The old prompt default used
+   *  toISOString(), which is UTC: an Edmonton owner accepting the default
+   *  closed shifts six or seven hours in the future. */
+  function nowInOrgTz(): string {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: orgTz,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).formatToParts(new Date());
+    const get = (t: string) =>
+      parts.find((x) => x.type === t)?.value ?? "00";
+    return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}`;
+  }
+
+  /** One confirmed tap: end the shift at the current moment. For someone
+   *  working right now — the forgotten-clock-out path below still asks
+   *  for the real historical end time instead. */
+  async function handleClockOutNow(shiftId: string, name: string) {
+    if (
+      !confirm(
+        `Clock ${name} out now? Their shift will end at the current time.`,
+      )
+    ) {
+      return;
+    }
+    const fd = new FormData();
+    fd.set("id", shiftId);
+    fd.set("end_at", nowInOrgTz());
+    const { closeOpenShiftAction } = await import("./actions");
+    const result = await closeOpenShiftAction(fd);
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
+    }
+    toast.success(`${name} clocked out`);
+    router.refresh();
+  }
+
   async function handleCloseOpenShift(shiftId: string) {
     const endLocal = prompt(
       "End time for this shift (YYYY-MM-DD HH:MM, org timezone):",
-      new Date().toISOString().slice(0, 16).replace("T", " "),
+      nowInOrgTz().replace("T", " "),
     );
     if (!endLocal) return;
     // Accept both space and T separator; the action's parser handles ISO format.
@@ -638,10 +681,13 @@ export function TimesheetsView({
                         </span>
                         <button
                           type="button"
-                          onClick={() => handleCloseOpenShift(s.id)}
-                          className="text-[11px] text-emerald-800/70 underline underline-offset-2 hover:text-emerald-900 dark:text-emerald-300/70 dark:hover:text-emerald-200"
+                          onClick={() =>
+                            handleClockOutNow(s.id, s.employee_name)
+                          }
+                          className="inline-flex items-center gap-1.5 rounded-md bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90"
                         >
-                          close early
+                          <Clock className="h-3.5 w-3.5" />
+                          Clock {s.employee_name} out
                         </button>
                       </li>
                     );
