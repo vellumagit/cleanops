@@ -72,6 +72,14 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  // Bake this build's identity into the client bundle. The update beacon
+  // compares it against /api/version (which reports the RUNNING deploy) —
+  // a stale tab's Save buttons carry dead server-action IDs that Next
+  // "recovers" from with a silent quick reload that discards the change.
+  env: {
+    NEXT_PUBLIC_BUILD_SHA:
+      process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 12) ?? "dev",
+  },
   // Pin Turbopack to this project root so a stray lockfile in the user's
   // home directory doesn't confuse the build.
   turbopack: {

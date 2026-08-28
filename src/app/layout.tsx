@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
+import { UpdateBeacon } from "@/components/update-beacon";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import "./globals.css";
 
@@ -92,6 +93,7 @@ export default function RootLayout({
       <body className="min-h-full flex flex-col bg-background text-foreground">
         <TooltipProvider>{children}</TooltipProvider>
         <Toaster richColors closeButton />
+        <UpdateBeacon />
       </body>
     </html>
   );
