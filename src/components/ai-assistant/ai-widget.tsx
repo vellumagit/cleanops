@@ -115,7 +115,7 @@ export function AIWidget() {
                   Sollos Assistant
                 </p>
                 <p className="text-[11px] text-primary-foreground/70">
-                  Powered by Claude
+                  Powered by Velluma
                 </p>
               </div>
             </div>
