@@ -7,6 +7,7 @@ import { body as timesheetsAndPayroll } from "./timesheets-and-payroll";
 import { body as websiteForms } from "./website-forms";
 import { body as clientPortal } from "./client-portal";
 import { body as automations } from "./automations";
+import { body as hiring } from "./hiring";
 
 /**
  * The in-app Help library. Plain typed modules, on purpose:
@@ -71,6 +72,13 @@ export const HELP_ARTICLES: HelpArticle[] = [
     blurb: "The fixed set of switches, who actually receives what, and the cadence knobs.",
     section: "Day to day",
     body: automations,
+  },
+  {
+    slug: "hiring",
+    title: "Hiring",
+    blurb: "Applicants, interview questionnaires, hiring procedures — and where training takes over.",
+    section: "Day to day",
+    body: hiring,
   },
   {
     slug: "invoicing",

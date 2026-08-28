@@ -105,7 +105,6 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/app/leads", label: "Leads", icon: UserPlus, roles: ["owner", "admin", "manager"] , capability: "clients" as const },
       { href: "/app/clients", label: "Clients", icon: Users, roles: ["owner", "admin", "manager"] , capability: "clients" as const },
       { href: "/app/employees", label: "Employees", icon: UserRound, roles: ["owner", "admin"] },
-      { href: "/app/applicants", label: "Applicants", icon: ClipboardList, roles: ["owner", "admin"] },
       // PURELY A SOURCING TOOL: "who can I text tonight". Contractor pay used
       // to hang off this entry, which filed a paying concept inside a hiring
       // one — a roster subcontractor who had never touched the bench still had
@@ -121,6 +120,18 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/app/freelancers", label: "On-call pool", icon: UserPlus, roles: ["owner", "admin", "manager"] , capability: "subcontractors" as const },
       { href: "/app/reviews", label: "Reviews", icon: Star },
       { href: "/app/bonuses", label: "Bonuses", icon: Award },
+    ],
+  },
+  {
+    // Hiring is its own lane — Brian: applicants, the hiring library
+    // (questionnaires + procedures you work FROM before the yes), and
+    // Training (what a new employee works THROUGH after it).
+    label: "Hiring",
+    accent: "text-rose-400",
+    activeBg: "bg-rose-500/10",
+    items: [
+      { href: "/app/applicants", label: "Applicants", icon: ClipboardList, roles: ["owner", "admin"] },
+      { href: "/app/hiring", label: "Hiring", icon: UserPlus, roles: ["owner", "admin"] },
       { href: "/app/training", label: "Training", icon: GraduationCap },
     ],
   },
