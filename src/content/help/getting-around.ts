@@ -7,7 +7,7 @@ Sollos has three surfaces, and knowing who lives where explains most of the layo
 
 ## The sidebar, in one pass
 
-Work flows top to bottom: **Operations** (dashboard, scheduling, bookings, requests), **People** (leads, clients, employees, timesheets), **Money** (invoices, reports, payroll), **Comms** (feed, chat). Notifications and Settings sit at the bottom.
+Work flows top to bottom: **Operations** (dashboard, scheduling, bookings, requests), **People** (leads, clients, employees), **Money** (invoices, timesheets, payroll, reports — in the order money flows), **Comms** (feed, chat). Notifications and Settings sit at the bottom.
 
 The small numbers beside some entries are live counts — today's bookings, pending requests, overdue invoices. A badge is the app telling you something is waiting on a human; a clear sidebar is a clear conscience.
 

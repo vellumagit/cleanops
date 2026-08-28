@@ -108,7 +108,6 @@ const NAV_SECTIONS: NavSection[] = [
       { href: "/app/clients", label: "Clients", icon: Users, roles: ["owner", "admin", "manager"] , capability: "clients" as const },
       { href: "/app/employees", label: "Employees", icon: UserRound, roles: ["owner", "admin"] },
       { href: "/app/applicants", label: "Applicants", icon: ClipboardList, roles: ["owner", "admin"] },
-      { href: "/app/timesheets", label: "Timesheets", icon: Clock, roles: ["owner", "admin", "manager"] , capability: "timesheets" as const },
       // PURELY A SOURCING TOOL: "who can I text tonight". Contractor pay used
       // to hang off this entry, which filed a paying concept inside a hiring
       // one — a roster subcontractor who had never touched the bench still had
@@ -133,8 +132,13 @@ const NAV_SECTIONS: NavSection[] = [
     activeBg: "bg-emerald-500/10",
     items: [
       { href: "/app/invoices", label: "Invoices", icon: Receipt, roles: ["owner", "admin", "manager"] , capability: "invoicing" as const },
-      { href: "/app/reports", label: "Reports", icon: BarChart3, roles: ["owner", "admin"] },
+      // Timesheets sits with the money, not the people: hours are the raw
+      // material of payroll, and the two now share one pay-period calendar.
+      // Brian: "I think that makes more sense." Above Payroll — the order
+      // work flows: hours → review → run.
+      { href: "/app/timesheets", label: "Timesheets", icon: Clock, roles: ["owner", "admin", "manager"] , capability: "timesheets" as const },
       { href: "/app/payroll", label: "Payroll", icon: Banknote, roles: ["owner", "admin"] },
+      { href: "/app/reports", label: "Reports", icon: BarChart3, roles: ["owner", "admin"] },
     ],
   },
   {
