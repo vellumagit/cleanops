@@ -8,6 +8,9 @@ import { buttonVariants } from "@/components/ui/button";
 import { StatusBadge } from "@/components/status-badge";
 import { formatCurrencyCents } from "@/lib/format";
 import { getOrgCurrency } from "@/lib/org-currency";
+import { getOrgTimezone } from "@/lib/org-timezone";
+import { periodContaining, type PaySchedule } from "@/lib/pay-schedule";
+import { periodHref } from "@/lib/pay-period";
 
 export const metadata = { title: "Pay period" };
 
@@ -38,6 +41,58 @@ export default async function PayPeriodPage({
 
   const admin = createSupabaseAdminClient();
   const currency = await getOrgCurrency(membership.organization_id);
+
+  // Same period cycler Timesheets has — Brian: "can I have that here
+  // too?" Prev/next windows on the org's schedule; next hides once it
+  // would step past today.
+  const { data: orgSched } = (await admin
+    .from("organizations")
+    .select("pay_schedule, pay_anchor" as never)
+    .eq("id", membership.organization_id)
+    .maybeSingle()) as unknown as {
+    data: { pay_schedule: string | null; pay_anchor: string | null } | null;
+  };
+  const ymdAddDays = (ymd: string, n: number): string => {
+    const d = new Date(`${ymd}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + n);
+    return d.toISOString().slice(0, 10);
+  };
+  let pager: {
+    prev: { href: string; label: string };
+    next: { href: string; label: string } | null;
+  } | null = null;
+  if (orgSched?.pay_schedule) {
+    const sched = orgSched.pay_schedule as PaySchedule;
+    const anchor = orgSched.pay_anchor ?? null;
+    const tz = await getOrgTimezone(membership.organization_id);
+    const today = new Intl.DateTimeFormat("en-CA", {
+      timeZone: tz,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+    const prevW = periodContaining(sched, anchor, ymdAddDays(periodStart, -1));
+    const nextW = periodContaining(sched, anchor, ymdAddDays(periodEnd, 1));
+    const short = (ymd: string) =>
+      new Intl.DateTimeFormat("en-US", {
+        timeZone: "UTC",
+        month: "short",
+        day: "numeric",
+      }).format(new Date(`${ymd}T00:00:00Z`));
+    pager = {
+      prev: {
+        href: periodHref(prevW.start, prevW.end),
+        label: `${short(prevW.start)} – ${short(prevW.end)}`,
+      },
+      next:
+        nextW.start <= today
+          ? {
+              href: periodHref(nextW.start, nextW.end),
+              label: `${short(nextW.start)} – ${short(nextW.end)}`,
+            }
+          : null,
+    };
+  }
 
   const [{ data: payrollRuns }, { data: subRuns }] = await Promise.all([
     admin
@@ -191,6 +246,32 @@ export default async function PayPeriodPage({
       }
     >
       <div className="max-w-3xl space-y-6">
+        {pager && (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-card px-4 py-2.5">
+            <Link
+              href={pager.prev.href}
+              className="text-xs text-muted-foreground hover:text-foreground"
+            >
+              ‹ {pager.prev.label}
+            </Link>
+            <span className="text-xs font-medium text-muted-foreground">
+              pay periods
+            </span>
+            {pager.next ? (
+              <Link
+                href={pager.next.href}
+                className="text-xs text-muted-foreground hover:text-foreground"
+              >
+                {pager.next.label} ›
+              </Link>
+            ) : (
+              <span className="text-xs text-muted-foreground/50">
+                current period
+              </span>
+            )}
+          </div>
+        )}
+
         {!payrollRun && !subRun && (
           <p className="rounded-lg border border-dashed border-border bg-muted/20 p-8 text-center text-sm text-muted-foreground">
             This period hasn&rsquo;t been prepared yet — start it from the
