@@ -277,7 +277,7 @@ export function ManualEntryDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="p-6 sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>
             {mode === "edit" ? "Edit time entry" : "Log hours"}
@@ -289,7 +289,7 @@ export function ManualEntryDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="mt-1 space-y-5">
           {formError && (
             <div
               role="alert"
@@ -347,19 +347,20 @@ export function ManualEntryDialog({
           </div>
           )}
 
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1.5">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="min-w-0 space-y-1.5">
               <Label htmlFor="start_at">Start</Label>
               <Input
                 id="start_at"
                 name="start_at"
                 type="datetime-local"
+                className="h-10 w-full min-w-0 tabular-nums"
                 value={startAt}
                 onChange={(e) => setStartAt(e.target.value)}
                 required
               />
             </div>
-            <div className="space-y-1.5">
+            <div className="min-w-0 space-y-1.5">
               <Label htmlFor="end_at">
                 End{" "}
                 <span className="font-normal text-muted-foreground">
@@ -370,6 +371,7 @@ export function ManualEntryDialog({
                 id="end_at"
                 name="end_at"
                 type="datetime-local"
+                className="h-10 w-full min-w-0 tabular-nums"
                 value={endAt}
                 onChange={(e) => setEndAt(e.target.value)}
               />
