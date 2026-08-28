@@ -11,6 +11,18 @@ import { NextRequest } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { HELP_ARTICLES } from "@/content/help";
+
+// The assistant reads the SAME help library the in-app Help section renders
+// (src/content/help). Brian caught it telling a user there was no Help
+// section minutes after one shipped — a hand-written prompt goes stale the
+// moment the app moves. Articles travel in the same commit as the features
+// they describe, so building the prompt from them at request time means
+// every deploy re-teaches the assistant automatically. No update chore, no
+// interval, no drift.
+const HELP_LIBRARY = HELP_ARTICLES.map(
+  (a) => `### ${a.title} — in the app at /app/help/${a.slug}\n${a.body.trim()}`,
+).join("\n\n");
 
 // ─── System prompt ───────────────────────────────────────────────────────────
 const BASE_SYSTEM_PROMPT = `You are Sollos Assistant — a friendly, knowledgeable helper built into Sollos, a cleaning business management platform.
@@ -19,6 +31,7 @@ WHAT YOU DO:
 1. Answer questions about Sollos features: bookings, recurring series, clients, employees, subcontractors, invoices, estimates, scheduling, tasks, calendar, timesheets, checklists, automations, and reports.
 2. Help the user understand their live business data using the context snapshot below.
 3. FLAG FEEDBACK: When the user says something is confusing, hard to find, slow, broken, or just not working as expected — ALWAYS start your reply with "🚩 Feedback noted:" followed by a one-sentence plain-English summary of the issue, then help them anyway.
+4. POINT TO HELP: Sollos has a built-in Help section — the "Help" entry at the bottom of the sidebar, or /app/help. The full text of every guide is in the HELP LIBRARY below; answer from it, and when a guide covers the topic, end with a pointer like "Full guide: Help → Checklists." Never say Sollos has no help section.
 
 HOW TO ANSWER:
 - Be concise. Cleaning business owners are busy — get to the point.
@@ -89,12 +102,15 @@ them any other way):
   (external cleaners under the On-call pool section — paid the flat amount
   set on the offer). First tap claims the shift.
 
-STRICT RULE: if a question is about a feature or screen not described above or
-visible in the context snapshot, do NOT guess at steps or invent UI. Say you're
-not certain how that part works and flag it with "🚩 Feedback noted:" so the
-team can improve the docs.
+STRICT RULE: if a question is about a feature or screen not described above,
+in the HELP LIBRARY, or visible in the context snapshot, do NOT guess at steps
+or invent UI. Say you're not certain how that part works and flag it with
+"🚩 Feedback noted:" so the team can improve the docs.
 
-{ORG_CONTEXT}`;
+HELP LIBRARY (the app's own guides — same content as /app/help, always
+current because it ships with each deploy):
+
+{HELP_LIBRARY}`;
 
 // ─── Handler ─────────────────────────────────────────────────────────────────
 
@@ -201,7 +217,14 @@ export async function POST(request: NextRequest) {
 ${canSeeMoney ? `- Invoices awaiting payment: ${unpaidInvoices.count ?? "N/A"}` : ""}
 - Open tasks: ${(openTasks as { count: number | null }).count ?? "N/A"}`;
 
-  const systemPrompt = BASE_SYSTEM_PROMPT.replace("{ORG_CONTEXT}", orgContext);
+  // Two system blocks: the big static one (base prompt + help library) is
+  // identical for every request, so it's marked cacheable — Anthropic bills
+  // cache reads at a tenth of input. The per-request org snapshot rides
+  // separately so it never busts that cache.
+  const staticSystem = BASE_SYSTEM_PROMPT.replace(
+    "{HELP_LIBRARY}",
+    HELP_LIBRARY,
+  );
 
   // Stream from Claude
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -216,7 +239,14 @@ ${canSeeMoney ? `- Invoices awaiting payment: ${unpaidInvoices.count ?? "N/A"}` 
           // retired by Anthropic, which made every assistant request error.
           model: "claude-haiku-4-5-20251001",
           max_tokens: 1024,
-          system: systemPrompt,
+          system: [
+            {
+              type: "text",
+              text: staticSystem,
+              cache_control: { type: "ephemeral" },
+            },
+            { type: "text", text: orgContext },
+          ],
           messages,
         });
 
