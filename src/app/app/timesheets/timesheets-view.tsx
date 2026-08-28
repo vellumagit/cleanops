@@ -1128,15 +1128,16 @@ export function TimesheetsView({
                               </td>
                               <td className="px-2 py-2.5 text-right">
                                 <span className="inline-flex items-center gap-1">
-                                  {r.needs_review && (
+                                  {(r.needs_review ||
+                                    r.over_allotted_minutes > 0) && (
                                     <button
                                       type="button"
                                       onClick={() => quickConfirm(r.id)}
                                       disabled={confirmPending}
-                                      title="These capped hours are correct — clear the flag"
+                                      title="These hours are right — clear the flag"
                                       className="rounded-md border border-amber-400 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-50 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200 dark:hover:bg-amber-950/60"
                                     >
-                                      Confirm
+                                      Looks good
                                     </button>
                                   )}
                                   <button
@@ -1326,12 +1327,13 @@ export function TimesheetsView({
                     </td>
                     <td className="px-2 py-2.5 text-right">
                       <span className="inline-flex items-center gap-1">
-                        {r.needs_review && (
+                        {(r.needs_review ||
+                          r.over_allotted_minutes > 0) && (
                           <button
                             type="button"
                             onClick={() => quickConfirm(r.id)}
                             disabled={confirmPending}
-                            title="These capped hours are correct — clear the flag"
+                            title="These hours are right — clear the flag"
                             className="rounded-md border border-amber-400 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-50 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200 dark:hover:bg-amber-950/60"
                           >
                             Confirm

@@ -168,6 +168,7 @@ export default async function TimesheetsPage({
           engagement_snapshot,
           work_category,
           needs_review,
+          over_confirmed_at,
           auto_closed_at,
           clock_in_lat,
           clock_in_lng,
@@ -204,6 +205,7 @@ export default async function TimesheetsPage({
           pay_rate_cents_snapshot: number | null;
           work_category: string | null;
           needs_review: boolean | null;
+          over_confirmed_at: string | null;
           auto_closed_at: string | null;
           clock_in_lat: number | null;
           clock_in_lng: number | null;
@@ -478,7 +480,13 @@ export default async function TimesheetsPage({
               }),
             ).toISOString()
           : null,
-      over_allotted_minutes: closedEntryOverrunMinutes({
+      // A confirmed overrun stops flagging — one gate here clears the
+      // chip, the row tint, the banner count, and the flagged filter at
+      // once. The raw minutes still exist in the punches; only the alarm
+      // is acknowledged.
+      over_allotted_minutes: e.over_confirmed_at
+        ? 0
+        : closedEntryOverrunMinutes({
         clockInIso: e.clock_in_at,
         clockOutIso: e.clock_out_at,
         // Segment-adjusted start, not the booking's. On a split shift the

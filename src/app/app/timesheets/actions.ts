@@ -1159,6 +1159,9 @@ export async function updateTimeEntryAction(
       // clear the flag. Without this needs_review is a write-once latch that
       // blocks payroll forever even after the entry has been corrected.
       needs_review: false,
+      // Same logic for the over-allotted alarm: saving an edit used to
+      // leave the +time tag standing ("save changes ... doesn't do shit").
+      over_confirmed_at: new Date().toISOString(),
       // Encrypt before write. Read sites use maybeDecryptField; legacy
       // plaintext rows still display correctly until they're next saved.
       notes: encryptField(parsed.notes),
@@ -1705,12 +1708,18 @@ export async function confirmTimeEntryAction(
     return { ok: false, error: "Not authorized." };
   }
 
+  // Clears BOTH flag flavors in one tap: the capped needs_review latch
+  // and the derived over-allotted alarm (acknowledged via
+  // over_confirmed_at — the minutes themselves are untouched).
   const { data: updated, error } = (await supabase
     .from("time_entries")
-    .update({ needs_review: false } as never)
+    .update({
+      needs_review: false,
+      over_confirmed_at: new Date().toISOString(),
+      over_confirmed_by: membership.id,
+    } as never)
     .eq("id", id)
     .eq("organization_id", membership.organization_id)
-    .eq("needs_review" as never, true as never)
     .is("payroll_run_id", null)
     .is("subcontractor_run_id" as never, null as never)
     .select("id")) as unknown as {
@@ -1721,7 +1730,7 @@ export async function confirmTimeEntryAction(
   if (!updated || updated.length === 0) {
     return {
       ok: false,
-      error: "This entry is already confirmed — or locked inside a pay run.",
+      error: "This entry is locked inside a pay run.",
     };
   }
 
