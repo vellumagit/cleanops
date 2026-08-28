@@ -52,6 +52,27 @@ export default async function ClientJobsPage() {
     for (const row of tokenRows ?? []) {
       tokenMap.set(row.id, row.review_token ?? null);
     }
+
+    // Mint tokens for completed visits that don't have one yet. Review
+    // links used to exist only after the ask-email cron generated them —
+    // throttle the asking (review cadence setting) and the portal's
+    // "Leave a review" links would starve. Volunteering must never depend
+    // on having been asked.
+    const missing = completedIds.filter((id) => !tokenMap.get(id));
+    if (missing.length > 0) {
+      const { generateClaimToken } = await import("@/lib/claim-token");
+      for (const id of missing.slice(0, 20)) {
+        const token = await generateClaimToken();
+        const { error: mintErr } = (await admin
+          .from("bookings")
+          .update({ review_token: token } as never)
+          .eq("id", id)
+          .is("review_token" as never, null as never)) as unknown as {
+          error: { message: string } | null;
+        };
+        if (!mintErr) tokenMap.set(id, token);
+      }
+    }
   }
 
   // Fetch reviews already submitted by this client so we can show their

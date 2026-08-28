@@ -2312,19 +2312,79 @@ export async function sendBookingReviewRequests(): Promise<{
       bestPerClient.set(b.client.id, b);
     }
   }
+  // PER-ORG ASK CADENCE. The fixed 30-day gap meant a weekly client was
+  // asked "how did we do?" every month, forever — and a client who had
+  // just LEFT a review got asked again anyway. Each org now configures
+  // the gap (Settings -> Automations, beside the toggle): after every
+  // clean (legacy 30d), 4x, 2x, or once a year. Two skips per client,
+  // both scoped to their org's gap:
+  //   1. ASKED within the gap (any booking's review_request_sent_at)
+  //   2. REVIEWED within the gap — a submitted review is the strongest
+  //      possible "stop asking"; volunteering via the portal is separate
+  //      and never throttled.
+  const { reviewAskGapDays } = await import("@/lib/review-cadence");
+  const clientOrg = new Map<string, string>();
+  for (const b of bestPerClient.values()) {
+    if (b.client?.id) clientOrg.set(b.client.id, b.organization_id);
+  }
+  const freqOrgIds = Array.from(new Set(clientOrg.values()));
+  const gapByOrg = new Map<string, number>();
+  if (freqOrgIds.length > 0) {
+    const { data: orgRows } = (await db
+      .from("organizations")
+      .select("id, automation_settings")
+      .in("id", freqOrgIds)) as unknown as {
+      data: Array<{ id: string; automation_settings: unknown }> | null;
+    };
+    for (const o of orgRows ?? []) {
+      gapByOrg.set(o.id, reviewAskGapDays(o.automation_settings));
+    }
+  }
+  const gapMsFor = (clientId: string) =>
+    (gapByOrg.get(clientOrg.get(clientId) ?? "") ?? 30) * 24 * 60 * 60 * 1000;
+  const maxGapDays = Math.max(30, ...Array.from(gapByOrg.values()));
+  const oldestThreshold = new Date(
+    Date.now() - maxGapDays * 24 * 60 * 60 * 1000,
+  ).toISOString();
+
   const recentlyAskedClients = new Set<string>();
   {
     const clientIds = Array.from(bestPerClient.keys());
     if (clientIds.length > 0) {
       const { data: asked } = (await db
         .from("bookings")
-        .select("client_id")
+        .select("client_id, review_request_sent_at")
         .in("client_id", clientIds)
-        .gte("review_request_sent_at", earliestCutoff)) as unknown as {
-        data: Array<{ client_id: string | null }> | null;
+        .gte("review_request_sent_at", oldestThreshold)) as unknown as {
+        data: Array<{
+          client_id: string | null;
+          review_request_sent_at: string | null;
+        }> | null;
       };
       for (const r of asked ?? []) {
-        if (r.client_id) recentlyAskedClients.add(r.client_id);
+        if (!r.client_id || !r.review_request_sent_at) continue;
+        if (
+          Date.parse(r.review_request_sent_at) >=
+          Date.now() - gapMsFor(r.client_id)
+        ) {
+          recentlyAskedClients.add(r.client_id);
+        }
+      }
+      const { data: reviewed } = (await db
+        .from("reviews")
+        .select("client_id, submitted_at")
+        .in("client_id", clientIds)
+        .gte("submitted_at", oldestThreshold)) as unknown as {
+        data: Array<{
+          client_id: string | null;
+          submitted_at: string | null;
+        }> | null;
+      };
+      for (const r of reviewed ?? []) {
+        if (!r.client_id || !r.submitted_at) continue;
+        if (Date.parse(r.submitted_at) >= Date.now() - gapMsFor(r.client_id)) {
+          recentlyAskedClients.add(r.client_id);
+        }
       }
     }
   }

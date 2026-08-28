@@ -465,3 +465,42 @@ export async function updateClockOutThresholdsAction(
   revalidatePath("/app/settings/automations", "page");
   return { ok: true };
 }
+
+/**
+ * Cadence for the internal review ask, stored beside its toggle in
+ * automation_settings.review_request_after_completion.frequency. See
+ * lib/review-cadence.ts. Absent = legacy 30-day gap.
+ */
+export async function setReviewAskFrequencyAction(formData: FormData) {
+  const { membership } = await getActionContext();
+  if (!["owner", "admin"].includes(membership.role)) return;
+
+  const { isReviewAskFrequency } = await import("@/lib/review-cadence");
+  const raw = String(formData.get("frequency") ?? "");
+  if (!isReviewAskFrequency(raw)) return;
+
+  const admin = createSupabaseAdminClient();
+  const { data: org } = (await admin
+    .from("organizations")
+    .select("automation_settings")
+    .eq("id", membership.organization_id)
+    .maybeSingle()) as unknown as {
+    data: {
+      automation_settings: Record<string, Record<string, unknown>> | null;
+    } | null;
+  };
+  const current = org?.automation_settings ?? {};
+  const updated = {
+    ...current,
+    review_request_after_completion: {
+      ...(current.review_request_after_completion ?? {}),
+      frequency: raw,
+    },
+  };
+  await admin
+    .from("organizations")
+    .update({ automation_settings: updated } as never)
+    .eq("id", membership.organization_id);
+
+  revalidatePath("/app/settings/automations");
+}

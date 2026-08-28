@@ -24,6 +24,8 @@ import {
   automationAudience,
   type AutomationAudience,
 } from "@/lib/automation-defaults";
+import { reviewAskFrequency } from "@/lib/review-cadence";
+import { ReviewFrequencySelect } from "./review-frequency-select";
 import {
   toggleAutomationAction,
   setOrgContactDefaultAction,
@@ -321,10 +323,10 @@ const STAGES: Stage[] = [
     automations: [
       {
         key: "review_request_after_completion",
-        title: "Internal review request — within 24h of every job",
+        title: "Internal review request",
         description:
-          "Emails the client a Sollos-hosted review link within 24 hours of each completed booking. Captures a 1-5 star rating + comment scoped to the employee who did the work. Powers the dashboard rating, per-employee scores, and bonus rules.",
-        trigger: "Daily cron, ~10:00 UTC — fires once per booking",
+          "Emails the client a Sollos-hosted review link after a completed booking — at most as often as the cadence below, and never within the same window as a review they already left. Clients can always volunteer a review from their portal (every finished visit has a link); the cadence only limits the ASKING. Powers the dashboard rating, per-employee scores, and bonus rules.",
+        trigger: "Daily cron, ~10:00 UTC",
       },
       {
         key: "gbp_review_request",
@@ -660,6 +662,11 @@ export default async function AutomationsPage() {
                             {a.description}
                           </p>
                         </div>
+                        {a.key === "review_request_after_completion" && (
+                          <ReviewFrequencySelect
+                            current={reviewAskFrequency(settings)}
+                          />
+                        )}
                         <form action={toggleAutomationAction} className="shrink-0">
                           <input type="hidden" name="key" value={a.key} />
                           <input

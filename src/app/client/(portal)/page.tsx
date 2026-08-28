@@ -54,6 +54,24 @@ export default async function ClientDashboardPage() {
         </p>
       </div>
 
+      {/* Reviews are pull-first: asking is rare (org-configured cadence),
+          volunteering is always one tap away on any finished visit. */}
+      <section className="rounded-lg border border-border bg-card px-4 py-3">
+        <p className="text-sm">
+          <span className="font-medium">Want to tell us how we did?</span>{" "}
+          <span className="text-muted-foreground">
+            Every finished visit in{" "}
+            <Link
+              href="/client/jobs"
+              className="underline underline-offset-2 hover:text-foreground"
+            >
+              your cleans
+            </Link>{" "}
+            has a leave-a-review link — anytime, no waiting to be asked.
+          </span>
+        </p>
+      </section>
+
       {/* Upcoming jobs */}
       <section>
         <div className="mb-2 flex items-center justify-between">

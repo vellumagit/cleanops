@@ -6,6 +6,7 @@ The portal exists to absorb the phone calls: clients help themselves to the smal
 - **See their visits** — upcoming and past, with date, time, and service.
 - **Leave a note for a visit** — "skip the bathroom this week". It goes straight to the assigned cleaner's job screen as a highlighted card, notifies the crew, and shows on the booking for the office. Notes arrive already-resolved: they're information, not a decision waiting on you.
 - **Skip a visit** — far enough out, it just happens and you're told; close in, it becomes a request you approve or decline on the Requests page.
+- **Leave a review, anytime** — every finished visit in their cleans list carries a review link, no waiting to be asked. Automated review asks follow your cadence (Settings → Automations): after every clean, 4×, 2×, or once a year — and someone who just left a review is never re-asked within that window.
 - **Request a new booking** — service, preferred date and time window, address, notes. It lands on Requests, and **Create booking** there opens the form with everything they said pre-filled.
 
 ## The phone is a portal too
