@@ -1558,7 +1558,6 @@ export async function sendRebookingPrompts(): Promise<{
   const fourteenDaysAgo = new Date(
     now - 14 * 24 * 60 * 60 * 1000,
   ).toISOString();
-  const thirtyDaysAgo = new Date(now - 30 * 24 * 60 * 60 * 1000).toISOString();
   const nowIso = new Date(now).toISOString();
 
   // GATE FIRST (audit G6): resolve which orgs opted in BEFORE scanning
@@ -1592,6 +1591,11 @@ export async function sendRebookingPrompts(): Promise<{
       sender_email: string | null;
     }
   >();
+  // Per-org nudge cadence — "same thing for rebooking prompt": the fixed
+  // 30-day cap becomes the org's configured gap (monthly / 4x / 2x /
+  // yearly), read from the same settings entry as the toggle.
+  const { rebookingGapDays } = await import("@/lib/review-cadence");
+  const rebookGapByOrg = new Map<string, number>();
   for (const o of orgRows ?? []) {
     if (o.automations_enabled !== true) continue;
     if (
@@ -1600,8 +1604,13 @@ export async function sendRebookingPrompts(): Promise<{
       continue;
     }
     enabledOrgs.set(o.id, o);
+    rebookGapByOrg.set(o.id, rebookingGapDays(o.automation_settings));
   }
   if (enabledOrgs.size === 0) return { considered: 0, sent: 0 };
+  const maxRebookGapDays = Math.max(30, ...Array.from(rebookGapByOrg.values()));
+  const rebookThreshold = new Date(
+    now - maxRebookGapDays * 24 * 60 * 60 * 1000,
+  ).toISOString();
 
   // RECENCY CEILING (audit G6): never prompt someone whose last service is
   // older than this — "it's been 730 days since your last clean" is not a
@@ -1615,7 +1624,7 @@ export async function sendRebookingPrompts(): Promise<{
     .in("organization_id", Array.from(enabledOrgs.keys()))
     .not("email", "is", null)
     .or(
-      `last_rebook_prompt_at.is.null,last_rebook_prompt_at.lt.${thirtyDaysAgo}`,
+      `last_rebook_prompt_at.is.null,last_rebook_prompt_at.lt.${rebookThreshold}`,
     )
     .limit(500)) as unknown as {
     data: Array<{
@@ -1645,6 +1654,16 @@ export async function sendRebookingPrompts(): Promise<{
 
   for (const client of candidates) {
     if (!client.email) continue;
+
+    // The query used the WIDEST gap across orgs; enforce this org's own.
+    const gapDays = rebookGapByOrg.get(client.organization_id) ?? 30;
+    if (
+      client.last_rebook_prompt_at &&
+      Date.parse(client.last_rebook_prompt_at) >
+        now - gapDays * 24 * 60 * 60 * 1000
+    ) {
+      continue;
+    }
 
     // Check most recent completed booking for this client.
     const { data: lastCompleted } = (await db

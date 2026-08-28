@@ -47,3 +47,29 @@ export function reviewAskGapDays(automationSettings: unknown): number {
     REVIEW_ASK_FREQUENCY_OPTIONS.find((o) => o.value === freq)?.days ?? 30
   );
 }
+
+/** Same idea for the rebooking nudge — "same thing for rebooking prompt". */
+export const REBOOKING_FREQUENCY_OPTIONS = [
+  { value: "monthly", label: "Monthly (30-day minimum gap)", days: 30 },
+  { value: "quarterly", label: "4× a year", days: 91 },
+  { value: "twice_yearly", label: "2× a year", days: 182 },
+  { value: "yearly", label: "Once a year", days: 365 },
+] as const;
+
+export type RebookingFrequency =
+  (typeof REBOOKING_FREQUENCY_OPTIONS)[number]["value"];
+
+export function isRebookingFrequency(v: string): v is RebookingFrequency {
+  return REBOOKING_FREQUENCY_OPTIONS.some((o) => o.value === v);
+}
+
+export function rebookingGapDays(automationSettings: unknown): number {
+  const raw = (
+    automationSettings as
+      | { rebooking_prompt_email?: { frequency?: unknown } }
+      | null
+      | undefined
+  )?.rebooking_prompt_email?.frequency;
+  const freq = typeof raw === "string" && isRebookingFrequency(raw) ? raw : "monthly";
+  return REBOOKING_FREQUENCY_OPTIONS.find((o) => o.value === freq)?.days ?? 30;
+}

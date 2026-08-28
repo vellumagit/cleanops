@@ -24,8 +24,14 @@ import {
   automationAudience,
   type AutomationAudience,
 } from "@/lib/automation-defaults";
-import { reviewAskFrequency } from "@/lib/review-cadence";
-import { ReviewFrequencySelect } from "./review-frequency-select";
+import {
+  reviewAskFrequency,
+  REVIEW_ASK_FREQUENCY_OPTIONS,
+  REBOOKING_FREQUENCY_OPTIONS,
+  rebookingGapDays,
+  REBOOKING_FREQUENCY_OPTIONS as RB_OPTS,
+} from "@/lib/review-cadence";
+import { AutomationFrequencySelect } from "./review-frequency-select";
 import {
   toggleAutomationAction,
   setOrgContactDefaultAction,
@@ -339,7 +345,7 @@ const STAGES: Stage[] = [
         key: "rebooking_prompt_email",
         title: "Rebooking prompt",
         description:
-          "14+ days after a completed job, if the client has no future booking on the calendar, emails them a friendly 'ready for your next clean?' nudge. At most once every 30 days per client.",
+          "14+ days after a completed job, if the client has no future booking on the calendar, emails them a friendly 'ready for your next clean?' nudge — at most as often as the cadence below, per client.",
         trigger: "Daily scan at 15:00 UTC",
       },
     ],
@@ -663,8 +669,21 @@ export default async function AutomationsPage() {
                           </p>
                         </div>
                         {a.key === "review_request_after_completion" && (
-                          <ReviewFrequencySelect
+                          <AutomationFrequencySelect
+                            automationKey="review_request_after_completion"
                             current={reviewAskFrequency(settings)}
+                            options={REVIEW_ASK_FREQUENCY_OPTIONS}
+                          />
+                        )}
+                        {a.key === "rebooking_prompt_email" && (
+                          <AutomationFrequencySelect
+                            automationKey="rebooking_prompt_email"
+                            current={
+                              REBOOKING_FREQUENCY_OPTIONS.find(
+                                (o) => o.days === rebookingGapDays(settings),
+                              )?.value ?? "monthly"
+                            }
+                            options={RB_OPTS}
                           />
                         )}
                         <form action={toggleAutomationAction} className="shrink-0">

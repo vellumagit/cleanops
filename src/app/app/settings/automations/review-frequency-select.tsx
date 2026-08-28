@@ -2,42 +2,44 @@
 
 import { useTransition } from "react";
 import { useRouter } from "next/navigation";
-import {
-  REVIEW_ASK_FREQUENCY_OPTIONS,
-  type ReviewAskFrequency,
-} from "@/lib/review-cadence";
-import { setReviewAskFrequencyAction } from "./actions";
+import { setAutomationFrequencyAction } from "./actions";
 
 /**
- * The ask cadence, living beside the toggle it configures. Auto-saves on
- * change — a dropdown with a separate Save button is one click of ceremony
- * more than a cadence deserves.
+ * A cadence knob beside the toggle it configures. Auto-saves on change —
+ * a dropdown with a separate Save button is one click of ceremony more
+ * than a cadence deserves. Generic: the review ask and the rebooking
+ * nudge both use it with their own option sets.
  */
-export function ReviewFrequencySelect({
+export function AutomationFrequencySelect({
+  automationKey,
   current,
+  options,
 }: {
-  current: ReviewAskFrequency;
+  automationKey: string;
+  current: string;
+  options: ReadonlyArray<{ readonly value: string; readonly label: string }>;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
 
   return (
     <label className="mr-2 flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground">
-      Ask at most
+      At most
       <select
         value={current}
         disabled={pending}
         onChange={(e) => {
           const fd = new FormData();
+          fd.set("key", automationKey);
           fd.set("frequency", e.target.value);
           startTransition(async () => {
-            await setReviewAskFrequencyAction(fd);
+            await setAutomationFrequencyAction(fd);
             router.refresh();
           });
         }}
         className="rounded-md border border-input bg-background px-2 py-1 text-xs disabled:opacity-50"
       >
-        {REVIEW_ASK_FREQUENCY_OPTIONS.map((o) => (
+        {options.map((o) => (
           <option key={o.value} value={o.value}>
             {o.label}
           </option>

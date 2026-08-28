@@ -90,7 +90,7 @@ them any other way):
 - Settings → Thresholds controls the housekeeping timers (auto-expire,
   auto-void, auto-complete, auto-archive). Leaving a field blank disables that
   timer for the org.
-- The INTERNAL review ask has a per-org cadence set beside its toggle in
+- The REBOOKING nudge has the same kind of cadence knob beside its toggle:\n  monthly (legacy 30-day gap), 4x, 2x, or once a year per client.\n- The INTERNAL review ask has a per-org cadence set beside its toggle in
   Settings → Automations: after every clean (30-day minimum gap), 4x, 2x, or
   once a year. A client who already left a review inside that window is never
   re-asked. Clients can always VOLUNTEER a review without being asked: every

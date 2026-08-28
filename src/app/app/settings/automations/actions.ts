@@ -467,17 +467,23 @@ export async function updateClockOutThresholdsAction(
 }
 
 /**
- * Cadence for the internal review ask, stored beside its toggle in
- * automation_settings.review_request_after_completion.frequency. See
- * lib/review-cadence.ts. Absent = legacy 30-day gap.
+ * Cadence knobs living beside the toggles they configure, in the same
+ * automation_settings entry (precedent: clock-out thresholds). One action,
+ * per-key validation — see lib/review-cadence.ts. Absent = legacy gap.
  */
-export async function setReviewAskFrequencyAction(formData: FormData) {
+export async function setAutomationFrequencyAction(formData: FormData) {
   const { membership } = await getActionContext();
   if (!["owner", "admin"].includes(membership.role)) return;
 
-  const { isReviewAskFrequency } = await import("@/lib/review-cadence");
+  const { isReviewAskFrequency, isRebookingFrequency } = await import(
+    "@/lib/review-cadence"
+  );
+  const key = String(formData.get("key") ?? "");
   const raw = String(formData.get("frequency") ?? "");
-  if (!isReviewAskFrequency(raw)) return;
+  const valid =
+    (key === "review_request_after_completion" && isReviewAskFrequency(raw)) ||
+    (key === "rebooking_prompt_email" && isRebookingFrequency(raw));
+  if (!valid) return;
 
   const admin = createSupabaseAdminClient();
   const { data: org } = (await admin
@@ -492,8 +498,8 @@ export async function setReviewAskFrequencyAction(formData: FormData) {
   const current = org?.automation_settings ?? {};
   const updated = {
     ...current,
-    review_request_after_completion: {
-      ...(current.review_request_after_completion ?? {}),
+    [key]: {
+      ...(current[key] ?? {}),
       frequency: raw,
     },
   };
