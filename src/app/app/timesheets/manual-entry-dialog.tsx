@@ -277,7 +277,7 @@ export function ManualEntryDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="p-6 sm:max-w-xl">
+      <DialogContent className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>
             {mode === "edit" ? "Edit time entry" : "Log hours"}

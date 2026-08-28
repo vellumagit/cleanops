@@ -64,7 +64,7 @@ function DialogContent({
           // ignores the browser's own toolbars, so a 100vh dialog still hides
           // its last ~100px behind Safari's address bar — the exact rows this
           // is here to rescue.
-          "fixed top-1/2 left-1/2 z-50 flex max-h-[calc(100dvh-2rem)] w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          "fixed top-1/2 left-1/2 z-50 flex max-h-[calc(100dvh-2rem)] w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col rounded-xl bg-popover text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           className
         )}
         {...props}
@@ -74,11 +74,18 @@ function DialogContent({
           absolutely against the popup — stays put instead of scrolling away
           with the content. min-h-0 is load-bearing: a flex child defaults to
           min-height:auto and refuses to shrink below its content, which
-          silently defeats overflow-y-auto. The grid+gap-4 that used to live
-          on the popup moves here so every existing call site keeps its
-          spacing unchanged.
+          silently defeats overflow-y-auto.
+
+          Padding lives HERE, not on the popup: with padded-popup + inner
+          scroller, DialogFooter's negative margins sat inside the overflow
+          box, where negative margins don't bleed — they EXTEND the
+          scrollable area, manufacturing a horizontal scrollbar in every
+          tall dialog. overflow-x-hidden belts-and-suspenders that class of
+          bug away for good (overflow-y:auto silently computes
+          overflow-x:auto otherwise). rounded-xl keeps the scrollbar inside
+          the popup's corners.
         */}
-        <div className="grid min-h-0 gap-4 overflow-y-auto overscroll-contain">
+        <div className="grid min-h-0 gap-4 overflow-y-auto overflow-x-hidden overscroll-contain rounded-xl p-6">
           {children}
         </div>
         {showCloseButton && (
@@ -87,7 +94,7 @@ function DialogContent({
             render={
               <Button
                 variant="ghost"
-                className="absolute top-2 right-2"
+                className="absolute top-3 right-3 z-10 bg-popover/90"
                 size="icon-sm"
               />
             }
@@ -124,7 +131,7 @@ function DialogFooter({
     <div
       data-slot="dialog-footer"
       className={cn(
-        "-mx-4 -mb-4 flex flex-col-reverse gap-2 rounded-b-xl border-t bg-muted/50 p-4 sm:flex-row sm:justify-end",
+        "-mx-6 -mb-6 mt-1 flex flex-col-reverse gap-2 rounded-b-xl border-t bg-muted/50 px-6 py-4 sm:flex-row sm:justify-end",
         className
       )}
       {...props}
