@@ -17,7 +17,9 @@ Opens on the current pay period; date filters reach anywhere. Each person shows 
 
 ## Paying employees: Payroll runs
 
-1. **Create a run** for the pay period — it starts as a *draft*.
+The Payroll page leads with one next step: an **Up next** card suggesting the next period (it picks up the day after the last one ended) with the unpaid hours and estimated wages waiting in it — or, if a run is already in flight, a **Finish what's started** card pointing at it. Flagged shifts show as a warning there and are left out of the totals until confirmed.
+
+1. **Start this run** (dates are pre-filled; "Different dates?" if you need a custom window) — it starts as a *draft*.
 2. **Review** each line (hours + bonuses). Fix entries on Timesheets, or delete the draft freely and start over.
 3. **Finalize** — amounts lock and every hour in the run is *frozen*.
 4. **Mark as paid** when the money has actually gone out. Sollos records; it doesn't move money.
