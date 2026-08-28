@@ -557,7 +557,7 @@ export default async function TimesheetsPage({
     .from("time_entries")
     .select(
       `id, employee_id, clock_in_at,
-       booking:bookings ( id, scheduled_at, service_type, client:clients ( name ) )`,
+       booking:bookings ( id, scheduled_at, duration_minutes, service_type, client:clients ( name ) )`,
     )
     .is("clock_out_at" as never, null as never)
     .order("clock_in_at", { ascending: true })
@@ -569,21 +569,43 @@ export default async function TimesheetsPage({
       booking: {
         id: string;
         scheduled_at: string | null;
+        duration_minutes: number | null;
         service_type: string | null;
         client: { name: string | null } | null;
       } | null;
     }> | null;
   };
 
-  const openShifts = (openShiftsRaw ?? []).map((o) => ({
-    id: o.id,
-    employee_id: o.employee_id,
-    employee_name: empMeta[o.employee_id]?.name ?? "Unknown",
-    clock_in_at: o.clock_in_at,
-    booking_id: o.booking?.id ?? null,
-    client_name: o.booking?.client?.name ?? null,
-    service_type: o.booking?.service_type ?? null,
-  }));
+  // An open punch is only "forgotten" once it's OVERDUE — past the job's
+  // expected end plus the same 2h grace the auto-capper uses (12h for
+  // off-job time). Brian caught Marharyta, 69 minutes into a real shift,
+  // labeled a forgotten clock-out that "inflates payroll": someone
+  // currently working is status, not an alarm.
+  const openShifts = (openShiftsRaw ?? []).map((o) => {
+    const clockInMs = new Date(o.clock_in_at).getTime();
+    let overdue: boolean;
+    if (o.booking?.scheduled_at) {
+      const startMs = Math.max(
+        new Date(o.booking.scheduled_at).getTime(),
+        clockInMs,
+      );
+      const expectedEnd =
+        startMs + ((o.booking.duration_minutes ?? 0) + 120) * 60_000;
+      overdue = nowMs > expectedEnd;
+    } else {
+      overdue = nowMs - clockInMs > 12 * 60 * 60 * 1000;
+    }
+    return {
+      id: o.id,
+      employee_id: o.employee_id,
+      employee_name: empMeta[o.employee_id]?.name ?? "Unknown",
+      clock_in_at: o.clock_in_at,
+      booking_id: o.booking?.id ?? null,
+      client_name: o.booking?.client?.name ?? null,
+      service_type: o.booking?.service_type ?? null,
+      overdue,
+    };
+  });
 
   // PTO data
   const ptoRows = ((ptoRequests ?? []) as Array<{

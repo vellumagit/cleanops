@@ -125,4 +125,7 @@ export type OpenShift = {
   booking_id: string | null;
   client_name: string | null;
   service_type: string | null;
+  /** Past the job's expected end + 2h grace (or 12h off-job) — a
+   *  genuinely forgotten punch, not someone currently working. */
+  overdue: boolean;
 };

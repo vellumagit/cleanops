@@ -597,22 +597,77 @@ export function TimesheetsView({
         );
       })()}
 
-      {openShifts.length > 0 && (
+      {/* On the clock RIGHT NOW — status, not an alarm. Calm card, elapsed
+          time, and a quiet close link for mistaken punches. */}
+      {openShifts.some((s) => !s.overdue) && (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 p-4 dark:border-emerald-900/40 dark:bg-emerald-950/20">
+          <div className="flex items-start gap-3">
+            <span className="mt-1 h-2 w-2 shrink-0 animate-pulse rounded-full bg-emerald-500" />
+            <div className="flex-1 space-y-2">
+              <div className="text-sm font-semibold text-emerald-900 dark:text-emerald-200">
+                On the clock right now
+              </div>
+              <ul className="space-y-1.5 text-xs">
+                {openShifts
+                  .filter((s) => !s.overdue)
+                  .map((s) => {
+                    const mins = Math.max(
+                      0,
+                      Math.round(
+                        (Date.now() - new Date(s.clock_in_at).getTime()) /
+                          60_000,
+                      ),
+                    );
+                    const elapsed = `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, "0")}m`;
+                    return (
+                      <li
+                        key={s.id}
+                        className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-white/60 px-2.5 py-1.5 dark:bg-black/20"
+                      >
+                        <span className="text-emerald-900 dark:text-emerald-200">
+                          <span className="font-medium">{s.employee_name}</span>
+                          <span className="ml-1.5 text-emerald-700 dark:text-emerald-300">
+                            since {formatDateTime(s.clock_in_at, orgTz)} ·{" "}
+                            <span className="tabular-nums">{elapsed}</span>
+                          </span>
+                          {s.client_name && (
+                            <span className="ml-1.5 text-emerald-700 dark:text-emerald-300">
+                              · {s.client_name}
+                            </span>
+                          )}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleCloseOpenShift(s.id)}
+                          className="text-[11px] text-emerald-800/70 underline underline-offset-2 hover:text-emerald-900 dark:text-emerald-300/70 dark:hover:text-emerald-200"
+                        >
+                          close early
+                        </button>
+                      </li>
+                    );
+                  })}
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {openShifts.some((s) => s.overdue) && (
         <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 dark:border-amber-900/40 dark:bg-amber-950/30">
           <div className="flex items-start gap-3">
             <Clock className="mt-0.5 h-4 w-4 shrink-0 text-amber-700 dark:text-amber-300" />
             <div className="flex-1 space-y-2">
               <div className="text-sm font-semibold text-amber-900 dark:text-amber-200">
-                {openShifts.length === 1
+                {openShifts.filter((s) => s.overdue).length === 1
                   ? "1 forgotten clock-out"
-                  : `${openShifts.length} forgotten clock-outs`}
+                  : `${openShifts.filter((s) => s.overdue).length} forgotten clock-outs`}
               </div>
               <p className="text-xs text-amber-900/80 dark:text-amber-300/80">
                 These employees clocked in but never clocked out. Each open
                 shift inflates payroll until you close it.
               </p>
               <ul className="space-y-1.5 text-xs">
-                {openShifts.map((s) => (
+                {openShifts.filter((s) => s.overdue).map((s) => (
                   <li
                     key={s.id}
                     className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-white/60 px-2.5 py-1.5 dark:bg-black/20"

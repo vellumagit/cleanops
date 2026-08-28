@@ -13,6 +13,8 @@ Cleaners clock in and out on their job in the field app. A forgotten clock-out g
 
 ## Timesheets, day to day
 
+Someone *still clocked in* shows in a calm **On the clock right now** card — status, not a problem. It only becomes a **forgotten clock-out** alarm once the shift runs well past its expected end.
+
 Opens on the current pay period — the same calendar your pay schedule defines, with ‹ › arrows to step between periods; date filters still reach anywhere. Flagged rows are unmissable: amber-highlighted with a colored edge (capped shifts) or a lighter orange (ran past the allotted time), and the banner's **Show only these** button filters the table to just them. Any flagged row whose hours are simply right gets a one-tap **Looks good** button — no editor needed; it clears both kinds of flag, and saving an edit counts as review too. Each person shows hours and **Earned** (their rate × their minutes, computed live). Edit an entry to fix a time — edits are minute-exact, so a one-minute correction moves the total by exactly one minute. PTO lives here too: employee PTO carries paid hours; subcontractor time off blocks the schedule but is unpaid by design.
 
 ## Paying employees: Payroll runs
