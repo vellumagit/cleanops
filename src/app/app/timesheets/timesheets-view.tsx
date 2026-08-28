@@ -672,7 +672,9 @@ export function TimesheetsView({
 
       {/* ─── Date range picker ─────────────────────────────── */}
       <div className="flex flex-wrap items-end gap-3">
-        <div className="flex items-center gap-2">
+        {/* items-end, not center: the siblings are label+input stacks, so
+            centering floated the Apply button above the input row. */}
+        <div className="flex items-end gap-2">
           <div>
             <label className="text-xs font-medium text-muted-foreground">
               From
