@@ -72,9 +72,21 @@ export async function startJobAction(
   if (!isPrimary && !crewRow) {
     return { ok: false, error: "This job isn't assigned to you" };
   }
-  if (crewRow?.acceptance_status === "pending") {
+  // The acceptance gate applies only BEFORE the job is under way — the same
+  // rule the job page renders by. Once the lead clocks in, the page hides
+  // the Accept button (a pending cleaner on an in-progress job must not
+  // lose Start), so a server that still demanded acceptance was a softlock:
+  // "Please accept this shift" with nowhere left to accept it. That was the
+  // second-cleaner-can't-clock-in bug. On a job already moving, starting IS
+  // accepting — recorded below once the clock-in succeeds.
+  const jobUnderWay =
+    booking.status === "in_progress" ||
+    booking.status === "en_route" ||
+    booking.status === "completed";
+  if (crewRow?.acceptance_status === "pending" && !jobUnderWay) {
     return { ok: false, error: "Please accept this shift before starting it." };
   }
+  const acceptOnStart = crewRow?.acceptance_status === "pending";
 
   // A cleaner arriving early is normal and the grace window in
   // futureStatusError exists for exactly that. What it still catches is a job
@@ -188,6 +200,20 @@ export async function startJobAction(
     }
   }
 
+  // Starting the job is the strongest possible acceptance — record it so
+  // the roster stops showing this cleaner as pending. Admin client, scoped
+  // to their own row (same pattern as acceptShiftAction).
+  if (acceptOnStart) {
+    await (createSupabaseAdminClient()
+      .from("booking_assignees")
+      .update({
+        acceptance_status: "accepted",
+        responded_at: new Date().toISOString(),
+      })
+      .eq("booking_id", bookingId)
+      .eq("membership_id", membership.id) as unknown as Promise<unknown>);
+  }
+
   revalidatePath("/field/jobs");
   revalidatePath(`/field/jobs/${bookingId}`);
   revalidatePath("/field/clock");
@@ -241,7 +267,11 @@ export async function completeJobAction(
   if (!isPrimary && !crewRow) {
     return { ok: false, error: "This job isn't assigned to you" };
   }
-  if (crewRow?.acceptance_status === "pending") {
+  if (
+    crewRow?.acceptance_status === "pending" &&
+    booking.status !== "in_progress" &&
+    booking.status !== "en_route"
+  ) {
     return { ok: false, error: "Please accept this shift first." };
   }
 
