@@ -515,7 +515,7 @@ export function AppSidebar({
             <p className="text-center text-[9px] text-zinc-600">
               Powered by{" "}
               <a
-                href="https://velluma.com"
+                href="https://velluma.co"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-zinc-500 hover:text-zinc-400"

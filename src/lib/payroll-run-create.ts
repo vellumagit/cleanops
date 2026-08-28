@@ -66,6 +66,7 @@ export async function createPayrollRunForOrg(opts: {
     .select("id", { count: "exact", head: true })
     .eq("organization_id", organizationId)
     .is("payroll_run_id", null)
+    .is("subcontractor_run_id" as never, null as never)
     .lt("clock_in_at", toIso)
     .or("engagement_snapshot.eq.employee,engagement_snapshot.is.null")
     .eq("needs_review" as never, true as never);
@@ -88,6 +89,10 @@ export async function createPayrollRunForOrg(opts: {
     )
     .eq("organization_id", organizationId)
     .is("payroll_run_id", null)
+    // Hours a contractor STATEMENT already settled must never re-pay here.
+    // Pre-snapshot entries (engagement_snapshot null) of someone later
+    // flipped to employee would otherwise match and be paid twice.
+    .is("subcontractor_run_id" as never, null as never)
     .lt("clock_in_at", toIso)
     .or("engagement_snapshot.eq.employee,engagement_snapshot.is.null")
     .not("clock_out_at", "is", null);

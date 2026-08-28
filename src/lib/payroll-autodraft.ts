@@ -6,6 +6,7 @@ import { suggestedPayPeriod, type PaySchedule } from "@/lib/pay-schedule";
 import { preparePayPeriod, periodHref } from "@/lib/pay-period";
 import { notify } from "@/lib/notify";
 import { formatCurrencyCents } from "@/lib/format";
+import { getOrgCurrency } from "@/lib/org-currency";
 
 /**
  * The morning after a pay period ends, prepare it and tell the owner it's
@@ -103,11 +104,12 @@ export async function runPayrollAutodraft(): Promise<{
         const total =
           (result.payroll?.totalCents ?? 0) +
           (result.contractor?.totalCents ?? 0);
+        const currency = await getOrgCurrency(org.id);
         await notify({
           organizationId: org.id,
           audience: "org-management",
           title: "Pay period ready for review",
-          body: `${p.start} to ${p.end} — ${formatCurrencyCents(total)} across employees and contractors. Nothing is paid until you finalize.`,
+          body: `${p.start} to ${p.end} — ${formatCurrencyCents(total, currency)} across employees and contractors. Nothing is paid until you finalize.`,
           href: periodHref(p.start, p.end),
         });
       } else if (result.flagged) {

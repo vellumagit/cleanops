@@ -27,7 +27,7 @@ export function StartRunCard({
   unpaidEstimate,
   unpaidPeople,
   flaggedCount,
-  sinceLabel,
+  olderLine = null,
   endsAhead = null,
 }: {
   suggestedStart: string;
@@ -40,8 +40,8 @@ export function StartRunCard({
   unpaidEstimate: string;
   unpaidPeople: number;
   flaggedCount: number;
-  /** e.g. "since Aug 14" or "all time" */
-  sinceLabel: string;
+  /** Where unpaid time OUTSIDE this window lives — composed server-side. */
+  olderLine?: string | null;
   /** Set when the suggested period hasn't finished yet — its end date. */
   endsAhead?: string | null;
 }) {
@@ -88,7 +88,7 @@ export function StartRunCard({
           <p className="mt-0.5 text-lg font-bold tabular-nums">
             {unpaidHoursLabel}
           </p>
-          <p className="text-[11px] text-muted-foreground">{sinceLabel}</p>
+          <p className="text-[11px] text-muted-foreground">in this period</p>
         </div>
         <div className="rounded-lg bg-muted/40 p-3">
           <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
@@ -113,6 +113,10 @@ export function StartRunCard({
           </p>
         </div>
       </div>
+
+      {olderLine && (
+        <p className="mt-2 text-[11px] text-muted-foreground">{olderLine}</p>
+      )}
 
       {flaggedCount > 0 && (
         <Link

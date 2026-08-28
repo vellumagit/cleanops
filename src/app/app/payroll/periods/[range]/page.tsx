@@ -40,7 +40,18 @@ export default async function PayPeriodPage({
   const [, periodStart, periodEnd] = m;
 
   const admin = createSupabaseAdminClient();
-  const currency = await getOrgCurrency(membership.organization_id);
+  const [currency, tz] = await Promise.all([
+    getOrgCurrency(membership.organization_id),
+    getOrgTimezone(membership.organization_id),
+  ]);
+  // Which org-local calendar day an instant belongs to — the period's
+  // boundaries are org days, so UTC slicing misplaces evening work.
+  const localYmd = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
 
   // Same period cycler Timesheets has — Brian: "can I have that here
   // too?" Prev/next windows on the org's schedule; next hides once it
@@ -64,13 +75,7 @@ export default async function PayPeriodPage({
   if (orgSched?.pay_schedule) {
     const sched = orgSched.pay_schedule as PaySchedule;
     const anchor = orgSched.pay_anchor ?? null;
-    const tz = await getOrgTimezone(membership.organization_id);
-    const today = new Intl.DateTimeFormat("en-CA", {
-      timeZone: tz,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).format(new Date());
+    const today = localYmd.format(new Date());
     const prevW = periodContaining(sched, anchor, ymdAddDays(periodStart, -1));
     const nextW = periodContaining(sched, anchor, ymdAddDays(periodEnd, 1));
     const short = (ymd: string) =>
@@ -144,7 +149,9 @@ export default async function PayPeriodPage({
     .select(
       "contact_id, contact:freelancer_contacts ( id, full_name ), offer:job_offers ( pay_cents, booking:bookings ( status, scheduled_at, organization_id ) )",
     )
-    .not("contact_id", "is", null)) as unknown as {
+    .eq("organization_id" as never, membership.organization_id as never)
+    .not("contact_id", "is", null)
+    .limit(2000)) as unknown as {
     data: Array<{
       contact_id: string | null;
       contact: { id: string; full_name: string | null } | null;
@@ -167,7 +174,7 @@ export default async function PayPeriodPage({
     if (!c.contact_id || !b) continue;
     if (b.organization_id !== membership.organization_id) continue;
     if (b.status !== "completed") continue;
-    const day = b.scheduled_at.slice(0, 10);
+    const day = localYmd.format(new Date(b.scheduled_at));
     if (day < periodStart || day > periodEnd) continue;
     const row = benchByContact.get(c.contact_id) ?? {
       name: c.contact?.full_name ?? "On-call cleaner",

@@ -27,6 +27,7 @@ import { markTipsPaidAction } from "./actions";
 import { getTipsOwed } from "@/lib/invoice-tips";
 import { getSubcontractorPayables } from "@/lib/subcontractor-payables";
 import { getOrgTimezone } from "@/lib/org-timezone";
+import { zonedDayStartUtc, zonedMidnightUtc } from "@/lib/wall-clock";
 
 export const metadata = { title: "Payroll" };
 
@@ -169,68 +170,6 @@ export default async function PayrollPage() {
   const benchContractorCount = subRows.filter((r) => !r.isRoster).length;
   const contractorCount = rosterContractorCount + benchContractorCount;
 
-  // ── The unpaid bucket (Square's mental model) ─────────────────────────
-  // Every completed employee-system entry no run has swallowed yet — the
-  // hours a run exists to pay. Flagged (auto-capped) shifts are counted
-  // separately and excluded from the totals: guesses must not preview as
-  // wages. Engagement snapshot beats current engagement, same rule as the
-  // run itself.
-  const rateById = new Map(roster.map((r) => [r.id, r.pay_rate_cents]));
-  const engagementById = new Map(roster.map((r) => [r.id, r.engagement]));
-  let unpaidMinutes = 0;
-  let unpaidCents = 0;
-  let flaggedCount = 0;
-  const unpaidPeople = new Set<string>();
-  if (roster.length > 0) {
-    const { data: unstamped } = (await admin
-      .from("time_entries")
-      .select(
-        "employee_id, clock_in_at, clock_out_at, pay_rate_cents_snapshot, engagement_snapshot, needs_review",
-      )
-      .in(
-        "employee_id",
-        roster.map((r) => r.id),
-      )
-      .is("payroll_run_id", null)
-      .not("clock_out_at", "is", null)
-      .limit(2000)) as unknown as {
-      data: Array<{
-        employee_id: string;
-        clock_in_at: string;
-        clock_out_at: string;
-        pay_rate_cents_snapshot: number | null;
-        engagement_snapshot: string | null;
-        needs_review: boolean | null;
-      }> | null;
-    };
-    for (const e of unstamped ?? []) {
-      const engagement =
-        e.engagement_snapshot ?? engagementById.get(e.employee_id) ?? null;
-      if (paySystemFor(engagement) !== "payroll") continue;
-      if (e.needs_review) {
-        flaggedCount += 1;
-        continue;
-      }
-      const mins = Math.max(
-        0,
-        Math.round(
-          (new Date(e.clock_out_at).getTime() -
-            new Date(e.clock_in_at).getTime()) /
-            60_000,
-        ),
-      );
-      if (mins === 0) continue;
-      const rate =
-        e.pay_rate_cents_snapshot ?? rateById.get(e.employee_id) ?? 0;
-      unpaidMinutes += mins;
-      unpaidCents += Math.round((mins * rate) / 60);
-      unpaidPeople.add(e.employee_id);
-    }
-  }
-  const unpaidHoursLabel = `${Math.floor(unpaidMinutes / 60)}h ${String(
-    unpaidMinutes % 60,
-  ).padStart(2, "0")}m`;
-
   // ── The suggested next period ─────────────────────────────────────────
   // With a pay schedule set (Brian's "1st–15th and 16th–end of month"),
   // periods follow the org's calendar: the last completed window, or the
@@ -261,9 +200,87 @@ export default async function PayrollPage() {
     if (suggestedStart > today) suggestedStart = today;
     suggestedEnd = today;
   }
-  const sinceLabel = latestEnd
-    ? `since ${shortDate(latestEnd)}`
-    : "all unpaid time";
+
+  // ── The unpaid bucket (Square's mental model) ─────────────────────────
+  // Employee hours waiting INSIDE the suggested window — the same org-local
+  // half-open bounds the run machine uses, so the card previews exactly
+  // what "Start this run" will pay (advertising all history while paying
+  // one window is the Olha bug wearing a different hat). Older unpaid time
+  // is tallied separately and pointed at the back-settlement list. Flagged
+  // (auto-capped) shifts are counted, never priced: guesses must not
+  // preview as wages.
+  const bucketFromIso = zonedMidnightUtc(suggestedStart, tz).toISOString();
+  const bucketToIso = zonedDayStartUtc(
+    zonedMidnightUtc(suggestedEnd, tz),
+    tz,
+    1,
+  ).toISOString();
+  const rateById = new Map(roster.map((r) => [r.id, r.pay_rate_cents]));
+  const engagementById = new Map(roster.map((r) => [r.id, r.engagement]));
+  let unpaidMinutes = 0;
+  let unpaidCents = 0;
+  let flaggedCount = 0;
+  let olderCents = 0;
+  const unpaidPeople = new Set<string>();
+  if (roster.length > 0) {
+    const { data: unstamped } = (await admin
+      .from("time_entries")
+      .select(
+        "employee_id, clock_in_at, clock_out_at, pay_rate_cents_snapshot, engagement_snapshot, needs_review",
+      )
+      .in(
+        "employee_id",
+        roster.map((r) => r.id),
+      )
+      .is("payroll_run_id", null)
+      .is("subcontractor_run_id" as never, null as never)
+      .not("clock_out_at", "is", null)
+      .lt("clock_in_at", bucketToIso)
+      .limit(2000)) as unknown as {
+      data: Array<{
+        employee_id: string;
+        clock_in_at: string;
+        clock_out_at: string;
+        pay_rate_cents_snapshot: number | null;
+        engagement_snapshot: string | null;
+        needs_review: boolean | null;
+      }> | null;
+    };
+    for (const e of unstamped ?? []) {
+      const engagement =
+        e.engagement_snapshot ?? engagementById.get(e.employee_id) ?? null;
+      if (paySystemFor(engagement) !== "payroll") continue;
+      const inWindow = e.clock_in_at >= bucketFromIso;
+      if (e.needs_review) {
+        // In-window flags block THIS run and show here; older flags belong
+        // to their own window's row in the back-settlement list.
+        if (inWindow) flaggedCount += 1;
+        continue;
+      }
+      const mins = Math.max(
+        0,
+        Math.round(
+          (new Date(e.clock_out_at).getTime() -
+            new Date(e.clock_in_at).getTime()) /
+            60_000,
+        ),
+      );
+      if (mins === 0) continue;
+      const rate =
+        e.pay_rate_cents_snapshot ?? rateById.get(e.employee_id) ?? 0;
+      const cents = Math.round((mins * rate) / 60);
+      if (inWindow) {
+        unpaidMinutes += mins;
+        unpaidCents += cents;
+        unpaidPeople.add(e.employee_id);
+      } else {
+        olderCents += cents;
+      }
+    }
+  }
+  const unpaidHoursLabel = `${Math.floor(unpaidMinutes / 60)}h ${String(
+    unpaidMinutes % 60,
+  ).padStart(2, "0")}m`;
 
   const lastPaidRun = runs.find((r) => r.status === "paid") ?? null;
 
@@ -278,6 +295,7 @@ export default async function PayrollPage() {
     end: string;
     empCents: number;
     subCents: number;
+    flagged: number;
   };
   const backPeriods: BackPeriod[] = [];
   if (paySchedule && roster.length > 0) {
@@ -301,7 +319,16 @@ export default async function PayrollPage() {
       (w) => !covered.has(`${w.start}_${w.end}`),
     );
     if (open.length > 0) {
+      // Bounds and day-bucketing are ORG-LOCAL, matching the run machine —
+      // sliced UTC dates put a 7pm Edmonton shift on the 15th into the
+      // 16th's window, so estimates promised money Prepare wouldn't find.
       const oldestStart = open[open.length - 1].start;
+      const localYmd = new Intl.DateTimeFormat("en-CA", {
+        timeZone: tz,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      });
       const { data: oldEntries } = (await admin
         .from("time_entries")
         .select(
@@ -314,8 +341,8 @@ export default async function PayrollPage() {
         .is("payroll_run_id", null)
         .is("subcontractor_run_id" as never, null as never)
         .not("clock_out_at", "is", null)
-        .gte("clock_in_at", `${oldestStart}T00:00:00Z`)
-        .lt("clock_in_at", `${suggestedStart}T23:59:59Z`)
+        .gte("clock_in_at", zonedMidnightUtc(oldestStart, tz).toISOString())
+        .lt("clock_in_at", zonedMidnightUtc(suggestedStart, tz).toISOString())
         .limit(3000)) as unknown as {
         data: Array<{
           employee_id: string;
@@ -329,10 +356,16 @@ export default async function PayrollPage() {
       for (const w of open) {
         let empCents = 0;
         let subCents = 0;
+        let flagged = 0;
         for (const e of oldEntries ?? []) {
-          const d = e.clock_in_at.slice(0, 10);
+          const d = localYmd.format(new Date(e.clock_in_at));
           if (d < w.start || d > w.end) continue;
-          if (e.needs_review) continue;
+          if (e.needs_review) {
+            // Priced at nothing, but shown: a flagged shift blocks this
+            // window's Prepare, and an unexplained refusal isn't stupid-proof.
+            flagged += 1;
+            continue;
+          }
           const mins = Math.max(
             0,
             Math.round(
@@ -349,12 +382,27 @@ export default async function PayrollPage() {
           if (paySystemFor(engagement) === "payroll") empCents += cents;
           else subCents += cents;
         }
-        if (empCents > 0 || subCents > 0) {
-          backPeriods.push({ start: w.start, end: w.end, empCents, subCents });
+        if (empCents > 0 || subCents > 0 || flagged > 0) {
+          backPeriods.push({
+            start: w.start,
+            end: w.end,
+            empCents,
+            subCents,
+            flagged,
+          });
         }
       }
     }
   }
+
+  // The card above only counts the suggested window; say where the rest
+  // lives instead of letting the totals quietly disagree with Timesheets.
+  const olderLine =
+    olderCents > 0
+      ? backPeriods.length > 0
+        ? `Not counted above: ~${formatCurrencyCents(olderCents, currency)} of unpaid employee time from earlier periods — settle those below.`
+        : `Not counted above: ~${formatCurrencyCents(olderCents, currency)} of unpaid employee time from before this period — use “Different dates” to reach back.`
+      : null;
 
   // Tips: money the business is holding that belongs to a specific person,
   // settled outside a payroll run — same shape of problem as contractor pay.
@@ -410,7 +458,7 @@ export default async function PayrollPage() {
             unpaidEstimate={formatCurrencyCents(unpaidCents, currency)}
             unpaidPeople={unpaidPeople.size}
             flaggedCount={flaggedCount}
-            sinceLabel={sinceLabel}
+            olderLine={olderLine}
             endsAhead={periodEndsAhead}
           />
         )}
@@ -530,6 +578,11 @@ export default async function PayrollPage() {
                     {b.subCents > 0 && (
                       <span className="tabular-nums">
                         contractors ~{formatCurrencyCents(b.subCents, currency)}
+                      </span>
+                    )}
+                    {b.flagged > 0 && (
+                      <span className="font-medium text-amber-600 dark:text-amber-400">
+                        {b.flagged} flagged — review first
                       </span>
                     )}
                     <PreparePeriodButton start={b.start} end={b.end} />
