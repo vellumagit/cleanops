@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect } from "react";
+import { useActionState, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { FormError, FormField, FormSelect } from "@/components/form-field";
@@ -62,6 +62,17 @@ export function ServiceTypeForm({
       : createServiceTypeAction;
   const [state, formAction] = useActionState(boundAction, empty);
   const v = state.values ?? {};
+
+  // CONTROLLED, because React 19 resets the form after a successful
+  // action and defaultChecked re-applies from momentarily-stale props —
+  // unchecking Active + saving rendered it checked again until a reload.
+  const [isActive, setIsActive] = useState(defaults.is_active);
+  const savedActive = defaults.is_active;
+  const [seenActive, setSeenActive] = useState(savedActive);
+  if (savedActive !== seenActive) {
+    setSeenActive(savedActive);
+    setIsActive(savedActive);
+  }
 
   // Successful submit is signaled by the action returning `{ ok: true }`.
   // The initial state passed to useActionState is bare `{}` which has
@@ -219,13 +230,8 @@ export function ServiceTypeForm({
           <input
             type="checkbox"
             name="is_active"
-            defaultChecked={
-              v.is_active === "on"
-                ? true
-                : v.is_active === ""
-                  ? defaults.is_active
-                  : defaults.is_active
-            }
+            checked={isActive}
+            onChange={(e) => setIsActive(e.target.checked)}
             className="h-4 w-4 rounded border-input"
           />
           <span>Active (shown in the booking form)</span>

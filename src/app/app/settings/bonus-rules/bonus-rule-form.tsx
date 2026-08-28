@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect } from "react";
+import { useActionState, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Star, Zap } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -37,6 +37,24 @@ export function BonusRuleForm({
   const [state, formAction] = useActionState(upsertBonusRuleAction, empty);
   const v = state.values ?? {};
 
+  // CONTROLLED checkboxes, deliberately. React 19 resets a form when its
+  // action succeeds, re-applying defaultChecked from props that are stale
+  // for a beat — so unchecking + saving snapped the box back to checked
+  // until a manual reload showed the truth. (Brian: "drives me fucking
+  // nuts.") Text inputs dodge this because the action echoes their typed
+  // values back through state.values; checkboxes read only `defaults`.
+  const [reviewOn, setReviewOn] = useState(defaults.enabled);
+  const [efficiencyOn, setEfficiencyOn] = useState(defaults.efficiency_enabled);
+  // Re-seed when the SAVED values actually change (revalidation delivered
+  // fresh props) — the same adjust-during-render pattern InvoicingForm uses.
+  const savedSignature = `${defaults.enabled}|${defaults.efficiency_enabled}`;
+  const [seenSignature, setSeenSignature] = useState(savedSignature);
+  if (savedSignature !== seenSignature) {
+    setSeenSignature(savedSignature);
+    setReviewOn(defaults.enabled);
+    setEfficiencyOn(defaults.efficiency_enabled);
+  }
+
   useEffect(() => {
     if (state.values && !state.errors) {
       toast.success("Bonus rules saved");
@@ -58,7 +76,8 @@ export function BonusRuleForm({
           <input
             type="checkbox"
             name="enabled"
-            defaultChecked={defaults.enabled}
+            checked={reviewOn}
+            onChange={(e) => setReviewOn(e.target.checked)}
             className="mt-0.5 h-4 w-4 rounded border-input accent-violet-500"
           />
           <span className="flex flex-col">
@@ -156,7 +175,8 @@ export function BonusRuleForm({
           <input
             type="checkbox"
             name="efficiency_enabled"
-            defaultChecked={defaults.efficiency_enabled}
+            checked={efficiencyOn}
+            onChange={(e) => setEfficiencyOn(e.target.checked)}
             className="mt-0.5 h-4 w-4 rounded border-input accent-emerald-500"
           />
           <span className="flex flex-col">
