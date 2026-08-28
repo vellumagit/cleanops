@@ -167,6 +167,12 @@ export function ManualEntryDialog({
   const [history, setHistory] = useState<TimeEntryHistoryRow[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
 
+  // Editing is "fix a time" 95% of the time — who worked and which job are
+  // already right. Both dropdowns stay hidden in edit mode until asked for,
+  // and the header states them as plain text instead. Brian: "cluttered
+  // when it doesn't need to be."
+  const [reassignOpen, setReassignOpen] = useState(false);
+
   // Reset fields when the dialog opens in a new mode or for a new entry.
   // Sync'ing local form state to an external trigger (the open toggle) is
   // the idiomatic effect use — acknowledged via the compiler escape hatch.
@@ -191,9 +197,10 @@ export function ManualEntryDialog({
       setNotes("");
     }
     setFormError(null);
-    // Reset history state when dialog opens for a new entry
+    // Reset history + reassign state when dialog opens for a new entry
     setHistoryOpen(false);
     setHistory([]);
+    setReassignOpen(false);
   }, [open, mode, editing, employees, orgTz]);
 
   async function loadHistory() {
@@ -216,6 +223,16 @@ export function ManualEntryDialog({
     () => employees.filter(Boolean).sort((a, b) => a.name.localeCompare(b.name)),
     [employees],
   );
+
+  // Plain-text statement of who/what this entry is, for the edit header.
+  const contextEmployee =
+    activeEmployees.find((e) => e.id === employeeId)?.name ?? "Team member";
+  const contextBookingRow = bookings.find((b) => b.id === bookingId);
+  const contextBooking = bookingId
+    ? contextBookingRow
+      ? formatBookingLabel(contextBookingRow, orgTz)
+      : "linked booking"
+    : "no booking (office/admin time)";
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -267,7 +284,7 @@ export function ManualEntryDialog({
           </DialogTitle>
           <DialogDescription>
             {mode === "edit"
-              ? "Adjust who worked, which booking they worked on, and the start/end times."
+              ? `${contextEmployee} · ${contextBooking}`
               : "Back-fill hours for a shift that wasn't clocked on the phone. The entry shows up on payroll alongside live clock-ins."}
           </DialogDescription>
         </DialogHeader>
@@ -282,6 +299,7 @@ export function ManualEntryDialog({
             </div>
           )}
 
+          {(mode === "create" || reassignOpen) && (
           <div className="space-y-1.5">
             <Label htmlFor="employee_id">Employee</Label>
             <FormSelect
@@ -299,7 +317,9 @@ export function ManualEntryDialog({
               ))}
             </FormSelect>
           </div>
+          )}
 
+          {(mode === "create" || reassignOpen) && (
           <div className="space-y-1.5">
             <Label htmlFor="booking_id">
               Booking{" "}
@@ -319,12 +339,13 @@ export function ManualEntryDialog({
                 </option>
               ))}
             </FormSelect>
-            <p className="text-[11px] text-muted-foreground">
-              Leave blank for non-job time (office work, driving, quoting a
-              lead, etc.). Linking a booking enables punctuality + completion
-              analysis.
-            </p>
+            {mode === "create" && (
+              <p className="text-[11px] text-muted-foreground">
+                Leave blank for non-job time — office work, driving, quoting.
+              </p>
+            )}
           </div>
+          )}
 
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
@@ -394,14 +415,27 @@ export function ManualEntryDialog({
 
           {/* The number payroll actually pays on — visible while you type,
               rather than only after saving. */}
-          {liveDuration && (
-            <p className="text-xs text-muted-foreground">
-              Recorded time:{" "}
-              <span className="font-semibold tabular-nums text-foreground">
-                {liveDuration}
-              </span>
-            </p>
-          )}
+          <div className="flex items-center justify-between gap-3">
+            {liveDuration ? (
+              <p className="text-xs text-muted-foreground">
+                Recorded time:{" "}
+                <span className="font-semibold tabular-nums text-foreground">
+                  {liveDuration}
+                </span>
+              </p>
+            ) : (
+              <span />
+            )}
+            {mode === "edit" && !reassignOpen && (
+              <button
+                type="button"
+                onClick={() => setReassignOpen(true)}
+                className="text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
+              >
+                Change person or booking
+              </button>
+            )}
+          </div>
 
           <div className="space-y-1.5">
             <Label htmlFor="notes">
@@ -422,17 +456,17 @@ export function ManualEntryDialog({
           {/* Inline edit history (edit mode only). Lazy-loaded so the
               dialog stays snappy when opening a long-history entry. */}
           {mode === "edit" && editing && (
+            !historyOpen ? (
+              <button
+                type="button"
+                onClick={loadHistory}
+                className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
+              >
+                <History className="h-3 w-3" />
+                Show history
+              </button>
+            ) : (
             <div className="rounded-md border border-border bg-muted/30 p-3">
-              {!historyOpen ? (
-                <button
-                  type="button"
-                  onClick={loadHistory}
-                  className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
-                >
-                  <History className="h-3.5 w-3.5" />
-                  Show history
-                </button>
-              ) : (
                 <div className="space-y-2">
                   <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
                     <History className="h-3.5 w-3.5" />
@@ -473,8 +507,8 @@ export function ManualEntryDialog({
                     </ol>
                   )}
                 </div>
-              )}
             </div>
+            )
           )}
 
           <DialogFooter className="flex items-center justify-between gap-2 sm:justify-between">
