@@ -1686,3 +1686,54 @@ export async function deleteTimeEntryAction(
   revalidatePath("/app/payroll", "page");
   return { ok: true };
 }
+
+/**
+ * One-tap confirm for a flagged (auto-capped) entry — Brian: "if there's an
+ * issue, I wanna see that issue immediately" and fixing it must not require
+ * opening an editor when the capped hours were simply right. Clearing the
+ * flag carries the same meaning as an edit-save: a human looked at these
+ * hours. Refuses entries already swallowed by a run (frozen is frozen).
+ */
+export async function confirmTimeEntryAction(
+  formData: FormData,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const id = String(formData.get("id") ?? "").trim();
+  if (!id) return { ok: false, error: "Missing entry." };
+
+  const { membership, supabase } = await getActionContext();
+  if (!["owner", "admin", "manager"].includes(membership.role)) {
+    return { ok: false, error: "Not authorized." };
+  }
+
+  const { data: updated, error } = (await supabase
+    .from("time_entries")
+    .update({ needs_review: false } as never)
+    .eq("id", id)
+    .eq("organization_id", membership.organization_id)
+    .eq("needs_review" as never, true as never)
+    .is("payroll_run_id", null)
+    .is("subcontractor_run_id" as never, null as never)
+    .select("id")) as unknown as {
+    data: Array<{ id: string }> | null;
+    error: { message: string } | null;
+  };
+  if (error) return { ok: false, error: error.message };
+  if (!updated || updated.length === 0) {
+    return {
+      ok: false,
+      error: "This entry is already confirmed — or locked inside a pay run.",
+    };
+  }
+
+  await logAuditEvent({
+    membership,
+    action: "update",
+    entity: "time_entry",
+    entity_id: id,
+    after: { needs_review: false, confirmed_via: "quick_confirm" },
+  });
+
+  revalidatePath("/app/timesheets", "page");
+  revalidatePath("/app/payroll", "page");
+  return { ok: true };
+}

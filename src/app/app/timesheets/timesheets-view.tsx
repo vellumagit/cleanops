@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -35,6 +35,7 @@ import type {
   BookingOption,
   OpenShift,
 } from "./types";
+import { confirmTimeEntryAction } from "./actions";
 import { PtoApprovalPanel } from "./pto-approval-panel";
 import { ManualEntryDialog, type EditingEntry } from "./manual-entry-dialog";
 
@@ -373,6 +374,22 @@ export function TimesheetsView({
   const [manualOnly, setManualOnly] = useState(false);
   // Banner-driven: show only flagged (needs_review / over-allotted) rows.
   const [reviewOnly, setReviewOnly] = useState(false);
+  // One-tap "these capped hours are right" — clears the flag without
+  // opening the editor. Same meaning as an edit-save: a human looked.
+  const [confirmPending, startConfirm] = useTransition();
+  function quickConfirm(id: string) {
+    startConfirm(async () => {
+      const fd = new FormData();
+      fd.set("id", id);
+      const r = await confirmTimeEntryAction(fd);
+      if (r.ok) {
+        toast.success("Hours confirmed");
+        router.refresh();
+      } else {
+        toast.error(r.error);
+      }
+    });
+  }
 
   const [attachPending, setAttachPending] = useState(false);
   async function handleAttach(
@@ -1002,6 +1019,10 @@ export function TimesheetsView({
                               className={cn(
                                 "group border-b border-border last:border-0",
                                 selectedIds.has(r.id) && "bg-muted/40",
+                                r.needs_review
+                                  ? "border-l-4 border-l-amber-500 bg-amber-50/70 dark:bg-amber-950/20"
+                                  : r.over_allotted_minutes > 0 &&
+                                      "border-l-4 border-l-orange-300 bg-orange-50/40 dark:border-l-orange-800 dark:bg-orange-950/10",
                               )}
                             >
                               <td className="px-2 py-2.5">
@@ -1104,14 +1125,27 @@ export function TimesheetsView({
                                 {formatCurrencyCents(r.earned_cents)}
                               </td>
                               <td className="px-2 py-2.5 text-right">
-                                <button
-                                  type="button"
-                                  onClick={() => openEdit(r)}
-                                  aria-label="Edit entry"
-                                  className="rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground group-hover:opacity-100"
-                                >
-                                  <Pencil className="h-3.5 w-3.5" />
-                                </button>
+                                <span className="inline-flex items-center gap-1">
+                                  {r.needs_review && (
+                                    <button
+                                      type="button"
+                                      onClick={() => quickConfirm(r.id)}
+                                      disabled={confirmPending}
+                                      title="These capped hours are correct — clear the flag"
+                                      className="rounded-md border border-amber-400 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-50 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200 dark:hover:bg-amber-950/60"
+                                    >
+                                      Confirm
+                                    </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => openEdit(r)}
+                                    aria-label="Edit entry"
+                                    className="rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground group-hover:opacity-100"
+                                  >
+                                    <Pencil className="h-3.5 w-3.5" />
+                                  </button>
+                                </span>
                               </td>
                             </tr>
                           ))}
@@ -1184,6 +1218,10 @@ export function TimesheetsView({
                     className={cn(
                       "group border-b border-border last:border-0",
                       selectedIds.has(r.id) && "bg-muted/40",
+                      r.needs_review
+                        ? "border-l-4 border-l-amber-500 bg-amber-50/70 dark:bg-amber-950/20"
+                        : r.over_allotted_minutes > 0 &&
+                            "border-l-4 border-l-orange-300 bg-orange-50/40 dark:border-l-orange-800 dark:bg-orange-950/10",
                     )}
                   >
                     <td className="px-2 py-2.5">
@@ -1285,14 +1323,27 @@ export function TimesheetsView({
                       {formatCurrencyCents(r.earned_cents)}
                     </td>
                     <td className="px-2 py-2.5 text-right">
-                      <button
-                        type="button"
-                        onClick={() => openEdit(r)}
-                        aria-label="Edit entry"
-                        className="rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground group-hover:opacity-100"
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                      </button>
+                      <span className="inline-flex items-center gap-1">
+                        {r.needs_review && (
+                          <button
+                            type="button"
+                            onClick={() => quickConfirm(r.id)}
+                            disabled={confirmPending}
+                            title="These capped hours are correct — clear the flag"
+                            className="rounded-md border border-amber-400 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-50 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200 dark:hover:bg-amber-950/60"
+                          >
+                            Confirm
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => openEdit(r)}
+                          aria-label="Edit entry"
+                          className="rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground group-hover:opacity-100"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                      </span>
                     </td>
                   </tr>
                 ))}
