@@ -50,17 +50,18 @@ export async function acceptInvitationAction(
   const { data: invitation } = (await admin
     .from("invitations")
     .select(
-      "id, email, role, engagement, expires_at, accepted_at, organization_id",
+      "id, email, role, engagement, pay_rate_cents, expires_at, accepted_at, organization_id",
     )
     .eq("id", meta.invitationId)
     .eq("token", meta.token)
     .maybeSingle()) as unknown as {
-    // engagement postdates the generated types — see employees/page.tsx.
+    // engagement + pay_rate_cents postdate the generated types.
     data: {
       id: string;
       email: string;
       role: "owner" | "admin" | "manager" | "employee";
       engagement: string | null;
+      pay_rate_cents: number | null;
       expires_at: string;
       accepted_at: string | null;
       organization_id: string;
@@ -97,6 +98,7 @@ export async function acceptInvitationAction(
   );
 
   let userId: string;
+  let newMembershipId: string | null = null;
 
   if (existingUser) {
     // User already has an account — just create membership
@@ -124,18 +126,23 @@ export async function acceptInvitationAction(
     }
 
     if (existingMembership && existingMembership.status === "disabled") {
-      // Re-activate the membership
+      // Re-activate the membership. The invite's wage (when set) wins —
+      // re-hiring someone IS setting their terms.
       await admin
         .from("memberships")
         .update({
           status: "active",
           role: invitation.role,
           engagement: invitation.engagement,
+          ...(invitation.pay_rate_cents != null
+            ? { pay_rate_cents: invitation.pay_rate_cents }
+            : {}),
         })
         .eq("id", existingMembership.id);
+      newMembershipId = existingMembership.id;
     } else if (!existingMembership) {
       // Create new membership
-      const { error: membershipErr } = await admin
+      const { data: created, error: membershipErr } = await admin
         .from("memberships")
         .insert({
           organization_id: invitation.organization_id,
@@ -145,15 +152,23 @@ export async function acceptInvitationAction(
           // because this is the moment the membership first exists — miss it
           // and a subcontractor joins as an employee and lands in payroll.
           engagement: invitation.engagement,
+          // Same moment for the wage: the invite form asked for it, so the
+          // first payroll run prices this person correctly from day one.
+          ...(invitation.pay_rate_cents != null
+            ? { pay_rate_cents: invitation.pay_rate_cents }
+            : {}),
           status: "active",
-        });
+        })
+        .select("id")
+        .single();
 
-      if (membershipErr) {
+      if (membershipErr || !created) {
         return {
-          errors: { _form: membershipErr.message },
+          errors: { _form: membershipErr?.message ?? "Could not join." },
           values: { full_name: raw.full_name },
         };
       }
+      newMembershipId = created.id;
     }
   } else {
     // Create a new auth user
@@ -181,24 +196,44 @@ export async function acceptInvitationAction(
 
     // Create membership using admin client (RLS won't allow new users to
     // insert into memberships)
-    const { error: membershipErr } = await admin
+    const { data: created, error: membershipErr } = await admin
       .from("memberships")
       .insert({
         organization_id: invitation.organization_id,
         profile_id: userId,
         role: invitation.role,
         engagement: invitation.engagement,
+        ...(invitation.pay_rate_cents != null
+          ? { pay_rate_cents: invitation.pay_rate_cents }
+          : {}),
         status: "active",
-      });
+      })
+      .select("id")
+      .single();
 
-    if (membershipErr) {
+    if (membershipErr || !created) {
       // Cleanup: delete the user we just created
       await admin.auth.admin.deleteUser(userId);
       return {
-        errors: { _form: membershipErr.message },
+        errors: { _form: membershipErr?.message ?? "Could not join." },
         values: { full_name: raw.full_name },
       };
     }
+    newMembershipId = created.id;
+  }
+
+  // Onboarding training follows the membership automatically — modules
+  // marked assign_on_join land on the new member before their first shift.
+  // Best-effort inside the helper; never blocks the join.
+  if (newMembershipId) {
+    const { assignOnboardingTraining } = await import(
+      "@/lib/onboarding-training"
+    );
+    await assignOnboardingTraining(
+      admin,
+      invitation.organization_id,
+      newMembershipId,
+    );
   }
 
   // Mark invitation as accepted

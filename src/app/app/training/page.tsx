@@ -26,6 +26,9 @@ export default async function TrainingPage() {
         assignments:training_assignments ( id, completed_at )
       ` as never,
     )
+    // Explicit org scope — a two-org admin reads both orgs via RLS alone
+    // (see multi-org bleed, fixed on Timesheets 2026-08-29).
+    .eq("organization_id", membership.organization_id)
     .order("created_at", { ascending: false })
     .limit(200);
 

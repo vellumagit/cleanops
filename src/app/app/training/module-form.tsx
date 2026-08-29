@@ -36,6 +36,7 @@ type Props = {
   initialTitle?: string;
   initialDescription?: string;
   initialStatus?: string;
+  initialAssignOnJoin?: boolean;
   initialSteps?: Array<{
     title: string;
     body: string;
@@ -54,6 +55,7 @@ export function ModuleForm({
   initialTitle = "",
   initialDescription = "",
   initialStatus = "draft",
+  initialAssignOnJoin = false,
   initialSteps = [],
 }: Props) {
   const initialState: TrainingModuleState = {};
@@ -67,6 +69,7 @@ export function ModuleForm({
 
   const [title, setTitle] = useState(initialTitle);
   const [description, setDescription] = useState(initialDescription);
+  const [assignOnJoin, setAssignOnJoin] = useState(initialAssignOnJoin);
   const [steps, setSteps] = useState<StepData[]>(() => {
     if (initialSteps.length > 0) {
       return initialSteps.map((s) => {
@@ -190,6 +193,27 @@ export function ModuleForm({
             rows={2}
           />
         </FormField>
+
+        <label className="flex cursor-pointer items-start gap-2.5 rounded-md border border-border bg-muted/20 px-3 py-2.5">
+          <input
+            type="checkbox"
+            name="assign_on_join"
+            value="1"
+            checked={assignOnJoin}
+            onChange={(e) => setAssignOnJoin(e.target.checked)}
+            className="mt-0.5 h-4 w-4"
+          />
+          <span className="text-xs leading-relaxed">
+            <span className="font-medium">
+              Assign to every new hire automatically
+            </span>
+            <span className="block text-muted-foreground">
+              The moment someone joins the team, this module lands on their
+              training list — no one has to remember. Applies while the
+              module is published.
+            </span>
+          </span>
+        </label>
       </div>
 
       {/* Sections / Steps */}

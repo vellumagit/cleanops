@@ -110,6 +110,7 @@ export async function createTrainingModuleAction(
       description: description || null,
       created_by: membership.id,
       status: status as never,
+      assign_on_join: formData.get("assign_on_join") === "1",
     } as never)
     .select("id")
     .single();
@@ -187,8 +188,10 @@ export async function updateTrainingModuleAction(
       title,
       description: description || null,
       status: status as never,
+      assign_on_join: formData.get("assign_on_join") === "1",
     } as never)
-    .eq("id", moduleId);
+    .eq("id", moduleId)
+    .eq("organization_id", membership.organization_id);
 
   if (modErr) return { error: modErr.message };
 

@@ -88,6 +88,12 @@ export async function sendInvitationAction(
       // exist until they accept. Without this the invitee lands as an
       // employee and silently appears in the next payroll run.
       engagement: raw.engagement,
+      // The wage the form asked for. It was validated, audit-logged, and
+      // then DROPPED for months — the join flow now applies it the moment
+      // the membership exists.
+      ...(parsed.data.pay_rate != null
+        ? { pay_rate_cents: parsed.data.pay_rate }
+        : {}),
       invited_by: membership.profile_id,
     })
     .select("id, token")

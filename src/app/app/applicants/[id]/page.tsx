@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { formatDateTime } from "@/lib/format";
 import { ApplicantControls } from "./applicant-controls";
+import { HireDialog } from "./hire-dialog";
 import { deleteApplicantAction } from "../actions";
 import { STATUS_TONE } from "../page";
 
@@ -182,6 +183,11 @@ export default async function ApplicantDetailPage({
         </div>
 
         <div className="space-y-5">
+          {/* The yes, as one button — invite prefilled from the application,
+              wage + engagement chosen here, training auto-assigned at join. */}
+          {a.status !== "hired" && a.status !== "rejected" && (
+            <HireDialog applicantId={a.id} name={a.name} email={a.email} />
+          )}
           <div className="rounded-xl border border-border bg-card p-5">
             <ApplicantControls id={a.id} status={a.status} notes={a.notes} />
           </div>
