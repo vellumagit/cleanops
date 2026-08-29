@@ -31,6 +31,13 @@ export default async function Home() {
   if (membership?.role === "employee") {
     redirect("/field/jobs");
   }
+  // Same for portal clients: sollos3.com is their cleaning company's site,
+  // not a SaaS pitch. No membership + a linked client row → their portal.
+  if (!membership) {
+    const { getCurrentClient } = await import("@/lib/client-auth");
+    const client = await getCurrentClient();
+    if (client) redirect("/client");
+  }
 
   return (
     <main className="sollos-wash relative flex flex-1 flex-col">

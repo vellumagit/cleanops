@@ -18,7 +18,7 @@ export type LoginActionState = {
  * Keep this list tight. If a new public area needs a post-login deep
  * link, add its prefix here — never accept arbitrary paths.
  */
-const SAFE_NEXT_PREFIXES = ["/app", "/field"];
+const SAFE_NEXT_PREFIXES = ["/app", "/field", "/client"];
 
 function isSafeNextPath(next: string): boolean {
   // Must be a plain absolute path. No scheme, no protocol-relative,
@@ -71,7 +71,7 @@ export async function loginAction(
   }
 
   const supabase = await createSupabaseServerClient();
-  const { error } = await supabase.auth.signInWithPassword({
+  const { data: signInData, error } = await supabase.auth.signInWithPassword({
     email: parsed.data.email,
     password: parsed.data.password,
   });
@@ -146,6 +146,23 @@ export async function loginAction(
     redirect("/field");
   }
 
-  // No membership at all — send to onboarding
+  // No membership — maybe a portal CLIENT. Same auth pool, different
+  // schema (clients.profile_id, no memberships row). Without this check
+  // they fell to /app, whose guard bounced no-membership users straight
+  // back to /login: a client could sign in correctly, forever, and never
+  // move. One front door; the system recognizes which home you have.
+  if (signInData.user) {
+    const { data: clientRow } = await supabase
+      .from("clients")
+      .select("id")
+      .eq("profile_id", signInData.user.id)
+      .limit(1)
+      .maybeSingle();
+    if (clientRow) {
+      redirect("/client");
+    }
+  }
+
+  // Truly nobody's — send to onboarding
   redirect("/app");
 }
