@@ -1,9 +1,20 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Clock, History, Pencil, Plus, Trash2 } from "lucide-react";
+import {
+  CalendarClock,
+  Check,
+  ChevronDown,
+  Clock,
+  History,
+  Pencil,
+  Plus,
+  Search,
+  Trash2,
+  X,
+} from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -122,6 +133,205 @@ function formatBookingLabel(b: BookingOption, tz: string): string {
   return `${b.client_name} · ${service} · ${d}`;
 }
 
+/**
+ * The booking's scheduled window as datetime-local values plus a short
+ * "3:26 – 5:26 PM" label. Duration math happens on the UTC instant, then
+ * converts — so it stays right across a DST boundary mid-shift.
+ */
+function bookingHours(
+  b: BookingOption,
+  tz: string,
+): { startLocal: string; endLocal: string | null; label: string } {
+  const startMs = new Date(b.scheduled_at).getTime();
+  const endIso =
+    b.duration_minutes && b.duration_minutes > 0
+      ? new Date(startMs + b.duration_minutes * 60_000).toISOString()
+      : null;
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  return {
+    startLocal: utcIsoToLocalInput(b.scheduled_at, tz),
+    endLocal: endIso ? utcIsoToLocalInput(endIso, tz) : null,
+    label: endIso
+      ? `${fmt.format(new Date(b.scheduled_at))} – ${fmt.format(new Date(endIso))}`
+      : fmt.format(new Date(b.scheduled_at)),
+  };
+}
+
+// -----------------------------------------------------------------------------
+// Booking picker — searchable, same pattern as the invoice form's combobox.
+// The flat <select> held ~500 rows spanning six months; finding one meant
+// scrolling. Type a client, a service, or a date fragment instead.
+
+function BookingPicker({
+  bookings,
+  value,
+  onChange,
+  tz,
+}: {
+  bookings: BookingOption[];
+  value: string;
+  onChange: (id: string) => void;
+  tz: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const containerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(e.target as Node)
+      ) {
+        setOpen(false);
+        setQuery("");
+      }
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const filtered = useMemo(() => {
+    if (!query.trim()) return bookings;
+    const needle = query.trim().toLowerCase();
+    return bookings.filter((b) =>
+      formatBookingLabel(b, tz).toLowerCase().includes(needle),
+    );
+  }, [bookings, query, tz]);
+
+  const selected = bookings.find((b) => b.id === value);
+
+  function select(id: string) {
+    onChange(id);
+    setOpen(false);
+    setQuery("");
+  }
+
+  return (
+    <div ref={containerRef} className="relative">
+      <button
+        type="button"
+        id="booking_id"
+        onClick={() => {
+          setOpen((o) => !o);
+          setTimeout(() => inputRef.current?.focus(), 0);
+        }}
+        className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+      >
+        {selected ? (
+          <span className="min-w-0 truncate font-medium">
+            {formatBookingLabel(selected, tz)}
+          </span>
+        ) : (
+          <span className="text-muted-foreground">
+            No booking (office / admin time)
+          </span>
+        )}
+        <div className="ml-2 flex shrink-0 items-center gap-1">
+          {selected && (
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={(e) => {
+                e.stopPropagation();
+                select("");
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.stopPropagation();
+                  select("");
+                }
+              }}
+              className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              aria-label="Clear booking"
+            >
+              <X className="h-3 w-3" />
+            </span>
+          )}
+          <ChevronDown className="h-4 w-4 text-muted-foreground" />
+        </div>
+      </button>
+
+      {open && (
+        <div className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-md border border-border bg-popover shadow-lg">
+          <div className="border-b border-border bg-muted/60 px-3 py-2.5">
+            <div className="flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 shadow-sm focus-within:ring-2 focus-within:ring-ring">
+              <Search className="h-4 w-4 shrink-0 text-primary" />
+              <input
+                ref={inputRef}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search by client, service, or date…"
+                className="flex-1 bg-transparent text-sm font-medium outline-none placeholder:font-normal placeholder:text-muted-foreground"
+              />
+              {query && (
+                <button
+                  type="button"
+                  onClick={() => setQuery("")}
+                  className="text-muted-foreground transition-colors hover:text-foreground"
+                  aria-label="Clear search"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
+
+          <ul className="max-h-56 overflow-y-auto py-1">
+            <li>
+              <button
+                type="button"
+                onClick={() => select("")}
+                className="flex w-full items-center gap-2 px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted"
+              >
+                <span className="w-4 shrink-0">
+                  {!value && <Check className="h-3.5 w-3.5 text-primary" />}
+                </span>
+                — No booking (office / admin time)
+              </button>
+            </li>
+            {filtered.length === 0 ? (
+              <li className="px-3 py-4 text-center text-xs text-muted-foreground">
+                {query ? "No bookings match your search." : "No bookings found."}
+              </li>
+            ) : (
+              filtered.map((b) => (
+                <li key={b.id}>
+                  <button
+                    type="button"
+                    onClick={() => select(b.id)}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-sm transition-colors hover:bg-muted"
+                  >
+                    <span className="w-4 shrink-0">
+                      {value === b.id && (
+                        <Check className="h-3.5 w-3.5 text-primary" />
+                      )}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-left">
+                      {formatBookingLabel(b, tz)}
+                    </span>
+                  </button>
+                </li>
+              ))
+            )}
+          </ul>
+
+          {query && (
+            <div className="border-t border-border px-3 py-1.5 text-[10px] text-muted-foreground">
+              {filtered.length} of {bookings.length} bookings match
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // -----------------------------------------------------------------------------
 
 export function ManualEntryDialog({
@@ -234,6 +444,36 @@ export function ManualEntryDialog({
       : "linked booking"
     : "no booking (office/admin time)";
 
+  // The selected booking's scheduled window, and whether the time fields
+  // already say exactly that (button hides once applied).
+  const bookedTimes = contextBookingRow
+    ? bookingHours(contextBookingRow, orgTz)
+    : null;
+  const bookedTimesApplied =
+    bookedTimes !== null &&
+    startAt === bookedTimes.startLocal &&
+    (bookedTimes.endLocal === null || endAt === bookedTimes.endLocal);
+
+  function applyBookingHours() {
+    if (!bookedTimes) return;
+    setStartAt(bookedTimes.startLocal);
+    if (bookedTimes.endLocal) setEndAt(bookedTimes.endLocal);
+  }
+
+  function handleBookingChange(id: string) {
+    setBookingId(id);
+    if (!id) return;
+    const b = bookings.find((x) => x.id === id);
+    if (!b) return;
+    // Fresh entry, empty clock: picking the job IS picking the hours —
+    // prefill the scheduled window; typing over it stays possible.
+    if (!startAt && !endAt) {
+      const t = bookingHours(b, orgTz);
+      setStartAt(t.startLocal);
+      if (t.endLocal) setEndAt(t.endLocal);
+    }
+  }
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const fd = new FormData();
@@ -327,18 +567,12 @@ export function ManualEntryDialog({
                 (optional)
               </span>
             </Label>
-            <FormSelect
-              id="booking_id"
+            <BookingPicker
+              bookings={bookings}
               value={bookingId}
-              onChange={(e) => setBookingId(e.target.value)}
-            >
-              <option value="">— No booking (office / admin time)</option>
-              {bookings.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {formatBookingLabel(b, orgTz)}
-                </option>
-              ))}
-            </FormSelect>
+              onChange={handleBookingChange}
+              tz={orgTz}
+            />
             {mode === "create" && (
               <p className="text-[11px] text-muted-foreground">
                 Leave blank for non-job time — office work, driving, quoting.
@@ -377,6 +611,24 @@ export function ManualEntryDialog({
               />
             </div>
           </div>
+
+          {/* One tap to say "they worked the scheduled window" — the answer
+              95% of the time a booking is attached. Hidden once the fields
+              already match, so it never nags. */}
+          {bookedTimes && !bookedTimesApplied && (
+            <button
+              type="button"
+              onClick={applyBookingHours}
+              className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/40 px-2.5 py-1 text-[11px] font-semibold text-foreground transition-colors hover:bg-muted"
+            >
+              <CalendarClock className="h-3 w-3" />
+              Use booking hours ({bookedTimes.label}
+              {bookedTimes.endLocal
+                ? ` · ${durationLabel(bookedTimes.startLocal, bookedTimes.endLocal) ?? ""}`
+                : ""}
+              )
+            </button>
+          )}
 
           {/*
            * Why this row is open for correction, and the one number that

@@ -9,7 +9,7 @@ On **Employees**, each person has an *engagement* (employee or subcontractor —
 
 ## Where hours come from
 
-Cleaners clock in and out on their job in the field app. A forgotten clock-out gets closed automatically past the job's expected end and flagged **needs review** — those hours wait for a human to confirm the real time before they count as pay. The office can also add manual entries on Timesheets and attach them to bookings.
+Cleaners clock in and out on their job in the field app. A forgotten clock-out gets closed automatically past the job's expected end and flagged **needs review** — those hours wait for a human to confirm the real time before they count as pay. The office can also add manual entries on Timesheets and attach them to bookings — the booking picker is searchable (client, service, or date), and picking a booking fills the scheduled times in automatically; a **Use booking hours** button re-applies them after edits.
 
 ## Timesheets, day to day
 

@@ -286,7 +286,7 @@ export default async function TimesheetsPage({
       supabase
         .from("bookings")
         .select(
-          "id, scheduled_at, service_type, client:clients ( name )",
+          "id, scheduled_at, duration_minutes, service_type, client:clients ( name )",
         )
         .gte("scheduled_at", bookingsWindowFrom)
         .lte("scheduled_at", bookingsWindowTo)
@@ -545,6 +545,7 @@ export default async function TimesheetsPage({
   const bookingOptions: BookingOption[] = (recentBookings ?? []).map((b) => ({
     id: b.id,
     scheduled_at: b.scheduled_at,
+    duration_minutes: b.duration_minutes ?? null,
     service_type: b.service_type ?? null,
     client_name: b.client?.name ?? "—",
   }));

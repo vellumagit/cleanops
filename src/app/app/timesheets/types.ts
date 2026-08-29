@@ -94,6 +94,8 @@ export type EmployeeMeta = {
 export type BookingOption = {
   id: string;
   scheduled_at: string;
+  /** Scheduled length — lets "Use booking hours" fill both time fields. */
+  duration_minutes: number | null;
   service_type: string | null;
   client_name: string;
 };
