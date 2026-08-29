@@ -7,6 +7,7 @@ import { autoInvoiceOnJobComplete } from "@/lib/automations";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { deleteMemberCalendarEvent } from "@/lib/google-calendar";
 import { notify } from "@/lib/notify";
+import { logAuditEvent } from "@/lib/audit";
 import { futureStatusError } from "@/lib/booking-status";
 
 export type JobActionResult = { ok: true } | { ok: false; error: string };
@@ -108,6 +109,14 @@ export async function startJobAction(
       .update({ status: "in_progress" })
       .eq("id", bookingId);
     if (updateError) return { ok: false, error: updateError.message };
+    await logAuditEvent({
+      membership,
+      action: "status_change",
+      entity: "booking",
+      entity_id: bookingId,
+      before: { status: booking.status },
+      after: { status: "in_progress" },
+    });
   }
 
   // Check for ANY open time entry for this employee, not just for this booking.
@@ -350,6 +359,14 @@ export async function completeJobAction(
   if (updateBookingError) {
     return { ok: false, error: updateBookingError.message };
   }
+  await logAuditEvent({
+    membership,
+    action: "status_change",
+    entity: "booking",
+    entity_id: bookingId,
+    before: { status: booking.status },
+    after: { status: "completed" },
+  });
 
   // Auto-generate a draft invoice for the completed job. Awaited (not
   // fire-and-forget) so the draft is present by the time /app/invoices

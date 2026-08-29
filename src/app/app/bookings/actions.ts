@@ -39,6 +39,7 @@ import { getOrgTimezone } from "@/lib/org-timezone";
 import { localInputToUtcIso } from "@/lib/validators/common";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { redirectAfterSetup } from "@/lib/setup-return";
+import { logAuditEvent } from "@/lib/audit";
 import { notify } from "@/lib/notify";
 import { formatDateTime } from "@/lib/format";
 import { occurrenceDate } from "@/lib/client-job-requests";
@@ -2468,6 +2469,17 @@ export async function markBookingCompleteAction(id: string) {
 
   if (error) return;
 
+  // Completing is a money-adjacent transition (it drafts the invoice), and
+  // reconstructing WHO completed a job from invoice timestamps is archaeology.
+  await logAuditEvent({
+    membership,
+    action: "status_change",
+    entity: "booking",
+    entity_id: id,
+    before: { status: booking.status },
+    after: { status: "completed" },
+  });
+
   await autoInvoiceOnJobComplete(id);
 
   revalidatePath("/app/bookings");
@@ -2567,6 +2579,18 @@ export async function setBookingStatusAction(
     .eq("id", id)
     .eq("organization_id", membership.organization_id);
   if (error) return { ok: false, error: error.message };
+
+  // Status is the booking's most consequential field (completed invoices;
+  // cancelled notifies people) and this was the one write nobody could
+  // trace afterwards.
+  await logAuditEvent({
+    membership,
+    action: "status_change",
+    entity: "booking",
+    entity_id: id,
+    before: { status: booking.status },
+    after: { status: target },
+  });
 
   if (target === "completed") {
     await autoInvoiceOnJobComplete(id);

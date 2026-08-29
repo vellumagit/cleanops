@@ -1608,7 +1608,15 @@ export async function closeOpenShiftAction(
 
   const { error } = await supabase
     .from("time_entries")
-    .update({ clock_out_at: endUtc, needs_review: false } as never)
+    .update({
+      clock_out_at: endUtc,
+      needs_review: false,
+      // Choosing the end time IS the human review — same rule as saving an
+      // edit. Without this the row keeps wearing the "+Xm over" tag asking
+      // for the review that just happened.
+      over_confirmed_at: new Date().toISOString(),
+      over_confirmed_by: membership.id,
+    } as never)
     .eq("id", id)
     .eq("organization_id", membership.organization_id);
   if (error) return { ok: false, error: error.message };
