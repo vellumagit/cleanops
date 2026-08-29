@@ -597,9 +597,11 @@ export function ManualEntryDialog({
             <div className="min-w-0 space-y-1.5">
               <Label htmlFor="end_at">
                 End{" "}
-                <span className="font-normal text-muted-foreground">
-                  (optional)
-                </span>
+                {!(mode === "edit" && editing?.clock_out_at) && (
+                  <span className="font-normal text-muted-foreground">
+                    (optional)
+                  </span>
+                )}
               </Label>
               <Input
                 id="end_at"
@@ -608,6 +610,10 @@ export function ManualEntryDialog({
                 className="h-10 w-full min-w-0 tabular-nums"
                 value={endAt}
                 onChange={(e) => setEndAt(e.target.value)}
+                // A closed shift must stay closed through this form:
+                // blanking End silently reopened it, dropping the hours out
+                // of payroll ("clocked in" forever, never gathered by a run).
+                required={mode === "edit" && Boolean(editing?.clock_out_at)}
               />
             </div>
           </div>

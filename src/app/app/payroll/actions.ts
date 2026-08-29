@@ -11,6 +11,40 @@ import { preparePayPeriod } from "@/lib/pay-period";
 type Result = { ok: true; id: string } | { ok: false; error: string };
 
 /**
+ * A custom pay-period range has to be a real, bounded window. The old
+ * checks (regex + order) accepted 2026-02-31 (which Date.UTC silently
+ * rolls to March 3, so the run's window and its stored dates disagree)
+ * and a fat-fingered 2062 end date (a 36-year "period" that swallows —
+ * then truncates — the org's entire unpaid history: the Olha bug with
+ * extra steps).
+ */
+export async function validatePeriodRange(
+  start: string,
+  end: string,
+): Promise<string | null> {
+  const shape = /^\d{4}-\d{2}-\d{2}$/;
+  if (!shape.test(start) || !shape.test(end)) {
+    return "Dates must be valid calendar dates.";
+  }
+  // Round-trip: a date that normalizes to a different YMD never existed.
+  for (const ymd of [start, end]) {
+    if (new Date(`${ymd}T00:00:00Z`).toISOString().slice(0, 10) !== ymd) {
+      return `${ymd} isn't a real calendar date.`;
+    }
+  }
+  if (end < start) return "Period end must be on or after start.";
+  const days =
+    (new Date(`${end}T00:00:00Z`).getTime() -
+      new Date(`${start}T00:00:00Z`).getTime()) /
+      86_400_000 +
+    1;
+  if (days > 92) {
+    return "A pay period can't be longer than 92 days — split it up.";
+  }
+  return null;
+}
+
+/**
  * Compute + create a payroll run for a date range. Snapshots every
  * employee's hours, regular pay, bonuses, and PTO into payroll_items.
  */
@@ -31,15 +65,8 @@ export async function preparePeriodAction(
 
   const period_start = String(formData.get("period_start") ?? "").trim();
   const period_end = String(formData.get("period_end") ?? "").trim();
-  if (
-    !/^\d{4}-\d{2}-\d{2}$/.test(period_start) ||
-    !/^\d{4}-\d{2}-\d{2}$/.test(period_end)
-  ) {
-    return { ok: false, error: "Dates must be valid calendar dates." };
-  }
-  if (period_end < period_start) {
-    return { ok: false, error: "Period end must be on or after start." };
-  }
+  const rangeErr = await validatePeriodRange(period_start, period_end);
+  if (rangeErr) return { ok: false, error: rangeErr };
 
   const result = await preparePayPeriod({
     organizationId: membership.organization_id,
@@ -75,9 +102,10 @@ export async function finalizePayrollRunAction(formData: FormData) {
   const { membership, supabase } = await getActionContext();
   if (!["owner", "admin"].includes(membership.role)) return;
 
-  // Only a draft can be finalized (atomic guard — a replayed/forged POST
-  // can't re-finalize or skip the draft stage).
-  await (supabase
+  // Only a draft can be finalized — and the claim is CHECKED, so a
+  // replayed/forged POST that matches nothing doesn't write a phantom
+  // "finalized" transition into the audit trail of a financial record.
+  const { data: claimed } = (await supabase
     .from("payroll_runs")
     .update({
       status: "finalized",
@@ -85,7 +113,9 @@ export async function finalizePayrollRunAction(formData: FormData) {
     })
     .eq("id", id)
     .eq("organization_id", membership.organization_id)
-    .eq("status", "draft") as unknown as Promise<unknown>);
+    .eq("status", "draft")
+    .select("id")) as unknown as { data: Array<{ id: string }> | null };
+  if (!claimed || claimed.length === 0) return;
 
   await logAuditEvent({
     membership,
@@ -171,8 +201,16 @@ export async function deletePayrollRunAction(formData: FormData) {
 
   if (!run) return;
 
+  // A PAID run is a record of money that left the business. Deleting it
+  // releases every stamped hour and PTO row (FKs are SET NULL) back into
+  // "unpaid", and the next prepare would pay them all a second time. The
+  // contractor twin refuses this; so do we. Un-pay isn't offered — if a
+  // run was marked paid by mistake, that's a support conversation, not a
+  // delete button.
+  if (run.status === "paid") return;
+
   // Draft runs can be deleted freely.
-  // Finalized/paid runs require the admin to type "DELETE" to confirm —
+  // Finalized runs require the admin to type "DELETE" to confirm —
   // this is a sensitive financial record and we don't want accidents.
   if (run.status !== "draft" && confirmPhrase !== "DELETE") return;
 
@@ -226,9 +264,19 @@ export async function markTipsPaidAction(formData: FormData): Promise<void> {
     ? q.eq("membership_id" as never, raw as never)
     : q.is("membership_id" as never, null as never);
 
-  const { data: settled } = (await q.select("id, amount_cents")) as unknown as {
+  const { data: settled, error: settleErr } = (await q.select(
+    "id, amount_cents",
+  )) as unknown as {
     data: Array<{ id: string; amount_cents: number }> | null;
+    error: { message: string } | null;
   };
+  // A failed update and "a concurrent click already settled these" used to
+  // look identical (both fell out as zero rows) — a persistent failure to
+  // record the handover read as a UI glitch. Surface the failure.
+  if (settleErr) {
+    console.error("[payroll] markTipsPaid failed:", settleErr.message);
+    return;
+  }
 
   const rows = settled ?? [];
   if (rows.length === 0) return;

@@ -236,7 +236,9 @@ export default async function PayrollPage() {
       .is("subcontractor_run_id" as never, null as never)
       .not("clock_out_at", "is", null)
       .lt("clock_in_at", bucketToIso)
-      .limit(2000)) as unknown as {
+      // PostgREST clamps to the project max_rows (1000) anyway — asking
+      // for more just pretends. The run machine refuses windows this big.
+      .limit(1000)) as unknown as {
       data: Array<{
         employee_id: string;
         clock_in_at: string;
@@ -343,7 +345,8 @@ export default async function PayrollPage() {
         .not("clock_out_at", "is", null)
         .gte("clock_in_at", zonedMidnightUtc(oldestStart, tz).toISOString())
         .lt("clock_in_at", zonedMidnightUtc(suggestedStart, tz).toISOString())
-        .limit(3000)) as unknown as {
+        // Clamped to max_rows (1000) server-side regardless; estimates only.
+        .limit(1000)) as unknown as {
         data: Array<{
           employee_id: string;
           clock_in_at: string;

@@ -143,8 +143,12 @@ async function adjustPtoBalance(
         args: Record<string, unknown>,
       ) => PromiseLike<unknown>
     )("increment_pto_used", {
+      // startDate is already an org-local calendar day — slice the year
+      // out of the string. new Date(...).getFullYear() read it in the
+      // SERVER's zone, so Jan 1 debited the prior year's bucket on any
+      // non-UTC host.
+      p_year: Number(startDate.slice(0, 4)),
       p_employee_id: employeeId,
-      p_year: new Date(startDate).getFullYear(),
       p_hours: hoursDelta,
     });
   } catch {
@@ -169,15 +173,40 @@ export async function createPtoRequestAction(
   if (!employee_id || !start_date || !end_date) {
     return { ok: false, error: "Employee, start date, and end date are required." };
   }
-
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(start_date) ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(end_date)
+  ) {
+    return { ok: false, error: "Dates must be valid calendar dates." };
+  }
   if (new Date(end_date) < new Date(start_date)) {
     return { ok: false, error: "End date must be on or after start date." };
   }
+  // Same bounds the self-service path enforces. Unbounded hours went
+  // straight into an APPROVED row — payroll would have paid hours=999 at
+  // the wage without blinking, and a negative value skipped the run fence.
+  if (!Number.isFinite(postedHours) || postedHours < 0 || postedHours > 200) {
+    return { ok: false, error: "Hours must be between 0 and 200." };
+  }
 
-  const isSub = await isSubcontractorMember(
-    employee_id,
-    membership.organization_id,
+  // Explicit membership check — the old engagement probe returned false
+  // for "not found", which read as "found, and an employee": a foreign
+  // employee_id sailed through and landed as an approved PTO row.
+  const { createSupabaseAdminClient: createAdminForMember } = await import(
+    "@/lib/supabase/admin"
   );
+  const { data: ptoMember } = (await createAdminForMember()
+    .from("memberships")
+    .select("engagement" as never)
+    .eq("id", employee_id)
+    .eq("organization_id", membership.organization_id)
+    .maybeSingle()) as unknown as {
+    data: { engagement: string | null } | null;
+  };
+  if (!ptoMember) {
+    return { ok: false, error: "That person isn't in this organization." };
+  }
+  const isSub = ptoMember.engagement === "subcontractor";
   const hours = isSub ? 0 : postedHours;
 
   // This inserts as approved directly, so it needs the same fence as
@@ -385,7 +414,9 @@ export async function updatePtoStatusAction(
   );
 
   // Fire-and-forget email to the employee about the decision.
-  notifyPtoStatus(id);
+  // Awaited: on serverless the runtime can freeze the instant the action
+  // returns, and a floating promise's email is dropped non-deterministically.
+  await notifyPtoStatus(id);
 
   // Own surface only — submitSelfPtoRequestAction documents the 30s+
   // freezes cross-surface revalidation caused. The other side is a
@@ -1027,7 +1058,7 @@ export async function updateTimeEntryAction(
   const parsed = readManualTimeFormValues(formData, orgTz);
   if ("_error" in parsed) return { ok: false, error: parsed._error };
 
-  const { data: before } = (await supabase
+  const { data: before, error: beforeErr } = (await supabase
     .from("time_entries")
     .select(
       "clock_in_at, clock_out_at, employee_id, booking_id, payroll_run_id, subcontractor_run_id, engagement_snapshot",
@@ -1044,7 +1075,43 @@ export async function updateTimeEntryAction(
       subcontractor_run_id: string | null;
       engagement_snapshot: string | null;
     } | null;
+    error: { message: string } | null;
   };
+  // Fail CLOSED. A failed read used to fall through with before = null,
+  // which SKIPPED the frozen-run guard below — the guard protecting run
+  // totals must abort on error, never shrug past it.
+  if (beforeErr) return { ok: false, error: beforeErr.message };
+  if (!before) return { ok: false, error: "Entry not found." };
+
+  // Reassignment targets get the same scrutiny the create path applies —
+  // this action used to write employee_id/booking_id verbatim from the
+  // form, accepting ids from other orgs entirely.
+  if (parsed.employee_id !== before.employee_id) {
+    const { data: newOwner } = (await supabase
+      .from("memberships")
+      .select("id")
+      .eq("id", parsed.employee_id)
+      .eq("organization_id", membership.organization_id)
+      .eq("status", "active")
+      .maybeSingle()) as unknown as { data: { id: string } | null };
+    if (!newOwner) {
+      return { ok: false, error: "That person isn't an active member of this organization." };
+    }
+  }
+  if (parsed.booking_id && parsed.booking_id !== before.booking_id) {
+    const { data: newBooking } = (await supabase
+      .from("bookings")
+      .select("id, status")
+      .eq("id", parsed.booking_id)
+      .eq("organization_id", membership.organization_id)
+      .maybeSingle()) as unknown as {
+      data: { id: string; status: string } | null;
+    };
+    if (!newBooking) return { ok: false, error: "Job not found." };
+    if (newBooking.status === "cancelled") {
+      return { ok: false, error: "That job was cancelled — hours can't attach to it." };
+    }
+  }
 
   // Hours a pay run has swallowed are frozen. Editing an entry AFTER a
   // payroll run or subcontractor statement snapshotted it changes the hours
@@ -1303,12 +1370,20 @@ async function findOverlap(
   // Pull every entry for this employee whose start is before our end, then
   // keep the ones whose stop is after our start. An open shift is treated as
   // running until now, which is what the docstring above has always claimed.
+  // Bounded below: without this the guard fetched the employee's ENTIRE
+  // history and, past the API's 1000-row cap, silently dropped the recent
+  // rows — the ones that actually collide. Recent starts OR still-open
+  // shifts (an open entry from days ago still overlaps everything).
+  const lowerBound = new Date(
+    new Date(startIso).getTime() - 48 * 3_600_000,
+  ).toISOString();
   let query = supabase
     .from("time_entries")
     .select("id, clock_in_at, clock_out_at")
     .eq("organization_id", organizationId)
     .eq("employee_id", employeeId)
-    .lt("clock_in_at", effectiveEnd);
+    .lt("clock_in_at", effectiveEnd)
+    .or(`clock_in_at.gte.${lowerBound},clock_out_at.is.null`);
 
   if (excludeId) {
     query = query.neq("id", excludeId);
@@ -1390,7 +1465,7 @@ export async function attachEntryToBookingAction(
 
   const { data: booking } = (await supabase
     .from("bookings")
-    .select("id, assigned_to, status, organization_id")
+    .select("id, assigned_to, status, organization_id, scheduled_at, duration_minutes")
     .eq("id", bookingId)
     .eq("organization_id", membership.organization_id)
     .maybeSingle()) as unknown as {
@@ -1399,11 +1474,35 @@ export async function attachEntryToBookingAction(
       assigned_to: string | null;
       status: string;
       organization_id: string;
+      scheduled_at: string | null;
+      duration_minutes: number | null;
     } | null;
   };
   if (!booking) return { ok: false, error: "Job not found." };
   if (booking.status === "cancelled") {
     return { ok: false, error: "That job was cancelled — hours can't attach to it." };
+  }
+
+  // The window re-verification the docstring promises. The UI only offers
+  // overlapping jobs, but this is a POST endpoint: without the check, an
+  // Aug punch could be attached to a June job and land on its labour cost.
+  // Generous bounds — 4h early through 12h past the scheduled end.
+  if (booking.scheduled_at) {
+    const schedMs = new Date(booking.scheduled_at).getTime();
+    const durMs = Math.max(booking.duration_minutes ?? 0, 60) * 60_000;
+    const loMs = schedMs - 4 * 3_600_000;
+    const hiMs = schedMs + durMs + 12 * 3_600_000;
+    const inMs = new Date(entry.clock_in_at).getTime();
+    const outMs = entry.clock_out_at
+      ? new Date(entry.clock_out_at).getTime()
+      : inMs;
+    if (outMs < loMs || inMs > hiMs) {
+      return {
+        ok: false,
+        error:
+          "That punch doesn't line up with this job's time window — pick the job it was actually worked on.",
+      };
+    }
   }
 
   // The person must actually be assigned — primary slot or crew junction.
@@ -1464,14 +1563,18 @@ export async function bulkDeleteTimeEntriesAction(
   // or statement — a partial "deleted 7 of 9" leaves the owner guessing which
   // two survived and why. All-or-nothing keeps the refusal explainable.
   {
-    const { data: frozen } = (await supabase
+    const { data: frozen, error: frozenErr } = (await supabase
       .from("time_entries")
       .select("id, payroll_run_id, subcontractor_run_id")
       .in("id", rawIds)
       .eq("organization_id", membership.organization_id)
       .or("payroll_run_id.not.is.null,subcontractor_run_id.not.is.null")) as unknown as {
       data: Array<{ id: string }> | null;
+      error: { message: string } | null;
     };
+    // Fail CLOSED: if this read errors, the guard must stop the batch —
+    // a null result falling through would delete run-stamped hours.
+    if (frozenErr) return { ok: false, error: frozenErr.message };
     if (frozen && frozen.length > 0) {
       return {
         ok: false,
@@ -1606,6 +1709,25 @@ export async function closeOpenShiftAction(
     }
   }
 
+  // The one window-changing mutation that skipped the overlap guard: an
+  // end time fat-fingered a day forward (the 24h cap allows it) swallows
+  // the person's NEXT shift, and payroll prices both.
+  const clash = await findOverlap(
+    supabase,
+    membership.organization_id,
+    before.employee_id,
+    before.clock_in_at,
+    endUtc,
+    id,
+  );
+  if (clash) {
+    return {
+      ok: false,
+      error:
+        "That end time overlaps another of their shifts — check the date and time.",
+    };
+  }
+
   const { error } = await supabase
     .from("time_entries")
     .update({
@@ -1649,7 +1771,7 @@ export async function deleteTimeEntryAction(
   const id = String(formData.get("id") ?? "");
   if (!id) return { ok: false, error: "Missing entry id." };
 
-  const { data: before } = (await supabase
+  const { data: before, error: beforeErr } = (await supabase
     .from("time_entries")
     .select(
       "employee_id, booking_id, clock_in_at, clock_out_at, payroll_run_id, subcontractor_run_id",
@@ -1665,7 +1787,12 @@ export async function deleteTimeEntryAction(
       payroll_run_id: string | null;
       subcontractor_run_id: string | null;
     } | null;
+    error: { message: string } | null;
   };
+  // Fail CLOSED: an errored read must stop the delete — falling through
+  // with before = null skipped the frozen-run guard entirely.
+  if (beforeErr) return { ok: false, error: beforeErr.message };
+  if (!before) return { ok: false, error: "Entry not found." };
 
   // Same freeze as updateTimeEntryAction — deleting a paid entry is the
   // harsher version of editing one.

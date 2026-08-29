@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -101,10 +101,31 @@ function buildSummaries(
   for (const p of ptoEntries) {
     if (p.status !== "approved") continue;
     if (p.engagement === "subcontractor") continue;
-    const existing = map.get(p.employee_id);
-    if (existing) {
-      existing.ptoHours += p.hours;
+    let existing = map.get(p.employee_id);
+    if (!existing) {
+      // On PTO the whole window = zero time entries, but payroll will pay
+      // those hours — dropping the person from the reconciliation list
+      // made the screen disagree with the run.
+      existing = {
+        id: p.employee_id,
+        name: p.employee_name ?? "Unknown",
+        totalMinutes: 0,
+        jobMinutes: 0,
+        otherMinutes: 0,
+        shiftCount: 0,
+        openShift: false,
+        earnedCents: 0,
+        payRateCents: employees[p.employee_id]?.pay_rate_cents ?? 0,
+        payType: employees[p.employee_id]?.pay_type ?? "hourly",
+        lateCount: 0,
+        earlyCount: 0,
+        overCount: 0,
+        underCount: 0,
+        ptoHours: 0,
+      };
+      map.set(p.employee_id, existing);
     }
+    existing.ptoHours += p.hours;
   }
 
   return Array.from(map.values()).sort(
@@ -188,6 +209,18 @@ function CompletionBadge({
  * page disagreed by the zone's offset on every line — and an evening shift
  * carried a date in the CSV that nobody could find on the timesheet.
  */
+/**
+ * One CSV field, done properly: quotes doubled per RFC 4180 (a client
+ * named `Sam "Bud" Jones` used to shear every later column on his row),
+ * and a leading =/+/-/@ prefixed so Excel treats it as text, not a live
+ * formula.
+ */
+function csvField(v: string | number | null | undefined): string {
+  const s = String(v ?? "");
+  const guarded = /^[=+\-@]/.test(s) ? `'${s}` : s;
+  return `"${guarded.replace(/"/g, '""')}"`;
+}
+
 function generateCSV(entries: TimesheetEntry[], orgTz: string): string {
   const header = [
     "Employee",
@@ -208,16 +241,16 @@ function generateCSV(entries: TimesheetEntry[], orgTz: string): string {
 
   const rows = entries.map((e) =>
     [
-      `"${e.employee_name}"`,
-      `"${formatDateTime(e.clock_in_at, orgTz)}"`,
-      `"${e.clock_out_at ? formatDateTime(e.clock_out_at, orgTz) : ""}"`,
+      csvField(e.employee_name),
+      csvField(formatDateTime(e.clock_in_at, orgTz)),
+      csvField(e.clock_out_at ? formatDateTime(e.clock_out_at, orgTz) : ""),
       e.actual_minutes,
-      `"${e.client_name ?? ""}"`,
-      `"${e.service_type ?? ""}"`,
-      `"${e.scheduled_at ? formatDateTime(e.scheduled_at, orgTz) : ""}"`,
+      csvField(e.client_name),
+      csvField(e.service_type),
+      csvField(e.scheduled_at ? formatDateTime(e.scheduled_at, orgTz) : ""),
       e.estimated_minutes ?? "",
-      `"${e.punctuality ?? ""}"`,
-      `"${e.completion ?? ""}"`,
+      csvField(e.punctuality),
+      csvField(e.completion),
       (e.pay_rate_cents / 100).toFixed(2),
       e.pay_type,
       (e.earned_cents / 100).toFixed(2),
@@ -296,6 +329,34 @@ export function TimesheetsView({
   const [view, setView] = useState<"summary" | "all">("summary");
   const [localFrom, setLocalFrom] = useState(from);
   const [localTo, setLocalTo] = useState(to);
+
+  // Reseed the date inputs when the WINDOW changes underneath them — the
+  // period pager and "Back to current period" navigate with plain links,
+  // so this client component re-renders in place and useState kept the old
+  // values: table showing July, boxes still saying August.
+  const [seededRange, setSeededRange] = useState(`${from}_${to}`);
+  if (seededRange !== `${from}_${to}`) {
+    setSeededRange(`${from}_${to}`);
+    setLocalFrom(from);
+    setLocalTo(to);
+  }
+
+  // PTO is deliberately over-fetched (pending + future stay cancellable);
+  // totals must count only what OVERLAPS the visible window, or a December
+  // vacation shows up in August's pay-period summary — in every period.
+  const ptoInWindow = ptoEntries.filter(
+    (p) => p.start_date <= to && p.end_date >= from,
+  );
+
+  // Browser clock for the "on the clock" elapsed labels: null during SSR
+  // (server time in the markup ≠ client time at hydration = React text
+  // mismatch), then ticking every minute so the label doesn't freeze.
+  const [nowTick, setNowTick] = useState<number | null>(null);
+  useEffect(() => {
+    setNowTick(Date.now());
+    const t = setInterval(() => setNowTick(Date.now()), 60_000);
+    return () => clearInterval(t);
+  }, []);
 
   // Manual-entry dialog state. "create" = fresh entry, "edit" = prefilled
   // for correcting an existing row.
@@ -489,7 +550,7 @@ export function TimesheetsView({
     setDialogOpen(true);
   }
 
-  const summaries = buildSummaries(filteredEntries, employees, ptoEntries);
+  const summaries = buildSummaries(filteredEntries, employees, ptoInWindow);
 
   const totalHours = Math.round(
     filteredEntries.reduce((sum, e) => sum + e.actual_minutes, 0) / 60,
@@ -499,12 +560,13 @@ export function TimesheetsView({
     0,
   );
   // Paid PTO hours only — subcontractor unavailability carries no hours.
+  // Window-scoped: over-fetched future/pending PTO must not count here.
   const filteredPto =
     empFilter === "all"
-      ? ptoEntries.filter(
+      ? ptoInWindow.filter(
           (p) => p.status === "approved" && p.engagement !== "subcontractor",
         )
-      : ptoEntries.filter(
+      : ptoInWindow.filter(
           (p) =>
             p.status === "approved" &&
             p.engagement !== "subcontractor" &&
@@ -654,14 +716,20 @@ export function TimesheetsView({
                 {openShifts
                   .filter((s) => !s.overdue)
                   .map((s) => {
-                    const mins = Math.max(
-                      0,
-                      Math.round(
-                        (Date.now() - new Date(s.clock_in_at).getTime()) /
-                          60_000,
-                      ),
-                    );
-                    const elapsed = `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, "0")}m`;
+                    const mins =
+                      nowTick == null
+                        ? null
+                        : Math.max(
+                            0,
+                            Math.round(
+                              (nowTick - new Date(s.clock_in_at).getTime()) /
+                                60_000,
+                            ),
+                          );
+                    const elapsed =
+                      mins == null
+                        ? null
+                        : `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, "0")}m`;
                     return (
                       <li
                         key={s.id}
@@ -670,8 +738,13 @@ export function TimesheetsView({
                         <span className="text-emerald-900 dark:text-emerald-200">
                           <span className="font-medium">{s.employee_name}</span>
                           <span className="ml-1.5 text-emerald-700 dark:text-emerald-300">
-                            since {formatDateTime(s.clock_in_at, orgTz)} ·{" "}
-                            <span className="tabular-nums">{elapsed}</span>
+                            since {formatDateTime(s.clock_in_at, orgTz)}
+                            {elapsed && (
+                              <>
+                                {" "}
+                                · <span className="tabular-nums">{elapsed}</span>
+                              </>
+                            )}
                           </span>
                           {s.client_name && (
                             <span className="ml-1.5 text-emerald-700 dark:text-emerald-300">
@@ -863,7 +936,8 @@ export function TimesheetsView({
         <div className="rounded-xl border border-border bg-card px-4 py-3">
           <div className="text-xs text-muted-foreground">Shifts</div>
           <div className="mt-1 text-xl font-semibold tabular-nums">
-            {entries.length}
+            {/* Same population as the hours/earnings cards beside it. */}
+            {filteredEntries.length}
           </div>
         </div>
         <div className="rounded-xl border border-border bg-card px-4 py-3">
@@ -972,7 +1046,13 @@ export function TimesheetsView({
         <div className="space-y-2">
           {summaries.map((emp) => {
             const isExpanded = expandedEmp === emp.id;
-            const empEntries = entries.filter((e) => e.employee_id === emp.id);
+            // FILTERED entries — the header's totals come from the same
+            // set, and the select-all below feeds bulk delete: with the
+            // unfiltered list, "manual entries only" + select-all queued
+            // every shift the person had for deletion.
+            const empEntries = filteredEntries.filter(
+              (e) => e.employee_id === emp.id,
+            );
             const hours = Math.floor(emp.totalMinutes / 60);
             const mins = emp.totalMinutes % 60;
             const empPto = ptoEntries.filter(

@@ -35,17 +35,11 @@ export async function generateSubcontractorRunAction(
   if (!period_start || !period_end) {
     return { ok: false, error: "Period start and end are required." };
   }
-  // Malformed dates used to sail through to zonedMidnightUtc and throw a
-  // RangeError — a 500 where a form error belongs.
-  if (
-    !/^\d{4}-\d{2}-\d{2}$/.test(period_start) ||
-    !/^\d{4}-\d{2}-\d{2}$/.test(period_end)
-  ) {
-    return { ok: false, error: "Dates must be valid calendar dates." };
-  }
-  if (period_end < period_start) {
-    return { ok: false, error: "Period end must be on or after start." };
-  }
+  // Same range rules as preparePeriodAction: real calendar dates, ordered,
+  // bounded — a fat-fingered year must not become a decades-long window.
+  const { validatePeriodRange } = await import("../actions");
+  const rangeErr = await validatePeriodRange(period_start, period_end);
+  if (rangeErr) return { ok: false, error: rangeErr };
 
   // The machine lives in lib/contractor-run-create (shared with the
   // period-prepare flow and the cron autodraft); this action is the gate
@@ -106,13 +100,23 @@ export async function markSubcontractorRunPaidAction(
   if (!run) return { ok: false, error: "Statement not found." };
   if (run.status === "paid") return { ok: true };
 
-  const { error } = (await admin
+  // CHECKED claim, same as markPayrollPaidAction: two admins clicking at
+  // once both passed the read above, and both used to proceed — duplicate
+  // "statement paid" texts to every contractor and a phantom second
+  // transition in the audit log. Only the click that flips the row keeps
+  // going.
+  const { data: claimed, error } = (await admin
     .from("subcontractor_pay_runs" as never)
     .update({ status: "paid", paid_at: new Date().toISOString() } as never)
-    .eq("id" as never, runId as never)) as unknown as {
+    .eq("id" as never, runId as never)
+    .eq("organization_id" as never, membership.organization_id as never)
+    .eq("status" as never, "finalized" as never)
+    .select("id")) as unknown as {
+    data: Array<{ id: string }> | null;
     error: { message: string } | null;
   };
   if (error) return { ok: false, error: error.message };
+  if (!claimed || claimed.length === 0) return { ok: true };
 
   // Tell each subcontractor their statement settled. Best-effort.
   try {
@@ -184,11 +188,14 @@ export async function deleteSubcontractorRunAction(
   }
 
   // FK is ON DELETE SET NULL, so deleting the run releases its entries back
-  // to the floating balance and the period can be regenerated.
+  // to the floating balance and the period can be regenerated. Org filter
+  // on the DELETE itself, not just the read above — the tenancy boundary
+  // belongs on the destructive statement.
   const { error } = (await admin
     .from("subcontractor_pay_runs" as never)
     .delete()
-    .eq("id" as never, runId as never)) as unknown as {
+    .eq("id" as never, runId as never)
+    .eq("organization_id" as never, membership.organization_id as never)) as unknown as {
     error: { message: string } | null;
   };
   if (error) return { ok: false, error: error.message };

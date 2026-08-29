@@ -105,6 +105,16 @@ export async function createContractorRunForOrg(opts: {
     }> | null;
   };
 
+  // PostgREST caps unranged selects at 1000 rows; a bigger window would
+  // silently price an arbitrary subset. Refuse loudly — split the period.
+  if ((entries?.length ?? 0) >= 1000) {
+    return {
+      ok: false,
+      error:
+        "This window has too many time entries to price safely in one statement. Split it into shorter periods and generate each.",
+    };
+  }
+
   const rateById = new Map<string, number | null>(
     (subs ?? []).map((s) => [s.id, s.pay_rate_cents]),
   );
@@ -194,6 +204,10 @@ export async function createContractorRunForOrg(opts: {
     .from("time_entries")
     .update({ subcontractor_run_id: run.id } as never)
     .is("subcontractor_run_id" as never, null as never)
+    // Both columns: a concurrent EMPLOYEE run can claim the same legacy
+    // null-snapshot row via payroll_run_id; checking only our own column
+    // would let both claims succeed and pay the hours twice.
+    .is("payroll_run_id", null)
     .in("id", entryIds)
     .select("id")) as unknown as {
     data: Array<{ id: string }> | null;

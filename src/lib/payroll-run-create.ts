@@ -98,6 +98,12 @@ export async function createPayrollRunForOrg(opts: {
     .not("clock_out_at", "is", null);
   if (!includeStragglers) entriesQuery = entriesQuery.gte("clock_in_at", fromIso);
 
+  // PostgREST caps unranged selects at 1000 rows (project max_rows). A
+  // window with more entries than that would price and stamp an arbitrary
+  // subset — paycheques silently short. Refuse loudly instead; splitting
+  // the period is always available.
+  const ENTRY_CAP = 1000;
+
   const [{ data: entries }, { data: employees }, { data: bonuses }, { data: ptoRequests }] =
     await Promise.all([
       entriesQuery as unknown as Promise<{
@@ -155,6 +161,14 @@ export async function createPayrollRunForOrg(opts: {
       }>,
     ]);
 
+  if ((entries?.length ?? 0) >= ENTRY_CAP) {
+    return {
+      ok: false,
+      error:
+        "This window has too many time entries to price safely in one run. Split it into shorter periods and prepare each.",
+    };
+  }
+
   type Bucket = {
     employeeName: string;
     minutes: number;
@@ -183,35 +197,53 @@ export async function createPayrollRunForOrg(opts: {
     });
   }
 
-  // Flipped-to-subcontractor owners of employee-era hours: hours-only buckets.
+  // Hours-only buckets for entry owners outside the active-employee roster:
+  //  - flipped to subcontractor since (their employee-era hours settle here);
+  //  - DEACTIVATED employees (a cleaner who quit still gets her last shifts —
+  //    without this, pre-snapshot hours of anyone since deactivated existed
+  //    on no pay surface at all).
+  // A null-snapshot entry follows its owner's CURRENT engagement: employee →
+  // bucketed here; subcontractor → left for the statement side, same rule
+  // the queries above and the payables ledger use.
   const hoursOnly = new Set<string>();
+  // Current engagement of every rescued owner — the pricing loop needs it
+  // to route their null-snapshot entries to the right pay system.
+  const currentEngagement = new Map<string, string | null>();
   {
-    const flippedIds = Array.from(
-      new Set(
-        (entries ?? [])
-          .filter(
-            (e) =>
-              e.engagement_snapshot === "employee" &&
-              e.employee_id &&
-              !buckets.has(e.employee_id),
-          )
-          .map((e) => e.employee_id as string),
-      ),
+    const snapEmployeeOrphans = new Set<string>();
+    const nullSnapOrphans = new Set<string>();
+    for (const e of entries ?? []) {
+      if (!e.employee_id || buckets.has(e.employee_id)) continue;
+      if (e.engagement_snapshot === "employee") {
+        snapEmployeeOrphans.add(e.employee_id);
+      } else if (e.engagement_snapshot == null) {
+        nullSnapOrphans.add(e.employee_id);
+      }
+    }
+    const orphanIds = Array.from(
+      new Set([...snapEmployeeOrphans, ...nullSnapOrphans]),
     );
-    if (flippedIds.length > 0) {
+    if (orphanIds.length > 0) {
       const { data: flipped } = (await admin
         .from("memberships")
-        .select("id, pay_rate_cents, display_name, profile:profiles ( full_name )")
-        .in("id", flippedIds)
+        .select(
+          "id, pay_rate_cents, engagement, display_name, profile:profiles ( full_name )",
+        )
+        .in("id", orphanIds)
         .eq("organization_id", organizationId)) as unknown as {
         data: Array<{
           id: string;
           pay_rate_cents: number | null;
+          engagement: string | null;
           display_name: string | null;
           profile: { full_name: string | null } | null;
         }> | null;
       };
       for (const m of flipped ?? []) {
+        currentEngagement.set(m.id, m.engagement ?? null);
+        const employeeEra =
+          snapEmployeeOrphans.has(m.id) || m.engagement === "employee";
+        if (!employeeEra) continue;
         hoursOnly.add(m.id);
         buckets.set(m.id, {
           employeeName:
@@ -233,6 +265,15 @@ export async function createPayrollRunForOrg(opts: {
     if (!e.employee_id || !e.clock_in_at || !e.clock_out_at) continue;
     const bucket = buckets.get(e.employee_id);
     if (!bucket) continue;
+    // A null-snapshot entry owned by a CURRENT subcontractor is that
+    // person's contractor-era time — the statement pays it, not this run,
+    // even when the same person also has employee-era hours bucketed here.
+    if (
+      e.engagement_snapshot == null &&
+      currentEngagement.get(e.employee_id) === "subcontractor"
+    ) {
+      continue;
+    }
     countedEntries.push({ id: e.id, employeeId: e.employee_id });
     const mins = Math.max(
       0,
@@ -356,6 +397,10 @@ export async function createPayrollRunForOrg(opts: {
       .from("time_entries")
       .update({ payroll_run_id: run.id })
       .is("payroll_run_id", null)
+      // Both columns, not just ours: a concurrent contractor statement can
+      // claim the same legacy null-snapshot row via ITS column, and each
+      // side checking only its own would let both succeed — paid twice.
+      .is("subcontractor_run_id" as never, null as never)
       .in("id", stampEntryIds)
       .select("id")) as unknown as { data: Array<{ id: string }> | null };
     claims += got?.length ?? 0;

@@ -579,6 +579,10 @@ export async function getSubcontractorLedger(
       .from("memberships")
       .select("pay_rate_cents, engagement")
       .eq("id", payee.id)
+      // The one read in this file that skipped the tenancy filter — the id
+      // comes off the URL and this decides a pay rate. Currently masked by
+      // the org-scoped contact lookup 404ing first; belt anyway.
+      .eq("organization_id", organizationId)
       .maybeSingle()) as unknown as {
       data: { pay_rate_cents: number | null; engagement: string | null } | null;
     };

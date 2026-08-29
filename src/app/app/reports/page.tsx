@@ -28,12 +28,14 @@ export default async function ReportsPage({
   const orgTz = await getOrgTimezone(membership.organization_id);
 
   const params = await searchParams;
+  // Defaults in the ORG's calendar — the UTC slice handed org-local
+  // converters tomorrow's date every evening, dropping the range's first
+  // day and stretching it into the org's future.
+  const { zonedYmd, zonedDayStartUtc } = await import("@/lib/wall-clock");
   const now = new Date();
-  const defaultFrom = new Date(now);
-  defaultFrom.setDate(defaultFrom.getDate() - 90);
-
-  const from = params.from || defaultFrom.toISOString().slice(0, 10);
-  const to = params.to || now.toISOString().slice(0, 10);
+  const from =
+    params.from || zonedYmd(zonedDayStartUtc(now, orgTz, -90), orgTz);
+  const to = params.to || zonedYmd(now, orgTz);
 
   // Convert user-picked YYYY-MM-DD values to UTC ISO boundaries using the
   // org's timezone. Previously these were hardcoded to T00:00:00Z /

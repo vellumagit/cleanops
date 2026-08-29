@@ -42,7 +42,15 @@ export function RecordPaymentForm({ invoiceId, balanceCents }: Props) {
   const boundAction = recordInvoicePaymentAction.bind(null, invoiceId);
   const [state, formAction] = useActionState(boundAction, empty);
 
-  const today = new Date().toISOString().slice(0, 10);
+  // Browser-LOCAL today — the UTC slice dated an 8pm-Edmonton e-transfer
+  // tomorrow, shoving it into the next month on statements and reports.
+  // (Same correction the contractor payout form applies.)
+  const nowLocal = new Date();
+  const today = new Date(
+    nowLocal.getTime() - nowLocal.getTimezoneOffset() * 60_000,
+  )
+    .toISOString()
+    .slice(0, 10);
   const defaultAmount = centsToDollarString(balanceCents);
 
   return (

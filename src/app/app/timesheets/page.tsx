@@ -191,6 +191,11 @@ export default async function TimesheetsPage({
           )
         `,
         )
+        // Explicit org scope, not just RLS: a user who admins TWO orgs
+        // (Brian: Velluma + Svit) can read both orgs' rows, so without
+        // this the page mixed them — Velluma test shifts on Svit's
+        // timesheets as "Unknown".
+        .eq("organization_id", membership.organization_id)
         .gte("clock_in_at", fromIso)
         .lt("clock_in_at", toIso)
         .order("clock_in_at", { ascending: false })
@@ -288,6 +293,7 @@ export default async function TimesheetsPage({
         .select(
           "id, scheduled_at, duration_minutes, service_type, client:clients ( name )",
         )
+        .eq("organization_id", membership.organization_id)
         .gte("scheduled_at", bookingsWindowFrom)
         .lte("scheduled_at", bookingsWindowTo)
         .order("scheduled_at", { ascending: false })
@@ -560,6 +566,7 @@ export default async function TimesheetsPage({
       `id, employee_id, clock_in_at,
        booking:bookings ( id, scheduled_at, duration_minutes, service_type, client:clients ( name ) )`,
     )
+    .eq("organization_id", membership.organization_id)
     .is("clock_out_at" as never, null as never)
     .order("clock_in_at", { ascending: true })
     .limit(50)) as unknown as {

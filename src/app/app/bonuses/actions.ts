@@ -3,6 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { getActionContext } from "@/lib/actions";
 import { logAuditEvent } from "@/lib/audit";
+import { getOrgTimezone } from "@/lib/org-timezone";
+import { zonedYmd, zonedDayStartUtc } from "@/lib/wall-clock";
 
 type ComputeResult =
   | { ok: true; created: number; skipped: number }
@@ -37,12 +39,19 @@ export async function computeBonusesAction(): Promise<ComputeResult> {
     return { ok: false, error: "The review bonus engine is currently disabled." };
   }
 
-  const periodEnd = new Date();
-  const periodStart = new Date(periodEnd);
-  periodStart.setUTCDate(periodStart.getUTCDate() - rule.period_days);
-  const periodStartIso = periodStart.toISOString();
-  const periodStartDate = periodStartIso.slice(0, 10);
-  const periodEndDate = periodEnd.toISOString().slice(0, 10);
+  // ORG-LOCAL period dates. The UTC slice put a 7pm-Edmonton compute into
+  // tomorrow's date — the bonus row landed one pay period over, and an
+  // evening re-compute produced a DIFFERENT (start, end) pair than the
+  // afternoon one, so the dedupe key missed and everyone was awarded twice.
+  const bonusOrgTz = await getOrgTimezone(membership.organization_id);
+  const periodEndDate = zonedYmd(new Date(), bonusOrgTz);
+  const periodStartUtc = zonedDayStartUtc(
+    new Date(),
+    bonusOrgTz,
+    -rule.period_days,
+  );
+  const periodStartDate = zonedYmd(periodStartUtc, bonusOrgTz);
+  const periodStartIso = periodStartUtc.toISOString();
 
   // Pull every review for this org in the window.
   // Explicit org filter as defense-in-depth — this computes financial data.
@@ -163,12 +172,19 @@ export async function computeEfficiencyBonusesAction(): Promise<ComputeResult> {
     return { ok: false, error: "The efficiency bonus engine is currently disabled." };
   }
 
-  const periodEnd = new Date();
-  const periodStart = new Date(periodEnd);
-  periodStart.setUTCDate(periodStart.getUTCDate() - rule.period_days);
-  const periodStartIso = periodStart.toISOString();
-  const periodStartDate = periodStartIso.slice(0, 10);
-  const periodEndDate = periodEnd.toISOString().slice(0, 10);
+  // ORG-LOCAL period dates. The UTC slice put a 7pm-Edmonton compute into
+  // tomorrow's date — the bonus row landed one pay period over, and an
+  // evening re-compute produced a DIFFERENT (start, end) pair than the
+  // afternoon one, so the dedupe key missed and everyone was awarded twice.
+  const bonusOrgTz = await getOrgTimezone(membership.organization_id);
+  const periodEndDate = zonedYmd(new Date(), bonusOrgTz);
+  const periodStartUtc = zonedDayStartUtc(
+    new Date(),
+    bonusOrgTz,
+    -rule.period_days,
+  );
+  const periodStartDate = zonedYmd(periodStartUtc, bonusOrgTz);
+  const periodStartIso = periodStartUtc.toISOString();
 
   // Get all completed bookings in the period with their time entries
   const { data: bookings, error: bookingsErr } = await supabase
@@ -394,8 +410,13 @@ export async function createAdHocBonusAction(
     return { ok: false, error: "Enter a dollar amount greater than zero." };
   }
 
-  // Default the period to today if the owner didn't pick one.
-  const today = new Date().toISOString().slice(0, 10);
+  // Default the period to today — the ORG'S today. The UTC slice dated an
+  // 8pm-Edmonton bonus tomorrow, which slid it past the run fence into the
+  // next pay period, where the owner never meant it.
+  const today = zonedYmd(
+    new Date(),
+    await getOrgTimezone(membership.organization_id),
+  );
   const start = period_start || today;
   const end = period_end || today;
   if (new Date(end).getTime() < new Date(start).getTime()) {

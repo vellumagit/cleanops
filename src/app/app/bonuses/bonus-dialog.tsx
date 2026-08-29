@@ -75,7 +75,13 @@ export function BonusDialog({
       setEmployeeId(employees[0]?.id ?? "");
       setAmount("");
       setReason("");
-      const today = new Date().toISOString().slice(0, 10);
+      // Browser-LOCAL today, not the UTC date — after 6pm Edmonton the UTC
+      // slice pre-filled tomorrow, quietly dating the bonus into the next
+      // pay period.
+      const d = new Date();
+      const today = new Date(d.getTime() - d.getTimezoneOffset() * 60_000)
+        .toISOString()
+        .slice(0, 10);
       setPeriodStart(today);
       setPeriodEnd(today);
     }

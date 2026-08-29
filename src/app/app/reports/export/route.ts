@@ -32,16 +32,15 @@ export async function GET(request: NextRequest) {
 
   const { searchParams } = new URL(request.url);
 
-  const now = new Date();
-  const defaultFrom = new Date(now);
-  defaultFrom.setDate(defaultFrom.getDate() - 90);
-
-  const from = searchParams.get("from") || defaultFrom.toISOString().slice(0, 10);
-  const to = searchParams.get("to") || now.toISOString().slice(0, 10);
-
-  // Respect the org's timezone for the date-range boundaries (previously
-  // hardcoded to UTC, which skewed data for non-Eastern orgs).
+  // Org-local defaults, matching the Reports page — UTC-sliced dates fed
+  // to an org-local converter dropped the first day of the stated range
+  // from the CSV every evening.
   const orgTz = await getOrgTimezone(membership.organization_id);
+  const { zonedYmd, zonedDayStartUtc } = await import("@/lib/wall-clock");
+  const now = new Date();
+  const from =
+    searchParams.get("from") || zonedYmd(zonedDayStartUtc(now, orgTz, -90), orgTz);
+  const to = searchParams.get("to") || zonedYmd(now, orgTz);
   const fromIso = localInputToUtcIso(`${from}T00:00:00`, orgTz);
   const toIso = localInputToUtcIso(`${to}T23:59:59`, orgTz);
 

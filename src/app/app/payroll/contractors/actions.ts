@@ -162,7 +162,8 @@ export async function deletePayoutAction(formData: FormData): Promise<Result> {
   const { error } = (await (admin
     .from("subcontractor_payouts" as never)
     .delete()
-    .eq("id" as never, id as never) as unknown as Promise<{
+    .eq("id" as never, id as never)
+    .eq("organization_id" as never, membership.organization_id as never) as unknown as Promise<{
     error: { message: string } | null;
   }>));
   if (error) return { ok: false, error: error.message };
@@ -257,7 +258,8 @@ export async function deleteBillAction(formData: FormData): Promise<Result> {
   const { error } = (await (admin
     .from("subcontractor_bills" as never)
     .delete()
-    .eq("id" as never, id as never) as unknown as Promise<{
+    .eq("id" as never, id as never)
+    .eq("organization_id" as never, membership.organization_id as never) as unknown as Promise<{
     error: { message: string } | null;
   }>));
   if (error) return { ok: false, error: error.message };
