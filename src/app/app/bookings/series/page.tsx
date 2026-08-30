@@ -30,9 +30,12 @@ export default async function SeriesPage() {
         total_cents,
         assigned_to,
         created_at,
+        client_id,
         client:clients ( name )
       `,
     )
+    // Explicit org scope — a two-org admin reads both orgs via RLS alone.
+    .eq("organization_id" as never, membership.organization_id as never)
     .order("created_at", { ascending: false })
     .limit(100) as unknown as Promise<{
     data: Array<{
@@ -48,6 +51,7 @@ export default async function SeriesPage() {
       total_cents: number;
       assigned_to: string | null;
       created_at: string;
+      client_id: string | null;
       client: { name: string } | null;
     }> | null;
     error: { message: string } | null;
@@ -57,7 +61,10 @@ export default async function SeriesPage() {
 
   // Get booking counts per series
   const seriesIds = (data ?? []).map((s) => s.id);
-  const bookingCounts: Record<string, { total: number; upcoming: number }> = {};
+  const bookingCounts: Record<
+    string,
+    { total: number; upcoming: number; unbilled: number }
+  > = {};
 
   if (seriesIds.length > 0) {
     const now = new Date().toISOString();
@@ -83,10 +90,26 @@ export default async function SeriesPage() {
       data: Array<{ series_id: string }> | null;
     }>);
 
+    // Past COMPLETED occurrences no invoice has claimed — the money the
+    // series has earned that nothing has billed yet. Surfacing it here is
+    // the difference between "the cron will get it" and finding out at
+    // month-end that it never did.
+    const { data: unbilledData } = await (supabase
+      .from("bookings")
+      .select("series_id")
+      .in("series_id" as never, seriesIds as never)
+      .eq("status" as never, "completed" as never)
+      .is("billing_invoice_id" as never, null as never)
+      .lt("scheduled_at" as never, now as never) as unknown as Promise<{
+      data: Array<{ series_id: string }> | null;
+    }>);
+
     for (const id of seriesIds) {
       bookingCounts[id] = {
         total: (totalData ?? []).filter((b) => b.series_id === id).length,
         upcoming: (upcomingData ?? []).filter((b) => b.series_id === id).length,
+        unbilled: (unbilledData ?? []).filter((b) => b.series_id === id)
+          .length,
       };
     }
   }
@@ -104,8 +127,10 @@ export default async function SeriesPage() {
     total_cents: s.total_cents,
     created_at: s.created_at,
     client_name: s.client?.name ?? "—",
+    client_id: s.client_id ?? null,
     total_bookings: bookingCounts[s.id]?.total ?? 0,
     upcoming_bookings: bookingCounts[s.id]?.upcoming ?? 0,
+    unbilled_past: bookingCounts[s.id]?.unbilled ?? 0,
   }));
 
   return (

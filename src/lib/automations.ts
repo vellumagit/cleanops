@@ -7292,6 +7292,37 @@ export async function autoGenerateRecurringInvoices(): Promise<{
       continue;
     }
 
+    // ── Double-billing guard ─────────────────────────────────────────
+    // booking_series and invoice_series are separate recurrence engines.
+    // A client on a billing CYCLE already gets their bookings swept into
+    // consolidated invoices — a standing invoice on top is double-billing
+    // by construction. HOLD the standing one (the cycle knows the actual
+    // work; this row only knows a number) and tell management to pick an
+    // engine. The claim above already advanced the clock, so this warns
+    // once per period, never daily.
+    const { data: seriesClient } = (await db
+      .from("clients")
+      .select("name, billing_cadence")
+      .eq("id", series.client_id)
+      .maybeSingle()) as unknown as {
+      data: { name: string | null; billing_cadence: string | null } | null;
+    };
+    if (
+      seriesClient?.billing_cadence &&
+      seriesClient.billing_cadence !== "on_demand"
+    ) {
+      await notify({
+        organizationId: series.organization_id,
+        audience: "org-management",
+        title: "Standing invoice held — client is on a billing cycle",
+        body: `${seriesClient.name ?? "A client"} has BOTH a ${seriesClient.billing_cadence} billing cycle and the standing invoice "${series.name}". The cycle already bills their jobs, so the standing invoice was NOT sent this period — keep one or the other.`,
+        href: "/app/settings/recurring-invoices",
+      }).catch((err) =>
+        console.error("[auto] recurring-invoice hold notify failed:", err),
+      );
+      continue;
+    }
+
     // Let the DB trigger assign the invoice number — it uses the
     // INV-YYYY-XXXX format consistently across all invoice creation
     // paths. The previous code computed a count-based "INV-0001"
@@ -7420,6 +7451,34 @@ export async function autoGenerateRecurringInvoices(): Promise<{
         last_invoice_id: inserted.id,
       })
       .eq("id", series.id);
+
+    // The other half of the double-billing guard: an on-demand client's
+    // standing invoice went out while completed jobs sit unbilled. Whether
+    // the standing amount COVERS those jobs is a judgment call the system
+    // must not make (auto-stamping them "billed" would silently under-bill
+    // a client whose standing fee is for something else) — so a human gets
+    // the question, with the numbers.
+    try {
+      const { count: unbilledCount } = (await db
+        .from("bookings")
+        .select("id", { count: "exact", head: true })
+        .eq("client_id", series.client_id)
+        .eq("organization_id", series.organization_id)
+        .eq("status", "completed")
+        .is("billing_invoice_id", null)
+        .lt("scheduled_at", nowIso)) as unknown as { count: number | null };
+      if ((unbilledCount ?? 0) > 0) {
+        await notify({
+          organizationId: series.organization_id,
+          audience: "org-management",
+          title: "Standing invoice sent — unbilled jobs alongside it",
+          body: `The standing invoice "${series.name}" went out while ${unbilledCount} completed job${unbilledCount === 1 ? "" : "s"} for the same client ${unbilledCount === 1 ? "sits" : "sit"} unbilled. If the standing amount covers them, link them on an invoice; if not, bill them separately — don't let them ride unnoticed.`,
+          href: `/app/invoices/new?client_id=${series.client_id}`,
+        });
+      }
+    } catch (err) {
+      console.error("[auto] recurring-invoice unbilled check failed:", err);
+    }
 
     // Schedule auto-send if the org opted in — recurring drafts previously
     // sat unsent forever while per-job and consolidated invoices auto-sent

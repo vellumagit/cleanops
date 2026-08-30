@@ -17,6 +17,8 @@ The fields that matter most:
 
 Tick **Repeats** and set the pattern; Sollos generates the visits ahead of time and keeps generating them. Editing a recurring booking asks whether you mean *just this visit* or *this and future* — the second rewrites the schedule from that date forward. A client skipping one week is a **skip**, not an edit.
 
+The recurring list shows each series' **billing state**: an amber "N unbilled" chip means completed visits no invoice has claimed — click it to bill them. And the two recurring engines guard each other: if a client is on a billing cycle AND has a standing recurring invoice, the standing one is held with a warning instead of double-billing them.
+
 ## Split shifts
 
 A split shift is a hand-off: one cleaner does the first hours, another takes over — they don't overlap. For two cleaners working *together*, don't split; assign both as crew.

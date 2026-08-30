@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useTransition } from "react";
 import { Pause, Play } from "lucide-react";
 import { DataTable, type DataTableColumn } from "@/components/data-table";
@@ -26,8 +27,11 @@ export type SeriesRow = {
   total_cents: number;
   created_at: string;
   client_name: string;
+  client_id: string | null;
   total_bookings: number;
   upcoming_bookings: number;
+  /** Past completed occurrences no invoice has claimed. */
+  unbilled_past: number;
 };
 
 function CancelButton({
@@ -116,6 +120,26 @@ export function SeriesTable({
       headerClassName: "text-right",
       className: "text-right tabular-nums",
       render: (r) => formatCurrencyCents(r.total_cents),
+    },
+    {
+      key: "billing",
+      header: "Billing",
+      render: (r) =>
+        r.unbilled_past > 0 ? (
+          <Link
+            href={
+              r.client_id
+                ? `/app/invoices/new?client_id=${r.client_id}`
+                : "/app/invoices/new"
+            }
+            title="Completed visits no invoice has claimed — click to bill them"
+            className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800 hover:bg-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:hover:bg-amber-950/60"
+          >
+            {r.unbilled_past} unbilled
+          </Link>
+        ) : (
+          <span className="text-xs text-muted-foreground">billed up</span>
+        ),
     },
     {
       key: "bookings",
