@@ -17,11 +17,14 @@ const EMPTY: RequestBookingState = {};
 
 export function RequestForm({
   defaultAddress,
+  defaultService = null,
 }: {
   /** Pre-fill from the client record so they don't retype their
    *  address every time. They can edit if this request is for a
    *  different location. */
   defaultAddress: string | null;
+  /** Their usual service — the label from their most recent booking. */
+  defaultService?: string | null;
 }) {
   const [state, action] = useActionState<RequestBookingState, FormData>(
     submitBookingRequestAction,
@@ -66,6 +69,7 @@ export function RequestForm({
           id="service_type"
           name="service_type"
           placeholder="Standard house clean"
+          defaultValue={defaultService ?? ""}
           required
         />
       </FormField>

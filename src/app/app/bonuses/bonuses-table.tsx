@@ -70,14 +70,20 @@ export function BonusesTable({
   canEdit,
   employees,
   tz,
+  preselectEmployeeId = null,
 }: {
   rows: BonusRow[];
   canEdit: boolean;
   employees: BonusEmployeeOption[];
   /** Org IANA timezone — every date on this table renders in it. */
   tz: string;
+  /** ?employee= deep link ("Add bonus" from an employee's file) — opens
+   *  the create dialog with that person locked in. */
+  preselectEmployeeId?: string | null;
 }) {
-  const [dialogOpen, setDialogOpen] = useState(false);
+  const [dialogOpen, setDialogOpen] = useState(
+    Boolean(canEdit && preselectEmployeeId),
+  );
   const [dialogMode, setDialogMode] = useState<"create" | "edit">("create");
   const [editing, setEditing] = useState<EditingBonus | null>(null);
 
@@ -211,6 +217,7 @@ export function BonusesTable({
         mode={dialogMode}
         editing={editing}
         employees={employees}
+        preselectEmployeeId={preselectEmployeeId}
       />
     </div>
   );

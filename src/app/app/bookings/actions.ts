@@ -853,6 +853,35 @@ export async function createBookingAction(
     revalidatePath("/app/bookings/requests");
   }
 
+  // "Book this job" from an estimate: stamp the link, so the estimate
+  // page shows converted and nobody wonders whether the quote landed.
+  // Same guards as the request claim — org-scoped, and the estimate must
+  // belong to the client this booking was actually saved for.
+  const fromEstimateId = String(formData.get("estimate_id") ?? "");
+  if (fromEstimateId) {
+    const estAdmin = createSupabaseAdminClient();
+    const { data: est } = (await estAdmin
+      .from("estimates")
+      .select("client_id")
+      .eq("id", fromEstimateId)
+      .eq("organization_id", membership.organization_id)
+      .maybeSingle()) as unknown as { data: { client_id: string } | null };
+    // Only when the estimate is real AND still matches the client the
+    // booking was actually saved for — retargeting the form to a
+    // different client must not claim the quote.
+    if (est && est.client_id === parsed.data.client_id) {
+      const { error: estErr } = await estAdmin
+        .from("bookings")
+        .update({ estimate_id: fromEstimateId } as never)
+        .eq("id", booking.id)
+        .eq("organization_id", membership.organization_id);
+      if (estErr) {
+        console.error("[booking] estimate link failed:", estErr.message);
+      }
+      revalidatePath("/app/estimates");
+    }
+  }
+
   revalidatePath("/app/bookings");
   revalidatePath("/app/calendar");
   revalidatePath("/app");
@@ -2276,7 +2305,20 @@ export async function convertBookingToRecurringAction(
  * with status reset to "pending". Redirects to the new booking's edit page
  * so the owner can adjust the date before confirming.
  */
+/** "Book again" from a finished job — duplicate, advanced to the next
+ *  future occurrence of the same weekday/time. Form-bindable wrapper. */
+export async function rebookBookingAction(id: string) {
+  return duplicateBookingImpl(id, { advance: true });
+}
+
 export async function duplicateBookingAction(id: string) {
+  return duplicateBookingImpl(id, {});
+}
+
+async function duplicateBookingImpl(
+  id: string,
+  opts: { advance?: boolean },
+) {
   const { membership, supabase } = await getActionContext();
 
   const { data: source } = (await supabase
@@ -2306,6 +2348,19 @@ export async function duplicateBookingAction(id: string) {
 
   if (!source) return;
 
+  // "Book again" on a finished job: same weekday, same time, next FUTURE
+  // occurrence — a completed job's date is in the past, and rebooking a
+  // cleaning is almost always "the same slot, next week". Plain Duplicate
+  // keeps the source's date (the owner is editing anyway).
+  let scheduledAt = source.scheduled_at;
+  if (opts?.advance) {
+    const d = new Date(source.scheduled_at);
+    while (d.getTime() <= Date.now()) {
+      d.setUTCDate(d.getUTCDate() + 7);
+    }
+    scheduledAt = d.toISOString();
+  }
+
   const { data: copy, error } = await supabase
     .from("bookings")
     .insert({
@@ -2313,7 +2368,7 @@ export async function duplicateBookingAction(id: string) {
       client_id: source.client_id,
       package_id: source.package_id ?? null,
       assigned_to: source.assigned_to ?? null,
-      scheduled_at: source.scheduled_at,
+      scheduled_at: scheduledAt,
       duration_minutes: source.duration_minutes,
       service_type: source.service_type as ServiceTypeEnum,
       service_type_id: source.service_type_id,
@@ -2393,7 +2448,7 @@ export async function duplicateBookingAction(id: string) {
 
     createCalendarEvent(membership.organization_id, {
       id: copy.id,
-      scheduled_at: source.scheduled_at,
+      scheduled_at: scheduledAt,
       duration_minutes: dupEffectiveDuration,
       service_type: source.service_type,
       address: source.address,
@@ -2417,7 +2472,7 @@ export async function duplicateBookingAction(id: string) {
     );
     syncMemberCalendarEvents(copy.id, everyAssignee, {
       id: copy.id,
-      scheduled_at: source.scheduled_at,
+      scheduled_at: scheduledAt,
       duration_minutes: dupEffectiveDuration,
       service_type: source.service_type,
       address: source.address,

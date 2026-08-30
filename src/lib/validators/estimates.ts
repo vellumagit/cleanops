@@ -7,6 +7,9 @@ export const EstimateStatusEnum = z.enum([
   "sent",
   "approved",
   "declined",
+  // The expiry cron writes this; without it here, re-saving an expired
+  // estimate forced the editor to pick some other status first.
+  "expired",
 ]);
 
 const cardSafeOptionalText = optionalText.refine(noCardNumber, {

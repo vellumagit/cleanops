@@ -13,15 +13,16 @@ export const metadata = { title: "Estimates" };
 export default async function EstimatesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ archived?: string }>;
+  searchParams: Promise<{ archived?: string; client?: string }>;
 }) {
   const membership = await requireMembership();
   requireCapability(membership, "invoicing");
   const tz = await getOrgTimezone(membership.organization_id);
   const canEdit = membership.role === "owner" || membership.role === "admin";
   const supabase = await createSupabaseServerClient();
-  const { archived } = await searchParams;
+  const { archived, client } = await searchParams;
   const showArchived = archived === "1";
+  const clientFilter = client?.trim() || null;
 
   let query = supabase.from("estimates").select(
     `
@@ -36,6 +37,11 @@ export default async function EstimatesPage({
         client:clients ( name )
       `,
   );
+
+  // Explicit org scope — a two-org admin reads both orgs via RLS alone.
+  query = query.eq("organization_id", membership.organization_id);
+  // ?client= — the client page's estimate links promise this scoping.
+  if (clientFilter) query = query.eq("client_id", clientFilter);
 
   query = showArchived
     ? query.not("archived_at" as never, "is" as never, null as never)
@@ -98,6 +104,19 @@ export default async function EstimatesPage({
         </div>
       }
     >
+      {clientFilter && (
+        <div className="mb-3 flex items-center gap-2 text-sm">
+          <span className="rounded-full bg-primary/10 px-3 py-1 font-medium text-primary">
+            Filtered to {rows[0]?.client_name ?? "one client"}
+          </span>
+          <Link
+            href="/app/estimates"
+            className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+          >
+            Show all estimates
+          </Link>
+        </div>
+      )}
       <EstimatesTable tz={tz} rows={rows} canEdit={canEdit && !showArchived} />
     </PageShell>
   );

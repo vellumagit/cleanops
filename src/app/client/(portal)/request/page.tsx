@@ -10,13 +10,32 @@ export default async function ClientRequestPage() {
 
   // Pull the default address off the client record so we can pre-fill
   // the form. RLS lets the client read their own clients row.
-  const { data } = (await supabase
-    .from("clients")
-    .select("address")
-    .eq("id", client.id)
-    .maybeSingle()) as unknown as {
-    data: { address: string | null } | null;
-  };
+  const [{ data }, { data: lastBooking }] = await Promise.all([
+    supabase
+      .from("clients")
+      .select("address")
+      .eq("id", client.id)
+      .maybeSingle() as unknown as Promise<{
+      data: { address: string | null } | null;
+    }>,
+    // Their usual service, straight from their most recent job — "what do
+    // you need cleaned?" already has an answer for a 95%-recurring book.
+    supabase
+      .from("bookings")
+      .select("service_type_label, service_type")
+      .eq("client_id", client.id)
+      .neq("status", "cancelled")
+      .order("scheduled_at", { ascending: false })
+      .limit(1)
+      .maybeSingle() as unknown as Promise<{
+      data: { service_type_label: string | null; service_type: string | null } | null;
+    }>,
+  ]);
+  const lastService =
+    lastBooking?.service_type_label ??
+    (lastBooking?.service_type
+      ? lastBooking.service_type.replace(/_/g, " ")
+      : null);
 
   return (
     <div className="space-y-6">
@@ -29,7 +48,10 @@ export default async function ClientRequestPage() {
       </div>
 
       <div className="rounded-lg border border-border bg-card p-5">
-        <RequestForm defaultAddress={data?.address ?? null} />
+        <RequestForm
+          defaultAddress={data?.address ?? null}
+          defaultService={lastService}
+        />
       </div>
     </div>
   );

@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import {
   ArrowLeft,
+  Gift,
   Pencil,
   Mail,
   Phone,
@@ -143,6 +144,15 @@ export default async function EmployeeFilePage({
           >
             <ArrowLeft className="h-4 w-4" />
             Team
+          </Link>
+          {/* Deep link — the bonuses page opens its dialog with this
+              person locked in, instead of re-finding them in a dropdown. */}
+          <Link
+            href={`/app/bonuses?employee=${member.id}`}
+            className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+          >
+            <Gift className="h-4 w-4" />
+            Add bonus
           </Link>
           <Link
             href={`/app/employees/${member.id}/edit`}

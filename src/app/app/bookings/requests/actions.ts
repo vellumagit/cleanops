@@ -55,5 +55,40 @@ export async function updateRequestStatusAction(
     after: { status: nextStatus },
   });
 
+  // Declining used to be silent: the portal flipped the chip to
+  // "declined" and the client heard nothing — the exact phone call the
+  // portal exists to prevent. A short note closes the loop. Scheduling
+  // needs nothing here: the booking-confirmation flow already writes.
+  if (nextStatus === "declined") {
+    try {
+      const { data: req } = (await admin
+        .from("booking_requests" as never)
+        .select(
+          "service_type, client:clients ( name, email )" as never,
+        )
+        .eq("id" as never, id as never)
+        .maybeSingle()) as unknown as {
+        data: {
+          service_type: string | null;
+          client: { name: string | null; email: string | null } | null;
+        } | null;
+      };
+      if (req?.client?.email) {
+        const { sendOrgEmail } = await import("@/lib/email");
+        const { getOrgName } = await import("@/lib/org-name");
+        const orgName = await getOrgName(membership.organization_id);
+        await sendOrgEmail(membership.organization_id, {
+          to: req.client.email,
+          toName: req.client.name ?? undefined,
+          subject: `About your booking request — ${orgName}`,
+          text: `Hi ${req.client.name ?? "there"},\n\nWe can't take on your recent request${req.service_type ? ` (${req.service_type})` : ""} as submitted. If the timing was the issue, send another request with different dates — or just reply to this email and we'll figure it out together.\n\n— ${orgName}`,
+          html: `<p>Hi ${req.client.name ?? "there"},</p><p>We can&rsquo;t take on your recent request${req.service_type ? ` (<strong>${req.service_type}</strong>)` : ""} as submitted. If the timing was the issue, send another request with different dates — or just reply to this email and we&rsquo;ll figure it out together.</p><p>— ${orgName}</p>`,
+        });
+      }
+    } catch (err) {
+      console.error("[booking-request] decline notice failed:", err);
+    }
+  }
+
   revalidatePath("/app/bookings/requests");
 }

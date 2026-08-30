@@ -1,6 +1,13 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { CheckCircle2, Copy, Pencil, Receipt, Send } from "lucide-react";
+import {
+  CalendarPlus,
+  CheckCircle2,
+  Copy,
+  Pencil,
+  Receipt,
+  Send,
+} from "lucide-react";
 import { requireMembership, can } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
@@ -34,6 +41,7 @@ import { SubmitButton } from "@/components/submit-button";
 import { relayVisitNoteAction } from "../actions";
 import {
   duplicateBookingAction,
+  rebookBookingAction,
   markBookingCompleteAction,
 } from "@/app/app/bookings/actions";
 
@@ -423,6 +431,17 @@ export default async function BookingDetailPage({
                   </button>
                 </form>
               )}
+            {/* On a finished job the natural next step is the NEXT visit —
+                same client, service, crew, price; date advanced to the same
+                weekday/time next week, landing on the edit page to adjust. */}
+            {bookingStatus === "completed" && (
+              <form action={rebookBookingAction.bind(null, booking.id)}>
+                <button type="submit" className={buttonVariants()}>
+                  <CalendarPlus className="h-4 w-4" />
+                  Book again
+                </button>
+              </form>
+            )}
             <form action={duplicateBookingAction.bind(null, booking.id)}>
               <button
                 type="submit"

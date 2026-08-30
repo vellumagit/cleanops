@@ -17,7 +17,7 @@ export const metadata = { title: "Invoices" };
 export default async function InvoicesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ archived?: string }>;
+  searchParams: Promise<{ archived?: string; client?: string }>;
 }) {
   const membership = await requireMembership();
   requireCapability(membership, "invoicing");
@@ -29,8 +29,9 @@ export default async function InvoicesPage({
     membership.organization_id,
   );
   const tzPromise = getOrgTimezone(membership.organization_id);
-  const { archived } = await searchParams;
+  const { archived, client } = await searchParams;
   const showArchived = archived === "1";
+  const clientFilter = client?.trim() || null;
 
   let query = supabase.from("invoices").select(
     `
@@ -47,6 +48,13 @@ export default async function InvoicesPage({
         client:clients ( name, email, contact_preference, contact_overrides, sms_opted_in )
       ` as never,
   );
+
+  // Explicit org scope — a two-org admin reads both orgs via RLS alone.
+  query = query.eq("organization_id" as never, membership.organization_id as never);
+
+  // ?client= — the client page has linked here "scoped to THIS client"
+  // since day one; the page just never read it.
+  if (clientFilter) query = query.eq("client_id" as never, clientFilter as never);
 
   query = showArchived
     ? query.not("archived_at" as never, "is" as never, null as never)
@@ -165,6 +173,19 @@ export default async function InvoicesPage({
                 ` (${onHold} more ${onHold === 1 ? "is" : "are"} on hold — that one's deliberate.)`}
             </p>
           </div>
+        </div>
+      )}
+      {clientFilter && (
+        <div className="mb-3 flex items-center gap-2 text-sm">
+          <span className="rounded-full bg-primary/10 px-3 py-1 font-medium text-primary">
+            Filtered to {rows[0]?.client_name ?? "one client"}
+          </span>
+          <Link
+            href="/app/invoices"
+            className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+          >
+            Show all invoices
+          </Link>
         </div>
       )}
       <InvoicesTable

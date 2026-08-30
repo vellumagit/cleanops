@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import Link from "next/link";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -12,6 +12,10 @@ import { createReviewAction, type ReviewFormState } from "./actions";
 const empty: ReviewFormState = {};
 
 type Option = { id: string; label: string };
+type BookingOption = Option & {
+  client_id: string | null;
+  assigned_to: string | null;
+};
 
 export function ReviewForm({
   clients,
@@ -20,10 +24,26 @@ export function ReviewForm({
 }: {
   clients: Option[];
   employees: Option[];
-  bookings: Option[];
+  bookings: BookingOption[];
 }) {
   const [state, formAction] = useActionState(createReviewAction, empty);
   const v = state.values ?? {};
+
+  // Controlled so picking the BOOKING can fill the other two — the job
+  // fully determines who the client was and who cleaned it; restating
+  // them was pure retyping. Only-if-blank, same rule as the booking form.
+  const [clientId, setClientId] = useState(v.client_id ?? "");
+  const [employeeId, setEmployeeId] = useState(v.employee_id ?? "");
+  const [bookingId, setBookingId] = useState(v.booking_id ?? "");
+
+  function handleBookingChange(id: string) {
+    setBookingId(id);
+    if (!id) return;
+    const b = bookings.find((x) => x.id === id);
+    if (!b) return;
+    if (!clientId && b.client_id) setClientId(b.client_id);
+    if (!employeeId && b.assigned_to) setEmployeeId(b.assigned_to);
+  }
 
   return (
     <form action={formAction} className="space-y-5">
@@ -40,7 +60,8 @@ export function ReviewForm({
             id="client_id"
             name="client_id"
             required
-            defaultValue={v.client_id ?? ""}
+            value={clientId}
+            onChange={(e) => setClientId(e.target.value)}
           >
             <option value="">Select a client…</option>
             {clients.map((c) => (
@@ -59,7 +80,8 @@ export function ReviewForm({
           <FormSelect
             id="employee_id"
             name="employee_id"
-            defaultValue={v.employee_id ?? ""}
+            value={employeeId}
+            onChange={(e) => setEmployeeId(e.target.value)}
           >
             <option value="">No employee tagged</option>
             {employees.map((e) => (
@@ -76,12 +98,13 @@ export function ReviewForm({
           label="Booking"
           htmlFor="booking_id"
           error={state.errors?.booking_id}
-          hint="Optional — link a completed job"
+          hint="Optional — picking the job fills client & cleaner"
         >
           <FormSelect
             id="booking_id"
             name="booking_id"
-            defaultValue={v.booking_id ?? ""}
+            value={bookingId}
+            onChange={(e) => handleBookingChange(e.target.value)}
           >
             <option value="">No booking</option>
             {bookings.map((b) => (

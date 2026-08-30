@@ -41,6 +41,8 @@ type Props = {
   mode: "create" | "edit";
   editing: EditingBonus | null;
   employees: BonusEmployeeOption[];
+  /** Deep link ("Add bonus" from an employee's file) — locks them in. */
+  preselectEmployeeId?: string | null;
 };
 
 function centsToDollarString(cents: number): string {
@@ -53,6 +55,7 @@ export function BonusDialog({
   mode,
   editing,
   employees,
+  preselectEmployeeId = null,
 }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -72,7 +75,10 @@ export function BonusDialog({
       setAmount(centsToDollarString(editing.amount_cents));
       setReason(editing.reason ?? "");
     } else {
-      setEmployeeId(employees[0]?.id ?? "");
+      // Preselect only when a deep link named someone; otherwise BLANK —
+      // opening on the alphabetically-first employee was a wrong-person-
+      // by-default risk (the booking form's multi-property rule, applied).
+      setEmployeeId(preselectEmployeeId ?? "");
       setAmount("");
       setReason("");
       // Browser-LOCAL today, not the UTC date — after 6pm Edmonton the UTC
@@ -86,7 +92,7 @@ export function BonusDialog({
       setPeriodEnd(today);
     }
     setFormError(null);
-  }, [open, mode, editing, employees]);
+  }, [open, mode, editing, employees, preselectEmployeeId]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   function handleSubmit(e: React.FormEvent) {

@@ -11,8 +11,10 @@ import {
   Pencil,
   Receipt,
   ClipboardList,
+  RotateCw,
   UserCheck,
 } from "lucide-react";
+import { rebookBookingAction } from "../../bookings/actions";
 import { requireMembership, can } from "@/lib/auth";
 import { getUnbilledCompletedBookings } from "@/lib/billed-bookings";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -325,6 +327,15 @@ export default async function ClientDetailPage({
           )}
           {canEdit && (
             <Link
+              href={`/app/estimates/new?client_id=${id}`}
+              className={buttonVariants({ variant: "outline", size: "sm" })}
+            >
+              <FileText className="h-3.5 w-3.5" />
+              New estimate
+            </Link>
+          )}
+          {canEdit && (
+            <Link
               href={`/app/bookings/new?client_id=${id}`}
               className={buttonVariants({ variant: "default", size: "sm" })}
             >
@@ -539,15 +550,14 @@ export default async function ClientDetailPage({
           <Section
             title="Recent bookings"
             emptyText="No bookings yet."
-            viewAllHref={`/app/bookings`}
+            viewAllHref={`/app/bookings?client=${id}`}
           >
             {bookings.map((b) => (
-              <Link
+              <div
                 key={b.id}
-                href={`/app/bookings/${b.id}`}
                 className="flex items-start justify-between gap-3 rounded-md px-2 py-2 transition-colors hover:bg-muted/50"
               >
-                <div className="min-w-0">
+                <Link href={`/app/bookings/${b.id}`} className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium">
                     {humanizeEnum(b.service_type)}
                   </p>
@@ -557,21 +567,36 @@ export default async function ClientDetailPage({
                       ? ` · ${formatDurationMinutes(b.duration_minutes)}`
                       : ""}
                   </p>
-                </div>
-                <StatusBadge
-                  tone={bookingStatusTone(
-                    b.status as
-                      | "pending"
-                      | "confirmed"
-                      | "en_route"
-                      | "in_progress"
-                      | "completed"
-                      | "cancelled",
+                </Link>
+                <span className="flex shrink-0 items-center gap-1.5">
+                  {/* Repeating last month's job shouldn't require opening
+                      it first — same rebook the booking page offers. */}
+                  {b.status === "completed" && canEdit && (
+                    <form action={rebookBookingAction.bind(null, b.id)}>
+                      <button
+                        type="submit"
+                        title="Book again — same job, next open week"
+                        className="rounded-md border border-border p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                      >
+                        <RotateCw className="h-3.5 w-3.5" />
+                      </button>
+                    </form>
                   )}
-                >
-                  {humanizeEnum(b.status)}
-                </StatusBadge>
-              </Link>
+                  <StatusBadge
+                    tone={bookingStatusTone(
+                      b.status as
+                        | "pending"
+                        | "confirmed"
+                        | "en_route"
+                        | "in_progress"
+                        | "completed"
+                        | "cancelled",
+                    )}
+                  >
+                    {humanizeEnum(b.status)}
+                  </StatusBadge>
+                </span>
+              </div>
             ))}
           </Section>
 

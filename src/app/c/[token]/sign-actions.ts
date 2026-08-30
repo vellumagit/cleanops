@@ -82,13 +82,15 @@ export async function signContractAction(
 
   const { data: contract, error: fetchErr } = (await admin
     .from("contracts")
-    .select("id, sign_status, signed_at")
+    .select("id, sign_status, signed_at, organization_id, title")
     .eq("public_token" as never, token as never)
     .maybeSingle()) as unknown as {
     data: {
       id: string;
       sign_status: string;
       signed_at: string | null;
+      organization_id: string;
+      title: string | null;
     } | null;
     error: { message: string } | null;
   };
@@ -140,6 +142,22 @@ export async function signContractAction(
       error:
         "Couldn't record your signature. Try again — if it persists, contact the sender.",
     };
+  }
+
+  // A signature is a business event, not a database whisper — reviews and
+  // payments notify; until now the owner discovered signatures by opening
+  // /app/contracts and looking. Best-effort, never blocks the signer.
+  try {
+    const { notify } = await import("@/lib/notify");
+    await notify({
+      organizationId: contract.organization_id,
+      audience: "org-management",
+      title: "Contract signed",
+      body: `${typedName} signed ${contract.title ?? "the contract"}.`,
+      href: "/app/contracts",
+    });
+  } catch (err) {
+    console.error("[contract-sign] notify failed:", err);
   }
 
   // Return ok=true so the client can navigate to ?signed=1 explicitly.

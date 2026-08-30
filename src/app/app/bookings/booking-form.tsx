@@ -57,6 +57,9 @@ export type BookingFormDefaults = {
   /** Portal booking-request id when the form was opened via "Create
    *  booking" on Requests — the create action marks it scheduled. */
   from_request?: string;
+  /** Estimate id when opened via "Book this job" on an estimate — the
+   *  create action stamps bookings.estimate_id so the link shows. */
+  estimate_id?: string;
   series_id?: string | null;
   /** Series schedule fields — passed when editing a recurring booking so the
    *  "Edit recurring schedule" section can be pre-filled. */
@@ -614,6 +617,9 @@ export function BookingForm({
       {onSuccess && <input type="hidden" name="_source" value="calendar" />}
       {mode === "create" && defaults?.from_request && (
         <input type="hidden" name="from_request" value={defaults.from_request} />
+      )}
+      {mode === "create" && defaults?.estimate_id && (
+        <input type="hidden" name="estimate_id" value={defaults.estimate_id} />
       )}
       <FormError message={state.errors?._form} />
 

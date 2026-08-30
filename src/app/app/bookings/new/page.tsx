@@ -39,6 +39,7 @@ export default async function NewBookingPage({
     assigned_to?: string;
     scheduled_at?: string;
     from_request?: string;
+    estimate_id?: string;
   }>;
 }) {
   const membership = await requireMembership(["owner", "admin", "manager"]);
@@ -121,7 +122,44 @@ export default async function NewBookingPage({
       };
     }
   }
-  const effectiveClientId = params.client_id ?? fromRequest.client_id;
+  // "Book this job" from an estimate: the client and the agreed price are
+  // decisions already made — carry them, plus the description as notes,
+  // and stamp the link so the estimate shows "converted".
+  let fromEstimate: {
+    id?: string;
+    client_id?: string;
+    total_dollars?: string;
+    notes?: string;
+  } = {};
+  if (params.estimate_id) {
+    const supabase = await createSupabaseServerClient();
+    const { data: est } = (await supabase
+      .from("estimates")
+      .select("id, client_id, total_cents, service_description")
+      .eq("id", params.estimate_id)
+      .eq("organization_id", membership.organization_id)
+      .maybeSingle()) as unknown as {
+      data: {
+        id: string;
+        client_id: string;
+        total_cents: number;
+        service_description: string | null;
+      } | null;
+    };
+    if (est) {
+      fromEstimate = {
+        id: est.id,
+        client_id: est.client_id,
+        total_dollars: (est.total_cents / 100).toFixed(2),
+        notes: est.service_description?.trim()
+          ? `From estimate: ${est.service_description.trim()}`
+          : undefined,
+      };
+    }
+  }
+
+  const effectiveClientId =
+    params.client_id ?? fromRequest.client_id ?? fromEstimate.client_id;
 
   // Pre-fill from query params so click-empty-slot on the Dispatch
   // scheduler (and future deep links) lands on a half-filled form.
@@ -157,14 +195,55 @@ export default async function NewBookingPage({
       undefined;
   }
 
+  // Their usual job, as starting values. A client on their fifteenth
+  // identical 3-hour clean shouldn't need the service re-picked and the
+  // price retyped — the last booking already knows all three. Explicit
+  // sources (request, estimate) win; this only fills what's still empty.
+  let lastJob: {
+    service_type_id?: string;
+    duration_minutes?: number;
+    total_dollars?: string;
+  } = {};
+  if (effectiveClientId && !fromRequest.id && !fromEstimate.id) {
+    const supabase = await createSupabaseServerClient();
+    const { data: prev } = (await supabase
+      .from("bookings")
+      .select("service_type_id, duration_minutes, total_cents")
+      .eq("client_id", effectiveClientId)
+      .eq("organization_id", membership.organization_id)
+      .neq("status", "cancelled")
+      .order("scheduled_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()) as unknown as {
+      data: {
+        service_type_id: string | null;
+        duration_minutes: number | null;
+        total_cents: number | null;
+      } | null;
+    };
+    if (prev) {
+      lastJob = {
+        service_type_id: prev.service_type_id ?? undefined,
+        duration_minutes: prev.duration_minutes ?? undefined,
+        total_dollars:
+          prev.total_cents != null
+            ? (prev.total_cents / 100).toFixed(2)
+            : undefined,
+      };
+    }
+  }
+
   const defaults: BookingFormDefaults = {
     client_id: effectiveClientId,
     assigned_to: params.assigned_to,
     // The address the client typed on THIS request beats their saved one.
     address: fromRequest.address ?? prefillAddress,
-    notes: fromRequest.notes,
-    service_type_id: fromRequest.service_type_id,
+    notes: fromRequest.notes ?? fromEstimate.notes,
+    service_type_id: fromRequest.service_type_id ?? lastJob.service_type_id,
+    duration_minutes: lastJob.duration_minutes,
+    total_dollars: fromEstimate.total_dollars ?? lastJob.total_dollars,
     from_request: fromRequest.id,
+    estimate_id: fromEstimate.id,
     scheduled_at_local: params.scheduled_at
       ? isoToDatetimeLocal(params.scheduled_at, tz)
       : fromRequest.scheduled_at_local,

@@ -105,6 +105,27 @@ export async function resolveBookingCoverage(
     }
   }
 
+  // A deactivated member is NOT coverage. Without this, a disabled
+  // employee still sitting on future jobs masked them as staffed — the
+  // unassigned-booking alert stayed silent, and auto-complete could
+  // invoice a client for work nobody was coming to do.
+  const allEmployeeIds = Array.from(
+    new Set([...out.values()].flatMap((c) => c.employeeIds)),
+  );
+  if (allEmployeeIds.length > 0) {
+    const { data: activeRows } = (await db
+      .from("memberships")
+      .select("id")
+      .in("id", allEmployeeIds)
+      .eq("status", "active")) as unknown as {
+      data: Array<{ id: string }> | null;
+    };
+    const active = new Set((activeRows ?? []).map((r) => r.id));
+    for (const c of out.values()) {
+      c.employeeIds = c.employeeIds.filter((mid) => active.has(mid));
+    }
+  }
+
   for (const c of out.values()) {
     c.staffed = c.employeeIds.length > 0 || c.freelancerContactIds.length > 0;
   }

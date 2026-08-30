@@ -3,7 +3,7 @@ A booking is one visit: who, where, when, what kind of work, and what it costs. 
 
 ## Creating one
 
-From **Bookings → New**, from an empty slot on the scheduler, from **+Book** on a client's profile (client and address arrive pre-filled), or from **Create booking** on a request (date, address, notes, and service arrive pre-filled — and saving marks the request scheduled).
+From **Bookings → New**, from an empty slot on the scheduler, from **+Book** on a client's profile (client, address, and their usual service/length/price arrive pre-filled from their last job), from **Create booking** on a request (date, address, notes, and service arrive pre-filled — and saving marks the request scheduled), or from **Book this job** on an estimate (client, price, and description carried over; the estimate shows "converted" once saved). A completed booking also has **Book again** — the same job duplicated onto the same weekday and time next week, landing on the edit page to adjust.
 
 The fields that matter most:
 

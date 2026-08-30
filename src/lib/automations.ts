@@ -788,6 +788,19 @@ export async function autoBookingOnEstimateApproval(estimateId: string) {
       data: { id: string } | null;
     }>);
 
+    // The fully-automated path (website quote → approve → booking) must
+    // convert the lead exactly like a hand-made booking does — this was
+    // the one booking-creation site that skipped it, leaving a person
+    // with a confirmed job sitting in the Leads column forever.
+    if (newBooking) {
+      try {
+        const { convertLeadOnBooking } = await import("@/lib/lead-conversion");
+        await convertLeadOnBooking(estimate.client_id);
+      } catch (err) {
+        console.error("[auto] estimate-approval lead convert failed:", err);
+      }
+    }
+
     const bookingHref = newBooking
       ? `/app/bookings/${newBooking.id}`
       : "/app/bookings";
@@ -3389,7 +3402,7 @@ export async function sendEstimateToClient(
       .from("estimates")
       .select(
         `
-        id, organization_id, service_description, total_cents,
+        id, organization_id, client_id, service_description, total_cents,
         status, public_token, expires_at,
         client:clients ( name, email )
       `,
@@ -3403,6 +3416,7 @@ export async function sendEstimateToClient(
         data: {
           id: string;
           organization_id: string;
+          client_id: string;
           service_description: string | null;
           total_cents: number;
           status: string;
@@ -3564,6 +3578,17 @@ export async function sendEstimateToClient(
           ...(estimate.status === "draft" ? { status: "sent" } : {}),
         })
         .eq("id", estimateId);
+
+      // A quoted lead moves to "Quoted". The pipeline column existed and
+      // was documented ("price is with them, waiting") but NOTHING ever
+      // wrote it — every quoted lead sat in whatever stage it was dragged
+      // to by hand. Leads only; a real client's lifecycle is untouched.
+      await db
+        .from("clients")
+        .update({ lead_stage: "quoted" } as never)
+        .eq("id", estimate.client_id)
+        .eq("lifecycle" as never, "lead" as never)
+        .in("lead_stage" as never, ["new", "contacted"] as never);
     }
 
     return { ok: sendOk, publicToken };

@@ -15,15 +15,16 @@ export const metadata = { title: "Bookings" };
 export default async function BookingsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ archived?: string }>;
+  searchParams: Promise<{ archived?: string; client?: string }>;
 }) {
   const membership = await requireMembership();
   const canEdit = membership.role === "owner" || membership.role === "admin" || membership.role === "manager";
   const supabase = await createSupabaseServerClient();
   // Fired, not awaited — resolves while the main bookings query runs.
   const tzPromise = getOrgTimezone(membership.organization_id);
-  const { archived } = await searchParams;
+  const { archived, client } = await searchParams;
   const showArchived = archived === "1";
+  const clientFilter = client?.trim() || null;
 
   let query = supabase
     .from("bookings")
@@ -49,6 +50,13 @@ export default async function BookingsPage({
         )
       `,
     );
+
+  // Explicit org scope — a two-org admin reads both orgs via RLS alone.
+  query = query.eq("organization_id", membership.organization_id);
+
+  // ?client= — the client page's stat cards and "View all" promise this
+  // scoping; the param was accepted and ignored for months.
+  if (clientFilter) query = query.eq("client_id", clientFilter);
 
   // Default: hide auto-archived rows. When ?archived=1, show ONLY archived.
   query = showArchived
@@ -294,6 +302,19 @@ export default async function BookingsPage({
         </div>
       }
     >
+      {clientFilter && (
+        <div className="mb-3 flex items-center gap-2 text-sm">
+          <span className="rounded-full bg-primary/10 px-3 py-1 font-medium text-primary">
+            Filtered to {rows[0]?.client_name ?? "one client"}
+          </span>
+          <Link
+            href="/app/bookings"
+            className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+          >
+            Show all bookings
+          </Link>
+        </div>
+      )}
       <BookingsTable
         rows={rows}
         canEdit={canEdit && !showArchived}

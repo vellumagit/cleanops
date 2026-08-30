@@ -93,6 +93,23 @@ export async function submitBookingRequestAction(
     };
   }
 
+  // In-app notification FIRST — every sibling portal action (job notes,
+  // skip requests, payments) calls notify(); this one, the action that
+  // represents new revenue, sent email only. If mail was paused or eaten,
+  // the sole trace was a sidebar number.
+  try {
+    const { notify } = await import("@/lib/notify");
+    await notify({
+      organizationId: client.organization_id,
+      audience: "org-management",
+      title: "New booking request",
+      body: `${client.name} requested ${serviceType}${preferredDate ? ` — preferred ${preferredDate}` : ""}. Review and schedule it.`,
+      href: "/app/bookings/requests",
+    });
+  } catch (err) {
+    console.error("[booking-request] notify failed:", err);
+  }
+
   // Notify the org that a request came in. Fire-and-forget: never
   // block the client's form submission on owner-side mail delivery.
   if (isEmailConfigured() && !isClientEmailPaused()) {

@@ -11,18 +11,22 @@ A lead is a name and what they want. They arrive three ways:
 
 Editing a lead happens right on the Leads page — the **Edit** button opens a small dialog for their details and the note. Leads deliberately don't open the full client profile; they're not clients yet.
 
+## Working a lead
+
+Every lead row has **Quote** and **Book** buttons. Quote opens a new estimate with the lead selected and their "what do they want?" note already in the description; sending any estimate moves the lead to **Quoted** automatically. Book opens a prefilled booking — and creating any booking for a lead converts them to a client on the spot.
+
 ## Becoming a client
 
 Two doors, both automatic in effect:
 
 1. **Make client** — they said yes; press it and they move to the Clients page with everything carried over.
-2. **Book them** — creating any booking for a lead converts them on the spot. Scheduling work *is* the yes, so nobody has to remember the button.
+2. **Book them** — creating any booking for a lead converts them on the spot. Scheduling work *is* the yes, so nobody has to remember the button. This includes the automatic booking created when an estimate is approved.
 
 Either way, any open website inquiries from them are resolved automatically — the Requests badge clears itself.
 
 ## Clients
 
-A client's profile is the long-term record: address, standing notes (buzzer codes, pets), billing preferences, properties if they have several places, and their booking history. **+Book** from a profile starts a booking with the client and their address already filled.
+A client's profile is the long-term record: address, standing notes (buzzer codes, pets), billing preferences, properties if they have several places, and their booking history. **+Book** from a profile starts a booking with the client, their address, AND their usual job — service, length, and price from their last booking — already filled. **New estimate** and **New invoice** start prefilled the same way, completed jobs in the history have a one-tap **book again**, and the stat cards ("Bookings 12", "Invoices 3") open those pages filtered to just this client.
 
 > Same email = same person. If a website form arrives with an email you already have, it updates that lead instead of creating a duplicate. Different emails create separate leads — merge by hand if you spot twins.
 `;

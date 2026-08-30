@@ -1,6 +1,7 @@
 "use client";
 
-import { Check, RotateCcw, X } from "lucide-react";
+import Link from "next/link";
+import { CalendarPlus, Check, FileText, RotateCcw, X } from "lucide-react";
 import { LEAD_STAGES, type LeadStage } from "@/lib/lead-pipeline";
 import {
   setLeadStageAction,
@@ -63,6 +64,26 @@ export function LeadRowActions({
           </form>
         ))}
       </div>
+
+      {/* The two moves that ADVANCE a lead, prefilled — quoting seeds the
+          estimate from their note, booking auto-converts them to a client
+          (the promise the page copy already makes). */}
+      <Link
+        href={`/app/estimates/new?client_id=${id}`}
+        title="Quote this — the estimate opens with them selected and their request as the description"
+        className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] font-medium hover:bg-muted"
+      >
+        <FileText className="h-3 w-3" />
+        Quote
+      </Link>
+      <Link
+        href={`/app/bookings/new?client_id=${id}`}
+        title="Book them — creating the booking converts the lead to a client automatically"
+        className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] font-medium hover:bg-muted"
+      >
+        <CalendarPlus className="h-3 w-3" />
+        Book
+      </Link>
 
       <form action={convertLeadAction}>
         <input type="hidden" name="id" value={id} />

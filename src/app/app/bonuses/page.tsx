@@ -11,9 +11,14 @@ import { getOrgTimezone } from "@/lib/org-timezone";
 
 export const metadata = { title: "Bonuses" };
 
-export default async function BonusesPage() {
+export default async function BonusesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ employee?: string }>;
+}) {
   // Bonuses contain compensation data for all employees — owner/admin only.
   const membership = await requireMembership(["owner", "admin"]);
+  const { employee: employeeParam } = await searchParams;
   const tz = await getOrgTimezone(membership.organization_id);
   const canEdit = membership.role === "owner" || membership.role === "admin";
   const supabase = await createSupabaseServerClient();
@@ -184,6 +189,12 @@ export default async function BonusesPage() {
           rows={rows}
           canEdit={canEdit}
           employees={employees}
+          // Only honour an id that's actually on this org's employee list.
+          preselectEmployeeId={
+            employeeParam && employees.some((e) => e.id === employeeParam)
+              ? employeeParam
+              : null
+          }
         />
       </div>
     </PageShell>

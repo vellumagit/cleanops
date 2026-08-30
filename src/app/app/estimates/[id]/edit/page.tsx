@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, CalendarPlus } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getOrgCurrency } from "@/lib/org-currency";
@@ -78,7 +78,7 @@ export default async function EditEstimatePage({
   return (
     <PageShell title="Edit estimate">
       <div className="max-w-2xl space-y-6">
-        {linkedBooking && (
+        {linkedBooking ? (
           <Link
             href={`/app/bookings/${linkedBooking.id}`}
             className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700 transition-colors hover:bg-emerald-100"
@@ -89,6 +89,21 @@ export default async function EditEstimatePage({
               <span className="font-semibold">{linkedBooking.status}</span>{" "}
               booking.{" "}
               <span className="underline underline-offset-2">View booking →</span>
+            </span>
+          </Link>
+        ) : (
+          /* The manual convert path. Until now this existed ONLY as an
+             opt-in automation on approval — with it off (the default), an
+             approved estimate meant retyping the client, price, and
+             description into a blank booking form. */
+          <Link
+            href={`/app/bookings/new?estimate_id=${estimate.id}`}
+            className="flex items-center gap-2 rounded-lg border border-border bg-card px-4 py-3 text-sm transition-colors hover:bg-muted"
+          >
+            <CalendarPlus className="h-4 w-4" />
+            <span>
+              <span className="font-semibold">Book this job</span> — opens a
+              booking with the client, price, and description carried over.
             </span>
           </Link>
         )}
