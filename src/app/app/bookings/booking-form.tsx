@@ -14,6 +14,13 @@ import {
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { buttonVariants } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { FormError, FormField, FormSelect } from "@/components/form-field";
 import { Tip } from "@/components/tip";
 import { SubmitButton } from "@/components/submit-button";
@@ -581,6 +588,45 @@ export function BookingForm({
     "this_only" | "this_and_future"
   >("this_only");
 
+  // ── Notify-the-client interception ───────────────────────────────────
+  // A save that would email the client pauses for one explicit choice.
+  const formRef = useRef<HTMLFormElement>(null);
+  const notifyInputRef = useRef<HTMLInputElement>(null);
+  const notifyDecidedRef = useRef(false);
+  const [notifyDialogOpen, setNotifyDialogOpen] = useState(false);
+
+  const timeChanged =
+    mode === "edit" &&
+    Boolean(defaults?.scheduled_at_local) &&
+    scheduledAtLocal !== defaults?.scheduled_at_local;
+  const seriesScheduleChanged =
+    isEditingSeries &&
+    updateScope === "this_and_future" &&
+    (seriesPattern !== (defaults?.series_pattern ?? "weekly") ||
+      seriesStartTime !== (defaults?.series_start_time ?? "09:00") ||
+      seriesStartsAt !== (defaults?.series_starts_at ?? "") ||
+      (seriesEndsIndefinite ? "" : seriesEndsAtValue) !==
+        (defaults?.series_ends_at ?? "") ||
+      seriesCustomDays.join(",") !==
+        (defaults?.series_custom_days ?? []).join(","));
+  // Pending bookings never email (the client hasn't heard about the job
+  // at all yet), matching the server's own gate.
+  const wouldEmailClient =
+    defaults?.status !== "pending" && (timeChanged || seriesScheduleChanged);
+
+  function saveWithNotifyChoice(choice: "1" | "0") {
+    if (notifyInputRef.current) notifyInputRef.current.value = choice;
+    notifyDecidedRef.current = true;
+    setNotifyDialogOpen(false);
+    formRef.current?.requestSubmit();
+  }
+
+  // A failed save (validation error) re-arms the question — the next
+  // attempt may carry a different time than the one they decided on.
+  useEffect(() => {
+    if (state.errors) notifyDecidedRef.current = false;
+  }, [state.errors]);
+
   function toggleDay(day: number) {
     setSelectedDays((prev) =>
       prev.includes(day)
@@ -610,7 +656,29 @@ export function BookingForm({
   );
 
   return (
-    <form action={formAction} className="space-y-5">
+    <form
+      ref={formRef}
+      action={formAction}
+      className="space-y-5"
+      // The one interception in this form: a save that would EMAIL the
+      // client (time moved, or the recurring schedule rewritten) stops
+      // for one question — notify them, or save quietly. Brian's demo
+      // taught us why: an unexpected client email mid-save is a trust
+      // problem, in both directions.
+      onSubmit={(e) => {
+        if (mode !== "edit") return;
+        if (notifyDecidedRef.current) return;
+        if (!wouldEmailClient) return;
+        e.preventDefault();
+        setNotifyDialogOpen(true);
+      }}
+    >
+      <input
+        ref={notifyInputRef}
+        type="hidden"
+        name="notify_client"
+        defaultValue="1"
+      />
       <ReturnToField />
       {/* Signal the server action to return a done-state instead of
           redirecting when we're embedded inside a Sheet / drawer. */}
@@ -1729,6 +1797,35 @@ export function BookingForm({
               : "Save changes"}
         </SubmitButton>
       </div>
+
+      <Dialog open={notifyDialogOpen} onOpenChange={setNotifyDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Tell the client about this change?</DialogTitle>
+            <DialogDescription>
+              {seriesScheduleChanged && !timeChanged
+                ? "This rewrites their upcoming visits. Sollos can email them the new schedule, or save quietly so you can tell them yourself."
+                : "This moves the visit time. Sollos can email them the new time (with the old one shown), or save quietly so you can tell them yourself."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <button
+              type="button"
+              onClick={() => saveWithNotifyChoice("0")}
+              className={buttonVariants({ variant: "outline" })}
+            >
+              Save without emailing
+            </button>
+            <button
+              type="button"
+              onClick={() => saveWithNotifyChoice("1")}
+              className={buttonVariants()}
+            >
+              Save &amp; email client
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </form>
   );
 }

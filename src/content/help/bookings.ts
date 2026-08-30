@@ -19,6 +19,8 @@ Tick **Repeats** and set the pattern; Sollos generates the visits ahead of time 
 
 The recurring list shows each series' **billing state**: an amber "N unbilled" chip means completed visits no invoice has claimed — click it to bill them. And the two recurring engines guard each other: if a client is on a billing cycle AND has a standing recurring invoice, the standing one is held with a warning instead of double-billing them.
 
+When a save would **email the client** — the visit time moved, or the recurring schedule was rewritten — Sollos stops and asks: **Save & email client**, or **Save without emailing** (you tell them yourself). Saves that change nothing client-visible never email; a save with an untouched schedule doesn't touch future visits at all.
+
 ## Split shifts
 
 A split shift is a hand-off: one cleaner does the first hours, another takes over — they don't overlap. For two cleaners working *together*, don't split; assign both as crew.

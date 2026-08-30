@@ -1506,6 +1506,11 @@ export async function updateBookingAction(
     }
   }
 
+  // The edit form asks the owner whether the client should hear about a
+  // time change ("Save & email client" / "Save without emailing"). Absent
+  // field = paths without the dialog ⇒ notify, preserving old behavior.
+  const notifyClient = String(formData.get("notify_client") ?? "") !== "0";
+
   // "This and all future" propagation for recurring series.
   // We use the admin client for the bulk update because RLS on bookings can
   // silently drop bulk-UPDATE rows when the series_id column isn't in the
@@ -1550,8 +1555,71 @@ export async function updateBookingAction(
     // Check whether the owner is also changing the recurrence schedule.
     // The form signals this by including a hidden `series_update_schedule=1`
     // field, which is only injected when the schedule-edit section is visible.
-    const updateSchedule =
+    const updateScheduleRaw =
       String(formData.get("series_update_schedule") ?? "") === "1";
+
+    // NO-OP DETECTION. The section being VISIBLE is not the schedule being
+    // CHANGED: saving with "this and future" and an untouched schedule used
+    // to delete + regenerate every future occurrence (new row ids, calendar
+    // churn) and then email the client a "reschedule" whose old and new
+    // times were identical — Brian hit exactly this doing a live demo.
+    // Identical rule ⇒ plain field propagation, nothing destroyed, nobody
+    // emailed.
+    let updateSchedule = updateScheduleRaw;
+    if (updateScheduleRaw) {
+      const probe = {
+        pattern: String(formData.get("series_pattern") ?? "").trim(),
+        startTime: String(formData.get("series_start_time") ?? "").trim(),
+        startsAt: String(formData.get("series_starts_at") ?? "").trim(),
+        endsAt: String(formData.get("series_ends_at") ?? "").trim() || null,
+        customDays: String(formData.get("series_custom_days") ?? "").trim(),
+        monthlyNth: String(formData.get("series_monthly_nth") ?? "").trim(),
+        monthlyDow: String(formData.get("series_monthly_dow") ?? "").trim(),
+      };
+      const { data: currentRule } = (await admin
+        .from("booking_series" as never)
+        .select(
+          "pattern, start_time, starts_at, ends_at, custom_days, monthly_nth, monthly_dow",
+        )
+        .eq("id" as never, seriesId as never)
+        .eq("organization_id" as never, membership.organization_id as never)
+        .maybeSingle()) as unknown as {
+        data: {
+          pattern: string;
+          start_time: string | null;
+          starts_at: string | null;
+          ends_at: string | null;
+          custom_days: number[] | null;
+          monthly_nth: number | null;
+          monthly_dow: number | null;
+        } | null;
+      };
+      if (currentRule) {
+        const normTime = (t: string | null) => (t ?? "").slice(0, 5);
+        const normDays = (d: number[] | string | null) => {
+          const arr = Array.isArray(d)
+            ? d
+            : String(d ?? "")
+                .split(",")
+                .map(Number)
+                .filter((n) => Number.isFinite(n));
+          return [...arr].sort().join(",");
+        };
+        const normNum = (v: number | string | null) => {
+          const n = typeof v === "number" ? v : Number(v);
+          return Number.isFinite(n) && String(v ?? "").trim() !== "" ? n : null;
+        };
+        const sameRule =
+          currentRule.pattern === probe.pattern &&
+          normTime(currentRule.start_time) === normTime(probe.startTime) &&
+          String(currentRule.starts_at ?? "") === probe.startsAt &&
+          String(currentRule.ends_at ?? "") === String(probe.endsAt ?? "") &&
+          normDays(currentRule.custom_days) === normDays(probe.customDays) &&
+          normNum(currentRule.monthly_nth) === normNum(probe.monthlyNth) &&
+          normNum(currentRule.monthly_dow) === normNum(probe.monthlyDow);
+        if (sameRule) updateSchedule = false;
+      }
+    }
     let scheduleFields: Record<string, unknown> = {};
 
     if (updateSchedule) {
@@ -1818,7 +1886,17 @@ export async function updateBookingAction(
               new Date(parsed.data.scheduled_at).getTime();
           const firstNew = regenRows[0];
           const firstOldAt = (staleSiblings ?? [])[0]?.scheduled_at ?? null;
-          if (editedTimeUnchanged && firstNew && firstOldAt) {
+          if (
+            editedTimeUnchanged &&
+            firstNew &&
+            firstOldAt &&
+            // A move the email can SHOW: some rule changes (weekly →
+            // biweekly) keep the first occurrence identical, and "old
+            // time crossed out, same time written in" reads as a glitch.
+            new Date(firstNew.scheduled_at).getTime() !==
+              new Date(firstOldAt).getTime() &&
+            notifyClient
+          ) {
             sendBookingRescheduled(firstNew.id, firstOldAt);
           }
         }
@@ -1908,7 +1986,7 @@ export async function updateBookingAction(
     // real date is the whole point of a pending placeholder — both Duplicate
     // and the estimate conversion create one — so "your job has been moved"
     // would be the first thing the client ever heard about it.
-    if (existing.status !== "pending") {
+    if (existing.status !== "pending" && notifyClient) {
       sendBookingRescheduled(id, existing.scheduled_at);
     }
   }
