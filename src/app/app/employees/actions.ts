@@ -509,17 +509,55 @@ export async function updateMemberAction(
 
   const action = parsed.data.status === "disabled" ? "deactivate" : "update";
 
+  // Deactivation is an event, not a field edit: their future jobs need a
+  // new cleaner, an open clock must stop, pending time off is moot. The
+  // sweep handles all three and tells management what needs a human.
+  let offboardSummary: Record<string, unknown> | null = null;
+  if (parsed.data.status === "disabled" && before.status === "active") {
+    const { sweepDeactivatedMember } = await import("@/lib/member-offboarding");
+    const { memberDisplayName } = await import("@/lib/member-display");
+    const sweep = await sweepDeactivatedMember(admin, {
+      organizationId: membership.organization_id,
+      membershipId: memberId,
+      memberName: memberDisplayName({
+        display_name:
+          (parsed.data.display_name || before.display_name) ?? null,
+      }),
+    });
+    offboardSummary = {
+      unassigned_booking_ids: sweep.unassignedBookings.map((b) => b.id),
+      closed_time_entry_id: sweep.closedEntryId,
+      cancelled_pto_ids: sweep.cancelledPtoIds,
+    };
+    if (sweep.closedEntryId) {
+      await logAuditEvent({
+        membership,
+        action: "update",
+        entity: "time_entry",
+        entity_id: sweep.closedEntryId,
+        before: { clock_out_at: null },
+        after: { closed_by_offboarding: true, needs_review: true },
+      });
+    }
+  }
+
   await logAuditEvent({
     membership,
     action,
     entity: "membership",
     entity_id: memberId,
     before: before ?? null,
-    after: { ...updatePayload, ...adminDataPayload },
+    after: {
+      ...updatePayload,
+      ...adminDataPayload,
+      ...(offboardSummary ? { offboard_sweep: offboardSummary } : {}),
+    },
   });
 
   revalidatePath("/app/employees");
   revalidatePath("/app/settings/members");
+  revalidatePath("/app/bookings");
+  revalidatePath("/app/timesheets", "page");
 
   return { done: true };
 }
