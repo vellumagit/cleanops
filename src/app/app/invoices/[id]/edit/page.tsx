@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { requireMembership, requireCapability } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getOrgCurrency } from "@/lib/org-currency";
+import { getOrgTimezone } from "@/lib/org-timezone";
 import { taxRateBpsToPercentString } from "@/lib/org-tax";
 import { PageShell } from "@/components/page-shell";
 import { centsToDollarString } from "@/lib/validators/common";
@@ -22,6 +23,7 @@ export default async function EditInvoicePage({
   const { id } = await params;
   const supabase = await createSupabaseServerClient();
   const currency = await getOrgCurrency(membership.organization_id);
+  const tz = await getOrgTimezone(membership.organization_id);
 
   const { data: invoice, error } = (await supabase
     .from("invoices")
@@ -84,6 +86,7 @@ export default async function EditInvoicePage({
             mode="edit"
             id={invoice.id}
             currency={currency}
+            tz={tz}
             clients={clients}
             bookings={bookings}
             lineItemsMode={lineItems.length > 0}

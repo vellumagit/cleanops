@@ -413,6 +413,12 @@ export async function autoInvoiceOnJobComplete(
     const dueDate = new Date(dueBase);
     dueDate.setDate(dueDate.getDate() + 14); // Net 14
 
+    // due_date is a calendar date in the ORG's timezone. A UTC slice put an
+    // evening completion on the next day's date, shifting every due date.
+    const { getOrgTimezone } = await import("@/lib/org-timezone");
+    const { zonedYmd } = await import("@/lib/wall-clock");
+    const orgTz = await getOrgTimezone(booking.organization_id);
+
     // Core insert uses ONLY the long-standing invoice columns. Tax +
     // line items are applied as separate steps below so a missing
     // migration or a new column can't take down the whole path.
@@ -425,7 +431,7 @@ export async function autoInvoiceOnJobComplete(
         booking_id: booking.id,
         status: "draft",
         amount_cents: subtotalCents,
-        due_date: dueDate.toISOString().split("T")[0],
+        due_date: zonedYmd(dueDate, orgTz),
       })
       .select("id, number")
       .single()) as unknown as {
@@ -489,9 +495,7 @@ export async function autoInvoiceOnJobComplete(
     // Line items live on a separate table, not as a column on
     // invoices. Insert one starter row describing what was done so
     // the owner sees something when they open the invoice.
-    const { getOrgTimezone: getTzForLine } = await import("@/lib/org-timezone");
     const { bookingLineLabel } = await import("@/lib/invoice-line-label");
-    const lineTz = await getTzForLine(booking.organization_id);
 
     const { error: liErr } = await db.from("invoice_line_items").insert({
       organization_id: booking.organization_id,
@@ -507,7 +511,7 @@ export async function autoInvoiceOnJobComplete(
         address: booking.address,
         propertyLabel: (booking as { property?: { label?: string } | null }).property?.label ?? null,
         fallbackAddress: booking.client?.address ?? null,
-        tz: lineTz,
+        tz: orgTz,
       }),
       // Mirrors the billing-cycle path: the line records which job it bills,
       // so the line-item dedup can see this work is already invoiced.
@@ -4784,6 +4788,7 @@ export async function sendInvoiceReviewDigests(): Promise<{
     );
 
     const dayLabel = yesterday.start.toLocaleDateString("en-US", {
+      timeZone: tz,
       weekday: "long",
       month: "long",
       day: "numeric",
@@ -4854,13 +4859,12 @@ export async function sendWeeklyOpsDigests(): Promise<{
   const end = new Date(now);
   const start = new Date(end.getTime() - 7 * 24 * 60 * 60 * 1000);
   const prevStart = new Date(start.getTime() - 7 * 24 * 60 * 60 * 1000);
-  const weekLabel = `${start.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${end.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
 
   const { data: orgs } = (await db
     .from("organizations")
-    .select("id, name")
+    .select("id, name, timezone")
     .is("deleted_at", null)) as unknown as {
-    data: Array<{ id: string; name: string }> | null;
+    data: Array<{ id: string; name: string; timezone: string | null }> | null;
   };
 
   if (!orgs) return { orgsSent: 0 };
@@ -4873,6 +4877,12 @@ export async function sendWeeklyOpsDigests(): Promise<{
 
     const recipients = await getOrgAdminRecipients(org.id);
     if (recipients.length === 0) continue;
+
+    // Label the week in the org's calendar, not the server's — rendering
+    // these instants with UTC's date shifts the whole label a day off for
+    // timezones where the cron hour lands on a different local date.
+    const orgTz = org.timezone ?? "America/Edmonton";
+    const weekLabel = `${start.toLocaleDateString("en-US", { timeZone: orgTz, month: "short", day: "numeric" })} – ${end.toLocaleDateString("en-US", { timeZone: orgTz, month: "short", day: "numeric", year: "numeric" })}`;
 
     // Gather stats in parallel.
     const [
@@ -6830,13 +6840,18 @@ export async function autoExpireStaleEstimates(): Promise<{ expired: number }> {
 // 23. Auto-void overdue invoices with no payment (daily)
 export async function autoVoidOldInvoices(): Promise<{ voided: number }> {
   const db = admin();
+  const { zonedYmd } = await import("@/lib/wall-clock");
   let voided = 0;
 
   const { data: orgs } = (await db
     .from("organizations")
-    .select("id, invoice_void_days")
+    .select("id, invoice_void_days, timezone")
     .is("deleted_at", null)) as unknown as {
-    data: Array<{ id: string; invoice_void_days: number | null }> | null;
+    data: Array<{
+      id: string;
+      invoice_void_days: number | null;
+      timezone: string | null;
+    }> | null;
   };
 
   for (const org of orgs ?? []) {
@@ -6846,9 +6861,13 @@ export async function autoVoidOldInvoices(): Promise<{ voided: number }> {
     const days = org.invoice_void_days;
     if (days < 30) continue;
 
-    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
-      .toISOString()
-      .slice(0, 10); // date
+    // Cutoff in the ORG's calendar. due_date is an org-local date, and the
+    // cron fires at 21:30 Edmonton — already tomorrow in UTC, so a UTC slice
+    // voided invoices one org-local day early.
+    const cutoff = zonedYmd(
+      new Date(Date.now() - days * 24 * 60 * 60 * 1000),
+      org.timezone ?? "America/Edmonton",
+    );
 
     // voided_at is the system-wide source of truth for "void" (the payment
     // trigger, webhooks, and every dedup query key on it). Setting only the

@@ -131,6 +131,7 @@ export default async function NewInvoicePage({
             clients={clients}
             bookings={bookings}
             currency={currency}
+            tz={tz}
             defaults={
               prefillClient
                 ? {

@@ -47,11 +47,13 @@ function BookingCombobox({
   clientId,
   value,
   onChange,
+  tz,
 }: {
   bookings: BookingOption[];
   clientId: string;
   value: string;
   onChange: (id: string) => void;
+  tz: string;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -86,11 +88,11 @@ function BookingCombobox({
         b.service_type.toLowerCase().includes(needle) ||
         b.status.toLowerCase().includes(needle) ||
         new Date(b.scheduled_at)
-          .toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+          .toLocaleDateString("en-US", { timeZone: tz, month: "short", day: "numeric", year: "numeric" })
           .toLowerCase()
           .includes(needle),
     );
-  }, [clientBookings, query]);
+  }, [clientBookings, query, tz]);
 
   const selected = bookings.find((b) => b.id === value);
 
@@ -101,7 +103,10 @@ function BookingCombobox({
   }
 
   function formatBookingLabel(b: BookingOption) {
+    // Org timezone, not the browser's — an evening Alberta job viewed from a
+    // UTC-ish machine would otherwise list under the next day's date.
     const date = new Date(b.scheduled_at).toLocaleDateString("en-US", {
+      timeZone: tz,
       month: "short",
       day: "numeric",
       year: "numeric",
@@ -279,6 +284,9 @@ export function InvoiceForm({
   clients,
   bookings,
   currency = "CAD",
+  /** Org IANA timezone — booking dates render in the org's calendar,
+   *  never the browser's. */
+  tz,
   /** Org's default tax settings. Used ONLY on create to pre-fill.
    *  On edit we use whatever was saved on the invoice itself. */
   orgDefaultTaxRatePercent,
@@ -295,6 +303,7 @@ export function InvoiceForm({
   clients: { id: string; label: string }[];
   bookings: BookingOption[];
   currency?: CurrencyCode;
+  tz: string;
   orgDefaultTaxRatePercent?: string;
   orgDefaultTaxLabel?: string;
   lineItemsMode?: boolean;
@@ -424,6 +433,7 @@ export function InvoiceForm({
           clientId={clientId}
           value={bookingId}
           onChange={setBookingId}
+          tz={tz}
         />
       </FormField>
 

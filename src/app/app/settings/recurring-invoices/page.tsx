@@ -5,6 +5,7 @@ import { ArrowLeft, Plus, Pause, Play, Pencil, Trash2 } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getOrgCurrency } from "@/lib/org-currency";
+import { getOrgTimezone } from "@/lib/org-timezone";
 import { formatCurrencyCents } from "@/lib/format";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
@@ -32,6 +33,7 @@ export default async function RecurringInvoicesPage() {
   const membership = await requireMembership(["owner", "admin", "manager"]);
   const admin = createSupabaseAdminClient();
   const currency = await getOrgCurrency(membership.organization_id);
+  const tz = await getOrgTimezone(membership.organization_id);
 
   const { data } = (await admin
     .from("invoice_series" as never)
@@ -126,12 +128,13 @@ export default async function RecurringInvoicesPage() {
                     <p className="mt-1 text-xs text-muted-foreground">
                       Next run:{" "}
                       {nextRun.toLocaleDateString("en-US", {
+                        timeZone: tz,
                         month: "short",
                         day: "numeric",
                         year: "numeric",
                       })}
                       {s.last_generated_at
-                        ? ` · Last generated ${new Date(s.last_generated_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`
+                        ? ` · Last generated ${new Date(s.last_generated_at).toLocaleDateString("en-US", { timeZone: tz, month: "short", day: "numeric" })}`
                         : " · Never generated yet"}
                     </p>
                   </div>
