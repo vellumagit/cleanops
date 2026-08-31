@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { getActionContext } from "@/lib/actions";
+import { logAuditEvent } from "@/lib/audit";
 
 export type TrainingResult = { ok: true } | { ok: false; error: string };
 
@@ -26,7 +27,7 @@ export async function toggleStepAction(
     await Promise.all([
       supabase
         .from("training_assignments")
-        .select("id, completed_step_ids")
+        .select("id, completed_step_ids, completed_at")
         .eq("module_id", moduleId)
         .eq("employee_id", membership.id)
         .maybeSingle(),
@@ -60,6 +61,22 @@ export async function toggleStepAction(
     })
     .eq("id", assignment.id);
   if (updateError) return { ok: false, error: updateError.message };
+
+  // The completion TRANSITION is the auditable moment — admin overrides
+  // already log, but a cleaner finishing (or un-finishing) a module in the
+  // field left no trail at all, so "when did she complete WHMIS?" had one
+  // mutable timestamp as its only answer.
+  const wasComplete = !!assignment.completed_at;
+  if (allDone !== wasComplete) {
+    await logAuditEvent({
+      membership,
+      action: "update",
+      entity: "training_assignment",
+      entity_id: assignment.id,
+      before: { completed: wasComplete },
+      after: { completed: allDone, module_id: moduleId, self_serve: true },
+    });
+  }
 
   revalidatePath("/field/training");
   revalidatePath(`/field/training/${moduleId}`);

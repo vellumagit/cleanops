@@ -133,6 +133,60 @@ export default async function EmployeeFilePage({
     }),
   );
 
+  // Training, from this person's side. Every other training surface is
+  // module-centric — answering "is this cleaner trained?" used to mean
+  // opening every module and scanning for their name.
+  const [{ data: orgModules }, { data: trainingRows }] = await Promise.all([
+    (admin
+      .from("training_modules")
+      .select("id, title, status, steps:training_steps ( id )")
+      .eq("organization_id", viewer.organization_id)) as unknown as Promise<{
+      data: Array<{
+        id: string;
+        title: string;
+        status: string | null;
+        steps: Array<{ id: string }> | null;
+      }> | null;
+    }>,
+    (admin
+      .from("training_assignments")
+      .select(
+        "module_id, completed_at, completed_step_ids, certification_expires_at",
+      )
+      .eq("employee_id", id)
+      .eq(
+        "organization_id",
+        viewer.organization_id,
+      )) as unknown as Promise<{
+      data: Array<{
+        module_id: string;
+        completed_at: string | null;
+        completed_step_ids: string[] | null;
+        certification_expires_at: string | null;
+      }> | null;
+    }>,
+  ]);
+  const assignmentByModule = new Map(
+    (trainingRows ?? []).map((a) => [a.module_id, a]),
+  );
+  // Published modules always show (assigned or not); unpublished ones only
+  // when this person carries an assignment from back when they were live.
+  const training = (orgModules ?? [])
+    .filter((m) => m.status === "published" || assignmentByModule.has(m.id))
+    .map((m) => {
+      const a = assignmentByModule.get(m.id);
+      return {
+        id: m.id,
+        title: m.title,
+        stepCount: m.steps?.length ?? 0,
+        assigned: !!a,
+        completedAt: a?.completed_at ?? null,
+        progressSteps: a?.completed_step_ids?.length ?? 0,
+        certExpiresAt: a?.certification_expires_at ?? null,
+      };
+    })
+    .sort((a, b) => a.title.localeCompare(b.title));
+
   return (
     <PageShell
       title="Employee file"
@@ -253,6 +307,69 @@ export default async function EmployeeFilePage({
             </div>
           </div>
         )}
+
+        {/* Training */}
+        <div className="rounded-xl border border-border bg-card">
+          <div className="flex items-baseline justify-between border-b border-border px-4 py-3">
+            <h2 className="text-sm font-semibold">Training</h2>
+            <span className="text-xs text-muted-foreground">
+              {training.filter((t) => t.completedAt).length} of{" "}
+              {training.filter((t) => t.assigned).length} assigned complete
+            </span>
+          </div>
+          {training.length === 0 ? (
+            <p className="px-4 py-6 text-center text-xs text-muted-foreground">
+              No training modules yet.
+            </p>
+          ) : (
+            <ul className="divide-y divide-border/60">
+              {training.map((t) => {
+                const expired =
+                  t.certExpiresAt && new Date(t.certExpiresAt) < new Date();
+                return (
+                  <li key={t.id}>
+                    <Link
+                      href={`/app/training/${t.id}`}
+                      className="flex items-center justify-between gap-3 px-4 py-2.5 transition-colors hover:bg-muted/50"
+                    >
+                      <span className="min-w-0 truncate text-sm font-medium">
+                        {t.title}
+                      </span>
+                      <span className="flex shrink-0 items-center gap-2">
+                        {t.certExpiresAt && (
+                          <span
+                            className={cn(
+                              "text-[11px]",
+                              expired
+                                ? "font-medium text-red-600 dark:text-red-400"
+                                : "text-muted-foreground",
+                            )}
+                          >
+                            {expired ? "Expired" : "Expires"}{" "}
+                            {formatDate(t.certExpiresAt, tz)}
+                          </span>
+                        )}
+                        {t.completedAt ? (
+                          <StatusBadge tone={expired ? "red" : "green"}>
+                            Completed {formatDate(t.completedAt, tz)}
+                          </StatusBadge>
+                        ) : !t.assigned ? (
+                          <StatusBadge tone="neutral">Not assigned</StatusBadge>
+                        ) : t.progressSteps > 0 ? (
+                          <StatusBadge tone="amber">
+                            In progress · {t.progressSteps}/{t.stepCount} steps
+                          </StatusBadge>
+                        ) : (
+                          <StatusBadge tone="amber">Not started</StatusBadge>
+                        )}
+                      </span>
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
 
         {/* Documents */}
         <div>
