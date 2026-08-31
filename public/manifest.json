@@ -2,7 +2,7 @@
   "name": "Sollos 3",
   "short_name": "Sollos",
   "description": "Operations software for cleaning companies.",
-  "start_url": "/field/jobs",
+  "start_url": "/launch",
   "display": "standalone",
   "background_color": "#09090b",
   "theme_color": "#09090b",

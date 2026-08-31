@@ -9,6 +9,7 @@ import { PushPrompt } from "@/components/push-prompt";
 import { TrialBanner } from "@/components/trial-banner";
 import { AutomationsOffBanner } from "@/components/automations-off-banner";
 import { SetupReturnBanner } from "@/components/setup-return-banner";
+import { PwaInstallBanner } from "@/components/pwa-install-banner";
 import { QuickActions } from "@/components/quick-actions";
 import { AIWidget } from "@/components/ai-assistant/ai-widget";
 import { getOrgTimezone } from "@/lib/org-timezone";
@@ -230,6 +231,17 @@ export default async function AppLayout({
           membershipId={membership.id}
           organizationId={membership.organization_id}
         />
+        {/* Install prompt for admins on phones. The banner already self-hides
+            when installed or dismissed; lg:hidden keeps desktops on the
+            quieter Settings card instead. Mounting it here also registers
+            the service worker for admin sessions — previously only field
+            visits did that. */}
+        {/* empty:hidden — the banner renders null for most sessions
+            (dismissed, already installed); without it the wrapper's mt-3
+            leaves 12px of phantom space on every mobile page. */}
+        <div className="mt-3 empty:hidden lg:hidden">
+          <PwaInstallBanner />
+        </div>
         {children}
         <QuickActions
           role={membership.role}

@@ -275,7 +275,10 @@ export default async function DashboardPage() {
   const orgLogo = orgBranding.data?.logo_url ?? null;
 
   return (
-    <div className="mx-auto w-full max-w-6xl px-4 py-5 sm:px-6 lg:px-8 lg:py-10">
+    // flex-col so the sections can carry order-* — on a phone the day's
+    // jobs and the needs-attention card outrank the stat cards, on desktop
+    // (lg:order-none everywhere) the DOM order below is the layout.
+    <div className="mx-auto flex w-full max-w-6xl flex-col px-4 py-5 sm:px-6 lg:px-8 lg:py-10">
       <div className="mb-8 flex items-end justify-between gap-4">
         <div className="flex items-center gap-3">
           {orgLogo && (
@@ -329,7 +332,7 @@ export default async function DashboardPage() {
           to the invoicing capability. A restricted manager gets the operational
           pair instead: what is happening today, and this week. */}
       {canMoney ? (
-        <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="order-3 mb-6 grid grid-cols-2 gap-3 sm:gap-4 lg:order-none lg:grid-cols-4">
           <HeroCard
             icon={<DollarSign className="h-4 w-4" />}
             label="Today's revenue"
@@ -363,7 +366,7 @@ export default async function DashboardPage() {
           />
         </div>
       ) : (
-        <div className="mb-6 grid gap-4 sm:grid-cols-2">
+        <div className="order-3 mb-6 grid grid-cols-2 gap-3 sm:gap-4 lg:order-none">
           <HeroCard
             icon={<Calendar className="h-4 w-4" />}
             label="Today's jobs"
@@ -386,13 +389,17 @@ export default async function DashboardPage() {
       {/* Suspense: the card runs four scans of its own; the dashboard
           paints without waiting and the card streams in when ready. */}
       {canMoney && (
-        <Suspense fallback={null}>
-          <NeedsAttention tz={tz} />
-        </Suspense>
+        <div className="order-2 lg:order-none">
+          <Suspense fallback={null}>
+            <NeedsAttention tz={tz} />
+          </Suspense>
+        </div>
       )}
 
-      {/* SECONDARY: avg rating + top performers + today's jobs + activity */}
-      <div className="grid gap-4 lg:grid-cols-3">
+      {/* SECONDARY — split into two grids purely so the first (today's
+          jobs + rating) can jump above the stats on a phone; on desktop
+          the mb-4 reproduces the old single grid's row gap exactly. */}
+      <div className="order-1 mb-4 grid gap-4 lg:order-none lg:grid-cols-3">
         {/* LEFT — today's jobs */}
         <Panel
           title="Today's jobs"
@@ -476,7 +483,9 @@ export default async function DashboardPage() {
             </div>
           )}
         </Panel>
+      </div>
 
+      <div className="order-4 grid gap-4 lg:order-none lg:grid-cols-3">
         {/* Top performers */}
         <Panel
           title="Top-rated employees"
@@ -583,18 +592,19 @@ function HeroCard({
   return (
     <div
       className={cn(
-        "rounded-lg border bg-card px-5 py-4",
+        // Compact on phones — four of these render as a 2×2 strip there.
+        "rounded-lg border bg-card px-3 py-3 sm:px-5 sm:py-4",
         tone === "warning"
           ? "border-amber-200 dark:border-amber-900/40"
           : "border-border",
       )}
     >
       <div className="flex items-center justify-between">
-        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        <p className="truncate text-xs font-medium uppercase tracking-wide text-muted-foreground">
           {label}
         </p>
         <span
-          className="flex h-8 w-8 items-center justify-center rounded-lg"
+          className="hidden h-8 w-8 items-center justify-center rounded-lg sm:flex"
           style={{
             backgroundColor: `var(--brand-light, rgba(99,102,241,0.1))`,
             color: `var(--brand, #6366f1)`,
@@ -603,7 +613,9 @@ function HeroCard({
           {icon}
         </span>
       </div>
-      <p className="mt-2 text-2xl font-semibold tabular-nums">{value}</p>
+      <p className="mt-2 text-xl font-semibold tabular-nums sm:text-2xl">
+        {value}
+      </p>
       <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
         {delta && delta.direction !== "flat" && (
           <span
