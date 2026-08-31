@@ -33,6 +33,7 @@ export type AuditEntity =
   | "training_module"
   | "training_assignment"
   | "applicant"
+  | "network_contact"
   | "inventory_item"
   | "bonus"
   | "bonus_rule"

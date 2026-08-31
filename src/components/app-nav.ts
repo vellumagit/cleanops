@@ -1,5 +1,6 @@
 import {
   LayoutDashboard,
+  BookUser,
   Calendar,
   CalendarCheck,
   CalendarDays,
@@ -114,6 +115,10 @@ export const NAV_SECTIONS: NavSection[] = [
       // Sollos sells. Roster subcontractors live under Employees and get shift
       // offers through the same Offer flow.
       { href: "/app/freelancers", label: "On-call pool", icon: UserPlus, roles: ["owner", "admin", "manager"], capability: "subcontractors" as const, mobileTier: "more" },
+      // The rolodex: realtors, property managers, suppliers — people who
+      // matter but aren't clients (and never will be: no bookings, no
+      // invoices). Sits after the work roster, before reputation.
+      { href: "/app/network", label: "Network", icon: BookUser, roles: ["owner", "admin", "manager"], mobileTier: "more" },
       { href: "/app/reviews", label: "Reviews", icon: Star, mobileTier: "more" },
       { href: "/app/bonuses", label: "Bonuses", icon: Award, mobileTier: "more" },
     ],

@@ -68,6 +68,7 @@ const TENANT_TABLES = [
   "job_photos",
   "membership_admin_data",
   "memberships",
+  "network_contacts",
   "notifications",
   "packages",
   "payroll_items",
@@ -453,6 +454,7 @@ export async function purgeOrgData(
     "job_offer_dispatches",
     "job_offers",
     "freelancer_contacts",
+    "network_contacts",
     "client_documents",
     "clients",
     // Misc per-org

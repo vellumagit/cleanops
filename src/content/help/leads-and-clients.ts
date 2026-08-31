@@ -29,4 +29,8 @@ Either way, any open website inquiries from them are resolved automatically — 
 A client's profile is the long-term record: address, standing notes (buzzer codes, pets), billing preferences, properties if they have several places, and their booking history. **+Book** from a profile starts a booking with the client, their address, AND their usual job — service, length, and price from their last booking — already filled. **New estimate** and **New invoice** start prefilled the same way, completed jobs in the history have a one-tap **book again**, and the stat cards ("Bookings 12", "Invoices 3") open those pages filtered to just this client.
 
 > Same email = same person. If a website form arrives with an email you already have, it updates that lead instead of creating a duplicate. Different emails create separate leads — merge by hand if you spot twins.
+
+## Network
+
+**Network** (under People) is the rolodex for everyone who matters but isn't a client and never will be: realtors who send you move-out cleans, property managers, suppliers, referral partners. Name, category, company, tap-to-call phone, and notes ("how we met, what they refer, their terms"). Deliberately separate from clients — no bookings, invoices, or portal hang off these people — and from the on-call pool, which is for workers you offer shifts to. If a network contact ever books a cleaning, add them as a client like anyone else.
 `;
