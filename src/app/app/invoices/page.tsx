@@ -60,9 +60,15 @@ export default async function InvoicesPage({
     ? query.not("archived_at" as never, "is" as never, null as never)
     : query.is("archived_at" as never, null as never);
 
+  // 500, and the table is TOLD when it's truncated. At 200, Leslie's two
+  // overdue invoices from June/July fell off the newest-N window and the
+  // client-side search box swore she only had three invoices — while the
+  // booking picker (correctly) showed her July job as already billed.
+  // A search over a truncated list must say so, or it's testimony.
+  const LIST_LIMIT = 500;
   const { data, error } = (await query
     .order("created_at", { ascending: false })
-    .limit(200)) as unknown as {
+    .limit(LIST_LIMIT)) as unknown as {
     data: Array<{
       id: string;
       number: string | null;
@@ -186,6 +192,14 @@ export default async function InvoicesPage({
           >
             Show all invoices
           </Link>
+        </div>
+      )}
+      {rows.length >= LIST_LIMIT && (
+        <div className="mb-3 rounded-lg border border-border bg-muted/30 px-4 py-2.5 text-xs text-muted-foreground">
+          Showing the newest {LIST_LIMIT} invoices — older ones exist, and the
+          search box only looks inside what&apos;s shown. For one client&apos;s
+          complete history, open their page and use{" "}
+          <span className="font-medium">View all</span> beside Recent invoices.
         </div>
       )}
       <InvoicesTable
