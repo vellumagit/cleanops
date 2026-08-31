@@ -39,6 +39,7 @@ import { ClientNotificationsCard } from "./notifications-card";
 import { fetchOrgNotificationContext } from "../org-contact-default";
 import { SmsOptInButton } from "./sms-opt-in-button";
 import { ClientPropertiesCard, type PropertyRow } from "./properties-card";
+import { ClientDocumentsCard, type ClientDocument } from "./documents-card";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import {
   markGbpReviewedAction,
@@ -273,6 +274,48 @@ export default async function ClientDetailPage({
 
   const { orgDefault: orgContactDefault, smsEnabled: orgSmsEnabled } =
     await fetchOrgNotificationContext(membership.organization_id);
+
+  // Documents attached to this client's record (signed invoices etc.).
+  // Admin client + explicit org filter: the client row above already
+  // proved this client is in the caller's org, and the org filter keeps
+  // a multi-org account from ever crossing streams.
+  const adminDb = createSupabaseAdminClient();
+  const { data: rawDocs } = (await adminDb
+    .from("client_documents" as never)
+    .select("id, category, label, file_name, size_bytes, file_path, created_at")
+    .eq("client_id" as never, id)
+    .eq("organization_id" as never, membership.organization_id as never)
+    .order(
+      "created_at" as never,
+      { ascending: false } as never,
+    )) as unknown as {
+    data: Array<{
+      id: string;
+      category: string;
+      label: string;
+      file_name: string;
+      size_bytes: number | null;
+      file_path: string;
+      created_at: string;
+    }> | null;
+  };
+  // Sign each file so the card can offer a (short-lived) download link.
+  const clientDocuments: ClientDocument[] = await Promise.all(
+    (rawDocs ?? []).map(async (d) => {
+      const { data } = await adminDb.storage
+        .from("client-documents")
+        .createSignedUrl(d.file_path, 3600);
+      return {
+        id: d.id,
+        category: d.category,
+        label: d.label,
+        file_name: d.file_name,
+        size_bytes: d.size_bytes,
+        created_at: d.created_at,
+        url: data?.signedUrl ?? null,
+      };
+    }),
+  );
 
   return (
     <PageShell
@@ -643,6 +686,13 @@ export default async function ClientDetailPage({
               </Link>
             ))}
           </Section>
+
+          {/* ── Documents ── */}
+          <ClientDocumentsCard
+            clientId={id}
+            documents={clientDocuments}
+            canEdit={canEdit}
+          />
 
           {/* ── Estimates ── */}
           <Section

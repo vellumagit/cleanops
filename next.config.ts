@@ -93,9 +93,11 @@ const nextConfig: NextConfig = {
   serverExternalPackages: ["puppeteer-core", "@sparticuz/chromium"],
   experimental: {
     // Raise server action body limit for image/PDF uploads via forms.
-    // Default is 1 MB; feed images + estimate PDFs can be up to 10 MB.
+    // Default is 1 MB. Client documents advertise 20 MB (bucket limit
+    // matches); 25mb leaves headroom for multipart overhead. Feed images
+    // + estimate PDFs remain capped at 10 MB by their own actions.
     serverActions: {
-      bodySizeLimit: "10mb",
+      bodySizeLimit: "25mb",
     },
   },
   async headers() {

@@ -45,6 +45,7 @@ const TENANT_TABLES = [
   "chat_threads",
   "checklist_template_items",
   "checklist_templates",
+  "client_documents",
   "clients",
   "contract_documents",
   "contracts",
@@ -151,6 +152,9 @@ export async function exportOrgData(orgId: string): Promise<ExportBundle> {
     "contract-docs",
     "estimate-pdfs",
     "job-photos",
+    "employee-documents",
+    "subcontractor-bills",
+    "client-documents",
   ];
   async function listStoragePaths(bucket: string, prefix: string): Promise<string[]> {
     const out: string[] = [];
@@ -449,6 +453,7 @@ export async function purgeOrgData(
     "job_offer_dispatches",
     "job_offers",
     "freelancer_contacts",
+    "client_documents",
     "clients",
     // Misc per-org
     "scheduler_views",
@@ -491,11 +496,18 @@ export async function purgeOrgData(
   // deeper. Other buckets currently store files directly under <orgId>/
   // but we also recurse for safety in case a future upload nests them.
   let storageFilesRemoved = 0;
+  // employee-documents, subcontractor-bills and client-documents all use
+  // <orgId>/<recordId>/<uuid>-<name> paths, so the recursive purge below
+  // covers them. They were missing from these lists for a while — files
+  // in them survived org deletion and never made it into exports.
   const buckets = [
     "org-assets",
     "contract-docs",
     "estimate-pdfs",
     "job-photos",
+    "employee-documents",
+    "subcontractor-bills",
+    "client-documents",
   ];
 
   async function purgeBucketPrefix(
