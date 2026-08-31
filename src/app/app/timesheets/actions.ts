@@ -304,7 +304,8 @@ export async function submitSelfPtoRequestAction(
   // on their own view. Cross-surface revalidation was causing 30s+
   // freezes because the action waited for the admin layout's many
   // parallel queries to re-run before returning.
-  revalidatePath("/field/profile");
+  revalidatePath("/field/time-off");
+  revalidatePath("/field/profile"); // pending badge on the Time off row
   return { ok: true };
 }
 
@@ -549,7 +550,7 @@ export async function updatePtoRequestAction(
       body: `Now ${fields.start_date}${
         fields.end_date !== fields.start_date ? ` to ${fields.end_date}` : ""
       }, ${fields.hours}h (${before.status}).`,
-      href: "/field/profile",
+      href: "/field/time-off",
     });
   } catch {
     // Best-effort only.
@@ -671,7 +672,8 @@ export async function cancelSelfPtoRequestAction(
   // Field surface only — revalidating /app/timesheets from a field action
   // is the exact pattern submitSelfPtoRequestAction documents as causing
   // 30s+ freezes (the action waits on the admin layout's queries).
-  revalidatePath("/field/profile");
+  revalidatePath("/field/time-off");
+  revalidatePath("/field/profile"); // pending badge on the Time off row
   return { ok: true };
 }
 
@@ -801,7 +803,8 @@ export async function updateSelfPtoRequestAction(
   }
 
   // Field surface only — see cancelSelfPtoRequestAction above.
-  revalidatePath("/field/profile");
+  revalidatePath("/field/time-off");
+  revalidatePath("/field/profile"); // pending badge on the Time off row
   return { ok: true };
 }
 

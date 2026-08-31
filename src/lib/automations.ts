@@ -6443,7 +6443,7 @@ export async function notifyPtoStatus(ptoRequestId: string): Promise<void> {
       endDate: fmt(req.end_date),
       hours: req.hours,
       reason: req.reason,
-      dashboardUrl: `${siteUrl}/field/profile`,
+      dashboardUrl: `${siteUrl}/field/time-off`,
     });
     await sendEmail({
       to: recipient.email,
@@ -6564,7 +6564,8 @@ export async function notifyPayrollPaid(payrollRunId: string): Promise<void> {
         bonusPay: formatCurrencyCents(item.bonus_cents, currency),
         ptoPay: formatCurrencyCents(item.pto_pay_cents, currency),
         paidDate,
-        dashboardUrl: `${siteUrl}/field/profile`,
+        // /field/pay shows the statement this email describes.
+        dashboardUrl: `${siteUrl}/field/pay`,
       });
       await sendEmail({
         to: recipient.email,

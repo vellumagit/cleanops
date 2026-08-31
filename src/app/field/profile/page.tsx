@@ -1,15 +1,17 @@
 import Link from "next/link";
+import type { LucideIcon } from "lucide-react";
 import {
   Banknote,
-  ChevronRight,
-  GraduationCap,
   Calendar,
   CalendarClock,
-  MapPin,
   CalendarDays,
   CheckCircle2,
-  XCircle,
+  ChevronRight,
+  GraduationCap,
+  MapPin,
+  RefreshCw,
   Shield,
+  XCircle,
 } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -17,10 +19,6 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { FieldHeader } from "@/components/field-shell";
 import { ProfileForm } from "./profile-form";
 import { CalendarScopeForm } from "./calendar-scope-form";
-import { PtoRequestForm } from "./pto-request-form";
-import { PtoHistory } from "./pto-history";
-import { zonedYmd } from "@/lib/wall-clock";
-import { toEngagement } from "@/lib/engagement";
 import { PushToggle } from "@/components/push-prompt";
 import { formatDateTime } from "@/lib/format";
 import {
@@ -28,10 +26,54 @@ import {
   disconnectMyGoogleCalendarAction,
   resyncMyGoogleCalendarAction,
 } from "./actions";
-import { RefreshCw } from "lucide-react";
 import { getOrgTimezone } from "@/lib/org-timezone";
 
 export const metadata = { title: "Profile" };
+
+/** Small uppercase label that turns the stack into named groups. */
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <h2 className="mb-2 mt-6 px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+      {children}
+    </h2>
+  );
+}
+
+/** One tappable row: icon, title, optional hint/badge, chevron. */
+function NavRow({
+  href,
+  icon: Icon,
+  title,
+  hint,
+  badge,
+}: {
+  href: string;
+  icon: LucideIcon;
+  title: string;
+  hint?: string;
+  badge?: string | null;
+}) {
+  return (
+    <Link
+      href={href}
+      className="flex items-center gap-3 border-b border-border/60 px-4 py-3.5 transition-colors last:border-b-0 active:bg-muted"
+    >
+      <Icon className="h-5 w-5 shrink-0 text-muted-foreground" />
+      <span className="min-w-0 flex-1">
+        <span className="block text-[15px] font-medium">{title}</span>
+        {hint && (
+          <span className="block text-xs text-muted-foreground">{hint}</span>
+        )}
+      </span>
+      {badge && (
+        <span className="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-semibold text-amber-700 dark:text-amber-400">
+          {badge}
+        </span>
+      )}
+      <ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground" />
+    </Link>
+  );
+}
 
 export default async function FieldProfilePage() {
   const membership = await requireMembership();
@@ -44,59 +86,47 @@ export default async function FieldProfilePage() {
     .maybeSingle();
 
   // Personal calendar scope + highlight color (managers can mirror the whole
-  // org) — plus engagement, which decides whether time off is paid PTO
-  // (employee) or unpaid unavailability (subcontractor).
+  // org).
   const { data: calPrefs } = (await supabase
     .from("memberships")
-    .select("calendar_scope, calendar_color, engagement" as never)
+    .select("calendar_scope, calendar_color" as never)
     .eq("id", membership.id)
     .maybeSingle()) as unknown as {
     data: {
       calendar_scope: string | null;
       calendar_color: string | null;
-      engagement: string | null;
     } | null;
   };
   const calScope = calPrefs?.calendar_scope ?? "mine";
   const calColor = calPrefs?.calendar_color ?? "6";
-  const isSubcontractor = toEngagement(calPrefs?.engagement) === "subcontractor";
   const isManagerPlus = ["owner", "admin", "manager"].includes(membership.role);
 
-  // PTO history — start_date desc puts upcoming requests (the editable
-  // ones) on top and history below.
   const admin = createSupabaseAdminClient();
-  const [{ data: ptoHistory }, { data: gcalConn }] = await Promise.all([
+  const [{ count: pendingPto }, { data: gcalConn }] = await Promise.all([
+    // Pending time-off count — surfaces on the Time off row so an open
+    // request is visible without opening the page.
     admin
       .from("pto_requests" as never)
-      .select("id, start_date, end_date, hours, status, reason, reviewed_at")
+      .select("id", { count: "exact", head: true })
       .eq("employee_id" as never, membership.id as never)
-      .order("start_date" as never, { ascending: false } as never)
-      .limit(8) as unknown as {
-      data: Array<{
-        id: string;
-        start_date: string;
-        end_date: string;
-        hours: number;
-        status: "pending" | "approved" | "declined" | "cancelled";
-        reason: string | null;
-        reviewed_at: string | null;
-      }> | null;
-    },
+      .eq("status" as never, "pending" as never) as unknown as Promise<{
+      count: number | null;
+    }>,
 
-    // Check if this member has a personal GCal connection.
+    // Personal GCal connection, if any.
     admin
       .from("integration_connections" as never)
       .select("external_account_id, connected_at, scope")
       .eq("membership_id" as never, membership.id)
       .eq("provider" as never, "google_calendar")
       .eq("status" as never, "active")
-      .maybeSingle() as unknown as {
+      .maybeSingle() as unknown as Promise<{
       data: {
         external_account_id: string | null;
         connected_at: string;
         scope: string | null;
       } | null;
-    },
+    }>,
   ]);
 
   // A connection can be "active" (token refreshes) yet useless if the user
@@ -109,9 +139,10 @@ export default async function FieldProfilePage() {
     <>
       <FieldHeader
         title="Profile"
-        description="Keep your contact info up to date so your team can reach you."
+        description="Your details, your money, and how the app reaches you."
       />
 
+      {/* ── Who you are ── */}
       <div className="rounded-xl border border-border bg-card p-5">
         <div className="mb-5 flex items-center gap-4">
           <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted text-xl font-bold">
@@ -135,9 +166,50 @@ export default async function FieldProfilePage() {
         />
       </div>
 
-      {/* Push notifications */}
-      <div className="mt-5 rounded-xl border border-border bg-card p-5">
-        <h2 className="mb-3 text-sm font-semibold">Push notifications</h2>
+      {/* ── My work — the things a cleaner actually checks ── */}
+      <SectionLabel>My work</SectionLabel>
+      <div className="overflow-hidden rounded-xl border border-border bg-card">
+        <NavRow
+          href="/field/pay"
+          icon={Banknote}
+          title="My pay"
+          hint="This period so far, and every statement"
+        />
+        <NavRow
+          href="/field/hours"
+          icon={CalendarDays}
+          title="My hours"
+          hint="Every shift you've recorded"
+        />
+        <NavRow
+          href="/field/availability"
+          icon={CalendarClock}
+          title="My availability"
+          hint="The hours you can work — shows on the office schedule"
+        />
+        <NavRow
+          href="/field/time-off"
+          icon={Calendar}
+          title="Time off"
+          hint="Request days off and track approvals"
+          badge={
+            pendingPto
+              ? `${pendingPto} pending`
+              : null
+          }
+        />
+        <NavRow
+          href="/field/training"
+          icon={GraduationCap}
+          title="Training modules"
+          hint="Work through what's assigned to you"
+        />
+      </div>
+
+      {/* ── Notifications & calendar — how the app reaches you ── */}
+      <SectionLabel>Notifications &amp; calendar</SectionLabel>
+      <div className="rounded-xl border border-border bg-card p-5">
+        <h3 className="mb-3 text-sm font-semibold">Push notifications</h3>
         <p className="mb-3 text-xs text-muted-foreground">
           Get alerts on this device for new jobs, messages, and schedule changes
           — even when the app is in the background.
@@ -148,29 +220,11 @@ export default async function FieldProfilePage() {
         />
       </div>
 
-      {/* Security — two-factor auth */}
-      <Link
-        href="/field/profile/security"
-        className="mt-5 flex items-center gap-3 rounded-xl border border-border bg-card p-5 transition-colors active:bg-muted"
-      >
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted">
-          <Shield className="h-5 w-5 text-muted-foreground" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <h2 className="text-sm font-semibold">Security</h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            Add a second factor to your sign-in.
-          </p>
-        </div>
-        <ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground" />
-      </Link>
-
-      {/* Google Calendar */}
-      <div className="mt-5 rounded-xl border border-border bg-card p-5">
-        <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold">
+      <div className="mt-3 rounded-xl border border-border bg-card p-5">
+        <h3 className="mb-1 flex items-center gap-2 text-sm font-semibold">
           <CalendarDays className="h-4 w-4 text-blue-500" />
           Google Calendar
-        </h2>
+        </h3>
         <p className="mb-4 text-xs text-muted-foreground leading-relaxed">
           Connect your personal Google Calendar to automatically see your
           assigned jobs. Events are created, updated, and removed as your
@@ -262,6 +316,18 @@ export default async function FieldProfilePage() {
                 </button>
               </form>
             </div>
+
+            {/* Managers can mirror the whole org, with their jobs highlighted. */}
+            {isManagerPlus && (
+              <div className="border-t border-border pt-3">
+                <h4 className="mb-1 text-sm font-semibold">Calendar view</h4>
+                <p className="mb-3 text-xs text-muted-foreground">
+                  Show only your own jobs, or the whole team&apos;s schedule
+                  with your jobs highlighted in your color.
+                </p>
+                <CalendarScopeForm scope={calScope} color={calColor} />
+              </div>
+            )}
           </div>
         ) : (
           <form action={connectMyGoogleCalendarAction}>
@@ -276,88 +342,25 @@ export default async function FieldProfilePage() {
         )}
       </div>
 
-      {/* Calendar view (managers can mirror the whole org, with their jobs highlighted) */}
-      {isManagerPlus && gcalConn && (
-        <div className="mt-5 rounded-xl border border-border bg-card p-5">
-          <h2 className="mb-1 text-sm font-semibold">Calendar view</h2>
-          <p className="mb-4 text-xs text-muted-foreground">
-            Show only your own jobs, or the whole team&apos;s schedule with your
-            jobs highlighted in your color.
-          </p>
-          <CalendarScopeForm scope={calScope} color={calColor} />
-        </div>
-      )}
-
-      {/* Location & privacy */}
-      <div className="mt-5 rounded-xl border border-border bg-card p-5">
-        <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold">
-          <MapPin className="h-4 w-4 text-muted-foreground" />
-          Location &amp; privacy
-        </h2>
-        <p className="text-xs text-muted-foreground leading-relaxed">
-          When you clock in or out of a job your GPS coordinates are recorded to
-          confirm on-site presence. This data is visible only to your employer
-          and is never shared with third parties.
-        </p>
-      </div>
-
-      {/* Time off request */}
-      <div className="mt-5 rounded-xl border border-border bg-card p-5">
-        <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold">
-          <Calendar className="h-4 w-4 text-muted-foreground" />
-          Request time off
-        </h2>
-        <p className="mb-4 text-xs text-muted-foreground">
-          {isSubcontractor
-            ? "Marks you unavailable so nothing gets scheduled on you. Unpaid — your manager approves it."
-            : "Submit a request for your manager to approve."}
-        </p>
-        <PtoRequestForm isSubcontractor={isSubcontractor} />
-
-        <PtoHistory
-          rows={(ptoHistory ?? []).map((req) => ({
-            id: req.id,
-            start_date: req.start_date,
-            end_date: req.end_date,
-            hours: Number(req.hours),
-            status: req.status,
-            reason: req.reason,
-          }))}
-          todayYmd={zonedYmd(new Date(), tz)}
-          hideHours={isSubcontractor}
+      {/* ── Account & privacy ── */}
+      <SectionLabel>Account &amp; privacy</SectionLabel>
+      <div className="overflow-hidden rounded-xl border border-border bg-card">
+        <NavRow
+          href="/field/profile/security"
+          icon={Shield}
+          title="Security"
+          hint="Add a second factor to your sign-in"
         />
       </div>
-
-      {/* Quick links */}
-      <div className="mt-5 space-y-2">
-        <Link
-          href="/field/pay"
-          className="flex items-center gap-3 rounded-xl border border-border bg-card p-4 transition-colors active:bg-muted"
-        >
-          <Banknote className="h-5 w-5 text-muted-foreground" />
-          <span className="flex-1 text-[15px] font-medium">My pay</span>
-          <ChevronRight className="h-5 w-5 text-muted-foreground" />
-        </Link>
-        <Link
-          href="/field/availability"
-          className="flex items-center gap-3 rounded-xl border border-border bg-card p-4 transition-colors active:bg-muted"
-        >
-          <CalendarClock className="h-5 w-5 text-muted-foreground" />
-          <span className="flex-1 text-[15px] font-medium">
-            My availability
+      <div className="mt-3 rounded-xl border border-border bg-card p-4">
+        <p className="flex items-start gap-2 text-xs text-muted-foreground leading-relaxed">
+          <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>
+            When you clock in or out of a job your GPS coordinates are recorded
+            to confirm on-site presence. This data is visible only to your
+            employer and is never shared with third parties.
           </span>
-          <ChevronRight className="h-5 w-5 text-muted-foreground" />
-        </Link>
-        <Link
-          href="/field/training"
-          className="flex items-center gap-3 rounded-xl border border-border bg-card p-4 transition-colors active:bg-muted"
-        >
-          <GraduationCap className="h-5 w-5 text-muted-foreground" />
-          <span className="flex-1 text-[15px] font-medium">
-            Training modules
-          </span>
-          <ChevronRight className="h-5 w-5 text-muted-foreground" />
-        </Link>
+        </p>
       </div>
     </>
   );
