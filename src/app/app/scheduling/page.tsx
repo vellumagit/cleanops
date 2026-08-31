@@ -97,7 +97,13 @@ export default async function SchedulingPage({
             const [y, m, d] = week.split("-").map(Number);
             return new Date(y, m - 1, d);
           })()
-        : new Date(new Date().setHours(0, 0, 0, 0))
+        : (() => {
+            // ORG-local today, not server-local: new Date() on Vercel is UTC,
+            // so an Edmonton phone opening ?view=day after ~6 PM was shown
+            // TOMORROW's board. Same rule the Today button already uses.
+            const [y, m, d] = zonedYmd(new Date(), tz).split("-").map(Number);
+            return new Date(y, m - 1, d);
+          })()
       : view === "month"
         ? (() => {
             // Anchor to the 1st of the month (any date within the month works).
@@ -318,6 +324,9 @@ export default async function SchedulingPage({
         </div>
         <SchedulerShell
           view={view}
+          // Cold open (no params): phones get steered to Day view — the only
+          // grid that fits a narrow screen. Explicit URLs are never touched.
+          autoView={!viewRaw && !week}
           weekStart={formatWeekParam(weekStart)}
           bookings={bookings}
           employees={employees}

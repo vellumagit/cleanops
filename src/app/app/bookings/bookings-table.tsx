@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useReturnTo } from "@/components/return-to-field";
 import { useUrlState } from "@/components/use-url-state";
 import {
@@ -153,7 +153,38 @@ export function BookingsTable({
   // useState, so the redirect back from the editor remounted this component
   // with everything reset — and a filtered view could not be bookmarked or
   // shared. Now the ?_return the editor carries includes them verbatim.
-  const [view, setView] = useUrlState<ViewMode>("view", "table");
+  // View mode is deliberately NOT useUrlState: that hook deletes the param
+  // when the value equals its fallback, which makes an explicit "table"
+  // choice indistinguishable from "never chose" — and the mobile default
+  // below would then re-flip the user to cards after every editor
+  // round-trip. Explicit choices always write the URL (so _return carries
+  // them); the automatic phone default writes nothing (so it re-applies on
+  // any fresh visit, which is what a default should do).
+  const urlSearchParams = useSearchParams();
+  const [view, setViewState] = useState<ViewMode>(
+    () => (urlSearchParams.get("view") as ViewMode | null) ?? "table",
+  );
+  const setView = useCallback((next: ViewMode) => {
+    setViewState(next);
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    params.set("view", next);
+    window.history.replaceState(
+      null,
+      "",
+      `${window.location.pathname}?${params.toString()}`,
+    );
+  }, []);
+  // Phones default to cards — the table squeezes down to four cramped
+  // columns at 375px while the card view was built for exactly that width.
+  // One-shot, and only when the URL didn't choose.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).has("view")) return;
+    if (window.matchMedia("(max-width: 767px)").matches) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- SSR-safe by design: render the table default, upgrade to cards post-mount once the viewport is knowable
+      setViewState("cards");
+    }
+  }, []);
   // Open on the actionable pipeline (today + future), not all-time history —
   // otherwise the list dumps up to 1000 rows on load.
   const [tab, setTab] = useUrlState<TimeTab>("tab", "upcoming");

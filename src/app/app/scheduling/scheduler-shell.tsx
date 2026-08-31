@@ -37,6 +37,7 @@ const STORAGE_KEY = "cleanops.scheduler.filters";
  */
 export function SchedulerShell({
   view,
+  autoView = false,
   weekStart,
   bookings,
   employees,
@@ -49,6 +50,10 @@ export function SchedulerShell({
   currency = "CAD",
 }: {
   view: "week" | "day" | "month";
+  /** True when the URL carried neither ?view nor ?week — the server fell
+   *  back to week view without anyone choosing it, so the client may pick
+   *  a better default for the screen it's actually on. */
+  autoView?: boolean;
   weekStart: string;
   bookings: ScheduleBooking[];
   employees: ScheduleEmployee[];
@@ -65,6 +70,17 @@ export function SchedulerShell({
     useState<SchedulerFiltersState>(DEFAULT_FILTERS);
   const [filterOpen, setFilterOpen] = useState(false);
   const router = useRouter();
+
+  // Phones cold-opening the scheduler land on the week grid — 1160px of
+  // columns on a 375px screen. When nobody explicitly chose a view, steer
+  // narrow screens to Day (today), the one grid that fits. replace() so
+  // Back doesn't bounce through the week view.
+  useEffect(() => {
+    if (!autoView || view !== "week") return;
+    if (window.matchMedia("(max-width: 639px)").matches) {
+      router.replace("/app/scheduling?view=day");
+    }
+  }, [autoView, view, router]);
 
   // Rehydrate from localStorage on mount. We start with DEFAULT_FILTERS
   // during SSR and the first client render to avoid hydration drift,

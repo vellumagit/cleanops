@@ -295,116 +295,130 @@ export function DispatchGrid({
         onDragEnd={handleDragEnd}
       >
         <div className="overflow-hidden rounded-lg border border-border bg-card">
-          {/* Header row — employee names pinned at the top */}
-          <div
-            className="grid border-b border-border bg-muted/30"
-            style={{
-              gridTemplateColumns: `60px repeat(${Math.max(employees.length, 1)}, minmax(140px, 1fr))`,
-            }}
-          >
-            <div className="border-r border-border px-2 py-2 text-[10px] uppercase tracking-wide text-muted-foreground">
-              Time
-            </div>
-            {employees.length === 0 ? (
-              <div className="px-4 py-2 text-sm text-muted-foreground">
-                No active employees.
-              </div>
-            ) : (
-              employees.map((emp, idx) => {
-                const isOff = offEmployeeIds.has(emp.id);
-                const windows = isOff
-                  ? []
-                  : availabilityWindowsFor(availability[emp.id], date);
-                return (
-                  <div
-                    key={emp.id}
-                    className={cn(
-                      "border-r border-border px-3 py-2 last:border-r-0",
-                      isOff && "bg-muted/30",
-                    )}
-                  >
-                    <div className="flex items-center gap-2">
-                      <span
-                        className="h-2 w-2 shrink-0 rounded-full"
-                        style={{ backgroundColor: toneForEmployee(idx) }}
-                      />
-                      <span
+          {/* ONE scroller for both axes. The header used to live OUTSIDE the
+              scroll container inside an overflow-hidden card: the body could
+              scroll sideways while the names stayed frozen, so on any screen
+              too narrow for every column (a phone at 3 employees, a laptop at
+              8) column 3's jobs rendered under column 1's name. Sticky header
+              + sticky time gutter keep both readable on either axis. The
+              w-max/min-w-full wrapper makes both grids resolve their columns
+              over the same width so header and body can never drift. */}
+          <div ref={scrollRef} className="max-h-[72vh] overflow-auto">
+            <div className="w-max min-w-full">
+              {/* Header row — employee names, sticky above the time grid */}
+              <div
+                className="sticky top-0 z-30 grid border-b border-border bg-card"
+                style={{
+                  gridTemplateColumns: `60px repeat(${Math.max(employees.length, 1)}, minmax(140px, 1fr))`,
+                }}
+              >
+                <div className="sticky left-0 z-40 border-r border-border bg-card px-2 py-2 text-[10px] uppercase tracking-wide text-muted-foreground">
+                  Time
+                </div>
+                {employees.length === 0 ? (
+                  <div className="px-4 py-2 text-sm text-muted-foreground">
+                    No active employees.
+                  </div>
+                ) : (
+                  employees.map((emp, idx) => {
+                    const isOff = offEmployeeIds.has(emp.id);
+                    const windows = isOff
+                      ? []
+                      : availabilityWindowsFor(availability[emp.id], date);
+                    return (
+                      <div
+                        key={emp.id}
                         className={cn(
-                          "truncate text-sm font-medium",
-                          isOff && "text-muted-foreground line-through",
+                          "border-r border-border px-3 py-2 last:border-r-0",
+                          isOff && "bg-muted",
                         )}
                       >
-                        {emp.name}
-                      </span>
-                    </div>
-                    <p className="mt-0.5 text-[10px] text-muted-foreground">
-                      {isOff
-                        ? "Off today"
-                        : `${bookingsByEmployee.get(emp.id)?.length ?? 0} jobs`}
-                      {windows.length > 0 && (
-                        <span
-                          className="text-emerald-700 dark:text-emerald-400"
-                          title="Availability submitted by the employee"
-                        >
-                          {" · "}
-                          {formatAvailabilityWindows(windows)}
-                        </span>
-                      )}
-                    </p>
-                  </div>
-                );
-              })
-            )}
-          </div>
-
-          {/* Scrollable time grid */}
-          <div ref={scrollRef} className="max-h-[72vh] overflow-y-auto">
-            <div
-              className="relative grid"
-              style={{
-                gridTemplateColumns: `60px repeat(${Math.max(employees.length, 1)}, minmax(140px, 1fr))`,
-                height: DAY_HEIGHT_PX,
-              }}
-            >
-              {/* Time gutter — labels positioned at each hour boundary */}
-              <div className="relative border-r border-border">
-                {Array.from({ length: 24 }, (_, hour) => (
-                  <div
-                    key={hour}
-                    className="absolute right-1.5 text-[10px] leading-none text-muted-foreground"
-                    style={{ top: hour * 2 * SLOT_PX }}
-                  >
-                    {hour === 0 ? (
-                      <span className="block pt-0.5">
-                        {formatHourLabel(hour)}
-                      </span>
-                    ) : (
-                      <span className="block -translate-y-1/2 rounded bg-card px-1">
-                        {formatHourLabel(hour)}
-                      </span>
-                    )}
-                  </div>
-                ))}
+                        {/* max-w keeps a long name or a two-window availability
+                            string from inflating this column's max-content
+                            width under the w-max wrapper. */}
+                        <div className="flex max-w-[220px] items-center gap-2">
+                          <span
+                            className="h-2 w-2 shrink-0 rounded-full"
+                            style={{ backgroundColor: toneForEmployee(idx) }}
+                          />
+                          <span
+                            className={cn(
+                              "truncate text-sm font-medium",
+                              isOff && "text-muted-foreground line-through",
+                            )}
+                          >
+                            {emp.name}
+                          </span>
+                        </div>
+                        <p className="mt-0.5 max-w-[220px] truncate text-[10px] text-muted-foreground">
+                          {isOff
+                            ? "Off today"
+                            : `${bookingsByEmployee.get(emp.id)?.length ?? 0} jobs`}
+                          {windows.length > 0 && (
+                            <span
+                              className="text-emerald-700 dark:text-emerald-400"
+                              title="Availability submitted by the employee"
+                            >
+                              {" · "}
+                              {formatAvailabilityWindows(windows)}
+                            </span>
+                          )}
+                        </p>
+                      </div>
+                    );
+                  })
+                )}
               </div>
 
-              {/* Employee columns */}
-              {employees.map((emp, idx) => (
-                <EmployeeColumn
-                  key={emp.id}
-                  employee={emp}
-                  laneIdx={idx}
-                  bookings={bookingsByEmployee.get(emp.id) ?? []}
-                  conflictIds={conflictIds}
-                  canEdit={canEdit}
-                  tz={tz}
-                  date={date}
-                  isOff={offEmployeeIds.has(emp.id)}
-                  onQuickView={setQuickViewId}
-                  onSlotClick={handleSlotClick}
-                  colorBy={colorBy}
-                  nameById={nameById}
-                />
-              ))}
+              {/* Time grid */}
+              <div
+                className="relative grid"
+                style={{
+                  gridTemplateColumns: `60px repeat(${Math.max(employees.length, 1)}, minmax(140px, 1fr))`,
+                  height: DAY_HEIGHT_PX,
+                }}
+              >
+                {/* Time gutter — sticky through horizontal scroll so the hour
+                    labels never leave the screen */}
+                <div className="sticky left-0 z-20 border-r border-border bg-card">
+                  {Array.from({ length: 24 }, (_, hour) => (
+                    <div
+                      key={hour}
+                      className="absolute right-1.5 text-[10px] leading-none text-muted-foreground"
+                      style={{ top: hour * 2 * SLOT_PX }}
+                    >
+                      {hour === 0 ? (
+                        <span className="block pt-0.5">
+                          {formatHourLabel(hour)}
+                        </span>
+                      ) : (
+                        <span className="block -translate-y-1/2 rounded bg-card px-1">
+                          {formatHourLabel(hour)}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                {/* Employee columns */}
+                {employees.map((emp, idx) => (
+                  <EmployeeColumn
+                    key={emp.id}
+                    employee={emp}
+                    laneIdx={idx}
+                    bookings={bookingsByEmployee.get(emp.id) ?? []}
+                    conflictIds={conflictIds}
+                    canEdit={canEdit}
+                    tz={tz}
+                    date={date}
+                    isOff={offEmployeeIds.has(emp.id)}
+                    onQuickView={setQuickViewId}
+                    onSlotClick={handleSlotClick}
+                    colorBy={colorBy}
+                    nameById={nameById}
+                  />
+                ))}
+              </div>
             </div>
           </div>
         </div>
@@ -584,8 +598,10 @@ function DroppableSlot({
       style={{ height: SLOT_PX }}
     >
       {canEdit && (
+        // pointer-coarse: touch screens have no hover, so the tap-to-create
+        // affordance must be faintly visible there or it doesn't exist.
         <Plus
-          className="absolute left-1/2 top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 text-muted-foreground/0 transition-opacity group-hover:text-muted-foreground/60"
+          className="absolute left-1/2 top-1/2 h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 text-muted-foreground/0 transition-opacity group-hover:text-muted-foreground/60 pointer-coarse:text-muted-foreground/40"
           aria-hidden
         />
       )}
@@ -717,12 +733,14 @@ function PositionedBooking({
           )}
         </div>
         {canEdit && (
+          // touch-none: without it the browser claims the pan gesture and
+          // fires pointercancel, so a touch drag always lost to scrolling.
           <button
             type="button"
             aria-label="Drag to reschedule"
             onClick={(e) => e.stopPropagation()}
             {...(listeners as DraggableSyntheticListeners)}
-            className="shrink-0 rounded p-0.5 text-muted-foreground cursor-grab active:cursor-grabbing hover:bg-muted"
+            className="shrink-0 touch-none rounded p-1 text-muted-foreground cursor-grab active:cursor-grabbing hover:bg-muted"
           >
             <GripVertical className="h-3 w-3" />
           </button>

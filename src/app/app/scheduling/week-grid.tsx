@@ -626,12 +626,14 @@ function BookingCard({
           <span className="truncate">{booking.client_name}</span>
         </div>
         {canDrag && dragListeners ? (
+          // touch-none: without it the browser claims the pan gesture and
+          // fires pointercancel, so a touch drag always lost to scrolling.
           <button
             type="button"
             aria-label="Drag to reschedule"
             onClick={(e) => e.stopPropagation()}
             {...dragListeners}
-            className="shrink-0 rounded p-0.5 text-muted-foreground cursor-grab active:cursor-grabbing hover:bg-muted hover:text-foreground"
+            className="shrink-0 touch-none rounded p-1 text-muted-foreground cursor-grab active:cursor-grabbing hover:bg-muted hover:text-foreground"
           >
             <GripVertical className="h-3 w-3" />
           </button>
