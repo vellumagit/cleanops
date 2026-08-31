@@ -1078,14 +1078,19 @@ export async function generateReviewTokenAction(formData: FormData) {
   revalidatePath(`/app/invoices/${id}`);
 }
 
-export async function deleteInvoiceAction(formData: FormData) {
+export async function deleteInvoiceAction(
+  formData: FormData,
+): Promise<{ ok: false; error: string } | void> {
   const id = String(formData.get("id") ?? "");
   if (!id) return;
   const { membership, supabase } = await getActionContext();
 
-  // Hard-delete of a financial document — owner/admin only.
+  // Hard-delete of a financial document — owner/admin only. Guard
+  // outcomes RETURN, never throw: a thrown error in a form action is the
+  // Next error page for the user and a Sentry page for us (SOLLOS3-Q),
+  // when all the guard wants to say is "not like this".
   if (!["owner", "admin"].includes(membership.role)) {
-    throw new Error("Only owners and admins can delete invoices.");
+    return { ok: false, error: "Only owners and admins can delete invoices." };
   }
 
   const { data: prev } = await supabase
@@ -1107,13 +1112,15 @@ export async function deleteInvoiceAction(formData: FormData) {
     } | null)?.payments ?? [],
   );
   if (paidCents > 0) {
-    throw new Error(
-      "This invoice has recorded payments. Refund or remove the payments first — deleting it now would erase money from the books.",
-    );
+    return {
+      ok: false,
+      error:
+        "This invoice has recorded payments. Refund or remove the payments first — deleting it now would erase money from the books.",
+    };
   }
 
   const { error } = await supabase.from("invoices").delete().eq("id", id);
-  if (error) throw error;
+  if (error) return { ok: false, error: error.message };
 
   await logAuditEvent({
     membership,

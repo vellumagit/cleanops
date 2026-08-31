@@ -6,6 +6,8 @@ import { getOrgTimezone } from "@/lib/org-timezone";
 import { taxRateBpsToPercentString } from "@/lib/org-tax";
 import { PageShell } from "@/components/page-shell";
 import { centsToDollarString } from "@/lib/validators/common";
+import { netPaidCents } from "@/lib/invoice-balance";
+import { formatCurrencyCents } from "@/lib/format";
 import { InvoiceForm } from "../../invoice-form";
 import { fetchInvoiceFormOptions } from "../../options";
 import { DeleteInvoiceForm } from "./delete-form";
@@ -30,7 +32,8 @@ export default async function EditInvoicePage({
     .select(
       `id, client_id, booking_id, status, amount_cents, due_date,
        tax_rate_bps, tax_amount_cents, tax_label,
-       line_items:invoice_line_items ( id, label, quantity, unit_price_cents, sort_order, booking_id )`,
+       line_items:invoice_line_items ( id, label, quantity, unit_price_cents, sort_order, booking_id ),
+       payments:invoice_payments ( amount_cents, refunded_cents )`,
     )
     .eq("id", id)
     .maybeSingle()) as unknown as {
@@ -55,6 +58,10 @@ export default async function EditInvoicePage({
                 booking_id: string | null;
               }>
             | null;
+          payments: Array<{
+            amount_cents: number;
+            refunded_cents: number | null;
+          }> | null;
         }
       | null;
     error: { message: string } | null;
@@ -77,6 +84,10 @@ export default async function EditInvoicePage({
   // (subtotal + tax). Derive subtotal for the form by backing tax out.
   const subtotalCents =
     invoice.amount_cents - (invoice.tax_amount_cents ?? 0);
+
+  // Net payments decide whether Delete is even on the table — same rule
+  // the action enforces, surfaced BEFORE the click instead of after.
+  const paidCents = netPaidCents(invoice.payments ?? []);
 
   return (
     <PageShell title="Edit invoice">
@@ -122,7 +133,14 @@ export default async function EditInvoicePage({
             Deleting will remove this invoice and any line items.
           </p>
           <div className="mt-4">
-            <DeleteInvoiceForm id={invoice.id} />
+            <DeleteInvoiceForm
+              id={invoice.id}
+              paidLabel={
+                paidCents > 0
+                  ? formatCurrencyCents(paidCents, currency)
+                  : null
+              }
+            />
           </div>
         </div>
       </div>
