@@ -55,6 +55,36 @@ function maybeStamp(
   };
 }
 
+/**
+ * Translate an invoice write failure into something a human can act on.
+ * The one that bit in production: invoices_booking_uidx (one LIVE invoice
+ * per booking) surfacing verbatim as "duplicate key value violates unique
+ * constraint" — correct rule, hostile sentence.
+ */
+async function friendlyInvoiceDbError(
+  supabase: Awaited<ReturnType<typeof getActionContext>>["supabase"],
+  error: { message: string } | null,
+  bookingId: string | null | undefined,
+): Promise<string> {
+  const message = error?.message ?? "Save failed";
+  if (!message.includes("invoices_booking_uidx")) return message;
+
+  let label = "another invoice";
+  if (bookingId) {
+    const { data: existing } = (await supabase
+      .from("invoices")
+      .select("number")
+      .eq("booking_id", bookingId)
+      .is("voided_at" as never, null as never)
+      .limit(1)
+      .maybeSingle()) as unknown as { data: { number: number | null } | null };
+    if (existing?.number != null) {
+      label = `invoice INV-${String(existing.number).padStart(3, "0")}`;
+    }
+  }
+  return `That booking is already billed by ${label} — a booking can only carry one live invoice. Open that invoice instead, or void it first if this is a correction.`;
+}
+
 export async function createInvoiceAction(
   _prev: InvoiceFormState,
   formData: FormData,
@@ -97,8 +127,18 @@ export async function createInvoiceAction(
     error: { message: string } | null;
   }>);
 
-  if (error || !inserted)
-    return { errors: { _form: error?.message ?? "Insert failed" }, values: raw };
+  if (error || !inserted) {
+    return {
+      errors: {
+        _form: await friendlyInvoiceDbError(
+          supabase,
+          error,
+          parsed.data.booking_id,
+        ),
+      },
+      values: raw,
+    };
+  }
 
   // Stamp the booking as billed. Without this, a biweekly/monthly client's
   // booking manually invoiced here was invoiced AGAIN by the consolidated
@@ -272,7 +312,20 @@ export async function updateInvoiceAction(
     } as never)
     .eq("id", id) as unknown as Promise<{ error: { message: string } | null }>);
 
-  if (error) return { errors: { _form: error.message }, values: raw };
+  if (error) {
+    // Re-pointing an invoice at a booking another live invoice already
+    // bills hits the same unique index the create path does.
+    return {
+      errors: {
+        _form: await friendlyInvoiceDbError(
+          supabase,
+          error,
+          parsed.data.booking_id,
+        ),
+      },
+      values: raw,
+    };
+  }
 
   // Promote a status change to its own audit action so the viewer can
   // distinguish a "mark paid" from a generic update.

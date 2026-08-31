@@ -52,12 +52,15 @@ function BookingCombobox({
   value,
   onChange,
   tz,
+  currentInvoiceId,
 }: {
   bookings: BookingOption[];
   clientId: string;
   value: string;
   onChange: (id: string) => void;
   tz: string;
+  /** When editing, the invoice whose own booking stays selectable. */
+  currentInvoiceId?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -232,35 +235,58 @@ function BookingCombobox({
                 {query ? "No bookings match your search." : "No bookings found."}
               </li>
             ) : (
-              filtered.map((b) => (
-                <li key={b.id}>
-                  <button
-                    type="button"
-                    onClick={() => select(b.id)}
-                    className="flex w-full items-center gap-2 px-3 py-2.5 text-sm hover:bg-muted transition-colors"
-                  >
-                    <span className="w-4 shrink-0">
-                      {value === b.id && (
-                        <Check className="h-3.5 w-3.5 text-primary" />
-                      )}
-                    </span>
-                    <span className="flex-1 min-w-0 text-left">
-                      <span className="block font-medium leading-tight">{formatBookingLabel(b)}</span>
-                      <span className="block text-xs text-muted-foreground leading-tight mt-0.5">
-                        {b.client_name}
-                      </span>
-                    </span>
-                    <span
-                      className={`shrink-0 text-xs ${statusColor[b.status] ?? "text-muted-foreground"}`}
+              filtered.map((b) => {
+                // One live invoice per booking is a DB rule — a booking
+                // billed by ANOTHER invoice is shown but not selectable,
+                // so the rule reads here instead of as a Postgres error.
+                const billedElsewhere = Boolean(
+                  b.invoiced_by && b.invoiced_by !== currentInvoiceId,
+                );
+                return (
+                  <li key={b.id}>
+                    <button
+                      type="button"
+                      disabled={billedElsewhere}
+                      onClick={() => select(b.id)}
+                      title={
+                        billedElsewhere
+                          ? "Already billed by another invoice — void that one first if this is a correction."
+                          : undefined
+                      }
+                      className={`flex w-full items-center gap-2 px-3 py-2.5 text-sm transition-colors ${
+                        billedElsewhere
+                          ? "cursor-not-allowed opacity-50"
+                          : "hover:bg-muted"
+                      }`}
                     >
-                      {humanizeEnum(b.status)}
-                    </span>
-                    <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-                      {formatCurrencyCents(b.total_cents)}
-                    </span>
-                  </button>
-                </li>
-              ))
+                      <span className="w-4 shrink-0">
+                        {value === b.id && (
+                          <Check className="h-3.5 w-3.5 text-primary" />
+                        )}
+                      </span>
+                      <span className="flex-1 min-w-0 text-left">
+                        <span className="block font-medium leading-tight">{formatBookingLabel(b)}</span>
+                        <span className="block text-xs text-muted-foreground leading-tight mt-0.5">
+                          {b.client_name}
+                        </span>
+                      </span>
+                      {billedElsewhere && (
+                        <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                          Invoiced
+                        </span>
+                      )}
+                      <span
+                        className={`shrink-0 text-xs ${statusColor[b.status] ?? "text-muted-foreground"}`}
+                      >
+                        {humanizeEnum(b.status)}
+                      </span>
+                      <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                        {formatCurrencyCents(b.total_cents)}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })
             )}
           </ul>
 
@@ -448,6 +474,7 @@ export function InvoiceForm({
           value={bookingId}
           onChange={setBookingId}
           tz={tz}
+          currentInvoiceId={mode === "edit" ? id : undefined}
         />
       </FormField>
 
