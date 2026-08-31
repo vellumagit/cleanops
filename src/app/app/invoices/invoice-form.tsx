@@ -23,6 +23,10 @@ import {
   type InvoiceFormState,
 } from "./actions";
 import type { BookingOption } from "./options";
+import {
+  LineItemsFields,
+  type ExistingLineItem,
+} from "./line-items-fields";
 
 const empty: InvoiceFormState = {};
 
@@ -291,11 +295,13 @@ export function InvoiceForm({
    *  On edit we use whatever was saved on the invoice itself. */
   orgDefaultTaxRatePercent,
   orgDefaultTaxLabel,
-  /** When this invoice has line items, the line-items editor below owns
-   *  the subtotal + tax. This form then hides its own money fields and
-   *  leaves amount_cents untouched on save, so the two forms can't fight
-   *  over the total. */
-  lineItemsMode = false,
+  /** Saved line items (edit mode). When any exist, the items own the
+   *  money: the subtotal/tax fields hide and the rows render INSIDE this
+   *  form so the one Save writes everything — fields, items, totals. */
+  lineItems = [],
+  /** The invoice's saved tax, seeding the items' tax inputs (bps). */
+  itemsTaxRateBps,
+  itemsTaxLabel,
 }: {
   mode: "create" | "edit";
   id?: string;
@@ -306,7 +312,9 @@ export function InvoiceForm({
   tz: string;
   orgDefaultTaxRatePercent?: string;
   orgDefaultTaxLabel?: string;
-  lineItemsMode?: boolean;
+  lineItems?: ExistingLineItem[];
+  itemsTaxRateBps?: number | null;
+  itemsTaxLabel?: string | null;
 }) {
   const action =
     mode === "create"
@@ -314,6 +322,12 @@ export function InvoiceForm({
       : updateInvoiceAction.bind(null, id ?? "");
   const [state, formAction] = useActionState(action, empty);
   const v = state.values ?? {};
+
+  // Items vs single-amount is a per-invoice mode. Saved items lock it on
+  // (removing them all would orphan the billed-job links); an invoice
+  // without any can switch to items before saving — one-way per save.
+  const hasSavedItems = lineItems.length > 0;
+  const [useItems, setUseItems] = useState<boolean>(hasSavedItems);
 
   const [clientId, setClientId] = useState<string>(
     v.client_id ?? defaults?.client_id ?? "",
@@ -437,21 +451,36 @@ export function InvoiceForm({
         />
       </FormField>
 
-      {lineItemsMode ? (
+      {mode === "edit" && useItems ? (
         <>
           {statusField}
-          {/* Line items below own the money. Carry the saved subtotal so
-              validation passes, but updateInvoiceAction ignores it and
-              leaves amount_cents / tax untouched. */}
-          <input type="hidden" name="subtotal_cents" value={subtotalText} />
+          {/* Line items own the money. Carry the saved subtotal so
+              validation passes; the action recomputes the total from the
+              items and ignores this. */}
+          <input type="hidden" name="subtotal_cents" value={subtotalText || "0"} />
           <input type="hidden" name="tax_rate_bps" value="" />
           <input type="hidden" name="tax_label" value="" />
           <input type="hidden" name="totals_managed_elsewhere" value="1" />
-          <p className="rounded-lg border border-dashed border-border bg-muted/20 p-4 text-xs text-muted-foreground">
-            The subtotal and tax for this invoice are calculated from its
-            line items below. Edit them in the <strong>Line items</strong>{" "}
-            section.
-          </p>
+
+          <div className="rounded-lg border border-border bg-muted/10 p-4">
+            <div className="mb-3 flex items-baseline justify-between gap-3">
+              <h3 className="text-sm font-semibold">Line items</h3>
+              {!hasSavedItems && (
+                <button
+                  type="button"
+                  onClick={() => setUseItems(false)}
+                  className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                >
+                  Back to a single amount
+                </button>
+              )}
+            </div>
+            <LineItemsFields
+              existing={lineItems}
+              taxRateBps={itemsTaxRateBps}
+              taxLabel={itemsTaxLabel}
+            />
+          </div>
         </>
       ) : (
         <>
@@ -570,6 +599,16 @@ export function InvoiceForm({
           </dl>
         )}
           </div>
+
+          {mode === "edit" && (
+            <button
+              type="button"
+              onClick={() => setUseItems(true)}
+              className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+            >
+              Bill as itemized line items instead
+            </button>
+          )}
         </>
       )}
 

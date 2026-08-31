@@ -149,7 +149,9 @@ export async function updateInvoiceAction(
   const { membership, supabase } = await getActionContext();
   const { data: prev } = await supabase
     .from("invoices")
-    .select("status, amount_cents, sent_at, paid_at, client_id")
+    .select(
+      "organization_id, status, amount_cents, sent_at, paid_at, client_id, tax_rate_bps, tax_label",
+    )
     .eq("id", id)
     .maybeSingle();
 
@@ -173,13 +175,45 @@ export async function updateInvoiceAction(
     rateBps: parsed.data.tax_rate_bps,
   });
 
-  // When the invoice has line items, the line-items editor is the single
-  // owner of amount_cents + tax. This form then leaves those columns
-  // untouched so the two forms can't overwrite each other's total.
+  // ONE save for the whole invoice: when the form carries line items,
+  // reconcile them right here — rows synced, subtotal + tax recomputed —
+  // so fields, items, and totals commit together. (They used to be two
+  // forms with two Save buttons; the second one is gone.)
   const managedElsewhere = formData.get("totals_managed_elsewhere") === "1";
-  const effectiveTotal = managedElsewhere
+  let itemsMoneyFields: Record<string, unknown> | null = null;
+  let itemsCount: number | null = null;
+  let effectiveTotal = managedElsewhere
     ? prev?.amount_cents ?? 0
     : tax.totalCents;
+
+  if (managedElsewhere && formData.get("line_items_json") != null && prev) {
+    const { reconcileInvoiceLineItems } = await import(
+      "@/lib/invoice-line-items"
+    );
+    const result = await reconcileInvoiceLineItems(
+      supabase,
+      {
+        id,
+        organization_id: (prev as { organization_id?: string })
+          .organization_id as string,
+        tax_rate_bps:
+          (prev as { tax_rate_bps?: number | null }).tax_rate_bps ?? null,
+        tax_label: (prev as { tax_label?: string | null }).tax_label ?? null,
+      },
+      formData,
+    );
+    if (!result.ok) {
+      return { errors: { _form: result.error }, values: raw };
+    }
+    itemsMoneyFields = {
+      amount_cents: result.totalCents,
+      tax_rate_bps: result.taxRateBps,
+      tax_amount_cents: result.taxAmountCents,
+      tax_label: result.taxLabel,
+    };
+    itemsCount = result.itemCount;
+    effectiveTotal = result.totalCents;
+  }
 
   // Respect the payment ledger: if the invoice has recorded payments, the
   // edit form can't revert it below its paid state (which would null
@@ -211,16 +245,19 @@ export async function updateInvoiceAction(
     stamps = maybeStamp(parsed.data.status, prev ?? undefined);
   }
 
-  // In line-items mode, omit the money columns entirely — the line-items
-  // editor owns them. Otherwise this form computes and writes the total.
-  const moneyFields = managedElsewhere
-    ? {}
-    : {
-        amount_cents: tax.totalCents,
-        tax_rate_bps: tax.rateBps,
-        tax_amount_cents: tax.taxAmountCents,
-        tax_label: tax.rateBps ? parsed.data.tax_label : null,
-      };
+  // Items mode with a payload: money comes from the reconciled items.
+  // Items mode without one (a stale client that predates the merge):
+  // leave money untouched. Otherwise this form computes the total.
+  const moneyFields = itemsMoneyFields
+    ? itemsMoneyFields
+    : managedElsewhere
+      ? {}
+      : {
+          amount_cents: tax.totalCents,
+          tax_rate_bps: tax.rateBps,
+          tax_amount_cents: tax.taxAmountCents,
+          tax_label: tax.rateBps ? parsed.data.tax_label : null,
+        };
 
   const { error } = await (supabase
     .from("invoices")
@@ -254,11 +291,13 @@ export async function updateInvoiceAction(
       status: effectiveStatus,
       amount_cents: effectiveTotal,
       tax_amount_cents: managedElsewhere ? undefined : tax.taxAmountCents,
+      line_items_count: itemsCount ?? undefined,
       paid_at: stamps.paid_at,
     },
   });
 
   revalidatePath("/app/invoices");
+  revalidatePath(`/app/invoices/${id}`);
   revalidatePath(`/app/invoices/${id}/edit`);
   revalidatePath("/app");
   // Back where they came from — a client's page, a filtered list — and

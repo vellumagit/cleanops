@@ -27,7 +27,7 @@ type EditorLine = {
   booking_id: string | null;
 };
 
-/** The row the action writes. Mirrors saveLineItemsAction's payload. */
+/** The row the save writes. Mirrors reconcileInvoiceLineItems's payload. */
 function persistedRow(row: EditorLine, invoiceId: string, orgId: string) {
   return {
     invoice_id: invoiceId,

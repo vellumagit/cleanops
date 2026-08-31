@@ -1,17 +1,23 @@
 "use client";
 
-import { useActionState, useCallback, useId, useState } from "react";
+import { useCallback, useState } from "react";
 import { Plus, Trash2, GripVertical } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { FormError } from "@/components/form-field";
-import { SubmitButton } from "@/components/submit-button";
 import { formatCurrencyCents } from "@/lib/format";
 import { computeTax, formatTaxRate, parseTaxRate } from "@/lib/invoice-tax";
-import {
-  saveLineItemsAction,
-  type LineItemsFormState,
-} from "./line-items-actions";
+
+/**
+ * Line items as FIELDS, not a form — they live inside the one invoice
+ * form and post with its single Save. (They used to be their own form
+ * with their own "Save line items" button; Brian: "It should always be
+ * one entire invoice that I'm editing.")
+ *
+ * Posts three hidden fields the invoice action reads:
+ *   line_items_json         — the rows
+ *   items_tax_rate_percent  — tax on top of the items ("" = none)
+ *   items_tax_label         — what the client sees
+ */
 
 type LineItem = {
   /** Temp client-side key. DB id is passed as `dbId` if the row existed. */
@@ -23,19 +29,13 @@ type LineItem = {
   /**
    * Which booking this line bills, carried through the round trip.
    *
-   * Not editable and not shown — it exists so that saving this form cannot
-   * DESTROY it. The save reconciles by delete-then-reinsert, and the payload
-   * used to omit booking_id entirely, so any re-inserted line came back
-   * orphaned. That link is the only record that a job on a consolidated
-   * invoice has been billed: the period builder's "already billed" filter
-   * reads it, and so does the billing-cycle cron (via the booking stamp
-   * derived from it). Losing it silently re-arms the same work to be
-   * invoiced a second time.
+   * Not editable and not shown — it exists so that saving cannot DESTROY
+   * it. The save reconciles by delete-then-reinsert, and the payload once
+   * omitted booking_id entirely, so re-inserted lines came back orphaned
+   * from the jobs they bill — which is how a job got billed twice.
    */
   bookingId: string | null;
 };
-
-const empty: LineItemsFormState = {};
 
 function newBlank(): LineItem {
   return {
@@ -44,7 +44,6 @@ function newBlank(): LineItem {
     label: "",
     quantity: "1",
     unitPriceDollars: "",
-    // A hand-added line bills no particular job until someone says so.
     bookingId: null,
   };
 }
@@ -63,26 +62,20 @@ export type ExistingLineItem = {
   booking_id?: string | null;
 };
 
-export function LineItemsEditor({
-  invoiceId,
+export function LineItemsFields({
   existing,
   taxRateBps,
   taxLabel,
 }: {
-  invoiceId: string;
   existing: ExistingLineItem[];
   /** The invoice's saved tax rate (bps), so the running total matches what
    *  gets stored. Null = no tax. Reflects the LAST SAVED tax setting. */
   taxRateBps?: number | null;
   taxLabel?: string | null;
 }) {
-  const prefix = useId();
-  const boundAction = saveLineItemsAction.bind(null, invoiceId);
-  const [state, formAction] = useActionState(boundAction, empty);
-
   const [items, setItems] = useState<LineItem[]>(() => {
     if (existing.length === 0) return [newBlank()];
-    return existing
+    return [...existing]
       .sort((a, b) => a.sort_order - b.sort_order)
       .map((e) => ({
         key: crypto.randomUUID(),
@@ -114,9 +107,6 @@ export function LineItemsEditor({
     [],
   );
 
-  // Tax is editable right here so line items + tax + total all live in ONE
-  // form with ONE "Save" — the source of the long-standing "I add tax and
-  // nothing changes" confusion was tax living in a separate form.
   const [taxEnabled, setTaxEnabled] = useState<boolean>(
     Boolean(taxRateBps && taxRateBps > 0),
   );
@@ -136,36 +126,34 @@ export function LineItemsEditor({
   const tax = computeTax(subtotalCents, { rateBps });
 
   return (
-    <form action={formAction} className="space-y-4">
-      <FormError message={state.errors?._form} />
-
-      {/* Hidden JSON payload — the action reads this */}
-      <input type="hidden" name="line_items_json" value={JSON.stringify(
-        items.map((item, idx) => ({
-          db_id: item.dbId,
-          label: item.label,
-          quantity: item.quantity,
-          unit_price_dollars: item.unitPriceDollars,
-          sort_order: idx,
-          // Carried so the save can preserve it. Omitting it is what
-          // orphaned 53 live line items from the jobs they bill.
-          booking_id: item.bookingId,
-        })),
-      )} />
-      {/* Tax — read by saveLineItemsAction and applied on top of the items. */}
+    <div className="space-y-4">
+      {/* Hidden payload — the invoice action reads these on save */}
       <input
         type="hidden"
-        name="tax_rate_percent"
+        name="line_items_json"
+        value={JSON.stringify(
+          items.map((item, idx) => ({
+            db_id: item.dbId,
+            label: item.label,
+            quantity: item.quantity,
+            unit_price_dollars: item.unitPriceDollars,
+            sort_order: idx,
+            booking_id: item.bookingId,
+          })),
+        )}
+      />
+      <input
+        type="hidden"
+        name="items_tax_rate_percent"
         value={taxEnabled ? rateText : ""}
       />
       <input
         type="hidden"
-        name="tax_label"
+        name="items_tax_label"
         value={taxEnabled ? labelText : ""}
       />
 
       <div className="space-y-2">
-        {/* Header */}
         <div className="hidden gap-2 px-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground sm:grid sm:grid-cols-[1fr_80px_110px_32px]">
           <span>Description</span>
           <span>Qty</span>
@@ -173,7 +161,7 @@ export function LineItemsEditor({
           <span />
         </div>
 
-        {items.map((item, _idx) => (
+        {items.map((item) => (
           <div
             key={item.key}
             className="group flex flex-col gap-2 rounded-md border border-border bg-background p-3 sm:grid sm:grid-cols-[1fr_80px_110px_32px] sm:items-center sm:border-0 sm:bg-transparent sm:p-0 sm:px-2"
@@ -218,8 +206,6 @@ export function LineItemsEditor({
         ))}
       </div>
 
-      {/* Tax — owners set it right here so items, tax, and total all save
-          together with one "Save line items" click. */}
       <div className="rounded-md border border-border bg-muted/30 p-3">
         <label className="flex items-center gap-2 text-sm font-medium">
           <input
@@ -257,12 +243,7 @@ export function LineItemsEditor({
       </div>
 
       <div className="flex items-center justify-between gap-3">
-        <Button
-          type="button"
-          onClick={addRow}
-          variant="outline"
-          size="sm"
-        >
+        <Button type="button" onClick={addRow} variant="outline" size="sm">
           <Plus className="h-4 w-4" />
           Add line item
         </Button>
@@ -298,10 +279,6 @@ export function LineItemsEditor({
           )}
         </div>
       </div>
-
-      <div className="flex justify-end border-t border-border pt-4">
-        <SubmitButton pendingLabel="Saving…">Save line items</SubmitButton>
-      </div>
-    </form>
+    </div>
   );
 }

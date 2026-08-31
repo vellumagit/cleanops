@@ -11,7 +11,7 @@ import { formatCurrencyCents } from "@/lib/format";
 import { InvoiceForm } from "../../invoice-form";
 import { fetchInvoiceFormOptions } from "../../options";
 import { DeleteInvoiceForm } from "./delete-form";
-import { LineItemsEditor, type ExistingLineItem } from "./line-items-editor";
+import type { ExistingLineItem } from "../../line-items-fields";
 
 export const metadata = { title: "Edit invoice" };
 
@@ -78,6 +78,8 @@ export default async function EditInvoicePage({
     quantity: li.quantity,
     unit_price_cents: li.unit_price_cents,
     sort_order: li.sort_order,
+    // Round-tripped so the one-form save can't orphan billed-job links.
+    booking_id: li.booking_id ?? null,
   }));
 
   // The form edits the SUBTOTAL; amount_cents in the DB is the total
@@ -100,7 +102,9 @@ export default async function EditInvoicePage({
             tz={tz}
             clients={clients}
             bookings={bookings}
-            lineItemsMode={lineItems.length > 0}
+            lineItems={lineItems}
+            itemsTaxRateBps={invoice.tax_rate_bps}
+            itemsTaxLabel={invoice.tax_label}
             defaults={{
               client_id: invoice.client_id,
               booking_id: invoice.booking_id,
@@ -111,21 +115,6 @@ export default async function EditInvoicePage({
               tax_label: invoice.tax_label,
             }}
           />
-        </div>
-        <div className="rounded-lg border border-border bg-card p-6">
-          <h2 className="text-sm font-semibold">Line items</h2>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Add services, fees, and extras. Saving line items will
-            recompute the invoice total automatically.
-          </p>
-          <div className="mt-4">
-            <LineItemsEditor
-              invoiceId={invoice.id}
-              existing={lineItems}
-              taxRateBps={invoice.tax_rate_bps}
-              taxLabel={invoice.tax_label}
-            />
-          </div>
         </div>
         <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-6">
           <h2 className="text-sm font-semibold text-destructive">Danger zone</h2>
