@@ -11,6 +11,13 @@ import { ApplicantControls } from "./applicant-controls";
 import { HireDialog } from "./hire-dialog";
 import { deleteApplicantAction } from "../actions";
 import { STATUS_TONE } from "../page";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { memberDisplayName } from "@/lib/member-display";
+import {
+  InterviewPanel,
+  type InterviewRow,
+  type QuestionnaireOption,
+} from "./interview-panel";
 
 export const metadata = { title: "Applicant" };
 
@@ -61,6 +68,59 @@ export default async function ApplicantDetailPage({
     .maybeSingle()) as unknown as { data: Applicant | null };
 
   if (!a) notFound();
+
+  // Interviews on file + startable questionnaires. Admin client (these
+  // tables postdate the generated types), explicitly org-scoped.
+  const admin = createSupabaseAdminClient();
+  const [{ data: interviewRows }, { data: questionnaireRows }] =
+    await Promise.all([
+      admin
+        .from("applicant_interviews" as never)
+        .select(
+          "id, title, questions, answers, notes, created_at, conductor:memberships ( display_name, profile:profiles ( full_name ) )",
+        )
+        .eq("applicant_id" as never, id as never)
+        .eq(
+          "organization_id" as never,
+          membership.organization_id as never,
+        )
+        .order("created_at" as never, {
+          ascending: false,
+        } as never) as unknown as Promise<{
+        data: Array<{
+          id: string;
+          title: string;
+          questions: unknown;
+          answers: unknown;
+          notes: string | null;
+          created_at: string;
+          conductor: {
+            display_name: string | null;
+            profile: { full_name: string | null } | null;
+          } | null;
+        }> | null;
+      }>,
+      admin
+        .from("hiring_docs" as never)
+        .select("id, title")
+        .eq("organization_id" as never, membership.organization_id as never)
+        .eq("kind" as never, "questionnaire" as never)
+        .eq("is_active" as never, true as never)
+        .order("title" as never) as unknown as Promise<{
+        data: Array<{ id: string; title: string }> | null;
+      }>,
+    ]);
+
+  const interviews: InterviewRow[] = (interviewRows ?? []).map((r) => ({
+    id: r.id,
+    title: r.title,
+    questions: Array.isArray(r.questions) ? r.questions.map(String) : [],
+    answers: Array.isArray(r.answers) ? r.answers.map(String) : [],
+    notes: r.notes,
+    created_at: r.created_at,
+    conducted_by_name: r.conductor ? memberDisplayName(r.conductor) : null,
+  }));
+  const questionnaires: QuestionnaireOption[] = questionnaireRows ?? [];
 
   // Extra fields the form sent that we didn't map to a column.
   const mappedKeys = new Set([
@@ -162,6 +222,14 @@ export default async function ApplicantDetailPage({
               Received {formatDateTime(a.created_at, tz)}
             </p>
           </div>
+
+          {/* Interviews — answers recorded against the questionnaire as it
+              was asked, living on the applicant instead of in a notebook. */}
+          <InterviewPanel
+            applicantId={a.id}
+            interviews={interviews}
+            questionnaires={questionnaires}
+          />
 
           {extras.length > 0 && (
             <details className="rounded-xl border border-border bg-card p-5">
