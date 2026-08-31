@@ -17,6 +17,7 @@ import {
 import { SchedulerShell } from "./scheduler-shell";
 import { CoveragePanel } from "./coverage-panel";
 import { zonedYmd, startOfWeekUtc, formatCalendarDate } from "@/lib/wall-clock";
+import { getOrgHolidays } from "@/lib/holidays";
 
 export const metadata = { title: "Scheduling" };
 
@@ -160,15 +161,20 @@ export default async function SchedulingPage({
   const fetchStart = midnightInTzUtc(weekStartYmd, tz);
   const fetchEnd = midnightInTzUtc(weekEndYmd, tz);
 
-  const [{ bookings, employees, offDays, availability }, savedViews, currency] =
-    await Promise.all([
-      fetchScheduleWeek(fetchStart, fetchEnd, {
-        startYmd: weekStartYmd,
-        endYmdExclusive: weekEndYmd,
-      }),
-      fetchSchedulerViews(membership.organization_id),
-      getOrgCurrency(membership.organization_id),
-    ]);
+  const [
+    { bookings, employees, offDays, availability },
+    savedViews,
+    currency,
+    holidays,
+  ] = await Promise.all([
+    fetchScheduleWeek(fetchStart, fetchEnd, {
+      startYmd: weekStartYmd,
+      endYmdExclusive: weekEndYmd,
+    }),
+    fetchSchedulerViews(membership.organization_id),
+    getOrgCurrency(membership.organization_id),
+    getOrgHolidays(membership.organization_id, weekStartYmd, weekEndYmd),
+  ]);
 
   // For month nav, prev/next = first of prev/next month.
   const prev =
@@ -332,6 +338,7 @@ export default async function SchedulingPage({
           employees={employees}
           offDays={offDays}
           availability={availability}
+          holidays={holidays}
           canEdit={canEdit}
           canEditStatus={canEditStatus}
           tz={tz}

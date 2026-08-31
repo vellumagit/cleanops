@@ -106,6 +106,7 @@ export function DispatchGrid({
   tz,
   offDays = {},
   availability = {},
+  holidays = {},
   colorBy = "employee",
   warnings = {},
 }: {
@@ -122,6 +123,8 @@ export function DispatchGrid({
   /** Declared working windows per employee — shown in the column
    *  header so the dispatcher sees submitted availability at a glance. */
   availability?: AvailabilityByEmployee;
+  /** YMD → statutory holiday name(s), from the org's holiday region. */
+  holidays?: Record<string, string>;
   /** Card accent color rule. Header dots always reflect employee idx
    *  regardless — switching by service/client/status only changes the
    *  card left border. */
@@ -295,6 +298,12 @@ export function DispatchGrid({
         onDragEnd={handleDragEnd}
       >
         <div className="overflow-hidden rounded-lg border border-border bg-card">
+          {/* Statutory holiday for the viewed day — a label, not a block. */}
+          {holidays[date] && (
+            <div className="border-b border-border bg-violet-500/10 px-3 py-1.5 text-xs font-medium text-violet-700 dark:text-violet-300">
+              {holidays[date]}
+            </div>
+          )}
           {/* ONE scroller for both axes. The header used to live OUTSIDE the
               scroll container inside an overflow-hidden card: the body could
               scroll sideways while the names stayed frozen, so on any screen

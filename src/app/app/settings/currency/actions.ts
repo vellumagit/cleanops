@@ -15,6 +15,62 @@ export type TaxDefaultsFormState = {
   success?: boolean;
 };
 
+export type HolidayRegionFormState = {
+  errors?: Partial<Record<"holiday_country" | "_form", string>>;
+  success?: boolean;
+};
+
+/**
+ * Save the org's holiday region ("CA", "CA-AB", or off). Drives the
+ * statutory-holiday labels on the scheduler — computed offline, so this
+ * setting is the entire integration.
+ */
+export async function saveHolidayRegionAction(
+  _prev: HolidayRegionFormState,
+  formData: FormData,
+): Promise<HolidayRegionFormState> {
+  const { membership } = await getActionContext();
+
+  if (!["owner", "admin"].includes(membership.role)) {
+    return { errors: { _form: "You don't have permission." } };
+  }
+
+  const country = String(formData.get("holiday_country") ?? "")
+    .trim()
+    .toUpperCase();
+  const state = String(formData.get("holiday_state") ?? "")
+    .trim()
+    .toUpperCase();
+
+  let region: string | null = null;
+  if (country) {
+    region = state ? `${country}-${state}` : country;
+    const { isValidHolidayRegion } = await import("@/lib/holidays");
+    if (!isValidHolidayRegion(region)) {
+      return { errors: { holiday_country: "Pick a country from the list." } };
+    }
+  }
+
+  const admin = createSupabaseAdminClient();
+  const { error } = await admin
+    .from("organizations")
+    .update({ holiday_region: region } as never)
+    .eq("id", membership.organization_id);
+  if (error) return { errors: { _form: error.message } };
+
+  await logAuditEvent({
+    membership,
+    action: "update",
+    entity: "settings",
+    entity_id: membership.organization_id,
+    after: { holiday_region: region },
+  });
+
+  revalidatePath("/app/settings/currency");
+  revalidatePath("/app/scheduling");
+  return { success: true };
+}
+
 export async function saveCurrencyAction(
   _prev: CurrencyFormState,
   formData: FormData,

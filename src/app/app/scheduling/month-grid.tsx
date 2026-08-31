@@ -107,6 +107,7 @@ export function MonthGrid({
   bookings,
   employees,
   offDays,
+  holidays = {},
   tz,
 }: {
   /** Any YYYY-MM-DD within the target month. */
@@ -114,6 +115,8 @@ export function MonthGrid({
   bookings: ScheduleBooking[];
   employees: ScheduleEmployee[];
   offDays: Record<string, string[]>;
+  /** YMD → statutory holiday name(s), from the org's holiday region. */
+  holidays?: Record<string, string>;
   tz: string;
 }) {
   // Carry the board/calendar state we are on, so Save and Cancel return here.
@@ -218,6 +221,16 @@ export function MonthGrid({
                 >
                   {day.getDate()}
                 </button>
+
+                {/* Statutory holiday label */}
+                {holidays[ymd] && (
+                  <div
+                    className="mb-0.5 truncate rounded bg-violet-500/10 px-1 py-px text-[9px] font-medium text-violet-700 dark:text-violet-300"
+                    title={holidays[ymd]}
+                  >
+                    {holidays[ymd]}
+                  </div>
+                )}
 
                 {/* Booking chips */}
                 <div className="space-y-0.5">

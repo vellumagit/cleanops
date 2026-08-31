@@ -103,6 +103,7 @@ export function WeekGrid({
    *  employee — rendered as a small "available" chip in each day cell
    *  so a submitted schedule is actually visible while planning. */
   availability = {},
+  holidays = {},
   /** How card accent color is computed. Lane headers always use the
    *  per-employee tone regardless. */
   colorBy = "employee",
@@ -119,6 +120,8 @@ export function WeekGrid({
   tz: string;
   offDays?: Record<string, string[]>;
   availability?: AvailabilityByEmployee;
+  /** YMD → statutory holiday name(s), from the org's holiday region. */
+  holidays?: Record<string, string>;
   colorBy?: ColorBy;
   /** booking id → warnings, computed once by the shell. */
   warnings?: Record<string, BookingWarning[]> | Map<string, BookingWarning[]>;
@@ -290,28 +293,39 @@ export function WeekGrid({
               <div className="sticky left-0 z-10 border-b border-r border-border bg-card px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 Cleaner
               </div>
-              {days.map((d) => (
-                <div
-                  key={d.toISOString()}
-                  className="border-b border-border px-3 py-3 text-center"
-                >
-                  <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    {DAY_LABELS[(d.getDay() + 6) % 7]}
+              {days.map((d) => {
+                const holiday = holidays[dateKey(d)];
+                return (
+                  <div
+                    key={d.toISOString()}
+                    className="border-b border-border px-3 py-3 text-center"
+                  >
+                    <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      {DAY_LABELS[(d.getDay() + 6) % 7]}
+                    </div>
+                    <div className="text-sm font-medium tabular-nums">
+                      {/* `d` is a calendar square, built local-midnight from
+                          weekStart — not an instant. Zoning it read that
+                          midnight as a moment and slid it back a day, so this
+                          said "Aug 7" under the "Sat" printed directly above
+                          from local getDay(). The two halves of one header
+                          disagreed. */}
+                      {formatCalendarDate(d, {
+                        month: "short",
+                        day: "numeric",
+                      })}
+                    </div>
+                    {holiday && (
+                      <div
+                        className="mt-0.5 truncate text-[10px] font-medium text-violet-600 dark:text-violet-400"
+                        title={holiday}
+                      >
+                        {holiday}
+                      </div>
+                    )}
                   </div>
-                  <div className="text-sm font-medium tabular-nums">
-                    {/* `d` is a calendar square, built local-midnight from
-                        weekStart — not an instant. Zoning it read that
-                        midnight as a moment and slid it back a day, so this
-                        said "Aug 7" under the "Sat" printed directly above
-                        from local getDay(). The two halves of one header
-                        disagreed. */}
-                    {formatCalendarDate(d, {
-                      month: "short",
-                      day: "numeric",
-                    })}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
 
               {employees.length === 0 ? (
                 <div

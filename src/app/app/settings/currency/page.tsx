@@ -3,21 +3,33 @@ import { ChevronLeft } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { getOrgTaxDefaults, taxRateBpsToPercentString } from "@/lib/org-tax";
+import { regionOptions } from "@/lib/holidays";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { PageShell } from "@/components/page-shell";
 import { CurrencyForm } from "./currency-form";
 import { TaxForm } from "./tax-form";
+import { HolidaysForm } from "./holidays-form";
 
-export const metadata = { title: "Currency & tax" };
+export const metadata = { title: "Currency, tax & holidays" };
 
 export default async function CurrencySettingsPage() {
   const membership = await requireMembership(["owner", "admin"]);
   const current = await getOrgCurrency(membership.organization_id);
   const taxDefaults = await getOrgTaxDefaults(membership.organization_id);
 
+  const admin = createSupabaseAdminClient();
+  const { data: org } = (await admin
+    .from("organizations")
+    .select("holiday_region" as never)
+    .eq("id", membership.organization_id)
+    .maybeSingle()) as unknown as {
+    data: { holiday_region: string | null } | null;
+  };
+
   return (
     <PageShell
-      title="Currency & tax"
-      description="How invoice amounts display, and the default tax (GST, HST, VAT, etc.) applied to new invoices."
+      title="Currency, tax & holidays"
+      description="How invoice amounts display, the default tax applied to new invoices, and which region's statutory holidays mark the scheduler."
       actions={
         <Link
           href="/app/settings"
@@ -47,6 +59,19 @@ export default async function CurrencySettingsPage() {
           <TaxForm
             currentRatePercent={taxRateBpsToPercentString(taxDefaults.rateBps)}
             currentLabel={taxDefaults.label ?? ""}
+          />
+        </section>
+
+        <section className="border-t border-border pt-8">
+          <h2 className="text-sm font-semibold">Holidays</h2>
+          <p className="mb-4 mt-0.5 text-xs text-muted-foreground">
+            Statutory holidays for this region show on the scheduler — a
+            label on the day, nothing blocked. Computed locally; no
+            calendar account needed.
+          </p>
+          <HolidaysForm
+            current={org?.holiday_region ?? null}
+            options={regionOptions()}
           />
         </section>
       </div>

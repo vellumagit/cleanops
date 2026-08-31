@@ -29,6 +29,8 @@ A split shift is a hand-off: one cleaner does the first hours, another takes ove
 
 Cleaners can submit their working hours in the field app (Profile → Availability). Whatever they declare shows on the scheduler: a green dashed chip with the hours in their day cells on the week view, and the hours beside their name in the day view's column headers. A specific day marked *off* beats the standing weekly hours. No chip just means nothing was submitted — unknown, not unavailable.
 
+Statutory holidays show too, once a region is picked in **Settings → Currency, tax & holidays**: the day gets a violet label with the holiday's name on every scheduler view. It's a label, not a block — you can still book the day; you just do it knowing it's Labour Day. Computed locally from the region (province-level rules included), no calendar account involved.
+
 ## Deleting and skipping
 
 - **Skip** is for one visit of a recurring series that shouldn't happen — the series continues.

@@ -96,9 +96,9 @@ const SECTIONS: Section[] = [
       {
         href: "/app/settings/currency",
         icon: Coins,
-        title: "Currency & tax",
+        title: "Currency, tax & holidays",
         description:
-          "How amounts display + the default GST / VAT / sales tax applied to new invoices.",
+          "How amounts display, the default GST / VAT / sales tax, and which region's statutory holidays mark the scheduler.",
       },
       {
         href: "/app/settings/timezone",

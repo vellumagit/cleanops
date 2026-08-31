@@ -43,6 +43,7 @@ export function SchedulerShell({
   employees,
   offDays,
   availability = {},
+  holidays = {},
   canEdit,
   canEditStatus,
   tz,
@@ -59,6 +60,8 @@ export function SchedulerShell({
   employees: ScheduleEmployee[];
   offDays: Record<string, string[]>;
   availability?: AvailabilityByEmployee;
+  /** YMD → statutory holiday name(s), per the org's holiday region. */
+  holidays?: Record<string, string>;
   canEdit: boolean;
   /** Owner/admin/manager — wider than canEdit (which gates rescheduling). */
   canEditStatus: boolean;
@@ -349,6 +352,7 @@ export function SchedulerShell({
           bookings={filteredBookings}
           employees={filteredEmployees}
           offDays={offDays}
+          holidays={holidays}
           tz={tz}
         />
       ) : view === "day" ? (
@@ -362,6 +366,7 @@ export function SchedulerShell({
           tz={tz}
           offDays={offDays}
           availability={availability}
+          holidays={holidays}
           colorBy={filters.colorBy}
         />
       ) : (
@@ -376,6 +381,7 @@ export function SchedulerShell({
           tz={tz}
           offDays={offDays}
           availability={availability}
+          holidays={holidays}
           colorBy={filters.colorBy}
         />
       )}
