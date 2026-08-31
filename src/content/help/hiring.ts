@@ -28,6 +28,16 @@ Any published Training module can be marked **"Assign to every new hire automati
 
 Every module also says **who it's for** — Employees & contractors, Managers, Admins & owners, in any combination. Each level only ever gets its own modules: a new manager receives the manager onboarding, not the bathroom SOP, and the module's roster page lists only the people it applies to (plus anyone who already carries an assignment, so history never vanishes).
 
+## People added without a login
+
+Someone can be added to the team manually (Employees → Add) with no account — they appear on schedules and timesheets but can't sign in. When they're ready for the field app, **send them an invitation using the same email on their record**: accepting it links the login to their existing record, so their hours and history come with them. It never creates a second person.
+
+## When someone leaves
+
+Set their status to **Disabled** on their edit page — nothing is deleted. Their sign-in stops working immediately, their upcoming jobs are unassigned (you're notified to re-cover them), an open clock is closed and flagged for review, and pending time-off requests are cancelled. The same notification warns you about money still owed: their final unpaid hours are picked up by the next pay run automatically, but **pending bonuses and already-approved future time off are not** — pay or remove those yourself. They move to the Archived tab on Employees. Re-hiring someone who had a login is flipping their status back to Active on their edit page (a fresh invite to that email is blocked and will point you there); update their role or wage on the same page while you're in it. Someone who never had a login re-joins through an invitation, which links and reactivates their old record.
+
+You can't deactivate yourself, and the only active owner can't be deactivated — promote someone first.
+
 ## The seam between hiring and training
 
 The line is the yes. Before it: questionnaires and procedures (this page). After it: the Hire button handles account, wage, and training in one motion; anything beyond that (contracts, banking details) lives in your hiring procedure checklist. If you find yourself writing "how we clean a bathroom" here, it belongs in Training; if you're writing "ask about weekend availability", it belongs here.

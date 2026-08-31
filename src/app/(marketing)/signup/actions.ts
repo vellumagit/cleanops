@@ -65,17 +65,21 @@ export async function signupAction(
   type InviteRow = {
     id: string;
     organization_id: string;
-    role: string;
+    email: string;
+    role: "owner" | "admin" | "manager" | "employee";
     expires_at: string;
     accepted_at: string | null;
-    engagement?: string | null;
+    engagement: string | null;
+    pay_rate_cents: number | null;
   };
   let inviteRow: InviteRow | null = null;
 
   if (isInvite) {
     const { data } = (await admin
       .from("invitations")
-      .select("id, organization_id, role, engagement, expires_at, accepted_at")
+      .select(
+        "id, organization_id, email, role, engagement, pay_rate_cents, expires_at, accepted_at",
+      )
       .eq("token", inviteToken as string)
       .maybeSingle()) as unknown as {
       data: InviteRow | null;
@@ -114,28 +118,22 @@ export async function signupAction(
 
   if (isInvite && inviteRow) {
     // ── Invite path: join the existing org ──────────────────────────────
-    const { error: membershipError } = await admin.from("memberships").insert({
-      organization_id: inviteRow.organization_id,
-      profile_id: userId,
-      role: inviteRow.role as "owner" | "admin" | "manager" | "employee",
-      // Carried from the invitation — see /join/[token]/actions.ts.
-      engagement: inviteRow.engagement ?? "employee",
-      status: "active",
-    });
+    // claimInvitation is the shared accept path: it applies role, engagement,
+    // AND the wage from the Hire dialog, links a matching shadow record
+    // instead of duplicating the person, assigns onboarding training, and
+    // stamps the invite accepted. This page used to hand-roll the insert and
+    // silently dropped the wage and the training — the dominant hire path
+    // was the broken one.
+    const { claimInvitation } = await import("@/lib/invitation-claim");
+    const claimed = await claimInvitation(admin, inviteRow, userId);
 
-    if (membershipError) {
+    if (!claimed.ok) {
       await admin.auth.admin.deleteUser(userId);
       return {
-        errors: { _form: membershipError.message },
+        errors: { _form: claimed.error },
         values: { fullName, organizationName, email },
       };
     }
-
-    // Mark invitation as accepted
-    await admin
-      .from("invitations")
-      .update({ accepted_at: new Date().toISOString() } as never)
-      .eq("id", inviteRow.id);
 
     if (!signUpData.session) {
       redirect(`/login?confirm=1&email=${encodeURIComponent(email)}`);

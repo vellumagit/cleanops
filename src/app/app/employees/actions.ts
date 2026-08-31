@@ -411,6 +411,36 @@ export async function updateMemberAction(
     };
   }
 
+  // DEACTIVATION GUARDS — server-side, because the write below is
+  // service-role and RLS can't backstop it either. The UI hides the status
+  // control for self, but hiding a control is not a permission model.
+  if (parsed.data.status === "disabled") {
+    if (memberId === membership.id) {
+      return {
+        errors: { _form: "You can't deactivate your own account." },
+      };
+    }
+    // Mirror of the last-owner demotion guard above: it only fires on ROLE
+    // changes, so without this a second owner (or a raw request) could set
+    // the sole active owner to disabled and lock the org out of itself.
+    if (before.role === "owner" && before.status === "active") {
+      const { count } = await supabase
+        .from("memberships")
+        .select("id", { count: "exact", head: true })
+        .eq("organization_id", membership.organization_id)
+        .eq("role", "owner")
+        .eq("status", "active");
+      if ((count ?? 0) <= 1) {
+        return {
+          errors: {
+            _form:
+              "Cannot deactivate the only active owner. Promote someone else to owner first.",
+          },
+        };
+      }
+    }
+  }
+
   // Build the memberships update payload (public-ish fields only).
   //
   // For shadow members, display_name is their canonical name.
@@ -528,6 +558,8 @@ export async function updateMemberAction(
       unassigned_booking_ids: sweep.unassignedBookings.map((b) => b.id),
       closed_time_entry_id: sweep.closedEntryId,
       cancelled_pto_ids: sweep.cancelledPtoIds,
+      pending_bonus_cents: sweep.pendingBonusCents,
+      approved_future_pto: sweep.approvedFuturePtoCount,
     };
     if (sweep.closedEntryId) {
       await logAuditEvent({
@@ -762,6 +794,11 @@ export async function createManualEmployeeAction(
       organization_id: membership.organization_id,
       profile_id: null,
       role: parsed.data.role,
+      // The dialog's employee/subcontractor picker. This was read into `raw`
+      // and then dropped from the insert for months — every manually added
+      // person became an employee and landed in payroll regardless of the
+      // selection.
+      engagement: raw.engagement,
       status: "active",
       pay_rate_cents: parsed.data.pay_rate_cents,
       display_name: parsed.data.display_name,
@@ -789,6 +826,7 @@ export async function createManualEmployeeAction(
     after: {
       display_name: parsed.data.display_name,
       role: parsed.data.role,
+      engagement: raw.engagement,
       pay_rate_cents: parsed.data.pay_rate_cents,
       manual: true,
     },

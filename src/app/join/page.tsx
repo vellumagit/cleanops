@@ -40,14 +40,18 @@ export default async function JoinPage({
   // Look up the invitation — use admin so RLS doesn't block
   const { data: invite } = (await admin
     .from("invitations")
-    .select("id, organization_id, email, role, expires_at, accepted_at")
+    .select(
+      "id, organization_id, email, role, engagement, pay_rate_cents, expires_at, accepted_at",
+    )
     .eq("token", token)
     .maybeSingle()) as unknown as {
     data: {
       id: string;
       organization_id: string;
       email: string;
-      role: string;
+      role: "owner" | "admin" | "manager" | "employee";
+      engagement: string | null;
+      pay_rate_cents: number | null;
       expires_at: string;
       accepted_at: string | null;
     } | null;
@@ -66,43 +70,31 @@ export default async function JoinPage({
     return <ErrorPage message="This invite link has expired. Ask your admin to send a new one." />;
   }
 
-  // Check the user doesn't already have an active membership in this org
-  const { data: existingMembership } = await admin
-    .from("memberships")
-    .select("id, status")
-    .eq("organization_id", invite.organization_id)
-    .eq("profile_id", user.id)
-    .maybeSingle();
-
-  if (existingMembership?.status === "active") {
-    redirect(invite.role === "employee" ? "/field/jobs" : "/app");
+  // WRONG-ACCOUNT GUARD. This page claims for whoever is signed in, and the
+  // claim can now LINK the invitee's existing (shadow) record — grafting it
+  // onto a stranger's login if a forwarded link is opened on a shared device
+  // or while signed into an unrelated account. The invite is addressed to an
+  // email; require the session to match it.
+  if ((user.email ?? "").toLowerCase() !== invite.email.toLowerCase()) {
+    return (
+      <ErrorPage
+        message={`This invite was sent to ${invite.email}, but you're signed in as ${user.email ?? "a different account"}. Sign out, then open the invite link again.`}
+      />
+    );
   }
 
-  if (existingMembership?.status === "disabled") {
-    // Re-activate
-    await admin
-      .from("memberships")
-      .update({ status: "active" } as never)
-      .eq("id", existingMembership.id);
-  } else {
-    // Create the membership
-    const { error: membershipError } = await admin.from("memberships").insert({
-      organization_id: invite.organization_id,
-      profile_id: user.id,
-      role: invite.role as "owner" | "admin" | "manager" | "employee",
-      status: "active",
-    });
+  // The shared accept path: applies role, engagement, and wage from the
+  // invite, reactivates a disabled membership (re-hire, invite's terms win),
+  // links a matching shadow record instead of duplicating the person, and
+  // assigns onboarding training. This page used to insert role-only —
+  // a subcontractor accepting from the email became an employee and landed
+  // in the next payroll run.
+  const { claimInvitation } = await import("@/lib/invitation-claim");
+  const claimed = await claimInvitation(admin, invite, user.id);
 
-    if (membershipError) {
-      return <ErrorPage message="Could not join team. Please try again or contact support." />;
-    }
+  if (!claimed.ok) {
+    return <ErrorPage message="Could not join team. Please try again or contact support." />;
   }
-
-  // Mark invite as accepted
-  await admin
-    .from("invitations")
-    .update({ accepted_at: new Date().toISOString() } as never)
-    .eq("id", invite.id);
 
   // Set the new org as the active org cookie. Cookie name must match
   // the constant in src/lib/auth.ts (ACTIVE_ORG_COOKIE) — previously

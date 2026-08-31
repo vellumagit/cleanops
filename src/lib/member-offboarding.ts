@@ -31,6 +31,14 @@ export type OffboardSweepResult = {
   closedEntryId: string | null;
   /** Pending PTO requests flipped to cancelled. */
   cancelledPtoIds: string[];
+  /** Money still owed that NOTHING will pay automatically once they're off
+   *  the roster: pending bonuses are skipped by every future payroll run
+   *  (which only prices non-roster people's raw hours), and approved
+   *  future time off is neither worked nor paid. Surfaced, not resolved —
+   *  paying or voiding them is the owner's call. */
+  pendingBonusCents: number;
+  pendingBonusCount: number;
+  approvedFuturePtoCount: number;
 };
 
 const OPEN_STATUSES = ["pending", "confirmed", "en_route"] as const;
@@ -50,6 +58,9 @@ export async function sweepDeactivatedMember(
     unassignedBookings: [],
     closedEntryId: null,
     cancelledPtoIds: [],
+    pendingBonusCents: 0,
+    pendingBonusCount: 0,
+    approvedFuturePtoCount: 0,
   };
 
   // ── 1. Future bookings they were covering ────────────────────────────
@@ -173,9 +184,58 @@ export async function sweepDeactivatedMember(
     console.error("[offboard] pto cancel failed:", err);
   }
 
-  // ── 4. Tell whoever has to act on it ─────────────────────────────────
+  // ── 4. Money that would otherwise vanish ─────────────────────────────
+  // Read-only: pending bonuses are EXPLICITLY skipped for people off the
+  // active roster by payroll-run-create (its hoursOnly bucket prices raw
+  // hours, nothing else), and approved future PTO is neither cancelled by
+  // step 3 (pending-only) nor ever paid. Left alone, both debts are
+  // invisible on every screen. The decision — pay it out or void it —
+  // belongs to the owner, so this step counts and reports, never writes.
+  try {
+    const todayYmd = nowIso.slice(0, 10);
+    const [{ data: bonuses }, { count: futurePto }] = await Promise.all([
+      // payroll_run_id NULL on both: a prepared-but-unpaid run stamps the
+      // rows it consumed while their status stays pending/approved — those
+      // WILL be paid, and counting them here would tell the owner to pay
+      // them a second time.
+      admin
+        .from("bonuses")
+        .select("amount_cents")
+        .eq("organization_id", organizationId)
+        .eq("employee_id", membershipId)
+        .eq("status", "pending")
+        .is("payroll_run_id", null) as unknown as Promise<{
+        data: Array<{ amount_cents: number }> | null;
+      }>,
+      admin
+        .from("pto_requests")
+        .select("id", { count: "exact", head: true })
+        .eq("organization_id", organizationId)
+        .eq("employee_id", membershipId)
+        .eq("status", "approved")
+        .is("payroll_run_id" as never, null as never)
+        .gte("end_date", todayYmd) as unknown as Promise<{
+        count: number | null;
+      }>,
+    ]);
+    result.pendingBonusCount = bonuses?.length ?? 0;
+    result.pendingBonusCents = (bonuses ?? []).reduce(
+      (s, b) => s + b.amount_cents,
+      0,
+    );
+    result.approvedFuturePtoCount = futurePto ?? 0;
+  } catch (err) {
+    console.error("[offboard] owed-money check failed:", err);
+  }
+
+  // ── 5. Tell whoever has to act on it ─────────────────────────────────
   // Only when there's something to act on — a clean offboard stays quiet.
-  if (result.unassignedBookings.length > 0 || result.closedEntryId) {
+  if (
+    result.unassignedBookings.length > 0 ||
+    result.closedEntryId ||
+    result.pendingBonusCount > 0 ||
+    result.approvedFuturePtoCount > 0
+  ) {
     try {
       const tz = await getOrgTimezone(organizationId);
       const fmt = new Intl.DateTimeFormat("en-US", {
@@ -209,6 +269,27 @@ export async function sweepDeactivatedMember(
           "They were still on the clock — the shift was closed and flagged for review on Timesheets.",
         );
       }
+      if (result.pendingBonusCount > 0) {
+        const dollars = (result.pendingBonusCents / 100).toFixed(2);
+        lines.push(
+          `They have ${result.pendingBonusCount} pending bonus${
+            result.pendingBonusCount === 1 ? "" : "es"
+          } totalling $${dollars} that no future payroll run will pick up — pay or delete ${
+            result.pendingBonusCount === 1 ? "it" : "them"
+          } on Bonuses.`,
+        );
+      }
+      if (result.approvedFuturePtoCount > 0) {
+        lines.push(
+          `${result.approvedFuturePtoCount} approved time-off request${
+            result.approvedFuturePtoCount === 1 ? "" : "s"
+          } reaching into the future ${
+            result.approvedFuturePtoCount === 1 ? "is" : "are"
+          } still on the books — decide whether ${
+            result.approvedFuturePtoCount === 1 ? "it" : "they"
+          } should be paid out.`,
+        );
+      }
       await notify({
         organizationId,
         audience: "org-management",
@@ -217,7 +298,11 @@ export async function sweepDeactivatedMember(
         href:
           result.unassignedBookings.length > 0
             ? "/app/bookings"
-            : "/app/timesheets",
+            : result.closedEntryId
+              ? "/app/timesheets"
+              : result.pendingBonusCount > 0
+                ? "/app/bonuses"
+                : "/app/timesheets",
       });
     } catch (err) {
       console.error("[offboard] notify failed:", err);
