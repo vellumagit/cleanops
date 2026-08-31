@@ -20,6 +20,9 @@
  *             clamped, which is one less rule anyone has to remember.
  *   biweekly  anchors to a DATE, and means it: exact 14-day cycles from
  *             that date, forever. Not "twice a month".
+ *   weekly    the same DATE shape at a 7-day stride. Anchored-only: it
+ *             postdates the legacy 1st/15th calendar, so there is no
+ *             anchorless weekly behaviour to fall back to.
  *
  * KEYS ARE PREFIXED anchor-*: — never the legacy formats. Legacy biweekly
  * keys are `biweekly:<period END>`; anchored keys use the period START. A
@@ -118,26 +121,46 @@ export function monthlyAnchorPeriodEnding(
 }
 
 /**
- * The 14-day period that ENDS today, if today lands on the client's cycle.
+ * The fixed-stride period that ENDS today, if today lands on the cycle.
  *
- * Fires when (today − anchor) is a positive multiple of 14. The anchor day
- * itself returns null: the first bill goes out after the first FULL cycle,
- * not on the day the cycle starts. An anchor in the future is simply not
- * due yet.
+ * Fires when (today − anchor) is a positive multiple of the stride. The
+ * anchor day itself returns null: the first bill goes out after the first
+ * FULL cycle, not on the day the cycle starts. An anchor in the future is
+ * simply not due yet.
  */
+function strideAnchorPeriodEnding(
+  todayYmd: string,
+  anchorYmd: string,
+  strideDays: number,
+  keyPrefix: string,
+): AnchoredPeriod | null {
+  if (!YMD.test(todayYmd) || !YMD.test(anchorYmd)) return null;
+  const diff = diffDays(anchorYmd, todayYmd);
+  if (diff <= 0 || diff % strideDays !== 0) return null;
+
+  const startYmd = addDays(todayYmd, -strideDays);
+  return {
+    startYmd,
+    endYmdExclusive: todayYmd,
+    key: `${keyPrefix}:${startYmd}`,
+    label: periodLabel(startYmd, todayYmd),
+  };
+}
+
+/** Exact 14-day cycles from the anchor date. */
 export function biweeklyAnchorPeriodEnding(
   todayYmd: string,
   anchorYmd: string,
 ): AnchoredPeriod | null {
-  if (!YMD.test(todayYmd) || !YMD.test(anchorYmd)) return null;
-  const diff = diffDays(anchorYmd, todayYmd);
-  if (diff <= 0 || diff % 14 !== 0) return null;
+  return strideAnchorPeriodEnding(todayYmd, anchorYmd, 14, "anchor-biweekly");
+}
 
-  const startYmd = addDays(todayYmd, -14);
-  return {
-    startYmd,
-    endYmdExclusive: todayYmd,
-    key: `anchor-biweekly:${startYmd}`,
-    label: periodLabel(startYmd, todayYmd),
-  };
+/** Exact 7-day cycles from the anchor date. Weekly has no legacy
+ *  calendar shape — it postdates the anchor model, so an anchor date is
+ *  the only way a weekly client bills at all. */
+export function weeklyAnchorPeriodEnding(
+  todayYmd: string,
+  anchorYmd: string,
+): AnchoredPeriod | null {
+  return strideAnchorPeriodEnding(todayYmd, anchorYmd, 7, "anchor-weekly");
 }

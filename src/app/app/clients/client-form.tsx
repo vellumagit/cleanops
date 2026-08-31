@@ -295,9 +295,9 @@ export function ClientForm({
           <p className="text-sm font-medium leading-none">Billing cadence</p>
           <p className="mt-1 text-xs text-muted-foreground">
             Controls when invoices are generated for this client. On-demand
-            (default) creates one invoice per completed job. Biweekly and
-            monthly generate a single consolidated invoice on the 1st and/or
-            15th of the month.
+            (default) creates one invoice per completed job. Weekly, biweekly
+            and monthly bundle the period&apos;s completed jobs into one
+            consolidated invoice.
           </p>
         </div>
 
@@ -312,6 +312,7 @@ export function ClientForm({
             defaultValue={v.billing_cadence ?? "on_demand"}
           >
             <option value="on_demand">On demand — one invoice per job</option>
+            <option value="weekly">Weekly — every week</option>
             <option value="biweekly">Biweekly — every two weeks</option>
             <option value="monthly">Monthly</option>
           </FormSelect>
@@ -340,10 +341,10 @@ export function ClientForm({
         </FormField>
 
         <FormField
-          label="Biweekly cycle start"
+          label="Weekly / biweekly cycle start"
           htmlFor="billing_anchor_date"
           error={state.errors?.billing_anchor_date}
-          hint="Biweekly clients only. Exact 14-day cycles counted from this date; the first invoice goes out one full cycle after it. Blank = the 1st and 15th."
+          hint="Weekly and biweekly clients. Exact 7- or 14-day cycles counted from this date; the first invoice goes out one full cycle after it. Biweekly may leave it blank for the legacy 1st and 15th; weekly requires it."
         >
           <Input
             id="billing_anchor_date"

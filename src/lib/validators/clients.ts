@@ -4,7 +4,12 @@ import { noCardNumber, CARD_DETECTED_MESSAGE } from "@/lib/card-detection";
 
 export const PreferredContactEnum = z.enum(["phone", "email", "sms"]);
 
-export const BillingCadenceEnum = z.enum(["on_demand", "biweekly", "monthly"]);
+export const BillingCadenceEnum = z.enum([
+  "on_demand",
+  "weekly",
+  "biweekly",
+  "monthly",
+]);
 export const BillingTypeEnum = z.enum(["itemized", "flat_rate"]);
 
 // Empty string → null; otherwise must look like a uuid. Used for the
@@ -161,6 +166,17 @@ export const ClientSchema = z.object({
   ),
   /** Client id of the person who referred this client. Blank → null. */
   referred_by_client_id: optionalClientId,
+}).superRefine((data, ctx) => {
+  // Weekly billing is anchored-only — it has no legacy 1st/15th calendar
+  // to fall back to, so a weekly client without a cycle start would
+  // silently never bill.
+  if (data.billing_cadence === "weekly" && !data.billing_anchor_date) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["billing_anchor_date"],
+      message: "Weekly billing needs a cycle start date",
+    });
+  }
 });
 
 export type ClientInput = z.infer<typeof ClientSchema>;

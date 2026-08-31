@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   monthlyAnchorPeriodEnding,
   biweeklyAnchorPeriodEnding,
+  weeklyAnchorPeriodEnding,
   isValidAnchorDay,
 } from "./billing-anchor";
 
@@ -96,6 +97,43 @@ describe("biweeklyAnchorPeriodEnding", () => {
       key: "anchor-biweekly:2026-03-01",
       label: "Mar 1 – Mar 14, 2026",
     });
+  });
+});
+
+describe("weeklyAnchorPeriodEnding", () => {
+  it("fires every 7 days from the anchor, billing the closed cycle", () => {
+    expect(weeklyAnchorPeriodEnding("2026-08-22", "2026-08-15")).toEqual({
+      startYmd: "2026-08-15",
+      endYmdExclusive: "2026-08-22",
+      key: "anchor-weekly:2026-08-15",
+      label: "Aug 15 – Aug 21, 2026",
+    });
+    // Three cycles on: fires again.
+    expect(weeklyAnchorPeriodEnding("2026-09-05", "2026-08-15")).toEqual({
+      startYmd: "2026-08-29",
+      endYmdExclusive: "2026-09-05",
+      key: "anchor-weekly:2026-08-29",
+      label: "Aug 29 – Sep 4, 2026",
+    });
+  });
+
+  it("is silent on the anchor day itself and on non-cycle days", () => {
+    expect(weeklyAnchorPeriodEnding("2026-08-15", "2026-08-15")).toBeNull();
+    expect(weeklyAnchorPeriodEnding("2026-08-21", "2026-08-15")).toBeNull();
+    expect(weeklyAnchorPeriodEnding("2026-08-23", "2026-08-15")).toBeNull();
+  });
+
+  it("a future anchor is simply not due yet", () => {
+    expect(weeklyAnchorPeriodEnding("2026-08-15", "2026-09-01")).toBeNull();
+  });
+
+  it("a weekly boundary that is also a biweekly boundary keys differently", () => {
+    // Day 14 from an anchor satisfies BOTH strides; the key prefix keeps a
+    // client switched between cadences from colliding on the same period.
+    const w = weeklyAnchorPeriodEnding("2026-08-29", "2026-08-15");
+    const b = biweeklyAnchorPeriodEnding("2026-08-29", "2026-08-15");
+    expect(w?.key).toBe("anchor-weekly:2026-08-22");
+    expect(b?.key).toBe("anchor-biweekly:2026-08-15");
   });
 });
 

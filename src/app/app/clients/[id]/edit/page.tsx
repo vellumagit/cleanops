@@ -52,6 +52,8 @@ export default async function EditClientPage({
         billing_cadence: string;
         billing_type: string;
         flat_rate_cents: number | null;
+        billing_anchor_day: number | null;
+        billing_anchor_date: string | null;
         referred_by_client_id: string | null;
       } | null;
       error: { message: string } | null;
@@ -102,6 +104,12 @@ export default async function EditClientPage({
               billing_cadence: client.billing_cadence,
               billing_type: client.billing_type,
               flat_rate_cents: client.flat_rate_cents,
+              // The update action writes whatever the form posts — omitting
+              // these rendered the anchor inputs blank on every edit, and a
+              // routine phone-number save silently wiped the anchor (flipping
+              // an anchored client back to legacy 1st/15th billing).
+              billing_anchor_day: client.billing_anchor_day,
+              billing_anchor_date: client.billing_anchor_date,
               referred_by_client_id: client.referred_by_client_id,
             }}
           />

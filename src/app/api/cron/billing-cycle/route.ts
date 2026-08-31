@@ -1,9 +1,13 @@
 /**
  * Cron: Billing-cycle invoice generation
  *
- * Runs on the 1st AND 15th of every month at 07:00 UTC.
- *   - On the 1st:  generates invoices for `monthly` AND `biweekly` clients.
- *   - On the 15th: generates invoices for `biweekly` clients only.
+ * Runs daily at 07:00 UTC. Legacy (anchorless) clients bill on the fixed
+ * calendar; anchored clients bill whenever today is their own boundary.
+ *   - On the 1st:  generates invoices for legacy `monthly` AND `biweekly`.
+ *   - On the 15th: legacy `biweekly` only.
+ *   - Any day: anchored `monthly` (their chosen day), anchored `biweekly`
+ *     (every 14 days from their date), `weekly` (every 7 days from their
+ *     date — anchored-only, no legacy shape).
  *
  * For each eligible client the cron collects all bookings that:
  *   1. Belong to that client.
@@ -39,6 +43,7 @@ import { zonedYmd, zonedMidnightUtc } from "@/lib/wall-clock";
 import {
   monthlyAnchorPeriodEnding,
   biweeklyAnchorPeriodEnding,
+  weeklyAnchorPeriodEnding,
   type AnchoredPeriod,
 } from "@/lib/billing-anchor";
 
@@ -64,7 +69,7 @@ type ClientRow = {
   email: string | null;
   /** Fallback service location when a booking has no address of its own. */
   address: string | null;
-  billing_cadence: "on_demand" | "biweekly" | "monthly";
+  billing_cadence: "on_demand" | "weekly" | "biweekly" | "monthly";
   billing_anchor_day: number | null;
   billing_anchor_date: string | null;
   billing_type: "itemized" | "flat_rate";
@@ -166,6 +171,9 @@ async function generateClientInvoice(
 ): Promise<{ invoiceId: string; number: string | null } | null> {
   const cadence = client.billing_cadence;
   if (cadence === "on_demand") return null; // shouldn't be called, guard anyway
+  // Weekly is anchored-only: without a period there is no calendar to fall
+  // back to, and the legacy label/key math below would mint a biweekly key.
+  if (cadence === "weekly" && !anchored) return null;
 
   // Cutoff: bookings scheduled strictly before the period boundary. For
   // anchored clients that is their own org-local cycle end; legacy keeps the
@@ -210,7 +218,11 @@ async function generateClientInvoice(
 
   // ── Compute amounts ──────────────────────────────────────────────────────
   const completedBookings = bookings.filter((b) => b.status === "completed");
-  const period = anchored ? anchored.label : periodLabel(runDate, cadence);
+  // The cast is safe: weekly bailed above unless anchored, so the legacy
+  // branch only ever sees biweekly/monthly.
+  const period = anchored
+    ? anchored.label
+    : periodLabel(runDate, cadence as "biweekly" | "monthly");
 
   let subtotalCents: number;
   let lineItemLabel: string;
@@ -508,7 +520,7 @@ export async function GET(request: Request) {
       .select(
         "id, name, email, address, billing_cadence, billing_type, flat_rate_cents, billing_anchor_day, billing_anchor_date, organization_id",
       )
-      .in("billing_cadence", ["biweekly", "monthly"])
+      .in("billing_cadence", ["weekly", "biweekly", "monthly"])
       .is("archived_at" as never, null as never)) as unknown as {
       data: ClientRow[] | null;
     };
@@ -536,7 +548,8 @@ export async function GET(request: Request) {
       const anchorDay =
         client.billing_cadence === "monthly" ? client.billing_anchor_day : null;
       const anchorDate =
-        client.billing_cadence === "biweekly"
+        client.billing_cadence === "biweekly" ||
+        client.billing_cadence === "weekly"
           ? client.billing_anchor_date
           : null;
 
@@ -545,7 +558,9 @@ export async function GET(request: Request) {
         const period =
           anchorDay != null
             ? monthlyAnchorPeriodEnding(orgToday, anchorDay)
-            : biweeklyAnchorPeriodEnding(orgToday, anchorDate as string);
+            : client.billing_cadence === "weekly"
+              ? weeklyAnchorPeriodEnding(orgToday, anchorDate as string)
+              : biweeklyAnchorPeriodEnding(orgToday, anchorDate as string);
         if (!period) {
           clientsSkipped++;
           continue; // not their boundary day — the daily run asks again tomorrow
