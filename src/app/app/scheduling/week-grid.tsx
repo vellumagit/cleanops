@@ -20,7 +20,15 @@ import { cn } from "@/lib/utils";
 import { StatusBadge, bookingStatusTone } from "@/components/status-badge";
 import { humanizeEnum } from "@/lib/format";
 import { rescheduleBookingAction } from "./actions";
-import type { ScheduleBooking, ScheduleEmployee } from "./data";
+import type {
+  AvailabilityByEmployee,
+  ScheduleBooking,
+  ScheduleEmployee,
+} from "./data";
+import {
+  availabilityWindowsFor,
+  formatAvailabilityWindows,
+} from "./availability-windows";
 import { BookingQuickView } from "./booking-quick-view";
 import { toneForBooking, toneForEmployee, type ColorBy } from "./color";
 import { computeSplitCue, type SplitCue } from "./split-cue";
@@ -91,6 +99,10 @@ export function WeekGrid({
    *  on one of these dates get a striped grey background so owners
    *  don't accidentally assign a job onto a known-unavailable day. */
   offDays = {},
+  /** Declared working windows (weekly slots + custom overrides) per
+   *  employee — rendered as a small "available" chip in each day cell
+   *  so a submitted schedule is actually visible while planning. */
+  availability = {},
   /** How card accent color is computed. Lane headers always use the
    *  per-employee tone regardless. */
   colorBy = "employee",
@@ -106,6 +118,7 @@ export function WeekGrid({
   view?: "week" | "day";
   tz: string;
   offDays?: Record<string, string[]>;
+  availability?: AvailabilityByEmployee;
   colorBy?: ColorBy;
   /** booking id → warnings, computed once by the shell. */
   warnings?: Record<string, BookingWarning[]> | Map<string, BookingWarning[]>;
@@ -324,6 +337,7 @@ export function WeekGrid({
                   onQuickView={setQuickViewId}
                   tz={tz}
                   offDates={offDaysByEmployee.get(emp.id) ?? new Set()}
+                  availability={availability[emp.id]}
                   colorBy={colorBy}
                   nameById={nameById}
                 />
@@ -363,6 +377,7 @@ function EmployeeRow({
   onQuickView,
   tz,
   offDates,
+  availability,
   colorBy,
   nameById,
 }: {
@@ -380,6 +395,8 @@ function EmployeeRow({
   tz: string;
   /** Days this employee is off (YYYY-MM-DD set). */
   offDates: Set<string>;
+  /** This employee's declared availability, if they submitted any. */
+  availability: AvailabilityByEmployee[string] | undefined;
   colorBy: ColorBy;
   /** membership_id → display name, for split-shift handoff labels. */
   nameById: Map<string, string>;
@@ -407,6 +424,7 @@ function EmployeeRow({
             onQuickView={onQuickView}
             tz={tz}
             isOff={offDates.has(dateStr)}
+            availableWindows={availabilityWindowsFor(availability, dateStr)}
             colorBy={colorBy}
             nameById={nameById}
           />
@@ -425,6 +443,7 @@ function DayCell({
   onQuickView,
   tz,
   isOff,
+  availableWindows,
   colorBy,
   nameById,
 }: {
@@ -439,6 +458,8 @@ function DayCell({
    *  Cell gets a striped grey background so it reads at a glance. Still
    *  droppable — server will reject or warn based on its own logic. */
   isOff: boolean;
+  /** Declared working windows for this date; empty = nothing declared. */
+  availableWindows: Array<{ start: string; end: string }>;
   colorBy: ColorBy;
   /** membership_id → display name, for split-shift handoff labels. */
   nameById: Map<string, string>;
@@ -461,6 +482,16 @@ function DayCell({
       )}
       title={isOff ? "Employee is off this day" : undefined}
     >
+      {/* Declared availability, submitted from the field app. Off-days
+          win — "I'm off Saturday" beats the standing "Saturdays 9–5". */}
+      {!isOff && availableWindows.length > 0 && (
+        <div
+          className="rounded border border-dashed border-emerald-500/40 bg-emerald-500/5 px-1.5 py-0.5 text-[10px] leading-4 text-emerald-700 dark:text-emerald-400"
+          title="Availability submitted by the employee"
+        >
+          {formatAvailabilityWindows(availableWindows)}
+        </div>
+      )}
       {bookings.map((b) => (
         // Owner view: always render the BOOKING's overall start + duration
         // in every assigned employee's cell. Segment-by-segment timing

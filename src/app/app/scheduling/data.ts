@@ -158,6 +158,25 @@ function shiftYmd(ymd: string, days: number): string {
  */
 export type OffDaysByEmployee = Record<string, string[]>;
 
+/** One "HH:MM"–"HH:MM" window in the org's timezone. */
+export type AvailabilityWindow = { start: string; end: string };
+
+/**
+ * Declared availability per employee, JSON-safe for client grids.
+ * `weekly` is keyed by day-of-week (0=Sun…6=Sat, matching the field
+ * editor); `custom` by YYYY-MM-DD for kind='custom' overrides, which
+ * REPLACE the weekly windows on that date. Employees who never
+ * submitted availability simply have no entry — absence means
+ * "unknown", not "unavailable".
+ */
+export type AvailabilityByEmployee = Record<
+  string,
+  {
+    weekly: Record<number, AvailabilityWindow[]>;
+    custom: Record<string, AvailabilityWindow[]>;
+  }
+>;
+
 /**
  * Fetch bookings + employees + off-days for a schedule range.
  *
@@ -188,6 +207,12 @@ export async function fetchScheduleWeek(
    *  cells / columns for these so owners can't accidentally assign a
    *  job onto a day the cleaner is known to be unavailable. */
   offDays: OffDaysByEmployee;
+  /** Declared working windows (weekly slots + kind='custom' overrides).
+   *  Cleaners submit these in the field app; until this was threaded
+   *  through, nothing on the admin side ever read availability_slots,
+   *  so a submitted schedule was invisible to the person planning the
+   *  week. */
+  availability: AvailabilityByEmployee;
 }> {
   const supabase = await createSupabaseServerClient();
   const weekStart = rangeStart;
@@ -207,8 +232,14 @@ export async function fetchScheduleWeek(
     ? shiftYmd(rangeDates.endYmdExclusive, -1)
     : formatYmdUtc(addDays(weekEnd, -1));
 
-  const [bookingsRes, membersRes, overridesRes, ptoRes, assigneesRes] =
-    await Promise.all([
+  const [
+    bookingsRes,
+    membersRes,
+    overridesRes,
+    ptoRes,
+    assigneesRes,
+    slotsRes,
+  ] = await Promise.all([
     supabase
       .from("bookings")
       .select(
@@ -247,19 +278,20 @@ export async function fetchScheduleWeek(
       )
       .eq("status", "active")
       .in("role", ["employee", "admin", "owner", "manager"]),
-    // availability_overrides with kind='off' that land inside the
-    // displayed range. kind='custom' is ignored here (v1 shading is
-    // "fully off" only — partial shading for custom-hours is a
-    // follow-up once the UX is validated).
+    // availability_overrides inside the displayed range — kind='off'
+    // feeds the off-day shading, kind='custom' replaces that date's
+    // weekly windows in the availability map.
     (supabase
       .from("availability_overrides" as never)
-      .select("membership_id, date, kind")
-      .eq("kind" as never, "off" as never)
+      .select("membership_id, date, kind, start_time, end_time")
       .gte("date" as never, rangeStartStr as never)
       .lte("date" as never, rangeEndStr as never)) as unknown as Promise<{
       data: Array<{
         membership_id: string;
         date: string;
+        kind: "off" | "custom";
+        start_time: string | null;
+        end_time: string | null;
       }> | null;
       error: { message: string } | null;
     }>,
@@ -298,6 +330,21 @@ export async function fetchScheduleWeek(
         is_primary: boolean;
         split_start_offset_minutes: number | null;
         split_duration_minutes: number | null;
+      }> | null;
+      error: { message: string } | null;
+    }>,
+    // Recurring weekly availability — no date filter, the windows apply
+    // to every week. RLS scopes to the caller's orgs.
+    (supabase
+      .from("availability_slots" as never)
+      .select(
+        "membership_id, day_of_week, start_time, end_time",
+      )) as unknown as Promise<{
+      data: Array<{
+        membership_id: string;
+        day_of_week: number;
+        start_time: string;
+        end_time: string;
       }> | null;
       error: { message: string } | null;
     }>,
@@ -389,7 +436,7 @@ export async function fetchScheduleWeek(
   };
 
   for (const row of overridesRes.data ?? []) {
-    addOff(row.membership_id, row.date);
+    if (row.kind === "off") addOff(row.membership_id, row.date);
   }
 
   // Expand each PTO range into individual YYYY-MM-DD dates, clamped
@@ -424,5 +471,30 @@ export async function fetchScheduleWeek(
     offDays[id] = Array.from(set).sort();
   }
 
-  return { bookings, employees, offDays };
+  // Declared availability: weekly slots plus custom-hours overrides.
+  const availability: AvailabilityByEmployee = {};
+  const availabilityFor = (memberId: string) =>
+    (availability[memberId] ??= { weekly: {}, custom: {} });
+  for (const s of slotsRes.data ?? []) {
+    const windows = (availabilityFor(s.membership_id).weekly[
+      s.day_of_week
+    ] ??= []);
+    windows.push({ start: s.start_time, end: s.end_time });
+  }
+  for (const row of overridesRes.data ?? []) {
+    if (row.kind !== "custom" || !row.start_time || !row.end_time) continue;
+    const windows = (availabilityFor(row.membership_id).custom[row.date] ??=
+      []);
+    windows.push({ start: row.start_time, end: row.end_time });
+  }
+  for (const entry of Object.values(availability)) {
+    for (const windows of Object.values(entry.weekly)) {
+      windows.sort((a, b) => a.start.localeCompare(b.start));
+    }
+    for (const windows of Object.values(entry.custom)) {
+      windows.sort((a, b) => a.start.localeCompare(b.start));
+    }
+  }
+
+  return { bookings, employees, offDays, availability };
 }

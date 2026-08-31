@@ -9,7 +9,7 @@ The fields that matter most:
 
 - **Service** — what kind of work. Drives the calendar color, reports, and any checklist attached to that service.
 - **Total** — what the client will be billed for this visit. *Price the job when you book it.* A $0 booking becomes a $0 invoice later, and those are the ones that end up as awkward client conversations.
-- **Assigned to** — the cleaner(s). Everyone assigned gets notified and sees the job in their field app.
+- **Assigned to** — the cleaner(s). Everyone assigned gets notified and sees the job in their field app. Subcontractors who claim an offered shift count too: every claimer shows on the booking tagged *(subcontractor)*, alongside any assigned member — including when the offer had several spots and only some are taken.
 
 > Prices live on bookings; wages live on people. What you charge the client never touches what a cleaner earns — pay comes from each person's rate in Employees, applied to their clocked hours.
 
@@ -24,6 +24,10 @@ When a save would **email the client** — the visit time moved, or the recurrin
 ## Split shifts
 
 A split shift is a hand-off: one cleaner does the first hours, another takes over — they don't overlap. For two cleaners working *together*, don't split; assign both as crew.
+
+## Availability on the scheduler
+
+Cleaners can submit their working hours in the field app (Profile → Availability). Whatever they declare shows on the scheduler: a green dashed chip with the hours in their day cells on the week view, and the hours beside their name in the day view's column headers. A specific day marked *off* beats the standing weekly hours. No chip just means nothing was submitted — unknown, not unavailable.
 
 ## Deleting and skipping
 

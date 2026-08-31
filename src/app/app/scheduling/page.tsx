@@ -154,7 +154,7 @@ export default async function SchedulingPage({
   const fetchStart = midnightInTzUtc(weekStartYmd, tz);
   const fetchEnd = midnightInTzUtc(weekEndYmd, tz);
 
-  const [{ bookings, employees, offDays }, savedViews, currency] =
+  const [{ bookings, employees, offDays, availability }, savedViews, currency] =
     await Promise.all([
       fetchScheduleWeek(fetchStart, fetchEnd, {
         startYmd: weekStartYmd,
@@ -322,6 +322,7 @@ export default async function SchedulingPage({
           bookings={bookings}
           employees={employees}
           offDays={offDays}
+          availability={availability}
           canEdit={canEdit}
           canEditStatus={canEditStatus}
           tz={tz}

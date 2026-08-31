@@ -15,6 +15,7 @@ import {
   computeBookingWarnings,
 } from "@/app/app/bookings/booking-warnings";
 import type {
+  AvailabilityByEmployee,
   ScheduleBooking,
   ScheduleEmployee,
   SchedulerView,
@@ -40,6 +41,7 @@ export function SchedulerShell({
   bookings,
   employees,
   offDays,
+  availability = {},
   canEdit,
   canEditStatus,
   tz,
@@ -51,6 +53,7 @@ export function SchedulerShell({
   bookings: ScheduleBooking[];
   employees: ScheduleEmployee[];
   offDays: Record<string, string[]>;
+  availability?: AvailabilityByEmployee;
   canEdit: boolean;
   /** Owner/admin/manager — wider than canEdit (which gates rescheduling). */
   canEditStatus: boolean;
@@ -342,6 +345,7 @@ export function SchedulerShell({
           canEditStatus={canEditStatus}
           tz={tz}
           offDays={offDays}
+          availability={availability}
           colorBy={filters.colorBy}
         />
       ) : (
@@ -355,6 +359,7 @@ export function SchedulerShell({
           view={view}
           tz={tz}
           offDays={offDays}
+          availability={availability}
           colorBy={filters.colorBy}
         />
       )}

@@ -20,7 +20,15 @@ import { cn } from "@/lib/utils";
 import { StatusBadge, bookingStatusTone } from "@/components/status-badge";
 import { humanizeEnum } from "@/lib/format";
 import { rescheduleBookingAction } from "./actions";
-import type { ScheduleBooking, ScheduleEmployee } from "./data";
+import type {
+  AvailabilityByEmployee,
+  ScheduleBooking,
+  ScheduleEmployee,
+} from "./data";
+import {
+  availabilityWindowsFor,
+  formatAvailabilityWindows,
+} from "./availability-windows";
 import { BookingQuickView } from "./booking-quick-view";
 import { toneForBooking, toneForEmployee, type ColorBy } from "./color";
 import { computeSplitCue, type SplitCue } from "./split-cue";
@@ -97,6 +105,7 @@ export function DispatchGrid({
   canEditStatus = false,
   tz,
   offDays = {},
+  availability = {},
   colorBy = "employee",
   warnings = {},
 }: {
@@ -110,6 +119,9 @@ export function DispatchGrid({
    *  in an employee's list, their whole column is visually shaded +
    *  flagged in the header so the owner sees at a glance. */
   offDays?: Record<string, string[]>;
+  /** Declared working windows per employee — shown in the column
+   *  header so the dispatcher sees submitted availability at a glance. */
+  availability?: AvailabilityByEmployee;
   /** Card accent color rule. Header dots always reflect employee idx
    *  regardless — switching by service/client/status only changes the
    *  card left border. */
@@ -300,6 +312,9 @@ export function DispatchGrid({
             ) : (
               employees.map((emp, idx) => {
                 const isOff = offEmployeeIds.has(emp.id);
+                const windows = isOff
+                  ? []
+                  : availabilityWindowsFor(availability[emp.id], date);
                 return (
                   <div
                     key={emp.id}
@@ -326,6 +341,15 @@ export function DispatchGrid({
                       {isOff
                         ? "Off today"
                         : `${bookingsByEmployee.get(emp.id)?.length ?? 0} jobs`}
+                      {windows.length > 0 && (
+                        <span
+                          className="text-emerald-700 dark:text-emerald-400"
+                          title="Availability submitted by the employee"
+                        >
+                          {" · "}
+                          {formatAvailabilityWindows(windows)}
+                        </span>
+                      )}
                     </p>
                   </div>
                 );
