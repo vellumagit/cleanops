@@ -28,6 +28,7 @@ import { fetchJobPhotos } from "@/lib/job-photos";
 import { memberDisplayName } from "@/lib/member-display";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { getFlaggedCrewIds } from "@/lib/crew-accommodations";
+import { resolveFreelancerCoverageNames } from "@/lib/booking-coverage";
 import { GenerateInvoiceButton } from "./generate-invoice-button";
 import { MakeRecurringButton } from "./make-recurring-button";
 import { JobPhotos } from "@/app/field/jobs/[id]/job-photos";
@@ -199,18 +200,13 @@ export default async function BookingDetailPage({
     }
   }
 
-  // Names of freelancers covering this booking (filled offers). A booking with
-  // no assigned member but a claimed offer is staffed by a freelancer — surface
-  // that instead of a misleading "Unassigned".
-  const coveringFreelancerNames = (
-    (offers ?? []) as Array<{
-      status: string;
-      filled_contact_id?: string | null;
-    }>
-  )
-    .filter((o) => o.status === "filled" && o.filled_contact_id)
-    .map((o) => filledNames.get(o.filled_contact_id as string))
-    .filter((v): v is string => Boolean(v));
+  // Names of freelancers covering this booking — read from the claims table
+  // (via the coverage resolver), not from offer status: a 1-of-N claim leaves
+  // the offer 'open', and a later claim overwrites the single filled_* pointer,
+  // so both cases showed "Unassigned" while a real person was turning up. Not
+  // gated on canEdit — managers running the day need to see who's coming.
+  const coveringFreelancerNames =
+    (await resolveFreelancerCoverageNames([booking.id])).get(booking.id) ?? [];
 
   const bookingStatus = booking.status as BookingStatus;
 
@@ -550,6 +546,14 @@ export default async function BookingDetailPage({
                     <span className="font-normal text-muted-foreground">
                       {" + "}
                       {additionalCrewNames.join(", ")}
+                    </span>
+                  )}
+                  {/* A member lead plus a bench claimer is a real crew shape —
+                      the freelancer must not vanish behind the assignee. */}
+                  {booking.assigned && coveringFreelancerNames.length > 0 && (
+                    <span className="font-normal text-muted-foreground">
+                      {" + "}
+                      {coveringFreelancerNames.join(", ")} (subcontractor)
                     </span>
                   )}
                 </dd>

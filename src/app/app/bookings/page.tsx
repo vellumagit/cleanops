@@ -8,6 +8,7 @@ import { ArchivedToggle } from "@/components/archived-toggle";
 import { memberDisplayName } from "@/lib/member-display";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { getFlaggedCrewIds } from "@/lib/crew-accommodations";
+import { resolveFreelancerCoverageNames } from "@/lib/booking-coverage";
 import { BookingsTable, type BookingRow } from "./bookings-table";
 
 export const metadata = { title: "Bookings" };
@@ -170,52 +171,15 @@ export default async function BookingsPage({
     }
   }
 
-  // Subcontractor coverage — for bookings with no member assigned, surface who
-  // claimed the shift offer (subcontractors can't occupy the member assigned
-  // slot, so those bookings would otherwise read "Unassigned").
-  const coverageMap = new Map<string, string>();
-  const uncoveredIds = (data ?? []).filter((b) => !b.assigned).map((b) => b.id);
-  if (uncoveredIds.length > 0) {
-    const { data: filledOffers } = (await supabase
-      .from("job_offers")
-      .select("booking_id, filled_contact_id")
-      .in("booking_id", uncoveredIds)
-      .eq("status", "filled")) as unknown as {
-      data: Array<{
-        booking_id: string | null;
-        filled_contact_id: string | null;
-      }> | null;
-    };
-    const contactIds = [
-      ...new Set(
-        (filledOffers ?? [])
-          .map((o) => o.filled_contact_id)
-          .filter((v): v is string => Boolean(v)),
-      ),
-    ];
-    const nameById = new Map<string, string>();
-    if (contactIds.length > 0) {
-      const { data: contacts } = (await supabase
-        .from("freelancer_contacts")
-        .select("id, full_name")
-        .in("id", contactIds)) as unknown as {
-        data: Array<{ id: string; full_name: string | null }> | null;
-      };
-      for (const c of contacts ?? []) {
-        if (c.full_name) nameById.set(c.id, c.full_name);
-      }
-    }
-    for (const o of filledOffers ?? []) {
-      if (
-        o.booking_id &&
-        o.filled_contact_id &&
-        nameById.has(o.filled_contact_id) &&
-        !coverageMap.has(o.booking_id)
-      ) {
-        coverageMap.set(o.booking_id, nameById.get(o.filled_contact_id)!);
-      }
-    }
-  }
+  // Subcontractor coverage — who claimed a shift offer on each booking. Read
+  // from the claims table, not job_offers.filled_*: a 1-of-N claim leaves the
+  // offer 'open' and a later claim overwrites the single filled pointer, so
+  // filtering on status='filled' hid real claimers. Shown alongside member
+  // assignment, not just as its fallback — a lead cleaner plus a bench
+  // freelancer is a real crew shape.
+  const coverageMap = await resolveFreelancerCoverageNames(
+    (data ?? []).map((b) => b.id),
+  );
 
   const rows: BookingRow[] = (data ?? []).map((b) => ({
     id: b.id,
@@ -229,7 +193,7 @@ export default async function BookingsPage({
     client_name: b.client?.name ?? "—",
     hourly_rate_cents: b.hourly_rate_cents ?? null,
     assigned_name: b.assigned ? memberDisplayName(b.assigned) : null,
-    covered_by_name: b.assigned ? null : (coverageMap.get(b.id) ?? null),
+    covered_by_name: coverageMap.get(b.id)?.join(", ") ?? null,
     assigned_to: b.assigned_to,
     additional_assignee_ids: additionalByBooking.get(b.id) ?? [],
     segment_count: segmentCountByBooking.get(b.id) ?? 0,

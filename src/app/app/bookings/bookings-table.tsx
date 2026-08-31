@@ -663,6 +663,11 @@ function TableView({
                     {r.assigned_name ? (
                       <span className="text-muted-foreground">
                         {r.assigned_name}
+                        {r.covered_by_name && (
+                          <span className="ml-1 text-xs">
+                            + {r.covered_by_name} (subcontractor)
+                          </span>
+                        )}
                       </span>
                     ) : r.covered_by_name ? (
                       <span className="text-muted-foreground">
@@ -843,7 +848,15 @@ function CardsView({
                   <div className="flex items-center gap-1.5">
                     <User className="h-3 w-3 shrink-0" />
                     {r.assigned_name ? (
-                      <span>{r.assigned_name}</span>
+                      <span>
+                        {r.assigned_name}
+                        {r.covered_by_name && (
+                          <span className="text-xs text-muted-foreground">
+                            {" + "}
+                            {r.covered_by_name} (subcontractor)
+                          </span>
+                        )}
+                      </span>
                     ) : r.covered_by_name ? (
                       <span>
                         {r.covered_by_name}{" "}

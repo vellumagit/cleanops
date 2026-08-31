@@ -137,3 +137,45 @@ export async function isBookingStaffed(bookingId: string): Promise<boolean> {
   const map = await resolveBookingCoverage([bookingId]);
   return (map.get(bookingId) ?? EMPTY).staffed;
 }
+
+/**
+ * Freelancer coverage as display names, per booking.
+ *
+ * Display code kept re-deriving this from job_offers.filled_contact_id, which
+ * loses claimers two ways: a 1-of-N claim leaves the offer 'open' (filtered
+ * out), and a later claim overwrites the single filled_* pointer. The claims
+ * table is the record — read it, via the same admin client the coverage
+ * resolver already needs (job_offer_claims RLS is owner/admin-only, but
+ * managers legitimately see who's turning up). Callers must pass booking ids
+ * that came from an org-scoped query.
+ */
+export async function resolveFreelancerCoverageNames(
+  bookingIds: string[],
+): Promise<Map<string, string[]>> {
+  const coverage = await resolveBookingCoverage(bookingIds);
+  const contactIds = Array.from(
+    new Set([...coverage.values()].flatMap((c) => c.freelancerContactIds)),
+  );
+  const out = new Map<string, string[]>();
+  if (contactIds.length === 0) return out;
+
+  const db = createSupabaseAdminClient();
+  const { data } = (await db
+    .from("freelancer_contacts")
+    .select("id, full_name")
+    .in("id", contactIds)) as unknown as {
+    data: Array<{ id: string; full_name: string | null }> | null;
+  };
+  const nameById = new Map<string, string>();
+  for (const c of data ?? []) {
+    if (c.full_name) nameById.set(c.id, c.full_name);
+  }
+
+  for (const [bookingId, c] of coverage) {
+    const names = c.freelancerContactIds
+      .map((id) => nameById.get(id))
+      .filter((n): n is string => Boolean(n));
+    if (names.length > 0) out.set(bookingId, names);
+  }
+  return out;
+}
