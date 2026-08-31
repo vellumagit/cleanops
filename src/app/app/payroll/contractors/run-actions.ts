@@ -135,7 +135,9 @@ export async function markSubcontractorRunPaidAction(
         membershipId: item.membership_id,
         title: "Your pay statement was marked paid",
         body: `${run.period_start} to ${run.period_end} — ${formatCurrencyCents(item.total_cents)}.`,
-        href: "/field/hours",
+        // /field/pay shows the dollars this message promises; /field/hours
+        // (the old target) has no money on it at all.
+        href: "/field/pay",
       });
     }
   } catch {

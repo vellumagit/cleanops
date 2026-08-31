@@ -37,4 +37,8 @@ An entry that refuses to be edited is frozen inside a run — that's the paid re
 **Payroll → Contractor pay** covers two deals: roster subcontractors earn *their rate × their clocked hours*; on-call cleaners claimed from the bench earn the *flat amount on the offer* once the job completes. Statements total, stamp, and freeze exactly like runs. Flagged needs-review shifts are excluded from Earned until confirmed — the amber count links you to them.
 
 > **Never pay straight from the CSV export.** It mixes employees and subcontractors with no column saying which is which. Employees get paid from runs; contractors from statements; the CSV is for bookkeeping.
+
+## Cleaners see their own pay
+
+The field app has **My pay** (Profile → My pay, or from My hours): the current period's earnings as a running estimate from their closed shifts, and below it every finalized or paid statement — the same frozen numbers your runs produced, marked *Paid* or *Finalized — payment on the way*. The estimate is labeled as one: bonuses, PTO, and corrections land when you actually run the period, and shifts awaiting review say so. Draft runs you're still checking are never shown.
 `;

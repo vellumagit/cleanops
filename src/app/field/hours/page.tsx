@@ -173,13 +173,21 @@ export default async function FieldHoursPage({
         description="Every shift you've recorded, and what it added up to."
       />
 
-      <Link
-        href="/field/clock"
-        className="mb-4 inline-flex items-center gap-1 text-sm font-medium text-muted-foreground"
-      >
-        <ChevronLeft className="h-4 w-4" />
-        Back to clock
-      </Link>
+      <div className="mb-4 flex items-center justify-between">
+        <Link
+          href="/field/clock"
+          className="inline-flex items-center gap-1 text-sm font-medium text-muted-foreground"
+        >
+          <ChevronLeft className="h-4 w-4" />
+          Back to clock
+        </Link>
+        <Link
+          href="/field/pay"
+          className="text-sm font-medium text-primary underline-offset-2 hover:underline"
+        >
+          My pay →
+        </Link>
+      </div>
 
       <div className="mb-4 flex flex-wrap gap-2">
         {PERIODS.map((p) => (

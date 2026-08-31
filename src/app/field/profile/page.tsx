@@ -1,5 +1,6 @@
 import Link from "next/link";
 import {
+  Banknote,
   ChevronRight,
   GraduationCap,
   Calendar,
@@ -329,6 +330,14 @@ export default async function FieldProfilePage() {
 
       {/* Quick links */}
       <div className="mt-5 space-y-2">
+        <Link
+          href="/field/pay"
+          className="flex items-center gap-3 rounded-xl border border-border bg-card p-4 transition-colors active:bg-muted"
+        >
+          <Banknote className="h-5 w-5 text-muted-foreground" />
+          <span className="flex-1 text-[15px] font-medium">My pay</span>
+          <ChevronRight className="h-5 w-5 text-muted-foreground" />
+        </Link>
         <Link
           href="/field/availability"
           className="flex items-center gap-3 rounded-xl border border-border bg-card p-4 transition-colors active:bg-muted"
