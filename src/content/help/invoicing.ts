@@ -19,7 +19,9 @@ Draft → Sent → Paid, with Overdue when a due date passes. Payments recorded 
 
 ## Finding things
 
-The invoice number is the first column and it's searchable — a client says "about invoice 149", you type 149. The search box takes names or numbers.
+The invoice number is the first column and it's searchable — a client says "about invoice 149", you type 149. The search box takes names, numbers, dates ("Jul 6", "July 6", or "2026-07-06"), statuses ("overdue"), and amounts ("183.75"). Words combine: "leslie july" narrows to that client's July invoices.
+
+The list shows the newest 500 invoices and says so when older ones exist — search only looks inside what's loaded. For one client's complete history, open their page and use **View all** beside Recent invoices.
 
 > A recurring client is usually better served by **period billing** — one invoice per month or cycle covering all visits — than by per-visit invoices. Ask about billing cadence on the client's profile.
 `;

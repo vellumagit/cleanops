@@ -70,15 +70,17 @@ export function DataTable<T>({
 
   const filtered = useMemo(() => {
     if (!query.trim()) return data;
-    const needle = query.trim().toLowerCase();
-    return data.filter((row) =>
-      columns.some((col) => {
-        if (!col.searchValue) return false;
-        const v = col.searchValue(row);
-        if (v == null) return false;
-        return v.toLowerCase().includes(needle);
-      }),
-    );
+    // Tokenized AND-match: every word must land in SOME column, so
+    // "leslie july" narrows to Leslie's July rows instead of matching
+    // nothing (the old single-needle filter required one column to
+    // contain the whole phrase).
+    const tokens = query.trim().toLowerCase().split(/\s+/);
+    return data.filter((row) => {
+      const haystacks = columns
+        .map((col) => col.searchValue?.(row)?.toLowerCase())
+        .filter((v): v is string => v != null && v !== "");
+      return tokens.every((t) => haystacks.some((h) => h.includes(t)));
+    });
   }, [query, data, columns]);
 
   const showEmptyState = data.length === 0 && emptyState;

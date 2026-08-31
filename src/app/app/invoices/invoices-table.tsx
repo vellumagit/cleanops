@@ -34,6 +34,22 @@ export type InvoiceRow = {
   delivery: { kind: "skipped" | "held" | "scheduled"; note: string } | null;
 };
 
+/** One date, three spellings — the display form ("Jul 6, 2026"), the long
+ *  month ("July 6, 2026"), and ISO ("2026-07-06") — so a date typed any of
+ *  the common ways matches. Rendered in the org timezone like the cell. */
+function dateNeedle(iso: string | null, tz: string): string {
+  if (!iso) return "";
+  const safeIso = /^\d{4}-\d{2}-\d{2}$/.test(iso) ? `${iso}T12:00:00Z` : iso;
+  const d = new Date(safeIso);
+  if (Number.isNaN(d.getTime())) return "";
+  const opts = { day: "numeric", year: "numeric", timeZone: tz } as const;
+  return [
+    d.toLocaleDateString("en-US", { month: "short", ...opts }),
+    d.toLocaleDateString("en-US", { month: "long", ...opts }),
+    d.toLocaleDateString("en-CA", { timeZone: tz }), // yyyy-mm-dd
+  ].join(" ");
+}
+
 export function InvoicesTable({
   rows,
   canEdit,
@@ -72,6 +88,7 @@ export function InvoicesTable({
           {formatDate(r.created_at, tz)}
         </span>
       ),
+      searchValue: (r) => dateNeedle(r.created_at, tz),
     },
     {
       key: "due",
@@ -81,6 +98,7 @@ export function InvoicesTable({
           {formatDate(r.due_date, tz)}
         </span>
       ),
+      searchValue: (r) => dateNeedle(r.due_date, tz),
     },
     {
       key: "paid",
@@ -90,6 +108,7 @@ export function InvoicesTable({
           {formatDate(r.paid_at, tz)}
         </span>
       ),
+      searchValue: (r) => dateNeedle(r.paid_at, tz),
     },
     {
       key: "status",
@@ -126,6 +145,9 @@ export function InvoicesTable({
           )}
         </div>
       ),
+      // "overdue", "draft", "paid" — status words are how people filter
+      // a ledger in their head; let the box do it too.
+      searchValue: (r) => humanizeEnum(r.status),
     },
     {
       key: "amount",
@@ -133,6 +155,9 @@ export function InvoicesTable({
       headerClassName: "text-right",
       className: "text-right tabular-nums font-medium",
       render: (r) => formatCurrencyCents(r.amount_cents, currency),
+      // Both "$183.75" and bare "183.75" match.
+      searchValue: (r) =>
+        `${formatCurrencyCents(r.amount_cents, currency)} ${(r.amount_cents / 100).toFixed(2)}`,
     },
   ];
 
@@ -141,7 +166,7 @@ export function InvoicesTable({
       data={rows}
       columns={columns}
       getRowId={(r) => r.id}
-      searchPlaceholder="Search by client or invoice #…"
+      searchPlaceholder="Search client, invoice #, date, status, amount…"
       onRowClick={
         canEdit ? (r) => router.push(`/app/invoices/${r.id}`) : undefined
       }
