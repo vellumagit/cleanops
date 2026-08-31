@@ -84,6 +84,22 @@ function parseStepsFromFormData(formData: FormData): Array<{
   return steps;
 }
 
+/**
+ * The audience checkboxes post as audience_levels values: "employee"
+ * (employees & contractors), "manager", "admins" (admin + owner as one
+ * level — they're one tier of trust everywhere else in the app).
+ * Combinatory by design; empty is refused rather than silently
+ * defaulted, because "nobody gets this module" is almost never meant.
+ */
+function parseAudienceRoles(formData: FormData): string[] | null {
+  const picked = new Set(formData.getAll("audience_levels").map(String));
+  const roles: string[] = [];
+  if (picked.has("employee")) roles.push("employee");
+  if (picked.has("manager")) roles.push("manager");
+  if (picked.has("admins")) roles.push("admin", "owner");
+  return roles.length > 0 ? roles : null;
+}
+
 // ── Create ─────────────────────────────────────────────────────
 
 export async function createTrainingModuleAction(
@@ -99,6 +115,11 @@ export async function createTrainingModuleAction(
   if (!title) return { error: "Title is required" };
   if (title.length > 200) return { error: "Title must be 200 characters or less" };
 
+  const audienceRoles = parseAudienceRoles(formData);
+  if (!audienceRoles) {
+    return { error: "Pick at least one level this module is for" };
+  }
+
   const steps = parseStepsFromFormData(formData);
 
   // Create the module
@@ -111,6 +132,7 @@ export async function createTrainingModuleAction(
       created_by: membership.id,
       status: status as never,
       assign_on_join: formData.get("assign_on_join") === "1",
+      audience_roles: audienceRoles,
     } as never)
     .select("id")
     .single();
@@ -156,7 +178,12 @@ export async function createTrainingModuleAction(
     action: "create",
     entity: "training_module",
     entity_id: module.id,
-    after: { title, status, step_count: steps.length },
+    after: {
+      title,
+      status,
+      step_count: steps.length,
+      audience_roles: audienceRoles,
+    },
   });
 
   revalidatePath("/app/training");
@@ -179,6 +206,11 @@ export async function updateTrainingModuleAction(
   if (!title) return { error: "Title is required" };
   if (title.length > 200) return { error: "Title must be 200 characters or less" };
 
+  const audienceRoles = parseAudienceRoles(formData);
+  if (!audienceRoles) {
+    return { error: "Pick at least one level this module is for" };
+  }
+
   const steps = parseStepsFromFormData(formData);
 
   // Update the module
@@ -189,6 +221,7 @@ export async function updateTrainingModuleAction(
       description: description || null,
       status: status as never,
       assign_on_join: formData.get("assign_on_join") === "1",
+      audience_roles: audienceRoles,
     } as never)
     .eq("id", moduleId)
     .eq("organization_id", membership.organization_id);
@@ -239,7 +272,12 @@ export async function updateTrainingModuleAction(
     action: "update",
     entity: "training_module",
     entity_id: moduleId,
-    after: { title, status, step_count: steps.length },
+    after: {
+      title,
+      status,
+      step_count: steps.length,
+      audience_roles: audienceRoles,
+    },
   });
 
   revalidatePath("/app/training");

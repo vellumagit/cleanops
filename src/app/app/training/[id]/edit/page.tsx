@@ -20,7 +20,9 @@ export default async function EditTrainingModulePage({
   const [{ data: module }, { data: steps }] = await Promise.all([
     supabase
       .from("training_modules")
-      .select("id, title, description, status, assign_on_join" as never)
+      .select(
+        "id, title, description, status, assign_on_join, audience_roles" as never,
+      )
       .eq("id", id)
       .maybeSingle(),
     supabase
@@ -38,6 +40,7 @@ export default async function EditTrainingModulePage({
     description: string | null;
     status: string;
     assign_on_join: boolean | null;
+    audience_roles: string[] | null;
   };
 
   const initialSteps = (steps ?? []).map((s) => ({
@@ -66,6 +69,7 @@ export default async function EditTrainingModulePage({
         initialDescription={mod.description ?? ""}
         initialStatus={mod.status ?? "draft"}
         initialAssignOnJoin={Boolean(mod.assign_on_join)}
+        initialAudienceRoles={mod.audience_roles ?? ["employee"]}
         initialSteps={initialSteps}
       />
     </PageShell>

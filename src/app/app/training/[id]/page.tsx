@@ -29,7 +29,7 @@ export default async function TrainingModuleDetailPage({
     await Promise.all([
       supabase
         .from("training_modules")
-        .select("id, title, description, status")
+        .select("id, title, description, status, audience_roles" as never)
         .eq("id", id)
         .maybeSingle() as unknown as Promise<{
         data: {
@@ -37,6 +37,7 @@ export default async function TrainingModuleDetailPage({
           title: string;
           description: string | null;
           status: string;
+          audience_roles: string[] | null;
         } | null;
       }>,
       supabase
@@ -66,7 +67,21 @@ export default async function TrainingModuleDetailPage({
     (assignments ?? []).map((a) => [a.employee_id, a]),
   );
 
+  // The roster shows the module's AUDIENCE — plus anyone outside it who
+  // already carries an assignment (history from before the levels, or a
+  // deliberate one-off), so nobody's progress silently vanishes.
+  const audience = mod.audience_roles ?? ["employee"];
+  const audienceLabel = [
+    audience.includes("employee") && "Employees & contractors",
+    audience.includes("manager") && "Managers",
+    (audience.includes("admin") || audience.includes("owner")) &&
+      "Admins & owners",
+  ]
+    .filter(Boolean)
+    .join(", ");
+
   const rows: AssignmentRow[] = (employees ?? [])
+    .filter((emp) => audience.includes(emp.role) || byEmployeeId.has(emp.id))
     .map((emp) => {
       const a = byEmployeeId.get(emp.id);
       return {
@@ -109,6 +124,7 @@ export default async function TrainingModuleDetailPage({
           <h2 className="text-sm font-semibold">Employee completions</h2>
           <p className="text-xs text-muted-foreground">
             Status: <span className="font-medium capitalize">{mod.status}</span>
+            {" · "}For: {audienceLabel || "—"}
             {" · "}
             {rows.filter((r) => r.completed_at).length} of {rows.length}{" "}
             complete

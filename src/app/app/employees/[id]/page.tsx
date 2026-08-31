@@ -139,12 +139,15 @@ export default async function EmployeeFilePage({
   const [{ data: orgModules }, { data: trainingRows }] = await Promise.all([
     (admin
       .from("training_modules")
-      .select("id, title, status, steps:training_steps ( id )")
+      .select(
+        "id, title, status, audience_roles, steps:training_steps ( id )" as never,
+      )
       .eq("organization_id", viewer.organization_id)) as unknown as Promise<{
       data: Array<{
         id: string;
         title: string;
         status: string | null;
+        audience_roles: string[] | null;
         steps: Array<{ id: string }> | null;
       }> | null;
     }>,
@@ -169,10 +172,16 @@ export default async function EmployeeFilePage({
   const assignmentByModule = new Map(
     (trainingRows ?? []).map((a) => [a.module_id, a]),
   );
-  // Published modules always show (assigned or not); unpublished ones only
-  // when this person carries an assignment from back when they were live.
+  // Published modules FOR THIS PERSON'S LEVEL show (assigned or not);
+  // anything they carry an assignment for shows regardless — history and
+  // deliberate one-offs never vanish from the file.
   const training = (orgModules ?? [])
-    .filter((m) => m.status === "published" || assignmentByModule.has(m.id))
+    .filter(
+      (m) =>
+        assignmentByModule.has(m.id) ||
+        (m.status === "published" &&
+          (m.audience_roles ?? ["employee"]).includes(member.role)),
+    )
     .map((m) => {
       const a = assignmentByModule.get(m.id);
       return {

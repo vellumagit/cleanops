@@ -26,6 +26,8 @@ When an applicant gets the yes, open their page and hit **Hire** — one dialog,
 
 Any published Training module can be marked **"Assign to every new hire automatically"** (a checkbox on the module). Those modules land on a new member's training list the instant they join — whether they came through the applicant pipeline or a plain invite from Employees. The "assign the onboarding training" line in your hiring procedure becomes the system's job, not memory's.
 
+Every module also says **who it's for** — Employees & contractors, Managers, Admins & owners, in any combination. Each level only ever gets its own modules: a new manager receives the manager onboarding, not the bathroom SOP, and the module's roster page lists only the people it applies to (plus anyone who already carries an assignment, so history never vanishes).
+
 ## The seam between hiring and training
 
 The line is the yes. Before it: questionnaires and procedures (this page). After it: the Hire button handles account, wage, and training in one motion; anything beyond that (contracts, banking details) lives in your hiring procedure checklist. If you find yourself writing "how we clean a bathroom" here, it belongs in Training; if you're writing "ask about weekend availability", it belongs here.

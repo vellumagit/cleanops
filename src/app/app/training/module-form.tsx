@@ -37,12 +37,43 @@ type Props = {
   initialDescription?: string;
   initialStatus?: string;
   initialAssignOnJoin?: boolean;
+  /** Stored membership roles ("employee" | "manager" | "admin" | "owner"). */
+  initialAudienceRoles?: string[];
   initialSteps?: Array<{
     title: string;
     body: string;
     image_url: string | null;
   }>;
 };
+
+/** The three account levels a module can target — combinatory. Admin and
+ *  owner travel as one level, matching how the rest of the app treats
+ *  them as a single tier of trust. */
+const AUDIENCE_LEVELS = [
+  {
+    value: "employee",
+    label: "Employees & contractors",
+    hint: "The field crew — cleaners on payroll or on statements",
+  },
+  {
+    value: "manager",
+    label: "Managers",
+    hint: "People running the day in the office app",
+  },
+  {
+    value: "admins",
+    label: "Admins & owners",
+    hint: "Full-access accounts",
+  },
+] as const;
+
+function levelsFromRoles(roles: string[]): Set<string> {
+  const s = new Set<string>();
+  if (roles.includes("employee")) s.add("employee");
+  if (roles.includes("manager")) s.add("manager");
+  if (roles.includes("admin") || roles.includes("owner")) s.add("admins");
+  return s;
+}
 
 let stepKeyCounter = 0;
 function nextKey() {
@@ -56,6 +87,7 @@ export function ModuleForm({
   initialDescription = "",
   initialStatus = "draft",
   initialAssignOnJoin = false,
+  initialAudienceRoles = ["employee"],
   initialSteps = [],
 }: Props) {
   const initialState: TrainingModuleState = {};
@@ -70,6 +102,18 @@ export function ModuleForm({
   const [title, setTitle] = useState(initialTitle);
   const [description, setDescription] = useState(initialDescription);
   const [assignOnJoin, setAssignOnJoin] = useState(initialAssignOnJoin);
+  const [audience, setAudience] = useState<Set<string>>(() =>
+    levelsFromRoles(initialAudienceRoles),
+  );
+
+  function toggleAudience(level: string) {
+    setAudience((prev) => {
+      const next = new Set(prev);
+      if (next.has(level)) next.delete(level);
+      else next.add(level);
+      return next;
+    });
+  }
   const [steps, setSteps] = useState<StepData[]>(() => {
     if (initialSteps.length > 0) {
       return initialSteps.map((s) => {
@@ -194,6 +238,44 @@ export function ModuleForm({
           />
         </FormField>
 
+        {/* Who is this for — combinatory account levels. Auto-assign and
+            the admin rosters both filter by this. */}
+        <div>
+          <p className="text-sm font-medium">Who is this for?</p>
+          <p className="mb-2 mt-0.5 text-xs text-muted-foreground">
+            Pick every level this module applies to — each level only ever
+            sees its own modules.
+          </p>
+          <div className="space-y-1.5">
+            {AUDIENCE_LEVELS.map((level) => (
+              <label
+                key={level.value}
+                className="flex cursor-pointer items-start gap-2.5 rounded-md border border-border bg-muted/20 px-3 py-2"
+              >
+                <input
+                  type="checkbox"
+                  name="audience_levels"
+                  value={level.value}
+                  checked={audience.has(level.value)}
+                  onChange={() => toggleAudience(level.value)}
+                  className="mt-0.5 h-4 w-4"
+                />
+                <span className="text-xs leading-relaxed">
+                  <span className="font-medium">{level.label}</span>
+                  <span className="block text-muted-foreground">
+                    {level.hint}
+                  </span>
+                </span>
+              </label>
+            ))}
+          </div>
+          {audience.size === 0 && (
+            <p className="mt-1.5 text-xs font-medium text-amber-600 dark:text-amber-400">
+              Pick at least one level — a module for nobody helps nobody.
+            </p>
+          )}
+        </div>
+
         <label className="flex cursor-pointer items-start gap-2.5 rounded-md border border-border bg-muted/20 px-3 py-2.5">
           <input
             type="checkbox"
@@ -208,9 +290,9 @@ export function ModuleForm({
               Assign to every new hire automatically
             </span>
             <span className="block text-muted-foreground">
-              The moment someone joins the team, this module lands on their
-              training list — no one has to remember. Applies while the
-              module is published.
+              The moment someone at one of the levels above joins, this
+              module lands on their training list — no one has to remember.
+              Applies while the module is published.
             </span>
           </span>
         </label>
