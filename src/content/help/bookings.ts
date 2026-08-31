@@ -19,7 +19,7 @@ Tick **Repeats** and set the pattern; Sollos generates the visits ahead of time 
 
 The recurring list shows each series' **billing state**: an amber "N unbilled" chip means completed visits no invoice has claimed — click it to bill them. And the two recurring engines guard each other: if a client is on a billing cycle AND has a standing recurring invoice, the standing one is held with a warning instead of double-billing them.
 
-When a save would **email the client** — the visit time moved, or the recurring schedule was rewritten — Sollos stops and asks: **Save & email client**, or **Save without emailing** (you tell them yourself). Saves that change nothing client-visible never email; a save with an untouched schedule doesn't touch future visits at all.
+When a save would **notify the client** — the visit time moved, or the recurring schedule was rewritten — Sollos stops and asks: **Save & notify client**, or **Save without notifying** (you tell them yourself). The notice goes out by the client's own channel preference: email, text, or both. Saves that change nothing client-visible never notify; a save with an untouched schedule doesn't touch future visits at all.
 
 ## Split shifts
 

@@ -589,7 +589,8 @@ export function BookingForm({
   >("this_only");
 
   // ── Notify-the-client interception ───────────────────────────────────
-  // A save that would email the client pauses for one explicit choice.
+  // A save that would notify the client (email or text, per their channel
+  // preference) pauses for one explicit choice.
   const formRef = useRef<HTMLFormElement>(null);
   const notifyInputRef = useRef<HTMLInputElement>(null);
   const notifyDecidedRef = useRef(false);
@@ -609,9 +610,9 @@ export function BookingForm({
         (defaults?.series_ends_at ?? "") ||
       seriesCustomDays.join(",") !==
         (defaults?.series_custom_days ?? []).join(","));
-  // Pending bookings never email (the client hasn't heard about the job
+  // Pending bookings never notify (the client hasn't heard about the job
   // at all yet), matching the server's own gate.
-  const wouldEmailClient =
+  const wouldNotifyClient =
     defaults?.status !== "pending" && (timeChanged || seriesScheduleChanged);
 
   function saveWithNotifyChoice(choice: "1" | "0") {
@@ -660,15 +661,15 @@ export function BookingForm({
       ref={formRef}
       action={formAction}
       className="space-y-5"
-      // The one interception in this form: a save that would EMAIL the
+      // The one interception in this form: a save that would NOTIFY the
       // client (time moved, or the recurring schedule rewritten) stops
       // for one question — notify them, or save quietly. Brian's demo
-      // taught us why: an unexpected client email mid-save is a trust
+      // taught us why: an unexpected client message mid-save is a trust
       // problem, in both directions.
       onSubmit={(e) => {
         if (mode !== "edit") return;
         if (notifyDecidedRef.current) return;
-        if (!wouldEmailClient) return;
+        if (!wouldNotifyClient) return;
         e.preventDefault();
         setNotifyDialogOpen(true);
       }}
@@ -1804,8 +1805,8 @@ export function BookingForm({
             <DialogTitle>Tell the client about this change?</DialogTitle>
             <DialogDescription>
               {seriesScheduleChanged && !timeChanged
-                ? "This rewrites their upcoming visits. Sollos can email them the new schedule, or save quietly so you can tell them yourself."
-                : "This moves the visit time. Sollos can email them the new time (with the old one shown), or save quietly so you can tell them yourself."}
+                ? "This rewrites their upcoming visits. Sollos can notify them of the new schedule — email or text, whichever they prefer — or save quietly so you can tell them yourself."
+                : "This moves the visit time. Sollos can notify them of the new time — email or text, whichever they prefer — or save quietly so you can tell them yourself."}
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
@@ -1814,14 +1815,14 @@ export function BookingForm({
               onClick={() => saveWithNotifyChoice("0")}
               className={buttonVariants({ variant: "outline" })}
             >
-              Save without emailing
+              Save without notifying
             </button>
             <button
               type="button"
               onClick={() => saveWithNotifyChoice("1")}
               className={buttonVariants()}
             >
-              Save &amp; email client
+              Save &amp; notify client
             </button>
           </div>
         </DialogContent>

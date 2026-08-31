@@ -1507,7 +1507,8 @@ export async function updateBookingAction(
   }
 
   // The edit form asks the owner whether the client should hear about a
-  // time change ("Save & email client" / "Save without emailing"). Absent
+  // time change ("Save & notify client" / "Save without notifying" — the
+  // client's channel preference decides email vs text vs both). Absent
   // field = paths without the dialog ⇒ notify, preserving old behavior.
   const notifyClient = String(formData.get("notify_client") ?? "") !== "0";
 
