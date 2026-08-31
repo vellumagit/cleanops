@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { requireMembership, requireCapability } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -643,30 +644,34 @@ export default async function TimesheetsPage({
     >
       {pager && (
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-card px-4 py-2.5">
-          <a
+          {/* Client-side <Link>s, not raw <a>: a full document load remounts
+              TimesheetsView and dumps the expanded employee + row filters, so
+              paging periods mid-review threw you back to the top. The date
+              inputs reseed via seededRange in the view. */}
+          <Link
             href={`/app/timesheets?from=${pager.prev.from}&to=${pager.prev.to}`}
             className="text-xs text-muted-foreground hover:text-foreground"
           >
             ‹ {pager.prev.label}
-          </a>
+          </Link>
           <span className="text-sm font-semibold">
             {pager.currentLabel}
             {pager.resetHref && (
-              <a
+              <Link
                 href={pager.resetHref}
                 className="ml-2 text-xs font-normal text-muted-foreground underline underline-offset-2 hover:text-foreground"
               >
                 Back to current period
-              </a>
+              </Link>
             )}
           </span>
           {pager.next ? (
-            <a
+            <Link
               href={`/app/timesheets?from=${pager.next.from}&to=${pager.next.to}`}
               className="text-xs text-muted-foreground hover:text-foreground"
             >
               {pager.next.label} ›
-            </a>
+            </Link>
           ) : (
             <span className="text-xs text-muted-foreground/50">
               current period

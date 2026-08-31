@@ -384,11 +384,19 @@ export function ManualEntryDialog({
   const [reassignOpen, setReassignOpen] = useState(false);
 
   // Reset fields when the dialog opens in a new mode or for a new entry.
-  // Sync'ing local form state to an external trigger (the open toggle) is
-  // the idiomatic effect use — acknowledged via the compiler escape hatch.
-  /* eslint-disable react-hooks/set-state-in-effect */
+  // Keyed by target, not by dep identity: the parent re-renders once a
+  // minute (nowTick) and after router.refresh(), handing down fresh prop
+  // objects — without the key guard each of those refired this effect and
+  // silently reverted whatever times were mid-typing in the open dialog.
+  const lastResetKey = useRef<string | null>(null);
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      lastResetKey.current = null;
+      return;
+    }
+    const resetKey = mode === "edit" ? `edit:${editing?.id ?? ""}` : "create";
+    if (lastResetKey.current === resetKey) return;
+    lastResetKey.current = resetKey;
     if (mode === "edit" && editing) {
       setEmployeeId(editing.employee_id);
       setBookingId(editing.booking_id ?? "");
@@ -427,7 +435,6 @@ export function ManualEntryDialog({
       setHistoryLoading(false);
     }
   }
-  /* eslint-enable react-hooks/set-state-in-effect */
 
   const activeEmployees = useMemo(
     () => employees.filter(Boolean).sort((a, b) => a.name.localeCompare(b.name)),

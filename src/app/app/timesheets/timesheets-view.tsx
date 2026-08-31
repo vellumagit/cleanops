@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -331,9 +331,10 @@ export function TimesheetsView({
   const [localTo, setLocalTo] = useState(to);
 
   // Reseed the date inputs when the WINDOW changes underneath them — the
-  // period pager and "Back to current period" navigate with plain links,
-  // so this client component re-renders in place and useState kept the old
-  // values: table showing July, boxes still saying August.
+  // period pager and "Back to current period" navigate client-side, so
+  // this component re-renders in place (keeping the expanded row and
+  // filters, which is the point) and useState kept the old values: table
+  // showing July, boxes still saying August.
   const [seededRange, setSeededRange] = useState(`${from}_${to}`);
   if (seededRange !== `${from}_${to}`) {
     setSeededRange(`${from}_${to}`);
@@ -469,8 +470,12 @@ export function TimesheetsView({
     router.refresh();
   }
 
-  const employeeList = Object.values(employees).sort((a, b) =>
-    a.name.localeCompare(b.name),
+  // Memoized so the minute tick doesn't hand the dialog a fresh array
+  // identity on every re-render.
+  const employeeList = useMemo(
+    () =>
+      Object.values(employees).sort((a, b) => a.name.localeCompare(b.name)),
+    [employees],
   );
 
   // Row-level filters applied on top of the date-range page filter.
