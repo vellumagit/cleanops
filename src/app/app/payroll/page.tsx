@@ -24,6 +24,7 @@ import {
 } from "@/lib/pay-schedule";
 import { periodHref } from "@/lib/pay-period";
 import { markTipsPaidAction } from "./actions";
+import { KeepTipsButton } from "./keep-tips-button";
 import { getTipsOwed } from "@/lib/invoice-tips";
 import { getSubcontractorPayables } from "@/lib/subcontractor-payables";
 import { getOrgTimezone } from "@/lib/org-timezone";
@@ -610,6 +611,12 @@ export default async function PayrollPage() {
             <p className="mt-1 text-xs text-muted-foreground">
               Clients tipped this by card. It landed in your Stripe balance
               along with the invoice, so it&rsquo;s yours to hand on.
+              <span className="text-muted-foreground/80">
+                {" "}
+                If one was actually meant for the business (or the owner),
+                &ldquo;Keep in business&rdquo; settles it without paying it
+                out.
+              </span>
             </p>
             <ul className="mt-3 space-y-1.5">
               {tipsOwed.rows.map((r) => (
@@ -643,6 +650,14 @@ export default async function PayrollPage() {
                         Mark paid
                       </button>
                     </form>
+                    <KeepTipsButton
+                      membershipId={r.membershipId}
+                      who={r.membershipId ? r.name : undefined}
+                      amountLabel={formatCurrencyCents(
+                        r.amountCents,
+                        currency,
+                      )}
+                    />
                   </div>
                 </li>
               ))}

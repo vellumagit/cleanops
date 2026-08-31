@@ -52,6 +52,7 @@ import { SubmitButton } from "@/components/submit-button";
 import { RecordPaymentForm } from "./record-payment-form";
 import { PaymentRowActions } from "./payment-row-actions";
 import { RefundPaymentButton } from "./refund-payment-button";
+import { KeepTipsButton } from "@/app/app/payroll/keep-tips-button";
 import { humanizePaymentMethod } from "@/lib/validators/invoice-payment";
 
 export const metadata = { title: "Invoice" };
@@ -660,7 +661,11 @@ export default async function InvoiceDetailPage({
                     >
                       <span className="truncate">
                         {t.name}
-                        {t.paidOut ? "" : " — not yet paid out"}
+                        {t.paidOut
+                          ? t.kept
+                            ? " — kept by the business"
+                            : ""
+                          : " — not yet paid out"}
                       </span>
                       <span className="shrink-0 tabular-nums">
                         {formatCurrencyCents(t.amountCents, currency)}
@@ -668,6 +673,23 @@ export default async function InvoiceDetailPage({
                     </li>
                   ))}
                 </ul>
+                {/* The owner override: this tip was really for the business
+                    (or the owner). Settles every unsettled tip row on THIS
+                    invoice — the payroll card has the per-person version. */}
+                {canRefund &&
+                  invoiceTips.rows.some((t) => !t.paidOut) && (
+                    <div className="mt-2">
+                      <KeepTipsButton
+                        invoiceId={id}
+                        amountLabel={formatCurrencyCents(
+                          invoiceTips.rows
+                            .filter((t) => !t.paidOut)
+                            .reduce((s, t) => s + t.amountCents, 0),
+                          currency,
+                        )}
+                      />
+                    </div>
+                  )}
               </div>
             )}
           </div>

@@ -97,19 +97,26 @@ export async function getTipsOwed(organizationId: string): Promise<TipsOwed> {
 /** Every tip recorded against one invoice, for the detail page. */
 export async function getInvoiceTips(invoiceId: string): Promise<{
   totalCents: number;
-  rows: Array<{ name: string; amountCents: number; paidOut: boolean }>;
+  rows: Array<{
+    name: string;
+    amountCents: number;
+    paidOut: boolean;
+    /** Settled INTO the business (owner override) rather than handed over. */
+    kept: boolean;
+  }>;
 }> {
   try {
     const admin = createSupabaseAdminClient();
     const { data } = (await admin
       .from("invoice_tips" as never)
       .select(
-        "amount_cents, paid_out_at, membership:memberships ( display_name, profile:profiles ( full_name ) )",
+        "amount_cents, paid_out_at, kept_by_business, membership:memberships ( display_name, profile:profiles ( full_name ) )",
       )
       .eq("invoice_id" as never, invoiceId as never)) as unknown as {
       data: Array<{
         amount_cents: number;
         paid_out_at: string | null;
+        kept_by_business: boolean | null;
         membership: {
           display_name: string | null;
           profile: { full_name: string | null } | null;
@@ -121,6 +128,7 @@ export async function getInvoiceTips(invoiceId: string): Promise<{
       name: r.membership ? memberDisplayName(r.membership) : "Not yet assigned",
       amountCents: r.amount_cents,
       paidOut: Boolean(r.paid_out_at),
+      kept: Boolean(r.kept_by_business),
     }));
 
     return {

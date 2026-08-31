@@ -297,6 +297,74 @@ export async function markTipsPaidAction(formData: FormData): Promise<void> {
 }
 
 /**
+ * The override: settle outstanding tips INTO the business instead of to a
+ * person. For the tip that was really meant for the owner, the unattributed
+ * pile nobody can claim, or a correction worth absorbing. Same claim-then-act
+ * shape as markTipsPaidAction — paid_out_at is stamped so the tip leaves the
+ * owed ledger, and kept_by_business marks which exit it took.
+ *
+ * Two scopes, one action: from the payroll card it's one person's bucket
+ * (membership_id, "" = unattributed); from an invoice page it's everything
+ * still unsettled on that invoice (invoice_id wins when present).
+ */
+export async function keepTipsAction(formData: FormData): Promise<void> {
+  const { membership } = await getActionContext();
+  if (!["owner", "admin"].includes(membership.role)) return;
+
+  const rawMember = String(formData.get("membership_id") ?? "").trim();
+  const invoiceId = String(formData.get("invoice_id") ?? "").trim();
+  const admin = createSupabaseAdminClient();
+
+  let q = admin
+    .from("invoice_tips" as never)
+    .update({
+      paid_out_at: new Date().toISOString(),
+      kept_by_business: true,
+    } as never)
+    .eq("organization_id" as never, membership.organization_id as never)
+    .is("paid_out_at" as never, null as never);
+
+  if (invoiceId) {
+    q = q.eq("invoice_id" as never, invoiceId as never);
+  } else {
+    // Same NULL-vs-"" discipline as markTipsPaidAction above.
+    q = rawMember
+      ? q.eq("membership_id" as never, rawMember as never)
+      : q.is("membership_id" as never, null as never);
+  }
+
+  const { data: kept, error: keepErr } = (await q.select(
+    "id, amount_cents",
+  )) as unknown as {
+    data: Array<{ id: string; amount_cents: number }> | null;
+    error: { message: string } | null;
+  };
+  if (keepErr) {
+    console.error("[payroll] keepTips failed:", keepErr.message);
+    return;
+  }
+
+  const rows = kept ?? [];
+  if (rows.length === 0) return;
+
+  await logAuditEvent({
+    membership,
+    action: "update",
+    entity: "settings",
+    entity_id: invoiceId || rawMember || membership.organization_id,
+    after: {
+      tips_kept_by_business: rows.length,
+      total_cents: rows.reduce((s, r) => s + r.amount_cents, 0),
+      membership_id: rawMember || null,
+      invoice_id: invoiceId || null,
+    },
+  });
+
+  revalidatePath("/app/payroll", "page");
+  if (invoiceId) revalidatePath(`/app/invoices/${invoiceId}`, "page");
+}
+
+/**
  * Set the org's pay period calendar. Meeting deliverable #3, defined by
  * Brian as "1st to the 15th and 16th to end of month" — the Up next card
  * computes its suggested period from this instead of guessing from the

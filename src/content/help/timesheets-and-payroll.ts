@@ -38,6 +38,15 @@ An entry that refuses to be edited is frozen inside a run — that's the paid re
 
 > **Never pay straight from the CSV export.** It mixes employees and subcontractors with no column saying which is which. Employees get paid from runs; contractors from statements; the CSV is for bookkeeping.
 
+## Tips to pass on
+
+A tip a client adds at checkout (or that arrives by e-transfer or cash into the business) lands in the **business's** account, so Payroll keeps a ledger of what's still owed to each cleaner: the **Tips to pass on** card. Tips split across a crew by their minutes on the invoice's jobs. Two ways off the ledger:
+
+- **Mark paid** — the money reached the person (through a run, in cash, however you actually pay). Records the handover; doesn't move money.
+- **Keep in business** — the override. The tip was really meant for the business or the owner, nobody could be attributed, or it's a correction. It settles the tip *without* paying it out, asks you to confirm first, and shows on the invoice as *kept by the business* — distinct from paid out, so history stays honest. Owner/admin only. The same button on an invoice's tip box keeps everything unsettled on just that invoice.
+
+A tip handed directly to the cleaner in cash never touches this ledger — record it as a *direct* tip and it appears in history already settled.
+
 ## Cleaners see their own pay
 
 The field app has **My pay** (Profile → My pay, or from My hours): the current period's earnings as a running estimate from their closed shifts, and below it every finalized or paid statement — the same frozen numbers your runs produced, marked *Paid* or *Finalized — payment on the way*. The estimate is labeled as one: bonuses, PTO, and corrections land when you actually run the period, and shifts awaiting review say so. Draft runs you're still checking are never shown.
