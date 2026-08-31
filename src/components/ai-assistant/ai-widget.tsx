@@ -102,7 +102,9 @@ export function AIWidget() {
   }
 
   return (
-    <div className="fixed bottom-5 right-5 z-50 flex flex-col items-end gap-3">
+    // bottom-24 below lg: the admin tab bar owns the bottom edge on
+    // phones, and bottom-5 parked this button squarely on its More tab.
+    <div className="fixed bottom-24 right-5 z-50 flex flex-col items-end gap-3 lg:bottom-5">
       {/* Chat panel */}
       {open && (
         <div className="flex h-[520px] w-[360px] flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-2xl">

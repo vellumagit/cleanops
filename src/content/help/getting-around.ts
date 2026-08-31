@@ -13,6 +13,10 @@ Work flows top to bottom: **Operations** (dashboard, scheduling, bookings, reque
 
 The small numbers beside some entries are live counts — today's bookings, pending requests, overdue invoices. A badge is the app telling you something is waiting on a human; a clear sidebar is a clear conscience.
 
+## On a phone
+
+The office swaps the sidebar for an app layout: bottom tabs — **Today, Schedule, Bookings, Requests**, badges included — plus **More**, which holds everything else. Desk-shaped tools (payroll, reports, settings, the hiring library) sit collapsed under **Desktop tools** in that sheet: nothing is locked away, those pages still work on a phone — they just tell you they're easier at a desk.
+
 ## The dashboard
 
 The top of the dashboard is today: jobs, revenue, who's working. When something money-shaped needs fixing — a completed job with no price, a $0 draft invoice — a **Needs attention** card appears with a link that lands exactly where the fix happens. No card means nothing needs you.

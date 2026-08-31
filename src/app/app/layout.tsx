@@ -4,6 +4,8 @@ import { getSubscriptionInfo } from "@/lib/subscription";
 import { isStripeEnabled } from "@/lib/stripe";
 import { TrialEndedWall } from "@/components/trial-ended-wall";
 import { AppSidebar } from "@/components/app-sidebar";
+import { AdminTabBar } from "@/components/admin-tab-bar";
+import { DesktopToolRibbon } from "@/components/desktop-tool-ribbon";
 import { BrandProvider } from "@/components/brand-provider";
 import { PushPrompt } from "@/components/push-prompt";
 import { TrialBanner } from "@/components/trial-banner";
@@ -219,8 +221,11 @@ export default async function AppLayout({
           "/app/leads": newLeads ?? 0,
         }}
       />
-      {/* pt-14 on mobile for the fixed top bar, lg:pt-0 when sidebar is visible */}
-      <div className="flex min-w-0 flex-1 flex-col overflow-y-auto pt-14 lg:pt-0">
+      {/* pt-14 for the fixed mobile top bar; bottom padding = tab bar height
+          plus the safe-area inset the bar itself grows by on gesture-nav
+          phones. Both zero out at lg where the sidebar takes over. */}
+      <div className="flex min-w-0 flex-1 flex-col overflow-y-auto pb-[calc(4rem+env(safe-area-inset-bottom))] pt-14 lg:pb-0 lg:pt-0">
+        <DesktopToolRibbon />
         <TrialBanner info={subscriptionInfo} role={membership.role} />
         <AutomationsOffBanner
           organizationId={membership.organization_id}
@@ -243,6 +248,27 @@ export default async function AppLayout({
           <PwaInstallBanner />
         </div>
         {children}
+        {/* Tab bar mounts BEFORE the palette/widget so their z-50 overlays
+            paint above the sheet when both are open (last-in-DOM wins at
+            equal z). */}
+        <AdminTabBar
+          role={membership.role}
+          capabilities={membership.capabilities}
+          unreadNotifications={unreadNotifications ?? 0}
+          feedEnabled={feedEnabled}
+          tabBadges={{
+            "/app/bookings": todayBookings ?? 0,
+            "/app/bookings/requests":
+              (pendingRequests ?? 0) + (openJobRequests ?? 0),
+            "/app/invoices": overdueInvoices ?? 0,
+            "/app/estimates": pendingEstimates ?? 0,
+            "/app/chat": Number(unreadChat ?? 0),
+            "/app/reviews": newReviews ?? 0,
+            "/app/tasks": overdueTasks ?? 0,
+            "/app/applicants": newApplicants ?? 0,
+            "/app/leads": newLeads ?? 0,
+          }}
+        />
         <QuickActions
           role={membership.role}
           capabilities={membership.capabilities}

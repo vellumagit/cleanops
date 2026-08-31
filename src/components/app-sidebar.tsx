@@ -1,182 +1,25 @@
 "use client";
 
-import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import {
-  LayoutDashboard,
-  Calendar,
-  CalendarCheck,
-  CalendarDays,
-  Clock,
-  FileText,
-  ScrollText,
-  Users,
-  UserRound,
-  UserPlus,
-  Star,
-  Award,
-  Receipt,
-  GraduationCap,
-  Boxes,
-  ClipboardCheck,
-  ClipboardList,
-  CheckSquare,
-  MessageSquare,
-  Rss,
-  Rocket,
-  Settings,
-  LogOut,
-  Bell,
-  LifeBuoy,
-  BarChart3,
-  Banknote,
-  Inbox,
-  Menu,
-  X,
-  Smartphone,
-} from "lucide-react";
+import { Rocket, LogOut, Smartphone } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { NotificationBell } from "@/components/notification-bell";
+import { type CapabilityMap } from "@/lib/capabilities";
 import {
-  hasCapability,
-  type CapabilityKey,
-  type CapabilityMap,
-} from "@/lib/capabilities";
+  NAV_SECTIONS,
+  FOOTER_NAV,
+  BADGE_LABELS,
+  navItemVisible,
+  bestNavMatch,
+} from "@/components/app-nav";
 
 /**
- * Sollos 3 ops-console sidebar — responsive: hamburger on mobile,
- * fixed sidebar on desktop (lg+).
- *
- * Now with per-section colour coding and per-tab notification badges.
+ * Sollos 3 ops-console sidebar. Desktop (lg+) renders the fixed sidebar;
+ * mobile gets only the slim top bar — navigation on phones lives in the
+ * bottom AdminTabBar + its More sheet, both fed by the SAME manifest
+ * (src/components/app-nav.ts), so the two surfaces cannot drift.
  */
-
-type NavItem = {
-  href: string;
-  label: string;
-  icon: React.ComponentType<{ className?: string }>;
-  /** Roles that can see this item. If omitted, visible to all. */
-  roles?: string[];
-  /** Manager capability this item needs. Owners/admins always pass; a
-   *  manager without it never sees the link, so the nav matches what the
-   *  page would actually let them open. */
-  capability?: CapabilityKey;
-};
-
-type NavSection = {
-  label: string;
-  items: NavItem[];
-  /** Accent colour for this section's icons */
-  accent: string;
-  /** Active tab background tint */
-  activeBg: string;
-};
-
-const NAV_SECTIONS: NavSection[] = [
-  {
-    label: "Overview",
-    accent: "text-zinc-300",
-    activeBg: "bg-zinc-800",
-    items: [{ href: "/app", label: "Dashboard", icon: LayoutDashboard }],
-  },
-  {
-    label: "Operations",
-    accent: "text-sky-400",
-    activeBg: "bg-sky-500/10",
-    items: [
-      { href: "/app/bookings", label: "Bookings", icon: CalendarCheck },
-      { href: "/app/calendar", label: "Calendar", icon: CalendarDays , capability: "scheduling" as const },
-      { href: "/app/scheduling", label: "Scheduling", icon: Calendar, roles: ["owner", "admin", "manager"] , capability: "scheduling" as const },
-      { href: "/app/bookings/requests", label: "Requests", icon: Inbox, roles: ["owner", "admin", "manager"] },
-      { href: "/app/estimates", label: "Estimates", icon: FileText, roles: ["owner", "admin", "manager"] , capability: "invoicing" as const },
-      { href: "/app/contracts", label: "Contracts", icon: ScrollText, roles: ["owner", "admin", "manager"] },
-      { href: "/app/checklists", label: "Checklists", icon: ClipboardCheck, roles: ["owner", "admin", "manager"] },
-      { href: "/app/tasks", label: "Tasks", icon: CheckSquare },
-      { href: "/app/inventory", label: "Inventory", icon: Boxes },
-    ],
-  },
-  {
-    label: "People",
-    accent: "text-violet-400",
-    activeBg: "bg-violet-500/10",
-    items: [
-      // Leads sits ABOVE Clients: it's the same people one step earlier, and
-      // the order matches the direction they travel.
-      { href: "/app/leads", label: "Leads", icon: UserPlus, roles: ["owner", "admin", "manager"] , capability: "clients" as const },
-      { href: "/app/clients", label: "Clients", icon: Users, roles: ["owner", "admin", "manager"] , capability: "clients" as const },
-      { href: "/app/employees", label: "Employees", icon: UserRound, roles: ["owner", "admin"] },
-      // PURELY A SOURCING TOOL: "who can I text tonight". Contractor pay used
-      // to hang off this entry, which filed a paying concept inside a hiring
-      // one — a roster subcontractor who had never touched the bench still had
-      // their pay living here. It now sits under Payroll as a peer of
-      // employee pay, which is the split that actually matters (engagement,
-      // and therefore tax treatment). Where someone was sourced changes
-      // nothing about how they are paid.
-      //
-      // The naming still earns its keep: "Subcontractors" sent owners here
-      // looking for their own crew, and "Outsourcing" read like a service
-      // Sollos sells. Roster subcontractors live under Employees and get shift
-      // offers through the same Offer flow.
-      { href: "/app/freelancers", label: "On-call pool", icon: UserPlus, roles: ["owner", "admin", "manager"] , capability: "subcontractors" as const },
-      { href: "/app/reviews", label: "Reviews", icon: Star },
-      { href: "/app/bonuses", label: "Bonuses", icon: Award },
-    ],
-  },
-  {
-    // Hiring is its own lane — Brian: applicants, the hiring library
-    // (questionnaires + procedures you work FROM before the yes), and
-    // Training (what a new employee works THROUGH after it).
-    label: "Hiring",
-    accent: "text-rose-400",
-    activeBg: "bg-rose-500/10",
-    items: [
-      { href: "/app/applicants", label: "Applicants", icon: ClipboardList, roles: ["owner", "admin"] },
-      { href: "/app/hiring", label: "Hiring", icon: UserPlus, roles: ["owner", "admin"] },
-      { href: "/app/training", label: "Training", icon: GraduationCap },
-    ],
-  },
-  {
-    label: "Money",
-    accent: "text-emerald-400",
-    activeBg: "bg-emerald-500/10",
-    items: [
-      { href: "/app/invoices", label: "Invoices", icon: Receipt, roles: ["owner", "admin", "manager"] , capability: "invoicing" as const },
-      // Timesheets sits with the money, not the people: hours are the raw
-      // material of payroll, and the two now share one pay-period calendar.
-      // Brian: "I think that makes more sense." Above Payroll — the order
-      // work flows: hours → review → run.
-      { href: "/app/timesheets", label: "Timesheets", icon: Clock, roles: ["owner", "admin", "manager"] , capability: "timesheets" as const },
-      { href: "/app/payroll", label: "Payroll", icon: Banknote, roles: ["owner", "admin"] },
-      { href: "/app/reports", label: "Reports", icon: BarChart3, roles: ["owner", "admin"] },
-    ],
-  },
-  {
-    label: "Comms",
-    accent: "text-amber-400",
-    activeBg: "bg-amber-500/10",
-    items: [
-      { href: "/app/feed", label: "Feed", icon: Rss },
-      { href: "/app/chat", label: "Chat", icon: MessageSquare },
-    ],
-  },
-];
-
-const FOOTER_NAV: NavItem[] = [
-  { href: "/app/help", label: "Help", icon: LifeBuoy },
-  { href: "/app/notifications", label: "Notifications", icon: Bell },
-  { href: "/app/settings", label: "Settings", icon: Settings, roles: ["owner", "admin"] },
-];
-
-/** Badge labels for specific tabs */
-const BADGE_LABELS: Record<string, string> = {
-  "/app/bookings": "today",
-  "/app/bookings/requests": "pending",
-  "/app/invoices": "overdue",
-  "/app/estimates": "pending",
-  "/app/chat": "new",
-  "/app/reviews": "this week",
-  "/app/applicants": "new",
-};
 
 type Props = {
   organizationName: string;
@@ -209,53 +52,21 @@ export function AppSidebar({
   feedEnabled = false,
 }: Props) {
   const pathname = usePathname();
-  const [mobileOpen, setMobileOpen] = useState(false);
 
-  // Close drawer on route change. React 19's compiler flags the
-  // setState-in-effect, but this is the idiomatic pattern — syncing
-  // local UI state to an external routing event. The alternative
-  // (listen to router events) is more invasive and doesn't change behavior.
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setMobileOpen(false);
-  }, [pathname]);
-
-  // Prevent body scroll when drawer is open
-  useEffect(() => {
-    if (mobileOpen) {
-      document.body.style.overflow = "hidden";
-      return () => {
-        document.body.style.overflow = "";
-      };
-    }
-  }, [mobileOpen]);
-
-  // Apply the per-org feed visibility toggle: when off, strip the
-  // /app/feed entry from the Comms section entirely (rather than
-  // rendering a dead link that 404s).
+  // Shared visibility rule (feed toggle + capability + role) — the same
+  // one the tab bar and More sheet apply, so no surface ever shows a
+  // link another hides.
   const visibleNavSections = NAV_SECTIONS.map((section) => ({
     ...section,
-    items: section.items.filter(
-      (item) =>
-        (feedEnabled || item.href !== "/app/feed") &&
-        // A link to a page this manager cannot open is worse than no link:
-        // they click it and get bounced with no explanation.
-        (!item.capability ||
-          hasCapability(role, capabilities, item.capability)),
+    items: section.items.filter((item) =>
+      navItemVisible(item, role, capabilities, feedEnabled),
     ),
   }));
 
-  // "Longest prefix wins" — prevents /app/bookings from being active
-  // when the user is on /app/bookings/requests (a deeper nav item).
-  const allNavHrefs = [
+  const bestMatch = bestNavMatch(pathname, [
     ...visibleNavSections.flatMap((s) => s.items.map((i) => i.href)),
     ...FOOTER_NAV.map((i) => i.href),
-  ];
-  const bestMatch = allNavHrefs
-    .filter((h) =>
-      h === "/app" ? pathname === "/app" : pathname === h || pathname.startsWith(h + "/"),
-    )
-    .sort((a, b) => b.length - a.length)[0] ?? "";
+  ]);
   const isActive = (href: string) => href === bestMatch;
 
   const sidebarContent = (
@@ -337,9 +148,7 @@ export function AppSidebar({
       {/* Sections */}
       <nav className="sollos-scroll flex-1 overflow-y-auto px-3 py-3">
         {visibleNavSections.map((section) => {
-          const visibleItems = section.items.filter(
-            (item) => !item.roles || item.roles.includes(role),
-          );
+          const visibleItems = section.items;
           if (visibleItems.length === 0) return null;
           return (
             <div key={section.label} className="mb-5 last:mb-0">
@@ -531,7 +340,8 @@ export function AppSidebar({
 
   return (
     <>
-      {/* ── Mobile top bar (visible below lg) ── */}
+      {/* ── Mobile top bar (visible below lg). No hamburger: navigation on
+          phones is the bottom tab bar + its More sheet. ── */}
       <div className="fixed inset-x-0 top-0 z-30 flex items-center justify-between border-b border-border bg-zinc-900 px-4 py-3 lg:hidden">
         <div className="flex items-center gap-2.5">
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -547,44 +357,8 @@ export function AppSidebar({
             {logoUrl ? organizationName : "Sollos 3"}
           </span>
         </div>
-        <div className="flex items-center gap-2">
-          <NotificationBell count={unreadNotifications} />
-          <button
-            type="button"
-            onClick={() => setMobileOpen(true)}
-            className="rounded-md p-2 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
-            aria-label="Open menu"
-          >
-            <Menu className="h-6 w-6" />
-          </button>
-        </div>
+        <NotificationBell count={unreadNotifications} />
       </div>
-
-      {/* ── Mobile overlay + drawer ── */}
-      {mobileOpen && (
-        <>
-          {/* Backdrop */}
-          <div
-            className="fixed inset-0 z-40 bg-black/60 lg:hidden"
-            onClick={() => setMobileOpen(false)}
-          />
-          {/* Drawer */}
-          <aside className="fixed inset-y-0 left-0 z-50 flex w-72 flex-col bg-zinc-900 text-zinc-400 shadow-2xl lg:hidden">
-            {/* Close button */}
-            <div className="flex justify-end px-3 pt-3">
-              <button
-                type="button"
-                onClick={() => setMobileOpen(false)}
-                className="rounded-md p-2 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
-                aria-label="Close menu"
-              >
-                <X className="h-6 w-6" />
-              </button>
-            </div>
-            {sidebarContent}
-          </aside>
-        </>
-      )}
 
       {/* ── Desktop sidebar (lg+) ── */}
       <aside className="hidden h-screen w-56 shrink-0 flex-col bg-zinc-900 text-zinc-400 lg:flex">

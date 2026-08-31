@@ -157,10 +157,11 @@ export function QuickActions({
         title="Quick actions (⌘K)"
         className={cn(
           "fixed z-40 flex h-12 w-12 items-center justify-center rounded-full bg-foreground text-background shadow-lg transition-transform active:scale-95 lg:h-10 lg:w-10",
-          // Stack above the AI assistant button (bottom-5, 48px tall) when
-          // present; otherwise sit in the normal bottom-right FAB slot.
+          // Stack above the AI assistant button when present (bottom-24 on
+          // phones now that the tab bar owns the bottom edge, bottom-5 on
+          // desktop); otherwise sit in the normal bottom-right FAB slot.
           hasAssistant
-            ? "bottom-24 right-5 lg:bottom-20"
+            ? "bottom-40 right-5 lg:bottom-20"
             : "bottom-24 right-4 lg:bottom-6",
         )}
         aria-label="Quick actions"
