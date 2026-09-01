@@ -17,7 +17,7 @@ The small numbers beside some entries are live counts — today's bookings, pend
 
 The office swaps the sidebar for an app layout: bottom tabs — **Today, Schedule, Bookings, Requests**, badges included — plus **More**, which holds everything else. Desk-shaped tools (payroll, reports, settings, the hiring library) sit collapsed under **Desktop tools** in that sheet: nothing is locked away, those pages still work on a phone — they just tell you they're easier at a desk.
 
-The **Schedule** tab on a phone opens on today as a simple agenda: one row per job ("4 PM · client · who's on it"), tap a job for details, tap a **free slot** between jobs (or "Add after…") to start a booking pre-filled at that time — assign whoever's available from the booking form. The per-employee dispatch board with drag-to-reschedule is the same page on a bigger screen.
+The **Schedule** tab on a phone opens on today as a single timeline: hours down the side, each job a block as tall as it is long ("10:30 AM – 2:30 PM" reads as four hours), jobs at the same time sitting side by side, a red line marking now. **Tap any empty time to book it** — before, after, or between jobs, the form opens pre-filled at that half-hour; assign whoever's available from there. Tap a block for details and status. The per-employee dispatch board with drag-to-reschedule is the same page on a bigger screen.
 
 ## The dashboard
 
