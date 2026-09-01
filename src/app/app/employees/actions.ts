@@ -472,15 +472,26 @@ export async function updateMemberAction(
   }
   if (raw.engagement) updatePayload.engagement = raw.engagement;
   if (parsed.data.status) updatePayload.status = parsed.data.status;
-  if (parsed.data.pay_rate !== undefined)
+  // Same presence test, for the same reason: every form that can set a wage
+  // carries this field today, so behaviour is unchanged — but a future form
+  // that doesn't must not be able to wipe someone's rate by omission.
+  if (formData.has("pay_rate"))
     updatePayload.pay_rate_cents = parsed.data.pay_rate;
   if (parsed.data.display_name && parsed.data.display_name.length > 0) {
     updatePayload.display_name = parsed.data.display_name;
   }
-  if (parsed.data.contact_email !== undefined) {
+  // ABSENCE MUST SURVIVE — the same rule as engagement, capabilities, and
+  // the admin-data trio. These two were still on a `!== undefined` gate,
+  // which NEVER holds: absence becomes "" at the top of this action and the
+  // zod transform maps "" to null, and null !== undefined. So every save
+  // from Settings › Members (a form carrying only role, pay rate, status)
+  // nulled both fields. That is not just lost contact info: contact_email
+  // is the key claimInvitation matches a shadow record on, so wiping it
+  // turns the next invite into a duplicate person.
+  if (formData.has("contact_email")) {
     updatePayload.contact_email = parsed.data.contact_email;
   }
-  if (parsed.data.contact_phone !== undefined) {
+  if (formData.has("contact_phone")) {
     updatePayload.contact_phone = parsed.data.contact_phone;
   }
 

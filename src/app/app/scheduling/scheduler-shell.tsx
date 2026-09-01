@@ -372,6 +372,8 @@ export function SchedulerShell({
               canEditStatus={canEditStatus}
               tz={tz}
               holidayName={holidays[weekStart] ?? null}
+              offDays={offDays}
+              availability={availability}
             />
           </div>
           <div className="hidden sm:block">

@@ -6,7 +6,15 @@ import { Plus, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StatusBadge, bookingStatusTone } from "@/components/status-badge";
 import { humanizeEnum } from "@/lib/format";
-import type { ScheduleBooking, ScheduleEmployee } from "./data";
+import type {
+  AvailabilityByEmployee,
+  ScheduleBooking,
+  ScheduleEmployee,
+} from "./data";
+import {
+  availabilityWindowsFor,
+  formatAvailabilityWindows,
+} from "./availability-windows";
 import { BookingQuickView } from "./booking-quick-view";
 import { toneForEmployee } from "./color";
 import type { BookingWarning } from "@/app/app/bookings/booking-warnings";
@@ -127,6 +135,8 @@ export function DayAgenda({
   canEditStatus,
   tz,
   holidayName = null,
+  offDays = {},
+  availability = {},
 }: {
   /** YYYY-MM-DD for the day this view renders. */
   date: string;
@@ -138,6 +148,13 @@ export function DayAgenda({
   tz: string;
   /** Statutory holiday name for this day, if any. */
   holidayName?: string | null;
+  /** Employee → YYYY-MM-DD list they're off. The desk board shades their
+   *  whole column; the phone has no columns, so it says who's out in a
+   *  line above the timeline. Without it the phone was the one surface
+   *  that couldn't see a cleaner was on PTO before promising the day. */
+  offDays?: Record<string, string[]>;
+  /** Declared working windows per employee, same source as the board. */
+  availability?: AvailabilityByEmployee;
 }) {
   const router = useRouter();
   const [quickViewId, setQuickViewId] = useState<string | null>(null);
@@ -161,6 +178,27 @@ export function DayAgenda({
         .filter((b) => dateKey(new Date(b.scheduled_at), tz) === date)
         .sort((a, b) => a.scheduled_at.localeCompare(b.scheduled_at)),
     [bookings, date, tz],
+  );
+
+  const offToday = useMemo(
+    () =>
+      employees
+        .filter((e) => (offDays[e.id] ?? []).includes(date))
+        .map((e) => e.name),
+    [employees, offDays, date],
+  );
+
+  const availableToday = useMemo(
+    () =>
+      employees
+        .filter((e) => !(offDays[e.id] ?? []).includes(date))
+        .map((e) => ({
+          name: e.name,
+          windows: availabilityWindowsFor(availability[e.id], date),
+        }))
+        .filter((e) => e.windows.length > 0)
+        .map((e) => `${e.name} ${formatAvailabilityWindows(e.windows)}`),
+    [employees, availability, offDays, date],
   );
 
   const bookingById = useMemo(
@@ -187,11 +225,11 @@ export function DayAgenda({
   // mirrors the dispatch grid.
   useEffect(() => {
     const isToday = dateKey(new Date(), tz) === date;
-    if (isToday) {
-      const d = new Date();
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- SSR-safe by design: the now-line only exists client-side, set once post-mount
-      setNowMin(minutesOfDay(d.toISOString(), tz));
-    }
+    // BOTH branches must write. Day navigation is a soft push that re-renders
+    // this same mounted component, so setting the line only when isToday left
+    // yesterday's red "now" marker drawn across tomorrow's timeline.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- SSR-safe by design: the now-line only exists client-side, set post-mount
+    setNowMin(isToday ? minutesOfDay(new Date().toISOString(), tz) : null);
     if (didInitialScroll.current) return;
     const el = scrollRef.current;
     if (!el) return;
@@ -226,6 +264,30 @@ export function DayAgenda({
           </span>
           {canEdit && <span>Tap any empty time to book it</span>}
         </div>
+
+        {/* Who can't work today, and who said when they can. The desk board
+            carries this in its column headers; on a phone it has to be its
+            own line or the information simply doesn't exist here. */}
+        {(offToday.length > 0 || availableToday.length > 0) && (
+          <div className="border-b border-border px-3 py-1.5 text-[11px]">
+            {offToday.length > 0 && (
+              <p className="text-amber-700 dark:text-amber-400">
+                {/* "today" only when it IS today — this component renders
+                    whichever day is selected. */}
+                <span className="font-medium">
+                  {nowMin != null ? "Off today:" : "Off this day:"}
+                </span>{" "}
+                {offToday.join(", ")}
+              </p>
+            )}
+            {availableToday.length > 0 && (
+              <p className="truncate text-emerald-700 dark:text-emerald-400">
+                <span className="font-medium">Available:</span>{" "}
+                {availableToday.join(" · ")}
+              </p>
+            )}
+          </div>
+        )}
 
         <div ref={scrollRef} className="max-h-[70vh] overflow-y-auto">
           <div className="relative flex" style={{ height: DAY_HEIGHT_PX }}>

@@ -404,7 +404,7 @@ export type ArchiveClientResult =
   | { ok: false; error: string };
 
 /**
- * One swift movement: archived_at is stamped, their FUTURE bookings are
+ * One swift movement: archived_at is stamped, their OPEN bookings are
  * cancelled, their recurring series stop generating, their portal login
  * stops resolving (client-auth filters archived), and every picker, list,
  * and billing cron already skips archived clients. Unpaid invoices stay

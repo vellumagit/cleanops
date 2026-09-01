@@ -41,6 +41,7 @@ import { SmsOptInButton } from "./sms-opt-in-button";
 import { ClientPropertiesCard, type PropertyRow } from "./properties-card";
 import { ClientDocumentsCard, type ClientDocument } from "./documents-card";
 import { ArchiveClientCard } from "./archive-card";
+import { archiveCancelWindowStartIso } from "@/lib/client-offboarding";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import {
   markGbpReviewedAction,
@@ -259,11 +260,14 @@ export default async function ClientDetailPage({
   const [futureBk, activeSeries] = isArchived
     ? [{ count: 0 }, { count: 0 }]
     : await Promise.all([
+        // Same window the sweep uses, read from the same helper so the two
+        // can't drift. Slight overcount is possible — the sweep also spares
+        // billed jobs — and that's the safe direction for a confirm to err.
         supabase
           .from("bookings")
           .select("id", { count: "exact", head: true })
           .eq("client_id", id)
-          .gte("scheduled_at", new Date().toISOString())
+          .gte("scheduled_at", archiveCancelWindowStartIso())
           .in("status", ["pending", "confirmed"]),
         supabase
           .from("booking_series")

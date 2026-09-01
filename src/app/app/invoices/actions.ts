@@ -195,10 +195,26 @@ export async function updateInvoiceAction(
     .eq("id", id)
     .maybeSingle();
 
+  // The invoice must still exist. Without this, a row deleted in another
+  // tab took the silent path: the items branch below skipped (it requires
+  // `prev`), the UPDATE matched zero rows WITHOUT erroring, and the action
+  // logged an audit event and redirected as if the save had worked.
+  if (!prev) {
+    return {
+      errors: {
+        _form:
+          "This invoice no longer exists — it may have been deleted in another tab. Nothing was saved.",
+      },
+      values: raw,
+    };
+  }
+
   // Void and refunded invoices are closed records, and this form predates
   // both states. Without the gate, editing a void invoice silently un-voids
   // it (the form's status just gets written), and editing a refunded one
   // recomputed it straight back to "paid" from its gross payment rows.
+  // FIRST, ahead of the booking check below: a void invoice is refused for
+  // being void, not misdiagnosed as a booking clash.
   if (prev?.status === "void" || prev?.status === "refunded") {
     return {
       errors: {
@@ -209,6 +225,37 @@ export async function updateInvoiceAction(
       },
       values: raw,
     };
+  }
+
+  // PRE-FLIGHT the one failure this form actually expects: re-pointing the
+  // invoice at a booking another live invoice already bills. The line-item
+  // reconcile below COMMITS rows immediately, so discovering the conflict
+  // afterwards (on the UPDATE) left the items rewritten while the invoice
+  // kept its old totals — the invoice disagreeing with its own rows. There
+  // is no transaction to lean on here, so the check has to come first.
+  if (parsed.data.booking_id) {
+    const { data: clash } = (await supabase
+      .from("invoices")
+      .select("id, number")
+      .eq("booking_id", parsed.data.booking_id)
+      .is("voided_at" as never, null as never)
+      .neq("id", id)
+      .limit(1)
+      .maybeSingle()) as unknown as {
+      data: { id: string; number: number | null } | null;
+    };
+    if (clash) {
+      const label =
+        clash.number != null
+          ? `invoice INV-${String(clash.number).padStart(3, "0")}`
+          : "another invoice";
+      return {
+        errors: {
+          _form: `That booking is already billed by ${label} — a booking can only carry one live invoice. Open that invoice instead, or void it first if this is a correction.`,
+        },
+        values: raw,
+      };
+    }
   }
 
   const tax = computeTax(parsed.data.subtotal_cents, {
@@ -299,7 +346,10 @@ export async function updateInvoiceAction(
           tax_label: tax.rateBps ? parsed.data.tax_label : null,
         };
 
-  const { error } = await (supabase
+  // .select() so a zero-row match is visible: a bare update returns no
+  // error when the filter matches nothing, which is how a vanished invoice
+  // used to redirect as a success.
+  const { data: updatedRows, error } = await (supabase
     .from("invoices")
     .update({
       client_id: parsed.data.client_id,
@@ -310,7 +360,21 @@ export async function updateInvoiceAction(
       sent_at: stamps.sent_at,
       paid_at: stamps.paid_at,
     } as never)
-    .eq("id", id) as unknown as Promise<{ error: { message: string } | null }>);
+    .eq("id", id)
+    .select("id") as unknown as Promise<{
+    data: Array<{ id: string }> | null;
+    error: { message: string } | null;
+  }>);
+
+  if (!error && (updatedRows?.length ?? 0) === 0) {
+    return {
+      errors: {
+        _form:
+          "This invoice could not be found when saving, so its details were not updated. Reload the page and check it before saving again.",
+      },
+      values: raw,
+    };
+  }
 
   if (error) {
     // Re-pointing an invoice at a booking another live invoice already

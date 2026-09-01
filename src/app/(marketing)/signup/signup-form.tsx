@@ -9,7 +9,16 @@ import { signupAction, type SignupActionState } from "./actions";
 
 const initialState: SignupActionState = {};
 
-export function SignupForm({ inviteToken }: { inviteToken?: string }) {
+export function SignupForm({
+  inviteToken,
+  inviteEmail,
+}: {
+  inviteToken?: string;
+  /** The address the invitation was sent to. Prefilled and read-only —
+   *  the server requires the match, so letting someone type a different
+   *  address here would only produce a refusal they can't act on. */
+  inviteEmail?: string | null;
+}) {
   const [state, formAction, pending] = useActionState(signupAction, initialState);
   const isInvite = Boolean(inviteToken);
 
@@ -72,9 +81,16 @@ export function SignupForm({ inviteToken }: { inviteToken?: string }) {
           type="email"
           autoComplete="email"
           required
-          defaultValue={state.values?.email}
+          defaultValue={inviteEmail ?? state.values?.email}
+          readOnly={Boolean(inviteEmail)}
+          className={inviteEmail ? "bg-muted text-muted-foreground" : undefined}
           aria-invalid={Boolean(state.errors?.email)}
         />
+        {inviteEmail && (
+          <p className="text-xs text-muted-foreground">
+            The address this invitation was sent to.
+          </p>
+        )}
         {state.errors?.email && (
           <p className="text-xs text-destructive">{state.errors.email}</p>
         )}

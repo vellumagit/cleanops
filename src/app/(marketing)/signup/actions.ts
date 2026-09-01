@@ -91,6 +91,22 @@ export async function signupAction(
         values: { fullName, organizationName, email },
       };
     }
+
+    // WRONG-ACCOUNT GUARD — the twin of the one on /join. An invitation is
+    // addressed to an email, and accepting it can now LINK an existing
+    // record (the manually-added person's hours, wage, and history) to the
+    // account being created. This form's email box is free text, so without
+    // this check a forwarded link — or a typo — grafts someone else's
+    // working identity onto a new login and burns the invite, leaving the
+    // real invitee with "this link is invalid".
+    if (data.email.toLowerCase() !== email.toLowerCase()) {
+      return {
+        errors: {
+          _form: `This invitation was sent to ${data.email}. Sign up with that email address to accept it.`,
+        },
+        values: { fullName, organizationName, email },
+      };
+    }
     inviteRow = data;
   }
 

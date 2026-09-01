@@ -1,6 +1,8 @@
 import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { getOrgTimezone } from "@/lib/org-timezone";
+import { zonedYmd } from "@/lib/wall-clock";
 
 /**
  * Everything the business still owes one person, on one number.
@@ -50,7 +52,14 @@ export async function getFinalSettlement(
   /** memberships.pay_rate_cents — fallback for legacy entries without a snapshot. */
   fallbackRateCents: number | null,
 ): Promise<FinalSettlement> {
-  const todayYmd = new Date().toISOString().slice(0, 10);
+  // The ORG's today, not the server's. Vercel runs in UTC, so a plain
+  // toISOString() cutoff rolls over mid-evening in the Americas and drops
+  // time off that ends today out of the "still owed" count — the one
+  // number this whole screen exists to get right.
+  const todayYmd = zonedYmd(
+    new Date(),
+    await getOrgTimezone(organizationId),
+  );
 
   const [
     { data: entries },

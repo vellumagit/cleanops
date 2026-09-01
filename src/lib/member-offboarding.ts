@@ -2,6 +2,7 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getOrgTimezone } from "@/lib/org-timezone";
+import { zonedYmd } from "@/lib/wall-clock";
 import { notify } from "@/lib/notify";
 
 /**
@@ -192,7 +193,10 @@ export async function sweepDeactivatedMember(
   // invisible on every screen. The decision — pay it out or void it —
   // belongs to the owner, so this step counts and reports, never writes.
   try {
-    const todayYmd = nowIso.slice(0, 10);
+    // Org-local today — see final-settlement.ts. nowIso.slice(0,10) is the
+    // UTC date, which in an evening offboarding silently skips PTO ending
+    // today and under-reports what the business still owes.
+    const todayYmd = zonedYmd(new Date(), await getOrgTimezone(organizationId));
     const [{ data: bonuses }, { count: futurePto }] = await Promise.all([
       // payroll_run_id NULL on both: a prepared-but-unpaid run stamps the
       // rows it consumed while their status stays pending/approved — those

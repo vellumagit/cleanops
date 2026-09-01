@@ -30,7 +30,9 @@ export function ArchiveClientCard({
   clientId: string;
   clientName: string;
   archived: boolean;
-  /** Pending/confirmed bookings from now on — what archive will cancel. */
+  /** Every still-live pending/confirmed booking — what archive will cancel.
+   *  Includes ones already in the past: a job that never happened and was
+   *  never cancelled is exactly the loose end archiving ties off. */
   futureBookings: number;
   /** Recurring series still generating — what archive will pause. */
   activeSeries: number;
@@ -41,7 +43,7 @@ export function ArchiveClientCard({
 
   const consequences = [
     futureBookings > 0 &&
-      `cancel ${futureBookings} upcoming booking${futureBookings === 1 ? "" : "s"}`,
+      `cancel ${futureBookings} open booking${futureBookings === 1 ? "" : "s"}`,
     activeSeries > 0 &&
       `pause ${activeSeries} recurring schedule${activeSeries === 1 ? "" : "s"}`,
     hasPortalAccess && "lock their portal sign-in",

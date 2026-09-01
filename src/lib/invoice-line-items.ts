@@ -145,11 +145,15 @@ export async function reconcileInvoiceLineItems(
       ? parseTaxRate(typeof rawRate === "string" ? rawRate : "")
       : invoice.tax_rate_bps;
   const tax = computeTax(subtotalCents, { rateBps });
+  // SUBMITTED-BUT-EMPTY means the owner cleared the label, and must not
+  // fall back to the saved one — blanking "GST" on a taxed invoice used to
+  // write "GST" straight back onto the client-facing document. Only a field
+  // the form never sent at all (a stale client predating the merged save)
+  // falls back to what's stored.
   const taxLabel =
     tax.rateBps && tax.rateBps > 0
-      ? (typeof rawLabel === "string" && rawLabel.trim()
-          ? rawLabel.trim()
-          : invoice.tax_label) || null
+      ? (typeof rawLabel === "string" ? rawLabel.trim() : invoice.tax_label) ||
+        null
       : null;
 
   return {

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { SignupForm } from "./signup-form";
 
 export const metadata: Metadata = {
@@ -14,6 +15,25 @@ export default async function SignupPage({
 }) {
   const { invite } = await searchParams;
   const isInvite = Boolean(invite);
+
+  // Look the invitation's address up so the email box arrives filled in and
+  // read-only. The server action requires it to match; asking someone to
+  // retype an address that must be exactly one value only invites the typo
+  // that used to attach their new login to somebody else's record.
+  let inviteEmail: string | null = null;
+  if (invite) {
+    const admin = createSupabaseAdminClient();
+    const { data } = (await admin
+      .from("invitations")
+      .select("email, accepted_at, expires_at")
+      .eq("token", invite)
+      .maybeSingle()) as unknown as {
+      data: { email: string; accepted_at: string | null; expires_at: string } | null;
+    };
+    if (data && !data.accepted_at && new Date(data.expires_at) >= new Date()) {
+      inviteEmail = data.email;
+    }
+  }
 
   return (
     <main className="sollos-wash relative flex flex-1 items-center justify-center px-6 py-16">
@@ -59,7 +79,7 @@ export default async function SignupPage({
             )}
           </div>
 
-          <SignupForm inviteToken={invite} />
+          <SignupForm inviteToken={invite} inviteEmail={inviteEmail} />
         </div>
 
         <p className="mt-6 text-center text-sm text-muted-foreground">
