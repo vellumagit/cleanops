@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { WeekGrid } from "./week-grid";
 import { DispatchGrid } from "./dispatch-grid";
+import { DayAgenda } from "./day-agenda";
 import { MonthGrid } from "./month-grid";
 import {
   SchedulerFilters,
@@ -356,19 +357,39 @@ export function SchedulerShell({
           tz={tz}
         />
       ) : view === "day" ? (
-        <DispatchGrid
-          date={weekStart}
-          bookings={filteredBookings}
-          employees={filteredEmployees}
-          warnings={warnings}
-          canEdit={canEdit}
-          canEditStatus={canEditStatus}
-          tz={tz}
-          offDays={offDays}
-          availability={availability}
-          holidays={holidays}
-          colorBy={filters.colorBy}
-        />
+        <>
+          {/* Phones get the AGENDA — one chronological list, tappable free
+              slots. The employee-column dispatch grid is the desk tool and
+              stays exactly as it is from sm up. Same filtered data, two
+              renderings; CSS decides, so SSR never guesses the screen. */}
+          <div className="sm:hidden">
+            <DayAgenda
+              date={weekStart}
+              bookings={filteredBookings}
+              employees={filteredEmployees}
+              warnings={warnings}
+              canEdit={canEdit}
+              canEditStatus={canEditStatus}
+              tz={tz}
+              holidayName={holidays[weekStart] ?? null}
+            />
+          </div>
+          <div className="hidden sm:block">
+            <DispatchGrid
+              date={weekStart}
+              bookings={filteredBookings}
+              employees={filteredEmployees}
+              warnings={warnings}
+              canEdit={canEdit}
+              canEditStatus={canEditStatus}
+              tz={tz}
+              offDays={offDays}
+              availability={availability}
+              holidays={holidays}
+              colorBy={filters.colorBy}
+            />
+          </div>
+        </>
       ) : (
         <WeekGrid
           weekStart={weekStart}
