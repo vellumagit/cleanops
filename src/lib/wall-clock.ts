@@ -120,6 +120,42 @@ export function zonedYmd(instant: Date, tz: string): string {
   }).format(instant);
 }
 
+/**
+ * A ?scheduled_at= value → the "YYYY-MM-DDTHH:mm" a datetime-local input wants.
+ *
+ * TWO SHAPES, and telling them apart is the point. The scheduler's
+ * empty-slot click sends a WALL CLOCK — "the 2 PM row" — because that is
+ * what the owner pointed at; it names no instant and no timezone may be
+ * applied to it. A value carrying a zone designator (Z or ±hh:mm) IS an
+ * instant, and has to be re-rendered in the org's zone to keep naming the
+ * same moment.
+ *
+ * Both used to go through the instant path while the grids sent wall-clock
+ * times wearing a "Z": clicking 2 PM in Edmonton pre-filled the form with
+ * 8:00 AM, six hours adrift, on every click-to-create in the app.
+ */
+export function toDatetimeLocal(value: string, tz: string): string {
+  const trimmed = value.trim();
+  if (!/(?:Z|[+-]\d{2}:?\d{2})$/i.test(trimmed)) {
+    const m = trimmed.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/);
+    return m ? `${m[1]}T${m[2]}` : "";
+  }
+  const d = new Date(trimmed);
+  if (Number.isNaN(d.getTime())) return "";
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(d);
+  const get = (type: string) =>
+    parts.find((p) => p.type === type)?.value ?? "00";
+  return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}`;
+}
+
 /** The UTC instant when `tz`'s wall clock reads `dateYmd` at 00:00. */
 export function zonedMidnightUtc(dateYmd: string, tz: string): Date {
   const [y, m, d] = dateYmd.split("-").map(Number);

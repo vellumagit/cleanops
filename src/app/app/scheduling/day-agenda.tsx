@@ -241,10 +241,10 @@ export function DayAgenda({
   function addAt(minutes: number) {
     if (!canEdit) return;
     const hhmm = `${pad(Math.floor(minutes / 60))}:${pad(minutes % 60)}`;
-    // Same "local ISO" contract the dispatch grid's slot click uses — the
-    // new-booking page reinterprets it in the org tz.
+    // Wall clock, no timezone — same contract as the dispatch grid's slot
+    // click: the time the owner tapped is the time the form shows.
     router.push(
-      `/app/bookings/new?scheduled_at=${encodeURIComponent(`${date}T${hhmm}:00Z`)}`,
+      `/app/bookings/new?scheduled_at=${encodeURIComponent(`${date}T${hhmm}`)}`,
     );
   }
 

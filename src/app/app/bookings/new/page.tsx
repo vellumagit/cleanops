@@ -1,6 +1,7 @@
 import { requireMembership } from "@/lib/auth";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { getOrgTimezone } from "@/lib/org-timezone";
+import { toDatetimeLocal } from "@/lib/wall-clock";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
 import { BookingForm, type BookingFormDefaults } from "../booking-form";
@@ -8,28 +9,6 @@ import { fetchBookingFormOptions } from "../options";
 
 export const metadata = { title: "New booking" };
 
-/**
- * Convert a UTC ISO timestamp to a datetime-local string (YYYY-MM-DDTHH:mm)
- * rendered in the given timezone. Used to pre-fill the booking form from
- * click-empty-slot in the scheduler Dispatch view — the user clicked on
- * 2:30pm in Jane's column, we need the form to show 14:30 in their tz.
- */
-function isoToDatetimeLocal(iso: string, tz: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: tz,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).formatToParts(d);
-  const get = (type: string) =>
-    parts.find((p) => p.type === type)?.value ?? "00";
-  return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}`;
-}
 
 export default async function NewBookingPage({
   searchParams,
@@ -245,7 +224,7 @@ export default async function NewBookingPage({
     from_request: fromRequest.id,
     estimate_id: fromEstimate.id,
     scheduled_at_local: params.scheduled_at
-      ? isoToDatetimeLocal(params.scheduled_at, tz)
+      ? toDatetimeLocal(params.scheduled_at, tz)
       : fromRequest.scheduled_at_local,
   };
 

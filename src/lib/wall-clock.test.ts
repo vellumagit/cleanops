@@ -8,6 +8,7 @@ import {
   startOfWeekUtc,
   zonedDayStartUtc,
   formatCalendarDate,
+  toDatetimeLocal,
 } from "./wall-clock";
 
 const EDM = "America/Edmonton"; // MDT (UTC-6) summer / MST (UTC-7) winter
@@ -249,5 +250,45 @@ describe("formatCalendarDate", () => {
         day: "numeric",
       }),
     ).toBe("Jan 1");
+  });
+});
+
+describe("toDatetimeLocal", () => {
+  const EDM = "America/Edmonton";
+
+  it("hands a wall clock straight through — the slot you tapped is the time you get", () => {
+    // The regression this exists for: the scheduler's empty-slot click sends
+    // "the 2 PM row". It named no instant, but the page ran it through a
+    // timezone conversion anyway and pre-filled 8:00 AM in Edmonton.
+    expect(toDatetimeLocal("2026-09-03T14:00", EDM)).toBe("2026-09-03T14:00");
+    expect(toDatetimeLocal("2026-09-03T08:30", EDM)).toBe("2026-09-03T08:30");
+  });
+
+  it("never shifts a wall clock, whatever the org timezone", () => {
+    for (const tz of ["America/Edmonton", "UTC", "Australia/Sydney", "Asia/Kolkata"]) {
+      expect(toDatetimeLocal("2026-09-03T14:00", tz)).toBe("2026-09-03T14:00");
+    }
+  });
+
+  it("DOES convert a real instant into the org's wall clock", () => {
+    // A value carrying a zone names a moment, so it must be re-rendered in
+    // the org's zone: 20:00Z is 2 PM in Edmonton on that date (MDT, UTC-6).
+    expect(toDatetimeLocal("2026-09-03T20:00:00Z", EDM)).toBe(
+      "2026-09-03T14:00",
+    );
+    expect(toDatetimeLocal("2026-09-03T20:00:00+00:00", EDM)).toBe(
+      "2026-09-03T14:00",
+    );
+  });
+
+  it("tolerates seconds and a space separator on wall clocks", () => {
+    expect(toDatetimeLocal("2026-09-03T14:00:00", EDM)).toBe("2026-09-03T14:00");
+    expect(toDatetimeLocal("2026-09-03 14:00", EDM)).toBe("2026-09-03T14:00");
+  });
+
+  it("returns empty for junk rather than a wrong time", () => {
+    expect(toDatetimeLocal("", EDM)).toBe("");
+    expect(toDatetimeLocal("not-a-date", EDM)).toBe("");
+    expect(toDatetimeLocal("2026-13-45T99:99Z", EDM)).toBe("");
   });
 });

@@ -278,13 +278,13 @@ export function DispatchGrid({
     const h = Math.floor(minutesFromMidnight / 60);
     const m = minutesFromMidnight % 60;
     const hhmm = `${pad(h)}:${pad(m)}`;
-    // Construct a "local" ISO — the new-booking page re-interprets this
-    // via the org tz to produce the correct datetime-local string for
-    // the form. Using Z suffix plus tz-aware reinterpretation avoids
-    // double-shifting.
-    const isoLike = `${date}T${hhmm}:00Z`;
+    // A WALL CLOCK, with no timezone on it — the owner pointed at the 2 PM
+    // row and the form must say 2 PM. It used to carry a "Z", which made the
+    // new-booking page read it as a UTC instant and re-render it in the org's
+    // timezone: click 2 PM in Edmonton, get a form pre-filled 8:00 AM.
+    const wallClock = `${date}T${hhmm}`;
     router.push(
-      `/app/bookings/new?assigned_to=${employeeId}&scheduled_at=${encodeURIComponent(isoLike)}`,
+      `/app/bookings/new?assigned_to=${employeeId}&scheduled_at=${encodeURIComponent(wallClock)}`,
     );
   }
 
