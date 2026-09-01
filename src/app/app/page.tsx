@@ -399,7 +399,12 @@ export default async function DashboardPage() {
       {/* SECONDARY — split into two grids purely so the first (today's
           jobs + rating) can jump above the stats on a phone; on desktop
           the mb-4 reproduces the old single grid's row gap exactly. */}
-      <div className="order-1 mb-4 grid gap-4 lg:order-none lg:grid-cols-3">
+      {/* Explicit grid-cols-1 at the call site: this grid's cards are the
+          ones that ran off a phone (see the :where(.grid) note in
+          globals.css for the min-content mechanism). Stating the single
+          column here means the fix survives even if that rule is ever
+          scoped differently. */}
+      <div className="order-1 mb-4 grid grid-cols-1 gap-4 lg:order-none lg:grid-cols-3">
         {/* LEFT — today's jobs */}
         <Panel
           title="Today's jobs"
@@ -485,7 +490,7 @@ export default async function DashboardPage() {
         </Panel>
       </div>
 
-      <div className="order-4 grid gap-4 lg:order-none lg:grid-cols-3">
+      <div className="order-4 grid grid-cols-1 gap-4 lg:order-none lg:grid-cols-3">
         {/* Top performers */}
         <Panel
           title="Top-rated employees"

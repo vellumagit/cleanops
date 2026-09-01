@@ -173,6 +173,29 @@
     overscroll-behavior-y: contain;
     overscroll-behavior-x: none;
   }
+
+}
+
+/* WHY EVERY BARE `grid` NEEDS THIS.
+   Ninety-odd places in this app write `grid gap-4 lg:grid-cols-3` — a stack
+   on a phone that becomes columns at a breakpoint. But with no template at
+   the small size, the single implicit column is `auto`-sized, and an auto
+   track's FLOOR is the min-content of its widest item. The `truncate`
+   utility sets white-space: nowrap, so a row's min-content is its entire
+   unbroken string: "Sep 1, 2026 · 12:30 PM · Iryna Pikalova" measured 219px,
+   which pushed the dashboard's cards to 405px inside a 375px phone.
+   Everything ran off the right edge, and truncate — the very thing meant to
+   prevent that — never got the chance to clip, because the track had grown
+   to fit it.
+
+   Giving implicit columns a zero floor makes a bare `grid` behave the way
+   all ninety of those call sites already assume: one full-width column that
+   lets truncate truncate. Explicit `grid-cols-*` utilities set a different
+   property and are untouched; nothing here uses grid-flow-col, so no grid
+   depends on content-sized implicit columns. :where() keeps specificity at
+   zero. Deliberately OUTSIDE @layer base — Tailwind drops it from there. */
+:where(.grid) {
+  grid-auto-columns: minmax(0, 1fr);
 }
 
 /* =============================================================================

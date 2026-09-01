@@ -161,7 +161,7 @@ export async function NeedsAttention({ tz }: { tz: string }) {
           </h2>
         </div>
 
-        <div className="mt-3 grid gap-4 text-xs text-amber-900/90 dark:text-amber-200/90 sm:grid-cols-2">
+        <div className="mt-3 grid grid-cols-1 gap-4 text-xs text-amber-900/90 dark:text-amber-200/90 sm:grid-cols-2">
           {doneRows.length > 0 && (
             <div>
               <p className="font-medium">
