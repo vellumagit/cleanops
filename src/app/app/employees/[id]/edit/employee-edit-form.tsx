@@ -30,6 +30,8 @@ export type EmployeeEditDefaults = {
   engagement: string | null;
   pay_rate_cents: number | null;
   status: "active" | "invited" | "disabled";
+  /** Why they were deactivated — admin-only, shown/edited only when disabled. */
+  exit_reason: string | null;
   /** true when this member was added manually and has no login account. */
   is_shadow: boolean;
 };
@@ -50,6 +52,10 @@ export function EmployeeEditForm({
   const router = useRouter();
   const [engagement, setEngagement] = useState<Engagement>(
     toEngagement(defaults.engagement),
+  );
+  // Controlled so the exit-reason field can follow the selection live.
+  const [status, setStatus] = useState<"active" | "disabled">(
+    defaults.status === "disabled" ? "disabled" : "active",
   );
   const boundAction = updateMemberAction.bind(null, memberId);
   const [state, formAction, pending] = useActionState(boundAction, initial);
@@ -196,8 +202,9 @@ export function EmployeeEditForm({
               <FormSelect
                 id="status"
                 name="status"
-                defaultValue={
-                  defaults.status === "disabled" ? "disabled" : "active"
+                value={status}
+                onChange={(e) =>
+                  setStatus(e.target.value === "disabled" ? "disabled" : "active")
                 }
               >
                 <option value="active">Active</option>
@@ -212,6 +219,28 @@ export function EmployeeEditForm({
             Disabled employees are hidden from assignment dropdowns and
             can&rsquo;t log in if they have an account.
           </p>
+        )}
+
+        {/* The exit record — only meaningful alongside Disabled. Admin-only
+            storage (membership_admin_data), never visible to the employee. */}
+        {!isSelf && status === "disabled" && (
+          <FormField
+            label="Reason for leaving (optional)"
+            htmlFor="exit_reason"
+            error={state.errors?.exit_reason}
+          >
+            <Textarea
+              id="exit_reason"
+              name="exit_reason"
+              rows={2}
+              placeholder="e.g. moved away, let go for no-shows, seasonal end…"
+              defaultValue={defaults.exit_reason ?? ""}
+            />
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              Saved on their file, visible to owners and admins only. Cleared
+              automatically if they&rsquo;re re-activated.
+            </p>
+          </FormField>
         )}
       </div>
 

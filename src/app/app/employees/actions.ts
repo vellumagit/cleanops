@@ -290,6 +290,14 @@ const UpdateMemberSchema = z.object({
     .max(2000, "Keep this under 2000 characters")
     .optional()
     .transform((s) => (s && s.length > 0 ? s : null)),
+  // Why they were deactivated — stored in membership_admin_data (owner/admin
+  // RLS), never on memberships where the whole team could read it.
+  exit_reason: z
+    .string()
+    .trim()
+    .max(500, "Keep the reason under 500 characters")
+    .optional()
+    .transform((s) => (s && s.length > 0 ? s : null)),
 });
 
 export type UpdateMemberState = {
@@ -304,6 +312,7 @@ export type UpdateMemberState = {
       | "address"
       | "notes"
       | "accommodations"
+      | "exit_reason"
       | "_form",
       string
     >
@@ -335,6 +344,7 @@ export async function updateMemberAction(
     address: String(formData.get("address") ?? ""),
     notes: String(formData.get("notes") ?? ""),
     accommodations: String(formData.get("accommodations") ?? ""),
+    exit_reason: String(formData.get("exit_reason") ?? ""),
   };
 
   const parsed = UpdateMemberSchema.safeParse(raw);
@@ -477,11 +487,38 @@ export async function updateMemberAction(
   // Notes and address are stored in membership_admin_data (owner/admin-only
   // RLS) so the blanket memberships SELECT policy can't expose them to
   // employees querying the Supabase REST API directly.
+  // ABSENCE MUST SURVIVE, same discipline as engagement and capabilities
+  // above: the quick dialog and the Settings › Members table carry none of
+  // these fields, and `String(formData.get(...) ?? "")` turns absence into
+  // "" which the zod transform turns into null — so every dialog save was
+  // silently WIPING notes, address, and accommodations. formData.has() is
+  // the real "this form owns the field" test; the full-page form still
+  // clears a field by submitting it empty.
   const adminDataPayload: Record<string, unknown> = {};
-  if (parsed.data.address !== undefined) adminDataPayload.address = parsed.data.address;
-  if (parsed.data.notes !== undefined) adminDataPayload.notes = parsed.data.notes;
-  if (parsed.data.accommodations !== undefined)
+  if (formData.has("address")) adminDataPayload.address = parsed.data.address;
+  if (formData.has("notes")) adminDataPayload.notes = parsed.data.notes;
+  if (formData.has("accommodations"))
     adminDataPayload.accommodations = parsed.data.accommodations;
+
+  // The exit record. Each deactivation carries its own date and reason:
+  // stamping on the active→disabled transition (an absent reason CLEARS the
+  // old one — the quick dialog has no reason field, and a rehire-then-refire
+  // must never resurrect last year's reason); editable while disabled; both
+  // wiped the moment they're active again. The invite re-claim path clears
+  // deactivated_at too (invitation-claim.ts).
+  if (parsed.data.status === "disabled") {
+    // !== "disabled", not === "active": an invited member deactivated
+    // straight from the form deserves a dated exit record too.
+    if (before.status !== "disabled") {
+      updatePayload.deactivated_at = new Date().toISOString();
+      adminDataPayload.exit_reason = parsed.data.exit_reason;
+    } else if (formData.has("exit_reason")) {
+      adminDataPayload.exit_reason = parsed.data.exit_reason;
+    }
+  } else if (parsed.data.status === "active" && before.status === "disabled") {
+    updatePayload.deactivated_at = null;
+    adminDataPayload.exit_reason = null;
+  }
 
   if (
     Object.keys(updatePayload).length === 0 &&

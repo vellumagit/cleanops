@@ -6,6 +6,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
 import { memberDisplayName } from "@/lib/member-display";
+import { formatCurrencyCents } from "@/lib/format";
 import {
   EmployeeEditForm,
   type EmployeeEditDefaults,
@@ -57,13 +58,14 @@ export default async function EditEmployeePage({
   // these fields to employees querying the Supabase REST API directly.
   const { data: adminData } = (await admin
     .from("membership_admin_data" as never)
-    .select("notes, address, accommodations")
+    .select("notes, address, accommodations, exit_reason")
     .eq("membership_id" as never, id as never)
     .maybeSingle()) as unknown as {
     data: {
       notes: string | null;
       address: string | null;
       accommodations: string | null;
+      exit_reason: string | null;
     } | null;
   };
 
@@ -71,6 +73,23 @@ export default async function EditEmployeePage({
   if (!member) notFound();
 
   const isSelf = member.id === viewer.id;
+
+  // What deactivating would leave owed — shown BEFORE the owner flips the
+  // switch, so the settlement is part of the decision instead of a surprise
+  // in the notification afterwards. Active members only; the disabled
+  // member's version lives on their file page.
+  const settlement =
+    member.status === "active" && !isSelf
+      ? await (async () => {
+          const { getFinalSettlement } = await import("@/lib/final-settlement");
+          return getFinalSettlement(
+            admin,
+            viewer.organization_id,
+            member.id,
+            member.pay_rate_cents,
+          );
+        })()
+      : null;
 
   // Derive the display name the form should pre-fill:
   // If there's an admin override (display_name) use that; otherwise fall
@@ -91,8 +110,15 @@ export default async function EditEmployeePage({
     engagement: member.engagement,
     pay_rate_cents: member.pay_rate_cents,
     status: member.status,
+    exit_reason: adminData?.exit_reason ?? null,
     is_shadow: member.profile_id === null,
   };
+
+  const owed =
+    settlement &&
+    (settlement.totalCents > 0 ||
+      settlement.ptoCount > 0 ||
+      settlement.flaggedCount > 0);
 
   return (
     <PageShell
@@ -109,6 +135,33 @@ export default async function EditEmployeePage({
       }
     >
       <div className="max-w-2xl space-y-6">
+        {/* Settlement preview — what firing this person TODAY leaves owed.
+            Rendered above the form so it's read before the status select is
+            touched. Quiet when nothing is outstanding. */}
+        {owed && settlement && (
+          <div className="rounded-lg border border-amber-300/60 bg-amber-50 px-4 py-3 text-xs text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-200">
+            <p className="font-semibold">
+              If deactivated today, still owed:{" "}
+              {formatCurrencyCents(settlement.totalCents)}
+            </p>
+            <p className="mt-0.5 opacity-90">
+              {[
+                settlement.unpaidHoursCents > 0 &&
+                  `$${(settlement.unpaidHoursCents / 100).toFixed(2)} in unpaid hours (next run pays these)`,
+                settlement.bonusCents > 0 &&
+                  `$${(settlement.bonusCents / 100).toFixed(2)} in pending bonuses (no run will — resolve on Bonuses)`,
+                settlement.tipsCents > 0 &&
+                  `$${(settlement.tipsCents / 100).toFixed(2)} in tips owed (settle on Payroll)`,
+                settlement.ptoCount > 0 &&
+                  `${settlement.ptoHours}h of approved future time off (pay-or-void, not in the total)`,
+                settlement.flaggedCount > 0 &&
+                  `${settlement.flaggedCount} flagged shift${settlement.flaggedCount === 1 ? "" : "s"} awaiting review`,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </p>
+          </div>
+        )}
         <div className="rounded-lg border border-border bg-card p-6">
           <EmployeeEditForm
             memberId={member.id}

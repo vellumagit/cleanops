@@ -78,11 +78,15 @@ export async function claimInvitation(
   }
 
   if (existing) {
+    // Rehire ends the exit record the same way the status-flip path does
+    // (employees/actions.ts): date AND reason, or a refire years later
+    // pre-fills last time's reason as if it were new.
     const { error } = await admin
       .from("memberships")
-      .update({ status: "active", ...terms } as never)
+      .update({ status: "active", deactivated_at: null, ...terms } as never)
       .eq("id", existing.id);
     if (error) return { ok: false, error: error.message };
+    await clearExitReason(admin, existing.id);
     await assignOnboardingTraining(
       admin,
       invitation.organization_id,
@@ -107,9 +111,15 @@ export async function claimInvitation(
   if (shadows && shadows.length === 1) {
     const { error } = await admin
       .from("memberships")
-      .update({ profile_id: userId, status: "active", ...terms } as never)
+      .update({
+        profile_id: userId,
+        status: "active",
+        deactivated_at: null,
+        ...terms,
+      } as never)
       .eq("id", shadows[0].id);
     if (error) return { ok: false, error: error.message };
+    await clearExitReason(admin, shadows[0].id);
     await assignOnboardingTraining(
       admin,
       invitation.organization_id,
@@ -140,6 +150,14 @@ export async function claimInvitation(
   );
   await stampAccepted(admin, invitation.id);
   return { ok: true, membershipId, alreadyActive: false };
+}
+
+/** Best-effort: a member without an admin-data row simply matches nothing. */
+async function clearExitReason(admin: SupabaseClient, membershipId: string) {
+  await admin
+    .from("membership_admin_data" as never)
+    .update({ exit_reason: null } as never)
+    .eq("membership_id" as never, membershipId as never);
 }
 
 async function stampAccepted(admin: SupabaseClient, invitationId: string) {

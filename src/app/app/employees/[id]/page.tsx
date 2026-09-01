@@ -59,7 +59,7 @@ export default async function EmployeeFilePage({
   const { data: member } = (await admin
     .from("memberships")
     .select(
-      "id, organization_id, profile_id, role, engagement, status, pay_rate_cents, display_name, contact_email, contact_phone, created_at, profile:profiles(full_name, phone)",
+      "id, organization_id, profile_id, role, engagement, status, pay_rate_cents, display_name, contact_email, contact_phone, created_at, deactivated_at, profile:profiles(full_name, phone)",
     )
     .eq("id", id)
     .eq("organization_id", viewer.organization_id)
@@ -75,6 +75,7 @@ export default async function EmployeeFilePage({
       contact_email: string | null;
       contact_phone: string | null;
       created_at: string;
+      deactivated_at: string | null;
       profile: { full_name: string | null; phone: string | null } | null;
     } | null;
   };
@@ -84,16 +85,71 @@ export default async function EmployeeFilePage({
   // Admin-only fields (accommodations / health + general notes) for the file.
   const { data: adminData } = (await admin
     .from("membership_admin_data" as never)
-    .select("accommodations, notes")
+    .select("accommodations, notes, exit_reason")
     .eq("membership_id" as never, id as never)
     .maybeSingle()) as unknown as {
-    data: { accommodations: string | null; notes: string | null } | null;
+    data: {
+      accommodations: string | null;
+      notes: string | null;
+      exit_reason: string | null;
+    } | null;
   };
 
   const name = memberDisplayName(member);
   const email = member.contact_email ?? null;
   const phone = member.profile?.phone ?? member.contact_phone ?? null;
   const isShadow = !member.profile_id;
+  const isDisabled = member.status === "disabled";
+
+  // Lifecycle strip data. The applicant record is matched by email — there's
+  // no FK between job_applicants and memberships (they're deliberately two
+  // rows), so email is the honest join. ilike gives case-insensitive
+  // equality, but only after escaping LIKE wildcards: underscores are common
+  // in real emails and an unescaped `_` matches any character, pinning the
+  // wrong applicant's dates to this person's strip.
+  const emailPattern = email?.replace(/[\\%_]/g, (m) => `\\${m}`) ?? null;
+  const applicantPromise = emailPattern
+    ? (admin
+        .from("job_applicants" as never)
+        .select("created_at, reviewed_at, status")
+        .eq("organization_id" as never, viewer.organization_id as never)
+        .ilike("email" as never, emailPattern as never)
+        .order("created_at" as never, { ascending: true } as never)
+        .limit(1)
+        .maybeSingle() as unknown as Promise<{
+        data: {
+          created_at: string;
+          reviewed_at: string | null;
+          status: string;
+        } | null;
+      }>)
+    : Promise.resolve({ data: null });
+
+  // The settlement question only exists once they're off the roster — for
+  // active people "unpaid hours" is just the normal course of a pay period.
+  const settlementPromise = isDisabled
+    ? import("@/lib/final-settlement").then(({ getFinalSettlement }) =>
+        getFinalSettlement(
+          admin,
+          viewer.organization_id,
+          member.id,
+          member.pay_rate_cents,
+        ),
+      )
+    : Promise.resolve(null);
+
+  const [{ data: applicant }, settlement] = await Promise.all([
+    applicantPromise,
+    settlementPromise,
+  ]);
+
+  const lifecycle: Array<{ label: string; date: string | null }> = [];
+  if (applicant) lifecycle.push({ label: "Applied", date: applicant.created_at });
+  if (applicant?.status === "hired")
+    lifecycle.push({ label: "Hired", date: applicant.reviewed_at });
+  lifecycle.push({ label: "Joined", date: member.created_at });
+  if (isDisabled)
+    lifecycle.push({ label: "Deactivated", date: member.deactivated_at });
 
   // Documents for this person's file.
   const { data: rawDocs } = (await admin
@@ -280,7 +336,140 @@ export default async function EmployeeFilePage({
               </dl>
             </div>
           </div>
+
+          {/* Lifecycle strip — the whole story in one line. Stages render
+              only when their moment is known: Applied/Hired come from the
+              applicant record matched by email, Deactivated from the exit
+              stamp (older offboards predate it and show without a date). */}
+          <div className="mt-4 flex flex-wrap items-center gap-1.5 border-t border-border pt-3 text-[11px] text-muted-foreground">
+            {lifecycle.map((stage, i) => (
+              <span key={stage.label} className="flex items-center gap-1.5">
+                {i > 0 && <span aria-hidden>›</span>}
+                <span
+                  className={cn(
+                    "font-medium",
+                    stage.label === "Deactivated"
+                      ? "text-red-600 dark:text-red-400"
+                      : "text-foreground",
+                  )}
+                >
+                  {stage.label}
+                </span>
+                {stage.date && <span>{formatDate(stage.date, tz)}</span>}
+              </span>
+            ))}
+          </div>
+
+          {isDisabled && adminData?.exit_reason && (
+            <p className="mt-2 text-xs text-muted-foreground">
+              <span className="font-medium text-foreground">
+                Reason for leaving:
+              </span>{" "}
+              {adminData.exit_reason}
+            </p>
+          )}
         </div>
+
+        {/* Final settlement — only for deactivated members. For active
+            people "unpaid hours" is just an open pay period; for someone
+            off the roster it's a debt with no automatic collector (bonuses
+            and PTO especially — no future run touches them). */}
+        {settlement && (
+          <div
+            className={cn(
+              "rounded-xl border p-4",
+              settlement.totalCents > 0 ||
+                settlement.ptoCount > 0 ||
+                settlement.flaggedCount > 0
+                ? "border-amber-300/60 bg-amber-50 dark:border-amber-900/40 dark:bg-amber-950/20"
+                : "border-border bg-card",
+            )}
+          >
+            <div className="flex items-baseline justify-between gap-3">
+              <h3 className="text-sm font-semibold">Final settlement</h3>
+              <span className="text-sm font-bold tabular-nums">
+                {formatCurrencyCents(settlement.totalCents)}
+              </span>
+            </div>
+            {settlement.totalCents === 0 &&
+            settlement.ptoCount === 0 &&
+            settlement.flaggedCount === 0 ? (
+              <p className="mt-1 text-xs text-muted-foreground">
+                Nothing owed — hours, bonuses, and tips are all settled.
+              </p>
+            ) : (
+              <ul className="mt-2 space-y-1 text-xs">
+                {settlement.unpaidHoursCents > 0 && (
+                  <li className="flex justify-between gap-3">
+                    <span>
+                      Unpaid hours ({Math.floor(settlement.unpaidMinutes / 60)}h{" "}
+                      {settlement.unpaidMinutes % 60}m across{" "}
+                      {settlement.unpaidEntryCount} shift
+                      {settlement.unpaidEntryCount === 1 ? "" : "s"}) — the
+                      next pay run picks these up
+                    </span>
+                    <span className="shrink-0 tabular-nums font-medium">
+                      {formatCurrencyCents(settlement.unpaidHoursCents)}
+                    </span>
+                  </li>
+                )}
+                {settlement.bonusCents > 0 && (
+                  <li className="flex justify-between gap-3">
+                    <span>
+                      Pending bonus{settlement.bonusCount === 1 ? "" : "es"} —{" "}
+                      <Link
+                        href="/app/bonuses"
+                        className="underline underline-offset-2"
+                      >
+                        pay or delete on Bonuses
+                      </Link>
+                      ; no run will pick {settlement.bonusCount === 1 ? "it" : "them"} up
+                    </span>
+                    <span className="shrink-0 tabular-nums font-medium">
+                      {formatCurrencyCents(settlement.bonusCents)}
+                    </span>
+                  </li>
+                )}
+                {settlement.tipsCents > 0 && (
+                  <li className="flex justify-between gap-3">
+                    <span>
+                      Tips owed —{" "}
+                      <Link
+                        href="/app/payroll"
+                        className="underline underline-offset-2"
+                      >
+                        settle on Payroll
+                      </Link>{" "}
+                      (mark paid, or keep in business)
+                    </span>
+                    <span className="shrink-0 tabular-nums font-medium">
+                      {formatCurrencyCents(settlement.tipsCents)}
+                    </span>
+                  </li>
+                )}
+                {settlement.ptoCount > 0 && (
+                  <li className="flex justify-between gap-3">
+                    <span>
+                      Approved future time off ({settlement.ptoHours}h) —
+                      pay out or remove; not counted in the total
+                    </span>
+                    <span className="shrink-0 text-muted-foreground">
+                      your call
+                    </span>
+                  </li>
+                )}
+                {settlement.flaggedCount > 0 && (
+                  <li className="text-amber-800 dark:text-amber-300">
+                    {settlement.flaggedCount} shift
+                    {settlement.flaggedCount === 1 ? "" : "s"} still flagged
+                    for review on Timesheets — blocked from every pay run
+                    until confirmed, then added here.
+                  </li>
+                )}
+              </ul>
+            )}
+          </div>
+        )}
 
         {/* Accommodations & health — surfaced prominently so anyone opening
             the file sees safety-relevant info first. */}
