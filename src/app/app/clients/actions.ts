@@ -395,6 +395,119 @@ export async function updateClientAction(
   redirect("/app/clients");
 }
 
+// ---------------------------------------------------------------------------
+// Archive / restore — the "done with this client" move that keeps history
+// ---------------------------------------------------------------------------
+
+export type ArchiveClientResult =
+  | { ok: true; cancelledBookings: number; pausedSeries: number }
+  | { ok: false; error: string };
+
+/**
+ * One swift movement: archived_at is stamped, their FUTURE bookings are
+ * cancelled, their recurring series stop generating, their portal login
+ * stops resolving (client-auth filters archived), and every picker, list,
+ * and billing cron already skips archived clients. Unpaid invoices stay
+ * live on purpose — archiving someone who owes money must not archive the
+ * debt. Fully reversible from the same page, except the sweep: restore
+ * does NOT resurrect cancelled bookings or restart series.
+ */
+export async function archiveClientAction(
+  formData: FormData,
+): Promise<ArchiveClientResult> {
+  const id = String(formData.get("id") ?? "");
+  if (!id) return { ok: false, error: "Missing client id." };
+  const { membership } = await getActionContext();
+  if (!["owner", "admin"].includes(membership.role)) {
+    return { ok: false, error: "Only owners and admins can archive clients." };
+  }
+
+  const admin = createSupabaseAdminClient();
+  // Claim-then-act: only an un-archived row matches, so a double click (or
+  // two admins at once) runs the sweep exactly once.
+  const { data: claimed, error } = (await admin
+    .from("clients")
+    .update({ archived_at: new Date().toISOString() } as never)
+    .eq("id", id)
+    .eq("organization_id", membership.organization_id)
+    .is("archived_at", null)
+    .select("id, name")) as unknown as {
+    data: Array<{ id: string; name: string }> | null;
+    error: { message: string } | null;
+  };
+  if (error) return { ok: false, error: error.message };
+  if (!claimed || claimed.length === 0) {
+    return { ok: false, error: "This client is already archived." };
+  }
+
+  const { sweepArchivedClient } = await import("@/lib/client-offboarding");
+  const sweep = await sweepArchivedClient(admin, {
+    organizationId: membership.organization_id,
+    clientId: id,
+  });
+
+  await logAuditEvent({
+    membership,
+    action: "update",
+    entity: "client",
+    entity_id: id,
+    after: {
+      archived: true,
+      cancelled_booking_ids: sweep.cancelledBookingIds,
+      paused_series_ids: sweep.pausedSeriesIds,
+      paused_invoice_series_ids: sweep.pausedInvoiceSeriesIds,
+    },
+  });
+
+  revalidatePath("/app/clients");
+  revalidatePath(`/app/clients/${id}`);
+  revalidatePath("/app/scheduling", "page");
+  revalidatePath("/app/bookings", "page");
+  return {
+    ok: true,
+    cancelledBookings: sweep.cancelledBookingIds.length,
+    pausedSeries: sweep.pausedSeriesIds.length,
+  };
+}
+
+/**
+ * Clears archived_at — lists, pickers, billing, and the portal all come
+ * back. The archive sweep is NOT undone: cancelled bookings stay
+ * cancelled and paused series stay paused (re-enable deliberately).
+ */
+export async function unarchiveClientAction(
+  formData: FormData,
+): Promise<ArchiveClientResult> {
+  const id = String(formData.get("id") ?? "");
+  if (!id) return { ok: false, error: "Missing client id." };
+  const { membership } = await getActionContext();
+  if (!["owner", "admin"].includes(membership.role)) {
+    return { ok: false, error: "Only owners and admins can restore clients." };
+  }
+
+  const admin = createSupabaseAdminClient();
+  const { error } = (await admin
+    .from("clients")
+    .update({ archived_at: null } as never)
+    .eq("id", id)
+    .eq("organization_id", membership.organization_id)) as unknown as {
+    error: { message: string } | null;
+  };
+  if (error) return { ok: false, error: error.message };
+
+  await logAuditEvent({
+    membership,
+    action: "update",
+    entity: "client",
+    entity_id: id,
+    after: { archived: false },
+  });
+
+  revalidatePath("/app/clients");
+  revalidatePath(`/app/clients/${id}`);
+  return { ok: true, cancelledBookings: 0, pausedSeries: 0 };
+}
+
 export async function deleteClientAction(formData: FormData) {
   const id = String(formData.get("id") ?? "");
   if (!id) return;
@@ -449,7 +562,7 @@ export async function deleteClientAction(formData: FormData) {
     // but it has to say its own name where the person is standing.
     redirect(
       `/app/clients/${id}/edit?delete_error=${encodeURIComponent(
-        `This client has ${holds.join(", ")} on record, and those records keep the books whole. If this is a junk or duplicate entry, delete those records first (estimates delete from the Estimates page); if it's a real client you're done with, just leave them — history costs nothing.`,
+        `This client has ${holds.join(", ")} on record, and those records keep the books whole. If this is a junk or duplicate entry, delete those records first (estimates delete from the Estimates page); if it's a real client you're done with, archive them instead — the Archive button at the bottom of their page cancels their upcoming work and keeps the history.`,
       )}`,
     );
   }

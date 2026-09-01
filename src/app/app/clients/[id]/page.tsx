@@ -40,6 +40,7 @@ import { fetchOrgNotificationContext } from "../org-contact-default";
 import { SmsOptInButton } from "./sms-opt-in-button";
 import { ClientPropertiesCard, type PropertyRow } from "./properties-card";
 import { ClientDocumentsCard, type ClientDocument } from "./documents-card";
+import { ArchiveClientCard } from "./archive-card";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import {
   markGbpReviewedAction,
@@ -71,7 +72,7 @@ export default async function ClientDetailPage({
     supabase
       .from("clients")
       .select(
-        "id, name, email, phone, address, notes, preferred_contact, contact_preference, contact_overrides, balance_cents, created_at, profile_id, portal_invited_at, portal_accepted_at, portal_invite_expires_at, referred_by_client_id, gbp_review_state, gbp_first_asked_at, gbp_last_asked_at, gbp_clicked_at, gbp_reminders_sent, gbp_unsubscribed_at, sms_opted_in, sms_opt_in_requested_at",
+        "id, name, email, phone, address, notes, preferred_contact, contact_preference, contact_overrides, balance_cents, created_at, archived_at, profile_id, portal_invited_at, portal_accepted_at, portal_invite_expires_at, referred_by_client_id, gbp_review_state, gbp_first_asked_at, gbp_last_asked_at, gbp_clicked_at, gbp_reminders_sent, gbp_unsubscribed_at, sms_opted_in, sms_opt_in_requested_at",
       )
       .eq("id", id)
       .maybeSingle() as unknown as Promise<{
@@ -85,6 +86,7 @@ export default async function ClientDetailPage({
         preferred_contact: string;
         balance_cents: number;
         created_at: string;
+        archived_at: string | null;
         profile_id: string | null;
         portal_invited_at: string | null;
         portal_accepted_at: string | null;
@@ -248,6 +250,27 @@ export default async function ClientDetailPage({
     membership.role === "owner" ||
     membership.role === "admin" ||
     membership.role === "manager";
+  const canArchive =
+    membership.role === "owner" || membership.role === "admin";
+  const isArchived = Boolean(client.archived_at);
+
+  // What the Archive button would sweep — counted here so the confirm can
+  // state consequences instead of asking for blind trust. Head counts only.
+  const [futureBk, activeSeries] = isArchived
+    ? [{ count: 0 }, { count: 0 }]
+    : await Promise.all([
+        supabase
+          .from("bookings")
+          .select("id", { count: "exact", head: true })
+          .eq("client_id", id)
+          .gte("scheduled_at", new Date().toISOString())
+          .in("status", ["pending", "confirmed"]),
+        supabase
+          .from("booking_series")
+          .select("id", { count: "exact", head: true })
+          .eq("client_id", id)
+          .eq("active" as never, true as never),
+      ]);
 
   // How much of this client's finished work is still unbilled. Cheap enough to
   // compute here, and it's what turns "New invoice" from a blank form into an
@@ -346,7 +369,7 @@ export default async function ClientDetailPage({
               portalInviteExpiresAt={client.portal_invite_expires_at}
             />
           )}
-          {canEdit && can(membership, "invoicing") && (
+          {canEdit && !isArchived && can(membership, "invoicing") && (
             <Link
               href={`/app/invoices/new?client_id=${id}`}
               className={buttonVariants({ variant: "outline", size: "sm" })}
@@ -368,7 +391,7 @@ export default async function ClientDetailPage({
               )}
             </Link>
           )}
-          {canEdit && (
+          {canEdit && !isArchived && (
             <Link
               href={`/app/estimates/new?client_id=${id}`}
               className={buttonVariants({ variant: "outline", size: "sm" })}
@@ -377,7 +400,7 @@ export default async function ClientDetailPage({
               New estimate
             </Link>
           )}
-          {canEdit && (
+          {canEdit && !isArchived && (
             <Link
               href={`/app/bookings/new?client_id=${id}`}
               className={buttonVariants({ variant: "default", size: "sm" })}
@@ -399,6 +422,33 @@ export default async function ClientDetailPage({
       }
     >
       <div className="space-y-6">
+        {/* ── Archived banner ── */}
+        {isArchived && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-300/60 bg-amber-50 px-4 py-3 dark:border-amber-900/40 dark:bg-amber-950/20">
+            <div className="text-sm text-amber-900 dark:text-amber-200">
+              <p className="font-semibold">
+                Archived{" "}
+                {client.archived_at &&
+                  formatDateTime(client.archived_at, tz).split(" · ")[0]}
+              </p>
+              <p className="mt-0.5 text-xs opacity-90">
+                Hidden from lists, pickers, and billing runs; portal sign-in
+                locked. History and any unpaid invoices stay live below.
+              </p>
+            </div>
+            {canArchive && (
+              <ArchiveClientCard
+                clientId={client.id}
+                clientName={client.name}
+                archived
+                futureBookings={0}
+                activeSeries={0}
+                hasPortalAccess={Boolean(client.profile_id)}
+              />
+            )}
+          </div>
+        )}
+
         {/* ── Client info card ── */}
         <div className="rounded-lg border border-border bg-card p-5">
           <div className="flex flex-wrap items-start justify-between gap-4">
@@ -765,6 +815,19 @@ export default async function ClientDetailPage({
             ))}
           </Section>
         </div>
+
+        {/* ── Archive — the "done with this client" move, with its
+            consequences stated before the click. Owner/admin only. ── */}
+        {canArchive && !isArchived && (
+          <ArchiveClientCard
+            clientId={client.id}
+            clientName={client.name}
+            archived={false}
+            futureBookings={futureBk.count ?? 0}
+            activeSeries={activeSeries.count ?? 0}
+            hasPortalAccess={Boolean(client.profile_id)}
+          />
+        )}
       </div>
     </PageShell>
   );

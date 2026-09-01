@@ -30,6 +30,10 @@ A client's profile is the long-term record: address, standing notes (buzzer code
 
 > Same email = same person. If a website form arrives with an email you already have, it updates that lead instead of creating a duplicate. Different emails create separate leads — merge by hand if you spot twins.
 
+## When a client leaves
+
+**Archive them** — the button at the bottom of their profile, one move for everything: their upcoming bookings are cancelled (assigned cleaners are notified and calendar events removed), recurring schedules and standing invoices stop generating, their portal sign-in locks, and they disappear from every list, picker, and billing run. The confirm tells you exactly what it's about to cancel before you agree. What deliberately *stays*: their history, documents, and any **unpaid invoices** — archiving a client never archives a debt, so you can still chase and collect it. Archived clients live under the **Archived** toggle on the Clients page; **Restore** brings everything back (portal included) except the cancelled bookings and paused schedules — re-enable those on purpose if the client returns. Deleting is only for junk/duplicate entries with no history.
+
 ## Network
 
 **Network** (under People) is the rolodex for everyone who matters but isn't a client and never will be: realtors who send you move-out cleans, property managers, suppliers, referral partners. Name, category, company, tap-to-call phone, and notes ("how we met, what they refer, their terms"). Deliberately separate from clients — no bookings, invoices, or portal hang off these people — and from the on-call pool, which is for workers you offer shifts to. If a network contact ever books a cleaning, add them as a client like anyone else.

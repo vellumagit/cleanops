@@ -43,10 +43,15 @@ export async function getClientAuthState(): Promise<ClientAuthState> {
   const userId = claims?.claims?.sub;
   if (!userId) return { status: "anonymous" };
 
+  // Archived clients don't resolve — this is THE portal lock. Their login
+  // still authenticates, but with no client row behind it they land on the
+  // sign-in flow like any stranger. Restoring the client (archived_at back
+  // to null) restores access with no re-invite.
   const { data } = await supabase
     .from("clients")
     .select("id, organization_id, name, email, profile_id")
     .eq("profile_id", userId)
+    .is("archived_at", null)
     .limit(1)
     .maybeSingle();
 
@@ -86,6 +91,8 @@ export async function getCurrentClient(): Promise<CurrentClient | null> {
     .from("clients")
     .select("id, organization_id, name, email, profile_id")
     .eq("profile_id", userId)
+    // Same archived lock as getClientAuthState above.
+    .is("archived_at", null)
     .limit(1)
     .maybeSingle();
 
