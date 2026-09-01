@@ -165,78 +165,83 @@ export function DataTable<T>({
               Click a row to open.
             </p>
           )}
+          {/* Inner scroller, same shape as bookings-table: the card keeps the
+              rounded border, the TABLE scrolls inside it. `w-full` on a table
+              is a floor, not a ceiling — seven columns don't fit a phone, and
+              with the old plain `overflow-hidden` the right-hand ones (Amount,
+              on invoices) were simply cut off and unreachable. Now that the
+              page itself can't drift sideways, wide content has to carry its
+              own scroller or it can't be read at all. */}
           <div className="overflow-hidden rounded-lg border border-border bg-card">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border bg-muted/40">
-                  {columns.map((col) => (
-                    <th
-                      key={col.key}
-                      className={cn(
-                        "px-3 py-2 text-left text-xs font-medium text-muted-foreground",
-                        col.headerClassName,
-                      )}
-                    >
-                      {col.header}
-                    </th>
-                  ))}
-                  {onRowClick && (
-                    <th
-                      aria-label="Open"
-                      className="w-8 px-2 py-2"
-                    />
-                  )}
-                </tr>
-              </thead>
-              <tbody>
-                {showNoMatches ? (
-                  <tr>
-                    <td
-                      colSpan={columns.length + (onRowClick ? 1 : 0)}
-                      className="px-3 py-12 text-center text-xs text-muted-foreground"
-                    >
-                      No matches for &ldquo;{query}&rdquo;.
-                    </td>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border bg-muted/40">
+                    {columns.map((col) => (
+                      <th
+                        key={col.key}
+                        className={cn(
+                          "px-3 py-2 text-left text-xs font-medium text-muted-foreground",
+                          col.headerClassName,
+                        )}
+                      >
+                        {col.header}
+                      </th>
+                    ))}
+                    {onRowClick && (
+                      <th aria-label="Open" className="w-8 px-2 py-2" />
+                    )}
                   </tr>
-                ) : (
-                  filtered.map((row) => (
-                    <tr
-                      key={getRowId(row)}
-                      onClick={onRowClick ? () => onRowClick(row) : undefined}
-                      className={cn(
-                        "group border-b border-border last:border-0",
-                        onRowClick &&
-                          "cursor-pointer transition-colors hover:bg-muted/40",
-                      )}
-                    >
-                      {columns.map((col) => (
-                        <td
-                          key={col.key}
-                          className={cn(
-                            "px-3 py-2.5 align-middle",
-                            col.className,
-                          )}
-                        >
-                          {col.render(row)}
-                        </td>
-                      ))}
-                      {onRowClick && (
-                        <td className="w-8 px-2 py-2.5 align-middle text-right">
-                          <ChevronRight
-                            aria-hidden
-                            className="ml-auto h-4 w-4 text-muted-foreground/60 transition-all group-hover:translate-x-0.5 group-hover:text-foreground"
-                          />
-                        </td>
-                      )}
+                </thead>
+                <tbody>
+                  {showNoMatches ? (
+                    <tr>
+                      <td
+                        colSpan={columns.length + (onRowClick ? 1 : 0)}
+                        className="px-3 py-12 text-center text-xs text-muted-foreground"
+                      >
+                        No matches for &ldquo;{query}&rdquo;.
+                      </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                  ) : (
+                    filtered.map((row) => (
+                      <tr
+                        key={getRowId(row)}
+                        onClick={onRowClick ? () => onRowClick(row) : undefined}
+                        className={cn(
+                          "group border-b border-border last:border-0",
+                          onRowClick &&
+                            "cursor-pointer transition-colors hover:bg-muted/40",
+                        )}
+                      >
+                        {columns.map((col) => (
+                          <td
+                            key={col.key}
+                            className={cn(
+                              "px-3 py-2.5 align-middle",
+                              col.className,
+                            )}
+                          >
+                            {col.render(row)}
+                          </td>
+                        ))}
+                        {onRowClick && (
+                          <td className="w-8 px-2 py-2.5 align-middle text-right">
+                            <ChevronRight
+                              aria-hidden
+                              className="ml-auto h-4 w-4 text-muted-foreground/60 transition-all group-hover:translate-x-0.5 group-hover:text-foreground"
+                            />
+                          </td>
+                        )}
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </>
       )}
-
     </div>
   );
 }

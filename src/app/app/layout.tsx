@@ -224,7 +224,15 @@ export default async function AppLayout({
       {/* pt-14 for the fixed mobile top bar; bottom padding = tab bar height
           plus the safe-area inset the bar itself grows by on gesture-nav
           phones. Both zero out at lg where the sidebar takes over. */}
-      <div className="flex min-w-0 flex-1 flex-col overflow-y-auto pb-[calc(4rem+env(safe-area-inset-bottom))] pt-14 lg:pb-0 lg:pt-0">
+      {/* overflow-x-hidden is load-bearing, not decoration. `overflow-y-auto`
+          alone computes overflow-x to `auto` per spec, so this column — the
+          real scrolling element, not body — could drift sideways whenever any
+          child ran a few pixels wide, and the app felt loose in the hand
+          instead of rigid. The overscroll rules in globals.css sit on
+          html/body and never applied here. Wide content is unaffected: every
+          table and board carries its own overflow-x-auto scroller, which is
+          where sideways movement belongs. */}
+      <div className="flex min-w-0 flex-1 flex-col overflow-y-auto overflow-x-hidden overscroll-x-none pb-[calc(4rem+env(safe-area-inset-bottom))] pt-14 lg:pb-0 lg:pt-0">
         <DesktopToolRibbon />
         <TrialBanner info={subscriptionInfo} role={membership.role} />
         <AutomationsOffBanner
