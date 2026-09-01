@@ -13,6 +13,12 @@ For a client with several unbilled visits (or a company paying for several peopl
 - A booking sitting on an unsent **draft** can be folded into the batch — the old draft is voided automatically, on the logic that nobody has seen it yet.
 - "Bill as company" puts the paying company's details on the invoice while the visits stay attached to the people who received them.
 
+**Bill for a period** (Invoices → Bill for a period) does the same thing for a date range: pick the client, a From and To date, and Load bookings.
+
+Expect to see **"Every job in this range already has a draft invoice"** most of the time. That is normal, not a dead end — Sollos drafts one invoice per job as it finishes, so by the time you bill a month it's usually all spoken for. Tick the drafts in the amber box and each one drops into the line list as a real line; the total updates and those drafts are voided when you create the combined invoice, so nothing is billed twice. Remove one with the bin icon to leave that job on its own draft instead.
+
+You never need to delete a draft to make a period invoice work — ticking it does the same job without destroying anything. Invoices the client already has (sent or paid) can't be folded in and are listed separately.
+
 ## The lifecycle
 
 Draft → Sent → Paid, with Overdue when a due date passes. Payments recorded in the app (or arriving through Stripe/Square) mark the invoice paid and reconcile automatically. Refunds issued in-app do too.

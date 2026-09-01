@@ -165,9 +165,18 @@ export function PeriodInvoiceEditor({
             another invoice
           </p>
           <p className="mt-1 text-xs text-amber-900/80 dark:text-amber-200/80">
-            They are not in the list below. Auto-invoicing drafts one per job
-            as it finishes, so most of a period is usually spoken for by the
-            time you bill it.
+            Auto-invoicing drafts one per job as it finishes, so most of a
+            period is usually spoken for by the time you bill it — this is
+            normal, and not a reason to delete anything.
+            {consolidatable.length > 0 && (
+              <>
+                {" "}
+                <span className="font-medium">
+                  Tick the drafts you want combined
+                </span>{" "}
+                and they drop into the list below as lines.
+              </>
+            )}
           </p>
 
           {consolidatable.length > 0 && (
@@ -235,9 +244,50 @@ export function PeriodInvoiceEditor({
           <span />
         </div>
         <div className="divide-y divide-border">
-          {lines.length === 0 ? (
+          {/* Folded-in drafts, shown as REAL rows. They were previously
+              invisible here — counted in the total and in the submitted
+              payload, but absent from the table, so ticking one left the
+              list still reading "No lines" while the total jumped. That gap
+              is what made a working screen look broken and sent an owner off
+              deleting drafts by hand to force jobs back into the list. */}
+          {absorbedLines.map((b) => (
+            <div
+              key={b.invoiceId}
+              className="grid grid-cols-1 gap-2 bg-amber-50/40 px-3 py-2 dark:bg-amber-950/10 sm:grid-cols-[1fr_5rem_7rem_6rem_2rem] sm:items-center"
+            >
+              <div className="min-w-0">
+                <p className="truncate text-sm">{b.label}</p>
+                <p className="text-[11px] text-amber-800 dark:text-amber-300">
+                  From{" "}
+                  {b.invoiceNumber ? `INV-${b.invoiceNumber}` : "a draft"} —
+                  that draft is voided when this invoice is created
+                </p>
+              </div>
+              <span className="text-right text-sm tabular-nums text-muted-foreground sm:block">
+                {b.quantity}
+              </span>
+              <span className="text-right text-sm tabular-nums text-muted-foreground">
+                {b.unitPriceDollars}
+              </span>
+              <span className="text-right text-sm font-medium tabular-nums">
+                {formatCurrencyCents(b.invoiceAmountCents, currency)}
+              </span>
+              <button
+                type="button"
+                onClick={() => toggleAbsorb(b.invoiceId)}
+                aria-label={`Remove ${b.label} from this invoice`}
+                title="Leave this job on its own draft instead"
+                className="justify-self-end rounded p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+            </div>
+          ))}
+          {lines.length === 0 && absorbedLines.length === 0 ? (
             <p className="px-3 py-8 text-center text-sm text-muted-foreground">
-              No lines. Click “Add line” to start.
+              {consolidatable.length > 0
+                ? "Nothing on this invoice yet — tick a draft above to fold it in, or click “Add line”."
+                : "No lines. Click “Add line” to start."}
             </p>
           ) : (
             lines.map((l) => (

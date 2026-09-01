@@ -217,13 +217,20 @@ export default async function PeriodInvoicePage({
         {loaded ? (
           count === 0 ? (
             <div className="rounded-xl border border-dashed border-border bg-card px-6 py-12 text-center">
+              {/* Two very different situations wore the same headline. When
+                  drafts exist to fold in, "No un-billed bookings" reads as a
+                  dead end — the owner backs out, or deletes the drafts by
+                  hand to force the jobs back into the list. Say which case
+                  this is, and point at the control that finishes the job. */}
               <p className="text-sm font-medium">
-                No un-billed bookings in this range
+                {alreadyBilled.some((b) => b.canConsolidate)
+                  ? "Every job in this range already has a draft invoice"
+                  : "No un-billed bookings in this range"}
               </p>
               <p className="mt-1 text-xs text-muted-foreground">
-                Every booking for this client in that window is either
-                cancelled or already on an invoice. Try a different range, or
-                add lines manually below.
+                {alreadyBilled.some((b) => b.canConsolidate)
+                  ? "That's normal — one is drafted per job as it finishes. Tick the ones below to combine them into a single invoice; their drafts are voided so nothing is billed twice."
+                  : "Every booking for this client in that window is either cancelled or already on an invoice. Try a different range, or add lines manually below."}
               </p>
               <div className="mt-4 text-left">
                 <PeriodInvoiceEditor
