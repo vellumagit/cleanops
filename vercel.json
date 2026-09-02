@@ -1,4 +1,5 @@
 {
+  "regions": ["pdx1"],
   "functions": {
     "src/app/api/e/[token]/pdf/route.ts": {
       "memory": 1024,
