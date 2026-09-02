@@ -8,6 +8,12 @@ import {
   saveInvoiceAutoSendAction,
   type InvoicingFormState,
 } from "./actions";
+import {
+  DELAY_CHOICES,
+  WEEKDAY_LABELS,
+  describeSendSchedule,
+  type SendMode,
+} from "@/lib/invoice-send-schedule";
 
 const empty: InvoicingFormState = {};
 
@@ -15,6 +21,11 @@ export type InvoicingFormProps = {
   enabled: boolean;
   sendHour: number;
   consolidated: boolean;
+  sendMode: SendMode;
+  delayHours: number;
+  weekday: number;
+  /** Org IANA timezone — the queued-confirmation time is rendered in it. */
+  timezone: string;
 };
 
 // Every hour of the day — most owners pick a business-hours slot; the
@@ -36,6 +47,9 @@ export function InvoicingForm(props: InvoicingFormProps) {
   const [enabled, setEnabled] = useState(props.enabled);
   const [sendHour, setSendHour] = useState(String(props.sendHour));
   const [consolidated, setConsolidated] = useState(props.consolidated);
+  const [sendMode, setSendMode] = useState<SendMode>(props.sendMode);
+  const [delayHours, setDelayHours] = useState(String(props.delayHours));
+  const [weekday, setWeekday] = useState(String(props.weekday));
 
   // Re-seed from the server whenever the SAVED values change — React's
   // adjust-state-during-render pattern. useState only seeds on mount, so
@@ -43,14 +57,26 @@ export function InvoicingForm(props: InvoicingFormProps) {
   // it had, which reads as "my change was ignored". Doing it here rather
   // than with a `key` on the parent keeps this component mounted, so the
   // "Saved." confirmation from useActionState survives.
-  const savedSignature = `${props.enabled}|${props.sendHour}|${props.consolidated}`;
+  const savedSignature = `${props.enabled}|${props.sendHour}|${props.consolidated}|${props.sendMode}|${props.delayHours}|${props.weekday}`;
   const [seenSignature, setSeenSignature] = useState(savedSignature);
   if (savedSignature !== seenSignature) {
     setSeenSignature(savedSignature);
     setEnabled(props.enabled);
     setSendHour(String(props.sendHour));
     setConsolidated(props.consolidated);
+    setSendMode(props.sendMode);
+    setDelayHours(String(props.delayHours));
+    setWeekday(String(props.weekday));
   }
+
+  // The whole setting in one sentence, live as they change it — the same
+  // sentence the app uses everywhere else it has to say when invoices leave.
+  const scheduleSentence = describeSendSchedule({
+    mode: sendMode,
+    hour: Number(sendHour),
+    delayHours: Number(delayHours),
+    weekday: Number(weekday),
+  });
 
   return (
     <form action={formAction} className="max-w-lg space-y-6">
@@ -71,6 +97,7 @@ export function InvoicingForm(props: InvoicingFormProps) {
             {state.queued.count === 1 ? "" : "s"} from the last 7 days{" "}
             {state.queued.count === 1 ? "is" : "are"} now queued — going out{" "}
             {new Date(state.queued.sendAtIso).toLocaleString("en-US", {
+              timeZone: props.timezone,
               weekday: "long",
               hour: "numeric",
               minute: "2-digit",
@@ -127,6 +154,77 @@ export function InvoicingForm(props: InvoicingFormProps) {
           ))}
         </select>
       </FormField>
+
+      {/* Rhythm — when per-job drafts go out */}
+      <FormField
+        label="Send invoices"
+        htmlFor="send_mode"
+        hint="Applies to per-job invoices — “everyone else”. Clients you've put on a weekly, biweekly or monthly billing cycle keep their own schedule."
+      >
+        <select
+          id="send_mode"
+          name="send_mode"
+          value={sendMode}
+          onChange={(e) => setSendMode(e.target.value as SendMode)}
+          className="h-9 w-full max-w-xs rounded-md border border-input bg-background px-3 text-sm"
+        >
+          <option value="next_day">The day after the job</option>
+          <option value="delay_hours">After a set number of hours</option>
+          <option value="weekday">On one day each week</option>
+        </select>
+      </FormField>
+
+      {sendMode === "delay_hours" && (
+        <FormField
+          label="Hold for"
+          htmlFor="send_delay_hours"
+          hint="At least this long to review, then the next time the clock reaches your send time."
+        >
+          <select
+            id="send_delay_hours"
+            name="send_delay_hours"
+            value={delayHours}
+            onChange={(e) => setDelayHours(e.target.value)}
+            className="h-9 w-full max-w-xs rounded-md border border-input bg-background px-3 text-sm"
+          >
+            {DELAY_CHOICES.map((h) => (
+              <option key={h} value={String(h)}>
+                {h} hours
+              </option>
+            ))}
+          </select>
+        </FormField>
+      )}
+
+      {sendMode === "weekday" && (
+        <FormField
+          label="Send day"
+          htmlFor="send_weekday"
+          hint="Everything drafted since the last send goes out together. A draft raised less than an hour before the deadline waits for the following week."
+        >
+          <select
+            id="send_weekday"
+            name="send_weekday"
+            value={weekday}
+            onChange={(e) => setWeekday(e.target.value)}
+            className="h-9 w-full max-w-xs rounded-md border border-input bg-background px-3 text-sm"
+          >
+            {WEEKDAY_LABELS.map((label, i) => (
+              <option key={label} value={String(i)}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </FormField>
+      )}
+
+      {/* The setting, in a sentence. */}
+      {enabled && (
+        <p className="rounded-md border border-border bg-muted/40 px-3 py-2 text-sm">
+          Invoices go out{" "}
+          <span className="font-medium">{scheduleSentence}</span>.
+        </p>
+      )}
 
       {/* Consolidated */}
       <label className="flex items-start gap-3">

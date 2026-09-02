@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { SEND_MODES } from "@/lib/invoice-send-schedule";
 import { getActionContext } from "@/lib/actions";
 import { logAuditEvent } from "@/lib/audit";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -107,6 +108,26 @@ export async function saveInvoiceAutoSendAction(
     return { errors: { hour: "Pick a time of day." } };
   }
 
+  // The RHYTHM: when per-job drafts go out. Unknown values fall back to
+  // next_day rather than erroring — a malformed setting must never leave
+  // invoices unscheduled.
+  const rawMode = String(formData.get("send_mode") ?? "next_day").trim();
+  const sendMode = (SEND_MODES as readonly string[]).includes(rawMode)
+    ? rawMode
+    : "next_day";
+
+  const rawDelay = String(formData.get("send_delay_hours") ?? "").trim();
+  const delayHours = /^\d{1,3}$/.test(rawDelay) ? Number(rawDelay) : 24;
+  if (sendMode === "delay_hours" && (delayHours < 1 || delayHours > 168)) {
+    return { errors: { _form: "Pick how long to hold invoices before sending." } };
+  }
+
+  const rawWeekday = String(formData.get("send_weekday") ?? "").trim();
+  const weekday = /^[0-6]$/.test(rawWeekday) ? Number(rawWeekday) : 5;
+  if (sendMode === "weekday" && !/^[0-6]$/.test(rawWeekday)) {
+    return { errors: { _form: "Pick which day invoices go out." } };
+  }
+
   const admin = createSupabaseAdminClient();
   const { error } = await admin
     .from("organizations")
@@ -114,6 +135,9 @@ export async function saveInvoiceAutoSendAction(
       invoice_auto_send_enabled: enabled,
       invoice_auto_send_hour: sendHour,
       invoice_auto_send_consolidated: consolidated,
+      invoice_auto_send_mode: sendMode,
+      invoice_auto_send_delay_hours: delayHours,
+      invoice_auto_send_weekday: weekday,
     } as never)
     .eq("id", membership.organization_id);
   if (error) return { errors: { _form: error.message } };
@@ -135,7 +159,11 @@ export async function saveInvoiceAutoSendAction(
       .eq("id", membership.organization_id)
       .maybeSingle()) as unknown as { data: { timezone: string | null } | null };
     const tz = orgRow?.timezone ?? null;
-    const sendAtIso = computeAutoSendAt(new Date(), tz, sendHour).toISOString();
+    const sendAtIso = computeAutoSendAt(new Date(), tz, sendHour, {
+      mode: sendMode,
+      delayHours,
+      weekday,
+    }).toISOString();
 
     // 1. Re-arm previously-held drafts — held only ever means "auto-send was
     // switched off while these were queued" or the owner's own Hold button,

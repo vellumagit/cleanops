@@ -17,6 +17,10 @@ import { invoiceSentEmail } from "@/lib/email-templates";
 import { formatCurrencyCents, FALLBACK_TZ } from "@/lib/format";
 import { isValidIanaTz } from "@/lib/org-timezone";
 import { nextDayAtHourUtc } from "@/lib/wall-clock";
+import {
+  computeSendSlot,
+  type SendMode,
+} from "@/lib/invoice-send-schedule";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { pushInvoiceToSage } from "@/lib/sage";
 import { pushInvoiceToQuickBooks } from "@/lib/quickbooks";
@@ -235,7 +239,7 @@ export async function scheduleAutoSendIfEnabled(
     const { data } = (await db
       .from("organizations")
       .select(
-        "invoice_auto_send_enabled, invoice_auto_send_hour, invoice_auto_send_consolidated, timezone",
+        "invoice_auto_send_enabled, invoice_auto_send_hour, invoice_auto_send_consolidated, invoice_auto_send_mode, invoice_auto_send_delay_hours, invoice_auto_send_weekday, timezone",
       )
       .eq("id", orgId)
       .maybeSingle()) as unknown as {
@@ -243,6 +247,9 @@ export async function scheduleAutoSendIfEnabled(
         invoice_auto_send_enabled: boolean;
         invoice_auto_send_hour: number | null;
         invoice_auto_send_consolidated: boolean;
+        invoice_auto_send_mode: string | null;
+        invoice_auto_send_delay_hours: number | null;
+        invoice_auto_send_weekday: number | null;
         timezone: string | null;
       } | null;
     };
@@ -250,10 +257,21 @@ export async function scheduleAutoSendIfEnabled(
     if (!data || !data.invoice_auto_send_enabled) return;
     if (opts?.consolidated && !data.invoice_auto_send_consolidated) return;
 
+    // Consolidated (billing-cadence) invoices keep the next-day rhythm — the
+    // cadence IS their schedule, and holding a monthly invoice for "next
+    // Friday" would drift the client's billing date. The org's chosen rhythm
+    // governs the per-job drafts: "everyone else".
     const at = computeAutoSendAt(
       new Date(),
       data.timezone,
       data.invoice_auto_send_hour,
+      opts?.consolidated
+        ? undefined
+        : {
+            mode: data.invoice_auto_send_mode,
+            delayHours: data.invoice_auto_send_delay_hours,
+            weekday: data.invoice_auto_send_weekday,
+          },
     ).toISOString();
 
     await (db
@@ -265,15 +283,34 @@ export async function scheduleAutoSendIfEnabled(
   }
 }
 
-/** Next-day-at-hour helper shared by scheduling and the re-arm path. */
+/**
+ * The send slot, shared by scheduling and the re-arm path.
+ *
+ * `rhythm` omitted (or absent columns on an org that predates the migration)
+ * means the original next-day behaviour, so nothing moves for anyone who
+ * hasn't chosen otherwise.
+ */
 export function computeAutoSendAt(
   from: Date,
   timezone: string | null,
   hour: number | null,
+  rhythm?: {
+    mode: string | null;
+    delayHours: number | null;
+    weekday: number | null;
+  },
 ): Date {
   const tz = timezone && isValidIanaTz(timezone) ? timezone : FALLBACK_TZ;
   const h = typeof hour === "number" && hour >= 0 && hour <= 23 ? hour : 17;
-  return nextDayAtHourUtc(from, tz, h);
+  if (!rhythm || !rhythm.mode || rhythm.mode === "next_day") {
+    return nextDayAtHourUtc(from, tz, h);
+  }
+  return computeSendSlot(from, tz, {
+    mode: rhythm.mode as SendMode,
+    hour: h,
+    delayHours: rhythm.delayHours,
+    weekday: rhythm.weekday,
+  });
 }
 
 /**

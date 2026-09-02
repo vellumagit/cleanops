@@ -32,7 +32,15 @@ Two automations have an **"At most"** cadence dropdown right beside their toggle
 
 ## Invoice auto-send lives elsewhere
 
-Auto-sending drafted invoices is configured at **Settings → Invoicing**, not here: when on, a draft sends itself at your chosen local time (default 5:00 PM) the day *after* the job, by the client's billing channel. Every draft has Hold and Send-now escape hatches, and the **Morning invoice review digest** toggle (here, under Job done & getting paid) emails you each morning what's going out later that day.
+Auto-sending drafted invoices is configured at **Settings → Invoicing**, not here. When it's on you pick a **send time** and a **rhythm**, and the page states the result back to you in a sentence — *"Invoices go out every Friday at 5:00 PM."* Three rhythms:
+
+- **The day after the job** — the default, and what everyone had before.
+- **After a set number of hours** — 24, 48 or 72 hours of review, then the next time the clock reaches your send time.
+- **On one day each week** — everything drafted since the last send goes out together on your chosen day. A draft raised less than an hour before the deadline waits for the following week rather than slipping out unreviewed.
+
+This governs **per-job invoices — "everyone else"**. Clients you've put on a weekly, biweekly or monthly billing cycle keep their own schedule; the separate *"Also auto-send biweekly / monthly invoices"* switch is their opt-out.
+
+Every draft still has Hold and Send-now escape hatches, and the **Morning invoice review digest** toggle (here, under Job done & getting paid) emails you each morning what's going out later that day.
 
 ## The fine print that keeps you safe
 

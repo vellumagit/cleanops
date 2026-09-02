@@ -1,4 +1,6 @@
 import { SatelliteAutomations } from "@/app/app/settings/automations/satellite-automations";
+import type { SendMode } from "@/lib/invoice-send-schedule";
+import { getOrgTimezone } from "@/lib/org-timezone";
 import { INVOICING_AUTOMATIONS } from "@/app/app/settings/automations/satellite-registry";
 import Link from "next/link";
 import { ChevronLeft } from "lucide-react";
@@ -21,6 +23,9 @@ export const dynamic = "force-dynamic";
 export default async function InvoicingSettingsPage() {
   const membership = await requireMembership(["owner", "admin"]);
   const admin = createSupabaseAdminClient();
+  // The org's zone, so "going out Friday at 5:00 PM" means the org's Friday
+  // and the org's five — not the viewer's laptop.
+  const tz = await getOrgTimezone(membership.organization_id);
 
   // Two queries, deliberately. tipping_settings is a newer column, and
   // PostgREST fails the WHOLE select if any one column is unknown — folding it
@@ -31,7 +36,7 @@ export default async function InvoicingSettingsPage() {
     admin
       .from("organizations")
       .select(
-        "invoice_auto_send_enabled, invoice_auto_send_hour, invoice_auto_send_consolidated",
+        "invoice_auto_send_enabled, invoice_auto_send_hour, invoice_auto_send_consolidated, invoice_auto_send_mode, invoice_auto_send_delay_hours, invoice_auto_send_weekday",
       )
       .eq("id", membership.organization_id)
       .maybeSingle(),
@@ -59,6 +64,9 @@ export default async function InvoicingSettingsPage() {
     invoice_auto_send_enabled: boolean;
     invoice_auto_send_hour: number | null;
     invoice_auto_send_consolidated: boolean;
+    invoice_auto_send_mode: string | null;
+    invoice_auto_send_delay_hours: number | null;
+    invoice_auto_send_weekday: number | null;
   } | null;
 
   const tipping = parseTippingSettings(tipData?.tipping_settings);
@@ -89,6 +97,12 @@ export default async function InvoicingSettingsPage() {
           enabled={Boolean(org?.invoice_auto_send_enabled)}
           sendHour={org?.invoice_auto_send_hour ?? 17}
           consolidated={org?.invoice_auto_send_consolidated ?? true}
+          sendMode={
+            (org?.invoice_auto_send_mode as SendMode | null) ?? "next_day"
+          }
+          delayHours={org?.invoice_auto_send_delay_hours ?? 24}
+          weekday={org?.invoice_auto_send_weekday ?? 5}
+          timezone={tz}
         />
       </section>
 

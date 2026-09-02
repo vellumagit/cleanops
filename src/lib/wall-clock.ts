@@ -79,6 +79,42 @@ export function nextDayAtHourUtc(from: Date, tz: string, hour: number): Date {
   return utcForWallClock(y, m, d + 1, hour, tz);
 }
 
+/** Weekday index (0=Sunday … 6=Saturday) `tz`'s calendar shows at `instant`. */
+function zonedWeekday(instant: Date, tz: string): number {
+  const name = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    weekday: "short",
+  }).format(instant);
+  return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(name);
+}
+
+/**
+ * The next moment `tz`'s wall clock reads `hour`:00 on `weekday`
+ * (0=Sunday … 6=Saturday), at or after `from`.
+ *
+ * "Every Friday at 5" has to mean the org's Friday and the org's five,
+ * through DST in both directions — so this walks calendar days and resolves
+ * each candidate as a wall clock, rather than adding 7×24 hours to a stamp
+ * and landing an hour out twice a year.
+ */
+export function nextWeekdayAtHourUtc(
+  from: Date,
+  tz: string,
+  weekday: number,
+  hour: number,
+): Date {
+  const { y, m, d } = zonedDateParts(from, tz);
+  // 8 days covers today (whose slot may still be ahead of `from`) plus a full
+  // week; the spare day absorbs a DST shift at the boundary.
+  for (let i = 0; i < 8; i++) {
+    const candidate = utcForWallClock(y, m, d + i, hour, tz);
+    if (candidate.getTime() < from.getTime()) continue;
+    if (zonedWeekday(candidate, tz) === weekday) return candidate;
+  }
+  // Unreachable for a valid weekday; a week out beats throwing.
+  return utcForWallClock(y, m, d + 7, hour, tz);
+}
+
 /**
  * UTC [start, end) of the calendar day `dayOffset` days from the one `from`
  * falls on in `tz`. dayOffset -1 = "yesterday", 0 = "today".
