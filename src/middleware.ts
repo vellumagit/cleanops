@@ -16,11 +16,14 @@
  * so a spoofed header in some forwarded scenario can't become an
  * open redirect.
  *
- * Scope: narrowed to exclude /api/* (those routes have their own auth
- * — API keys, CRON_SECRET, OAuth state — and don't need x-pathname),
- * Next internals, and common static asset extensions. Every excluded
- * path is one less edge invocation Vercel bills + measurable latency
- * savings on hot paths like Stripe webhooks.
+ * Scope: /app and /field ONLY — the two trees behind requireMembership(),
+ * which is the sole consumer of the header (via enforceMfa's getRequestPath,
+ * whose redirect allowlist accepts nothing else anyway). Everything else —
+ * the marketing pages, /login, the client portal, the public token routes,
+ * /api/* with its own auth — was being run through an edge function to be
+ * handed a header nobody reads, and had its request headers rewritten for
+ * nothing. Each excluded path is one less edge invocation billed and one
+ * less mutation standing between the request and a cacheable response.
  */
 
 import { NextResponse, type NextRequest } from "next/server";
@@ -37,12 +40,9 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  // Match everything EXCEPT:
-  //   - /api/*          (own auth; no MFA-redirect concept; saves edge invocations on webhooks, crons, v1 routes)
-  //   - _next internals (build artifacts, image optimizer)
-  //   - public files     (favicon, robots, sitemap, manifest, sw.js, .well-known)
-  //   - static assets    (common extensions for images, fonts, css, js, sourcemaps)
-  matcher: [
-    "/((?!api/|_next/|favicon\\.ico|robots\\.txt|sitemap\\.xml|manifest\\.json|sw\\.js|\\.well-known/|.*\\.(?:png|svg|jpg|jpeg|gif|webp|ico|css|js|woff|woff2|map)$).*)",
-  ],
+  // The header exists for the MFA gate, and the MFA gate only runs inside
+  // requireMembership() — /app and /field. A positive matcher states that
+  // directly, instead of a negative one that has to be kept in step with
+  // every new asset extension and public route the app grows.
+  matcher: ["/app/:path*", "/field/:path*"],
 };

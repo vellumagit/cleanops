@@ -18,6 +18,27 @@ import { getOrgTimezone } from "@/lib/org-timezone";
 import { zonedDayBoundsUtc } from "@/lib/wall-clock";
 import { isFeedVisible } from "@/lib/feed-visibility";
 
+/** Shape of app_shell_counts(). Every field optional — a failed RPC degrades
+ *  to an unbadged shell rather than an error page. */
+type ShellCounts = {
+  profile_full_name?: string | null;
+  org_onboarding_completed_at?: string | null;
+  org_logo_url?: string | null;
+  org_brand_color?: string | null;
+  org_name?: string | null;
+  unread_notifications?: number;
+  today_bookings?: number;
+  overdue_invoices?: number;
+  pending_estimates?: number;
+  unread_chat?: number;
+  new_reviews?: number;
+  pending_requests?: number;
+  open_job_requests?: number;
+  overdue_tasks?: number;
+  new_applicants?: number;
+  new_leads?: number;
+};
+
 export default async function AppLayout({
   children,
 }: {
@@ -60,130 +81,46 @@ export default async function AppLayout({
   const todayStart = dayBounds.start;
   const todayEnd = new Date(dayBounds.end.getTime() - 1);
 
-  const [
-    { data: profile },
-    { data: org },
-    { count: unreadNotifications },
-    { count: todayBookings },
-    { count: overdueInvoices },
-    { count: pendingEstimates },
-    { data: unreadChat },
-    { count: newReviews },
-    { count: pendingRequests },
-    { count: openJobRequests },
-    { count: overdueTasks },
-    { count: newApplicants },
-    { count: newLeads },
-  ] = await (async () => {
-    // Capture once — used as the lower bound on two time-windowed counts.
-    // eslint-disable-next-line react-hooks/purity
-    const nowMs = Date.now();
-    const reviewsSince = new Date(
-      nowMs - 7 * 24 * 60 * 60 * 1000,
-    ).toISOString();
-    return Promise.all([
-      supabase
-        .from("profiles")
-        .select("full_name")
-        .eq("id", membership.profile_id)
-        .maybeSingle(),
-      supabase
-        .from("organizations")
-        .select("onboarding_completed_at, logo_url, brand_color, name")
-        .eq("id", membership.organization_id)
-        .maybeSingle() as unknown as {
-        data: {
-          onboarding_completed_at: string | null;
-          logo_url: string | null;
-          brand_color: string | null;
-          name: string | null;
-        } | null;
-      },
-      supabase
-        .from("notifications" as never)
-        .select("id", { count: "exact", head: true })
-        .eq("organization_id", membership.organization_id)
-        .or(
-          `recipient_membership_id.is.null,recipient_membership_id.eq.${membership.id}`,
-        )
-        .is("read_at", null) as unknown as { count: number | null },
-      // Today's bookings
-      supabase
-        .from("bookings")
-        .select("id", { count: "exact", head: true })
-        .gte("scheduled_at", todayStart.toISOString())
-        .lte("scheduled_at", todayEnd.toISOString()),
-      // Overdue invoices
-      supabase
-        .from("invoices")
-        .select("id", { count: "exact", head: true })
-        .eq("status", "overdue"),
-      // Pending estimates (sent, awaiting response)
-      supabase
-        .from("estimates")
-        .select("id", { count: "exact", head: true })
-        .eq("status", "sent"),
-      // Unread chat — real per-member unread count (messages after each
-      // thread's last_read_at watermark that the member didn't send).
-      supabase.rpc(
-        "chat_unread_total" as never,
-        {
-          p_org_id: membership.organization_id,
-        } as never,
-      ) as unknown as {
-        data: number | null;
-      },
-      // New reviews in the last 7 days
-      supabase
-        .from("reviews")
-        .select("id", { count: "exact", head: true })
-        .gte("submitted_at", reviewsSince),
-      // Pending booking requests from the client portal
-      supabase
-        .from("booking_requests" as never)
-        .select("id", { count: "exact", head: true })
-        .eq("organization_id", membership.organization_id)
-        .eq("status", "pending") as unknown as { count: number | null },
-      // Open skips + inquiries (client_job_requests) — the badge counted
-      // only portal booking requests, so website inquiries arrived to a
-      // nav item that looked quiet. The counter is the clear picture.
-      supabase
-        .from("client_job_requests" as never)
-        .select("id", { count: "exact", head: true })
-        .eq("organization_id" as never, membership.organization_id as never)
-        .eq("status" as never, "open" as never) as unknown as {
-        count: number | null;
-      },
-      // Overdue + today tasks (incomplete, due <= now)
-      supabase
-        .from("tasks" as never)
-        .select("id", { count: "exact", head: true })
-        .lte("due_at" as never, todayEnd.toISOString())
-        .is("completed_at" as never, null) as unknown as {
-        count: number | null;
-      },
-      // New job applicants awaiting review
-      supabase
-        .from("job_applicants" as never)
-        .select("id", { count: "exact", head: true })
-        .eq("organization_id" as never, membership.organization_id as never)
-        .eq("status" as never, "new" as never) as unknown as {
-        count: number | null;
-      },
-      // Leads nobody has replied to yet. Counted at stage 'new' rather than all
-      // open leads: a badge that shows every lead in the pipeline never clears,
-      // and a number that never changes stops being read.
-      supabase
-        .from("clients")
-        .select("id", { count: "exact", head: true })
-        .eq("organization_id", membership.organization_id)
-        .eq("lifecycle" as never, "lead" as never)
-        .eq("lead_stage" as never, "new" as never)
-        .is("archived_at" as never, null as never) as unknown as {
-        count: number | null;
-      },
-    ]);
-  })();
+  // ONE round trip for the whole shell. This block used to await thirteen
+  // separate PostgREST calls — the profile, the org, and eleven nav badges —
+  // in parallel, so every navigation in /app paid the cost of the slowest of
+  // them before the page it was opening had fetched anything. Measured at
+  // ~840ms. The counts are microseconds of work sitting behind hundreds of
+  // milliseconds of network, so they moved next to the data.
+  //
+  // See supabase/migrations/20260903020000_app_shell_counts.sql. It runs
+  // SECURITY INVOKER, so every count is still bound by the caller's own RLS.
+  // eslint-disable-next-line react-hooks/purity
+  const nowMs = Date.now();
+  const { data: shell } = (await supabase.rpc("app_shell_counts" as never, {
+    p_org: membership.organization_id,
+    p_membership: membership.id,
+    p_today_start: todayStart.toISOString(),
+    p_today_end: todayEnd.toISOString(),
+    p_reviews_since: new Date(nowMs - 7 * 24 * 60 * 60 * 1000).toISOString(),
+  } as never)) as unknown as { data: ShellCounts | null };
+
+  // A failed RPC must not blank the shell: fall back to zeroes, which render
+  // as "no badges" rather than an error page over a nav decoration.
+  const counts: ShellCounts = shell ?? {};
+  const profile = { full_name: counts.profile_full_name ?? null };
+  const org = {
+    onboarding_completed_at: counts.org_onboarding_completed_at ?? null,
+    logo_url: counts.org_logo_url ?? null,
+    brand_color: counts.org_brand_color ?? null,
+    name: counts.org_name ?? null,
+  };
+  const unreadNotifications = counts.unread_notifications ?? 0;
+  const todayBookings = counts.today_bookings ?? 0;
+  const overdueInvoices = counts.overdue_invoices ?? 0;
+  const pendingEstimates = counts.pending_estimates ?? 0;
+  const unreadChat = counts.unread_chat ?? 0;
+  const newReviews = counts.new_reviews ?? 0;
+  const pendingRequests = counts.pending_requests ?? 0;
+  const openJobRequests = counts.open_job_requests ?? 0;
+  const overdueTasks = counts.overdue_tasks ?? 0;
+  const newApplicants = counts.new_applicants ?? 0;
+  const newLeads = counts.new_leads ?? 0;
 
   const showSetup =
     !org?.onboarding_completed_at &&

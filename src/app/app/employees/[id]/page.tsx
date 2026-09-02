@@ -52,8 +52,10 @@ export default async function EmployeeFilePage({
   params: Promise<{ id: string }>;
 }) {
   const viewer = await requireMembership(["owner", "admin"]);
-  const tz = await getOrgTimezone(viewer.organization_id);
   const { id } = await params;
+  // Fired, not awaited — resolves alongside the member fetch below instead
+  // of adding a round trip in front of it.
+  const tzPromise = getOrgTimezone(viewer.organization_id);
   const admin = createSupabaseAdminClient();
 
   const { data: member } = (await admin
@@ -83,17 +85,20 @@ export default async function EmployeeFilePage({
   if (!member) notFound();
 
   // Admin-only fields (accommodations / health + general notes) for the file.
-  const { data: adminData } = (await admin
+  // Fired, not awaited — see the single Promise.all below. This page used to
+  // run five separate waves of queries nose-to-tail, so opening one employee
+  // cost five sequential round trips before anything rendered.
+  const adminDataPromise = admin
     .from("membership_admin_data" as never)
     .select("accommodations, notes, exit_reason")
     .eq("membership_id" as never, id as never)
-    .maybeSingle()) as unknown as {
+    .maybeSingle() as unknown as Promise<{
     data: {
       accommodations: string | null;
       notes: string | null;
       exit_reason: string | null;
     } | null;
-  };
+  }>;
 
   const name = memberDisplayName(member);
   const email = member.contact_email ?? null;
@@ -138,28 +143,15 @@ export default async function EmployeeFilePage({
       )
     : Promise.resolve(null);
 
-  const [{ data: applicant }, settlement] = await Promise.all([
-    applicantPromise,
-    settlementPromise,
-  ]);
-
-  const lifecycle: Array<{ label: string; date: string | null }> = [];
-  if (applicant) lifecycle.push({ label: "Applied", date: applicant.created_at });
-  if (applicant?.status === "hired")
-    lifecycle.push({ label: "Hired", date: applicant.reviewed_at });
-  lifecycle.push({ label: "Joined", date: member.created_at });
-  if (isDisabled)
-    lifecycle.push({ label: "Deactivated", date: member.deactivated_at });
-
   // Documents for this person's file.
-  const { data: rawDocs } = (await admin
+  const rawDocsPromise = admin
     .from("membership_documents" as never)
     .select("id, category, label, file_name, size_bytes, file_path, created_at")
     .eq("membership_id" as never, id)
     .order(
       "created_at" as never,
       { ascending: false } as never,
-    )) as unknown as {
+    ) as unknown as Promise<{
     data: Array<{
       id: string;
       category: string;
@@ -169,30 +161,12 @@ export default async function EmployeeFilePage({
       file_path: string;
       created_at: string;
     }> | null;
-  };
-
-  // Sign each file so the panel can offer a (short-lived) download link.
-  const documents: EmployeeDocument[] = await Promise.all(
-    (rawDocs ?? []).map(async (d) => {
-      const { data } = await admin.storage
-        .from(BUCKET)
-        .createSignedUrl(d.file_path, 3600);
-      return {
-        id: d.id,
-        category: d.category,
-        label: d.label,
-        file_name: d.file_name,
-        size_bytes: d.size_bytes,
-        created_at: d.created_at,
-        url: data?.signedUrl ?? null,
-      };
-    }),
-  );
+  }>;
 
   // Training, from this person's side. Every other training surface is
   // module-centric — answering "is this cleaner trained?" used to mean
   // opening every module and scanning for their name.
-  const [{ data: orgModules }, { data: trainingRows }] = await Promise.all([
+  const trainingPair = Promise.all([
     (admin
       .from("training_modules")
       .select(
@@ -225,6 +199,52 @@ export default async function EmployeeFilePage({
       }> | null;
     }>,
   ]);
+
+  // ONE wave. Everything below depends only on `member`, `id` and `viewer`,
+  // never on each other, so they all go at once instead of nose-to-tail.
+  const [
+    tz,
+    { data: adminData },
+    { data: applicant },
+    settlement,
+    { data: rawDocs },
+    [{ data: orgModules }, { data: trainingRows }],
+  ] = await Promise.all([
+    tzPromise,
+    adminDataPromise,
+    applicantPromise,
+    settlementPromise,
+    rawDocsPromise,
+    trainingPair,
+  ]);
+
+  const lifecycle: Array<{ label: string; date: string | null }> = [];
+  if (applicant) lifecycle.push({ label: "Applied", date: applicant.created_at });
+  if (applicant?.status === "hired")
+    lifecycle.push({ label: "Hired", date: applicant.reviewed_at });
+  lifecycle.push({ label: "Joined", date: member.created_at });
+  if (isDisabled)
+    lifecycle.push({ label: "Deactivated", date: member.deactivated_at });
+
+
+  // Sign each file so the panel can offer a (short-lived) download link.
+  const documents: EmployeeDocument[] = await Promise.all(
+    (rawDocs ?? []).map(async (d) => {
+      const { data } = await admin.storage
+        .from(BUCKET)
+        .createSignedUrl(d.file_path, 3600);
+      return {
+        id: d.id,
+        category: d.category,
+        label: d.label,
+        file_name: d.file_name,
+        size_bytes: d.size_bytes,
+        created_at: d.created_at,
+        url: data?.signedUrl ?? null,
+      };
+    }),
+  );
+
   const assignmentByModule = new Map(
     (trainingRows ?? []).map((a) => [a.module_id, a]),
   );
