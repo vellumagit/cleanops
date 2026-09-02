@@ -4,6 +4,7 @@ import {
   EARLY_START_GRACE_MINUTES,
   WRITABLE_BOOKING_STATUSES,
   BOOKING_STATUS_TRANSITIONS,
+  allowedTransitionsFor,
   statusDropdownOptions,
   rendersAsStaticBadge,
 } from "./booking-status";
@@ -190,5 +191,84 @@ describe("rendersAsStaticBadge", () => {
         statusDropdownOptions(s).length === 0,
       );
     }
+  });
+});
+
+describe("allowedTransitionsFor — a future job is a plan, not a record", () => {
+  const soon = () => new Date(Date.now() + 60 * 60_000).toISOString(); // +1h
+  const nextWeek = () =>
+    new Date(Date.now() + 7 * 24 * 60 * 60_000).toISOString();
+  const lastWeek = () =>
+    new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString();
+
+  it("lets a future confirmed job go back to pending", () => {
+    // Svitlana's case: moved to tomorrow, client hasn't agreed to the new
+    // time, and the "your job is tomorrow" reminder fires on confirmed only.
+    expect(allowedTransitionsFor("confirmed", nextWeek())).toContain("pending");
+  });
+
+  it("does NOT let a past confirmed job go back to pending", () => {
+    expect(allowedTransitionsFor("confirmed", lastWeek())).not.toContain(
+      "pending",
+    );
+    expect(allowedTransitionsFor("confirmed", lastWeek())).toEqual(
+      BOOKING_STATUS_TRANSITIONS.confirmed,
+    );
+  });
+
+  it("treats 'imminent' as present, not future — the early-start grace", () => {
+    // A job an hour out may be starting; it keeps the strict ladder.
+    expect(allowedTransitionsFor("confirmed", soon())).not.toContain("pending");
+  });
+
+  it("never offers completed or in_progress for a future job", () => {
+    // futureStatusError would reject them anyway; don't offer them either.
+    for (const s of ["pending", "confirmed", "cancelled"]) {
+      const next = allowedTransitionsFor(s, nextWeek());
+      expect(next).not.toContain("completed");
+      expect(next).not.toContain("in_progress");
+    }
+  });
+
+  it("reopens a future cancelled booking, but leaves a past one terminal", () => {
+    expect(allowedTransitionsFor("cancelled", nextWeek())).toEqual(
+      expect.arrayContaining(["pending", "confirmed"]),
+    );
+    expect(allowedTransitionsFor("cancelled", lastWeek())).toEqual([]);
+  });
+
+  it("lets a future completed job be undone (the money guard lives in the action)", () => {
+    expect(allowedTransitionsFor("completed", nextWeek())).toEqual(
+      expect.arrayContaining(["pending", "confirmed", "cancelled"]),
+    );
+    expect(allowedTransitionsFor("completed", lastWeek())).toEqual(["cancelled"]);
+  });
+
+  it("a future job offers ONLY pre-work statuses", () => {
+    expect([...allowedTransitionsFor("confirmed", nextWeek())].sort()).toEqual([
+      "cancelled",
+      "pending",
+    ]);
+  });
+
+  it("never lists a status as a transition to itself", () => {
+    for (const s of WRITABLE_BOOKING_STATUSES) {
+      expect(allowedTransitionsFor(s, nextWeek())).not.toContain(s);
+    }
+  });
+
+  it("falls back to the strict table when the date is missing or junk", () => {
+    expect(allowedTransitionsFor("confirmed", null)).toEqual(
+      BOOKING_STATUS_TRANSITIONS.confirmed,
+    );
+    expect(allowedTransitionsFor("confirmed", "not-a-date")).toEqual(
+      BOOKING_STATUS_TRANSITIONS.confirmed,
+    );
+  });
+
+  it("the dropdown shows the reopened options, and drops the badge", () => {
+    expect(statusDropdownOptions("cancelled", nextWeek())).toContain("pending");
+    expect(rendersAsStaticBadge("cancelled", true, nextWeek())).toBe(false);
+    expect(rendersAsStaticBadge("cancelled", true, lastWeek())).toBe(true);
   });
 });

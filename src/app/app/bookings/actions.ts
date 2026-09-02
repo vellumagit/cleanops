@@ -5,7 +5,7 @@ import { redirect, RedirectType } from "next/navigation";
 import { redirectBack } from "@/lib/return-to";
 import {
   futureStatusError,
-  BOOKING_STATUS_TRANSITIONS,
+  allowedTransitionsFor,
 } from "@/lib/booking-status";
 import { lifecycleByAssignee, withPriorLifecycle } from "@/lib/crew-sync";
 import { after } from "next/server";
@@ -1303,17 +1303,21 @@ export async function updateBookingAction(
     } | null;
   };
 
-  // The dropdown proves every move against BOOKING_STATUS_TRANSITIONS; this
+  // The dropdown proves every move against the same shared rule; this
   // form wrote whatever status the <select> posted. Same door, no lock --
   // completed -> confirmed through here un-completes a job an invoice may
   // already bill, and cancelled -> anything quietly resurrects a booking the
   // client was told is off. Enforce the same table. Same-status saves skip
   // the check so a cancelled booking's notes stay editable.
   if (existing?.status && parsed.data.status !== existing.status) {
-    const allowed =
-      BOOKING_STATUS_TRANSITIONS[
-        existing.status as keyof typeof BOOKING_STATUS_TRANSITIONS
-      ] ?? [];
+    // Judged against the date BEING SAVED, not the one on file. This is the
+    // reschedule case exactly: dragging a job into next week and setting it
+    // back to Pending is one save, and testing the old date would refuse the
+    // move on the strength of where the booking used to be.
+    const allowed = allowedTransitionsFor(
+      existing.status,
+      parsed.data.scheduled_at ?? existing.scheduled_at,
+    );
     if (!allowed.includes(parsed.data.status)) {
       return {
         errors: {
@@ -1326,14 +1330,16 @@ export async function updateBookingAction(
     // Un-completing is allowed, but not out from under an invoice -- the
     // exact guard the status dropdown enforces. Without this twin, the edit
     // form is the bypass.
-    if (existing.status === "completed" && parsed.data.status === "cancelled") {
+    // Any exit from completed, not just cancelling — see the twin guard in
+    // setBookingStatusAction.
+    if (existing.status === "completed") {
       const { resolveBilledBookings } = await import("@/lib/billed-bookings");
       const billed = await resolveBilledBookings(supabase, [id]);
       const inv = billed.get(id);
       if (inv) {
         return {
           errors: {
-            status: `Invoice ${inv.number ?? ""} (${inv.status}) bills this job. Void or fix that invoice first, then cancel the booking.`,
+            status: `Invoice ${inv.number ?? ""} (${inv.status}) bills this job. Void or fix that invoice first, then change the booking's status.`,
           },
           values: raw,
         };
@@ -2675,22 +2681,26 @@ export async function setBookingStatusAction(
   if (booking.status === target) return { ok: true };
 
   // Un-completing is allowed, but not out from under an invoice. If a live
-  // invoice bills this job, cancelling the booking would leave the client
-  // charged for a visit the system says never happened — the money has to be
+  // invoice bills this job, leaving `completed` would have the client charged
+  // for a visit the system no longer says happened — the money has to be
   // undone first (void the draft, or refund), then the status follows.
-  if (booking.status === "completed" && target === "cancelled") {
+  // ANY exit from completed, not just cancelling: future-dated bookings can
+  // now go back to pending/confirmed too, and that is the same hole.
+  if (booking.status === "completed" && target !== "completed") {
     const { resolveBilledBookings } = await import("@/lib/billed-bookings");
     const billed = await resolveBilledBookings(supabase, [id]);
     const inv = billed.get(id);
     if (inv) {
       return {
         ok: false,
-        error: `Invoice ${inv.number ?? ""} (${inv.status}) bills this job. Void or fix that invoice first, then cancel the booking.`,
+        error: `Invoice ${inv.number ?? ""} (${inv.status}) bills this job. Void or fix that invoice first, then change the booking's status.`,
       };
     }
   }
 
-  const allowed = BOOKING_STATUS_TRANSITIONS[booking.status] ?? [];
+  // Judged against WHEN the job sits: a future-dated booking is a plan, so
+  // it can go back to any pre-work status. Past ones keep the strict ladder.
+  const allowed = allowedTransitionsFor(booking.status, booking.scheduled_at);
   if (!allowed.includes(target)) {
     return {
       ok: false,

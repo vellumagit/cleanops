@@ -19,6 +19,7 @@ import {
   ClipboardList,
   CheckSquare,
   MessageSquare,
+  MessageSquareWarning,
   Rss,
   Settings,
   Bell,
@@ -164,6 +165,11 @@ export const NAV_SECTIONS: NavSection[] = [
 
 export const FOOTER_NAV: NavItem[] = [
   { href: "/app/help", label: "Help", icon: LifeBuoy, mobileTier: "more" },
+  // Sits next to Help because it is the other half of the same question:
+  // Help answers what the app already does, Feedback is where you go when
+  // the answer is "it doesn't", or "it did the wrong thing". No roles gate —
+  // a cleaner hitting a bug in the field files the report nobody else can.
+  { href: "/app/feedback", label: "Feedback", icon: MessageSquareWarning, mobileTier: "more" },
   { href: "/app/notifications", label: "Notifications", icon: Bell, mobileTier: "more" },
   { href: "/app/settings", label: "Settings", icon: Settings, roles: ["owner", "admin"], mobileTier: "desktop" },
 ];

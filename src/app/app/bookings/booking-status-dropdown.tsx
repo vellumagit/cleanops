@@ -18,17 +18,21 @@ export function BookingStatusDropdown({
   bookingId,
   status,
   canEdit,
+  scheduledAt,
 }: {
   bookingId: string;
   status: string;
   canEdit: boolean;
+  /** When the job is scheduled. A future-dated booking can be moved back to
+   *  any pre-work status; a past one keeps the strict forward ladder. */
+  scheduledAt?: string | null;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
 
-  const options = statusDropdownOptions(status);
+  const options = statusDropdownOptions(status, scheduledAt);
   // Read-only: no edit rights, or a terminal status → plain badge.
-  if (rendersAsStaticBadge(status, canEdit)) {
+  if (rendersAsStaticBadge(status, canEdit, scheduledAt)) {
     return (
       <StatusBadge
         tone={bookingStatusTone(

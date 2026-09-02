@@ -160,6 +160,26 @@ export function bonusStatusTone(status: "pending" | "paid"): StatusTone {
   return status === "paid" ? "green" : "amber";
 }
 
+export function feedbackStatusTone(
+  status: "open" | "needs_answer" | "in_progress" | "shipped" | "closed",
+): StatusTone {
+  switch (status) {
+    // The only status that points AT the org rather than at Sollos, so it
+    // wears the same amber the rest of the app uses for "needs a human".
+    case "needs_answer":
+      return "amber";
+    case "open":
+      return "blue";
+    // Under way right now — the same violet a job in progress gets.
+    case "in_progress":
+      return "violet";
+    case "shipped":
+      return "green";
+    case "closed":
+      return "neutral";
+  }
+}
+
 export function formatBookingStatus(status: string): string {
   return status.replace(/_/g, " ");
 }

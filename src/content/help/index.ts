@@ -8,6 +8,7 @@ import { body as websiteForms } from "./website-forms";
 import { body as clientPortal } from "./client-portal";
 import { body as automations } from "./automations";
 import { body as hiring } from "./hiring";
+import { body as feedback } from "./feedback";
 
 /**
  * The in-app Help library. Plain typed modules, on purpose:
@@ -44,6 +45,13 @@ export const HELP_ARTICLES: HelpArticle[] = [
     blurb: "The three surfaces, the sidebar, badges, and where to find the fast paths.",
     section: "Start here",
     body: gettingAround,
+  },
+  {
+    slug: "feedback",
+    title: "Feedback",
+    blurb: "Reporting a bug, asking a question, and how to tell whose turn it is.",
+    section: "Start here",
+    body: feedback,
   },
   {
     slug: "bookings",

@@ -31,6 +31,16 @@ Cleaners can submit their working hours in the field app (Profile → Availabili
 
 Statutory holidays show too, once a region is picked in **Settings → Currency, tax & holidays**: the day gets a violet label with the holiday's name on every scheduler view. It's a label, not a block — you can still book the day; you just do it knowing it's Labour Day. Computed locally from the region (province-level rules included), no calendar account involved.
 
+## Status, and changing it back
+
+A booking moves **Pending → Confirmed → In progress → Completed**, and can be **Cancelled** from anywhere along the way. Set it from the dropdown on the bookings list, from a job's quick view on the scheduler, or on the booking's own form.
+
+For a job that has already happened, status only moves forward — you can't un-complete a visit the books say happened, and a cancelled one stays cancelled.
+
+**A job scheduled in the future is different**, because it's a plan rather than a record. Anything more than four hours out can be set freely to **Pending, Confirmed or Cancelled** — including back to Pending after you move it. That's the one to reach for when you reschedule and the client hasn't agreed to the new time yet: the "your job is tomorrow" reminder only goes out for **Confirmed** jobs, so parking it back on Pending stops the client being told about a time nobody has agreed. Future jobs aren't offered *Completed* or *In progress* at all — a job next week can't have happened.
+
+Undoing a **Completed** job is allowed, but not out from under an invoice. If a live invoice bills it, void or fix that invoice first, then change the status.
+
 ## Deleting and skipping
 
 - **Skip** is for one visit of a recurring series that shouldn't happen — the series continues.

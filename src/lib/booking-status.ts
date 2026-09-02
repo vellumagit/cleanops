@@ -102,11 +102,66 @@ export const BOOKING_STATUS_TRANSITIONS: Record<string, readonly string[]> = {
   completed: ["cancelled"],
 };
 
+/**
+ * The states a job can be in BEFORE anyone has worked it. Nothing here has
+ * touched money or told a client a job is finished, so moving between them
+ * costs nothing to undo.
+ */
+const PRE_WORK_STATUSES = ["pending", "confirmed", "cancelled"] as const;
+
+/** Far enough ahead that the job plainly has not happened yet — the same
+ *  threshold futureStatusError uses, so "in the future" means one thing. */
+function isFutureDated(
+  scheduledAtIso: string | null | undefined,
+  now: number,
+): boolean {
+  if (!scheduledAtIso) return false;
+  const start = new Date(scheduledAtIso).getTime();
+  if (!Number.isFinite(start)) return false;
+  return start > now + EARLY_START_GRACE_MINUTES * 60_000;
+}
+
+/**
+ * Where a booking may go, given WHEN it is scheduled.
+ *
+ * The forward-only table above is right about history: you do not un-complete
+ * a job an invoice bills, and you do not resurrect a cancelled visit the
+ * client was told is off. But it was applied to the future as well, where
+ * none of that reasoning holds — a job scheduled for tomorrow is a plan, not
+ * a record. Svitlana moved a booking to tomorrow and could not put it back to
+ * Pending to say "the client hasn't agreed to the new time yet", which
+ * matters: the "your job is tomorrow" reminder fires for CONFIRMED only, and
+ * a reschedule re-arms it. The rule left her one choice — leave it confirmed
+ * and let the client be told a time they never agreed to.
+ *
+ * So: a future-dated booking can be set to any pre-work status. A past-dated
+ * one keeps the strict ladder. The money guard on leaving `completed` lives
+ * in the actions and applies either way.
+ */
+export function allowedTransitionsFor(
+  status: string,
+  scheduledAtIso: string | null | undefined,
+  now: number = Date.now(),
+): readonly string[] {
+  const base = BOOKING_STATUS_TRANSITIONS[status] ?? [];
+  if (!isFutureDated(scheduledAtIso, now)) return base;
+  // Exactly the pre-work statuses — which also REMOVES `completed` and
+  // `in_progress` from the list. The strict table offered them on a job
+  // scheduled for next week, and futureStatusError then refused the save;
+  // an option that can only be rejected is worse than no option. The form's
+  // status <select> already hides them past the same grace, so the two
+  // surfaces now agree.
+  return PRE_WORK_STATUSES.filter((s) => s !== status);
+}
+
 /** What the dropdown shows for a booking at `status`: itself, then where it
  *  can go. Empty for a terminal status, which renders as a plain badge. */
-export function statusDropdownOptions(status: string): readonly string[] {
-  const next = BOOKING_STATUS_TRANSITIONS[status];
-  return next ? [status, ...next] : [];
+export function statusDropdownOptions(
+  status: string,
+  scheduledAtIso?: string | null,
+): readonly string[] {
+  const next = allowedTransitionsFor(status, scheduledAtIso);
+  return next.length > 0 ? [status, ...next] : [];
 }
 
 /**
@@ -124,6 +179,10 @@ export function statusDropdownOptions(status: string): readonly string[] {
  * entirely in how its result was interpreted. So the interpretation is a
  * function now, and it has tests.
  */
-export function rendersAsStaticBadge(status: string, canEdit: boolean): boolean {
-  return !canEdit || statusDropdownOptions(status).length === 0;
+export function rendersAsStaticBadge(
+  status: string,
+  canEdit: boolean,
+  scheduledAtIso?: string | null,
+): boolean {
+  return !canEdit || statusDropdownOptions(status, scheduledAtIso).length === 0;
 }

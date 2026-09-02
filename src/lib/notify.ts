@@ -49,6 +49,16 @@ type NotifyBase = {
    *  quiet = updates without re-buzzing; tag = explicit collapse key so a
    *  repeating nudge rewrites itself instead of stacking. */
   push?: { sticky?: boolean; quiet?: boolean; tag?: string };
+  /**
+   * Drop one membership from the resolved recipient list — the person who
+   * caused the event. Without it, a role audience buzzes the actor about
+   * their own action ("new feedback filed" landing on the phone of whoever
+   * just filed it), which trains people to swipe the whole category away.
+   *
+   * Ignored for `org-wide`, which writes a single shared row with no
+   * recipient to exclude.
+   */
+  excludeMembershipId?: string;
 };
 
 export type NotifyInput = NotifyBase &
@@ -228,6 +238,12 @@ export async function notify(input: NotifyInput): Promise<void> {
       }
       if (doPush) await sendPushToOrg(input.organizationId, push);
       return;
+    }
+
+    if (input.excludeMembershipId) {
+      recipientIds = recipientIds.filter(
+        (id) => id !== input.excludeMembershipId,
+      );
     }
 
     if (recipientIds.length === 0) return;

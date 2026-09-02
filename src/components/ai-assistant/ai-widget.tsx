@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Sparkles, X, Send, Loader2 } from "lucide-react";
+import { Sparkles, X, Send, Loader2, Flag } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type Message = {
@@ -13,7 +14,7 @@ type Message = {
 const WELCOME: Message = {
   role: "assistant",
   content:
-    "Hi! I'm your Sollos assistant. Ask me how to use any feature, or tell me if something seems off — I'll flag it for the team. What can I help you with?",
+    "Hi! I'm your Sollos assistant. Ask me how to use any feature. If something's actually broken, use Report a problem below — that reaches the team and you'll get a reply. What can I help you with?",
 };
 
 export function AIWidget() {
@@ -189,9 +190,19 @@ export function AIWidget() {
                 )}
               </button>
             </div>
-            <p className="mt-1.5 text-center text-[10px] text-muted-foreground">
-              Feedback is shared with the Sollos team
-            </p>
+            {/* This line used to read "Feedback is shared with the Sollos
+                team". It was not: chats are saved to ai_conversations, which
+                nothing and nobody read. The honest version is a button that
+                actually reaches someone — and it carries the page the user is
+                on, so the report arrives knowing where they were. */}
+            <Link
+              href={`/app/feedback/new?page=${encodeURIComponent(pathname)}`}
+              onClick={() => setOpen(false)}
+              className="mt-1.5 flex items-center justify-center gap-1.5 rounded-lg py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <Flag className="h-3 w-3" />
+              Report a problem to the Sollos team
+            </Link>
           </div>
         </div>
       )}

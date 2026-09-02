@@ -181,6 +181,7 @@ export function BookingQuickView({
               bookingId={booking.id}
               status={booking.status}
               canEdit={canEditStatus}
+              scheduledAt={booking.scheduled_at}
             />
           </div>
           {booking.service_type && (
