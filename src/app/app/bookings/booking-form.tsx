@@ -25,6 +25,7 @@ import { FormError, FormField, FormSelect } from "@/components/form-field";
 import { Tip } from "@/components/tip";
 import { SubmitButton } from "@/components/submit-button";
 import { DurationInput } from "@/components/duration-input";
+import { DayGlanceField } from "./day-glance-field";
 import { ReturnToField } from "@/components/return-to-field";
 import { AddressAutocomplete } from "@/components/address-autocomplete";
 import { cn } from "@/lib/utils";
@@ -998,6 +999,9 @@ export function BookingForm({
               value={scheduledAtLocal}
               onChange={(e) => setScheduledAtLocal(e.target.value)}
             />
+            {/* Names the weekday and lists what is already on that day —
+                a datetime-local on a phone tells you neither. */}
+            <DayGlanceField value={scheduledAtLocal} excludeBookingId={id} />
           </FormField>
 
           {durationInput}
