@@ -231,7 +231,16 @@ export async function requireMembership(
  * MFA enrolled and route them to /mfa-verify, which self-heals when
  * no verified factor exists (its own check redirects to /app).
  */
-async function enforceMfa(): Promise<void> {
+/**
+ * CACHED PER REQUEST, deliberately. requireMembership() is not memoized and
+ * is called from the layout, the page, and often a couple of server
+ * components besides — 156 call sites across the app. Each call used to run
+ * listFactors(), which is a NETWORK request to the Supabase Auth API, so a
+ * single dashboard render made the same "does this person have MFA?" round
+ * trip two or three times before rendering anything. MFA enrollment cannot
+ * change midway through one render, so asking once is the whole answer.
+ */
+const enforceMfa = cache(async function enforceMfa(): Promise<void> {
   // API-route exemption.
   //
   // OAuth callbacks (Stripe Connect, Square Connect, etc.) and a
@@ -253,7 +262,7 @@ async function enforceMfa(): Promise<void> {
   // enforceMfa() directly (it's an exported-as-private helper today;
   // promote it if needed).
   const currentPath = await getRequestPath();
-  if (currentPath.startsWith("/api/")) return;
+  if (!currentPath || currentPath.startsWith("/api/")) return;
 
   // Wrap the MFA-related Supabase calls in try/catch and FAIL-OPEN
   // on unhandled exceptions. The previous fail-closed shape was
@@ -276,6 +285,17 @@ async function enforceMfa(): Promise<void> {
     | null = null;
   let factorsCallFailed = false;
   try {
+    // THE JWT ALREADY KNOWS. A session that has cleared MFA carries
+    // aal: "aal2", which is exactly what the getAuthenticatorAssuranceLevel()
+    // call further down goes to the network to ask — and that call only
+    // decodes the same token, where getClaims() verifies it. Reading claims
+    // we have already parsed skips the auth round trips for every MFA user,
+    // on every page and every server action. Inside the try because
+    // getClaims() can throw on an expired, unrefreshable token, and this
+    // function fails open by design.
+    const claims = await getCurrentClaims();
+    if (claims?.aal === "aal2") return;
+
     const supabase = await createSupabaseServerClient();
     const result = await supabase.auth.mfa.listFactors();
     if (result.error) {
@@ -317,7 +337,7 @@ async function enforceMfa(): Promise<void> {
     );
     return;
   }
-}
+});
 
 /**
  * Detect Next.js's `redirect()` sentinel error so our try/catch can
@@ -336,7 +356,7 @@ function isNextRedirectError(err: unknown): boolean {
  * header set by middleware.ts. Returns "/app" as a sensible default
  * if middleware isn't running (build-time RSC, etc.).
  */
-async function getRequestPath(): Promise<string> {
+async function getRequestPath(): Promise<string | null> {
   try {
     const { headers } = await import("next/headers");
     const h = await headers();
@@ -345,7 +365,14 @@ async function getRequestPath(): Promise<string> {
   } catch {
     // Headers not available in this context (build-time, etc.) — fall through.
   }
-  return "/app";
+  // NULL, not "/app". middleware.ts sets this header for exactly the two
+  // trees the MFA gate protects, so its absence means "this is not a gated
+  // page render" — an API route, a build-time prerender. Defaulting to
+  // "/app" made the /api/ exemption below unreachable: an OAuth callback
+  // would be redirected to /mfa-verify, dropping the ?code and ?state that
+  // make the round trip work. The exemption's own comment has promised
+  // otherwise since the matcher first excluded /api/.
+  return null;
 }
 
 /**
