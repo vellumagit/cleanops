@@ -146,6 +146,12 @@ export async function clockOutAction(
     .eq("id", open.id);
   if (updateError) return { ok: false, error: updateError.message };
 
+  // Take back the sticky "Still on the clock?" nudge — the shift is over, and
+  // a notification that outlives its own condition reads as the app refusing
+  // to let you clock out. See src/lib/clock-nag.ts.
+  const { clearClockOutNag } = await import("@/lib/clock-nag");
+  await clearClockOutNag({ membershipId: membership.id, entryId: open.id });
+
   revalidatePath("/field/clock");
   revalidatePath("/field/jobs");
   return { ok: true };

@@ -294,7 +294,7 @@ export async function completeJobAction(
     .eq("booking_id", bookingId)
     .eq("membership_id", membership.id) as unknown as Promise<unknown>);
 
-  const { error: closeEntryError } = await supabase
+  const { data: closedEntries, error: closeEntryError } = (await supabase
     .from("time_entries")
     .update({
       clock_out_at: now,
@@ -303,8 +303,23 @@ export async function completeJobAction(
     })
     .eq("employee_id", membership.id)
     .eq("booking_id", bookingId)
-    .is("clock_out_at", null);
+    .is("clock_out_at", null)
+    .select("id")) as unknown as {
+    data: Array<{ id: string }> | null;
+    error: { message: string } | null;
+  };
   if (closeEntryError) return { ok: false, error: closeEntryError.message };
+
+  // Finishing the job is a clock-out too, so the nudge has to go the same way.
+  {
+    const { clearClockOutNag } = await import("@/lib/clock-nag");
+    for (const entry of closedEntries ?? []) {
+      await clearClockOutNag({
+        membershipId: membership.id,
+        entryId: entry.id,
+      });
+    }
+  }
 
   // A split shift is a hand-off between people (2+ segments, each with its own
   // duration). Don't finish (or invoice) the booking until EVERY segment is

@@ -37,6 +37,10 @@ interface PushPayload {
   /** Update in place without buzzing again — for a recurring nudge that
    *  rewrites itself rather than re-alerting every cycle. */
   quiet?: boolean;
+  /** Retract instead of show: the service worker closes any notification
+   *  carrying this `tag` and displays nothing. For taking back a sticky
+   *  nudge once the thing it was nagging about is done. */
+  dismiss?: boolean;
   /** Explicit collapse key. Same tag replaces rather than stacks; defaults
    *  to href, which groups by destination page. */
   tag?: string;

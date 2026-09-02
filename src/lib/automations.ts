@@ -6274,6 +6274,18 @@ export async function sendShiftClockOutReminders(): Promise<{
         if (!claimed || claimed.length === 0) continue;
         autoClosed += 1;
 
+        // The shift is closed, so the "Still on the clock?" nudge on their
+        // phone is now false. Retract it — it is sticky by design and would
+        // otherwise sit there telling them to do something they can no
+        // longer do. See src/lib/clock-nag.ts.
+        {
+          const { clearClockOutNag } = await import("@/lib/clock-nag");
+          await clearClockOutNag({
+            membershipId: e.employee_id,
+            entryId: e.id,
+          });
+        }
+
         // Whoever is responsible — manager, or the owner standing in when the
         // org has no manager.
         await notify({

@@ -85,7 +85,22 @@ self.addEventListener("push", (event) => {
     };
   }
 
-  const { title, body, href, icon, sticky, quiet, tag } = payload;
+  const { title, body, href, icon, sticky, quiet, tag, dismiss } = payload;
+
+  // RETRACTION. A sticky notification stays in the shade until someone
+  // dismisses it — which is right for "you're still on the clock", and wrong
+  // the moment they actually clock out. Nothing used to take it back, so the
+  // phone kept saying "tap to clock out" to someone who already had, and
+  // tapping it again changed nothing. A push carrying { dismiss: true }
+  // closes the matching notification instead of showing another.
+  if (dismiss) {
+    event.waitUntil(
+      self.registration
+        .getNotifications({ tag: tag || href || "default" })
+        .then((existing) => existing.forEach((n) => n.close())),
+    );
+    return;
+  }
 
   event.waitUntil(
     self.registration.showNotification(title || "Sollos 3", {
