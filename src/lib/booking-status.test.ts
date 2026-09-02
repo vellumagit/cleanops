@@ -272,3 +272,27 @@ describe("allowedTransitionsFor — a future job is a plan, not a record", () =>
     expect(rendersAsStaticBadge("cancelled", true, lastWeek())).toBe(true);
   });
 });
+
+describe("every offered option is a writable status", () => {
+  // The bug this pins: setBookingStatusAction carried its OWN hand-written
+  // list of acceptable targets, written before `pending` became writable.
+  // The list dropdown offered Pending on a future-dated job and that action
+  // answered "Invalid status.", while the edit form — reading the shared
+  // list — saved the identical change. Any status a surface can offer must
+  // be one the writer accepts.
+  const dates = [
+    new Date(Date.now() + 7 * 24 * 60 * 60_000).toISOString(),
+    new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString(),
+    null,
+  ];
+
+  it("holds for every status and every date shape", () => {
+    for (const s of [...WRITABLE_BOOKING_STATUSES, "en_route", "nonsense"]) {
+      for (const d of dates) {
+        for (const opt of statusDropdownOptions(s, d)) {
+          expect(WRITABLE_BOOKING_STATUSES).toContain(opt);
+        }
+      }
+    }
+  });
+});

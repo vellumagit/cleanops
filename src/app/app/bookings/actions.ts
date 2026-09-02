@@ -6,6 +6,9 @@ import { redirectBack } from "@/lib/return-to";
 import {
   futureStatusError,
   allowedTransitionsFor,
+  WRITABLE_BOOKING_STATUSES,
+  WRITABLE_BOOKING_STATUS_LIST,
+  type WritableBookingStatus,
 } from "@/lib/booking-status";
 import { lifecycleByAssignee, withPriorLifecycle } from "@/lib/crew-sync";
 import { after } from "next/server";
@@ -2646,10 +2649,16 @@ export async function setBookingStatusAction(
   const id = String(formData.get("id") ?? "").trim();
   const target = String(formData.get("status") ?? "").trim();
   if (!id) return { ok: false, error: "Missing booking." };
-  if (
-    !["confirmed", "in_progress", "completed", "cancelled"].includes(target)
-  ) {
-    return { ok: false, error: "Invalid status." };
+  // The SHARED list, not a fourth hand-written copy. This one was written
+  // before `pending` became writable and never caught up, so the dropdown
+  // offered Pending on a future-dated job and this line answered "Invalid
+  // status." — while the edit form, which reads the shared list, saved the
+  // same change happily. Two doors, two answers.
+  if (!(WRITABLE_BOOKING_STATUSES as readonly string[]).includes(target)) {
+    return {
+      ok: false,
+      error: `Invalid status. Allowed: ${WRITABLE_BOOKING_STATUS_LIST}.`,
+    };
   }
 
   const { membership, supabase } = await getActionContext();
@@ -2718,7 +2727,7 @@ export async function setBookingStatusAction(
   const { error } = await supabase
     .from("bookings")
     .update({
-      status: target as "confirmed" | "in_progress" | "completed" | "cancelled",
+      status: target as WritableBookingStatus,
     })
     .eq("id", id)
     .eq("organization_id", membership.organization_id);

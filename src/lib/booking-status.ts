@@ -144,6 +144,13 @@ export function allowedTransitionsFor(
   now: number = Date.now(),
 ): readonly string[] {
   const base = BOOKING_STATUS_TRANSITIONS[status] ?? [];
+  // Only statuses the app still writes get the future-date freedom. A legacy
+  // `en_route` row would otherwise gain a live dropdown whose first option is
+  // its own current value — which the writer rejects as invalid. Retired and
+  // unknown statuses keep rendering as a plain badge, exactly as before.
+  if (!(WRITABLE_BOOKING_STATUSES as readonly string[]).includes(status)) {
+    return base;
+  }
   if (!isFutureDated(scheduledAtIso, now)) return base;
   // Exactly the pre-work statuses — which also REMOVES `completed` and
   // `in_progress` from the list. The strict table offered them on a job
