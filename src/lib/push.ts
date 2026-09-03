@@ -79,6 +79,11 @@ export async function sendPushToMembership(
     sticky: payload.sticky ?? false,
     quiet: payload.quiet ?? false,
     tag: payload.tag,
+    // Serialized EXPLICITLY. This allow-list is the only thing that reaches
+    // the service worker; a field added to PushPayload but not here is
+    // silently dropped — which is exactly how the first clock-out retraction
+    // shipped as a blank "Sollos 3" notification instead of a dismissal.
+    dismiss: payload.dismiss ?? false,
   });
 
   let sent = 0;
@@ -181,6 +186,11 @@ export async function sendPushToOrg(
     sticky: payload.sticky ?? false,
     quiet: payload.quiet ?? false,
     tag: payload.tag,
+    // Serialized EXPLICITLY. This allow-list is the only thing that reaches
+    // the service worker; a field added to PushPayload but not here is
+    // silently dropped — which is exactly how the first clock-out retraction
+    // shipped as a blank "Sollos 3" notification instead of a dismissal.
+    dismiss: payload.dismiss ?? false,
   });
 
   let sent = 0;
