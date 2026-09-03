@@ -106,14 +106,20 @@ export default async function DashboardPage() {
       )
       .gte("submitted_at", thirtyDaysAgo.toISOString())
       .order("submitted_at", { ascending: false }),
+    // Recent bookings for the activity feed. scheduled_at and series_id
+    // ride along so a recurring generation can be folded into one line —
+    // eight occurrences minted in one save all share created_at, and the
+    // feed used to print eight identical "New booking · Elena" rows that
+    // read as a duplication bug. 24 so one burst can't crowd out the rest.
     supabase
       .from("bookings")
       .select(
-        `id, created_at, status, total_cents,
+        `id, created_at, scheduled_at, series_id, status, total_cents,
          client:clients ( name )`,
       )
+      .eq("organization_id", membership.organization_id)
       .order("created_at", { ascending: false })
-      .limit(8),
+      .limit(24),
     supabase
       .from("invoices")
       .select(
@@ -239,14 +245,54 @@ export default async function DashboardPage() {
         href: string;
       };
 
-  const activity: Activity[] = [
-    ...(recentBookings.data ?? []).slice(0, 5).map((b): Activity => ({
+  // Fold a recurring generation into ONE event. Occurrences created by the
+  // same save share series_id + created_at (to the second); shown one per
+  // row they are indistinguishable and look like a bug. A single booking
+  // shows the day it is FOR, which is what anyone reading "new booking"
+  // wants to know — not the second it was typed in.
+  type RecentBooking = NonNullable<typeof recentBookings.data>[number] & {
+    scheduled_at: string;
+    series_id: string | null;
+  };
+  const bookingEvents: Activity[] = [];
+  const seenBurst = new Map<string, { count: number; first: string; last: string; idx: number }>();
+  for (const b of (recentBookings.data ?? []) as RecentBooking[]) {
+    const burstKey = b.series_id
+      ? `${b.series_id}|${b.created_at.slice(0, 19)}`
+      : null;
+    if (burstKey && seenBurst.has(burstKey)) {
+      const g = seenBurst.get(burstKey)!;
+      g.count += 1;
+      if (b.scheduled_at < g.first) g.first = b.scheduled_at;
+      if (b.scheduled_at > g.last) g.last = b.scheduled_at;
+      continue;
+    }
+    if (burstKey) {
+      seenBurst.set(burstKey, {
+        count: 1,
+        first: b.scheduled_at,
+        last: b.scheduled_at,
+        idx: bookingEvents.length,
+      });
+    }
+    bookingEvents.push({
       kind: "booking_created",
       at: b.created_at,
       title: `New booking · ${b.client?.name ?? "—"}`,
-      meta: formatCurrencyCents(b.total_cents, currency),
+      meta: `${formatCurrencyCents(b.total_cents, currency)} · for ${formatDate(b.scheduled_at, tz)}`,
       href: "/app/bookings",
-    })),
+    });
+  }
+  for (const g of seenBurst.values()) {
+    if (g.count < 2) continue;
+    const ev = bookingEvents[g.idx];
+    ev.title = ev.title.replace("New booking", `${g.count} visits scheduled`);
+    ev.meta = `${formatDate(g.first, tz)} – ${formatDate(g.last, tz)}`;
+    ev.href = "/app/bookings/series";
+  }
+
+  const activity: Activity[] = [
+    ...bookingEvents.slice(0, 5),
     ...reviews.slice(0, 5).map((r): Activity => ({
       kind: "review",
       at: r.submitted_at,
@@ -561,7 +607,9 @@ export default async function DashboardPage() {
                         {a.title}
                       </span>
                       <span className="truncate text-[11px] text-muted-foreground">
-                        {a.meta} · {formatDate(a.at, tz)}
+                        {a.kind === "booking_created"
+                          ? a.meta
+                          : `${a.meta} · ${formatDate(a.at, tz)}`}
                       </span>
                     </div>
                   </Link>
