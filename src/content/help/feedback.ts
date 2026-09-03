@@ -1,5 +1,5 @@
 export const body = `
-**Feedback** is where you tell the Sollos team something is broken, ask for something new, or ask a question — and where they ask you things back. It replaced trading voice messages, and it exists for one reason: a voice memo has no status, no history, and no way to tell whose turn it is.
+**Feedback** is where you tell the Sollos team something is broken, ask for something new, or ask a question — and where they ask you things back. Every new item and every follow-up you post is also emailed to **support@sollos3.com**, with your address as the reply-to, so an answer from Sollos can reach you by email as well as here. It replaced trading voice messages, and it exists for one reason: a voice memo has no status, no history, and no way to tell whose turn it is.
 
 Find it under **Feedback** at the bottom of the sidebar, or from **Report a problem** at the bottom of the assistant chat.
 

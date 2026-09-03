@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
 import { notify } from "@/lib/notify";
+import { emailSupport } from "@/lib/support-mail";
 import {
   FeedbackItemSchema,
   FeedbackReplySchema,
@@ -104,6 +105,35 @@ export async function createFeedbackAction(
     href: `/app/feedback/${inserted.id}`,
   });
 
+  // And the people who build the thing. The bell above reaches the
+  // customer's own admins; nothing reached Sollos unless someone happened
+  // to be a member of that org. Reply-to is the reporter, so answering
+  // the email answers them.
+  {
+    const [{ data: org }, { data: userData }] = await Promise.all([
+      supabase
+        .from("organizations")
+        .select("name")
+        .eq("id", membership.organization_id)
+        .maybeSingle(),
+      supabase.auth.getUser(),
+    ]);
+    const orgName = (org as { name?: string } | null)?.name ?? "Unknown org";
+    const site = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+    void emailSupport({
+      subject: `[${feedbackKindLabel(parsed.data.kind)}] ${parsed.data.title} — ${orgName}`,
+      replyTo: userData?.user?.email ?? null,
+      fields: [
+        ["Org", orgName],
+        ["From", userData?.user?.email ?? null],
+        ["Kind", feedbackKindLabel(parsed.data.kind)],
+        ["Page", parsed.data.page_context ?? null],
+      ],
+      message: parsed.data.body ?? null,
+      href: `${site}/app/feedback/${inserted.id}`,
+    });
+  }
+
   revalidatePath("/app/feedback");
   redirect(`/app/feedback/${inserted.id}`);
 }
@@ -198,7 +228,8 @@ export async function replyFeedbackAction(
       href: `/app/feedback/${id}`,
     });
   } else {
-    // The reporter followed up on their own thread — tell the other side.
+    // The reporter followed up on their own thread — tell the other side,
+    // and tell Sollos: a customer follow-up is the thing most easily missed.
     await notify({
       organizationId: item.organization_id,
       audience: "org-admins",
@@ -207,6 +238,15 @@ export async function replyFeedbackAction(
       title: `Reply: ${item.title}`,
       body: bodyLine,
       href: `/app/feedback/${id}`,
+    });
+    const { data: userData } = await supabase.auth.getUser();
+    const site = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+    void emailSupport({
+      subject: `Re: ${item.title}`,
+      replyTo: userData?.user?.email ?? null,
+      fields: [["From", userData?.user?.email ?? null]],
+      message: bodyLine,
+      href: `${site}/app/feedback/${id}`,
     });
   }
 

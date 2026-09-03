@@ -212,6 +212,30 @@ ${canSeeMoney ? `- Invoices awaiting payment: ${unpaidInvoices.count ?? "N/A"}` 
 
         controller.close();
 
+        // A "🚩 Feedback noted" is the assistant hearing a complaint on the
+        // product's behalf. It was saved to ai_conversations — a table nobody
+        // reads — and went no further. Forward it to support with the user's
+        // words, so the flag means something.
+        if (fullResponse.startsWith("🚩 Feedback noted:")) {
+          const lastUser = [...messages].reverse().find((m) => m.role === "user");
+          const site = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+          void import("@/lib/support-mail").then(({ emailSupport }) =>
+            emailSupport({
+              subject: `[Assistant flag] ${fullResponse.split("\n")[0].slice(0, 120)}`,
+              replyTo: user.email ?? null,
+              fields: [
+                ["From", user.email ?? null],
+                ["Org", orgId],
+                ["Page", currentPage],
+              ],
+              message: lastUser
+                ? `They said:\n${lastUser.content}\n\nAssistant replied:\n${fullResponse}`
+                : fullResponse,
+              href: `${site}${currentPage.startsWith("/") ? currentPage : "/app"}`,
+            }),
+          );
+        }
+
         // Save conversation for UX/bug review — fire and forget
         const allMessages = [
           ...messages,
