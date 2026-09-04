@@ -18,7 +18,7 @@ import { StatusBadge, type StatusTone } from "@/components/status-badge";
 import { isSubcontractor } from "@/lib/engagement";
 import { buttonVariants } from "@/components/ui/button";
 import { memberDisplayName } from "@/lib/member-display";
-import { formatCurrencyCents, formatDate, humanizeEnum } from "@/lib/format";
+import { formatCurrencyCents, formatDate, formatDateTime, humanizeEnum } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { DocumentsPanel, type EmployeeDocument } from "./documents-panel";
 import { getOrgTimezone } from "@/lib/org-timezone";
@@ -398,27 +398,70 @@ export default async function EmployeeFilePage({
           <div
             className={cn(
               "rounded-xl border p-4",
-              settlement.totalCents > 0 ||
-                settlement.ptoCount > 0 ||
-                settlement.flaggedCount > 0
+              !settlement.allClear
                 ? "border-amber-300/60 bg-amber-50 dark:border-amber-900/40 dark:bg-amber-950/20"
                 : "border-border bg-card",
             )}
           >
             <div className="flex items-baseline justify-between gap-3">
-              <h3 className="text-sm font-semibold">Final settlement</h3>
+              <div>
+                <h3 className="text-sm font-semibold">Ending the employment</h3>
+                <p className="text-[11px] text-muted-foreground">
+                  Everything still open on this person. Clear each line and
+                  the card goes quiet.
+                </p>
+              </div>
               <span className="text-sm font-bold tabular-nums">
                 {formatCurrencyCents(settlement.totalCents)}
               </span>
             </div>
-            {settlement.totalCents === 0 &&
-            settlement.ptoCount === 0 &&
-            settlement.flaggedCount === 0 ? (
-              <p className="mt-1 text-xs text-muted-foreground">
-                Nothing owed — hours, bonuses, and tips are all settled.
+            {settlement.allClear ? (
+              <p className="mt-2 text-xs text-muted-foreground">
+                Nothing open — every run is paid, no hours or tips are
+                waiting, and they&rsquo;re on no future jobs.
               </p>
             ) : (
-              <ul className="mt-2 space-y-1 text-xs">
+              <ul className="mt-3 space-y-1.5 text-xs">
+                {settlement.inFlightRuns.length > 0 && (
+                  <li>
+                    <p className="font-medium">
+                      In a run, not yet marked paid —{" "}
+                      <span className="tabular-nums">
+                        {formatCurrencyCents(settlement.inFlightCents)}
+                      </span>
+                    </p>
+                    <ul className="mt-1 space-y-0.5 pl-3">
+                      {settlement.inFlightRuns.map((r) => (
+                        <li
+                          key={`${r.kind}-${r.runId}`}
+                          className="flex justify-between gap-3"
+                        >
+                          <span>
+                            <Link
+                              href={r.href}
+                              className="underline underline-offset-2"
+                            >
+                              {r.kind === "payroll"
+                                ? "Payroll run"
+                                : "Contractor statement"}{" "}
+                              {formatDate(r.periodStart, tz)} –{" "}
+                              {formatDate(r.periodEnd, tz)}
+                            </Link>{" "}
+                            <span className="text-muted-foreground">
+                              · {r.status === "draft" ? "draft, not finalized" : "finalized, not paid"}
+                            </span>
+                          </span>
+                          <span className="shrink-0 tabular-nums font-medium">
+                            {formatCurrencyCents(r.cents)}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="mt-0.5 text-muted-foreground">
+                      Open the run and <span className="font-medium">Mark as paid</span> once the money has gone out.
+                    </p>
+                  </li>
+                )}
                 {settlement.unpaidHoursCents > 0 && (
                   <li className="flex justify-between gap-3">
                     <span>
@@ -482,8 +525,38 @@ export default async function EmployeeFilePage({
                   <li className="text-amber-800 dark:text-amber-300">
                     {settlement.flaggedCount} shift
                     {settlement.flaggedCount === 1 ? "" : "s"} still flagged
-                    for review on Timesheets — blocked from every pay run
-                    until confirmed, then added here.
+                    for review on{" "}
+                    <Link href="/app/timesheets" className="underline underline-offset-2">
+                      Timesheets
+                    </Link>{" "}
+                    — blocked from every pay run until confirmed, then added
+                    here.
+                  </li>
+                )}
+                {settlement.openShiftCount > 0 && (
+                  <li className="text-amber-800 dark:text-amber-300">
+                    <p className="font-medium">
+                      Still the cleaner on {settlement.openShiftCount} future job
+                      {settlement.openShiftCount === 1 ? "" : "s"} — reassign or cancel
+                    </p>
+                    <ul className="mt-1 space-y-0.5 pl-3 text-foreground">
+                      {settlement.openShifts.slice(0, 5).map((s) => (
+                        <li key={s.bookingId}>
+                          <Link
+                            href={`/app/bookings/${s.bookingId}`}
+                            className="underline underline-offset-2"
+                          >
+                            {formatDateTime(s.scheduledAt, tz)}
+                          </Link>
+                          {s.clientName ? ` · ${s.clientName}` : ""}
+                        </li>
+                      ))}
+                      {settlement.openShiftCount > 5 && (
+                        <li className="text-muted-foreground">
+                          and {settlement.openShiftCount - 5} more on the scheduler
+                        </li>
+                      )}
+                    </ul>
                   </li>
                 )}
               </ul>

@@ -3,53 +3,75 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { zonedYmd } from "@/lib/wall-clock";
+import { periodHref } from "@/lib/pay-period";
 
 /**
- * Everything the business still owes one person, on one number.
+ * Everything still open when someone leaves.
  *
- * The offboarding audit found the debts scattered across four tables with
- * four different visibilities: unpaid hours WOULD be picked up by the next
- * run (invisible until then), pending bonuses would be skipped forever,
- * tips owed sat on the payroll page's org-wide card, and approved future
- * PTO sat nowhere at all. This aggregates them per person so the employee
- * file (and the edit page, before the owner flips the switch) can show a
- * settlement instead of a shrug.
+ * Two kinds of money:
+ *   - NOT YET IN A RUN — hours no run has claimed, pending bonuses, tips
+ *     owed, approved future PTO. These have no automatic collector once the
+ *     person is off the roster (a bonus never joins a run; PTO for a
+ *     departed person is a decision, not a payout).
+ *   - IN A RUN, NOT YET PAID — lines on a payroll run or contractor
+ *     statement whose run hasn't been marked paid. Jim (2026-09-04): every
+ *     shift sat on three finalized-but-unpaid runs, and the card said
+ *     "Nothing owed" because it only counted the first kind. The money was
+ *     owed; the card had handed responsibility to runs nobody finished.
  *
- * Pricing matches the run machines exactly — pay_rate_cents_snapshot first,
- * current member rate as fallback, minutes = whole minutes, integer cents
- * per entry (see src/lib/subcontractor-run.ts). "The same shift must not be
- * worth two different amounts depending on which screen you open."
- *
- * PTO is counted but NOT priced into the total: whether approved-but-unused
- * time off gets paid out on exit is the owner's call (and jurisdiction's),
- * so it's surfaced as hours awaiting a decision, never silently added.
+ * Plus the one non-money thing that bites: jobs they are still assigned
+ * to in the future. Deactivation sweeps those, but a person deactivated
+ * before the sweep existed, or re-assigned afterwards by hand, can still
+ * be the only cleaner on Tuesday's job.
  */
 
+export type InFlightRun = {
+  kind: "payroll" | "contractor";
+  runId: string;
+  periodStart: string;
+  periodEnd: string;
+  /** payroll: draft | finalized; contractor: finalized. Never "paid". */
+  status: string;
+  cents: number;
+  href: string;
+};
+
+export type OpenShift = {
+  bookingId: string;
+  scheduledAt: string;
+  status: string;
+  clientName: string | null;
+};
+
 export type FinalSettlement = {
-  /** Closed, reviewed, unpaid hours — the next run WILL pay these. */
   unpaidMinutes: number;
   unpaidHoursCents: number;
   unpaidEntryCount: number;
-  /** Closed but needs_review — blocked from every run until confirmed. */
   flaggedCount: number;
-  /** Pending bonuses no future run will pick up once they're off-roster. */
   bonusCents: number;
   bonusCount: number;
-  /** Tips collected by the business, not yet handed over. */
   tipsCents: number;
   tipsCount: number;
-  /** Approved time off reaching today or later — pay-or-void decision. */
   ptoHours: number;
   ptoCount: number;
-  /** hours + bonuses + tips. PTO deliberately excluded (see above). */
+  /** Runs that claimed their hours but were never marked paid. */
+  inFlightRuns: InFlightRun[];
+  inFlightCents: number;
+  /** Future jobs they are still the cleaner on. */
+  openShifts: OpenShift[];
+  openShiftCount: number;
+  /** Unclaimed hours + bonuses + tips + in-flight runs. */
   totalCents: number;
+  /** True when nothing on the card needs a human. */
+  allClear: boolean;
 };
+
+const OPEN_BOOKING_STATUSES = ["pending", "confirmed", "en_route", "in_progress"];
 
 export async function getFinalSettlement(
   admin: SupabaseClient,
   organizationId: string,
   membershipId: string,
-  /** memberships.pay_rate_cents — fallback for legacy entries without a snapshot. */
   fallbackRateCents: number | null,
 ): Promise<FinalSettlement> {
   // The ORG's today, not the server's. Vercel runs in UTC, so a plain
@@ -60,6 +82,7 @@ export async function getFinalSettlement(
     new Date(),
     await getOrgTimezone(organizationId),
   );
+  const nowIso = new Date().toISOString();
 
   const [
     { data: entries },
@@ -67,6 +90,10 @@ export async function getFinalSettlement(
     { data: bonuses },
     { data: tips },
     { data: pto },
+    { data: payrollLines },
+    { data: contractorLines },
+    { data: primaryShifts },
+    { data: crewShifts },
   ] = await Promise.all([
     admin
       .from("time_entries")
@@ -100,7 +127,7 @@ export async function getFinalSettlement(
       count: number | null;
     }>,
     // payroll_run_id NULL on bonuses and PTO: rows a prepared run already
-    // claimed WILL be paid by it — counting them here would double the debt.
+    // claimed WILL be paid by it — and that run shows up below as in-flight.
     admin
       .from("bonuses")
       .select("amount_cents")
@@ -128,6 +155,82 @@ export async function getFinalSettlement(
       .gte("end_date", todayYmd) as unknown as Promise<{
       data: Array<{ hours: number | string }> | null;
     }>,
+    // Their line on every payroll run. The run's status decides whether
+    // it's still owed; the embed comes back null for runs filtered out,
+    // so the JS below drops those.
+    admin
+      .from("payroll_items")
+      .select(
+        "total_cents, run:payroll_runs!inner ( id, status, period_start, period_end )",
+      )
+      .eq("organization_id", organizationId)
+      .eq("employee_id", membershipId)
+      .neq("run.status", "paid") as unknown as Promise<{
+      data: Array<{
+        total_cents: number;
+        run: {
+          id: string;
+          status: string;
+          period_start: string;
+          period_end: string;
+        } | null;
+      }> | null;
+    }>,
+    admin
+      .from("subcontractor_pay_items" as never)
+      .select(
+        "total_cents, run:subcontractor_pay_runs!inner ( id, status, period_start, period_end )",
+      )
+      .eq("organization_id" as never, organizationId as never)
+      .eq("membership_id" as never, membershipId as never)
+      .neq("run.status" as never, "paid" as never) as unknown as Promise<{
+      data: Array<{
+        total_cents: number;
+        run: {
+          id: string;
+          status: string;
+          period_start: string;
+          period_end: string;
+        } | null;
+      }> | null;
+    }>,
+    admin
+      .from("bookings")
+      .select("id, scheduled_at, status, client:clients ( name )")
+      .eq("organization_id", organizationId)
+      .eq("assigned_to", membershipId)
+      .is("archived_at", null)
+      .gte("scheduled_at", nowIso)
+      .in("status", OPEN_BOOKING_STATUSES)
+      .order("scheduled_at", { ascending: true })
+      .limit(50) as unknown as Promise<{
+      data: Array<{
+        id: string;
+        scheduled_at: string;
+        status: string;
+        client: { name: string } | null;
+      }> | null;
+    }>,
+    admin
+      .from("booking_assignees")
+      .select(
+        "booking:bookings!inner ( id, scheduled_at, status, organization_id, archived_at, client:clients ( name ) )",
+      )
+      .eq("membership_id", membershipId)
+      .eq("booking.organization_id", organizationId)
+      .is("booking.archived_at", null)
+      .gte("booking.scheduled_at", nowIso)
+      .in("booking.status", OPEN_BOOKING_STATUSES)
+      .limit(50) as unknown as Promise<{
+      data: Array<{
+        booking: {
+          id: string;
+          scheduled_at: string;
+          status: string;
+          client: { name: string } | null;
+        } | null;
+      }> | null;
+    }>,
   ]);
 
   let unpaidMinutes = 0;
@@ -154,6 +257,65 @@ export async function getFinalSettlement(
   const tipsCents = (tips ?? []).reduce((s, t) => s + t.amount_cents, 0);
   const ptoHours = (pto ?? []).reduce((s, p) => s + Number(p.hours || 0), 0);
 
+  const inFlightRuns: InFlightRun[] = [];
+  for (const l of payrollLines ?? []) {
+    if (!l.run || l.run.status === "paid") continue;
+    inFlightRuns.push({
+      kind: "payroll",
+      runId: l.run.id,
+      periodStart: l.run.period_start,
+      periodEnd: l.run.period_end,
+      status: l.run.status,
+      cents: l.total_cents ?? 0,
+      href: periodHref(l.run.period_start, l.run.period_end),
+    });
+  }
+  for (const l of contractorLines ?? []) {
+    if (!l.run || l.run.status === "paid") continue;
+    inFlightRuns.push({
+      kind: "contractor",
+      runId: l.run.id,
+      periodStart: l.run.period_start,
+      periodEnd: l.run.period_end,
+      status: l.run.status,
+      cents: l.total_cents ?? 0,
+      href: periodHref(l.run.period_start, l.run.period_end),
+    });
+  }
+  inFlightRuns.sort((a, b) => a.periodStart.localeCompare(b.periodStart));
+  const inFlightCents = inFlightRuns.reduce((s, r) => s + r.cents, 0);
+
+  // Future jobs, primary and crew, deduped by booking.
+  const shiftMap = new Map<string, OpenShift>();
+  for (const b of primaryShifts ?? []) {
+    shiftMap.set(b.id, {
+      bookingId: b.id,
+      scheduledAt: b.scheduled_at,
+      status: b.status,
+      clientName: b.client?.name ?? null,
+    });
+  }
+  for (const r of crewShifts ?? []) {
+    const b = r.booking;
+    if (!b || shiftMap.has(b.id)) continue;
+    shiftMap.set(b.id, {
+      bookingId: b.id,
+      scheduledAt: b.scheduled_at,
+      status: b.status,
+      clientName: b.client?.name ?? null,
+    });
+  }
+  const openShifts = [...shiftMap.values()].sort((a, b) =>
+    a.scheduledAt.localeCompare(b.scheduledAt),
+  );
+
+  const totalCents = unpaidHoursCents + bonusCents + tipsCents + inFlightCents;
+  const allClear =
+    totalCents === 0 &&
+    (pto?.length ?? 0) === 0 &&
+    (flagged ?? 0) === 0 &&
+    openShifts.length === 0;
+
   return {
     unpaidMinutes,
     unpaidHoursCents,
@@ -165,6 +327,11 @@ export async function getFinalSettlement(
     tipsCount: tips?.length ?? 0,
     ptoHours,
     ptoCount: pto?.length ?? 0,
-    totalCents: unpaidHoursCents + bonusCents + tipsCents,
+    inFlightRuns,
+    inFlightCents,
+    openShifts,
+    openShiftCount: openShifts.length,
+    totalCents,
+    allClear,
   };
 }
