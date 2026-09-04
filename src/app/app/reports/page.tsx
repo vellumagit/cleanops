@@ -52,6 +52,7 @@ export default async function ReportsPage({
     reviewsResp,
     { data: clients },
     { data: topClientsRaw },
+    { data: keptTips },
   ] = await Promise.all([
     supabase
       .from("invoices")
@@ -90,6 +91,19 @@ export default async function ReportsPage({
       .gte("paid_at", fromIso)
       .lte("paid_at", toIso)
       .limit(2000),
+    // Tips an owner kept for the business. Revenue above is net of tips by
+    // design (a tip was pass-through money for a cleaner), so a kept tip is
+    // income that shows up nowhere else. Keyed on the settlement date, which
+    // is stamped together with kept_by_business.
+    supabase
+      .from("invoice_tips" as never)
+      .select("amount_cents, paid_out_at")
+      .eq("organization_id" as never, membership.organization_id as never)
+      .eq("kept_by_business" as never, true as never)
+      .gte("paid_out_at" as never, fromIso as never)
+      .lte("paid_out_at" as never, toIso as never) as unknown as Promise<{
+      data: Array<{ amount_cents: number; paid_out_at: string | null }> | null;
+    }>,
   ]);
 
   const invoices = invoicesResp.data;
@@ -175,6 +189,23 @@ export default async function ReportsPage({
     a.localeCompare(b),
   );
   const maxMonthRevenue = Math.max(0, ...monthEntries.map(([, v]) => v));
+
+  // Tips kept — total and by month, beside revenue, never inside it.
+  const tipsKeptCents = (keptTips ?? []).reduce(
+    (s, t) => s + (t.amount_cents ?? 0),
+    0,
+  );
+  const tipsByMonth = new Map<string, number>();
+  for (const t of keptTips ?? []) {
+    if (!t.paid_out_at) continue;
+    const m = zonedYmd(new Date(t.paid_out_at), orgTz).slice(0, 7);
+    tipsByMonth.set(m, (tipsByMonth.get(m) ?? 0) + (t.amount_cents ?? 0));
+  }
+  // A month with kept tips but no paid invoice still deserves a row.
+  for (const m of tipsByMonth.keys()) {
+    if (!revenueByMonth.has(m)) monthEntries.push([m, 0]);
+  }
+  monthEntries.sort(([a], [b]) => a.localeCompare(b));
 
   // Bookings by service type
   const byService = new Map<string, number>();
@@ -265,11 +296,16 @@ export default async function ReportsPage({
       </form>
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
         <Kpi
           label="Paid revenue"
           value={formatCurrencyCents(totalRevenue, currency)}
           tone="green"
+        />
+        <Kpi
+          label="Tips kept"
+          value={formatCurrencyCents(tipsKeptCents, currency)}
+          tone={tipsKeptCents > 0 ? "green" : "neutral"}
         />
         <Kpi
           label="Outstanding"
@@ -294,7 +330,11 @@ export default async function ReportsPage({
 
       {/* Revenue by month */}
       <div className="mt-6 rounded-lg border border-border bg-card p-5">
-        <h2 className="mb-4 text-sm font-semibold">Revenue by month</h2>
+        <h2 className="mb-1 text-sm font-semibold">Revenue by month</h2>
+        <p className="mb-4 text-xs text-muted-foreground">
+          Paid invoices, net of tips. Tips kept by the business sit beside
+          the month they were kept, so service revenue stays comparable.
+        </p>
         {monthEntries.length === 0 ? (
           <p className="text-xs text-muted-foreground">
             No paid invoices in this window.
@@ -331,6 +371,14 @@ export default async function ReportsPage({
                   </div>
                   <div className="w-24 shrink-0 text-right font-mono text-xs tabular-nums">
                     {formatCurrencyCents(value, currency)}
+                  </div>
+                  <div
+                    className="w-28 shrink-0 text-right font-mono text-[11px] tabular-nums text-muted-foreground"
+                    title="Tips kept by the business this month"
+                  >
+                    {tipsByMonth.has(month)
+                      ? `+ ${formatCurrencyCents(tipsByMonth.get(month) ?? 0, currency)} tips`
+                      : ""}
                   </div>
                 </div>
               );

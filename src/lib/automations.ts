@@ -5193,6 +5193,21 @@ export async function sendMonthlyOpsDigests(): Promise<{ orgsSent: number }> {
       (a, r) => a + r.amount_cents,
       0,
     );
+    // Tips the owner kept for the business this month. Revenue is net of
+    // tips, so without this line a kept tip is income that appears nowhere.
+    const { data: keptTips } = (await db
+      .from("invoice_tips" as never)
+      .select("amount_cents")
+      .eq("organization_id" as never, org.id as never)
+      .eq("kept_by_business" as never, true as never)
+      .gte("paid_out_at" as never, start.toISOString() as never)
+      .lt("paid_out_at" as never, end.toISOString() as never)) as unknown as {
+      data: Array<{ amount_cents: number }> | null;
+    };
+    const tipsKeptCents = (keptTips ?? []).reduce(
+      (a, r) => a + (r.amount_cents ?? 0),
+      0,
+    );
     const avgRating =
       reviews && reviews.length > 0
         ? (reviews.reduce((a, r) => a + r.rating, 0) / reviews.length).toFixed(
@@ -5202,6 +5217,15 @@ export async function sendMonthlyOpsDigests(): Promise<{ orgsSent: number }> {
 
     const stats = [
       { label: "Revenue", value: formatCurrencyCents(revenueCents, currency) },
+      ...(tipsKeptCents > 0
+        ? [
+            {
+              label: "Tips kept",
+              value: formatCurrencyCents(tipsKeptCents, currency),
+              sub: "kept by the business",
+            },
+          ]
+        : []),
       { label: "Jobs completed", value: String(completedCount ?? 0) },
       { label: "Jobs cancelled", value: String(cancelledCount ?? 0) },
       {
