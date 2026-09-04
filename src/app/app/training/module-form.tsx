@@ -28,6 +28,8 @@ type StepData = {
   imageFile: File | null;
   existingImageUrl: string | null;
   removeImage: boolean;
+  /** Optional link — a video, a doc, a page. */
+  linkUrl: string;
 };
 
 type Props = {
@@ -43,6 +45,7 @@ type Props = {
     title: string;
     body: string;
     image_url: string | null;
+    link_url?: string | null;
   }>;
 };
 
@@ -133,6 +136,7 @@ export function ModuleForm({
           imageFile: null,
           existingImageUrl: s.image_url,
           removeImage: false,
+          linkUrl: s.link_url ?? "",
         };
       });
     }
@@ -145,6 +149,7 @@ export function ModuleForm({
         imageFile: null,
         existingImageUrl: null,
         removeImage: false,
+        linkUrl: "",
       },
     ];
   });
@@ -160,6 +165,7 @@ export function ModuleForm({
         imageFile: null,
         existingImageUrl: null,
         removeImage: false,
+        linkUrl: "",
       },
     ]);
   }
@@ -357,6 +363,7 @@ export function ModuleForm({
             name={`step_${idx}_remove_image`}
             value={step.removeImage ? "1" : "0"}
           />
+          <input type="hidden" name={`step_${idx}_link`} value={step.linkUrl} />
         </div>
       ))}
 
@@ -481,6 +488,30 @@ function StepEditor({
             rows={3}
             className="mt-1"
           />
+        </div>
+
+        {/* Link — a video, a doc, a page. YouTube/Vimeo play inline in the
+            field app; anything else opens in a new tab. */}
+        <div>
+          <label
+            htmlFor={`step-link-${index}`}
+            className="text-xs font-medium text-muted-foreground"
+          >
+            Link <span className="font-normal">(optional — a video, a document, a page)</span>
+          </label>
+          <input
+            id={`step-link-${index}`}
+            type="url"
+            inputMode="url"
+            value={step.linkUrl}
+            onChange={(e) => onUpdate({ linkUrl: e.target.value })}
+            placeholder="https://youtu.be/…"
+            className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
+          />
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            YouTube and Vimeo links play right in the step. Everything else
+            opens in a new tab.
+          </p>
         </div>
 
         {/* Reference image */}

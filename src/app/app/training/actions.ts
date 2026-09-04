@@ -51,6 +51,7 @@ function parseStepsFromFormData(formData: FormData): Array<{
   imageFile: File | null;
   existingImageUrl: string | null;
   removeImage: boolean;
+  linkUrl: string | null;
 }> {
   const steps: Array<{
     title: string;
@@ -58,6 +59,7 @@ function parseStepsFromFormData(formData: FormData): Array<{
     imageFile: File | null;
     existingImageUrl: string | null;
     removeImage: boolean;
+    linkUrl: string | null;
   }> = [];
 
   // Steps are encoded as step_0_title, step_0_body, step_0_image, etc.
@@ -68,6 +70,13 @@ function parseStepsFromFormData(formData: FormData): Array<{
     const imageFile = formData.get(`step_${i}_image`) as File | null;
     const existingImageUrl = String(formData.get(`step_${i}_existing_image`) ?? "");
     const removeImage = formData.get(`step_${i}_remove_image`) === "1";
+    // A link is optional and must be a web address. Anything else (a bare
+    // "youtube.com/...", a javascript: URL) is dropped rather than saved,
+    // because the field app renders it as a tappable target.
+    const rawLink = String(formData.get(`step_${i}_link`) ?? "").trim();
+    const linkUrl = /^https?:\/\/\S+$/i.test(rawLink) && rawLink.length <= 2000
+      ? rawLink
+      : null;
 
     // Only add steps that have content
     if (title || body) {
@@ -77,6 +86,7 @@ function parseStepsFromFormData(formData: FormData): Array<{
         imageFile: imageFile && imageFile.size > 0 ? imageFile : null,
         existingImageUrl: existingImageUrl || null,
         removeImage,
+        linkUrl,
       });
     }
     i++;
@@ -160,6 +170,7 @@ export async function createTrainingModuleAction(
           ord: idx,
           body: step.body,
           image_url: imageUrl,
+          link_url: step.linkUrl,
         };
       }),
     );
@@ -254,6 +265,7 @@ export async function updateTrainingModuleAction(
           ord: idx,
           body: step.body,
           image_url: imageUrl,
+          link_url: step.linkUrl,
         };
       }),
     );

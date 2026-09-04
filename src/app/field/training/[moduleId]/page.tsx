@@ -4,6 +4,7 @@ import { ChevronLeft } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { StepToggle } from "./step-toggle";
+import { TrainingStepLink } from "@/components/training-step-link";
 
 export const metadata = { title: "Training module" };
 
@@ -31,9 +32,18 @@ export default async function FieldTrainingModulePage({
         .maybeSingle(),
       supabase
         .from("training_steps")
-        .select("id, ord, body, image_url")
+        // link_url postdates the generated types (20260904020000).
+        .select("id, ord, body, image_url, link_url" as never)
         .eq("module_id", moduleId)
-        .order("ord", { ascending: true }),
+        .order("ord", { ascending: true }) as unknown as Promise<{
+        data: Array<{
+          id: string;
+          ord: number;
+          body: string;
+          image_url: string | null;
+          link_url: string | null;
+        }> | null;
+      }>,
     ]);
 
   if (!module) notFound();
@@ -117,6 +127,12 @@ export default async function FieldTrainingModulePage({
                       src={step.image_url}
                       alt={`Step ${idx + 1} reference`}
                       className="mt-2 max-h-48 rounded border border-border object-cover"
+                    />
+                  ) : null}
+                  {step.link_url ? (
+                    <TrainingStepLink
+                      url={step.link_url}
+                      label={`Step ${idx + 1} video`}
                     />
                   ) : null}
                 </div>

@@ -27,9 +27,18 @@ export default async function EditTrainingModulePage({
       .maybeSingle(),
     supabase
       .from("training_steps")
-      .select("id, ord, body, image_url")
+      // link_url postdates the generated types (20260904020000).
+      .select("id, ord, body, image_url, link_url" as never)
       .eq("module_id", id)
-      .order("ord", { ascending: true }),
+      .order("ord", { ascending: true }) as unknown as Promise<{
+        data: Array<{
+          id: string;
+          ord: number;
+          body: string;
+          image_url: string | null;
+          link_url: string | null;
+        }> | null;
+      }>,
   ]);
 
   if (!module) notFound();
@@ -47,6 +56,7 @@ export default async function EditTrainingModulePage({
     title: "",
     body: s.body,
     image_url: s.image_url,
+    link_url: s.link_url,
   }));
 
   return (

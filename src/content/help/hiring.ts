@@ -3,7 +3,7 @@ Hiring has its own lane in the sidebar, and its three pages map to the three mom
 
 - **Applicants** — where website applications land, with a pipeline: new → reviewing → interview → hired → rejected. Each applicant carries their submitted details, resume link, and your notes.
 - **Hiring** — the library you work FROM before the yes.
-- **Training** — what a new employee works THROUGH after it: modules you author, assigned to people, completed in the field app. The Training page answers both directions: per module (who's done it) and per employee (the **By employee** list — who's fully trained, what's outstanding). An employee's file shows the same rollup for just that person, including certification expiry dates.
+- **Training** — what a new employee works THROUGH after it: modules you author, assigned to people, completed in the field app. Each section takes text, a reference image, and a **link** — paste a YouTube or Vimeo address and the video plays inside the step on the cleaner's phone; any other link (a supplier's data sheet, a Google Doc, a page on your site) opens in a new tab. The Training page answers both directions: per module (who's done it) and per employee (the **By employee** list — who's fully trained, what's outstanding). An employee's file shows the same rollup for just that person, including certification expiry dates.
 
 ## The hiring library
 
