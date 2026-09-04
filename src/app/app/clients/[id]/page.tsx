@@ -40,6 +40,10 @@ import { fetchOrgNotificationContext } from "../org-contact-default";
 import { SmsOptInButton } from "./sms-opt-in-button";
 import { ClientPropertiesCard, type PropertyRow } from "./properties-card";
 import { ClientDocumentsCard, type ClientDocument } from "./documents-card";
+import { EmailClientDialog } from "./email-client-dialog";
+import { SentEmailsCard, type SentEmail } from "./sent-emails-card";
+import { memberDisplayName } from "@/lib/member-display";
+import { getOrgSender } from "@/lib/email";
 import { ArchiveClientCard } from "./archive-card";
 import { archiveCancelWindowStartIso } from "@/lib/client-offboarding";
 import { getOrgTimezone } from "@/lib/org-timezone";
@@ -344,6 +348,48 @@ export default async function ClientDetailPage({
     }),
   );
 
+  // The sent folder: hand-written emails to this client. Same admin
+  // client + org filter as documents, newest first, capped so a chatty
+  // account doesn't make the profile scroll forever.
+  const { data: rawEmails } = (await adminDb
+    .from("client_emails" as never)
+    .select(
+      "id, subject, to_email, status, error, created_at, attachments, sender:memberships!client_emails_sent_by_fkey(display_name, profile:profiles(full_name))",
+    )
+    .eq("client_id" as never, id)
+    .eq("organization_id" as never, membership.organization_id as never)
+    .order("created_at" as never, { ascending: false } as never)
+    .limit(20)) as unknown as {
+    data: Array<{
+      id: string;
+      subject: string;
+      to_email: string;
+      status: "sent" | "failed";
+      error: string | null;
+      created_at: string;
+      attachments: Array<{ name: string }> | null;
+      sender: {
+        display_name: string | null;
+        profile: { full_name: string | null } | null;
+      } | null;
+    }> | null;
+  };
+  const sentEmails: SentEmail[] = (rawEmails ?? []).map((e) => ({
+    id: e.id,
+    subject: e.subject,
+    to_email: e.to_email,
+    status: e.status,
+    error: e.error,
+    created_at: e.created_at,
+    attachments: Array.isArray(e.attachments) ? e.attachments : [],
+    sender_name: e.sender ? memberDisplayName(e.sender) : null,
+  }));
+  // Where a reply to a hand-written email would land — shown in the
+  // compose dialog so nobody assumes an inbox that isn't wired.
+  const canCompose = Boolean(canEdit && can(membership, "clients") && client.email && !isArchived);
+  const orgSender = canCompose ? await getOrgSender(membership.organization_id) : null;
+  const replyTo = orgSender?.replyTo ?? (orgSender && orgSender.from !== "noreply@sollos3.com" ? orgSender.from : null);
+
   return (
     <PageShell
       title={client.name}
@@ -371,6 +417,21 @@ export default async function ClientDetailPage({
               hasPortalAccess={Boolean(client.profile_id)}
               portalInvitedAt={client.portal_invited_at}
               portalInviteExpiresAt={client.portal_invite_expires_at}
+            />
+          )}
+          {canCompose && client.email && (
+            <EmailClientDialog
+              clientId={id}
+              clientName={client.name}
+              clientEmail={client.email}
+              replyTo={replyTo}
+              documents={clientDocuments.map((d) => ({
+                id: d.id,
+                label: d.label,
+                file_name: d.file_name,
+                size_bytes: d.size_bytes,
+                category: d.category,
+              }))}
             />
           )}
           {canEdit && !isArchived && can(membership, "invoicing") && (
@@ -746,6 +807,13 @@ export default async function ClientDetailPage({
             clientId={id}
             documents={clientDocuments}
             canEdit={canEdit}
+          />
+
+          {/* ── Sent emails ── */}
+          <SentEmailsCard
+            emails={sentEmails}
+            timeZone={tz}
+            canCompose={canCompose}
           />
 
           {/* ── Estimates ── */}

@@ -2084,3 +2084,83 @@ export function renderStaffAlertEmail(args: {
 
   return { subject, html, text };
 }
+
+// ---------------------------------------------------------------------------
+// Client message — a hand-written email from the office to a client
+// ---------------------------------------------------------------------------
+
+/**
+ * The "Email client" button on a client's profile. Plain letter on the
+ * org's letterhead: greeting, the message as paragraphs, a line naming
+ * what is attached, and the org's contact block. No call-to-action
+ * button — the person writing it decides what it is for.
+ */
+export function clientMessageEmail(args: {
+  clientName: string;
+  subject: string;
+  /** Plain text. Blank lines separate paragraphs. */
+  body: string;
+  attachmentNames: string[];
+  orgName: string;
+  brandColor?: string;
+  logoUrl?: string;
+  contactEmail?: string | null;
+  contactPhone?: string | null;
+}) {
+  const firstName = args.clientName.trim().split(/\s+/)[0] || args.clientName;
+  const paragraphs = args.body
+    .split(/\n{2,}/)
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .map(
+      (p) =>
+        `<p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#27272a;">${escapeHtml(p).replace(/\n/g, "<br>")}</p>`,
+    )
+    .join("");
+
+  const attached =
+    args.attachmentNames.length > 0
+      ? `<p style="margin:18px 0 0;padding-top:14px;border-top:1px solid #e4e4e7;font-size:13px;color:#52525b;"><strong style="color:#27272a;">Attached:</strong> ${args.attachmentNames.map(escapeHtml).join(", ")}</p>`
+      : "";
+
+  const contactBits = [
+    args.contactEmail
+      ? `<a href="mailto:${escapeAttr(args.contactEmail)}" style="color:#27272a;">${escapeHtml(args.contactEmail)}</a>`
+      : null,
+    args.contactPhone ? escapeHtml(args.contactPhone) : null,
+  ].filter(Boolean);
+  const contact =
+    contactBits.length > 0
+      ? `<p style="margin:22px 0 0;font-size:13px;color:#71717a;">${escapeHtml(args.orgName)} · ${contactBits.join(" · ")}</p>`
+      : `<p style="margin:22px 0 0;font-size:13px;color:#71717a;">${escapeHtml(args.orgName)}</p>`;
+
+  const html = layout(
+    `
+    <p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#27272a;">Hi ${escapeHtml(firstName)},</p>
+    ${paragraphs}
+    ${attached}
+    ${contact}
+    `,
+    {
+      brandColor: args.brandColor,
+      orgName: args.orgName,
+      logoUrl: args.logoUrl,
+      preheader: args.body.slice(0, 120),
+    },
+  );
+
+  const text = [
+    `Hi ${firstName},`,
+    "",
+    args.body,
+    args.attachmentNames.length > 0
+      ? `\nAttached: ${args.attachmentNames.join(", ")}`
+      : "",
+    "",
+    [args.orgName, args.contactEmail, args.contactPhone]
+      .filter(Boolean)
+      .join(" · "),
+  ].join("\n");
+
+  return { subject: args.subject, html, text };
+}

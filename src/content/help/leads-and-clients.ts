@@ -28,6 +28,8 @@ Either way, any open website inquiries from them are resolved automatically — 
 
 A client's profile is the long-term record: address, standing notes (buzzer codes, pets), billing preferences, properties if they have several places, and their booking history. **+Book** from a profile starts a booking with the client, their address, AND their usual job — service, length, and price from their last booking — already filled. **New estimate** and **New invoice** start prefilled the same way, completed jobs in the history have a one-tap **book again**, and the stat cards ("Bookings 12", "Invoices 3") open those pages filtered to just this client.
 
+**Email client** (top of the profile) writes to the client directly from Sollos: a subject, a message, and any of the files on their **Documents** card ticked as attachments — a countersigned invoice, a service agreement, a receipt — plus anything you add from your device (kept on the record by default). It goes to the email on their profile, on your letterhead with your logo and contact details, and replies land in your workspace's contact inbox. Every one shows up under **Sent emails** on the profile with what was attached and who sent it, so anyone in the office can see what the client was told. Automated mail (invoices, reminders, estimates) isn't in that list — it lives on the thing that sent it.
+
 > Same email = same person. If a website form arrives with an email you already have, it updates that lead instead of creating a duplicate. Different emails create separate leads — merge by hand if you spot twins.
 
 ## When a client leaves
