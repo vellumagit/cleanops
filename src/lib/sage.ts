@@ -489,7 +489,16 @@ async function sageFetch<T>(
 ): Promise<T> {
   let access = await getUsableSageAccessToken(organizationId);
   if (!access) {
-    throw new Error("Sage is not connected for this organization.");
+    // Two different situations wore the same sentence until 2026-09-04:
+    // no connection row at all, and a connection whose refresh failed.
+    // The second one is the one people hit, and "not connected" sent
+    // them to check a page that said Connected.
+    const conn = await getSageConnection(organizationId);
+    throw new Error(
+      conn
+        ? "Sage's sign-in couldn't be renewed (the refresh token was rejected or the encryption key changed). Reconnect Sage in Settings → Integrations."
+        : "Sage is not connected for this organization.",
+    );
   }
 
   const doFetch = async (token: string) => {
@@ -565,9 +574,17 @@ type SageContact = {
  * sales-invoice POST for that contact 422'd with "Invoice Address is
  * required." — which is why no invoice has ever reached Sage.
  */
+export type SageContactPush = {
+  id: string | null;
+  /** Why there is no id — worded for the person who has to fix it. */
+  error?: string;
+  /** Retrying with the same data will fail again. */
+  permanent?: boolean;
+};
+
 export async function pushClientToSage(
   clientId: string,
-): Promise<string | null> {
+): Promise<SageContactPush> {
   const admin = createSupabaseAdminClient();
 
   const { data: client } = (await admin
@@ -590,14 +607,18 @@ export async function pushClientToSage(
 
   if (!client) {
     console.log(`[sage] pushClientToSage: client ${clientId} not found`);
-    return null;
+    return { id: null, error: "Client not found.", permanent: true };
   }
   const conn = await getSageConnection(client.organization_id);
   if (!conn) {
     console.log(
       `[sage] pushClientToSage: org ${client.organization_id} has no active Sage connection`,
     );
-    return null;
+    return {
+      id: null,
+      error:
+        "Sage isn't connected. Reconnect it in Settings → Integrations, then try again.",
+    };
   }
 
   if (client.sage_contact_id) {
@@ -614,7 +635,10 @@ export async function pushClientToSage(
           {
             method: "PUT",
             body: JSON.stringify({
-              contact: { main_address: repair, delivery_address: repair },
+              contact: {
+                main_address: { name: "Main", ...repair },
+                delivery_address: { name: "Delivery", ...repair },
+              },
             }),
           },
         );
@@ -627,7 +651,7 @@ export async function pushClientToSage(
         );
       }
     }
-    return client.sage_contact_id;
+    return { id: client.sage_contact_id };
   }
 
   // Sage will not accept an invoice for a contact with no address, so refuse
@@ -639,7 +663,11 @@ export async function pushClientToSage(
       `[sage] pushClientToSage: client ${clientId} has no usable address; ` +
         `Sage rejects invoices for address-less contacts, so not creating one`,
     );
-    return null;
+    return {
+      id: null,
+      error: `Sage needs a postal address for ${client.name} before it can be created as a contact. Add one on the client (street, city, province, country), then sync again.`,
+      permanent: true,
+    };
   }
 
   try {
@@ -652,11 +680,16 @@ export async function pushClientToSage(
           contact: {
             name: client.name,
             contact_type_ids: ["CUSTOMER"],
-            main_address: parsed,
+            // Every Sage address needs a `name` label — without it the POST
+            // is a 422 "This field is required. (addresses.name)". That
+            // one line kept every new contact from being created between
+            // 2026-07-31 (when addresses were first sent) and 2026-09-04,
+            // and the error was swallowed into "check the client has a name".
+            main_address: { name: "Main", ...parsed },
             // Sage treats these as separate records; without a delivery
             // address the invoice POST fails its own "Delivery Address is
             // required." rule even when main_address is present.
-            delivery_address: parsed,
+            delivery_address: { name: "Delivery", ...parsed },
             ...(client.email || client.phone
               ? {
                   main_contact_person: {
@@ -680,11 +713,49 @@ export async function pushClientToSage(
     console.log(
       `[sage] pushClientToSage: client ${clientId} → contact ${result.id}`,
     );
-    return result.id;
+    return { id: result.id };
   } catch (err) {
+    // Until 2026-09-04 this returned null and the caller told the user to
+    // "check the client has a name" — while the real reason (Sage's own
+    // validation message, a dead token, a 5xx) went to the server log and
+    // nowhere else. Now the reason travels with the failure.
     console.error("[sage] pushClientToSage failed:", err);
-    return null;
+    const message =
+      err instanceof Error ? err.message : "Unknown error creating the contact.";
+    return {
+      id: null,
+      error: `Sage refused to create ${client.name} as a contact — ${describeSageError(message)}`,
+      permanent: /→\s*4\d\d:/.test(message),
+    };
   }
+}
+
+/**
+ * Turn "Sage API POST /contacts → 422: [{"$severity":"error",...,"$message":"…"}]"
+ * into the human sentence Sage put inside it, keeping the status. Falls
+ * back to the raw message when the body isn't the shape we expect.
+ */
+export function describeSageError(message: string): string {
+  const m = message.match(/→\s*(\d{3}):\s*([\s\S]*)$/);
+  if (!m) return message;
+  const [, status, body] = m;
+  try {
+    const parsed = JSON.parse(body) as unknown;
+    const items = Array.isArray(parsed) ? parsed : [parsed];
+    const lines = items
+      .map((it) => {
+        if (!it || typeof it !== "object") return null;
+        const o = it as { $message?: string; $source?: string; message?: string };
+        const text = o.$message ?? o.message;
+        if (!text) return null;
+        return o.$source ? `${text} (${o.$source})` : text;
+      })
+      .filter((x): x is string => Boolean(x));
+    if (lines.length) return `Sage said (${status}): ${lines.join("; ")}`;
+  } catch {
+    // not JSON — fall through
+  }
+  return `Sage answered ${status}: ${body.slice(0, 300)}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -790,11 +861,13 @@ export async function pushInvoiceToSage(
   const orgTaxRegionId = getSageTaxRegionId(conn);
 
   // Ensure the client exists in Sage first.
-  const sageContactId = await pushClientToSage(invoice.client_id);
+  const contact = await pushClientToSage(invoice.client_id);
+  const sageContactId = contact.id;
   if (!sageContactId) {
     return fail(
-      "Couldn't create this client as a Sage contact. Check the client has a name, then try again.",
-      true,
+      contact.error ??
+        "Couldn't create this client as a Sage contact. Try again, and if it keeps failing reconnect Sage in Settings → Integrations.",
+      contact.permanent ?? false,
     );
   }
 
@@ -917,7 +990,8 @@ export async function pushInvoiceToSage(
       );
     }
 
-    const result = await sageFetch<SageSalesInvoice>(
+    const postInvoice = (regionForAttempt: string | null) =>
+      sageFetch<SageSalesInvoice>(
       invoice.organization_id,
       "/sales_invoices",
       {
@@ -947,9 +1021,9 @@ export async function pushInvoiceToSage(
             // than picking one and hoping. Not about the customer's country:
             // the "not allowed" case reproduced for a Canadian and a US
             // contact alike.
-            ...(addressPinsRegion
-              ? {}
-              : { tax_address_region_id: orgTaxRegionId }),
+            ...(regionForAttempt
+              ? { tax_address_region_id: regionForAttempt }
+              : {}),
             invoice_lines: sageLines.map((l, i) => ({
               description: l.description,
               quantity: l.quantity,
@@ -971,6 +1045,36 @@ export async function pushInvoiceToSage(
         }),
       },
     );
+
+    // Which region to name. Live evidence, 2026-09-04, on the same Sage
+    // account: an Edmonton address with province AND country was refused
+    // WITHOUT the field ("tax_address_region_id is required"), while the
+    // 2026-08-04 note above records the opposite refusal WITH it. Sage's
+    // behaviour here is not stable enough to encode as a rule, so: send the
+    // region the address implies (CA-AB from "AB, Canada"), falling back to
+    // the org's configured one, and if Sage answers "not allowed" retry
+    // once without it. One extra request on the rare path beats a
+    // permanent skip-list entry on the common one.
+    const impliedRegion =
+      invoiceAddress.country_id && invoiceAddress.region
+        ? `${invoiceAddress.country_id}-${invoiceAddress.region}`
+        : null;
+    const firstRegion = impliedRegion ?? orgTaxRegionId;
+    let result: SageSalesInvoice;
+    try {
+      result = await postInvoice(firstRegion);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "";
+      const regionRefused =
+        /→\s*422:/.test(msg) &&
+        /tax_address_region_id/i.test(msg) &&
+        /not allowed|not permitted|must be blank|cannot be set/i.test(msg);
+      if (!regionRefused || firstRegion === null) throw err;
+      console.log(
+        `[sage] invoice ${invoiceId}: Sage refused tax_address_region_id=${firstRegion}; retrying without`,
+      );
+      result = await postInvoice(null);
+    }
 
     await admin
       .from("invoices")

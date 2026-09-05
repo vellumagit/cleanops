@@ -30,4 +30,8 @@ The invoice number is the first column and it's searchable — a client says "ab
 The list shows the newest 500 invoices and says so when older ones exist — search only looks inside what's loaded. For one client's complete history, open their page and use **View all** beside Recent invoices.
 
 > A recurring client is usually better served by **period billing** — one invoice per month or cycle covering all visits — than by per-visit invoices. Ask about billing cadence on the client's profile.
+
+## Accounting sync (Sage, QuickBooks)
+
+With an accounting connection under **Settings → Integrations**, every invoice that reaches *sent* (or paid) is pushed to the books as a sales invoice, and the client is created there as a contact the first time. A push that fails is retried every few hours, and the reason shows on the Integrations page in the accountant's words — nearly always a missing piece of address. Sage needs a real postal address on the client (street, city, province, country) before it will accept them at all, and a province + country on the invoice's address or a default tax region picked on the Sage card. **Payments are not pushed**: a paid invoice lands in the books as an open sales invoice, and the payment is recorded there by hand.
 `;
