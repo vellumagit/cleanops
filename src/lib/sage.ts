@@ -541,6 +541,11 @@ async function sageFetch<T>(
   return (await res.json()) as T;
 }
 
+/** Read-only GET against the org's Sage account, for diagnostics and tooling. */
+export function sageApiGet<T>(organizationId: string, path: string): Promise<T> {
+  return sageFetch<T>(organizationId, path);
+}
+
 // ---------------------------------------------------------------------------
 // Contact (client) sync
 // ---------------------------------------------------------------------------
@@ -1148,24 +1153,51 @@ async function getSageBankAccountId(
   return null;
 }
 
-/** Sollos payment method → Sage payment_method_id. Unknown → omitted. */
-function sagePaymentMethodId(method: string): string | null {
-  switch (method) {
-    case "card":
-      return "CREDIT_DEBIT";
-    case "cash":
-      return "CASH";
-    case "check":
-      return "CHEQUE";
-    case "bank_transfer":
-    case "ach":
-    case "zelle":
-    case "venmo":
-    case "cashapp":
-      return "BANK_TRANSFER";
-    default:
-      return null;
+/**
+ * The payment-method ids this Sage business actually has. They differ by
+ * region (the Canadian test business has CASH, CHECK, ELECTRONIC,
+ * CREDIT_DEBIT, ONLINE_PAYMENT — no BANK_TRANSFER, no CHEQUE), and Sage
+ * answers a wrong one with "is invalid for business. (payment_type_id)".
+ * Read once, cached on the connection.
+ */
+async function getSagePaymentMethodIds(conn: SageConnection): Promise<string[]> {
+  const cached = (conn.metadata ?? {})["payment_method_ids"];
+  if (Array.isArray(cached) && cached.every((x) => typeof x === "string")) {
+    return cached as string[];
   }
+  try {
+    const resp = await sageFetch<{ $items?: Array<{ id: string }> }>(
+      conn.organization_id,
+      "/payment_methods",
+    );
+    const ids = (resp.$items ?? []).map((m) => m.id).filter(Boolean);
+    await mergeConnectionMetadata(conn.id, { payment_method_ids: ids });
+    return ids;
+  } catch (err) {
+    console.error("[sage] payment_methods lookup failed:", err);
+    return [];
+  }
+}
+
+/**
+ * Sollos payment method → the first matching id the business offers.
+ * Nothing matching → omitted; the receipt still books without it.
+ */
+function sagePaymentMethodId(method: string, available: string[]): string | null {
+  const candidates: Record<string, string[]> = {
+    card: ["CREDIT_DEBIT"],
+    cash: ["CASH"],
+    check: ["CHECK", "CHEQUE"],
+    bank_transfer: ["ELECTRONIC", "BANK_TRANSFER"],
+    ach: ["ELECTRONIC", "BANK_TRANSFER"],
+    zelle: ["ELECTRONIC", "BANK_TRANSFER"],
+    venmo: ["ELECTRONIC", "BANK_TRANSFER"],
+    cashapp: ["ELECTRONIC", "BANK_TRANSFER"],
+  };
+  for (const id of candidates[method] ?? []) {
+    if (available.includes(id)) return id;
+  }
+  return null;
 }
 
 type SageContactPayment = { id: string; displayed_as?: string };
@@ -1271,7 +1303,29 @@ export async function pushInvoicePaymentToSage(
     const orgTz = await getOrgTimezone(orgId);
     const date = zonedYmd(new Date(payment.received_at), orgTz);
     const amount = payment.amount_cents / 100;
-    const methodId = sagePaymentMethodId(payment.method);
+    const methodId = sagePaymentMethodId(
+      payment.method,
+      await getSagePaymentMethodIds(conn),
+    );
+
+    // Sage refuses to allocate more than the invoice still owes ("You
+    // cannot overpay invoices"). A client who rounds up, or a test payment
+    // keyed for more than the bill, is real money all the same: allocate
+    // what the invoice can take and leave the rest on the customer's
+    // account in Sage, which is exactly what a bookkeeper would do.
+    const sageInvoice = await sageFetch<{ outstanding_amount?: number | string }>(
+      orgId,
+      `/sales_invoices/${sageInvoiceId}`,
+    );
+    const outstanding = Number(sageInvoice.outstanding_amount ?? 0);
+    if (!(outstanding > 0)) {
+      return fail(
+        `Sage already shows ${payment.invoice.number ?? "this invoice"} as paid — the receipt was recorded there by hand. Nothing pushed, nothing to fix.`,
+        true,
+      );
+    }
+    const allocate = Math.min(amount, outstanding);
+    const onAccount = Math.round((amount - allocate) * 100) / 100;
     const reference =
       (payment.reference ?? payment.invoice.number ?? "").slice(0, 50) ||
       undefined;
@@ -1288,7 +1342,7 @@ export async function pushInvoicePaymentToSage(
             total_amount: amount,
             reference,
             ...(withMethod && methodId ? { payment_method_id: methodId } : {}),
-            allocated_artefacts: [{ artefact_id: sageInvoiceId, amount }],
+            allocated_artefacts: [{ artefact_id: sageInvoiceId, amount: allocate }],
           },
         }),
       });
@@ -1300,7 +1354,11 @@ export async function pushInvoicePaymentToSage(
       // payment_method_id is decoration; if Sage's list doesn't carry the
       // one we guessed, the receipt still belongs in the books.
       const msg = err instanceof Error ? err.message : "";
-      if (methodId && /→\s*422:/.test(msg) && /payment_method/i.test(msg)) {
+      if (
+        methodId &&
+        /→\s*422:/.test(msg) &&
+        /payment_method|payment_type/i.test(msg)
+      ) {
         console.log(
           `[sage] payment ${paymentId}: method ${methodId} refused; retrying without`,
         );
@@ -1316,7 +1374,7 @@ export async function pushInvoicePaymentToSage(
       .eq("id" as never, paymentId as never);
     await recordSageError(orgId, null);
     console.log(
-      `[sage] pushInvoicePaymentToSage: payment ${paymentId} (${payment.invoice.number}, ${amount}) → sage ${result.id}`,
+      `[sage] pushInvoicePaymentToSage: payment ${paymentId} (${payment.invoice.number}, ${amount}${onAccount > 0 ? `, ${onAccount} left on account` : ""}) → sage ${result.id}`,
     );
     return { id: result.id };
   } catch (err) {
