@@ -308,6 +308,13 @@ async function qbQuery<T>(
 
 const escapeQuoted = (s: string) => s.replace(/'/g, "''");
 
+/** Read-only GET against the org's QuickBooks company, for diagnostics and tooling. */
+export async function qbApiGet<T>(organizationId: string, path: string): Promise<T> {
+  const conn = await getQBConnection(organizationId);
+  if (!conn) throw new Error("QuickBooks is not connected for this organization.");
+  return qbFetch<T>(conn, path);
+}
+
 // ---------------------------------------------------------------------------
 // Default item + tax code resolution (cached on the connection)
 // ---------------------------------------------------------------------------
