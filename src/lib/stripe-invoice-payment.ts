@@ -268,17 +268,31 @@ export async function recordStripeInvoicePayment(
   // A charge that was ENTIRELY tip has nothing to book against the invoice.
   if (invoiceAmountCents <= 0) return;
 
-  await (admin.from("invoice_payments" as never).insert({
-    organization_id: invoice.organization_id,
-    invoice_id: invoice.id,
-    amount_cents: invoiceAmountCents,
-    method: "card",
-    reference: "Stripe",
-    received_at: new Date().toISOString(),
-    provider: "stripe",
-    provider_payment_id: args.piId,
-    provider_fee_cents: args.feeCents,
-  } as never) as unknown as Promise<unknown>);
+  const { data: insertedPayment } = (await admin
+    .from("invoice_payments" as never)
+    .insert({
+      organization_id: invoice.organization_id,
+      invoice_id: invoice.id,
+      amount_cents: invoiceAmountCents,
+      method: "card",
+      reference: "Stripe",
+      received_at: new Date().toISOString(),
+      provider: "stripe",
+      provider_payment_id: args.piId,
+      provider_fee_cents: args.feeCents,
+    } as never)
+    .select("id")
+    .maybeSingle()) as unknown as { data: { id: string } | null };
+
+  // Books: the receipt follows the invoice into Sage. Never blocks the
+  // webhook; the reconciler picks up anything that doesn't land.
+  if (insertedPayment?.id) {
+    void import("@/lib/sage").then(({ pushInvoicePaymentToSage }) =>
+      pushInvoicePaymentToSage(insertedPayment.id).catch((err) =>
+        console.error("[stripe] sage payment push failed:", err),
+      ),
+    );
+  }
 
   console.log(
     `[stripe] recorded ${invoiceAmountCents}c payment${

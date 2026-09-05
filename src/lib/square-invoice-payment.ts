@@ -97,7 +97,7 @@ export async function recordSquareInvoicePayment(args: {
 
   if (invoiceAmountCents <= 0) return; // charge was entirely tip
 
-  const { error: insertErr } = (await admin
+  const { data: insertedPayment, error: insertErr } = (await admin
     .from("invoice_payments" as never)
     .insert({
       organization_id: invoice.organization_id,
@@ -109,7 +109,12 @@ export async function recordSquareInvoicePayment(args: {
       received_at: args.receivedAt,
       provider: "square",
       provider_payment_id: args.squarePaymentId,
-    } as never)) as unknown as { error: { message: string; code?: string } | null };
+    } as never)
+    .select("id")
+    .maybeSingle()) as unknown as {
+    data: { id: string } | null;
+    error: { message: string; code?: string } | null;
+  };
 
   // 23505 = the unique index resolving a concurrent double-delivery — the
   // other writer won, nothing is lost. Anything else must THROW so the
@@ -118,6 +123,16 @@ export async function recordSquareInvoicePayment(args: {
     throw new Error(`square payment ledger insert failed: ${insertErr.message}`);
   }
   if (insertErr) return; // duplicate: the winner handles everything below
+
+  // Books: the receipt follows the invoice into Sage. Never blocks the
+  // webhook; the reconciler picks up anything that doesn't land.
+  if (insertedPayment?.id) {
+    void import("@/lib/sage").then(({ pushInvoicePaymentToSage }) =>
+      pushInvoicePaymentToSage(insertedPayment.id).catch((err) =>
+        console.error("[square] sage payment push failed:", err),
+      ),
+    );
+  }
 
   console.log(
     `[square] recorded ${invoiceAmountCents}c payment${

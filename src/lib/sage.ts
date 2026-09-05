@@ -1098,3 +1098,232 @@ export async function pushInvoiceToSage(
     return fail(message, /→\s*4\d\d:/.test(message));
   }
 }
+
+// ---------------------------------------------------------------------------
+// Payment sync
+// ---------------------------------------------------------------------------
+//
+// A Sollos payment becomes a Sage "contact payment" of type CUSTOMER_RECEIPT,
+// paid into a bank account, allocated to the sales invoice we already pushed.
+// Without this every paid invoice sat open in Sage and the receipt was keyed
+// by hand — the half of "the books" the integration never did until
+// 2026-09-04.
+//
+// Idempotent on invoice_payments.sage_payment_id. Needs the invoice in Sage
+// first; if it isn't, this pushes it (same idempotent path), so a payment on
+// a never-synced invoice does the whole job in one call.
+
+type SageBankAccount = {
+  id: string;
+  displayed_as?: string | null;
+  bank_account_type?: { id?: string | null; displayed_as?: string | null } | null;
+  currency?: { id?: string | null } | null;
+};
+
+/**
+ * Which Sage bank account receipts land in. Cached in connection metadata as
+ * `bank_account_id`; first run picks the first current/checking account, else
+ * the first account of any kind. The owner can move money between accounts
+ * in Sage; what matters here is that the receipt exists and is allocated.
+ */
+async function getSageBankAccountId(
+  conn: SageConnection,
+): Promise<string | null> {
+  const cached = (conn.metadata ?? {})["bank_account_id"];
+  if (typeof cached === "string" && cached) return cached;
+
+  const resp = await sageFetch<{ $items?: SageBankAccount[] }>(
+    conn.organization_id,
+    "/bank_accounts?items_per_page=100&attributes=all",
+  );
+  const items = resp.$items ?? [];
+  const isCurrent = (a: SageBankAccount) =>
+    /current|checking|chequing/i.test(a.bank_account_type?.id ?? "") ||
+    /current|checking|chequing/i.test(a.bank_account_type?.displayed_as ?? "");
+  const chosen = items.find(isCurrent) ?? items[0] ?? null;
+  if (chosen?.id) {
+    await mergeConnectionMetadata(conn.id, { bank_account_id: chosen.id });
+    return chosen.id;
+  }
+  return null;
+}
+
+/** Sollos payment method → Sage payment_method_id. Unknown → omitted. */
+function sagePaymentMethodId(method: string): string | null {
+  switch (method) {
+    case "card":
+      return "CREDIT_DEBIT";
+    case "cash":
+      return "CASH";
+    case "check":
+      return "CHEQUE";
+    case "bank_transfer":
+    case "ach":
+    case "zelle":
+    case "venmo":
+    case "cashapp":
+      return "BANK_TRANSFER";
+    default:
+      return null;
+  }
+}
+
+type SageContactPayment = { id: string; displayed_as?: string };
+
+export async function pushInvoicePaymentToSage(
+  paymentId: string,
+): Promise<{ id: string | null; error?: string; permanent?: boolean }> {
+  const admin = createSupabaseAdminClient();
+
+  const { data: payment } = (await admin
+    .from("invoice_payments" as never)
+    .select(
+      "id, organization_id, invoice_id, amount_cents, method, reference, received_at, sage_payment_id, invoice:invoices ( id, number, sage_invoice_id, client_id, voided_at )",
+    )
+    .eq("id" as never, paymentId as never)
+    .maybeSingle()) as unknown as {
+    data: {
+      id: string;
+      organization_id: string;
+      invoice_id: string;
+      amount_cents: number;
+      method: string;
+      reference: string | null;
+      received_at: string;
+      sage_payment_id: string | null;
+      invoice: {
+        id: string;
+        number: string | null;
+        sage_invoice_id: string | null;
+        client_id: string | null;
+        voided_at: string | null;
+      } | null;
+    } | null;
+  };
+  if (!payment) return { id: null, error: "Payment not found.", permanent: true };
+  if (payment.sage_payment_id) return { id: payment.sage_payment_id };
+  if (!payment.invoice) {
+    return { id: null, error: "Payment has no invoice.", permanent: true };
+  }
+  if (payment.invoice.voided_at) {
+    return {
+      id: null,
+      error:
+        "The invoice is void; a receipt against it would not reconcile. Refund or re-issue instead.",
+      permanent: true,
+    };
+  }
+
+  const orgId = payment.organization_id;
+  const fail = async (error: string, permanent = false) => {
+    console.error(`[sage] payment ${paymentId}: ${error}`);
+    await recordSageError(orgId, error);
+    return { id: null, error, permanent };
+  };
+
+  const conn = await getSageConnection(orgId);
+  if (!conn) {
+    return fail(
+      "Sage isn't connected. Reconnect it in Settings → Integrations, then try again.",
+    );
+  }
+
+  // The invoice must exist in Sage to allocate against. Push it if needed —
+  // idempotent, and its failure reasons are already worded for people.
+  let sageInvoiceId = payment.invoice.sage_invoice_id;
+  if (!sageInvoiceId) {
+    const inv = await pushInvoiceToSage(payment.invoice.id);
+    if (!inv.id) {
+      return fail(
+        `The invoice isn't in Sage yet, and pushing it failed: ${inv.error ?? "unknown error"}`,
+        inv.permanent ?? false,
+      );
+    }
+    sageInvoiceId = inv.id;
+  }
+
+  const { data: client } = (await admin
+    .from("clients")
+    .select("sage_contact_id")
+    .eq("id", payment.invoice.client_id ?? "")
+    .maybeSingle()) as unknown as {
+    data: { sage_contact_id: string | null } | null;
+  };
+  const contactId = client?.sage_contact_id;
+  if (!contactId) {
+    return fail(
+      "The client has no Sage contact yet; sync the invoice first.",
+      false,
+    );
+  }
+
+  try {
+    const bankAccountId = await getSageBankAccountId(conn);
+    if (!bankAccountId) {
+      return fail(
+        "Sage has no bank account to receive payments into. Create one in Sage (Banking → New account), then sync again.",
+        true,
+      );
+    }
+
+    const { getOrgTimezone } = await import("@/lib/org-timezone");
+    const { zonedYmd } = await import("@/lib/wall-clock");
+    const orgTz = await getOrgTimezone(orgId);
+    const date = zonedYmd(new Date(payment.received_at), orgTz);
+    const amount = payment.amount_cents / 100;
+    const methodId = sagePaymentMethodId(payment.method);
+    const reference =
+      (payment.reference ?? payment.invoice.number ?? "").slice(0, 50) ||
+      undefined;
+
+    const post = (withMethod: boolean) =>
+      sageFetch<SageContactPayment>(orgId, "/contact_payments", {
+        method: "POST",
+        body: JSON.stringify({
+          contact_payment: {
+            transaction_type_id: "CUSTOMER_RECEIPT",
+            contact_id: contactId,
+            bank_account_id: bankAccountId,
+            date,
+            total_amount: amount,
+            reference,
+            ...(withMethod && methodId ? { payment_method_id: methodId } : {}),
+            allocated_artefacts: [{ artefact_id: sageInvoiceId, amount }],
+          },
+        }),
+      });
+
+    let result: SageContactPayment;
+    try {
+      result = await post(true);
+    } catch (err) {
+      // payment_method_id is decoration; if Sage's list doesn't carry the
+      // one we guessed, the receipt still belongs in the books.
+      const msg = err instanceof Error ? err.message : "";
+      if (methodId && /→\s*422:/.test(msg) && /payment_method/i.test(msg)) {
+        console.log(
+          `[sage] payment ${paymentId}: method ${methodId} refused; retrying without`,
+        );
+        result = await post(false);
+      } else {
+        throw err;
+      }
+    }
+
+    await admin
+      .from("invoice_payments" as never)
+      .update({ sage_payment_id: result.id } as never)
+      .eq("id" as never, paymentId as never);
+    await recordSageError(orgId, null);
+    console.log(
+      `[sage] pushInvoicePaymentToSage: payment ${paymentId} (${payment.invoice.number}, ${amount}) → sage ${result.id}`,
+    );
+    return { id: result.id };
+  } catch (err) {
+    const message =
+      err instanceof Error
+        ? err.message
+        : "Unknown error pushing payment to Sage.";
+    return fail(describeSageError(message), /→\s*4\d\d:/.test(message));
+  }
+}

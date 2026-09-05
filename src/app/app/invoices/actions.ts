@@ -19,7 +19,7 @@ import { canCreateData } from "@/lib/subscription";
 import { redirectAfterSetup } from "@/lib/setup-return";
 import { redirectBack } from "@/lib/return-to";
 import { computeTax, parseTaxRate } from "@/lib/invoice-tax";
-import { pushInvoiceToSage } from "@/lib/sage";
+import { pushInvoiceToSage, pushInvoicePaymentToSage } from "@/lib/sage";
 import { pushInvoiceToQuickBooks } from "@/lib/quickbooks";
 import {
   deliverInvoiceEmailCore,
@@ -526,6 +526,12 @@ export async function recordInvoicePaymentAction(
   if (error || !inserted) {
     return { errors: { _form: error?.message ?? "Insert failed" }, values: raw };
   }
+
+  // Books: the receipt follows the invoice into Sage. Fire-and-forget like
+  // the invoice push; the reconciler catches anything that doesn't land.
+  pushInvoicePaymentToSage(inserted.id).catch((err) =>
+    console.error("[invoices] sage payment push failed:", err),
+  );
 
   // A tip that arrived alongside this payment — an e-transfer for more than
   // the invoice, or cash. Deliberately NOT part of amount_cents: the payment

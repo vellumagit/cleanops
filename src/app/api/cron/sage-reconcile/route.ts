@@ -33,6 +33,7 @@ import {
   getSageConnection,
   mergeSageConnectionMetadata,
   pushInvoiceToSage,
+  pushInvoicePaymentToSage,
 } from "@/lib/sage";
 
 export const runtime = "nodejs";
@@ -155,13 +156,60 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    totalSynced += synced;
+    // ── Payments ─────────────────────────────────────────────────────
+    // Receipts for invoices that ARE in Sage but whose payment never got
+    // there. Keyed "pay:<id>" on the same skip-list. An invoice still
+    // missing from Sage is the invoice pass's problem, not this one's.
+    const { data: payRows } = (await admin
+      .from("invoice_payments" as never)
+      .select("id, invoice:invoices!inner ( number, sage_invoice_id )")
+      .eq("organization_id" as never, orgId as never)
+      .is("sage_payment_id" as never, null as never)
+      .not("invoice.sage_invoice_id" as never, "is" as never, null as never)
+      .gte("created_at" as never, cutoff as never)
+      .order("created_at" as never, { ascending: false } as never)
+      .limit(limit + Object.keys(existingSkips).length)) as unknown as {
+      data: Array<{
+        id: string;
+        invoice: { number: string | null; sage_invoice_id: string | null } | null;
+      }> | null;
+    };
+    const payCandidates = (payRows ?? [])
+      .filter((r) => r.invoice?.sage_invoice_id && !existingSkips[`pay:${r.id}`])
+      .slice(0, limit);
+    let paymentsSynced = 0;
+    for (const p of payCandidates) {
+      const result = await pushInvoicePaymentToSage(p.id);
+      if (result.id) {
+        paymentsSynced++;
+        continue;
+      }
+      const reason = `Payment on ${p.invoice?.number ?? "invoice"}: ${result.error ?? "Unknown error"}`;
+      if (result.permanent) {
+        mergedSkips[`pay:${p.id}`] = { reason, at: new Date().toISOString() };
+        skipped.push({ invoice: p.invoice?.number ?? null, reason });
+      } else {
+        retryable.push({ invoice: p.invoice?.number ?? null, reason });
+      }
+    }
+    if (
+      Object.keys(mergedSkips).length !== Object.keys(existingSkips).length ||
+      retrySkipped
+    ) {
+      await mergeSageConnectionMetadata(orgId, {
+        reconcile_skip: mergedSkips,
+      });
+    }
+
+    totalSynced += synced + paymentsSynced;
     totalFailed += skipped.length + retryable.length;
 
     perOrg.push({
       organization_id: orgId,
       considered: candidates.length,
       synced,
+      payments_considered: payCandidates.length,
+      payments_synced: paymentsSynced,
       will_retry: retryable,
       needs_attention: skipped,
       skip_list_size: Object.keys(mergedSkips).length,
