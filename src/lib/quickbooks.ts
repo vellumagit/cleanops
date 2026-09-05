@@ -445,9 +445,17 @@ async function getTaxCodeRefForBps(
  * clients.quickbooks_customer_id; if not yet linked, looks up an existing
  * customer by display name (QBO requires unique names) before creating.
  */
+export type QBCustomerPush = {
+  id: string | null;
+  /** Why there is no id — worded for the person who has to fix it. */
+  error?: string;
+  /** Retrying with the same data will fail again. */
+  permanent?: boolean;
+};
+
 export async function pushClientToQuickBooks(
   clientId: string,
-): Promise<string | null> {
+): Promise<QBCustomerPush> {
   const admin = createSupabaseAdminClient();
   const { data: client } = (await admin
     .from("clients")
@@ -466,11 +474,23 @@ export async function pushClientToQuickBooks(
       quickbooks_customer_id: string | null;
     } | null;
   };
-  if (!client) return null;
-  if (client.quickbooks_customer_id) return client.quickbooks_customer_id;
-
+  if (!client) return { id: null, error: "Client not found.", permanent: true };
+  if (client.quickbooks_customer_id) return { id: client.quickbooks_customer_id };
   const conn = await getQBConnection(client.organization_id);
-  if (!conn) return null;
+  if (!conn) {
+    return {
+      id: null,
+      error:
+        "QuickBooks isn't connected. Reconnect it in Settings → Integrations, then try again.",
+    };
+  }
+  if (!client.name.trim()) {
+    return {
+      id: null,
+      error: "QuickBooks needs a display name for the customer; this client has none.",
+      permanent: true,
+    };
+  }
 
   try {
     // QBO rejects duplicate DisplayName — reuse an existing customer if present.
@@ -507,10 +527,17 @@ export async function pushClientToQuickBooks(
       .from("clients")
       .update({ quickbooks_customer_id: customerId } as never)
       .eq("id", clientId);
-    return customerId;
+    return { id: customerId };
   } catch (err) {
+    // Until 2026-09-04 this returned null and the caller said "check the
+    // client has a name" — Intuit's actual sentence went to the log only.
     console.error("[qbo] pushClientToQuickBooks failed:", err);
-    return null;
+    const raw = err instanceof Error ? err.message : String(err);
+    return {
+      id: null,
+      error: `QuickBooks refused to create ${client.name} as a customer — ${describeQBOError(raw)}`,
+      permanent: isPermanentQBOError(raw),
+    };
   }
 }
 
@@ -530,7 +557,7 @@ export async function pushClientToQuickBooks(
  */
 export async function pushInvoiceToQuickBooks(
   invoiceId: string,
-): Promise<{ id: string | null; error?: string }> {
+): Promise<{ id: string | null; error?: string; permanent?: boolean }> {
   const admin = createSupabaseAdminClient();
   const { data: invoice } = (await admin
     .from("invoices")
@@ -563,12 +590,13 @@ export async function pushInvoiceToQuickBooks(
       }> | null;
     } | null;
   };
-  const fail = (error: string) => {
+  const fail = async (error: string, permanent = false) => {
     console.error(`[qbo] invoice ${invoiceId}: ${error}`);
-    return { id: null, error };
+    if (invoice) await recordQBOError(invoice.organization_id, error);
+    return { id: null, error, permanent };
   };
 
-  if (!invoice) return fail("Invoice not found.");
+  if (!invoice) return fail("Invoice not found.", true);
   if (invoice.quickbooks_invoice_id) {
     return { id: invoice.quickbooks_invoice_id };
   }
@@ -580,10 +608,13 @@ export async function pushInvoiceToQuickBooks(
     );
   }
 
-  const customerId = await pushClientToQuickBooks(invoice.client_id);
+  const customer = await pushClientToQuickBooks(invoice.client_id);
+  const customerId = customer.id;
   if (!customerId) {
     return fail(
-      "Couldn't create this client as a QuickBooks customer. Check the client has a name, then try again.",
+      customer.error ??
+        "Couldn't create this client as a QuickBooks customer. Try again, and if it keeps failing reconnect QuickBooks in Settings → Integrations.",
+      customer.permanent ?? false,
     );
   }
 
@@ -592,6 +623,7 @@ export async function pushInvoiceToQuickBooks(
     if (!itemRef) {
       return fail(
         "QuickBooks has no product or service to put on the invoice line. Create one in QuickBooks (Sales → Products & services), then try again.",
+        true,
       );
     }
 
@@ -610,10 +642,13 @@ export async function pushInvoiceToQuickBooks(
     // $325.00 recorded in the observed case. A refused sync is recoverable;
     // a quiet discrepancy in someone's accounting is not.
     if (invoice.tax_rate_bps && invoice.tax_rate_bps > 0 && !taxCodeId) {
+      // Permanent until someone adds the rate in QuickBooks — the reconciler
+      // will pick it up again after ?retry_skipped=1.
       return fail(
         isUsCompany
           ? `No sales tax code in QuickBooks matches this invoice's ${taxPct}% rate. Syncing would record the invoice as untaxed, so your books would disagree with what the client was billed. Add a matching ${taxPct}% sales tax rate in QuickBooks (Taxes → Sales tax), then try again — or change this invoice's tax rate to one QuickBooks already has.`
           : `QuickBooks (${country}) requires a matching sales tax code, and no tax rate of ${taxPct}% exists in your QuickBooks company. Add a ${taxPct}% sales tax rate in QuickBooks (Taxes → Sales tax), then try again — or change this invoice's tax rate to one QuickBooks already has.`,
+        true,
       );
     }
 
@@ -683,14 +718,280 @@ export async function pushInvoiceToQuickBooks(
       .from("invoices")
       .update({ quickbooks_invoice_id: created.Invoice.Id } as never)
       .eq("id", invoiceId);
+    await recordQBOError(invoice.organization_id, null);
     console.log(
       `[qbo] invoice ${invoiceId} (${invoice.number}) → QBO ${created.Invoice.Id}`,
     );
     return { id: created.Invoice.Id };
   } catch (err) {
-    // Surface QuickBooks' own words. qbFetch embeds the status, the response
-    // body, and the intuit_tid, which is exactly what Intuit support asks for.
     const raw = err instanceof Error ? err.message : String(err);
-    return fail(`QuickBooks rejected the invoice — ${raw}`);
+    return fail(
+      `QuickBooks rejected the invoice — ${describeQBOError(raw)}`,
+      isPermanentQBOError(raw),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Errors that say something, and the connection remembers them
+// ---------------------------------------------------------------------------
+
+/** Stamp the connection card's "last error" so the Integrations page shows it. */
+async function recordQBOError(
+  organizationId: string,
+  message: string | null,
+): Promise<void> {
+  const admin = createSupabaseAdminClient();
+  await admin
+    .from("integration_connections" as never)
+    .update({ last_error: message ? message.slice(0, 500) : null } as never)
+    .eq("organization_id" as never, organizationId as never)
+    .eq("provider" as never, "quickbooks")
+    .eq("status" as never, "active");
+}
+
+/**
+ * Turn "QBO POST /payment → 400 [intuit_tid=…]: {"Fault":{"Error":[{"Message":
+ * "…","Detail":"…","code":"6000"}]}}" into the sentence Intuit put inside it.
+ * Keeps the status and the intuit_tid (their support asks for it).
+ */
+export function describeQBOError(message: string): string {
+  const m = message.match(/→\s*(\d{3})\s*\[intuit_tid=([^\]]*)\]:\s*([\s\S]*)$/);
+  if (!m) return message;
+  const [, status, tid, body] = m;
+  try {
+    const parsed = JSON.parse(body) as {
+      Fault?: { Error?: Array<{ Message?: string; Detail?: string; code?: string }> };
+    };
+    const errs = parsed.Fault?.Error ?? [];
+    const lines = errs
+      .map((e) => [e.Message, e.Detail].filter(Boolean).join(": "))
+      .filter(Boolean);
+    if (lines.length) {
+      return `QuickBooks said (${status}): ${lines.join("; ")} [intuit_tid=${tid}]`;
+    }
+  } catch {
+    // not JSON — fall through
+  }
+  return `QuickBooks answered ${status}: ${body.slice(0, 300)} [intuit_tid=${tid}]`;
+}
+
+/** A 4xx means Intuit read the request and refused it; the same payload will be refused again. */
+function isPermanentQBOError(message: string): boolean {
+  return /→\s*4\d\d\s*\[/.test(message);
+}
+
+/** For the reconciler: merge a patch into the QuickBooks connection's metadata. */
+export async function mergeQBConnectionMetadata(
+  organizationId: string,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  const conn = await getQBConnection(organizationId);
+  if (conn) await mergeConnectionMetadata(conn.id, patch);
+}
+
+// ---------------------------------------------------------------------------
+// Payment sync
+// ---------------------------------------------------------------------------
+//
+// A Sollos payment becomes a QuickBooks Payment applied to the invoice
+// (LinkedTxn). Deposited to Undeposited Funds by default — QuickBooks'
+// own default when DepositToAccountRef is omitted — so the bookkeeper
+// matches it to the bank feed the way they already do.
+//
+// Idempotent on invoice_payments.quickbooks_payment_id. Pushes the invoice
+// first if it isn't there yet.
+
+type QBPaymentMethod = { Id: string; Name: string };
+
+/** Payment-method ids by name, read once and cached on the connection. */
+async function getQBPaymentMethods(
+  conn: QBConnection,
+): Promise<Record<string, string>> {
+  const cached = (conn.metadata ?? {})["payment_methods"];
+  if (cached && typeof cached === "object" && !Array.isArray(cached)) {
+    return cached as Record<string, string>;
+  }
+  try {
+    const resp = await qbQuery<{ PaymentMethod?: QBPaymentMethod[] }>(
+      conn,
+      "SELECT Id, Name FROM PaymentMethod WHERE Active = true MAXRESULTS 50",
+    );
+    const map: Record<string, string> = {};
+    for (const m of resp.PaymentMethod ?? []) map[m.Name.toLowerCase()] = m.Id;
+    await mergeConnectionMetadata(conn.id, { payment_methods: map });
+    return map;
+  } catch (err) {
+    console.error("[qbo] PaymentMethod lookup failed:", err);
+    return {};
+  }
+}
+
+/** Sollos payment method → a QuickBooks PaymentMethod id, if the company has a matching name. */
+function qbPaymentMethodRef(
+  method: string,
+  byName: Record<string, string>,
+): string | null {
+  const candidates: Record<string, string[]> = {
+    card: ["credit card", "visa", "mastercard", "debit card"],
+    cash: ["cash"],
+    check: ["check", "cheque"],
+    bank_transfer: ["bank transfer", "e-transfer", "etransfer", "direct deposit", "eft"],
+    ach: ["ach", "bank transfer", "direct deposit", "eft"],
+    zelle: ["zelle", "bank transfer"],
+    venmo: ["venmo"],
+    cashapp: ["cash app", "cashapp"],
+  };
+  for (const name of candidates[method] ?? []) {
+    const id = byName[name];
+    if (id) return id;
+  }
+  return null;
+}
+
+export async function pushInvoicePaymentToQuickBooks(
+  paymentId: string,
+): Promise<{ id: string | null; error?: string; permanent?: boolean }> {
+  const admin = createSupabaseAdminClient();
+
+  const { data: payment } = (await admin
+    .from("invoice_payments" as never)
+    .select(
+      "id, organization_id, invoice_id, amount_cents, method, reference, received_at, quickbooks_payment_id, invoice:invoices ( id, number, quickbooks_invoice_id, client_id, voided_at )",
+    )
+    .eq("id" as never, paymentId as never)
+    .maybeSingle()) as unknown as {
+    data: {
+      id: string;
+      organization_id: string;
+      invoice_id: string;
+      amount_cents: number;
+      method: string;
+      reference: string | null;
+      received_at: string;
+      quickbooks_payment_id: string | null;
+      invoice: {
+        id: string;
+        number: string | null;
+        quickbooks_invoice_id: string | null;
+        client_id: string | null;
+        voided_at: string | null;
+      } | null;
+    } | null;
+  };
+  if (!payment) return { id: null, error: "Payment not found.", permanent: true };
+  if (payment.quickbooks_payment_id) return { id: payment.quickbooks_payment_id };
+  if (!payment.invoice) {
+    return { id: null, error: "Payment has no invoice.", permanent: true };
+  }
+  if (payment.invoice.voided_at) {
+    return {
+      id: null,
+      error:
+        "The invoice is void; a payment against it would not reconcile. Refund or re-issue instead.",
+      permanent: true,
+    };
+  }
+
+  const orgId = payment.organization_id;
+  const fail = async (error: string, permanent = false) => {
+    console.error(`[qbo] payment ${paymentId}: ${error}`);
+    await recordQBOError(orgId, error);
+    return { id: null, error, permanent };
+  };
+
+  const conn = await getQBConnection(orgId);
+  if (!conn) {
+    return fail(
+      "QuickBooks isn't connected. Reconnect it in Settings → Integrations, then try again.",
+    );
+  }
+
+  let qbInvoiceId = payment.invoice.quickbooks_invoice_id;
+  if (!qbInvoiceId) {
+    const inv = await pushInvoiceToQuickBooks(payment.invoice.id);
+    if (!inv.id) {
+      return fail(
+        `The invoice isn't in QuickBooks yet, and pushing it failed: ${inv.error ?? "unknown error"}`,
+        inv.permanent ?? false,
+      );
+    }
+    qbInvoiceId = inv.id;
+  }
+
+  const { data: client } = (await admin
+    .from("clients")
+    .select("quickbooks_customer_id")
+    .eq("id", payment.invoice.client_id ?? "")
+    .maybeSingle()) as unknown as {
+    data: { quickbooks_customer_id: string | null } | null;
+  };
+  const customerId = client?.quickbooks_customer_id;
+  if (!customerId) {
+    return fail(
+      "The client has no QuickBooks customer yet; sync the invoice first.",
+      false,
+    );
+  }
+
+  try {
+    // QuickBooks refuses to apply more than the invoice's balance. A client
+    // who rounds up is still real money: apply what the invoice can take,
+    // the rest sits as an unapplied credit on the customer, as a
+    // bookkeeper would leave it.
+    const { Invoice: qbInvoice } = await qbFetch<{
+      Invoice: { Id: string; Balance?: number | string };
+    }>(conn, `/invoice/${qbInvoiceId}`);
+    const balance = Number(qbInvoice.Balance ?? 0);
+    if (!(balance > 0)) {
+      return fail(
+        `QuickBooks already shows ${payment.invoice.number ?? "this invoice"} as paid — the payment was recorded there by hand. Nothing pushed, nothing to fix.`,
+        true,
+      );
+    }
+    const amount = payment.amount_cents / 100;
+    const applied = Math.min(amount, balance);
+
+    const { getOrgTimezone } = await import("@/lib/org-timezone");
+    const { zonedYmd } = await import("@/lib/wall-clock");
+    const orgTz = await getOrgTimezone(orgId);
+    const txnDate = zonedYmd(new Date(payment.received_at), orgTz);
+
+    const methodRef = qbPaymentMethodRef(
+      payment.method,
+      await getQBPaymentMethods(conn),
+    );
+    // PaymentRefNum is 21 chars in QuickBooks.
+    const refNum = (payment.reference ?? "").trim().slice(0, 21) || undefined;
+
+    const created = await qbFetch<{ Payment: { Id: string } }>(conn, "/payment", {
+      method: "POST",
+      body: JSON.stringify({
+        CustomerRef: { value: customerId },
+        TotalAmt: amount,
+        TxnDate: txnDate,
+        ...(refNum ? { PaymentRefNum: refNum } : {}),
+        ...(methodRef ? { PaymentMethodRef: { value: methodRef } } : {}),
+        Line: [
+          {
+            Amount: applied,
+            LinkedTxn: [{ TxnId: qbInvoiceId, TxnType: "Invoice" }],
+          },
+        ],
+      }),
+    });
+
+    await admin
+      .from("invoice_payments" as never)
+      .update({ quickbooks_payment_id: created.Payment.Id } as never)
+      .eq("id" as never, paymentId as never);
+    await recordQBOError(orgId, null);
+    console.log(
+      `[qbo] payment ${paymentId} (${payment.invoice.number}, ${amount}${amount > applied ? `, ${Math.round((amount - applied) * 100) / 100} unapplied` : ""}) → QBO payment ${created.Payment.Id}`,
+    );
+    return { id: created.Payment.Id };
+  } catch (err) {
+    const raw = err instanceof Error ? err.message : String(err);
+    return fail(describeQBOError(raw), isPermanentQBOError(raw));
   }
 }

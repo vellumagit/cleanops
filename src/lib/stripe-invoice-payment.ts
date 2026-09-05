@@ -292,6 +292,11 @@ export async function recordStripeInvoicePayment(
         console.error("[stripe] sage payment push failed:", err),
       ),
     );
+    void import("@/lib/quickbooks").then(({ pushInvoicePaymentToQuickBooks }) =>
+      pushInvoicePaymentToQuickBooks(insertedPayment.id).catch((err) =>
+        console.error("[stripe] quickbooks payment push failed:", err),
+      ),
+    );
   }
 
   console.log(

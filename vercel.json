@@ -193,6 +193,10 @@
       "schedule": "30 */4 * * *"
     },
     {
+      "path": "/api/cron/quickbooks-reconcile",
+      "schedule": "45 */4 * * *"
+    },
+    {
       "path": "/api/cron/payroll-autodraft",
       "schedule": "0 13 * * *"
     }

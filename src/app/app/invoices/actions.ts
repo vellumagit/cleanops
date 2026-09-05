@@ -20,7 +20,10 @@ import { redirectAfterSetup } from "@/lib/setup-return";
 import { redirectBack } from "@/lib/return-to";
 import { computeTax, parseTaxRate } from "@/lib/invoice-tax";
 import { pushInvoiceToSage, pushInvoicePaymentToSage } from "@/lib/sage";
-import { pushInvoiceToQuickBooks } from "@/lib/quickbooks";
+import {
+  pushInvoiceToQuickBooks,
+  pushInvoicePaymentToQuickBooks,
+} from "@/lib/quickbooks";
 import {
   deliverInvoiceEmailCore,
   type SendInvoiceState,
@@ -531,6 +534,9 @@ export async function recordInvoicePaymentAction(
   // the invoice push; the reconciler catches anything that doesn't land.
   pushInvoicePaymentToSage(inserted.id).catch((err) =>
     console.error("[invoices] sage payment push failed:", err),
+  );
+  pushInvoicePaymentToQuickBooks(inserted.id).catch((err) =>
+    console.error("[invoices] quickbooks payment push failed:", err),
   );
 
   // A tip that arrived alongside this payment — an e-transfer for more than

@@ -132,6 +132,11 @@ export async function recordSquareInvoicePayment(args: {
         console.error("[square] sage payment push failed:", err),
       ),
     );
+    void import("@/lib/quickbooks").then(({ pushInvoicePaymentToQuickBooks }) =>
+      pushInvoicePaymentToQuickBooks(insertedPayment.id).catch((err) =>
+        console.error("[square] quickbooks payment push failed:", err),
+      ),
+    );
   }
 
   console.log(
