@@ -35,9 +35,17 @@ export function JobActionButtons({
   status,
   youCompleted = false,
   myOpenEntryHere = false,
+  notDueYet = false,
+  scheduledLabel,
 }: {
   bookingId: string;
   status: string;
+  /** The job is more than the early-start grace away. Start would be refused
+   *  by the server, so don't offer it — show when it unlocks instead. This is
+   *  how a cleaner on the wrong card finds out it's the wrong card. */
+  notDueYet?: boolean;
+  /** "Sep 26, 2026 · 3:00 PM" in the org's zone, for that message. */
+  scheduledLabel?: string;
   /** This cleaner finished their own segment of a split shift, but the booking
    *  isn't fully complete yet (later segments are still outstanding). */
   youCompleted?: boolean;
@@ -97,6 +105,20 @@ export function JobActionButtons({
         <CheckCircle2 className="h-5 w-5 shrink-0" />
         Your part is done — the job stays open until the rest of the crew
         finishes.
+      </div>
+    );
+  }
+
+  if (notDueYet && !isStarted && !isDone) {
+    return (
+      <div className="rounded-lg border border-dashed border-border bg-muted/40 px-4 py-3 text-sm">
+        <p className="font-medium">
+          This job is on {scheduledLabel ?? "a later date"}.
+        </p>
+        <p className="mt-1 text-muted-foreground">
+          Start job appears here four hours before it begins. If you&rsquo;re
+          working today, go back to My jobs and open the card dated today.
+        </p>
       </div>
     );
   }

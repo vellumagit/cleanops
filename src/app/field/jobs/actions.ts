@@ -9,6 +9,24 @@ import { deleteMemberCalendarEvent } from "@/lib/google-calendar";
 import { notify } from "@/lib/notify";
 import { logAuditEvent } from "@/lib/audit";
 import { futureStatusError } from "@/lib/booking-status";
+import { getOrgTimezone } from "@/lib/org-timezone";
+import { formatDateTime } from "@/lib/format";
+
+/**
+ * "Not due yet" with the date on it. Anna (2026-09-05) had two Amanda
+ * DeGroot jobs waiting for a response — today's and Sep 26 — accepted the
+ * far one, pressed Start, and got a sentence that named no day. She had no
+ * way to tell which card she was on. The date is the whole message.
+ */
+async function notDueYetMessage(
+  organizationId: string,
+  scheduledAtIso: string,
+  verb: "starting" | "finishing",
+): Promise<string> {
+  const tz = await getOrgTimezone(organizationId);
+  const when = formatDateTime(scheduledAtIso, tz);
+  return `This job is scheduled for ${when}, not today. If you're here for today's visit, go back to My jobs and open the card dated today before ${verb} it.`;
+}
 
 export type JobActionResult = { ok: true } | { ok: false; error: string };
 
@@ -97,8 +115,11 @@ export async function startJobAction(
   if (earlyErr) {
     return {
       ok: false,
-      error:
-        "This job isn't due for a while yet. Check the date with your manager before starting it.",
+      error: await notDueYetMessage(
+        membership.organization_id,
+        booking.scheduled_at,
+        "starting",
+      ),
     };
   }
 
@@ -362,8 +383,11 @@ export async function completeJobAction(
   if (notYetErr) {
     return {
       ok: false,
-      error:
-        "This job isn't due for a while yet. Check the date with your manager before finishing it.",
+      error: await notDueYetMessage(
+        membership.organization_id,
+        booking.scheduled_at,
+        "finishing",
+      ),
     };
   }
 

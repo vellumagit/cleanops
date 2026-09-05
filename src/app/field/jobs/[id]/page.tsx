@@ -27,6 +27,7 @@ import {
 } from "@/app/app/scheduling/split-shift-timeline";
 import { toneForEmployee } from "@/app/app/scheduling/color";
 import { JobActionButtons } from "./job-actions";
+import { futureStatusError } from "@/lib/booking-status";
 import { JobPhotos } from "./job-photos";
 import { ShiftAcceptance } from "./shift-acceptance";
 import { ManageShift } from "./manage-shift";
@@ -650,6 +651,10 @@ export default async function FieldJobDetailPage({
             status={booking.status}
             youCompleted={crewRow?.completed_at != null}
             myOpenEntryHere={Boolean(myOpenEntryHere)}
+            notDueYet={
+              futureStatusError(booking.scheduled_at, "in_progress") !== null
+            }
+            scheduledLabel={formatDateTime(effectiveScheduledAt, tz)}
           />
           {booking.status !== "completed" && (
             <ManageShift

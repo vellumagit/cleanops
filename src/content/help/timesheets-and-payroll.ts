@@ -9,7 +9,7 @@ On **Employees**, each person has an *engagement* (employee or subcontractor —
 
 ## Where hours come from
 
-Cleaners clock in and out on their job in the field app. A forgotten clock-out gets closed automatically past the job's expected end and flagged **needs review** — those hours wait for a human to confirm the real time before they count as pay. The office can also add manual entries on Timesheets and attach them to bookings — the booking picker is searchable (client, service, or date), and picking a booking fills the scheduled times in automatically; a **Use booking hours** button re-applies them after edits.
+Cleaners clock in and out on their job in the field app. **Start job** only appears on a job within four hours of its start; a card further out shows its date instead ("This job is on Sep 26") so a cleaner with two visits for the same client can't start the wrong one — the one for today is the card dated today in My jobs. A shift still waiting to be accepted shows **Accept** in place of Start until the lead clocks in, after which anyone on the crew can start. A forgotten clock-out gets closed automatically past the job's expected end and flagged **needs review** — those hours wait for a human to confirm the real time before they count as pay. The office can also add manual entries on Timesheets and attach them to bookings — the booking picker is searchable (client, service, or date), and picking a booking fills the scheduled times in automatically; a **Use booking hours** button re-applies them after edits.
 
 ## Timesheets, day to day
 
