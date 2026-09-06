@@ -247,6 +247,13 @@ const STAGES: Stage[] = [
     icon: Receipt,
     automations: [
       {
+        key: "shift_confirm_reminder",
+        title: "Shift still unconfirmed",
+        description:
+          "Asks a cleaner to confirm a shift they haven't answered — once the day before, and again two hours before it starts. At that second nudge you're told too: \"Anna hasn't confirmed today's 3:00 PM at Amanda DeGroot\", so you can check with them or reassign while there's still time. Each nudge is sent once per shift.",
+        trigger: "24 hours and 2 hours before an unconfirmed shift",
+      },
+      {
         key: "job_not_started_nudge",
         title: "Nobody clocked in yet",
         description:

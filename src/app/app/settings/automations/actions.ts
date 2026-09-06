@@ -45,6 +45,7 @@ export type AutomationKey =
   // (office alert, before auto-complete bills it).
   | "job_not_started_nudge"
   | "no_clock_in_alert"
+  | "shift_confirm_reminder"
   | "booking_cancelled_email"
   | "rebooking_prompt_email"
   | "estimate_followup_email"
@@ -117,6 +118,7 @@ const VALID_AUTOMATION_KEYS = new Set<AutomationKey>([
   "shift_clock_out_reminder",
   "job_not_started_nudge",
   "no_clock_in_alert",
+  "shift_confirm_reminder",
   "booking_cancelled_email",
   "rebooking_prompt_email",
   "estimate_followup_email",

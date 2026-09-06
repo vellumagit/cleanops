@@ -28,6 +28,7 @@ import {
 import { toneForEmployee } from "@/app/app/scheduling/color";
 import { JobActionButtons } from "./job-actions";
 import { futureStatusError } from "@/lib/booking-status";
+import { dayLabel } from "@/lib/day-label";
 import { JobPhotos } from "./job-photos";
 import { ShiftAcceptance } from "./shift-acceptance";
 import { ManageShift } from "./manage-shift";
@@ -182,6 +183,7 @@ export default async function FieldJobDetailPage({
             crewRow.split_start_offset_minutes * 60_000,
         ).toISOString()
       : booking.scheduled_at;
+  const when = dayLabel(effectiveScheduledAt, tz);
 
   const effectiveDurationMinutes =
     crewRow?.split_duration_minutes ?? booking.duration_minutes;
@@ -415,12 +417,28 @@ export default async function FieldJobDetailPage({
         <ShiftAcceptance
           bookingId={booking.id}
           whenLabel={formatDateTime(effectiveScheduledAt, tz)}
+          day={when.day}
+          time={when.time}
+          isToday={when.isToday}
           durationLabel={`Estimated ${formatDurationMinutes(displayDurationMinutes)}`}
           address={displayAddress}
         />
       )}
 
       <div className="rounded-xl border border-border bg-card p-5">
+        {/* Which day this card is, before anything else on it. */}
+        <div className="mb-2 flex items-center gap-2">
+          <span
+            className={
+              when.isToday
+                ? "inline-flex items-center rounded-md bg-foreground px-2 py-0.5 text-xs font-bold uppercase tracking-wide text-background"
+                : "inline-flex items-center rounded-md bg-muted px-2 py-0.5 text-xs font-bold uppercase tracking-wide text-muted-foreground"
+            }
+          >
+            {when.day}
+          </span>
+          <span className="text-sm font-semibold tabular-nums">{when.time}</span>
+        </div>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h1 className="truncate text-2xl font-bold">

@@ -7650,3 +7650,152 @@ function inferServiceType(
     return "recurring";
   return "standard";
 }
+
+
+// ---------------------------------------------------------------------------
+// Unconfirmed shifts: remind the cleaner, then tell the office
+// ---------------------------------------------------------------------------
+//
+// A shift waits for the cleaner to say yes. Nothing chased that answer until
+// 2026-09-05, when Anna had two visits for the same client unanswered,
+// confirmed the wrong one, and the office learned of it from the client.
+//
+// Two nudges per assignment, each sent once (stamped on the row):
+//   - the day before (inside 24h of start): the cleaner is asked to confirm
+//   - inside 2h of start, still unanswered: the cleaner is asked again and
+//     every admin gets "X hasn't confirmed today's 3:00 PM at Y"
+//
+// Runs on the same 30-minute heartbeat as the clock-in/out watch. Gated by
+// the org's `shift_confirm_reminder` toggle. Bookings must be pending or
+// confirmed and not archived; a started or cancelled job needs no yes.
+
+export async function chaseUnconfirmedShifts(): Promise<{
+  considered: number;
+  reminded: number;
+  escalated: number;
+}> {
+  const db = admin();
+  const { notify } = await import("@/lib/notify");
+  const { getOrgTimezone } = await import("@/lib/org-timezone");
+  const { dayLabel } = await import("@/lib/day-label");
+  const { memberDisplayName } = await import("@/lib/member-display");
+
+  const nowMs = Date.now();
+  const now = new Date(nowMs);
+  const nowIso = now.toISOString();
+  const in24h = new Date(nowMs + 24 * 60 * 60 * 1000).toISOString();
+
+  const { data: rows } = (await db
+    .from("booking_assignees")
+    .select(
+      "id, organization_id, membership_id, confirm_reminded_at, confirm_escalated_at, booking:bookings!inner ( id, scheduled_at, status, archived_at, client:clients ( name ) ), member:memberships!inner ( id, status, display_name, profile:profiles ( full_name ) )",
+    )
+    .eq("acceptance_status", "pending")
+    .in("booking.status", ["pending", "confirmed"])
+    .is("booking.archived_at", null)
+    .gte("booking.scheduled_at", nowIso)
+    .lte("booking.scheduled_at", in24h)
+    .eq("member.status", "active")
+    .limit(500)) as unknown as {
+    data: Array<{
+      id: string;
+      organization_id: string;
+      membership_id: string;
+      confirm_reminded_at: string | null;
+      confirm_escalated_at: string | null;
+      booking: {
+        id: string;
+        scheduled_at: string;
+        status: string;
+        client: { name: string | null } | null;
+      } | null;
+      member: {
+        id: string;
+        display_name: string | null;
+        profile: { full_name: string | null } | null;
+      } | null;
+    }> | null;
+  };
+
+  let reminded = 0;
+  let escalated = 0;
+  const considered = rows?.length ?? 0;
+  if (!rows || rows.length === 0) return { considered, reminded, escalated };
+
+  const enabledByOrg = new Map<string, boolean>();
+  const tzByOrg = new Map<string, string>();
+
+  for (const r of rows) {
+    if (!r.booking || !r.member) continue;
+    const orgId = r.organization_id;
+    if (!enabledByOrg.has(orgId)) {
+      enabledByOrg.set(
+        orgId,
+        await isAutomationEnabled(orgId, "shift_confirm_reminder"),
+      );
+    }
+    if (!enabledByOrg.get(orgId)) continue;
+    if (!tzByOrg.has(orgId)) tzByOrg.set(orgId, await getOrgTimezone(orgId));
+    const tz = tzByOrg.get(orgId)!;
+
+    const startMs = new Date(r.booking.scheduled_at).getTime();
+    const hoursAway = (startMs - nowMs) / 3_600_000;
+    const { day, time } = dayLabel(r.booking.scheduled_at, tz, now);
+    const client = r.booking.client?.name ?? "a client";
+    const href = `/field/jobs/${r.booking.id}`;
+
+    try {
+      if (hoursAway <= 2 && !r.confirm_escalated_at) {
+        await notify({
+          organizationId: orgId,
+          audience: "membership",
+          membershipId: r.membership_id,
+          type: "shift_unconfirmed",
+          title: `Starting soon — please confirm: ${day} ${time}`,
+          body: `${client}, ${day.toLowerCase() === "today" ? "today" : day} at ${time}. You haven't confirmed this shift. Open it and tap Accept, or tell the office you can't make it.`,
+          href,
+          push: { sticky: true },
+        });
+        const who = memberDisplayName(r.member);
+        await notify({
+          organizationId: orgId,
+          audience: "org-admins",
+          type: "shift_unconfirmed",
+          title: `${who} hasn't confirmed ${day.toLowerCase() === "today" ? "today's" : `${day}'s`} ${time} at ${client}`,
+          body: `The shift starts in under two hours and ${who} hasn't accepted it. Check with them, or reassign the job.`,
+          href: `/app/bookings/${r.booking.id}`,
+        });
+        await db
+          .from("booking_assignees")
+          .update({
+            confirm_escalated_at: nowIso,
+            confirm_reminded_at: r.confirm_reminded_at ?? nowIso,
+          } as never)
+          .eq("id", r.id);
+        escalated++;
+      } else if (hoursAway > 2 && !r.confirm_reminded_at) {
+        await notify({
+          organizationId: orgId,
+          audience: "membership",
+          membershipId: r.membership_id,
+          type: "shift_unconfirmed",
+          title: `Please confirm: ${day} ${time} at ${client}`,
+          body: `This shift is waiting for your yes. Open it and tap Accept, or tell the office if you can't make it.`,
+          href,
+        });
+        await db
+          .from("booking_assignees")
+          .update({ confirm_reminded_at: nowIso } as never)
+          .eq("id", r.id);
+        reminded++;
+      }
+    } catch (err) {
+      console.error(
+        `[chaseUnconfirmedShifts] assignment ${r.id} failed:`,
+        err,
+      );
+    }
+  }
+
+  return { considered, reminded, escalated };
+}

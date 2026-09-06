@@ -24,6 +24,12 @@ export default async function FieldTodayPage() {
   });
 
   // Group by day so an overdue job from an earlier date is clearly labelled.
+  // A job today that still needs the cleaner's yes is the one thing on this
+  // screen that can go wrong by being missed. It goes first.
+  todayJobs.sort((a, b) => {
+    if (a.needs_acceptance !== b.needs_acceptance) return a.needs_acceptance ? -1 : 1;
+    return a.effective_scheduled_at.localeCompare(b.effective_scheduled_at);
+  });
   const groups = new Map<string, typeof todayJobs>();
   for (const job of todayJobs) {
     // Same timezone as the filter three lines up, which uses localDate(…, tz).

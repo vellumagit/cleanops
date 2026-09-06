@@ -18,7 +18,11 @@
  * org master switch. Protected by CRON_SECRET.
  */
 
-import { runJobWatch, sendShiftClockOutReminders } from "@/lib/automations";
+import {
+  runJobWatch,
+  sendShiftClockOutReminders,
+  chaseUnconfirmedShifts,
+} from "@/lib/automations";
 import { requireCronAuth } from "@/lib/cron-auth";
 
 export const runtime = "nodejs";
@@ -60,7 +64,17 @@ export async function GET(request: Request) {
       };
     }
 
-    return Response.json({ ...result, watch });
+    // Third leg of the same heartbeat: shifts nobody has said yes to yet.
+    let confirm: Awaited<ReturnType<typeof chaseUnconfirmedShifts>> | { error: string };
+    try {
+      confirm = await chaseUnconfirmedShifts();
+    } catch (confirmErr) {
+      console.error("[cron/shift-reminders] confirm chase error:", confirmErr);
+      confirm = {
+        error: confirmErr instanceof Error ? confirmErr.message : "Unknown error",
+      };
+    }
+    return Response.json({ ...result, watch, confirm });
   } catch (err) {
     console.error("[cron/shift-reminders] error:", err);
     return Response.json(

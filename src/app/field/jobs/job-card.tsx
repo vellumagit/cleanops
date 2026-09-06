@@ -13,12 +13,17 @@ import {
   humanizeEnum,
 } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { dayLabel } from "@/lib/day-label";
 import type { FieldJob } from "./data";
 import { JobCardComplete } from "./job-card-complete";
 import { JobCardElapsed } from "./job-card-elapsed";
 
 export function JobCard({ job, tz }: { job: FieldJob; tz: string }) {
   const inProgress = job.status === "in_progress";
+  // The day, said out loud, before the client's name. Two cards for the same
+  // client three weeks apart looked identical at arm's length (Anna,
+  // 2026-09-05) — the date was the small grey line under the name.
+  const when = dayLabel(job.effective_scheduled_at, tz);
 
   return (
     /*
@@ -44,6 +49,19 @@ export function JobCard({ job, tz }: { job: FieldJob; tz: string }) {
       />
 
       <div className="pointer-events-none min-w-0 flex-1">
+        <div className="mb-1 flex items-center gap-2">
+          <span
+            className={cn(
+              "inline-flex items-center rounded-md px-2 py-0.5 text-xs font-bold uppercase tracking-wide",
+              when.isToday
+                ? "bg-foreground text-background"
+                : "bg-muted text-muted-foreground",
+            )}
+          >
+            {when.day}
+          </span>
+          <span className="text-sm font-semibold tabular-nums">{when.time}</span>
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <span className="truncate text-base font-semibold">
             {job.client?.name ?? "—"}
@@ -51,7 +69,7 @@ export function JobCard({ job, tz }: { job: FieldJob; tz: string }) {
           {job.needs_acceptance ? (
             <span className="inline-flex items-center gap-1 rounded-full bg-amber-500 px-2 py-0.5 text-[11px] font-bold text-white">
               <CalendarClock className="h-3 w-3" />
-              Confirm
+              {when.isToday ? "Confirm for today" : `Confirm for ${when.day}`}
             </span>
           ) : (
             <StatusBadge
@@ -99,6 +117,11 @@ export function JobCard({ job, tz }: { job: FieldJob; tz: string }) {
           {formatDurationMinutes(job.effective_duration_minutes)} ·{" "}
           {humanizeEnum(job.service_type)}
         </div>
+        {job.needs_acceptance && when.isToday ? (
+          <div className="mt-1.5 text-sm font-medium text-amber-800 dark:text-amber-300">
+            Needs your OK, then Start.
+          </div>
+        ) : null}
         {job.display_address ? (
           <div className="mt-1.5 flex items-center gap-1.5 text-sm text-muted-foreground">
             <MapPin className="h-3.5 w-3.5 shrink-0" />

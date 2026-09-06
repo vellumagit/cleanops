@@ -24,12 +24,20 @@ import { acceptShiftAction, declineShiftAction } from "../actions";
 export function ShiftAcceptance({
   bookingId,
   whenLabel,
+  day,
+  time,
+  isToday,
   durationLabel,
   address,
 }: {
   bookingId: string;
   /** Already formatted in the org's timezone by the server component. */
   whenLabel: string;
+  /** "Today" | "Tomorrow" | "Sat Sep 26" — the word on the button. */
+  day: string;
+  /** "3:00 PM" */
+  time: string;
+  isToday: boolean;
   durationLabel: string;
   address: string | null;
 }) {
@@ -82,7 +90,9 @@ export function ShiftAcceptance({
   return (
     <div className="rounded-xl border border-amber-300 bg-amber-50 p-5 dark:border-amber-900/50 dark:bg-amber-950/30">
       <h2 className="text-base font-semibold text-amber-900 dark:text-amber-200">
-        Can you make this shift?
+        {isToday
+          ? `Can you make this shift today at ${time}?`
+          : `Can you make this shift ${day} at ${time}?`}
       </h2>
 
       {/* When and where, before the buttons — this is the decision. */}
@@ -118,7 +128,11 @@ export function ShiftAcceptance({
             disabled={isPending}
           >
             <CheckCircle2 className="mr-2 h-5 w-5" />
-            {isPending ? "Confirming…" : "Accept shift"}
+            {isPending
+              ? "Confirming…"
+              : isToday
+                ? `Yes, I'm on this today at ${time}`
+                : `Yes, I'll be there ${day} at ${time}`}
           </Button>
           <Button
             type="button"
