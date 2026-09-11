@@ -34,6 +34,7 @@ import {
   mergeSageConnectionMetadata,
   pushInvoiceToSage,
   pushInvoicePaymentToSage,
+  pushPayrollRunToSage,
 } from "@/lib/sage";
 
 export const runtime = "nodejs";
@@ -201,7 +202,53 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    totalSynced += synced + paymentsSynced;
+    // ── Payroll ──────────────────────────────────────────────────────
+    // Paid runs and statements with no journal yet. Keyed "run:<id>" /
+    // "srun:<id>" on the same skip-list.
+    let runsSynced = 0;
+    for (const kind of ["employee", "contractor"] as const) {
+      const table = kind === "employee" ? "payroll_runs" : "subcontractor_pay_runs";
+      const prefix = kind === "employee" ? "run" : "srun";
+      const { data: runRows } = (await admin
+        .from(table as never)
+        .select("id, period_start, period_end")
+        .eq("organization_id" as never, orgId as never)
+        .eq("status" as never, "paid" as never)
+        .is("sage_journal_id" as never, null as never)
+        .gte("paid_at" as never, cutoff as never)
+        .order("paid_at" as never, { ascending: false } as never)
+        .limit(limit + Object.keys(existingSkips).length)) as unknown as {
+        data: Array<{ id: string; period_start: string; period_end: string }> | null;
+      };
+      const runCandidates = (runRows ?? [])
+        .filter((r) => !existingSkips[`${prefix}:${r.id}`])
+        .slice(0, limit);
+      for (const r of runCandidates) {
+        const result = await pushPayrollRunToSage(r.id, kind);
+        if (result.id) {
+          runsSynced++;
+          continue;
+        }
+        const label = `${kind === "employee" ? "Payroll" : "Contractor pay"} ${r.period_start}–${r.period_end}`;
+        const reason = `${label}: ${result.error ?? "Unknown error"}`;
+        if (result.permanent) {
+          mergedSkips[`${prefix}:${r.id}`] = { reason, at: new Date().toISOString() };
+          skipped.push({ invoice: label, reason });
+        } else {
+          retryable.push({ invoice: label, reason });
+        }
+      }
+    }
+    if (
+      Object.keys(mergedSkips).length !== Object.keys(existingSkips).length ||
+      retrySkipped
+    ) {
+      await mergeSageConnectionMetadata(orgId, {
+        reconcile_skip: mergedSkips,
+      });
+    }
+
+    totalSynced += synced + paymentsSynced + runsSynced;
     totalFailed += skipped.length + retryable.length;
 
     perOrg.push({
@@ -210,6 +257,7 @@ export async function GET(request: NextRequest) {
       synced,
       payments_considered: payCandidates.length,
       payments_synced: paymentsSynced,
+      payroll_runs_synced: runsSynced,
       will_retry: retryable,
       needs_attention: skipped,
       skip_list_size: Object.keys(mergedSkips).length,

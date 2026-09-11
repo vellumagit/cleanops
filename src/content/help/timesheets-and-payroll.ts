@@ -47,6 +47,10 @@ A tip a client adds at checkout (or that arrives by e-transfer or cash into the 
 
 A tip handed directly to the cleaner in cash never touches this ledger — record it as a *direct* tip and it appears in history already settled.
 
+## Payroll in the books
+
+With **Sage Accounting** connected (Settings → Integrations), every run or statement you **mark as paid** is posted to Sage as a journal: one line per person for their gross pay against your wages account (subcontractor statements against a subcontractor or cost-of-sales account when your chart has one), and one credit for the total to a wages-payable or accruals account. It is deliberately gross, not net: Sollos doesn't know deductions or what actually left the bank — your payroll product does — so the bookkeeper clears that liability against the bank feed and the remittances. A run that didn't post is retried every few hours, and the reason (usually a missing account in Sage's chart) shows on the Integrations card in Sage's words.
+
 ## Cleaners see their own pay
 
 The field app has **My pay** (Profile → My pay, or from My hours): the current period's earnings as a running estimate from their closed shifts, and below it every finalized or paid statement — the same frozen numbers your runs produced, marked *Paid* or *Finalized — payment on the way*. The estimate is labeled as one: bonuses, PTO, and corrections land when you actually run the period, and shifts awaiting review say so. Draft runs you're still checking are never shown.

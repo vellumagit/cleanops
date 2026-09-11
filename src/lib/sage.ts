@@ -1385,3 +1385,231 @@ export async function pushInvoicePaymentToSage(
     return fail(describeSageError(message), /→\s*4\d\d:/.test(message));
   }
 }
+
+
+// ---------------------------------------------------------------------------
+// Payroll: a paid run becomes a journal
+// ---------------------------------------------------------------------------
+//
+// Sollos knows GROSS pay: hours × rate, bonuses, PTO, per person. It does not
+// know deductions, remittances or the net that hit the bank — that's the
+// payroll product's job. So the journal records exactly what Sollos knows:
+//
+//   Dr  Wages (or Subcontractor costs)   gross, one line per person
+//   Cr  Wages payable / Accruals         the run total
+//
+// The bookkeeper clears the liability against the bank feed (net pay out)
+// and the remittances. Nothing here touches a bank account, so nothing here
+// can misstate the bank.
+//
+// Accounts are found by name in the business's own chart and cached on the
+// connection. A chart with no expense account for wages fails loudly with
+// the fix in the sentence.
+
+type PayrollLedgerAccounts = {
+  wages: string;
+  liability: string;
+  contractor: string;
+};
+
+async function getPayrollLedgerAccounts(
+  conn: SageConnection,
+): Promise<{ accounts: PayrollLedgerAccounts | null; missing: string | null }> {
+  const md = conn.metadata ?? {};
+  const cached = {
+    wages: md["payroll_wages_ledger_account_id"],
+    liability: md["payroll_liability_ledger_account_id"],
+    contractor: md["payroll_contractor_ledger_account_id"],
+  };
+  if (
+    typeof cached.wages === "string" &&
+    typeof cached.liability === "string" &&
+    typeof cached.contractor === "string"
+  ) {
+    return { accounts: cached as PayrollLedgerAccounts, missing: null };
+  }
+
+  const resp = await sageFetch<{ $items?: SageLedgerAccount[] }>(
+    conn.organization_id,
+    "/ledger_accounts?items_per_page=200&attributes=all",
+  );
+  const items = resp.$items ?? [];
+  const typeOf = (a: SageLedgerAccount) =>
+    (a.ledger_account_type?.displayed_as ?? "").toLowerCase();
+  const nameOf = (a: SageLedgerAccount) => (a.displayed_as ?? "").toLowerCase();
+  const find = (nameRe: RegExp, typeRe: RegExp) =>
+    items.find((a) => nameRe.test(nameOf(a)) && typeRe.test(typeOf(a))) ?? null;
+
+  const expenseType = /expense|overhead|cost/;
+  const liabilityType = /liabilit/;
+
+  const wages =
+    find(/wages? and salaries|wages? & salaries|salaries? and wages|^wages?\b|^salar/, expenseType) ??
+    find(/wage|salar|payroll/, expenseType);
+  const liability =
+    find(/wages? payable|salaries? payable|payroll (payable|clearing)|net wages|accrued (wages|payroll)/, liabilityType) ??
+    find(/^accruals?\b/, liabilityType);
+  const contractor =
+    find(/subcontract|contract labou?r|contractors?/, expenseType) ??
+    find(/cost of (sales|goods)|direct (costs?|expenses?)|purchases/, expenseType) ??
+    wages;
+
+  const missing: string[] = [];
+  if (!wages) missing.push("an expense account for wages (e.g. \"Wages\")");
+  if (!liability)
+    missing.push("a liability account to hold gross pay until it's paid out (e.g. \"Wages Payable\" or \"Accruals\")");
+  if (missing.length) {
+    return {
+      accounts: null,
+      missing: `Sage's chart of accounts has no ${missing.join(" and no ")}. Add it in Sage (Settings → Chart of accounts), then sync again.`,
+    };
+  }
+  const accounts: PayrollLedgerAccounts = {
+    wages: wages!.id,
+    liability: liability!.id,
+    contractor: contractor!.id,
+  };
+  await mergeConnectionMetadata(conn.id, {
+    payroll_wages_ledger_account_id: accounts.wages,
+    payroll_liability_ledger_account_id: accounts.liability,
+    payroll_contractor_ledger_account_id: accounts.contractor,
+  });
+  return { accounts, missing: null };
+}
+
+type SageJournal = { id: string; displayed_as?: string };
+
+export type PayrollRunKind = "employee" | "contractor";
+
+export async function pushPayrollRunToSage(
+  runId: string,
+  kind: PayrollRunKind,
+): Promise<{ id: string | null; error?: string; permanent?: boolean }> {
+  const admin = createSupabaseAdminClient();
+  const table = kind === "employee" ? "payroll_runs" : "subcontractor_pay_runs";
+  const itemsTable = kind === "employee" ? "payroll_items" : "subcontractor_pay_items";
+  const runKey = kind === "employee" ? "payroll_run_id" : "run_id";
+
+  const { data: run } = (await admin
+    .from(table as never)
+    .select("id, organization_id, status, period_start, period_end, total_cents, paid_at, sage_journal_id")
+    .eq("id" as never, runId as never)
+    .maybeSingle()) as unknown as {
+    data: {
+      id: string;
+      organization_id: string;
+      status: string;
+      period_start: string;
+      period_end: string;
+      total_cents: number;
+      paid_at: string | null;
+      sage_journal_id: string | null;
+    } | null;
+  };
+  if (!run) return { id: null, error: "Run not found.", permanent: true };
+  if (run.sage_journal_id) return { id: run.sage_journal_id };
+  if (run.status !== "paid") {
+    return {
+      id: null,
+      error: "Only a run marked paid is posted to Sage; this one isn't yet.",
+      permanent: false,
+    };
+  }
+  const orgId = run.organization_id;
+  const label = kind === "employee" ? "Payroll" : "Contractor pay";
+  const fail = async (error: string, permanent = false) => {
+    console.error(`[sage] ${label} run ${runId}: ${error}`);
+    await recordSageError(orgId, error);
+    return { id: null, error, permanent };
+  };
+
+  const conn = await getSageConnection(orgId);
+  if (!conn) {
+    return fail(
+      "Sage isn't connected. Reconnect it in Settings → Integrations, then try again.",
+    );
+  }
+
+  const { data: items } = (await admin
+    .from(itemsTable as never)
+    .select(
+      kind === "employee"
+        ? "employee_name, hours_worked, total_cents"
+        : "payee_name, minutes, total_cents",
+    )
+    .eq(runKey as never, runId as never)) as unknown as {
+    data: Array<{
+      employee_name?: string;
+      payee_name?: string;
+      hours_worked?: number | string;
+      minutes?: number;
+      total_cents: number;
+    }> | null;
+  };
+  const lines = (items ?? []).filter((i) => (i.total_cents ?? 0) > 0);
+  if (lines.length === 0) {
+    return fail("The run has no paid lines, so there is nothing to post.", true);
+  }
+  const totalCents = lines.reduce((s, i) => s + i.total_cents, 0);
+
+  try {
+    const { accounts, missing } = await getPayrollLedgerAccounts(conn);
+    if (!accounts) return fail(missing ?? "Sage ledger accounts not found.", true);
+
+    const { getOrgTimezone } = await import("@/lib/org-timezone");
+    const { zonedYmd } = await import("@/lib/wall-clock");
+    const orgTz = await getOrgTimezone(orgId);
+    const date = zonedYmd(new Date(run.paid_at ?? Date.now()), orgTz);
+    const debitAccount = kind === "employee" ? accounts.wages : accounts.contractor;
+
+    const journal_lines = [
+      ...lines.map((i) => {
+        const who = (i.employee_name ?? i.payee_name ?? "Team member").trim();
+        const hours =
+          i.hours_worked != null
+            ? Number(i.hours_worked)
+            : i.minutes != null
+              ? Math.round((i.minutes / 60) * 100) / 100
+              : null;
+        return {
+          ledger_account_id: debitAccount,
+          debit: i.total_cents / 100,
+          credit: 0,
+          details: `${who}${hours != null ? ` · ${hours}h` : ""}`.slice(0, 200),
+        };
+      }),
+      {
+        ledger_account_id: accounts.liability,
+        debit: 0,
+        credit: totalCents / 100,
+        details: `${label} ${run.period_start} to ${run.period_end}`.slice(0, 200),
+      },
+    ];
+
+    const result = await sageFetch<SageJournal>(orgId, "/journals", {
+      method: "POST",
+      body: JSON.stringify({
+        journal: {
+          date,
+          reference: `${label} ${run.period_end}`.slice(0, 25),
+          description: `${label} ${run.period_start} to ${run.period_end} (Sollos)`.slice(0, 200),
+          journal_lines,
+        },
+      }),
+    });
+
+    await admin
+      .from(table as never)
+      .update({ sage_journal_id: result.id } as never)
+      .eq("id" as never, runId as never);
+    await recordSageError(orgId, null);
+    console.log(
+      `[sage] ${label} run ${runId} (${run.period_start}–${run.period_end}, ${totalCents / 100}) → journal ${result.id}`,
+    );
+    return { id: result.id };
+  } catch (err) {
+    const message =
+      err instanceof Error ? err.message : "Unknown error posting payroll to Sage.";
+    return fail(describeSageError(message), /→\s*4\d\d:/.test(message));
+  }
+}

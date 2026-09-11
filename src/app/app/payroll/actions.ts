@@ -175,6 +175,13 @@ export async function markPayrollPaidAction(formData: FormData) {
 
   // Fire-and-forget per-employee "you were paid" receipt.
   notifyPayrollPaid(id);
+  // Books: gross wages per person land in Sage as a journal. Never blocks
+  // the click; the Sage reconciler catches a run that didn't land.
+  void import("@/lib/sage").then(({ pushPayrollRunToSage }) =>
+    pushPayrollRunToSage(id, "employee").catch((err) =>
+      console.error("[payroll] sage journal push failed:", err),
+    ),
+  );
 
   // Revalidate at "page" scope to avoid re-running the app layout's
   // many parallel nav-badge queries on every server action.
