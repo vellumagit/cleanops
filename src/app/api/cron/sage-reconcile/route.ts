@@ -35,6 +35,7 @@ import {
   pushInvoiceToSage,
   pushInvoicePaymentToSage,
   pushPayrollRunToSage,
+  syncContractorStatementToSage,
 } from "@/lib/sage";
 
 export const runtime = "nodejs";
@@ -206,33 +207,77 @@ export async function GET(request: NextRequest) {
     // Paid runs and statements with no journal yet. Keyed "run:<id>" /
     // "srun:<id>" on the same skip-list.
     let runsSynced = 0;
-    for (const kind of ["employee", "contractor"] as const) {
-      const table = kind === "employee" ? "payroll_runs" : "subcontractor_pay_runs";
-      const prefix = kind === "employee" ? "run" : "srun";
+    // Employee runs: a gross-wages journal per paid run.
+    {
       const { data: runRows } = (await admin
-        .from(table as never)
+        .from("payroll_runs")
         .select("id, period_start, period_end")
-        .eq("organization_id" as never, orgId as never)
-        .eq("status" as never, "paid" as never)
+        .eq("organization_id", orgId)
+        .eq("status", "paid")
         .is("sage_journal_id" as never, null as never)
-        .gte("paid_at" as never, cutoff as never)
-        .order("paid_at" as never, { ascending: false } as never)
+        .gte("paid_at", cutoff)
+        .order("paid_at", { ascending: false })
         .limit(limit + Object.keys(existingSkips).length)) as unknown as {
         data: Array<{ id: string; period_start: string; period_end: string }> | null;
       };
       const runCandidates = (runRows ?? [])
-        .filter((r) => !existingSkips[`${prefix}:${r.id}`])
+        .filter((r) => !existingSkips[`run:${r.id}`])
         .slice(0, limit);
       for (const r of runCandidates) {
-        const result = await pushPayrollRunToSage(r.id, kind);
+        const result = await pushPayrollRunToSage(r.id, "employee");
         if (result.id) {
           runsSynced++;
           continue;
         }
-        const label = `${kind === "employee" ? "Payroll" : "Contractor pay"} ${r.period_start}–${r.period_end}`;
+        const label = `Payroll ${r.period_start}–${r.period_end}`;
         const reason = `${label}: ${result.error ?? "Unknown error"}`;
         if (result.permanent) {
-          mergedSkips[`${prefix}:${r.id}`] = { reason, at: new Date().toISOString() };
+          mergedSkips[`run:${r.id}`] = { reason, at: new Date().toISOString() };
+          skipped.push({ invoice: label, reason });
+        } else {
+          retryable.push({ invoice: label, reason });
+        }
+      }
+    }
+    // Contractor statements: bills per line at finalize, supplier payments
+    // once paid. One idempotent sync per statement decides what's missing.
+    {
+      const { data: stRows } = (await admin
+        .from("subcontractor_pay_runs" as never)
+        .select("id, period_start, period_end, status, items:subcontractor_pay_items ( sage_purchase_invoice_id, sage_payment_id, total_cents )")
+        .eq("organization_id" as never, orgId as never)
+        .in("status" as never, ["finalized", "paid"] as never)
+        .gte("created_at" as never, cutoff as never)
+        .order("created_at" as never, { ascending: false } as never)
+        .limit(limit + Object.keys(existingSkips).length)) as unknown as {
+        data: Array<{
+          id: string;
+          period_start: string;
+          period_end: string;
+          status: string;
+          items: Array<{ sage_purchase_invoice_id: string | null; sage_payment_id: string | null; total_cents: number }> | null;
+        }> | null;
+      };
+      const stCandidates = (stRows ?? [])
+        .filter((r) => !existingSkips[`srun:${r.id}`])
+        .filter((r) =>
+          (r.items ?? []).some(
+            (i) =>
+              i.total_cents > 0 &&
+              (!i.sage_purchase_invoice_id || (r.status === "paid" && !i.sage_payment_id)),
+          ),
+        )
+        .slice(0, limit);
+      for (const r of stCandidates) {
+        const result = await syncContractorStatementToSage(r.id);
+        if (result.ok) {
+          if (result.billsPosted || result.paymentsPosted) runsSynced++;
+          continue;
+        }
+        const label = `Contractor pay ${r.period_start}–${r.period_end}`;
+        const reason = `${label}: ${result.error ?? "Unknown error"}`;
+        if (result.permanent) {
+          mergedSkips[`srun:${r.id}`] = { reason, at: new Date().toISOString() };
           skipped.push({ invoice: label, reason });
         } else {
           retryable.push({ invoice: label, reason });

@@ -28,10 +28,16 @@ import {
 } from "./google-calendar-actions";
 import { connectSageAction, disconnectSageAction } from "./sage-actions";
 import { SageTaxRegionForm } from "./sage-tax-region";
+import { SageAccountsForm } from "./sage-accounts";
 import {
   getSageConnection,
   getSageTaxRegionId,
   listSageAddressRegions,
+  getSageAccountMap,
+  listSageLedgerAccounts,
+  listSageBankAccounts,
+  type SageAccountMapKey,
+  type SageAccountOption,
 } from "@/lib/sage";
 import {
   connectQuickBooksAction,
@@ -145,6 +151,12 @@ export default async function IntegrationsPage({
     regions: Array<{ id: string; label: string }>;
     loadError: string | null;
   } | null = null;
+  let sageAccounts: {
+    current: Record<SageAccountMapKey, string | null>;
+    ledger: SageAccountOption[];
+    bank: SageAccountOption[];
+    loadError: string | null;
+  } | null = null;
 
   if (byProvider.has("sage")) {
     const sageConn = await getSageConnection(membership.organization_id);
@@ -167,6 +179,30 @@ export default async function IntegrationsPage({
     }
 
     sageRegion = { current, regions, loadError };
+
+    // The account mapping: what Sollos picked, with the chart to change it.
+    // Two Sage calls, only on this page, only for a connected org.
+    if (sageConn) {
+      let ledger: SageAccountOption[] = [];
+      let bank: SageAccountOption[] = [];
+      let acctError: string | null = null;
+      try {
+        [ledger, bank] = await Promise.all([
+          listSageLedgerAccounts(membership.organization_id),
+          listSageBankAccounts(membership.organization_id),
+        ]);
+      } catch (err) {
+        acctError =
+          err instanceof Error ? err.message.slice(0, 160) : "unknown error";
+        console.error("[sage] chart lookup failed:", err);
+      }
+      sageAccounts = {
+        current: getSageAccountMap(sageConn),
+        ledger,
+        bank,
+        loadError: acctError,
+      };
+    }
   }
 
   const paymentCards: ProviderCard[] = [
@@ -401,6 +437,14 @@ export default async function IntegrationsPage({
                     regions={sageRegion.regions}
                     current={sageRegion.current}
                     loadError={sageRegion.loadError}
+                  />
+                )}
+                {isSage && sageAccounts && (
+                  <SageAccountsForm
+                    current={sageAccounts.current}
+                    ledger={sageAccounts.ledger}
+                    bank={sageAccounts.bank}
+                    loadError={sageAccounts.loadError}
                   />
                 )}
                 {isStripe && stripeNeedsAction && (

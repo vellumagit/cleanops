@@ -8,6 +8,9 @@ import {
   buildSageOAuthUrl,
   issueSageOAuthState,
   setSageTaxRegionId,
+  setSageAccountMap,
+  SAGE_ACCOUNT_MAP_KEYS,
+  type SageAccountMapKey,
 } from "@/lib/sage";
 
 /**
@@ -61,6 +64,29 @@ export async function saveSageTaxRegionAction(
     };
   }
 
+  revalidatePath("/app/settings/integrations");
+  return { ok: true };
+}
+
+/**
+ * Save which Sage accounts Sollos posts to. Empty = back to auto-detect.
+ */
+export async function saveSageAccountMapAction(
+  values: Partial<Record<SageAccountMapKey, string>>,
+): Promise<{ ok: boolean; error?: string }> {
+  const membership = await requireMembership(["owner", "admin"]);
+  const patch: Partial<Record<SageAccountMapKey, string>> = {};
+  for (const k of SAGE_ACCOUNT_MAP_KEYS) {
+    const v = (values[k] ?? "").trim();
+    if (v.length > 64 || /[^a-zA-Z0-9_-]/.test(v)) {
+      return { ok: false, error: "That doesn't look like a Sage account id." };
+    }
+    patch[k] = v;
+  }
+  const saved = await setSageAccountMap(membership.organization_id, patch);
+  if (!saved) {
+    return { ok: false, error: "Sage isn't connected — connect it first." };
+  }
   revalidatePath("/app/settings/integrations");
   return { ok: true };
 }

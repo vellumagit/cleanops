@@ -199,6 +199,14 @@ export async function createContractorRunForOrg(opts: {
     return { ok: false, error: itemsErr.message };
   }
 
+  // Books: each contractor's line becomes a Sage bill against them as a
+  // supplier. Fire-and-forget; the Sage reconciler posts any that miss.
+  void import("@/lib/sage").then(({ syncContractorStatementToSage }) =>
+    syncContractorStatementToSage(run.id).catch((err) =>
+      console.error("[contractors] sage bills push failed:", err),
+    ),
+  );
+
   const entryIds = items.flatMap((i) => i.entryIds);
   const { data: claimedRows, error: stampErr } = (await admin
     .from("time_entries")

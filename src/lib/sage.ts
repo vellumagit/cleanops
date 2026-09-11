@@ -1613,3 +1613,338 @@ export async function pushPayrollRunToSage(
     return fail(describeSageError(message), /→\s*4\d\d:/.test(message));
   }
 }
+
+
+// ---------------------------------------------------------------------------
+// Account mapping — what Sollos picked, and letting the owner change it
+// ---------------------------------------------------------------------------
+
+export type SageAccountMapKey =
+  | "sales_ledger_account_id"
+  | "bank_account_id"
+  | "payroll_wages_ledger_account_id"
+  | "payroll_liability_ledger_account_id"
+  | "payroll_contractor_ledger_account_id";
+
+export const SAGE_ACCOUNT_MAP_KEYS: SageAccountMapKey[] = [
+  "sales_ledger_account_id",
+  "bank_account_id",
+  "payroll_wages_ledger_account_id",
+  "payroll_liability_ledger_account_id",
+  "payroll_contractor_ledger_account_id",
+];
+
+export type SageAccountOption = { id: string; label: string; type: string };
+
+/** The chart of accounts, for the mapping pickers. One Sage call. */
+export async function listSageLedgerAccounts(
+  organizationId: string,
+): Promise<SageAccountOption[]> {
+  const resp = await sageFetch<{ $items?: SageLedgerAccount[] }>(
+    organizationId,
+    "/ledger_accounts?items_per_page=200&attributes=all",
+  );
+  return (resp.$items ?? []).map((a) => ({
+    id: a.id,
+    label: a.displayed_as ?? a.nominal_code ?? a.id,
+    type: a.ledger_account_type?.displayed_as ?? "",
+  }));
+}
+
+/** Bank accounts, for the receipts/payments picker. One Sage call. */
+export async function listSageBankAccounts(
+  organizationId: string,
+): Promise<SageAccountOption[]> {
+  const resp = await sageFetch<{ $items?: SageBankAccount[] }>(
+    organizationId,
+    "/bank_accounts?items_per_page=100&attributes=all",
+  );
+  return (resp.$items ?? []).map((a) => ({
+    id: a.id,
+    label: a.displayed_as ?? a.id,
+    type: a.bank_account_type?.displayed_as ?? "",
+  }));
+}
+
+/** Current mapping from the connection's metadata (null = not picked yet). */
+export function getSageAccountMap(
+  conn: SageConnection,
+): Record<SageAccountMapKey, string | null> {
+  const md = conn.metadata ?? {};
+  const out = {} as Record<SageAccountMapKey, string | null>;
+  for (const k of SAGE_ACCOUNT_MAP_KEYS) {
+    const v = md[k];
+    out[k] = typeof v === "string" && v ? v : null;
+  }
+  return out;
+}
+
+/** Save an owner's picks. Empty string clears a key back to auto-detect. */
+export async function setSageAccountMap(
+  organizationId: string,
+  patch: Partial<Record<SageAccountMapKey, string>>,
+): Promise<boolean> {
+  const conn = await getSageConnection(organizationId);
+  if (!conn) return false;
+  const merged: Record<string, unknown> = { ...(conn.metadata ?? {}) };
+  for (const k of SAGE_ACCOUNT_MAP_KEYS) {
+    if (!(k in patch)) continue;
+    const v = (patch[k] ?? "").trim();
+    if (v) merged[k] = v;
+    else delete merged[k];
+  }
+  const admin = createSupabaseAdminClient();
+  await admin
+    .from("integration_connections" as never)
+    .update({ metadata: merged } as never)
+    .eq("id" as never, conn.id as never);
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Contractors as suppliers, statements as bills
+// ---------------------------------------------------------------------------
+//
+// A subcontractor bills the business; the business pays them. In Sage that
+// is a supplier with purchase invoices, and it gives the owner the view the
+// question was really about — who am I paying what, and what is still owed —
+// in the supplier ledger a bookkeeper already reads. Employees stay a gross
+// wages journal (pushPayrollRunToSage, kind "employee").
+
+async function pushContractorToSage(
+  membershipId: string,
+): Promise<{ id: string | null; error?: string; permanent?: boolean }> {
+  const admin = createSupabaseAdminClient();
+  const { data: m } = (await admin
+    .from("memberships")
+    .select(
+      "id, organization_id, display_name, contact_email, contact_phone, sage_contact_id, profile:profiles ( full_name, phone )",
+    )
+    .eq("id", membershipId)
+    .maybeSingle()) as unknown as {
+    data: {
+      id: string;
+      organization_id: string;
+      display_name: string | null;
+      contact_email: string | null;
+      contact_phone: string | null;
+      sage_contact_id: string | null;
+      profile: { full_name: string | null; phone: string | null } | null;
+    } | null;
+  };
+  if (!m) return { id: null, error: "Contractor not found.", permanent: true };
+  if (m.sage_contact_id) return { id: m.sage_contact_id };
+  const { memberDisplayName } = await import("@/lib/member-display");
+  const name = memberDisplayName(m);
+  if (!name || name === "Unknown") {
+    return {
+      id: null,
+      error: "The contractor has no name on their record; Sage needs one for the supplier.",
+      permanent: true,
+    };
+  }
+  const email = m.contact_email ?? null;
+  const phone = m.contact_phone ?? m.profile?.phone ?? null;
+  try {
+    const result = await sageFetch<SageContact>(m.organization_id, "/contacts", {
+      method: "POST",
+      body: JSON.stringify({
+        contact: {
+          name,
+          contact_type_ids: ["VENDOR"],
+          ...(email || phone
+            ? {
+                main_contact_person: {
+                  name,
+                  ...(email ? { email } : {}),
+                  ...(phone ? { telephone: phone } : {}),
+                  is_main_contact: true,
+                },
+              }
+            : {}),
+        },
+      }),
+    });
+    await admin
+      .from("memberships")
+      .update({ sage_contact_id: result.id } as never)
+      .eq("id", membershipId);
+    return { id: result.id };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      id: null,
+      error: `Sage refused to create ${name} as a supplier — ${describeSageError(message)}`,
+      permanent: /→\s*4\d\d:/.test(message),
+    };
+  }
+}
+
+type SagePurchaseInvoice = { id: string; displayed_as?: string };
+
+/**
+ * Bring one contractor statement up to date in Sage: a bill per contractor
+ * line that has none, and — once the statement is paid — a supplier payment
+ * per bill that has none. Idempotent on the two item columns; safe to call
+ * from the finalize path, the mark-paid path and the reconciler alike.
+ */
+export async function syncContractorStatementToSage(
+  runId: string,
+): Promise<{
+  ok: boolean;
+  billsPosted: number;
+  paymentsPosted: number;
+  error?: string;
+  permanent?: boolean;
+}> {
+  const admin = createSupabaseAdminClient();
+  const { data: run } = (await admin
+    .from("subcontractor_pay_runs" as never)
+    .select("id, organization_id, status, period_start, period_end, paid_at")
+    .eq("id" as never, runId as never)
+    .maybeSingle()) as unknown as {
+    data: {
+      id: string;
+      organization_id: string;
+      status: string;
+      period_start: string;
+      period_end: string;
+      paid_at: string | null;
+    } | null;
+  };
+  const zero = { billsPosted: 0, paymentsPosted: 0 };
+  if (!run) return { ok: false, ...zero, error: "Statement not found.", permanent: true };
+  if (run.status !== "finalized" && run.status !== "paid") {
+    return { ok: false, ...zero, error: "Only a finalized statement is posted to Sage.", permanent: false };
+  }
+  const orgId = run.organization_id;
+  const fail = async (error: string, permanent = false) => {
+    console.error(`[sage] contractor statement ${runId}: ${error}`);
+    await recordSageError(orgId, error);
+    return { ok: false, ...zero, error, permanent };
+  };
+  const conn = await getSageConnection(orgId);
+  if (!conn) {
+    return fail("Sage isn't connected. Reconnect it in Settings → Integrations, then try again.");
+  }
+
+  const { data: items } = (await admin
+    .from("subcontractor_pay_items" as never)
+    .select("id, membership_id, payee_name, minutes, total_cents, sage_purchase_invoice_id, sage_payment_id")
+    .eq("run_id" as never, runId as never)) as unknown as {
+    data: Array<{
+      id: string;
+      membership_id: string;
+      payee_name: string;
+      minutes: number;
+      total_cents: number;
+      sage_purchase_invoice_id: string | null;
+      sage_payment_id: string | null;
+    }> | null;
+  };
+  const lines = (items ?? []).filter((i) => i.total_cents > 0);
+  if (lines.length === 0) return { ok: true, ...zero };
+
+  let billsPosted = 0;
+  let paymentsPosted = 0;
+  try {
+    const { accounts, missing } = await getPayrollLedgerAccounts(conn);
+    if (!accounts) return fail(missing ?? "Sage ledger accounts not found.", true);
+    const { getOrgTimezone } = await import("@/lib/org-timezone");
+    const { zonedYmd } = await import("@/lib/wall-clock");
+    const orgTz = await getOrgTimezone(orgId);
+    const billDate = run.period_end;
+    const noTaxRateId = await getNoTaxRateId(conn, billDate);
+    if (!noTaxRateId) {
+      return fail(
+        "Sage has no zero-rate tax code to put on contractor bills. Add one (Settings → Sales tax), then sync again.",
+        true,
+      );
+    }
+
+    // Bills first.
+    for (const it of lines) {
+      if (it.sage_purchase_invoice_id) continue;
+      const contact = await pushContractorToSage(it.membership_id);
+      if (!contact.id) return fail(contact.error ?? "Couldn't create the supplier.", contact.permanent ?? false);
+      const hours = Math.round((it.minutes / 60) * 100) / 100;
+      const amount = it.total_cents / 100;
+      const bill = await sageFetch<SagePurchaseInvoice>(orgId, "/purchase_invoices", {
+        method: "POST",
+        body: JSON.stringify({
+          purchase_invoice: {
+            contact_id: contact.id,
+            date: billDate,
+            due_date: billDate,
+            reference: `Statement ${run.period_end}`.slice(0, 25),
+            invoice_lines: [
+              {
+                description: `Contract cleaning ${run.period_start} to ${run.period_end} · ${hours}h`.slice(0, 200),
+                quantity: 1,
+                unit_price: amount,
+                ledger_account_id: accounts.contractor,
+                tax_rate_id: noTaxRateId,
+                tax_amount: 0,
+              },
+            ],
+          },
+        }),
+      });
+      await admin
+        .from("subcontractor_pay_items" as never)
+        .update({ sage_purchase_invoice_id: bill.id } as never)
+        .eq("id" as never, it.id as never);
+      it.sage_purchase_invoice_id = bill.id;
+      billsPosted++;
+    }
+
+    // Then payments, only once the statement is paid.
+    if (run.status === "paid") {
+      const bankAccountId = await getSageBankAccountId(conn);
+      if (!bankAccountId) {
+        return fail(
+          "Sage has no bank account to pay contractors from. Create one in Sage (Banking → New account), then sync again.",
+          true,
+        );
+      }
+      const payDate = zonedYmd(new Date(run.paid_at ?? Date.now()), orgTz);
+      for (const it of lines) {
+        if (!it.sage_purchase_invoice_id || it.sage_payment_id) continue;
+        const contact = await pushContractorToSage(it.membership_id);
+        if (!contact.id) return fail(contact.error ?? "Couldn't find the supplier.", contact.permanent ?? false);
+        const amount = it.total_cents / 100;
+        const payment = await sageFetch<SageContactPayment>(orgId, "/contact_payments", {
+          method: "POST",
+          body: JSON.stringify({
+            contact_payment: {
+              transaction_type_id: "VENDOR_PAYMENT",
+              contact_id: contact.id,
+              bank_account_id: bankAccountId,
+              date: payDate,
+              total_amount: amount,
+              reference: `Statement ${run.period_end}`.slice(0, 50),
+              allocated_artefacts: [{ artefact_id: it.sage_purchase_invoice_id, amount }],
+            },
+          }),
+        });
+        await admin
+          .from("subcontractor_pay_items" as never)
+          .update({ sage_payment_id: payment.id } as never)
+          .eq("id" as never, it.id as never);
+        paymentsPosted++;
+      }
+    }
+
+    if (billsPosted || paymentsPosted) await recordSageError(orgId, null);
+    if (billsPosted || paymentsPosted) {
+      console.log(
+        `[sage] contractor statement ${runId} (${run.period_start}–${run.period_end}): ${billsPosted} bill(s), ${paymentsPosted} payment(s) posted`,
+      );
+    }
+    return { ok: true, billsPosted, paymentsPosted };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error posting the statement to Sage.";
+    const r = await fail(describeSageError(message), /→\s*4\d\d:/.test(message));
+    return { ...r, billsPosted, paymentsPosted };
+  }
+}

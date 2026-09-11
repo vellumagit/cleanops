@@ -152,10 +152,11 @@ export async function markSubcontractorRunPaidAction(
     before: { entity_name: "subcontractor_pay_run", status: "finalized" },
     after: { entity_name: "subcontractor_pay_run", status: "paid" },
   });
-  // Books: the statement lands in Sage as a journal. Fire-and-forget.
-  void import("@/lib/sage").then(({ pushPayrollRunToSage }) =>
-    pushPayrollRunToSage(runId, "contractor").catch((err) =>
-      console.error("[contractors] sage journal push failed:", err),
+  // Books: the bills posted at finalize get their supplier payments now.
+  // Fire-and-forget; the Sage reconciler posts any that miss.
+  void import("@/lib/sage").then(({ syncContractorStatementToSage }) =>
+    syncContractorStatementToSage(runId).catch((err) =>
+      console.error("[contractors] sage payments push failed:", err),
     ),
   );
   revalidatePath("/app/payroll/contractors");
