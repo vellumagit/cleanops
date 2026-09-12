@@ -36,6 +36,8 @@ import {
   pushInvoicePaymentToSage,
   pushPayrollRunToSage,
   syncContractorStatementToSage,
+  pushInvoiceRefundToSage,
+  syncTipToSage,
 } from "@/lib/sage";
 
 export const runtime = "nodejs";
@@ -293,7 +295,76 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    totalSynced += synced + paymentsSynced + runsSynced;
+    // ── Refunds ──────────────────────────────────────────────────────
+    // Payments refunded further than Sage has seen. Keyed "ref:<id>".
+    let refundsSynced = 0;
+    {
+      const { data: refRows } = (await admin
+        .from("invoice_payments" as never)
+        .select("id, refunded_cents, sage_refunded_cents, invoice:invoices!inner ( number, sage_invoice_id )")
+        .eq("organization_id" as never, orgId as never)
+        .gt("refunded_cents" as never, 0 as never)
+        .gte("created_at" as never, cutoff as never)
+        .limit(200)) as unknown as {
+        data: Array<{ id: string; refunded_cents: number; sage_refunded_cents: number | null; invoice: { number: string | null; sage_invoice_id: string | null } | null }> | null;
+      };
+      const refCandidates = (refRows ?? [])
+        .filter((r) => r.refunded_cents > (r.sage_refunded_cents ?? 0) && !existingSkips[`ref:${r.id}`])
+        .slice(0, limit);
+      for (const r of refCandidates) {
+        const result = await pushInvoiceRefundToSage(r.id);
+        if (result.postedCents > 0) {
+          refundsSynced++;
+          continue;
+        }
+        if (!result.error) continue;
+        const label = `Refund on ${r.invoice?.number ?? "invoice"}`;
+        const reason = `${label}: ${result.error}`;
+        if (result.permanent) {
+          mergedSkips[`ref:${r.id}`] = { reason, at: new Date().toISOString() };
+          skipped.push({ invoice: label, reason });
+        } else {
+          retryable.push({ invoice: label, reason });
+        }
+      }
+    }
+
+    // ── Tips ─────────────────────────────────────────────────────────
+    // Held tips missing their receipt journal, or settled ones missing
+    // the settle journal. Keyed "tip:<id>".
+    let tipsSynced = 0;
+    {
+      const { data: tipRows } = (await admin
+        .from("invoice_tips" as never)
+        .select("id, amount_cents, custody, paid_out_at, sage_receipt_journal_id, sage_settle_journal_id, invoice:invoices ( number )")
+        .eq("organization_id" as never, orgId as never)
+        .eq("custody" as never, "held" as never)
+        .gte("created_at" as never, cutoff as never)
+        .limit(300)) as unknown as {
+        data: Array<{ id: string; amount_cents: number; custody: string; paid_out_at: string | null; sage_receipt_journal_id: string | null; sage_settle_journal_id: string | null; invoice: { number: string | null } | null }> | null;
+      };
+      const tipCandidates = (tipRows ?? [])
+        .filter((t) => t.amount_cents > 0 && !existingSkips[`tip:${t.id}`])
+        .filter((t) => !t.sage_receipt_journal_id || (t.paid_out_at && !t.sage_settle_journal_id))
+        .slice(0, limit);
+      for (const t of tipCandidates) {
+        const result = await syncTipToSage(t.id);
+        if (result.ok) {
+          if (result.posted) tipsSynced++;
+          continue;
+        }
+        const label = `Tip on ${t.invoice?.number ?? "invoice"}`;
+        const reason = `${label}: ${result.error ?? "Unknown error"}`;
+        if (result.permanent) {
+          mergedSkips[`tip:${t.id}`] = { reason, at: new Date().toISOString() };
+          skipped.push({ invoice: label, reason });
+        } else {
+          retryable.push({ invoice: label, reason });
+        }
+      }
+    }
+
+    totalSynced += synced + paymentsSynced + runsSynced + refundsSynced + tipsSynced;
     totalFailed += skipped.length + retryable.length;
 
     perOrg.push({
@@ -303,6 +374,8 @@ export async function GET(request: NextRequest) {
       payments_considered: payCandidates.length,
       payments_synced: paymentsSynced,
       payroll_runs_synced: runsSynced,
+      refunds_synced: refundsSynced,
+      tips_synced: tipsSynced,
       will_retry: retryable,
       needs_attention: skipped,
       skip_list_size: Object.keys(mergedSkips).length,

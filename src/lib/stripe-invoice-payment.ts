@@ -149,11 +149,19 @@ export async function recordInvoiceTip(
             },
           ];
 
-    const { error } = (await admin
+    const { data: insertedTips, error } = (await admin
       .from("invoice_tips" as never)
-      .insert(rows as never)) as unknown as {
+      .insert(rows as never)
+      .select("id")) as unknown as {
+      data: Array<{ id: string }> | null;
       error: { message: string; code?: string } | null;
     };
+    if (!error && insertedTips?.length) {
+      // Books: the tip arrived in the bank and is owed to someone.
+      void import("@/lib/sage").then(({ syncTipsToSage }) =>
+        syncTipsToSage(insertedTips.map((t) => t.id)),
+      );
+    }
 
     // 23505 = the race above resolving correctly. Anything else means a tip
     // was paid and nobody is recorded as owed it.
@@ -415,6 +423,16 @@ export async function recordProviderRefund(args: {
 
   // Cumulative write, clamped — idempotent across partial-refund events and
   // webhook retries, and it can never drive net-paid negative.
+  // Books: the refunded amount becomes a Sage credit note + customer refund.
+  // Fire-and-forget after the row is updated below; the reconciler posts
+  // any difference that didn't land.
+  void import("@/lib/sage").then(({ pushInvoiceRefundToSage }) =>
+    setTimeout(() => {
+      pushInvoiceRefundToSage(payment.id).catch((err) =>
+        console.error("[refund] sage credit note push failed:", err),
+      );
+    }, 1500),
+  );
   const { error: refundErr } = await (admin
     .from("invoice_payments" as never)
     .update({ refunded_cents: invoiceRefundCents } as never)

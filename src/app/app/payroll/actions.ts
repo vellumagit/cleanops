@@ -287,6 +287,10 @@ export async function markTipsPaidAction(formData: FormData): Promise<void> {
 
   const rows = settled ?? [];
   if (rows.length === 0) return;
+  // Books: the liability clears against the bank. Fire-and-forget.
+  void import("@/lib/sage").then(({ syncTipsToSage }) =>
+    syncTipsToSage(rows.map((r) => r.id)),
+  );
 
   await logAuditEvent({
     membership,
@@ -353,6 +357,10 @@ export async function keepTipsAction(formData: FormData): Promise<void> {
 
   const rows = kept ?? [];
   if (rows.length === 0) return;
+  // Books: the liability becomes income. Fire-and-forget.
+  void import("@/lib/sage").then(({ syncTipsToSage }) =>
+    syncTipsToSage(rows.map((r) => r.id)),
+  );
 
   await logAuditEvent({
     membership,

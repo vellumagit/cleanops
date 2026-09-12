@@ -78,6 +78,7 @@ export async function recordManualTip(
       // owed to the cleaner. The link is what lets the delete clean up.
       provider_payment_id: args.paymentId,
       paid_out_at: settledAt,
+      custody: args.custody,
     };
 
     const rows =
@@ -97,14 +98,22 @@ export async function recordManualTip(
             },
           ];
 
-    const { error } = (await supabase
+    const { data: insertedTips, error } = (await supabase
       .from("invoice_tips")
-      .insert(rows as never)) as unknown as {
+      .insert(rows as never)
+      .select("id")) as unknown as {
+      data: Array<{ id: string }> | null;
       error: { message: string } | null;
     };
     if (error) {
       console.error("[tips] manual tip insert failed:", error.message);
       return { ok: false, error: error.message };
+    }
+    if (args.custody === "held" && insertedTips?.length) {
+      // Books: cash or e-transfer into the business is owed the same way.
+      void import("@/lib/sage").then(({ syncTipsToSage }) =>
+        syncTipsToSage(insertedTips.map((t) => t.id)),
+      );
     }
     return { ok: true };
   } catch (err) {

@@ -1624,7 +1624,9 @@ export type SageAccountMapKey =
   | "bank_account_id"
   | "payroll_wages_ledger_account_id"
   | "payroll_liability_ledger_account_id"
-  | "payroll_contractor_ledger_account_id";
+  | "payroll_contractor_ledger_account_id"
+  | "tips_liability_ledger_account_id"
+  | "tips_income_ledger_account_id";
 
 export const SAGE_ACCOUNT_MAP_KEYS: SageAccountMapKey[] = [
   "sales_ledger_account_id",
@@ -1632,6 +1634,8 @@ export const SAGE_ACCOUNT_MAP_KEYS: SageAccountMapKey[] = [
   "payroll_wages_ledger_account_id",
   "payroll_liability_ledger_account_id",
   "payroll_contractor_ledger_account_id",
+  "tips_liability_ledger_account_id",
+  "tips_income_ledger_account_id",
 ];
 
 export type SageAccountOption = { id: string; label: string; type: string };
@@ -1946,5 +1950,361 @@ export async function syncContractorStatementToSage(
     const message = err instanceof Error ? err.message : "Unknown error posting the statement to Sage.";
     const r = await fail(describeSageError(message), /→\s*4\d\d:/.test(message));
     return { ...r, billsPosted, paymentsPosted };
+  }
+}
+
+
+// ---------------------------------------------------------------------------
+// The bank account's ledger account (journals post to ledgers, not banks)
+// ---------------------------------------------------------------------------
+
+async function getSageBankLedgerAccountId(
+  conn: SageConnection,
+): Promise<string | null> {
+  const cached = (conn.metadata ?? {})["bank_ledger_account_id"];
+  const cachedFor = (conn.metadata ?? {})["bank_ledger_account_for"];
+  const bankId = await getSageBankAccountId(conn);
+  if (!bankId) return null;
+  if (typeof cached === "string" && cached && cachedFor === bankId) return cached;
+  const resp = await sageFetch<{ ledger_account?: { id?: string } }>(
+    conn.organization_id,
+    `/bank_accounts/${bankId}`,
+  );
+  const id = resp.ledger_account?.id ?? null;
+  if (id) {
+    await mergeConnectionMetadata(conn.id, {
+      bank_ledger_account_id: id,
+      bank_ledger_account_for: bankId,
+    });
+  }
+  return id;
+}
+
+// ---------------------------------------------------------------------------
+// Tips: a liability on receipt, cleared on payout or kept
+// ---------------------------------------------------------------------------
+
+async function getTipLedgerAccounts(
+  conn: SageConnection,
+): Promise<{ liability: string | null; income: string | null }> {
+  const md = conn.metadata ?? {};
+  const cl = md["tips_liability_ledger_account_id"];
+  const ci = md["tips_income_ledger_account_id"];
+  if (typeof cl === "string" && cl && typeof ci === "string" && ci) {
+    return { liability: cl, income: ci };
+  }
+  const resp = await sageFetch<{ $items?: SageLedgerAccount[] }>(
+    conn.organization_id,
+    "/ledger_accounts?items_per_page=200&attributes=all",
+  );
+  const items = resp.$items ?? [];
+  const typeOf = (a: SageLedgerAccount) =>
+    (a.ledger_account_type?.displayed_as ?? "").toLowerCase();
+  const nameOf = (a: SageLedgerAccount) => (a.displayed_as ?? "").toLowerCase();
+  const find = (nameRe: RegExp, typeRe: RegExp) =>
+    items.find((a) => nameRe.test(nameOf(a)) && typeRe.test(typeOf(a))) ?? null;
+  const liability =
+    (typeof cl === "string" && cl ? { id: cl } : null) ??
+    find(/tips? payable|gratuit/, /liabilit/) ??
+    find(/wages? payable|payroll (payable|clearing)/, /liabilit/) ??
+    find(/^accruals?\b/, /liabilit/);
+  const income =
+    (typeof ci === "string" && ci ? { id: ci } : null) ??
+    find(/tips?|gratuit/, /income|sales|revenue/) ??
+    find(/other income|sundry income|miscellaneous income|other revenue/, /income|sales|revenue/) ??
+    find(/^sales\b|revenue/, /income|sales|revenue/);
+  const out = { liability: liability?.id ?? null, income: income?.id ?? null };
+  await mergeConnectionMetadata(conn.id, {
+    ...(out.liability ? { tips_liability_ledger_account_id: out.liability } : {}),
+    ...(out.income ? { tips_income_ledger_account_id: out.income } : {}),
+  });
+  return out;
+}
+
+/**
+ * Bring one tip up to date in Sage. Two journals at most, each once:
+ *   receipt  — Dr bank / Cr tips payable, when the business received it
+ *   settle   — Dr tips payable / Cr bank (paid out) or Cr tips income (kept)
+ * A "direct" tip (handed to the cleaner) never touched the business and
+ * posts nothing. Idempotent; safe from the webhook, the payout button and
+ * the reconciler.
+ */
+export async function syncTipToSage(
+  tipId: string,
+): Promise<{ ok: boolean; posted: number; error?: string; permanent?: boolean }> {
+  const admin = createSupabaseAdminClient();
+  const { data: tip } = (await admin
+    .from("invoice_tips" as never)
+    .select(
+      "id, organization_id, invoice_id, membership_id, amount_cents, provider, custody, paid_out_at, kept_by_business, created_at, sage_receipt_journal_id, sage_settle_journal_id, invoice:invoices ( number ), member:memberships ( display_name, profile:profiles ( full_name ) )",
+    )
+    .eq("id" as never, tipId as never)
+    .maybeSingle()) as unknown as {
+    data: {
+      id: string;
+      organization_id: string;
+      invoice_id: string;
+      membership_id: string | null;
+      amount_cents: number;
+      provider: string;
+      custody: string;
+      paid_out_at: string | null;
+      kept_by_business: boolean | null;
+      created_at: string;
+      sage_receipt_journal_id: string | null;
+      sage_settle_journal_id: string | null;
+      invoice: { number: string | null } | null;
+      member: { display_name: string | null; profile: { full_name: string | null } | null } | null;
+    } | null;
+  };
+  if (!tip) return { ok: false, posted: 0, error: "Tip not found.", permanent: true };
+  if (tip.custody === "direct" || tip.amount_cents <= 0) return { ok: true, posted: 0 };
+  const needReceipt = !tip.sage_receipt_journal_id;
+  const needSettle = Boolean(tip.paid_out_at) && !tip.sage_settle_journal_id;
+  if (!needReceipt && !needSettle) return { ok: true, posted: 0 };
+
+  const orgId = tip.organization_id;
+  const fail = async (error: string, permanent = false) => {
+    console.error(`[sage] tip ${tipId}: ${error}`);
+    await recordSageError(orgId, error);
+    return { ok: false, posted: 0, error, permanent };
+  };
+  const conn = await getSageConnection(orgId);
+  if (!conn) return fail("Sage isn't connected. Reconnect it in Settings → Integrations, then try again.");
+
+  let posted = 0;
+  try {
+    const bankLedger = await getSageBankLedgerAccountId(conn);
+    if (!bankLedger) {
+      return fail("Sage has no bank account for tips to land in. Create one in Sage (Banking → New account), then sync again.", true);
+    }
+    const { liability, income } = await getTipLedgerAccounts(conn);
+    if (!liability) {
+      return fail('Sage\'s chart has no liability account for tips owed (e.g. "Tips Payable" or "Accruals"). Add one (Settings → Chart of accounts), then sync again.', true);
+    }
+    const { getOrgTimezone } = await import("@/lib/org-timezone");
+    const { zonedYmd } = await import("@/lib/wall-clock");
+    const { memberDisplayName } = await import("@/lib/member-display");
+    const orgTz = await getOrgTimezone(orgId);
+    const who = tip.member ? memberDisplayName(tip.member) : "unassigned";
+    const inv = tip.invoice?.number ?? "invoice";
+    const amount = tip.amount_cents / 100;
+
+    if (needReceipt) {
+      const date = zonedYmd(new Date(tip.created_at), orgTz);
+      const j = await sageFetch<SageJournal>(orgId, "/journals", {
+        method: "POST",
+        body: JSON.stringify({
+          journal: {
+            date,
+            reference: `Tip ${inv}`.slice(0, 25),
+            description: `Tip received on ${inv} for ${who} (Sollos)`.slice(0, 200),
+            journal_lines: [
+              { ledger_account_id: bankLedger, debit: amount, credit: 0, details: `Tip on ${inv}`.slice(0, 200) },
+              { ledger_account_id: liability, debit: 0, credit: amount, details: `Owed to ${who}`.slice(0, 200) },
+            ],
+          },
+        }),
+      });
+      await admin.from("invoice_tips" as never).update({ sage_receipt_journal_id: j.id } as never).eq("id" as never, tipId as never);
+      posted++;
+    }
+    if (needSettle && tip.paid_out_at) {
+      const kept = Boolean(tip.kept_by_business);
+      if (kept && !income) {
+        return fail('Sage\'s chart has no income account for tips the business keeps (e.g. "Tips Income" or "Other Income"). Add one, then sync again.', true);
+      }
+      const date = zonedYmd(new Date(tip.paid_out_at), orgTz);
+      const j = await sageFetch<SageJournal>(orgId, "/journals", {
+        method: "POST",
+        body: JSON.stringify({
+          journal: {
+            date,
+            reference: `Tip ${inv}`.slice(0, 25),
+            description: kept
+              ? `Tip on ${inv} kept by the business (Sollos)`.slice(0, 200)
+              : `Tip on ${inv} paid out to ${who} (Sollos)`.slice(0, 200),
+            journal_lines: [
+              { ledger_account_id: liability, debit: amount, credit: 0, details: kept ? "Kept by the business" : `Paid out to ${who}`.slice(0, 200) },
+              { ledger_account_id: kept ? income! : bankLedger, debit: 0, credit: amount, details: kept ? `Tip on ${inv}` : `Paid out to ${who}`.slice(0, 200) },
+            ],
+          },
+        }),
+      });
+      await admin.from("invoice_tips" as never).update({ sage_settle_journal_id: j.id } as never).eq("id" as never, tipId as never);
+      posted++;
+    }
+    if (posted) await recordSageError(orgId, null);
+    return { ok: true, posted };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error posting the tip to Sage.";
+    const r = await fail(describeSageError(message), /→\s*4\d\d:/.test(message));
+    return { ...r, posted };
+  }
+}
+
+/** Every tip on an invoice / for a member that still has something to post. */
+export async function syncTipsToSage(tipIds: string[]): Promise<void> {
+  for (const id of tipIds) {
+    try {
+      await syncTipToSage(id);
+    } catch (err) {
+      console.error(`[sage] tip ${id} sync threw:`, err);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Refunds: a credit note, and the money going back
+// ---------------------------------------------------------------------------
+//
+// A refunded invoice used to stay Paid in Sage. Now the refunded amount
+// becomes a sales credit note against the customer (reducing revenue and
+// tax the way the invoice raised them) plus a customer refund from the
+// bank allocated to it. Partial refunds accumulate on the payment as
+// refunded_cents; sage_refunded_cents is what Sage has seen, so this posts
+// only the difference and is safe to call any number of times.
+
+type SageCreditNote = { id: string; displayed_as?: string };
+
+export async function pushInvoiceRefundToSage(
+  paymentId: string,
+): Promise<{ postedCents: number; error?: string; permanent?: boolean }> {
+  const admin = createSupabaseAdminClient();
+  const { data: payment } = (await admin
+    .from("invoice_payments" as never)
+    .select(
+      "id, organization_id, invoice_id, amount_cents, refunded_cents, sage_refunded_cents, invoice:invoices ( id, number, sage_invoice_id, client_id, tax_rate_bps, tax_label, client:clients ( name, address, sage_contact_id ) )",
+    )
+    .eq("id" as never, paymentId as never)
+    .maybeSingle()) as unknown as {
+    data: {
+      id: string;
+      organization_id: string;
+      invoice_id: string;
+      amount_cents: number;
+      refunded_cents: number | null;
+      sage_refunded_cents: number | null;
+      invoice: {
+        id: string;
+        number: string | null;
+        sage_invoice_id: string | null;
+        client_id: string | null;
+        tax_rate_bps: number | null;
+        tax_label: string | null;
+        client: { name: string; address: string | null; sage_contact_id: string | null } | null;
+      } | null;
+    } | null;
+  };
+  if (!payment) return { postedCents: 0, error: "Payment not found.", permanent: true };
+  const delta = (payment.refunded_cents ?? 0) - (payment.sage_refunded_cents ?? 0);
+  if (delta <= 0) return { postedCents: 0 };
+  if (!payment.invoice) return { postedCents: 0, error: "Payment has no invoice.", permanent: true };
+
+  const orgId = payment.organization_id;
+  const fail = async (error: string, permanent = false) => {
+    console.error(`[sage] refund on payment ${paymentId}: ${error}`);
+    await recordSageError(orgId, error);
+    return { postedCents: 0, error, permanent };
+  };
+  const conn = await getSageConnection(orgId);
+  if (!conn) return fail("Sage isn't connected. Reconnect it in Settings → Integrations, then try again.");
+
+  // The invoice must be in Sage for the credit note to mean anything.
+  if (!payment.invoice.sage_invoice_id) {
+    const inv = await pushInvoiceToSage(payment.invoice.id);
+    if (!inv.id) return fail(`The invoice isn't in Sage yet, and pushing it failed: ${inv.error ?? "unknown error"}`, inv.permanent ?? false);
+  }
+  const contactId = payment.invoice.client?.sage_contact_id;
+  if (!contactId) return fail("The client has no Sage contact yet; sync the invoice first.", false);
+
+  try {
+    const { getOrgTimezone } = await import("@/lib/org-timezone");
+    const { zonedYmd } = await import("@/lib/wall-clock");
+    const orgTz = await getOrgTimezone(orgId);
+    const date = zonedYmd(new Date(), orgTz);
+    const inv = payment.invoice.number ?? "invoice";
+
+    // Tax comes off the refund the way it went onto the invoice.
+    const bps = payment.invoice.tax_rate_bps ?? 0;
+    const taxed = bps > 0;
+    const taxRate = taxed ? await getTaxRateIdForBps(conn, bps, date) : { id: null, available: [] };
+    if (taxed && !taxRate.id) {
+      return fail(`Sage has no tax rate matching ${(bps / 100).toFixed(2)}% for the credit note.`, true);
+    }
+    const lineTaxRateId = taxed ? taxRate.id! : await getNoTaxRateId(conn, date);
+    if (!lineTaxRateId) return fail("Sage has no zero-rate tax code to put on the credit note.", true);
+    const netCents = taxed ? Math.round(delta / (1 + bps / 10000)) : delta;
+    const taxCents = delta - netCents;
+    const ledgerAccountId = await getSalesLedgerAccountId(conn);
+    if (!ledgerAccountId) return fail("Sage has no sales ledger account to credit.", true);
+
+    // Same address / region rules as the invoice — Sage validates credit
+    // notes the same way it validates invoices.
+    const address = parsePostalAddress(payment.invoice.client?.address ?? null);
+    const impliedRegion = address?.country_id && address.region ? `${address.country_id}-${address.region}` : null;
+    const region = impliedRegion ?? getSageTaxRegionId(conn);
+
+    const postNote = (withRegion: string | null) =>
+      sageFetch<SageCreditNote>(orgId, "/sales_credit_notes", {
+        method: "POST",
+        body: JSON.stringify({
+          sales_credit_note: {
+            contact_id: contactId,
+            date,
+            reference: `Refund ${inv}`.slice(0, 25),
+            notes: `Refund of ${(delta / 100).toFixed(2)} on ${inv} (Sollos)`.slice(0, 500),
+            ...(address ? { main_address: address, delivery_address: address } : {}),
+            ...(withRegion ? { tax_address_region_id: withRegion } : {}),
+            credit_note_lines: [
+              {
+                description: `Refund on ${inv}`.slice(0, 200),
+                quantity: 1,
+                unit_price: netCents / 100,
+                ledger_account_id: ledgerAccountId,
+                tax_rate_id: lineTaxRateId,
+                tax_amount: taxCents / 100,
+              },
+            ],
+          },
+        }),
+      });
+    let note: SageCreditNote;
+    try {
+      note = await postNote(region);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "";
+      const regionRefused = /→\s*422:/.test(msg) && /tax_address_region_id/i.test(msg) && /not allowed|not permitted|must be blank|cannot be set/i.test(msg);
+      if (!regionRefused || region === null) throw err;
+      note = await postNote(null);
+    }
+
+    const bankAccountId = await getSageBankAccountId(conn);
+    if (!bankAccountId) return fail("Sage has no bank account to refund from. Create one in Sage (Banking → New account), then sync again.", true);
+    await sageFetch<SageContactPayment>(orgId, "/contact_payments", {
+      method: "POST",
+      body: JSON.stringify({
+        contact_payment: {
+          transaction_type_id: "CUSTOMER_REFUND",
+          contact_id: contactId,
+          bank_account_id: bankAccountId,
+          date,
+          total_amount: delta / 100,
+          reference: `Refund ${inv}`.slice(0, 50),
+          allocated_artefacts: [{ artefact_id: note.id, amount: delta / 100 }],
+        },
+      }),
+    });
+
+    await admin
+      .from("invoice_payments" as never)
+      .update({ sage_refunded_cents: (payment.sage_refunded_cents ?? 0) + delta } as never)
+      .eq("id" as never, paymentId as never);
+    await recordSageError(orgId, null);
+    console.log(`[sage] refund ${delta / 100} on ${inv} → credit note ${note.id}`);
+    return { postedCents: delta };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error posting the refund to Sage.";
+    return fail(describeSageError(message), /→\s*4\d\d:/.test(message));
   }
 }

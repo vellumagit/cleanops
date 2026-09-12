@@ -45,7 +45,7 @@ A tip a client adds at checkout (or that arrives by e-transfer or cash into the 
 - **Mark paid** — the money reached the person (through a run, in cash, however you actually pay). Records the handover; doesn't move money.
 - **Keep in business** — the override. The tip was really meant for the business or the owner, nobody could be attributed, or it's a correction. It settles the tip *without* paying it out, asks you to confirm first, and shows on the invoice as *kept by the business* — distinct from paid out, so history stays honest. Owner/admin only. The same button on an invoice's tip box keeps everything unsettled on just that invoice. A kept tip is the business's income, and the books say so: **Reports** shows a **Tips kept** figure beside paid revenue and a *+ tips* note on each month it happened, and the monthly ops digest carries the same line. Revenue itself stays net of tips, so service numbers stay comparable month to month.
 
-A tip handed directly to the cleaner in cash never touches this ledger — record it as a *direct* tip and it appears in history already settled.
+A tip handed directly to the cleaner in cash never touches this ledger — record it as a *direct* tip and it appears in history already settled. With **Sage Accounting** connected, every tip the business holds is posted the moment it arrives — bank in, *Tips owed* liability up — and posted again when it leaves: **Mark paid** clears the liability against the bank, **Keep in business** turns it into *Tips kept* income. Both accounts are on the Sage card under Settings → Integrations. Direct tips post nothing; the money was never the business's.
 
 ## Payroll in the books
 
