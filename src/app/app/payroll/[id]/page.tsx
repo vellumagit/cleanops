@@ -10,6 +10,8 @@ import { SubmitButton } from "@/components/submit-button";
 import { formatCurrencyCents, formatDate, formatDateTime } from "@/lib/format";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { getOrgTimezone } from "@/lib/org-timezone";
+import { getSageConnection } from "@/lib/sage";
+import { PostPayrollToSageButton } from "../post-to-sage-button";
 import {
   finalizePayrollRunAction,
   markPayrollPaidAction,
@@ -28,11 +30,12 @@ export default async function PayrollRunDetailPage({
   const admin = createSupabaseAdminClient();
   const currency = await getOrgCurrency(membership.organization_id);
   const tz = await getOrgTimezone(membership.organization_id);
+  const sageConnected = Boolean(await getSageConnection(membership.organization_id));
 
   const { data: runRaw } = (await admin
     .from("payroll_runs" as never)
     .select(
-      "id, organization_id, period_start, period_end, status, total_cents, notes, finalized_at, paid_at, created_at",
+      "id, organization_id, period_start, period_end, status, total_cents, notes, finalized_at, paid_at, created_at, sage_journal_id" as never,
     )
     .eq("id" as never, id as never)
     .maybeSingle()) as unknown as {
@@ -46,6 +49,7 @@ export default async function PayrollRunDetailPage({
       notes: string | null;
       finalized_at: string | null;
       paid_at: string | null;
+      sage_journal_id?: string | null;
       created_at: string;
     } | null;
   };
@@ -211,6 +215,12 @@ export default async function PayrollRunDetailPage({
           <span>Finalized {formatDateTime(run.finalized_at, tz)}</span>
         )}
         {run.paid_at && <span>Paid {formatDateTime(run.paid_at, tz)}</span>}
+        {run.status === "paid" && sageConnected && (
+          <PostPayrollToSageButton
+            runId={run.id}
+            posted={Boolean(run.sage_journal_id)}
+          />
+        )}
       </div>
 
       {/* Actions */}

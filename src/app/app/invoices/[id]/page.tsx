@@ -153,6 +153,12 @@ export default async function InvoiceDetailPage({
     data: { sage_invoice_id: string | null } | null;
   };
   const sageSynced = Boolean(sageInvRow?.sage_invoice_id);
+  // Sage's own page for this invoice — the API reports it, we don't guess it.
+  const sageViewUrl = sageSynced
+    ? await import("@/lib/sage").then(({ getSageWebLink }) =>
+        getSageWebLink(membership.organization_id, "sales_invoice", sageInvRow?.sage_invoice_id),
+      )
+    : null;
 
   // Same for QuickBooks — show its Sync button only when connected.
   const { data: qbConn } = (await admin
@@ -383,6 +389,7 @@ export default async function InvoiceDetailPage({
                   <SyncSageButton
                     invoiceId={invoice.id}
                     alreadySynced={sageSynced}
+                    viewUrl={sageViewUrl}
                   />
                 )}
                 {qbConnected && !isVoid && (

@@ -17,6 +17,9 @@ export const metadata = { title: "Contractor pay" };
 
 export default async function SubcontractorPayablesPage() {
   const membership = await requireMembership(["owner", "admin", "manager"]);
+  const sageConnected = Boolean(
+    await (await import("@/lib/sage")).getSageConnection(membership.organization_id),
+  );
   requireCapability(membership, "subcontractors");
   const [{ rows, totalOutstandingCents }, currency, runs, orgTz] =
     await Promise.all([
@@ -65,6 +68,7 @@ export default async function SubcontractorPayablesPage() {
 
         {/* ── Pay-period statements ── */}
         <StatementsCard
+          sageConnected={sageConnected}
           runs={runs}
           currency={currency}
           defaultStart={defaultStart}

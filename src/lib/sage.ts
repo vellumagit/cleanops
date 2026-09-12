@@ -1376,6 +1376,10 @@ export async function pushInvoicePaymentToSage(
     console.log(
       `[sage] pushInvoicePaymentToSage: payment ${paymentId} (${payment.invoice.number}, ${amount}${onAccount > 0 ? `, ${onAccount} left on account` : ""}) → sage ${result.id}`,
     );
+    // The processor's fee rides behind the receipt, when it's known.
+    void pushCardFeeToSage(paymentId).catch((err) =>
+      console.error("[sage] fee push after receipt failed:", err),
+    );
     return { id: result.id };
   } catch (err) {
     const message =
@@ -1626,7 +1630,8 @@ export type SageAccountMapKey =
   | "payroll_liability_ledger_account_id"
   | "payroll_contractor_ledger_account_id"
   | "tips_liability_ledger_account_id"
-  | "tips_income_ledger_account_id";
+  | "tips_income_ledger_account_id"
+  | "fees_ledger_account_id";
 
 export const SAGE_ACCOUNT_MAP_KEYS: SageAccountMapKey[] = [
   "sales_ledger_account_id",
@@ -1636,6 +1641,7 @@ export const SAGE_ACCOUNT_MAP_KEYS: SageAccountMapKey[] = [
   "payroll_contractor_ledger_account_id",
   "tips_liability_ledger_account_id",
   "tips_income_ledger_account_id",
+  "fees_ledger_account_id",
 ];
 
 export type SageAccountOption = { id: string; label: string; type: string };
@@ -2307,4 +2313,174 @@ export async function pushInvoiceRefundToSage(
     const message = err instanceof Error ? err.message : "Unknown error posting the refund to Sage.";
     return fail(describeSageError(message), /→\s*4\d\d:/.test(message));
   }
+}
+
+
+// ---------------------------------------------------------------------------
+// Card fees: the processor's cut, so the bank reconciles
+// ---------------------------------------------------------------------------
+
+async function getFeesLedgerAccountId(conn: SageConnection): Promise<string | null> {
+  const cached = (conn.metadata ?? {})["fees_ledger_account_id"];
+  if (typeof cached === "string" && cached) return cached;
+  const resp = await sageFetch<{ $items?: SageLedgerAccount[] }>(
+    conn.organization_id,
+    "/ledger_accounts?items_per_page=200&attributes=all",
+  );
+  const items = resp.$items ?? [];
+  const typeOf = (a: SageLedgerAccount) =>
+    (a.ledger_account_type?.displayed_as ?? "").toLowerCase();
+  const nameOf = (a: SageLedgerAccount) => (a.displayed_as ?? "").toLowerCase();
+  const find = (nameRe: RegExp) =>
+    items.find((a) => nameRe.test(nameOf(a)) && /expense|overhead|cost/.test(typeOf(a))) ?? null;
+  const chosen =
+    find(/merchant|card (fees?|processing|charges?)|payment processing|credit card fees?|stripe|square/) ??
+    find(/bank (charges?|fees?|service)/) ??
+    find(/service charges?|fees?\b/);
+  if (chosen?.id) {
+    await mergeConnectionMetadata(conn.id, { fees_ledger_account_id: chosen.id });
+    return chosen.id;
+  }
+  return null;
+}
+
+/**
+ * One journal per card payment with a known processor fee, once the
+ * receipt itself is in Sage. Idempotent on sage_fee_journal_id.
+ */
+export async function pushCardFeeToSage(
+  paymentId: string,
+): Promise<{ id: string | null; error?: string; permanent?: boolean }> {
+  const admin = createSupabaseAdminClient();
+  const { data: payment } = (await admin
+    .from("invoice_payments" as never)
+    .select(
+      "id, organization_id, provider, provider_fee_cents, received_at, sage_payment_id, sage_fee_journal_id, invoice:invoices ( number )",
+    )
+    .eq("id" as never, paymentId as never)
+    .maybeSingle()) as unknown as {
+    data: {
+      id: string;
+      organization_id: string;
+      provider: string | null;
+      provider_fee_cents: number | null;
+      received_at: string;
+      sage_payment_id: string | null;
+      sage_fee_journal_id: string | null;
+      invoice: { number: string | null } | null;
+    } | null;
+  };
+  if (!payment) return { id: null, error: "Payment not found.", permanent: true };
+  if (payment.sage_fee_journal_id) return { id: payment.sage_fee_journal_id };
+  const fee = payment.provider_fee_cents ?? 0;
+  if (fee <= 0) return { id: null };
+  if (!payment.sage_payment_id) {
+    return { id: null, error: "The receipt isn't in Sage yet; the fee follows it.", permanent: false };
+  }
+  const orgId = payment.organization_id;
+  const fail = async (error: string, permanent = false) => {
+    console.error(`[sage] fee on payment ${paymentId}: ${error}`);
+    await recordSageError(orgId, error);
+    return { id: null, error, permanent };
+  };
+  const conn = await getSageConnection(orgId);
+  if (!conn) return fail("Sage isn't connected. Reconnect it in Settings → Integrations, then try again.");
+  try {
+    const bankLedger = await getSageBankLedgerAccountId(conn);
+    if (!bankLedger) return fail("Sage has no bank account for the fee to come out of.", true);
+    const feesAccount = await getFeesLedgerAccountId(conn);
+    if (!feesAccount) {
+      return fail('Sage\'s chart has no expense account for card fees (e.g. "Merchant Fees" or "Bank Charges"). Add one (Settings → Chart of accounts), then sync again.', true);
+    }
+    const { getOrgTimezone } = await import("@/lib/org-timezone");
+    const { zonedYmd } = await import("@/lib/wall-clock");
+    const orgTz = await getOrgTimezone(orgId);
+    const date = zonedYmd(new Date(payment.received_at), orgTz);
+    const inv = payment.invoice?.number ?? "invoice";
+    const who = payment.provider === "square" ? "Square" : payment.provider === "stripe" ? "Stripe" : "Card";
+    const amount = fee / 100;
+    const j = await sageFetch<SageJournal>(orgId, "/journals", {
+      method: "POST",
+      body: JSON.stringify({
+        journal: {
+          date,
+          reference: `${who} fee ${inv}`.slice(0, 25),
+          description: `${who} processing fee on ${inv} (Sollos)`.slice(0, 200),
+          journal_lines: [
+            { ledger_account_id: feesAccount, debit: amount, credit: 0, details: `${who} fee on ${inv}`.slice(0, 200) },
+            { ledger_account_id: bankLedger, debit: 0, credit: amount, details: `${who} fee on ${inv}`.slice(0, 200) },
+          ],
+        },
+      }),
+    });
+    await admin
+      .from("invoice_payments" as never)
+      .update({ sage_fee_journal_id: j.id } as never)
+      .eq("id" as never, paymentId as never);
+    await recordSageError(orgId, null);
+    console.log(`[sage] ${who} fee ${amount} on ${inv} → journal ${j.id}`);
+    return { id: j.id };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error posting the fee to Sage.";
+    return fail(describeSageError(message), /→\s*4\d\d:/.test(message));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// "View in Sage": the web address Sage itself reports for a record
+// ---------------------------------------------------------------------------
+//
+// Sage's API answers each invoice, bill and credit note with a `links`
+// entry pointing at its page in the web app (the host differs by region:
+// accounting.na.sageone.com here). Journals carry no link, so they get
+// none — a guessed URL that 404s is worse than no link.
+
+export type SageLinkKind = "sales_invoice" | "purchase_invoice" | "sales_credit_note";
+
+const SAGE_LINK_PATH: Record<SageLinkKind, string> = {
+  sales_invoice: "/invoicing/sales_invoices/",
+  purchase_invoice: "/invoicing/purchase_invoices/",
+  sales_credit_note: "/invoicing/sales_credit_notes/",
+};
+const SAGE_API_PATH: Record<SageLinkKind, string> = {
+  sales_invoice: "/sales_invoices/",
+  purchase_invoice: "/purchase_invoices/",
+  sales_credit_note: "/sales_credit_notes/",
+};
+
+/** The web app's origin for this business, learned from the first record we look at and cached. */
+export async function getSageWebBase(
+  organizationId: string,
+  hint?: { kind: SageLinkKind; id: string },
+): Promise<string | null> {
+  const conn = await getSageConnection(organizationId);
+  if (!conn) return null;
+  const cached = (conn.metadata ?? {})["web_base"];
+  if (typeof cached === "string" && cached) return cached;
+  if (!hint) return null;
+  try {
+    const r = await sageFetch<{ links?: Array<{ href?: string; rel?: string; type?: string }> }>(
+      organizationId,
+      `${SAGE_API_PATH[hint.kind]}${hint.id}`,
+    );
+    const alt = (r.links ?? []).find((l) => l.rel === "alternate" && l.href)?.href;
+    if (!alt) return null;
+    const base = new URL(alt).origin;
+    await mergeConnectionMetadata(conn.id, { web_base: base });
+    return base;
+  } catch (err) {
+    console.error("[sage] web base lookup failed:", err);
+    return null;
+  }
+}
+
+/** Absolute URL of a record in Sage's web app, or null when unknown. Cheap once the base is cached. */
+export async function getSageWebLink(
+  organizationId: string,
+  kind: SageLinkKind,
+  id: string | null | undefined,
+): Promise<string | null> {
+  if (!id) return null;
+  const base = await getSageWebBase(organizationId, { kind, id });
+  return base ? `${base}${SAGE_LINK_PATH[kind]}${id}` : null;
 }

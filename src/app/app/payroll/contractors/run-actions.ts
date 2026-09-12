@@ -163,6 +163,25 @@ export async function markSubcontractorRunPaidAction(
   return { ok: true };
 }
 
+/** "Post to Sage" on a statement — bills, then payments once paid. */
+export async function postStatementToSageAction(runId: string): Promise<Result> {
+  const { membership, ok } = await ownerAdmin();
+  if (!ok) return { ok: false, error: "Only owners and admins can post to Sage." };
+  const admin = createSupabaseAdminClient();
+  const { data: run } = (await admin
+    .from("subcontractor_pay_runs" as never)
+    .select("id")
+    .eq("id" as never, runId as never)
+    .eq("organization_id" as never, membership.organization_id as never)
+    .maybeSingle()) as unknown as { data: { id: string } | null };
+  if (!run) return { ok: false, error: "Statement not found." };
+  const { syncContractorStatementToSage } = await import("@/lib/sage");
+  const r = await syncContractorStatementToSage(runId);
+  if (!r.ok) return { ok: false, error: r.error ?? "Couldn't post to Sage." };
+  revalidatePath("/app/payroll/contractors");
+  return { ok: true };
+}
+
 export async function deleteSubcontractorRunAction(
   formData: FormData,
 ): Promise<Result> {

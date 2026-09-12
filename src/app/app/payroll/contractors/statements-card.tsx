@@ -2,7 +2,7 @@
 
 import { useTransition } from "react";
 import { toast } from "sonner";
-import { FileText, Loader2, Check, Trash2 } from "lucide-react";
+import { FileText, Loader2, Check, Trash2, BookOpen, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { StatusBadge } from "@/components/status-badge";
@@ -16,6 +16,7 @@ import {
   generateSubcontractorRunAction,
   markSubcontractorRunPaidAction,
   deleteSubcontractorRunAction,
+  postStatementToSageAction,
 } from "./run-actions";
 
 /**
@@ -30,6 +31,7 @@ export function StatementsCard({
   defaultStart,
   defaultEnd,
   canManage,
+  sageConnected = false,
 }: {
   runs: PayRunSummary[];
   currency: CurrencyCode;
@@ -38,6 +40,8 @@ export function StatementsCard({
   defaultStart: string;
   defaultEnd: string;
   canManage: boolean;
+  /** Show "Post to Sage" on statements with lines Sage hasn't seen. */
+  sageConnected?: boolean;
 }) {
   const [isPending, startTransition] = useTransition();
 
@@ -46,6 +50,17 @@ export function StatementsCard({
       const res = await generateSubcontractorRunAction(formData);
       if (!res.ok) toast.error(res.error);
       else toast.success("Statement generated");
+    });
+  }
+
+  function postToSage(runId: string) {
+    startTransition(async () => {
+      const res = await postStatementToSageAction(runId);
+      if (!res.ok) {
+        toast.error(res.error ?? "Couldn't post to Sage.");
+        return;
+      }
+      toast.success("Posted to Sage.");
     });
   }
 
@@ -203,12 +218,41 @@ export function StatementsCard({
                         {item.entryCount === 1 ? "" : "s"}
                       </span>
                     </span>
-                    <span className="shrink-0 font-medium tabular-nums">
-                      {formatCurrencyCents(item.totalCents, currency)}
+                    <span className="flex shrink-0 items-center gap-2">
+                      {item.sageBillUrl && (
+                        <a
+                          href={item.sageBillUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          title="View this bill in Sage"
+                          className="inline-flex items-center gap-1 text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                        >
+                          <ExternalLink className="h-3 w-3" />
+                          Sage
+                        </a>
+                      )}
+                      <span className="font-medium tabular-nums">
+                        {formatCurrencyCents(item.totalCents, currency)}
+                      </span>
                     </span>
                   </li>
                 ))}
               </ul>
+              {canManage &&
+                sageConnected &&
+                run.items.some(
+                  (i) => !i.sageBillId || (run.status === "paid" && !i.sagePaymentId),
+                ) && (
+                  <button
+                    type="button"
+                    disabled={isPending}
+                    onClick={() => postToSage(run.id)}
+                    className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-[11px] font-medium hover:bg-muted disabled:opacity-50"
+                  >
+                    <BookOpen className="h-3 w-3" />
+                    Post to Sage
+                  </button>
+                )}
             </li>
           ))}
         </ul>

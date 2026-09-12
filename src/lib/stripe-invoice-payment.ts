@@ -265,6 +265,14 @@ export async function recordStripeInvoicePayment(
     // Already recorded (the paired event / a retry). Backfill the fee if this
     // event carried it and the row didn't have it yet.
     if (args.feeCents != null && dup.provider_fee_cents == null) {
+      // Books: the fee is known now; post it behind the receipt.
+      void import("@/lib/sage").then(({ pushCardFeeToSage }) =>
+        setTimeout(() => {
+          pushCardFeeToSage(dup.id).catch((err) =>
+            console.error("[stripe] sage fee push failed:", err),
+          );
+        }, 1500),
+      );
       await (admin
         .from("invoice_payments" as never)
         .update({ provider_fee_cents: args.feeCents } as never)

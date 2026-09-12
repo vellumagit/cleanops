@@ -721,6 +721,10 @@ export type PayRunSummary = {
     minutes: number;
     entryCount: number;
     totalCents: number;
+    /** Sage's web page for this line's bill, when posted and known. */
+    sageBillUrl: string | null;
+    sageBillId: string | null;
+    sagePaymentId: string | null;
   }>;
 };
 
@@ -728,10 +732,14 @@ export async function getSubcontractorRuns(
   organizationId: string,
 ): Promise<PayRunSummary[]> {
   const admin = createSupabaseAdminClient();
+  // Sage's web origin for bill links, cached on the connection; no Sage call
+  // here — the first synced invoice or bill someone opens teaches it.
+  const { getSageWebBase } = await import("@/lib/sage");
+  const sageWebBase = await getSageWebBase(organizationId);
   const { data } = (await admin
     .from("subcontractor_pay_runs" as never)
     .select(
-      "id, period_start, period_end, status, total_cents, paid_at, created_at, items:subcontractor_pay_items ( membership_id, payee_name, minutes, entry_count, total_cents )",
+      "id, period_start, period_end, status, total_cents, paid_at, created_at, items:subcontractor_pay_items ( membership_id, payee_name, minutes, entry_count, total_cents, sage_purchase_invoice_id, sage_payment_id )" as never,
     )
     .eq("organization_id" as never, organizationId as never)
     .order("period_start" as never, { ascending: false } as never)
@@ -750,6 +758,8 @@ export async function getSubcontractorRuns(
         minutes: number;
         entry_count: number;
         total_cents: number;
+        sage_purchase_invoice_id?: string | null;
+        sage_payment_id?: string | null;
       }> | null;
     }> | null;
   };
@@ -765,6 +775,12 @@ export async function getSubcontractorRuns(
       .map((i) => ({
         membershipId: i.membership_id,
         payeeName: i.payee_name,
+        sageBillId: i.sage_purchase_invoice_id ?? null,
+        sagePaymentId: i.sage_payment_id ?? null,
+        sageBillUrl:
+          i.sage_purchase_invoice_id && sageWebBase
+            ? `${sageWebBase}/invoicing/purchase_invoices/${i.sage_purchase_invoice_id}`
+            : null,
         minutes: i.minutes,
         entryCount: i.entry_count,
         totalCents: i.total_cents,

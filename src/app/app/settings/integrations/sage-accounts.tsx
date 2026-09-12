@@ -14,7 +14,8 @@ type Row = {
     | "payroll_liability_ledger_account_id"
     | "payroll_contractor_ledger_account_id"
     | "tips_liability_ledger_account_id"
-    | "tips_income_ledger_account_id";
+    | "tips_income_ledger_account_id"
+    | "fees_ledger_account_id";
   label: string;
   hint: string;
   kind: "ledger" | "bank";
@@ -63,6 +64,12 @@ const ROWS: Row[] = [
     hint: "Where a tip the business keeps becomes income.",
     kind: "ledger",
   },
+  {
+    key: "fees_ledger_account_id",
+    label: "Card fees",
+    hint: "Stripe and Square processing fees, one line per payment.",
+    kind: "ledger",
+  },
 ];
 
 /**
@@ -89,6 +96,7 @@ export function SageAccountsForm({
     payroll_contractor_ledger_account_id: current.payroll_contractor_ledger_account_id ?? "",
     tips_liability_ledger_account_id: current.tips_liability_ledger_account_id ?? "",
     tips_income_ledger_account_id: current.tips_income_ledger_account_id ?? "",
+    fees_ledger_account_id: current.fees_ledger_account_id ?? "",
   });
   const [pending, startTransition] = useTransition();
   const dirty = ROWS.some((r) => (current[r.key] ?? "") !== values[r.key]);

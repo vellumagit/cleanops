@@ -252,6 +252,37 @@ export async function deletePayrollRunAction(formData: FormData) {
  * Claim-then-act on paid_out_at: the update only matches rows still NULL, so
  * two owners clicking at once settle the same tips exactly once between them.
  */
+export type PostToSageState = { ok?: boolean; error?: string };
+
+/**
+ * "Post to Sage" on a paid payroll run — the retry path when the background
+ * post after Mark as paid didn't land (Sage down, token blip, an account
+ * missing from the chart that has since been added).
+ */
+export async function postPayrollRunToSageAction(
+  _prev: PostToSageState,
+  formData: FormData,
+): Promise<PostToSageState> {
+  const id = String(formData.get("id") ?? "");
+  if (!id) return { error: "Missing run id." };
+  const { membership } = await getActionContext();
+  if (!["owner", "admin"].includes(membership.role)) {
+    return { error: "Only owners and admins can post to Sage." };
+  }
+  const { data: run } = (await createSupabaseAdminClient()
+    .from("payroll_runs")
+    .select("id")
+    .eq("id", id)
+    .eq("organization_id", membership.organization_id)
+    .maybeSingle()) as unknown as { data: { id: string } | null };
+  if (!run) return { error: "Run not found." };
+  const { pushPayrollRunToSage } = await import("@/lib/sage");
+  const result = await pushPayrollRunToSage(id, "employee");
+  if (!result.id) return { error: result.error ?? "Couldn't post to Sage." };
+  revalidatePath(`/app/payroll/${id}`, "page");
+  return { ok: true };
+}
+
 export async function markTipsPaidAction(formData: FormData): Promise<void> {
   const { membership } = await getActionContext();
   if (!["owner", "admin"].includes(membership.role)) return;

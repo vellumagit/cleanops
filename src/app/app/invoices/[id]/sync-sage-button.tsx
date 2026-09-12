@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
-import { BookOpen, CheckCircle2 } from "lucide-react";
+import { BookOpen, CheckCircle2, ExternalLink } from "lucide-react";
 import { SubmitButton } from "@/components/submit-button";
 import { FormError } from "@/components/form-field";
 import {
@@ -22,8 +22,11 @@ const EMPTY: SyncSageState = {};
 export function SyncSageButton({
   invoiceId,
   alreadySynced,
+  viewUrl = null,
 }: {
   invoiceId: string;
+  /** Sage's web page for the synced invoice, when Sage reported one. */
+  viewUrl?: string | null;
   /** True when the invoice already has a sage_invoice_id — we still
    *  render the button so the owner can force a retry, but the label
    *  changes to reflect the synced state. */
@@ -56,6 +59,17 @@ export function SyncSageButton({
           )}
         </SubmitButton>
       </form>
+      {alreadySynced && viewUrl && (
+        <a
+          href={viewUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+        >
+          <ExternalLink className="h-3 w-3" />
+          View in Sage
+        </a>
+      )}
       {state.error && <FormError message={state.error} />}
       {state.ok && state.sageInvoiceId && !alreadySynced && (
         <p className="rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-400">

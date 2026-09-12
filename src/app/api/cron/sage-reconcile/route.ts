@@ -38,6 +38,7 @@ import {
   syncContractorStatementToSage,
   pushInvoiceRefundToSage,
   syncTipToSage,
+  pushCardFeeToSage,
 } from "@/lib/sage";
 
 export const runtime = "nodejs";
@@ -364,7 +365,41 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    totalSynced += synced + paymentsSynced + runsSynced + refundsSynced + tipsSynced;
+    // ── Card fees ────────────────────────────────────────────────────
+    // Receipts in Sage whose processor fee isn't. Keyed "fee:<id>".
+    let feesSynced = 0;
+    {
+      const { data: feeRows } = (await admin
+        .from("invoice_payments" as never)
+        .select("id, provider_fee_cents, invoice:invoices ( number )")
+        .eq("organization_id" as never, orgId as never)
+        .gt("provider_fee_cents" as never, 0 as never)
+        .not("sage_payment_id" as never, "is" as never, null as never)
+        .is("sage_fee_journal_id" as never, null as never)
+        .gte("created_at" as never, cutoff as never)
+        .limit(limit + Object.keys(existingSkips).length)) as unknown as {
+        data: Array<{ id: string; provider_fee_cents: number; invoice: { number: string | null } | null }> | null;
+      };
+      const feeCandidates = (feeRows ?? []).filter((r) => !existingSkips[`fee:${r.id}`]).slice(0, limit);
+      for (const r of feeCandidates) {
+        const result = await pushCardFeeToSage(r.id);
+        if (result.id) {
+          feesSynced++;
+          continue;
+        }
+        if (!result.error) continue;
+        const label = `Card fee on ${r.invoice?.number ?? "invoice"}`;
+        const reason = `${label}: ${result.error}`;
+        if (result.permanent) {
+          mergedSkips[`fee:${r.id}`] = { reason, at: new Date().toISOString() };
+          skipped.push({ invoice: label, reason });
+        } else {
+          retryable.push({ invoice: label, reason });
+        }
+      }
+    }
+
+    totalSynced += synced + paymentsSynced + runsSynced + refundsSynced + tipsSynced + feesSynced;
     totalFailed += skipped.length + retryable.length;
 
     perOrg.push({
@@ -376,6 +411,7 @@ export async function GET(request: NextRequest) {
       payroll_runs_synced: runsSynced,
       refunds_synced: refundsSynced,
       tips_synced: tipsSynced,
+      fees_synced: feesSynced,
       will_retry: retryable,
       needs_attention: skipped,
       skip_list_size: Object.keys(mergedSkips).length,
