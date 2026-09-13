@@ -19,7 +19,7 @@ import "server-only";
 import { headers } from "next/headers";
 import { checkRateLimit } from "@/lib/rate-limit";
 
-function getIp(h: { get(name: string): string | null }): string {
+export function getIp(h: { get(name: string): string | null }): string {
   // Vercel sets x-forwarded-for as "client, proxy1, proxy2, ..." — first is the real one.
   const fwd = h.get("x-forwarded-for");
   if (fwd) {

@@ -79,7 +79,8 @@ export default async function SignupPage({
             )}
           </div>
 
-          <SignupForm inviteToken={invite} inviteEmail={inviteEmail} />
+          <SignupForm
+          turnstileSiteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? null} inviteToken={invite} inviteEmail={inviteEmail} />
         </div>
 
         <p className="mt-6 text-center text-sm text-muted-foreground">

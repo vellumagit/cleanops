@@ -38,6 +38,11 @@ const BaseSchema = z.object({
   TWILIO_AUTH_TOKEN: z.string().optional(),
   TWILIO_FROM_NUMBER: z.string().optional(),
 
+  // Cloudflare Turnstile on the signup form. Site key ships to the browser;
+  // the secret verifies tokens server-side. Both optional: unset = layer off.
+  NEXT_PUBLIC_TURNSTILE_SITE_KEY: z.string().optional(),
+  TURNSTILE_SECRET_KEY: z.string().optional(),
+
   // Resend (transactional email)
   RESEND_API_KEY: z.string().optional(),
   EMAIL_FROM: z.string().optional(),

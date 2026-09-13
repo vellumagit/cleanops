@@ -5,7 +5,9 @@ import { DISPOSABLE_EMAIL_MESSAGE, isDisposableEmail } from "@/lib/disposable-do
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { SignupSchema, slugify } from "@/lib/validators/auth";
-import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
+import { checkIpRateLimit, getIp } from "@/lib/rate-limit-helpers";
+import { headers } from "next/headers";
+import { TURNSTILE_FIELD, turnstileConfigured, verifyTurnstile } from "@/lib/turnstile";
 
 export type SignupActionState = {
   errors?: Partial<Record<"fullName" | "organizationName" | "email" | "password" | "_form", string>>;
@@ -109,6 +111,26 @@ export async function signupAction(
       };
     }
     inviteRow = data;
+  }
+
+  // Prove there's a browser with a person behind it. Managed Turnstile is
+  // invisible to nearly everyone real; a script that skipped the widget has
+  // no token, and a token from anywhere else fails Cloudflare's check.
+  if (turnstileConfigured()) {
+    const ip = getIp(await headers());
+    const human = await verifyTurnstile(
+      String(formData.get(TURNSTILE_FIELD) ?? "") || null,
+      ip,
+    );
+    if (!human) {
+      return {
+        errors: {
+          _form:
+            "We couldn't confirm you're not a robot. Reload the page and try again; if it keeps happening, write to support@sollos3.com.",
+        },
+        values: { fullName, organizationName, email },
+      };
+    }
   }
 
   // 2026-09-11: the spam signup used a throwaway inbox, and so did every

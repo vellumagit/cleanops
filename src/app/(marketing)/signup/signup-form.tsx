@@ -1,6 +1,7 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
+import { Turnstile } from "@/components/turnstile";
 import { Input } from "@/components/ui/input";
 import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
@@ -12,8 +13,11 @@ const initialState: SignupActionState = {};
 export function SignupForm({
   inviteToken,
   inviteEmail,
+  turnstileSiteKey = null,
 }: {
   inviteToken?: string;
+  /** Cloudflare Turnstile site key; null renders no widget and asks nothing. */
+  turnstileSiteKey?: string | null;
   /** The address the invitation was sent to. Prefilled and read-only —
    *  the server requires the match, so letting someone type a different
    *  address here would only produce a refusal they can't act on. */
@@ -21,6 +25,11 @@ export function SignupForm({
 }) {
   const [state, formAction, pending] = useActionState(signupAction, initialState);
   const isInvite = Boolean(inviteToken);
+  // Until the widget has issued a token the submit stays disabled, so the
+  // only way to see "couldn't confirm you're not a robot" is a genuinely
+  // failed challenge, not a fast click.
+  const [humanToken, setHumanToken] = useState<string | null>(null);
+  const waitingOnHuman = Boolean(turnstileSiteKey) && !humanToken;
 
   return (
     <form action={formAction} className="space-y-4">
@@ -112,7 +121,15 @@ export function SignupForm({
         <p className="text-xs text-muted-foreground">At least 8 characters.</p>
       </div>
 
-      <Button type="submit" size="lg" disabled={pending} className="w-full">
+      {turnstileSiteKey && (
+        <Turnstile siteKey={turnstileSiteKey} onToken={setHumanToken} />
+      )}
+      <Button
+        type="submit"
+        size="lg"
+        disabled={pending || waitingOnHuman}
+        className="w-full"
+      >
         {pending
           ? isInvite ? "Joining…" : "Creating workspace…"
           : isInvite ? "Create account & join" : "Create workspace"}
