@@ -10,6 +10,7 @@ import {
   sendEstimateToClient,
 } from "@/lib/automations";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { isRealPdf } from "@/lib/file-sniff";
 import { canCreateData } from "@/lib/subscription";
 
 type Field = keyof typeof EstimateSchema.shape;
@@ -56,6 +57,11 @@ async function uploadEstimatePdf(
   }
   if (file.size > MAX_PDF_SIZE) {
     return { url: null, error: "PDF must be under 10 MB." };
+  }
+  // The label is the browser's word; the bytes are the file's. This lands
+  // in a public bucket, served as application/pdf to anyone with the link.
+  if (!(await isRealPdf(file))) {
+    return { url: null, error: "That file isn't a PDF." };
   }
 
   const admin = createSupabaseAdminClient();

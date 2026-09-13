@@ -280,6 +280,10 @@ async function downloadAndStorePdf(
     if (blob.size > MAX_PDF_SIZE) {
       return { url: null, error: "PDF must be under 10 MB" };
     }
+    const { isRealPdf } = await import("@/lib/file-sniff");
+    if (!(await isRealPdf(blob))) {
+      return { url: null, error: "That URL did not return a PDF" };
+    }
 
     const path = `${orgId}/estimates/${estimateId}.pdf`;
     const { error } = await admin.storage

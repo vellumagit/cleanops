@@ -2,6 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { getActionContext } from "@/lib/actions";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { extensionFor, isRealRasterImage } from "@/lib/file-sniff";
 
 export type FeedActionResult = { ok: true } | { ok: false; error: string };
 
@@ -40,7 +42,8 @@ export async function createFeedPostAction(
       return { ok: false, error: "Image must be under 5MB." };
     }
 
-    // Validate by MIME type (server-side) — don't trust the extension alone
+    // The label AND the bytes: org-assets is a public bucket, so whatever
+    // lands here is served to the internet under Sollos's storage origin.
     const allowedTypes = [
       "image/jpeg",
       "image/png",
@@ -50,10 +53,16 @@ export async function createFeedPostAction(
     if (!allowedTypes.includes(imageFile.type)) {
       return { ok: false, error: "Only JPG, PNG, GIF, and WebP images allowed." };
     }
-    const ext = imageFile.name.split(".").pop()?.toLowerCase() ?? "jpg";
+    if (!(await isRealRasterImage(imageFile, imageFile.type))) {
+      return { ok: false, error: "That file isn't the image it claims to be." };
+    }
+    const ext = extensionFor(imageFile.type, "jpg");
 
+    // Admin client: the bucket's insert policy admits owners and admins,
+    // but this action admits managers too (checked above), whose uploads
+    // failed with "Failed to upload image." for as long as the feed existed.
     const path = `${membership.organization_id}/feed/${Date.now()}.${ext}`;
-    const { error: uploadErr } = await supabase.storage
+    const { error: uploadErr } = await createSupabaseAdminClient().storage
       .from("org-assets")
       .upload(path, imageFile, {
         contentType: imageFile.type,
@@ -98,7 +107,15 @@ export async function deleteFeedPostAction(
   const postId = String(formData.get("post_id") ?? "");
   if (!postId) return { ok: false, error: "Missing post ID." };
 
-  const { supabase } = await getActionContext();
+  const { supabase, membership } = await getActionContext();
+
+  // The image goes with the post. It sat in the public bucket forever
+  // after a delete, a stable anonymous URL to whatever had been posted.
+  const { data: post } = (await supabase
+    .from("feed_posts" as never)
+    .select("image_url")
+    .eq("id" as never, postId as never)
+    .maybeSingle()) as unknown as { data: { image_url: string | null } | null };
 
   const { error } = await (supabase
     .from("feed_posts" as never)
@@ -108,6 +125,15 @@ export async function deleteFeedPostAction(
   }>);
 
   if (error) return { ok: false, error: error.message };
+
+  const marker = "/org-assets/";
+  const at = post?.image_url?.indexOf(marker) ?? -1;
+  if (at >= 0) {
+    const objectPath = decodeURIComponent(post!.image_url!.slice(at + marker.length).split("?")[0]);
+    if (objectPath.startsWith(`${membership.organization_id}/feed/`)) {
+      await createSupabaseAdminClient().storage.from("org-assets").remove([objectPath]);
+    }
+  }
 
   revalidatePath("/app/feed");
   revalidatePath("/field/feed");

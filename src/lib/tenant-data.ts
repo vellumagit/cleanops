@@ -22,6 +22,7 @@
 
 import "server-only";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { releaseOrgNumber } from "@/lib/twilio-provision";
 
 /**
  * Every public table that holds tenant-scoped data. The `organizations` row
@@ -576,6 +577,14 @@ export async function purgeOrgData(
 
   for (const bucket of buckets) {
     storageFilesRemoved += await purgeBucketPrefix(bucket, orgId);
+  }
+
+  // The Twilio number goes too. Nothing released it before: a deleted
+  // workspace kept renting its line indefinitely.
+  try {
+    await releaseOrgNumber(orgId);
+  } catch (err) {
+    console.error(`[tenant-purge] number release failed for ${orgId}:`, err);
   }
 
   // Tombstone the org row itself. Keep the id to prevent reuse; blank the

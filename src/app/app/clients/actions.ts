@@ -820,6 +820,16 @@ export async function requestSmsOptInAction(
     .eq("id", membership.organization_id)
     .maybeSingle();
 
+  // Consent requests go to numbers that have NOT opted in, by design — so
+  // they are the one client-facing text with no opt-in gate. A hundred a
+  // day per workspace is a business onboarding its list; more is a
+  // throwaway workspace texting strangers from a Sollos number.
+  const { checkRateLimit } = await import("@/lib/rate-limit");
+  const rl = await checkRateLimit(`sms-optin:${membership.organization_id}`, 100, 86_400_000);
+  if (!rl.allowed) {
+    return { ok: false, error: "That's a hundred consent requests today — the daily limit. Try again tomorrow." };
+  }
+
   const { composeSmsOptInRequest } = await import("@/lib/twilio");
   const { sendOrgSms } = await import("@/lib/sms");
   const res = await sendOrgSms(membership.organization_id, {

@@ -5,6 +5,7 @@ import { getActionContext } from "@/lib/actions";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { logAuditEvent } from "@/lib/audit";
 import { DOCUMENT_CATEGORY_KEYS } from "./document-categories";
+import { isAcceptableDocument } from "@/lib/file-sniff";
 
 const BUCKET = "employee-documents";
 const MAX_BYTES = 15 * 1024 * 1024; // 15 MB
@@ -28,6 +29,8 @@ export async function uploadEmployeeDocumentAction(
   if (file.size > MAX_BYTES) {
     return { ok: false, error: "File must be under 15 MB." };
   }
+  const accepted = await isAcceptableDocument(file);
+  if (!accepted.ok) return { ok: false, error: accepted.error };
 
   let category = String(formData.get("category") ?? "other");
   if (!DOCUMENT_CATEGORY_KEYS.includes(category as never)) category = "other";
@@ -49,7 +52,7 @@ export async function uploadEmployeeDocumentAction(
   const path = `${membership.organization_id}/${membershipId}/${crypto.randomUUID()}-${safeName}`;
 
   const { error: upErr } = await admin.storage.from(BUCKET).upload(path, file, {
-    contentType: file.type || "application/octet-stream",
+    contentType: accepted.type,
     upsert: false,
   });
   if (upErr) return { ok: false, error: upErr.message };

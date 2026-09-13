@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { getActionContext } from "@/lib/actions";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { logAuditEvent } from "@/lib/audit";
+import { isAcceptableDocument } from "@/lib/file-sniff";
 import {
   parsePayeeParam,
   encodePayeeParam,
@@ -186,6 +187,8 @@ export async function uploadBillAction(formData: FormData): Promise<Result> {
     return { ok: false, error: "Choose a file to upload." };
   }
   if (file.size > MAX_BYTES) return { ok: false, error: "File must be under 15 MB." };
+  const accepted = await isAcceptableDocument(file);
+  if (!accepted.ok) return { ok: false, error: accepted.error };
   const label = String(formData.get("label") ?? "").trim().slice(0, 200) || file.name;
 
   const admin = createSupabaseAdminClient();
@@ -202,7 +205,7 @@ export async function uploadBillAction(formData: FormData): Promise<Result> {
   const { error: upErr } = await admin.storage
     .from(BILL_BUCKET)
     .upload(path, file, {
-      contentType: file.type || "application/octet-stream",
+      contentType: accepted.type,
       upsert: false,
     });
   if (upErr) return { ok: false, error: upErr.message };

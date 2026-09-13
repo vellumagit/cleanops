@@ -341,6 +341,24 @@ export async function sendOrgSms(
       await maybeAlertCap(admin, orgId, "monthly cap");
       return skipped;
     }
+    // And someone to bill it to. A trial org has no Stripe subscription, so
+    // the meter below had nothing to report to; until 2026-09-13 the text
+    // still went out, up to the cap, on Sollos's Twilio bill. The included
+    // allotment is the trial's; overage is a paying customer's.
+    if (!org.sms_overage_item_id) {
+      let itemId: string | null = null;
+      try {
+        const { ensureSmsOverageItem } = await import("@/lib/stripe");
+        itemId = await ensureSmsOverageItem(orgId);
+      } catch (err) {
+        console.error("[sms] ensureSmsOverageItem failed:", err);
+      }
+      if (!itemId) {
+        await logSms(admin, orgId, args, clientId, thisSegments, "skipped_cap", false);
+        await maybeAlertCap(admin, orgId, "included allotment (no plan to bill overage to)");
+        return skipped;
+      }
+    }
   }
 
   // Gate 5: TWILIO_ENABLED is checked inside sendSms(). Send from the org's

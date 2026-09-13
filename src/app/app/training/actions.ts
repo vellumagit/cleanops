@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { getActionContext } from "@/lib/actions";
 import { logAuditEvent } from "@/lib/audit";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { extensionFor, isRealRasterImage } from "@/lib/file-sniff";
 
 type Result = { ok: true } | { ok: false; error: string };
 
@@ -27,8 +28,10 @@ async function uploadStepImage(
   if (!file || file.size === 0) return null;
   if (!ALLOWED_IMAGE_TYPES.includes(file.type)) return null;
   if (file.size > MAX_IMAGE_SIZE) return null;
+  // Bytes, not just the label: org-assets is a public bucket.
+  if (!(await isRealRasterImage(file, file.type))) return null;
 
-  const ext = file.name.split(".").pop()?.toLowerCase() ?? "png";
+  const ext = extensionFor(file.type, "png");
   const path = `${orgId}/training/${moduleId}/step-${stepIndex}.${ext}`;
 
   const admin = createSupabaseAdminClient();
