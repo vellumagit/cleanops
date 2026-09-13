@@ -32,15 +32,8 @@ set file_size_limit = 15728640,
     ]
 where id in ('employee-documents', 'subcontractor-bills');
 
--- The webhooks policy is FOR ALL for owners/admins, so a target_url can be
--- written straight into the table, past the server action's URL check.
--- Dispatch re-checks the URL now; the database refuses the plain-http case
--- outright. NOT VALID: existing rows are not re-examined, new and updated
--- ones are.
-alter table public.webhooks
-  drop constraint if exists webhooks_target_url_https;
-alter table public.webhooks
-  add constraint webhooks_target_url_https
-  check (target_url ~* '^https://') not valid;
+-- (The webhooks table needs nothing here: its url column has carried
+-- CHECK (url LIKE 'https://%') since 20260418010000. Dispatch re-checks
+-- the address itself now; see src/lib/url-safety.ts.)
 
 notify pgrst, 'reload schema';
