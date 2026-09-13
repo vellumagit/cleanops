@@ -94,6 +94,28 @@ export async function sendClientEmailAction(
     return { error: "Email isn't configured for this workspace yet." };
   }
 
+  // 2026-09-11: a seven-minute-old signup used this button to send 32,255
+  // fake order confirmations to addresses it had just created as clients.
+  // Beyond the org-wide daily cap in sendOrgEmail, this path in particular
+  // is locked for a new workspace's first day and limited per recipient.
+  {
+    const admin = createSupabaseAdminClient();
+    const { data: org } = (await admin
+      .from("organizations")
+      .select("created_at")
+      .eq("id", membership.organization_id)
+      .maybeSingle()) as unknown as { data: { created_at: string } | null };
+    const ageHours = org
+      ? (Date.now() - new Date(org.created_at).getTime()) / 3_600_000
+      : 0;
+    if (ageHours < 24) {
+      return {
+        error:
+          "Email client unlocks 24 hours after a workspace is created. Invoices and estimates can still be sent from their own pages.",
+      };
+    }
+  }
+
   const subject = String(formData.get("subject") ?? "")
     .trim()
     .slice(0, MAX_SUBJECT);
@@ -151,6 +173,20 @@ export async function sendClientEmailAction(
     return fail(
       "That address bounced or unsubscribed earlier, so we can't send to it. Confirm the address with the client and update their profile.",
     );
+  }
+  {
+    const since = new Date(Date.now() - 24 * 3_600_000).toISOString();
+    const { count } = (await admin
+      .from("client_emails" as never)
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id" as never, membership.organization_id as never)
+      .eq("to_email" as never, to as never)
+      .gte("created_at" as never, since as never)) as unknown as { count: number | null };
+    if ((count ?? 0) >= 5) {
+      return fail(
+        "That's five emails to this client in a day from this screen. Give them a moment to reply — or use their phone number.",
+      );
+    }
   }
 
   // ── Validate: documents on the record ────────────────────────────────

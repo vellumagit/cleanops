@@ -419,6 +419,67 @@ export function isInvoiceEmailUnpaused(): boolean {
   return process.env.INVOICE_EMAILS_UNPAUSED === "true";
 }
 
+/**
+ * How many org-branded emails an org may send per UTC day.
+ *
+ * 2026-09-11: a seven-hour-old signup sent 32,255 fake order confirmations
+ * on Sollos letterhead. Nothing counted them. A cleaning company of Svit's
+ * size sends a few dozen a day at the very most; a new signup sends a
+ * handful. The numbers are generous for anyone real and fatal for that.
+ */
+export const EMAIL_DAILY_CAP_NEW_ORG = 50;
+export const EMAIL_DAILY_CAP = 500;
+const NEW_ORG_DAYS = 7;
+
+/**
+ * Bump the org's daily counter and say whether this send is within the cap.
+ * The counter is a definer function so the increment is atomic. If the
+ * counter can't be reached (table not yet migrated, transient error), the
+ * send is ALLOWED and logged: a broken counter must not stop invoices.
+ */
+async function withinOrgEmailCap(
+  organizationId: string,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  try {
+    const admin = createSupabaseAdminClient();
+    const { data: org } = (await admin
+      .from("organizations")
+      .select("created_at, email_daily_cap" as never)
+      .eq("id", organizationId)
+      .maybeSingle()) as unknown as {
+      data: { created_at: string; email_daily_cap: number | null } | null;
+    };
+    const ageDays = org
+      ? (Date.now() - new Date(org.created_at).getTime()) / 86_400_000
+      : 0;
+    const cap =
+      org?.email_daily_cap ??
+      (ageDays < NEW_ORG_DAYS ? EMAIL_DAILY_CAP_NEW_ORG : EMAIL_DAILY_CAP);
+    const day = new Date().toISOString().slice(0, 10);
+    const { data: sent, error } = (await admin.rpc(
+      "bump_org_email_counter" as never,
+      { p_org: organizationId, p_day: day } as never,
+    )) as unknown as { data: number | null; error: { message: string } | null };
+    if (error || typeof sent !== "number") {
+      console.error("[email] cap counter unavailable, allowing send:", error?.message);
+      return { ok: true };
+    }
+    if (sent > cap) {
+      console.warn(
+        `[email] org ${organizationId} over daily cap (${sent}/${cap}) — refused`,
+      );
+      return {
+        ok: false,
+        reason: `This workspace has hit its daily email limit (${cap}). It resets at midnight UTC. If you genuinely send more than that, ask Sollos support to raise it.`,
+      };
+    }
+    return { ok: true };
+  } catch (err) {
+    console.error("[email] cap check threw, allowing send:", err);
+    return { ok: true };
+  }
+}
+
 export async function sendOrgEmailDetailed(
   organizationId: string,
   args: Omit<SendEmailArgs, "from" | "fromName" | "replyTo" | "replyToName"> & {
@@ -436,6 +497,9 @@ export async function sendOrgEmailDetailed(
     );
     return { ok: false, reason: "Client-facing emails are paused at the platform level (CLIENT_EMAILS_PAUSED=true)." };
   }
+
+  const cap = await withinOrgEmailCap(organizationId);
+  if (!cap.ok) return { ok: false, reason: cap.reason };
 
   const sender = await getOrgSender(organizationId);
   // Strip the internal pauseExempt flag — it's not part of SendEmailArgs.
