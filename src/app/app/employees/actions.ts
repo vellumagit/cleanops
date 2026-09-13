@@ -1060,7 +1060,7 @@ export async function generateRecoveryLinkAction(
   // is impossible because we filter on organization_id explicitly.
   const { data: target } = (await admin
     .from("memberships")
-    .select("id, organization_id, profile_id, display_name, profile:profiles(full_name)")
+    .select("id, organization_id, profile_id, role, display_name, profile:profiles(full_name)")
     .eq("id", memberId)
     .eq("organization_id", membership.organization_id)
     .maybeSingle()) as unknown as {
@@ -1068,6 +1068,7 @@ export async function generateRecoveryLinkAction(
       id: string;
       organization_id: string;
       profile_id: string | null;
+      role: string;
       display_name: string | null;
       profile: { full_name: string | null } | null;
     } | null;
@@ -1075,6 +1076,31 @@ export async function generateRecoveryLinkAction(
 
   if (!target) {
     return { ok: false, error: "Employee not found in your organization." };
+  }
+  // A recovery link is the account. Two lines the caller's role didn't
+  // draw until 2026-09-13: an admin cannot mint one for an owner (that is
+  // admin → owner in two clicks), and nobody mints one for a login that
+  // also belongs to another workspace — the token is the auth user's, and
+  // it would open that other workspace too.
+  if (target.role === "owner" && membership.role !== "owner") {
+    return {
+      ok: false,
+      error: "Only an owner can generate a recovery link for an owner.",
+    };
+  }
+  if (target.profile_id) {
+    const { count: elsewhere } = (await admin
+      .from("memberships")
+      .select("id", { count: "exact", head: true })
+      .eq("profile_id", target.profile_id)
+      .neq("organization_id", membership.organization_id)) as unknown as { count: number | null };
+    if ((elsewhere ?? 0) > 0) {
+      return {
+        ok: false,
+        error:
+          "This login also belongs to another workspace, so a reset link minted here would open that one too. Ask them to use Forgot password on the sign-in page instead.",
+      };
+    }
   }
 
   if (!target.profile_id) {

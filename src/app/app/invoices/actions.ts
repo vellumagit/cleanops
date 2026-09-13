@@ -20,6 +20,7 @@ import { redirectAfterSetup } from "@/lib/setup-return";
 import { redirectBack } from "@/lib/return-to";
 import { computeTax, parseTaxRate } from "@/lib/invoice-tax";
 import { pushInvoiceToSage, pushInvoicePaymentToSage } from "@/lib/sage";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
   pushInvoiceToQuickBooks,
   pushInvoicePaymentToQuickBooks,
@@ -100,6 +101,18 @@ export async function createInvoiceAction(
 
   if (!(await canCreateData(membership.organization_id))) {
     return { errors: { _form: "Your subscription has expired. Subscribe to create new invoices." }, values: raw };
+  }
+
+  {
+    // The client must be this workspace's. The database enforces it too (a
+    // trigger since 2026-09-13); this is the sentence the form shows.
+    const { data: own } = (await createSupabaseAdminClient()
+      .from("clients")
+      .select("id")
+      .eq("id", parsed.data.client_id)
+      .eq("organization_id", membership.organization_id)
+      .maybeSingle()) as unknown as { data: { id: string } | null };
+    if (!own) return { errors: { client_id: "Pick a client from this workspace." }, values: raw };
   }
 
   const stamps = maybeStamp(parsed.data.status);

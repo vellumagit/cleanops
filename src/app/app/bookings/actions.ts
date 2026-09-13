@@ -119,6 +119,18 @@ function readPropertyId(formData: FormData): string | null {
  * Returns null for anything that fails, so a bad id degrades to "no property"
  * rather than rejecting the save. The address the user sees is still written.
  */
+/** The client must be this workspace's. The database enforces it too (a
+ *  trigger since 2026-09-13); this is the sentence the form shows. */
+async function clientBelongsToOrg(clientId: string, organizationId: string): Promise<boolean> {
+  const { data } = (await createSupabaseAdminClient()
+    .from("clients")
+    .select("id")
+    .eq("id", clientId)
+    .eq("organization_id", organizationId)
+    .maybeSingle()) as unknown as { data: { id: string } | null };
+  return Boolean(data);
+}
+
 async function propertyBelongsToClient(
   admin: ReturnType<typeof createSupabaseAdminClient>,
   propertyId: string | null,
@@ -585,6 +597,9 @@ export async function createBookingAction(
     parsed.data.client_id,
     membership.organization_id,
   );
+  if (!(await clientBelongsToOrg(parsed.data.client_id, membership.organization_id))) {
+    return { errors: { client_id: "Pick a client from this workspace." }, values: raw };
+  }
 
 
   // Re-interpret the datetime-local string using the org's timezone.
@@ -921,6 +936,9 @@ export async function createRecurringBookingAction(
     parsed.data.client_id,
     membership.organization_id,
   );
+  if (!(await clientBelongsToOrg(parsed.data.client_id, membership.organization_id))) {
+    return { errors: { client_id: "Pick a client from this workspace." }, values: raw };
+  }
 
 
   const orgTz = await getOrgTimezone(membership.organization_id);
@@ -1274,6 +1292,9 @@ export async function updateBookingAction(
     parsed.data.client_id,
     membership.organization_id,
   );
+  if (!(await clientBelongsToOrg(parsed.data.client_id, membership.organization_id))) {
+    return { errors: { client_id: "Pick a client from this workspace." }, values: raw };
+  }
 
 
   // Re-interpret datetime-local with the org's tz (see createBookingAction).

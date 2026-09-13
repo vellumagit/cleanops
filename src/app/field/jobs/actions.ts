@@ -391,12 +391,25 @@ export async function completeJobAction(
     };
   }
 
-  const { error: updateBookingError } = await supabase
+  // Through the admin client, because RLS only lets the PRIMARY assignee
+  // update the booking — for a second crew member the update used to match
+  // zero rows, return no error, and the code below drafted (and could
+  // auto-send) an invoice for a job still marked confirmed. The crew check
+  // at the top of this action is the authorization; this is the write.
+  const { data: completedRows, error: updateBookingError } = (await createSupabaseAdminClient()
     .from("bookings")
     .update({ status: "completed" })
-    .eq("id", bookingId);
+    .eq("id", bookingId)
+    .eq("organization_id", membership.organization_id)
+    .select("id")) as unknown as {
+    data: Array<{ id: string }> | null;
+    error: { message: string } | null;
+  };
   if (updateBookingError) {
     return { ok: false, error: updateBookingError.message };
+  }
+  if (!completedRows || completedRows.length === 0) {
+    return { ok: false, error: "This job couldn't be marked complete. Reload and try again." };
   }
   await logAuditEvent({
     membership,

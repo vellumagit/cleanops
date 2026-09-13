@@ -227,7 +227,7 @@ export async function autoInvoiceOnJobComplete(
     const { data: booking } = (await db
       .from("bookings")
       .select(
-        "id, organization_id, client_id, total_cents, service_type, service_type_label, address, duration_minutes, scheduled_at, billing_invoice_id, property:client_properties ( label ), client:clients ( address )",
+        "id, organization_id, client_id, status, total_cents, service_type, service_type_label, address, duration_minutes, scheduled_at, billing_invoice_id, property:client_properties ( label ), client:clients ( address )",
       )
       .eq("id", bookingId)
       .maybeSingle()) as unknown as {
@@ -235,6 +235,7 @@ export async function autoInvoiceOnJobComplete(
         id: string;
         organization_id: string;
         client_id: string | null;
+        status: string;
         total_cents: number;
         service_type: string;
         service_type_label: string | null;
@@ -248,6 +249,14 @@ export async function autoInvoiceOnJobComplete(
 
     if (!booking) {
       const reason = `Booking ${bookingId} not found.`;
+      console.log(`[auto] autoInvoiceOnJobComplete: ${reason}`);
+      return { ok: false, reason };
+    }
+    // Only a completed job bills. Every caller sets completed first; this is
+    // the line that makes a caller that didn't (a filtered update, a bug)
+    // harmless instead of an invoice for work nobody did.
+    if (booking.status !== "completed") {
+      const reason = `booking ${bookingId} is ${booking.status}, not completed — not invoicing`;
       console.log(`[auto] autoInvoiceOnJobComplete: ${reason}`);
       return { ok: false, reason };
     }
