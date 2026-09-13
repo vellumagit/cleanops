@@ -14,25 +14,37 @@ import { Redis } from "@upstash/redis";
 
 /* ─── Redis-backed limiter (production) ─────────────────────── */
 
-let redisLimiter: Ratelimit | null = null;
+// One limiter per (max, window) pair. Until 2026-09-13 there was a single
+// 120-per-minute limiter and every caller's own numbers were ignored on the
+// Redis path: signup's "5 per minute" was really 120, the intake forms'
+// "10 per minute" was 120, the password reset's "3" was 120. Each limiter
+// carries its numbers in its key prefix, so windows can never share a bucket.
+const redisLimiters = new Map<string, Ratelimit>();
+let redisClient: Redis | null | undefined;
 
-function getRedisLimiter(): Ratelimit | null {
-  if (redisLimiter) return redisLimiter;
-
+function getRedis(): Redis | null {
+  if (redisClient !== undefined) return redisClient;
   const url = process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  redisClient = url && token ? new Redis({ url, token }) : null;
+  return redisClient;
+}
 
-  if (!url || !token) return null;
-
-  redisLimiter = new Ratelimit({
-    redis: new Redis({ url, token }),
-    // 120 requests per 60-second sliding window, per key
-    limiter: Ratelimit.slidingWindow(120, "60 s"),
-    analytics: true,
-    prefix: "cleanops:rl",
-  });
-
-  return redisLimiter;
+function getRedisLimiter(maxRequests: number, windowMs: number): Ratelimit | null {
+  const redis = getRedis();
+  if (!redis) return null;
+  const id = `${maxRequests}/${windowMs}`;
+  let limiter = redisLimiters.get(id);
+  if (!limiter) {
+    limiter = new Ratelimit({
+      redis,
+      limiter: Ratelimit.slidingWindow(maxRequests, `${Math.max(1000, windowMs)} ms`),
+      analytics: true,
+      prefix: `cleanops:rl:${id}`,
+    });
+    redisLimiters.set(id, limiter);
+  }
+  return limiter;
 }
 
 /* ─── In-memory fallback (dev / no Redis configured) ────────── */
@@ -88,7 +100,7 @@ export async function checkRateLimit(
   maxRequests = 120,
   windowMs = 60_000,
 ): Promise<{ allowed: true } | { allowed: false; retryAfterSeconds: number }> {
-  const redis = getRedisLimiter();
+  const redis = getRedisLimiter(maxRequests, windowMs);
 
   if (redis) {
     try {

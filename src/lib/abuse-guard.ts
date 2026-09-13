@@ -287,7 +287,7 @@ export async function evaluateAbuse(orgId: string): Promise<AbuseVerdict> {
         ["Emails today", String(signals.emailsToday)],
         ["Suspend", suspendUrl],
       ],
-      message: `${verdict.reasons.join("\n")}\n\nNothing has been blocked yet. The link above suspends the workspace in one click; the same link with &undo=1 lifts it.`,
+      message: `${verdict.reasons.join("\n")}\n\nNothing has been blocked yet. The link above opens a page with a Suspend button (a click, never a preview); the same link with &undo=1 lifts it.`,
       href: `${site}/app`,
     });
     return verdict;
