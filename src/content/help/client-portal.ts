@@ -1,5 +1,5 @@
 export const body = `
-The portal exists to absorb the phone calls: clients help themselves to the small stuff so it reaches you as tidy requests instead of interruptions. Invite a client and they sign in with their email — the main sollos3.com login recognizes a client account and routes it straight to the portal, so nobody needs to know a special address (\`/client\` also works, with an emailed sign-in link as the primary route and a "Forgot password?" reset — no account babysitting).
+The portal exists to absorb the phone calls: clients help themselves to the small stuff so it reaches you as tidy requests instead of interruptions. Invite a client and they sign in with their email — the main sollos3.com login recognizes a client account and routes it straight to the portal, so nobody needs to know a special address (\`/client\` also works, with an emailed sign-in link as the primary route and a "Forgot password?" reset — no account babysitting). If the client's email already has a Sollos login, the invite page sends them to sign in with it first; opening the invite link while signed in connects that login to their client account.
 
 ## What a client can do
 

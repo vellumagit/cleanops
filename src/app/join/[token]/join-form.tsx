@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
+import Link from "next/link";
 import { Input } from "@/components/ui/input";
 import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
@@ -43,6 +44,14 @@ export function JoinForm({
           className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"
         >
           {state.errors._form}
+          {state.signInHref && (
+            <Link
+              href={state.signInHref}
+              className="mt-2 flex h-10 w-full items-center justify-center rounded-md bg-primary text-sm font-semibold text-primary-foreground transition-all hover:bg-primary/90 active:scale-[0.98]"
+            >
+              Sign in to accept
+            </Link>
+          )}
         </div>
       )}
 

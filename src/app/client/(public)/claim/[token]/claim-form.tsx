@@ -15,7 +15,7 @@ export function ClaimForm({ token }: { token: string }) {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [showSignIn, setShowSignIn] = useState(false);
+  const [signInHref, setSignInHref] = useState<string | null>(null);
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -35,21 +35,13 @@ export function ClaimForm({ token }: { token: string }) {
       const res = await acceptPortalInviteAction(token, password);
       if (!res.ok) {
         setError(res.error);
-        setShowSignIn(Boolean(res.signInInstead));
+        setSignInHref(res.signInInstead ? (res.signInHref ?? "/client/login") : null);
         return;
       }
-      // Server linked the auth user + client record. We don't have the
-      // email on the client here, so send them to /client/login to sign
-      // in once and establish their session.
-      //
-      // When an existing account was adopted, the password typed above was
-      // deliberately NOT applied — telling them otherwise sends them into a
-      // login loop with a password that was never set.
-      router.push(
-        res.usedExistingAccount
-          ? "/client/login?claimed=existing"
-          : "/client/login?claimed=1",
-      );
+      // Server created the auth user + linked the client record. We don't
+      // have the email on the client here, so send them to /client/login to
+      // sign in once and establish their session.
+      router.push("/client/login?claimed=1");
     });
   }
 
@@ -61,9 +53,9 @@ export function ClaimForm({ token }: { token: string }) {
           className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"
         >
           {error}
-          {showSignIn && (
+          {signInHref && (
             <Link
-              href="/client/login"
+              href={signInHref}
               className="mt-2 flex h-10 w-full items-center justify-center rounded-md bg-primary text-sm font-semibold text-primary-foreground transition-all hover:bg-primary/90 active:scale-[0.98] active:bg-primary/80"
             >
               Go to sign in

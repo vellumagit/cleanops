@@ -31,6 +31,13 @@ function isSafeNextPath(next: string): boolean {
   if (next.includes("\\")) return false;
   if (/%2f/i.test(next) || /%5c/i.test(next)) return false;
 
+  // The team-invite landing for an existing account: /login?invite=<t>
+  // sets next=/join?token=<t>. It carries a query, which the prefix rule
+  // below cannot express, so it is named here. (Until 2026-09-13 it was
+  // silently rejected and the sign-in landed on the dashboard with the
+  // invite unclaimed.)
+  if (/^\/join\?token=[A-Za-z0-9-]+$/.test(next)) return true;
+
   // Must match an allowed root, either exactly or as a subpath.
   return SAFE_NEXT_PREFIXES.some(
     (prefix) => next === prefix || next.startsWith(`${prefix}/`),

@@ -4,16 +4,17 @@ import { revalidatePath } from "next/cache";
 import { randomBytes, createHash } from "node:crypto";
 import { getActionContext } from "@/lib/actions";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import {
+  authUserExistsForEmail,
+  findClientByPortalToken,
+  linkPortalAccount,
+} from "@/lib/portal-claim";
 import { logAuditEvent } from "@/lib/audit";
 import { sendOrgEmail } from "@/lib/email";
 
 type Result =
   | {
       ok: true;
-      /** True when we linked an existing auth account rather than creating one.
-       *  The password they typed was NOT applied — the claim page has to say so
-       *  or they will try it and fail. */
-      usedExistingAccount?: boolean;
     }
   | {
       ok: false;
@@ -21,6 +22,8 @@ type Result =
       /** The refusal is "you already have an account" — the claim page turns
        *  this into a Sign in button rather than telling them to navigate. */
       signInInstead?: boolean;
+      /** Where "sign in" should go — back to this claim link once signed in. */
+      signInHref?: string;
     };
 
 const INVITE_TTL_DAYS = 14;
@@ -138,157 +141,45 @@ export async function acceptPortalInviteAction(
   token: string,
   password: string,
 ): Promise<Result> {
-  if (!token || token.length < 16) {
-    return { ok: false, error: "Invalid link." };
-  }
   if (password.length < 8) {
     return { ok: false, error: "Password must be at least 8 characters." };
   }
 
-  const hashed = createHash("sha256").update(token).digest("hex");
   const admin = createSupabaseAdminClient();
+  const found = await findClientByPortalToken(admin, token);
+  if (!found.ok) return { ok: false, error: found.error };
+  const { client } = found;
 
-  const { data: client } = await admin
-    .from("clients")
-    .select(
-      "id, organization_id, name, email, portal_invite_expires_at, profile_id",
-    )
-    .eq("portal_invite_token", hashed as never)
-    .maybeSingle();
-
-  if (!client) return { ok: false, error: "Invalid or expired link." };
-  if (
-    !client.portal_invite_expires_at ||
-    new Date(client.portal_invite_expires_at).getTime() < Date.now()
-  ) {
-    return {
-      ok: false,
-      error: "This invite has expired. Ask for a new one.",
-    };
-  }
-  if (client.profile_id) {
+  // An email match is NOT permission to set that account's password — and,
+  // since 2026-09-13, not permission to adopt the account either. Anyone
+  // can register any address against the auth project with the public key
+  // before the invite goes out; linking "the" existing account from this
+  // unauthenticated form handed the client's portal to whoever registered
+  // first. If a login exists, its holder proves it by signing in, and the
+  // claim page links a session whose email matches the invite.
+  if (await authUserExistsForEmail(admin, client.email)) {
     return {
       ok: false,
       error:
-        "This invite has already been used. Log in with the email + password you set.",
-    };
-  }
-  if (!client.email) {
-    return {
-      ok: false,
-      error: "This client has no email on file. Ask the business to fix that.",
+        "There is already a Sollos login for this email. Sign in with it, and this link will connect it to your portal.",
+      signInInstead: true,
+      signInHref: `/client/login?next=${encodeURIComponent(`/client/claim/${token}`)}`,
     };
   }
 
-  // Look for an existing auth user with this email. If they exist (e.g.
-  // the client is already a member of a different Sollos org), we link
-  // their existing user to this client row. Otherwise create a new one.
-  // Paginate through all users — perPage:1000 only fetches the first page,
-  // so on larger deployments the user could be missed and a duplicate
-  // account created (which Supabase then rejects, giving the client an
-  // error instead of a working login).
-  let userId: string | null = null;
-  let existingUser = false;
-  {
-    const targetEmail = client.email!.toLowerCase();
-    let page = 1;
-    outer: while (true) {
-      const { data: batch } = await admin.auth.admin.listUsers({
-        page,
-        perPage: 1000,
-      });
-      if (!batch?.users?.length) break;
-      for (const u of batch.users) {
-        if (u.email?.toLowerCase() === targetEmail) {
-          userId = u.id;
-          existingUser = true;
-          break outer;
-        }
-      }
-      if (batch.users.length < 1000) break; // Last page reached
-      page++;
-    }
+  const { data: created, error: createErr } = await admin.auth.admin.createUser({
+    email: client.email,
+    password,
+    email_confirm: true,
+    user_metadata: { full_name: client.name, is_client: true },
+  });
+  if (createErr || !created.user) {
+    console.error("[portal-claim] createUser failed:", createErr?.message);
+    return { ok: false, error: "Could not create account. Try again, or ask for a new invite." };
   }
 
-  // An email match is NOT permission to set that account's password.
-  //
-  // listUsers() spans the whole Supabase project, and clients share auth.users
-  // with staff (memberships.profile_id vs clients.profile_id). The previous
-  // code called updateUserById(u.id, { password }) unconditionally on a match,
-  // so anyone holding a portal invite for an address that already had a Sollos
-  // account could set that account's password — including staff, and including
-  // owners of other organizations. It was never exploited only because no
-  // invite had ever been sent.
-  if (existingUser && userId) {
-    // Refusing on "this user has a membership" was too broad and produced a
-    // worse bug than the one it fixed: an owner who invites their own address
-    // ends up authenticated but unlinked — signed in correctly, no client row,
-    // bouncing off /client/login forever. Staff being their own client is
-    // ordinary in a small business.
-    //
-    // The only genuine conflict is a user ALREADY linked to a DIFFERENT client
-    // row, which would silently move their portal from one client to another.
-    const { data: otherClient } = await admin
-      .from("clients")
-      .select("id, name")
-      .eq("profile_id", userId)
-      .neq("id", client.id)
-      .limit(1);
-    if (otherClient && otherClient.length > 0) {
-      return {
-        ok: false,
-        error: `That email is already the portal login for ${otherClient[0].name}. One login can't cover two client accounts — send this invite to a different address.`,
-        signInInstead: true,
-      };
-    }
-    // Adopt the account. Password untouched — they sign in with what they
-    // already have, or with an emailed link.
-    const { error: linkOnlyErr } = await admin
-      .from("clients")
-      .update({
-        profile_id: userId,
-        portal_invite_token: null,
-        portal_invite_expires_at: null,
-        portal_accepted_at: new Date().toISOString(),
-      } as never)
-      .eq("id", client.id);
-    if (linkOnlyErr) return { ok: false, error: linkOnlyErr.message };
-    return {
-      ok: true,
-      usedExistingAccount: true,
-    };
-  }
-
-  if (!userId) {
-    const { data: created, error: createErr } =
-      await admin.auth.admin.createUser({
-        email: client.email,
-        password,
-        email_confirm: true,
-        user_metadata: { full_name: client.name, is_client: true },
-      });
-    if (createErr || !created.user) {
-      return {
-        ok: false,
-        error: createErr?.message ?? "Could not create account.",
-      };
-    }
-    userId = created.user.id;
-  }
-
-  // Link the client row + burn the token.
-  const { error: linkErr } = await admin
-    .from("clients")
-    .update({
-      profile_id: userId,
-      portal_invite_token: null,
-      portal_invite_expires_at: null,
-      portal_accepted_at: new Date().toISOString(),
-    } as never)
-    .eq("id", client.id);
-
-  if (linkErr) return { ok: false, error: linkErr.message };
-
+  const linked = await linkPortalAccount(admin, client, created.user.id);
+  if (!linked.ok) return { ok: false, error: linked.error };
   return { ok: true };
 }
 

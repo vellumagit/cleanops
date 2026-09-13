@@ -30,7 +30,7 @@ Every module also says **who it's for** — Employees & contractors, Managers, A
 
 ## People added without a login
 
-Someone can be added to the team manually (Employees → Add) with no account — they appear on schedules and timesheets but can't sign in. When they're ready for the field app, **send them an invitation using the same email on their record**: accepting it links the login to their existing record, so their hours and history come with them. It never creates a second person.
+Someone can be added to the team manually (Employees → Add) with no account — they appear on schedules and timesheets but can't sign in. When they're ready for the field app, **send them an invitation using the same email on their record**: accepting it links the login to their existing record, so their hours and history come with them. It never creates a second person. If the invited address already has a Sollos login (someone who works for another business on Sollos, say), the invite page asks them to **sign in with that login** rather than set a new password — an invite is only ever attached to an account its owner has signed into.
 
 ## When someone leaves
 

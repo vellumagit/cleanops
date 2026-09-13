@@ -5,16 +5,32 @@ import { ClientLoginForm } from "./login-form";
 
 export const metadata = { title: "Client sign-in" };
 
+function safePortalNext(raw: string | undefined): string | null {
+  if (!raw) return null;
+  if (!raw.startsWith("/client/")) return null;
+  if (raw.includes("//") || raw.includes("\\")) return null;
+  if (/%2f|%5c/i.test(raw)) return null;
+  if (!/^[A-Za-z0-9/_.~-]+$/.test(raw)) return null;
+  return raw;
+}
+
 // Standalone page — render without the tab-bar layout.
 export default async function ClientLoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ claimed?: string }>;
+  searchParams: Promise<{ claimed?: string; next?: string }>;
 }) {
-  const state = await getClientAuthState();
-  if (state.status === "ok") redirect("/client");
+  const { claimed, next: rawNext } = await searchParams;
+  // Only a portal path, and only a plain one. The claim page sends people
+  // here when the invite's address already has a login; after sign-in they
+  // go back to the claim link, which connects the session to the client.
+  const next = safePortalNext(rawNext);
 
-  const { claimed } = await searchParams;
+  const state = await getClientAuthState();
+  if (state.status === "ok") redirect(next ?? "/client");
+  // Signed in with a login no client row points at yet — the very case the
+  // claim page resolves. Send them back there instead of the dead end below.
+  if (state.status === "not-a-client" && next) redirect(next);
 
   return (
     <div className="flex min-h-[100dvh] items-center justify-center bg-muted/30 px-4">
@@ -74,7 +90,7 @@ export default async function ClientLoginPage({
             </form>
           </div>
         ) : (
-          <ClientLoginForm />
+          <ClientLoginForm next={next} />
         )}
         <p className="mt-4 text-center text-[11px] text-muted-foreground">
           Don&rsquo;t have an account?{" "}

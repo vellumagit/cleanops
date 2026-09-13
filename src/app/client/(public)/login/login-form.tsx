@@ -17,8 +17,11 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/client";
  * the first version offered only a password, with no reset and no link, so a
  * client who guessed wrong had no way forward at all.
  */
-export function ClientLoginForm() {
+export function ClientLoginForm({ next }: { next?: string | null }) {
   const router = useRouter();
+  // Where a successful sign-in lands. Validated server-side by the page;
+  // the auth callback re-checks it for the emailed link.
+  const dest = next ?? "/client";
   const [pending, startTransition] = useTransition();
   const [mode, setMode] = useState<"link" | "password">("link");
   const [email, setEmail] = useState("");
@@ -41,7 +44,7 @@ export function ClientLoginForm() {
           // Never create an account from this page — a portal login only
           // exists once an owner has invited that client.
           shouldCreateUser: false,
-          emailRedirectTo: `${siteOrigin()}/auth/callback?next=/client`,
+          emailRedirectTo: `${siteOrigin()}/auth/callback?next=${encodeURIComponent(dest)}`,
         },
       });
       // Deliberately not distinguishing "no such account" — that would let
@@ -71,7 +74,7 @@ export function ClientLoginForm() {
         );
         return;
       }
-      router.push("/client");
+      router.push(dest);
       router.refresh();
     });
   }

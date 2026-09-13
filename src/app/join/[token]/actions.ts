@@ -16,6 +16,8 @@ const JoinSchema = z.object({
 export type JoinFormState = {
   errors?: Partial<Record<"full_name" | "password" | "_form", string>>;
   values?: { full_name?: string };
+  /** Set when the invitee already has a login: the way forward is to sign in. */
+  signInHref?: string;
 };
 
 export async function acceptInvitationAction(
@@ -103,21 +105,22 @@ export async function acceptInvitationAction(
   const { claimInvitation } = await import("@/lib/invitation-claim");
 
   if (existingUser) {
-    // User already has an account — claim with their existing identity.
-    const claimed = await claimInvitation(admin, invitation, existingUser.id);
-    if (!claimed.ok) {
-      return {
-        errors: { _form: claimed.error },
-        values: { full_name: raw.full_name },
-      };
-    }
-    if (claimed.alreadyActive) {
-      return {
-        errors: { _form: "You're already a member of this organization. Sign in to continue." },
-        values: { full_name: raw.full_name },
-      };
-    }
-  } else {
+    // An email match is not proof of control. Anyone can register any
+    // address against the auth project with the public key before the
+    // invite goes out; claiming onto "the" existing account from this
+    // unauthenticated form (which it did until 2026-09-13, ignoring the
+    // password typed) handed the org's access to whoever registered first.
+    // The invitee proves the account is theirs by signing into it:
+    // /join?token= requires the session's email to equal the invite's.
+    return {
+      errors: {
+        _form: `There is already a Sollos account for ${invitation.email}. Sign in with it to accept this invite.`,
+      },
+      values: { full_name: raw.full_name },
+      signInHref: `/login?invite=${encodeURIComponent(meta.token)}`,
+    };
+  }
+  {
     // Create a new auth user
     // The on_auth_user_created trigger will create a profile row
     const supabase = await createSupabaseServerClient();

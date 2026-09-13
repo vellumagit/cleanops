@@ -278,7 +278,14 @@ const enforceMfa = cache(async function enforceMfa(): Promise<void> {
   // enforceMfa() directly (it's an exported-as-private helper today;
   // promote it if needed).
   const currentPath = await getRequestPath();
-  if (!currentPath || currentPath.startsWith("/api/")) return;
+  const isAction = await isServerActionRequest();
+  // Until 2026-09-13 a missing header meant "not a gated render", and a
+  // server action POSTed to /login — outside the middleware matcher — had
+  // no header at all. A password alone, no second factor, ran every action
+  // in the app for an MFA-enrolled owner. Actions are gated wherever they
+  // were posted; the exemption is for route handlers, which never carry a
+  // Next-Action header.
+  if (!isAction && (!currentPath || currentPath.startsWith("/api/"))) return;
 
   // Wrap the MFA-related Supabase calls in try/catch and FAIL-OPEN
   // on unhandled exceptions. The previous fail-closed shape was
@@ -341,7 +348,7 @@ const enforceMfa = cache(async function enforceMfa(): Promise<void> {
     if (aalData?.currentLevel === "aal2") return;
 
     // aal1 with at least one verified factor → must clear MFA challenge.
-    redirect(buildMfaVerifyUrl(currentPath));
+    redirect(buildMfaVerifyUrl(currentPath ?? "/app"));
   } catch (err) {
     // redirect() throws NEXT_REDIRECT — re-throw so Next can complete
     // the navigation. Anything else (genuine exception in supabase-js,
@@ -389,6 +396,22 @@ async function getRequestPath(): Promise<string | null> {
   // make the round trip work. The exemption's own comment has promised
   // otherwise since the matcher first excluded /api/.
   return null;
+}
+
+/**
+ * True when this request is a server-action invocation: Next marks those
+ * with a `Next-Action` header. An action runs at whatever URL it was
+ * POSTed to, so the x-pathname header says nothing about where the action
+ * "lives" — one defined for /app/payroll can be posted to /login.
+ */
+async function isServerActionRequest(): Promise<boolean> {
+  try {
+    const { headers } = await import("next/headers");
+    const h = await headers();
+    return Boolean(h.get("next-action"));
+  } catch {
+    return false;
+  }
 }
 
 /**
