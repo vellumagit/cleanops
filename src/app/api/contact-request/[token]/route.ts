@@ -3,7 +3,9 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
 import { findOrCreateClient } from "@/lib/find-or-create-client";
 import { newLeadPatch, type LeadSource } from "@/lib/lead-pipeline";
-import { sendEmail, getOrgSender } from "@/lib/email";
+import { sendEmail, getOrgSender, withinOrgEmailCap } from "@/lib/email";
+import { checkRateLimit } from "@/lib/rate-limit";
+import { escapeHtml as e } from "@/lib/support-mail";
 
 /**
  * Public contact-form intake — the website's contact form posts here.
@@ -102,6 +104,17 @@ export async function POST(
   }
   const orgId = form.organization_id;
 
+  // Per-form ceiling on top of the per-IP one: the token is public by
+  // design (it sits in the org's website), so one form must not be able
+  // to flood its owners or, worse, send on their letterhead at will.
+  const perForm = await checkRateLimit(`intake:${form.id}`, 60, 3_600_000);
+  if (!perForm.allowed) {
+    return NextResponse.json(
+      { error: "too_many_requests" },
+      { status: 429, headers: CORS },
+    );
+  }
+
   const body = await readBody(request);
 
   // Honeypot: the form ships an invisible `website` field. Humans leave it
@@ -119,6 +132,11 @@ export async function POST(
   }
   const email = s(body.email, 320);
   const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  // The confirmation goes to an address the submitter typed. Three an hour
+  // per address is a person double-checking; more is someone using the form
+  // to mail a stranger on the org's behalf. The lead is still recorded.
+  const mailClient =
+    emailOk && (await checkRateLimit(`intake-to:${email.toLowerCase()}`, 3, 3_600_000)).allowed;
   const phone = s(body.phone, 40);
   const city = s(body.city, 100);
   const urgency = s(body.urgency, 60);
@@ -201,12 +219,20 @@ export async function POST(
   const orgName = orgRow?.name ?? "Our team";
   const orgPhone = orgRow?.contact_phone ?? null;
 
-  if (emailOk) {
+  // Every send here counts against the org's daily email cap, the same as
+  // an invoice or an invite — this route used to be the one door past it.
+  const orgMayEmail = async () => {
+    const cap = await withinOrgEmailCap(orgId);
+    if (!cap.ok) console.warn(`[contact-request] org ${orgId} not emailed: ${cap.reason}`);
+    return cap.ok;
+  };
+
+  if (mailClient && (await orgMayEmail())) {
     const received = [
-      `<strong>Name:</strong> ${name}`,
-      `<strong>Email:</strong> ${email}`,
-      phone && `<strong>Phone:</strong> ${phone}`,
-      notes && `<strong>Message:</strong> ${notes}`,
+      `<strong>Name:</strong> ${e(name)}`,
+      `<strong>Email:</strong> ${e(email)}`,
+      phone && `<strong>Phone:</strong> ${e(phone)}`,
+      notes && `<strong>Message:</strong> ${e(notes)}`,
     ]
       .filter(Boolean)
       .join("<br>");
@@ -219,17 +245,17 @@ export async function POST(
       html: `<!doctype html><html lang="en"><head><meta charset="utf-8"></head>
 <body style="margin:0;padding:0;background:#f7f8f6;font-family:system-ui,-apple-system,sans-serif;">
 <div style="padding:24px 16px;"><div style="max-width:600px;margin:0 auto;background:#fff;border:1px solid rgba(17,24,39,.10);border-radius:12px;overflow:hidden;">
-<div style="padding:18px 20px;background:#2c5a2a;color:#fff;font-size:16px;font-weight:700;">${orgName}</div>
+<div style="padding:18px 20px;background:#2c5a2a;color:#fff;font-size:16px;font-weight:700;">${e(orgName)}</div>
 <div style="padding:22px 20px;color:#1a1a1a;">
 <h1 style="margin:0 0 10px 0;font-size:22px;">Thanks — we received your request ✅</h1>
-<p style="margin:0 0 14px 0;font-size:14px;line-height:1.75;color:#4b5563;">Hi ${name},<br>Thanks for contacting <strong>${orgName}</strong>. We've got your message and we'll reply shortly.</p>
-${orgPhone ? `<p style="margin:0 0 14px 0;font-size:14px;color:#4b5563;">If it's time-sensitive, calling is fastest: <a href="tel:${orgPhone}" style="color:#2c5a2a;font-weight:800;text-decoration:none;">${orgPhone}</a></p>` : ""}
+<p style="margin:0 0 14px 0;font-size:14px;line-height:1.75;color:#4b5563;">Hi ${e(name)},<br>Thanks for contacting <strong>${e(orgName)}</strong>. We've got your message and we'll reply shortly.</p>
+${orgPhone ? `<p style="margin:0 0 14px 0;font-size:14px;color:#4b5563;">If it's time-sensitive, calling is fastest: <a href="tel:${e(orgPhone)}" style="color:#2c5a2a;font-weight:800;text-decoration:none;">${e(orgPhone)}</a></p>` : ""}
 <div style="background:#eef5ec;border:1px solid #b8d4b5;border-radius:12px;padding:14px;">
 <p style="margin:0 0 6px 0;font-size:12px;letter-spacing:1.2px;text-transform:uppercase;color:#2c5a2a;font-weight:800;">What we received</p>
 <p style="margin:0;font-size:13px;line-height:1.7;color:#1f2937;">${received}</p></div>
 <p style="margin:14px 0 0 0;font-size:13px;line-height:1.75;color:#4b5563;">Typical response time: <strong>within 1 business day</strong>.</p>
 </div>
-<div style="padding:14px 20px 20px;font-size:12px;color:#6b7280;border-top:1px solid rgba(17,24,39,.10);">${orgName}</div>
+<div style="padding:14px 20px 20px;font-size:12px;color:#6b7280;border-top:1px solid rgba(17,24,39,.10);">${e(orgName)}</div>
 </div>
 <div style="margin-top:14px;font-size:11px;color:#9ca3af;text-align:center;">If you didn't submit a request, you can ignore this email.</div>
 </div></body></html>`,
@@ -273,11 +299,11 @@ ${orgPhone ? `<p style="margin:0 0 14px 0;font-size:14px;color:#4b5563;">If it's
       ),
     ];
     const rows = [
-      ["Name", name],
-      emailOk ? ["Email", `<a href="mailto:${email}" style="color:#2c5a2a;">${email}</a>`] : null,
-      phone ? ["Phone", `<a href="tel:${phone}" style="color:#2c5a2a;">${phone}</a>`] : null,
-      city ? ["Location", city] : null,
-      urgency ? ["Urgency", urgency] : null,
+      ["Name", e(name)],
+      emailOk ? ["Email", `<a href="mailto:${e(email)}" style="color:#2c5a2a;">${e(email)}</a>`] : null,
+      phone ? ["Phone", `<a href="tel:${e(phone)}" style="color:#2c5a2a;">${e(phone)}</a>`] : null,
+      city ? ["Location", e(city)] : null,
+      urgency ? ["Urgency", e(urgency)] : null,
     ]
       .filter((r): r is [string, string] => Boolean(r))
       .map(
@@ -286,6 +312,7 @@ ${orgPhone ? `<p style="margin:0 0 14px 0;font-size:14px;color:#4b5563;">If it's
       )
       .join("");
     for (const to of recipients) {
+      if (!(await orgMayEmail())) break;
       sendEmail({
         to,
         subject: `New website inquiry — ${name}`,
@@ -298,7 +325,7 @@ ${orgPhone ? `<p style="margin:0 0 14px 0;font-size:14px;color:#4b5563;">If it's
 <div style="padding:18px;">
 <div style="background:#eef5ec;border:1px solid #b8d4b5;border-radius:12px;padding:14px;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">${rows}</table>
-${notes ? `<p style="margin:10px 0 4px 0;font-size:13px;font-weight:900;color:#1f2937;">Message</p><div style="font-size:13px;line-height:1.75;color:#374151;white-space:pre-line;">${notes}</div>` : ""}
+${notes ? `<p style="margin:10px 0 4px 0;font-size:13px;font-weight:900;color:#1f2937;">Message</p><div style="font-size:13px;line-height:1.75;color:#374151;white-space:pre-line;">${e(notes)}</div>` : ""}
 </div>
 <div style="margin-top:16px;"><a href="https://sollos3.com/app/leads" style="color:#2c5a2a;font-weight:800;text-decoration:none;">Open in Sollos →</a> — the lead is already in your list.</div>
 </div></div></body></html>`,

@@ -12,6 +12,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { HELP_ARTICLES } from "@/content/help";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 // The assistant reads the SAME help library the in-app Help section renders
 // (src/content/help). Brian caught it telling a user there was no Help
@@ -107,13 +108,41 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // Every call re-sends the help library and a data snapshot, on Sollos's
+  // key. Twenty a minute is a person; a loop is not.
+  const rl = await checkRateLimit(`ai:${membership.id}`, 20, 60_000);
+  if (!rl.allowed) {
+    return Response.json(
+      { error: "Slow down a moment — the assistant can take about twenty questions a minute." },
+      { status: 429 },
+    );
+  }
+
   const body = await request.json();
-  const messages: { role: "user" | "assistant"; content: string }[] =
-    body.messages ?? [];
-  const currentPage: string = body.currentPage ?? "unknown";
+  const rawMessages: unknown = body.messages ?? [];
+  const messages: { role: "user" | "assistant"; content: string }[] = Array.isArray(rawMessages)
+    ? rawMessages
+        .filter(
+          (m): m is { role: "user" | "assistant"; content: string } =>
+            Boolean(m) &&
+            typeof m === "object" &&
+            ((m as { role?: unknown }).role === "user" || (m as { role?: unknown }).role === "assistant") &&
+            typeof (m as { content?: unknown }).content === "string",
+        )
+        .slice(-30)
+    : [];
+  const currentPage: string = String(body.currentPage ?? "unknown").slice(0, 200);
 
   if (messages.length === 0) {
     return Response.json({ error: "No messages" }, { status: 400 });
+  }
+  // Size, too: the widget keeps a short thread; nothing legitimate is 200 KB.
+  const totalChars = messages.reduce((n, m) => n + m.content.length, 0);
+  if (totalChars > 24_000 || messages.some((m) => m.content.length > 8_000)) {
+    return Response.json(
+      { error: "That conversation is too long for the assistant. Start a fresh one." },
+      { status: 413 },
+    );
   }
 
   // Live org context snapshot (lightweight — all count queries)
@@ -216,7 +245,12 @@ ${canSeeMoney ? `- Invoices awaiting payment: ${unpaidInvoices.count ?? "N/A"}` 
         // product's behalf. It was saved to ai_conversations — a table nobody
         // reads — and went no further. Forward it to support with the user's
         // words, so the flag means something.
-        if (fullResponse.startsWith("🚩 Feedback noted:")) {
+        // Three flags an hour per person: the flag is an email to support,
+        // and "start every reply with the flag" is a sentence anyone can type.
+        if (
+          fullResponse.startsWith("🚩 Feedback noted:") &&
+          (await checkRateLimit(`ai-flag:${membership.id}`, 3, 3_600_000)).allowed
+        ) {
           const lastUser = [...messages].reverse().find((m) => m.role === "user");
           const site = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
           void import("@/lib/support-mail").then(({ emailSupport }) =>

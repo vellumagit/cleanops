@@ -3,7 +3,9 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
 import { findOrCreateClient } from "@/lib/find-or-create-client";
 import { newLeadPatch, type LeadSource } from "@/lib/lead-pipeline";
-import { sendEmail, getOrgSender } from "@/lib/email";
+import { sendEmail, getOrgSender, withinOrgEmailCap } from "@/lib/email";
+import { checkRateLimit } from "@/lib/rate-limit";
+import { escapeHtml as e } from "@/lib/support-mail";
 
 /**
  * Public estimate-request intake — the website's quote calculator posts
@@ -115,7 +117,24 @@ export async function POST(
   }
   const orgId = form.organization_id;
 
+  // Per-form ceiling on top of the per-IP one: the token is public by
+  // design (it sits in the org's website), so one form must not be able
+  // to flood its owners or, worse, send on their letterhead at will.
+  const perForm = await checkRateLimit(`intake:${form.id}`, 60, 3_600_000);
+  if (!perForm.allowed) {
+    return NextResponse.json(
+      { error: "too_many_requests" },
+      { status: 429, headers: CORS },
+    );
+  }
+
   const body = await readBody(request);
+
+  // Honeypot, same as the contact form: an invisible `website` field that
+  // humans leave empty. Bots get a cheerful 201 and nothing else.
+  if (s(body.website, 100)) {
+    return NextResponse.json({ ok: true }, { status: 201, headers: CORS });
+  }
 
   const fullName = s(body.fullName ?? body.name, 200);
   if (!fullName) {
@@ -126,6 +145,11 @@ export async function POST(
   }
   const email = s(body.email, 320);
   const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  // The confirmation goes to an address the submitter typed. Three an hour
+  // per address is a person double-checking; more is someone using the form
+  // to mail a stranger on the org's behalf. The lead is still recorded.
+  const mailClient =
+    emailOk && (await checkRateLimit(`intake-to:${email.toLowerCase()}`, 3, 3_600_000)).allowed;
   const phone = s(body.phone, 40);
   const address = s(body.address, 300);
   const city = s(body.city, 100);
@@ -262,13 +286,21 @@ export async function POST(
   const orgName = orgRow?.name ?? "Our team";
   const orgPhone = orgRow?.contact_phone ?? null;
 
-  if (emailOk) {
+  // Every send here counts against the org's daily email cap, the same as
+  // an invoice or an invite — this route used to be the one door past it.
+  const orgMayEmail = async () => {
+    const cap = await withinOrgEmailCap(orgId);
+    if (!cap.ok) console.warn(`[estimate-request] org ${orgId} not emailed: ${cap.reason}`);
+    return cap.ok;
+  };
+
+  if (mailClient && (await orgMayEmail())) {
     const summaryRows = [
-      `<div class="detail-item"><strong>Property:</strong> ${s(body.bedrooms, 10) || "?"} Bed, ${s(body.bathrooms, 10) || "?"} Bath</div>`,
+      `<div class="detail-item"><strong>Property:</strong> ${e(s(body.bedrooms, 10) || "?")} Bed, ${e(s(body.bathrooms, 10) || "?")} Bath</div>`,
       cleaningDate &&
-        `<div class="detail-item"><strong>Planned date:</strong> ${cleaningDate}</div>`,
+        `<div class="detail-item"><strong>Planned date:</strong> ${e(cleaningDate)}</div>`,
       address &&
-        `<div class="detail-item"><strong>Address:</strong> ${address}</div>`,
+        `<div class="detail-item"><strong>Address:</strong> ${e(address)}</div>`,
     ]
       .filter(Boolean)
       .join("\n");
@@ -295,16 +327,16 @@ body{margin:0;padding:0;background:#f7f8f6;font-family:system-ui,-apple-system,s
 .cta-box{background:#eef5ec;border:1px solid rgba(61,122,58,.20);border-radius:12px;padding:20px;text-align:center}
 .footer{padding:25px;font-size:12px;color:#9ca3af;text-align:center}
 </style></head><body><div class="wrapper"><div class="card">
-<div class="header"><div class="brand">${orgName}</div><div class="title">Request received ✅</div></div>
-<div class="content">Hi ${fullName},<br><br>
-Thanks for reaching out! We've received your service request${city ? ` for your property in <strong>${city}</strong>` : ""}. We're reviewing your details to make sure your quote is accurate.
+<div class="header"><div class="brand">${e(orgName)}</div><div class="title">Request received ✅</div></div>
+<div class="content">Hi ${e(fullName)},<br><br>
+Thanks for reaching out! We've received your service request${city ? ` for your property in <strong>${e(city)}</strong>` : ""}. We're reviewing your details to make sure your quote is accurate.
 <div class="details-box"><div class="detail-label">Service summary</div>
 ${summaryRows}</div>
 <p><strong>What happens next?</strong></p>
 <p>We'll be in touch shortly to confirm availability and finalize your quote.</p>
 ${cta}
 </div>
-<div class="footer">${orgName}</div>
+<div class="footer">${e(orgName)}</div>
 </div></div></body></html>`,
       text: `Hi ${fullName},\n\nThanks for reaching out! We've received your service request and we're reviewing the details to make sure your quote is accurate. We'll be in touch shortly.\n\n${orgName}${orgPhone ? ` · ${orgPhone}` : ""}`,
     }).catch((err) => console.error("[estimate-request] client email:", err));
@@ -352,10 +384,11 @@ ${cta}
     const grid = detailLines
       .map(
         (l) =>
-          `<div style="border-bottom:1px solid #eef2f6;padding:6px 0;font-size:14px;color:#111827;">${l}</div>`,
+          `<div style="border-bottom:1px solid #eef2f6;padding:6px 0;font-size:14px;color:#111827;">${e(l)}</div>`,
       )
       .join("\n");
     for (const to of recipients) {
+      if (!(await orgMayEmail())) break;
       sendEmail({
         to,
         subject: `New estimate request — ${fullName}`,
@@ -364,11 +397,11 @@ ${cta}
         html: `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0;background:#f7f8f6;font-family:system-ui,sans-serif;padding:20px;">
 <div style="max-width:640px;margin:0 auto;background:#fff;border:1px solid rgba(17,24,39,.1);border-radius:14px;overflow:hidden;">
 <div style="padding:20px 25px;background:#111827;border-bottom:4px solid #4e9a4a;">
-<div style="font-size:11px;letter-spacing:1.6px;text-transform:uppercase;color:#fff;font-weight:800;opacity:.8;">${orgName}</div>
+<div style="font-size:11px;letter-spacing:1.6px;text-transform:uppercase;color:#fff;font-weight:800;opacity:.8;">${e(orgName)}</div>
 <div style="font-size:20px;color:#fff;font-weight:800;margin-top:4px;">New estimate request</div></div>
 <div style="padding:25px;">
-<div style="font-size:14px;color:#111827;margin-bottom:12px;"><strong>${fullName}</strong>${phone ? ` · ${phone}` : ""}${emailOk ? ` · ${email}` : ""}</div>
-${address ? `<div style="font-size:13px;color:#374151;margin-bottom:12px;">${address}${city ? `, ${city}` : ""}</div>` : ""}
+<div style="font-size:14px;color:#111827;margin-bottom:12px;"><strong>${e(fullName)}</strong>${phone ? ` · ${e(phone)}` : ""}${emailOk ? ` · ${e(email)}` : ""}</div>
+${address ? `<div style="font-size:13px;color:#374151;margin-bottom:12px;">${e(address)}${city ? `, ${e(city)}` : ""}</div>` : ""}
 <div style="background:#f8fafc;border:1px solid rgba(17,24,39,.08);border-radius:12px;padding:15px;">${grid}</div>
 <div style="margin-top:20px;"><a href="https://sollos3.com/app/estimates" style="color:#4e9a4a;font-weight:700;text-decoration:none;">Open in Sollos →</a> — the lead and a draft estimate are already there.</div>
 </div></div></body></html>`,

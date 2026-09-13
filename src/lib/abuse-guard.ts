@@ -170,15 +170,44 @@ export function judgeAbuse(s: AbuseSignals): AbuseVerdict {
   return { level, reasons };
 }
 
-function suspendSignature(orgId: string): string | null {
+export type SuspendAction = "suspend" | "undo";
+
+/** How long a tripwire link works: long enough to read the email on Monday. */
+const SUSPEND_LINK_TTL_MS = 3 * 24 * 60 * 60 * 1000;
+
+function suspendSignature(orgId: string, action: SuspendAction, exp: number): string | null {
   const secret = process.env.CRON_SECRET;
   if (!secret || secret.length < 16) return null;
-  return createHmac("sha256", secret).update(`suspend:${orgId}`).digest("hex");
+  return createHmac("sha256", secret)
+    .update(`suspend:${orgId}:${action}:${exp}`)
+    .digest("hex");
 }
 
-/** Verify a signed suspend/unsuspend link. Constant-time. */
-export function verifySuspendSignature(orgId: string, sig: string | null): boolean {
-  const expected = suspendSignature(orgId);
+/**
+ * The two links for one workspace. Each is bound to its action and to an
+ * expiry, so a forwarded email is not a permanent kill switch (or un-kill
+ * switch) and the suspend link can never be replayed as the undo.
+ */
+export function suspendLinks(orgId: string): { suspendUrl: string | null; unsuspendUrl: string | null } {
+  const site = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+  const exp = Math.floor((Date.now() + SUSPEND_LINK_TTL_MS) / 1000);
+  const link = (action: SuspendAction) => {
+    const sig = suspendSignature(orgId, action, exp);
+    if (!sig) return null;
+    return `${site}/api/admin/suspend-org?org=${orgId}&action=${action}&exp=${exp}&sig=${sig}`;
+  };
+  return { suspendUrl: link("suspend"), unsuspendUrl: link("undo") };
+}
+
+/** Verify a signed suspend/unsuspend link: right action, unexpired, constant-time. */
+export function verifySuspendSignature(
+  orgId: string,
+  action: SuspendAction,
+  exp: number,
+  sig: string | null,
+): boolean {
+  if (!Number.isFinite(exp) || exp * 1000 < Date.now()) return false;
+  const expected = suspendSignature(orgId, action, exp);
   if (!expected || !sig || sig.length !== expected.length) return false;
   return timingSafeEqual(Buffer.from(expected), Buffer.from(sig));
 }
@@ -246,9 +275,7 @@ export async function evaluateAbuse(orgId: string): Promise<AbuseVerdict> {
     if (verdict.level === "none") return verdict;
 
     const site = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
-    const sig = suspendSignature(orgId);
-    const suspendUrl = sig ? `${site}/api/admin/suspend-org?org=${orgId}&sig=${sig}` : null;
-    const unsuspendUrl = sig ? `${site}/api/admin/suspend-org?org=${orgId}&sig=${sig}&undo=1` : null;
+    const { suspendUrl, unsuspendUrl } = suspendLinks(orgId);
     const { emailSupport } = await import("@/lib/support-mail");
 
     if (verdict.level === "hard") {
@@ -286,8 +313,9 @@ export async function evaluateAbuse(orgId: string): Promise<AbuseVerdict> {
         ["Throwaway inboxes today", String(disposableClientsToday)],
         ["Emails today", String(signals.emailsToday)],
         ["Suspend", suspendUrl],
+        ["Undo", unsuspendUrl],
       ],
-      message: `${verdict.reasons.join("\n")}\n\nNothing has been blocked yet. The link above opens a page with a Suspend button (a click, never a preview); the same link with &undo=1 lifts it.`,
+      message: `${verdict.reasons.join("\n")}\n\nNothing has been blocked yet. The links above open a page with a button (a click, never a preview) and work for three days: Suspend closes the workspace, Undo reopens it.`,
       href: `${site}/app`,
     });
     return verdict;

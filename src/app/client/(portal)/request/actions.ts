@@ -6,6 +6,7 @@ import { requireClient } from "@/lib/client-auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { sendOrgEmail, isClientEmailPaused, isEmailConfigured } from "@/lib/email";
 import { detectCardNumber, CARD_DETECTED_MESSAGE } from "@/lib/card-detection";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 export type RequestBookingState = {
   error?: string;
@@ -28,6 +29,14 @@ export async function submitBookingRequestAction(
   formData: FormData,
 ): Promise<RequestBookingState> {
   const client = await requireClient();
+
+  // Each request pushes to every manager and sends the org an email that
+  // counts against its daily cap. Five an hour is a person; more is a
+  // portal login being used to flood the business or burn its cap.
+  const rl = await checkRateLimit(`portal-req:${client.id}`, 5, 3_600_000);
+  if (!rl.allowed) {
+    return { error: "You've sent a few requests in the last hour. Give the team a moment to reply." };
+  }
 
   const serviceType = String(formData.get("service_type") ?? "").trim();
   const preferredDate = String(formData.get("preferred_date") ?? "").trim();

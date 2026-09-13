@@ -38,6 +38,17 @@ export async function emailSupport(args: {
   href?: string | null;
 }): Promise<void> {
   try {
+    // Ten a day per sender. Every caller passes the signed-in person's
+    // address as replyTo; a script calling the feedback action in a loop
+    // was an unbounded feed into support@.
+    if (args.replyTo) {
+      const { checkRateLimit } = await import("@/lib/rate-limit");
+      const rl = await checkRateLimit(`support:${args.replyTo.toLowerCase()}`, 10, 86_400_000);
+      if (!rl.allowed) {
+        console.warn(`[support-mail] throttled ${args.replyTo}: ${args.subject}`);
+        return;
+      }
+    }
     const rows = args.fields.filter(
       ([, v]) => v != null && v !== "",
     ) as Array<[string, string]>;

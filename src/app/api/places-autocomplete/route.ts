@@ -9,6 +9,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUserId } from "@/lib/auth";
 import { rateLimitByIp } from "@/lib/rate-limit-helpers";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 const PLACES_URL = "https://places.googleapis.com/v1/places:autocomplete";
 
@@ -23,6 +24,12 @@ export async function GET(request: NextRequest) {
   // scripting the proxy. 60/min is generous for interactive address typing.
   const limited = await rateLimitByIp(request, "places-autocomplete", 60, 60_000);
   if (limited) return limited;
+  // And per person: every hit is a billed Places request, and a session
+  // can move between IPs.
+  const perUser = await checkRateLimit(`places:${userId}`, 30, 60_000);
+  if (!perUser.allowed) {
+    return NextResponse.json({ error: "Too many requests" }, { status: 429 });
+  }
 
   const q = request.nextUrl.searchParams.get("q") ?? "";
   if (q.trim().length < 3) {

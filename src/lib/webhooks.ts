@@ -172,11 +172,27 @@ async function attemptDelivery(
   const start = Date.now();
 
   try {
+    // Checked again here, not only when saved: the RLS policy lets an admin
+    // write a target_url straight into the table, and a name can be pointed
+    // at a private address after it was saved. No redirects followed: a
+    // public host answering 302 to an internal one would be fetch acting
+    // on our behalf.
+    const { assertSafeOutboundTarget } = await import("@/lib/url-safety");
+    const safe = await assertSafeOutboundTarget(sub.target_url);
+    if (!safe.ok) {
+      return {
+        success: false,
+        statusCode: null,
+        errorMessage: `Blocked: ${safe.reason}`,
+        durationMs: Date.now() - start,
+      };
+    }
+
     const signature = createHmac("sha256", sub.secret)
       .update(body)
       .digest("hex");
 
-    const res = await fetch(sub.target_url, {
+    const res = await fetch(safe.url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -184,11 +200,12 @@ async function attemptDelivery(
         "User-Agent": "Sollos-Webhook/1.0",
       },
       body,
+      redirect: "manual",
       signal: AbortSignal.timeout(10_000),
     });
 
     const durationMs = Date.now() - start;
-    const success = res.ok; // 2xx
+    const success = res.ok; // 2xx — a redirect is not delivery
 
     return {
       success,

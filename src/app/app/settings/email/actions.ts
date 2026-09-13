@@ -6,6 +6,7 @@ import { getActionContext } from "@/lib/actions";
 import { logAuditEvent } from "@/lib/audit";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { sendEmail } from "@/lib/email";
+import { checkRateLimit } from "@/lib/rate-limit";
 import { senderVerificationEmail } from "@/lib/email-templates";
 
 export type SenderEmailFormState = {
@@ -96,6 +97,16 @@ export async function saveSenderEmailAction(
     .maybeSingle() as unknown as {
     data: { name: string; brand_color: string | null } | null;
   };
+
+  // Five verification emails a day. This send is Sollos-branded, goes to
+  // any address the owner types, and deliberately skips the org cap (it is
+  // how an org earns its sender) — so it needs a ceiling of its own.
+  const rl = await checkRateLimit(`verify-sender:${membership.organization_id}`, 5, 86_400_000);
+  if (!rl.allowed) {
+    return {
+      errors: { _form: "Five verification emails a day is the limit. Try again tomorrow." },
+    };
+  }
 
   // Send verification email
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";

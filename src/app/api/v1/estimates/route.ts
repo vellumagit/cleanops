@@ -4,7 +4,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { dispatchWebhookEvent } from "@/lib/webhooks";
 import { findOrCreateClient } from "@/lib/find-or-create-client";
 import { findCrossOrgRef } from "@/lib/api/org-scope";
-import { isSafeOutboundUrl } from "@/lib/url-safety";
+import { assertSafeOutboundTarget } from "@/lib/url-safety";
 
 /**
  * GET /api/v1/estimates
@@ -255,14 +255,18 @@ async function downloadAndStorePdf(
   estimateId: string,
   sourceUrl: string,
 ): Promise<{ url: string | null; error: string | null }> {
-  // SSRF guard — https-only, no loopback / link-local / RFC1918 / metadata.
-  const safe = isSafeOutboundUrl(sourceUrl);
+  // SSRF guard — https-only, no loopback / link-local / RFC1918 / metadata,
+  // resolved before the fetch, and no redirects followed.
+  const safe = await assertSafeOutboundTarget(sourceUrl);
   if (!safe.ok) {
     return { url: null, error: `Invalid pdf_url: ${safe.reason}` };
   }
 
   try {
-    const res = await fetch(safe.url, { signal: AbortSignal.timeout(30_000) });
+    const res = await fetch(safe.url, {
+      redirect: "manual",
+      signal: AbortSignal.timeout(30_000),
+    });
     if (!res.ok) {
       return { url: null, error: "Could not fetch a PDF from that URL" };
     }

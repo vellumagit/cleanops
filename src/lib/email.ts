@@ -437,7 +437,7 @@ const NEW_ORG_DAYS = 7;
  * counter can't be reached (table not yet migrated, transient error), the
  * send is ALLOWED and logged: a broken counter must not stop invoices.
  */
-async function withinOrgEmailCap(
+export async function withinOrgEmailCap(
   organizationId: string,
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
   try {
