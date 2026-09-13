@@ -64,6 +64,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
+  {
+    const { guardClientCreate } = await import("@/lib/abuse-guard");
+    const gate = await guardClientCreate(auth.organizationId, (body as { email?: string }).email ?? null);
+    if (!gate.ok) return NextResponse.json({ error: gate.error }, { status: 429 });
+  }
+
   const { name, email, phone, address, preferred_contact, notes } = body as {
     name?: string;
     email?: string;
@@ -98,6 +104,9 @@ export async function POST(request: NextRequest) {
 
   // Fire webhook
   dispatchWebhookEvent(auth.organizationId, "client.created", data).catch(() => {});
+  void import("@/lib/abuse-guard").then(({ evaluateAbuse }) =>
+    evaluateAbuse(auth.organizationId).catch(() => {}),
+  );
 
   return NextResponse.json({ data }, { status: 201 });
 }

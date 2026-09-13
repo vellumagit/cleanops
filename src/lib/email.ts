@@ -444,11 +444,14 @@ async function withinOrgEmailCap(
     const admin = createSupabaseAdminClient();
     const { data: org } = (await admin
       .from("organizations")
-      .select("created_at, email_daily_cap" as never)
+      .select("created_at, email_daily_cap, suspended_at" as never)
       .eq("id", organizationId)
       .maybeSingle()) as unknown as {
-      data: { created_at: string; email_daily_cap: number | null } | null;
+      data: { created_at: string; email_daily_cap: number | null; suspended_at: string | null } | null;
     };
+    if (org?.suspended_at) {
+      return { ok: false, reason: "This workspace is suspended; nothing sends. Contact support@sollos3.com." };
+    }
     const ageDays = org
       ? (Date.now() - new Date(org.created_at).getTime()) / 86_400_000
       : 0;
@@ -463,6 +466,13 @@ async function withinOrgEmailCap(
     if (error || typeof sent !== "number") {
       console.error("[email] cap counter unavailable, allowing send:", error?.message);
       return { ok: true };
+    }
+    // The tripwire looks at the day's totals; poke it at the lines it cares
+    // about rather than on every send.
+    if (sent === 20 || sent === 50 || sent === 500) {
+      void import("@/lib/abuse-guard").then(({ evaluateAbuse }) =>
+        evaluateAbuse(organizationId).catch(() => {}),
+      );
     }
     if (sent > cap) {
       console.warn(

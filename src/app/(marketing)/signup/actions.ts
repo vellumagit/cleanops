@@ -1,6 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { DISPOSABLE_EMAIL_MESSAGE, isDisposableEmail } from "@/lib/disposable-domains";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { SignupSchema, slugify } from "@/lib/validators/auth";
@@ -108,6 +109,15 @@ export async function signupAction(
       };
     }
     inviteRow = data;
+  }
+
+  // 2026-09-11: the spam signup used a throwaway inbox, and so did every
+  // "client" it created. Real cleaners sign up with the address on their van.
+  if (isDisposableEmail(email)) {
+    return {
+      errors: { _form: DISPOSABLE_EMAIL_MESSAGE },
+      values: { fullName, organizationName, email },
+    };
   }
 
   const supabase = await createSupabaseServerClient();

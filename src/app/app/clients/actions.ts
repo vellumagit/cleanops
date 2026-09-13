@@ -117,6 +117,17 @@ export async function createClientAction(
     };
   }
 
+  // No throwaway inboxes, and a daily ceiling on how many clients a
+  // workspace can add — the Sep 11 spam run created 35,423 in a day.
+  {
+    const { guardClientCreate } = await import("@/lib/abuse-guard");
+    const gate = await guardClientCreate(
+      membership.organization_id,
+      (parsed.data as { email?: string | null }).email ?? null,
+    );
+    if (!gate.ok) return { errors: { _form: gate.error }, values: raw };
+  }
+
   // Checkbox sends "on" when checked, nothing when unchecked.
   const smsOptedIn = formData.get("sms_opted_in") === "on";
   // "I've already reviewed this business" checkbox — pre-marks the
@@ -175,6 +186,10 @@ export async function createClientAction(
     };
   }
 
+  // Tripwire: counts and ratios over the last day; acts past a line.
+  void import("@/lib/abuse-guard").then(({ evaluateAbuse }) =>
+    evaluateAbuse(membership.organization_id).catch(() => {}),
+  );
   await logAuditEvent({
     membership,
     action: "create",

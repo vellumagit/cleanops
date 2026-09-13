@@ -27,6 +27,12 @@ export async function createApiKeyAction(
     return { error: "Insufficient permissions" };
   }
 
+  // Week one gets no key: the Sep 11 spam signup minted one within eleven
+  // minutes of creating the workspace.
+  const { guardNewOrgFeature } = await import("@/lib/abuse-guard");
+  const gate = await guardNewOrgFeature(membership.organization_id, "api_keys");
+  if (!gate.ok) return { error: gate.error };
+
   const { rawKey, keyHash, keyPrefix } = generateApiKey();
 
   const admin = createSupabaseAdminClient();

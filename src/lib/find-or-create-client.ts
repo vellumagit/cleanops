@@ -95,7 +95,15 @@ export async function findOrCreateClient(
     return byName.id;
   }
 
-  // 3. Create new client
+  // 3. Create new client — same door rules as the form and the API.
+  {
+    const { guardClientCreate } = await import("@/lib/abuse-guard");
+    const gate = await guardClientCreate(organizationId, input.email ?? null);
+    if (!gate.ok) {
+      console.warn(`[find-or-create-client] refused for org ${organizationId}: ${gate.error}`);
+      return null;
+    }
+  }
   const { data: newClient, error } = await admin
     .from("clients" as never)
     .insert({
@@ -124,6 +132,10 @@ export async function findOrCreateClient(
     name: input.name,
     email: input.email ?? null,
   }).catch(() => {});
+  // Tripwire: counts and ratios over the last day; acts past a line.
+  void import("@/lib/abuse-guard").then(({ evaluateAbuse }) =>
+    evaluateAbuse(organizationId).catch(() => {}),
+  );
 
   return id;
 }

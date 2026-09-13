@@ -97,23 +97,11 @@ export async function sendClientEmailAction(
   // 2026-09-11: a seven-minute-old signup used this button to send 32,255
   // fake order confirmations to addresses it had just created as clients.
   // Beyond the org-wide daily cap in sendOrgEmail, this path in particular
-  // is locked for a new workspace's first day and limited per recipient.
+  // is locked for a new workspace's first week and limited per recipient.
   {
-    const admin = createSupabaseAdminClient();
-    const { data: org } = (await admin
-      .from("organizations")
-      .select("created_at")
-      .eq("id", membership.organization_id)
-      .maybeSingle()) as unknown as { data: { created_at: string } | null };
-    const ageHours = org
-      ? (Date.now() - new Date(org.created_at).getTime()) / 3_600_000
-      : 0;
-    if (ageHours < 24) {
-      return {
-        error:
-          "Email client unlocks 24 hours after a workspace is created. Invoices and estimates can still be sent from their own pages.",
-      };
-    }
+    const { guardNewOrgFeature } = await import("@/lib/abuse-guard");
+    const gate = await guardNewOrgFeature(membership.organization_id, "email_client");
+    if (!gate.ok) return { error: gate.error };
   }
 
   const subject = String(formData.get("subject") ?? "")

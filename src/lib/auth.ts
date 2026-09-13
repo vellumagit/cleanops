@@ -107,7 +107,7 @@ export const getCurrentMembership = cache(
   const { data, error } = await supabase
     .from("memberships")
     .select(
-      "id, organization_id, role, status, profile_id, capabilities, organizations!inner(name)",
+      "id, organization_id, role, status, profile_id, capabilities, organizations!inner(name, suspended_at)" as never,
     )
     .eq("profile_id", userId)
     .eq("status", "active")
@@ -115,10 +115,26 @@ export const getCurrentMembership = cache(
 
   if (error || !data || data.length === 0) return null;
 
+  // A suspended workspace (abuse tripwire, or support's link) is a door
+  // that's closed, not a membership that's gone: the row stays so an undo
+  // is instant, but nobody gets past this line while it's set.
+  type Row = {
+    id: string;
+    organization_id: string;
+    role: MembershipRole;
+    status: MembershipStatus;
+    profile_id: string | null;
+    capabilities?: unknown;
+    organizations: { name: string; suspended_at?: string | null };
+  };
+  const rows = data as unknown as Row[];
+  const live = rows.filter((m) => !m.organizations?.suspended_at);
+  if (live.length === 0) redirect("/suspended");
+
   const preferred = preferredOrgId
-    ? data.find((m) => m.organization_id === preferredOrgId)
+    ? live.find((m) => m.organization_id === preferredOrgId)
     : null;
-  const chosen = preferred ?? data[0];
+  const chosen = preferred ?? live[0];
 
   return {
     id: chosen.id,
