@@ -8,6 +8,9 @@ import { getOrgTimezone } from "@/lib/org-timezone";
 import { localInputToUtcIso } from "@/lib/validators/common";
 import { formatCurrencyCents, formatDate } from "@/lib/format";
 import { zonedYmd } from "@/lib/wall-clock";
+import { fetchJobProfitability, fetchCleanerScorecard } from "./profitability-data";
+import { ProfitabilitySection } from "./profitability";
+import { ScorecardSection } from "./scorecard";
 
 // Per-table cap. Large orgs exceeding this trigger a "narrow your range"
 // warning so the user knows the numbers are incomplete instead of silently
@@ -53,6 +56,8 @@ export default async function ReportsPage({
     { data: clients },
     { data: topClientsRaw },
     { data: keptTips },
+    profitability,
+    scorecard,
   ] = await Promise.all([
     supabase
       .from("invoices")
@@ -104,6 +109,11 @@ export default async function ReportsPage({
       .lte("paid_out_at" as never, toIso as never) as unknown as Promise<{
       data: Array<{ amount_cents: number; paid_out_at: string | null }> | null;
     }>,
+    // Summed in SQL (20260914010000_profitability_reports.sql), so neither
+    // has a row cap: the job list and the roster are aggregated where they
+    // live and one JSON document comes back.
+    fetchJobProfitability(supabase, membership.organization_id, fromIso, toIso),
+    fetchCleanerScorecard(supabase, membership.organization_id, fromIso, toIso),
   ]);
 
   const invoices = invoicesResp.data;
@@ -386,6 +396,14 @@ export default async function ReportsPage({
           </div>
         )}
       </div>
+
+      <ProfitabilitySection
+        report={profitability}
+        currency={currency}
+        orgTz={orgTz}
+      />
+
+      <ScorecardSection rows={scorecard} currency={currency} />
 
       {/* Two-column: service mix + top clients */}
       <div className="mt-6 grid gap-6 lg:grid-cols-2">

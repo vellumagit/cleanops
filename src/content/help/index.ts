@@ -4,6 +4,7 @@ import { body as bookings } from "./bookings";
 import { body as checklists } from "./checklists";
 import { body as invoicing } from "./invoicing";
 import { body as timesheetsAndPayroll } from "./timesheets-and-payroll";
+import { body as reports } from "./reports";
 import { body as websiteForms } from "./website-forms";
 import { body as clientPortal } from "./client-portal";
 import { body as automations } from "./automations";
@@ -101,6 +102,13 @@ export const HELP_ARTICLES: HelpArticle[] = [
     blurb: "Hours to paid: rates, review, payroll runs, contractor statements, and the CSV warning.",
     section: "Money",
     body: timesheetsAndPayroll,
+  },
+  {
+    slug: "reports",
+    title: "Reports",
+    blurb: "What came in, what each job actually made, and how each cleaner is doing.",
+    section: "Money",
+    body: reports,
   },
   {
     slug: "website-forms",

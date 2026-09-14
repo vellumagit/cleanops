@@ -3,6 +3,11 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { localInputToUtcIso } from "@/lib/validators/common";
 import { type NextRequest } from "next/server";
+import {
+  fetchJobProfitability,
+  fetchCleanerScorecard,
+  marginPct,
+} from "../profitability-data";
 
 // Per-table cap. A header row is added when the dataset is truncated so the
 // downstream reader can see the numbers are partial.
@@ -46,7 +51,7 @@ export async function GET(request: NextRequest) {
 
   const admin = createSupabaseAdminClient();
 
-  const [invoicesResp, bookingsResp] = await Promise.all([
+  const [invoicesResp, bookingsResp, profitability, scorecard] = await Promise.all([
     admin
       .from("invoices")
       .select(
@@ -90,6 +95,8 @@ export async function GET(request: NextRequest) {
         }> | null;
         count: number | null;
       },
+    fetchJobProfitability(admin, membership.organization_id, fromIso, toIso),
+    fetchCleanerScorecard(admin, membership.organization_id, fromIso, toIso),
   ]);
 
   const invoices = invoicesResp.data;
@@ -178,6 +185,103 @@ export async function GET(request: NextRequest) {
         b.total_cents,
         centsToDollars(b.total_cents),
         b.address,
+      ),
+    );
+  }
+
+  // PROFITABILITY sections — the on-screen tables are capped at a dozen
+  // rows; the CSV carries every client and service the window touched.
+  lines.push("");
+  lines.push("PROFITABILITY BY CLIENT");
+  lines.push(
+    row(
+      "Client",
+      "Jobs",
+      "Revenue",
+      "Labor",
+      "Margin",
+      "Margin %",
+      "Quoted minutes",
+      "Worked minutes",
+    ),
+  );
+  for (const c of profitability.by_client) {
+    lines.push(
+      row(
+        c.client_name,
+        c.jobs,
+        centsToDollars(c.revenue_cents),
+        centsToDollars(c.labor_cents),
+        centsToDollars(c.margin_cents),
+        marginPct(c.revenue_cents, c.margin_cents),
+        c.quoted_minutes,
+        c.worked_minutes,
+      ),
+    );
+  }
+
+  lines.push("");
+  lines.push("PROFITABILITY BY SERVICE");
+  lines.push(
+    row(
+      "Service",
+      "Jobs",
+      "Revenue",
+      "Labor",
+      "Margin",
+      "Margin %",
+      "Quoted minutes",
+      "Worked minutes",
+    ),
+  );
+  for (const s of profitability.by_service) {
+    lines.push(
+      row(
+        s.service,
+        s.jobs,
+        centsToDollars(s.revenue_cents),
+        centsToDollars(s.labor_cents),
+        centsToDollars(s.margin_cents),
+        marginPct(s.revenue_cents, s.margin_cents),
+        s.quoted_minutes,
+        s.worked_minutes,
+      ),
+    );
+  }
+
+  lines.push("");
+  lines.push("CLEANERS");
+  lines.push(
+    row(
+      "Person",
+      "Engagement",
+      "Minutes",
+      "Jobs",
+      "Quoted minutes (share)",
+      "Pay",
+      "Revenue (share)",
+      "Avg rating",
+      "Reviews",
+      "Bonuses",
+      "No clock-in flags",
+      "Needs review",
+    ),
+  );
+  for (const p of scorecard) {
+    lines.push(
+      row(
+        p.name,
+        p.engagement,
+        p.minutes,
+        p.jobs,
+        p.quoted_minutes,
+        centsToDollars(p.labor_cents),
+        centsToDollars(p.revenue_cents),
+        p.avg_rating == null ? "" : Number(p.avg_rating).toFixed(2),
+        p.reviews,
+        centsToDollars(p.bonus_cents),
+        p.no_clock_in_flags,
+        p.needs_review,
       ),
     );
   }
