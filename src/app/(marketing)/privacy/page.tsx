@@ -65,9 +65,12 @@ export default function PrivacyPage() {
               </li>
               <li>
                 <strong>Usage and diagnostic data</strong> — error reports and
-                basic application performance metrics collected via Sentry. We do
-                not use third-party analytics, advertising trackers, or cookies
-                for profiling.
+                basic application performance metrics collected via Sentry. Our
+                public marketing pages (the home page, pricing, and the sign-up
+                page) use Google Analytics to measure visits. Google Analytics
+                does not run anywhere inside the application once you are signed
+                in, and we do not use advertising trackers or cookies for
+                profiling.
               </li>
             </ul>
           </section>

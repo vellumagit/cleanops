@@ -39,14 +39,22 @@ const csp = [
   `frame-ancestors 'none'`,
   `object-src 'none'`,
   // Next.js needs unsafe-eval in dev for HMR; production uses 'self' only.
+  //
+  // challenges.cloudflare.com is Turnstile (signup's bot check): its script
+  // AND its iframe. It was missing from 2026-09-13 to 09-14, which blocked
+  // the widget, which kept the signup button disabled — nobody could sign
+  // up. A CSP that grows a third party has to grow here in the same commit.
+  //
+  // googletagmanager.com / google-analytics.com is GA4, rendered on the
+  // public marketing pages only (src/components/public-analytics.tsx).
   process.env.NODE_ENV === "production"
-    ? `script-src 'self' 'unsafe-inline' https://js.stripe.com`
-    : `script-src 'self' 'unsafe-inline' 'unsafe-eval' https://js.stripe.com`,
+    ? `script-src 'self' 'unsafe-inline' https://js.stripe.com https://challenges.cloudflare.com https://www.googletagmanager.com`
+    : `script-src 'self' 'unsafe-inline' 'unsafe-eval' https://js.stripe.com https://challenges.cloudflare.com https://www.googletagmanager.com`,
   `style-src 'self' 'unsafe-inline'`,
-  `img-src 'self' data: blob: ${supabaseHttp}`,
+  `img-src 'self' data: blob: ${supabaseHttp} https://www.google-analytics.com https://www.googletagmanager.com`,
   `font-src 'self' data:`,
-  `connect-src 'self' ${supabaseHttp} ${supabaseWs} https://api.stripe.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://fcm.googleapis.com https://updates.push.services.mozilla.com https://nominatim.openstreetmap.org`,
-  `frame-src https://js.stripe.com https://hooks.stripe.com`,
+  `connect-src 'self' ${supabaseHttp} ${supabaseWs} https://api.stripe.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://fcm.googleapis.com https://updates.push.services.mozilla.com https://nominatim.openstreetmap.org https://www.google-analytics.com https://*.google-analytics.com https://*.analytics.google.com https://www.googletagmanager.com`,
+  `frame-src https://js.stripe.com https://hooks.stripe.com https://challenges.cloudflare.com`,
   `worker-src 'self' blob:`,
   `manifest-src 'self'`,
   `upgrade-insecure-requests`,
