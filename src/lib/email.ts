@@ -2,6 +2,7 @@ import "server-only";
 import { Resend } from "resend";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getEnv } from "@/lib/env";
+import { isFreemailAddress } from "@/lib/freemail-domains";
 
 // ---------------------------------------------------------------------------
 // Singleton
@@ -235,6 +236,13 @@ type OrgSenderInfo = {
   fromName: string;
   replyTo?: string;
   replyToName?: string;
+  /**
+   * Set when the org's contact address is consumer webmail and we therefore
+   * refused to put it in Reply-To (see getOrgSender). sendOrgEmailDetailed
+   * renders it into the message instead, so the client still has somewhere
+   * to write even though hitting Reply no longer reaches the owner.
+   */
+  replyContactInBody?: string;
 };
 
 /**
@@ -331,14 +339,14 @@ export async function getOrgSender(
     // allow-list — safe to send as-them. Still route replies via
     // Reply-To when contact_email differs, so support-style inboxes
     // get the reply even when the From is a noreply@.
+    const orgReply =
+      org.contact_email && org.contact_email !== org.sender_email
+        ? org.contact_email
+        : undefined;
     return {
       from: org.sender_email,
       fromName: org.name,
-      replyTo:
-        org.contact_email && org.contact_email !== org.sender_email
-          ? org.contact_email
-          : undefined,
-      replyToName: org.name,
+      ...splitReplyTarget(orgReply, org.name),
     };
   }
 
@@ -350,9 +358,31 @@ export async function getOrgSender(
   return {
     from: getDefaultFromEmail(),
     fromName: org.name,
-    replyTo: replyTarget,
-    replyToName: org.name,
+    ...splitReplyTarget(replyTarget, org.name),
   };
+}
+
+/**
+ * Decide whether the org's contact address may go in the Reply-To header.
+ *
+ * A business-domain From with a freemail Reply-To is the classic phishing
+ * shape, and SpamAssassin charges -2.5 for it (FREEMAIL_FORGED_REPLYTO).
+ * Sollos hit that on every client-facing email it had ever sent, because
+ * the From is always noreply@sollos3.com and a small cleaning company's
+ * contact address is nearly always a Gmail.
+ *
+ * So: a business address still goes in Reply-To, where hitting Reply
+ * reaches the owner directly. A freemail address is kept out of the
+ * header and rendered into the message body instead — the client can
+ * still reach them, it just costs a copy-paste rather than a tap.
+ */
+function splitReplyTarget(
+  target: string | undefined,
+  orgName: string,
+): Pick<OrgSenderInfo, "replyTo" | "replyToName" | "replyContactInBody"> {
+  if (!target) return {};
+  if (isFreemailAddress(target)) return { replyContactInBody: target };
+  return { replyTo: target, replyToName: orgName };
 }
 
 // ---------------------------------------------------------------------------
@@ -514,11 +544,62 @@ export async function sendOrgEmailDetailed(
   const sender = await getOrgSender(organizationId);
   // Strip the internal pauseExempt flag — it's not part of SendEmailArgs.
   const { pauseExempt: _exempt, ...emailArgs } = args;
+  // When the owner's contact address was kept out of Reply-To for being
+  // freemail, say so in the message so the client isn't left replying into
+  // noreply@ and wondering why nobody answers.
+  const contact = sender.replyContactInBody;
   return sendEmailDetailed({
     ...emailArgs,
+    html: contact
+      ? withReplyContact(emailArgs.html, sender.fromName, contact)
+      : emailArgs.html,
+    text:
+      contact && emailArgs.text
+        ? `${emailArgs.text}\n\nReply to ${sender.fromName}: ${contact}`
+        : emailArgs.text,
     from: sender.from,
     fromName: sender.fromName,
     replyTo: sender.replyTo,
     replyToName: sender.replyToName,
   });
+}
+
+/** Minimal HTML escape. Local so email.ts stays free of cyclic imports —
+ *  support-mail.ts already imports from here. */
+function escapeHtmlLocal(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/**
+ * Append a "reply to this address" note under the email card.
+ *
+ * Every template renders through email-templates.ts `layout()`, which closes
+ * with </body>, so we insert there. If some future caller passes raw HTML
+ * with no </body> we append rather than silently dropping the note — the
+ * client's route back to the business matters more than the markup.
+ */
+function withReplyContact(
+  html: string,
+  orgName: string,
+  contact: string,
+): string {
+  const safeName = escapeHtmlLocal(orgName || "this business");
+  const safeContact = escapeHtmlLocal(contact);
+  const block = `
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#fafafa;">
+    <tr><td align="center" style="padding:0 16px 32px;">
+      <p style="margin:0;font-size:12px;line-height:1.5;color:#71717a;text-align:center;max-width:560px;">
+        Replies to this message aren't monitored. To reach ${safeName}, write to
+        <a href="mailto:${safeContact}" style="color:#71717a;">${safeContact}</a>.
+      </p>
+    </td></tr>
+  </table>
+`;
+  return html.includes("</body>")
+    ? html.replace("</body>", `${block}</body>`)
+    : html + block;
 }
