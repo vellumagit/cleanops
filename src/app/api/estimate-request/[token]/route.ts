@@ -278,10 +278,14 @@ export async function POST(
   const sender = await getOrgSender(orgId);
   const { data: orgRow } = (await admin
     .from("organizations")
-    .select("name, contact_phone")
+    .select("name, contact_phone, contact_email")
     .eq("id", orgId)
     .maybeSingle()) as unknown as {
-    data: { name: string; contact_phone: string | null } | null;
+    data: {
+      name: string;
+      contact_phone: string | null;
+      contact_email: string | null;
+    } | null;
   };
   const orgName = orgRow?.name ?? "Our team";
   const orgPhone = orgRow?.contact_phone ?? null;
@@ -374,10 +378,17 @@ ${cta}
         profile: { email: string | null } | null;
       }> | null;
     };
+    // Every owner and admin, plus the business's own contact inbox
+    // (Settings → Organization). The inbox is the address the owner
+    // actually watches for customers; before 2026-09-15 only the
+    // people's login emails were told.
     const recipients = [
       ...new Set(
-        (adminRows ?? [])
-          .map((r) => r.contact_email ?? r.profile?.email ?? "")
+        [
+          ...(adminRows ?? []).map((r) => r.contact_email ?? r.profile?.email ?? ""),
+          orgRow?.contact_email ?? "",
+        ]
+          .map((e) => e.trim().toLowerCase())
           .filter((e) => e.includes("@")),
       ),
     ];

@@ -121,7 +121,7 @@ export default async function BookingRequestsPage({
   // looked empty.
   const { data: inquiryRows } = (await supabase
     .from("client_job_requests" as never)
-    .select("id, body, created_at, client:clients ( id, name )")
+    .select("id, body, created_at, client:clients ( id, name, email, phone, address )")
     .eq("kind" as never, "job_note" as never)
     .eq("status" as never, "open" as never)
     .order("created_at" as never, { ascending: false } as never)) as unknown as {
@@ -129,13 +129,22 @@ export default async function BookingRequestsPage({
       id: string;
       body: string | null;
       created_at: string;
-      client: { id: string; name: string | null } | null;
+      client: {
+        id: string;
+        name: string | null;
+        email: string | null;
+        phone: string | null;
+        address: string | null;
+      } | null;
     }> | null;
   };
   const openInquiries: OpenInquiryRow[] = (inquiryRows ?? []).map((r) => ({
     id: r.id,
     clientId: r.client?.id ?? "",
     clientName: r.client?.name ?? "A client",
+    email: r.client?.email ?? null,
+    phone: r.client?.phone ?? null,
+    address: r.client?.address ?? null,
     body: r.body ?? "",
     askedLabel: formatDateTime(r.created_at, tz),
   }));

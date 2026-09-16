@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useActionState } from "react";
 import { CheckCircle2, MessageSquare } from "lucide-react";
 import { SubmitButton } from "@/components/submit-button";
+import { ContactLine } from "@/components/contact-line";
 import {
   resolveClientSkipAction,
   type ResolveState,
@@ -26,6 +27,9 @@ export type OpenInquiryRow = {
   id: string;
   clientId: string;
   clientName: string;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
   body: string;
   askedLabel: string;
 };
@@ -75,6 +79,12 @@ export function OpenInquiries({ rows }: { rows: OpenInquiryRow[] }) {
                     {r.askedLabel}
                   </span>
                 </div>
+                <ContactLine
+                  email={r.email}
+                  phone={r.phone}
+                  address={r.address}
+                  className="mt-1"
+                />
                 <p className="mt-1 whitespace-pre-line text-xs leading-relaxed text-muted-foreground">
                   {r.body}
                 </p>

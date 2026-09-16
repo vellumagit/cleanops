@@ -5,6 +5,7 @@ import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { PageShell } from "@/components/page-shell";
+import { ContactLine } from "@/components/contact-line";
 import { centsToDollarString } from "@/lib/validators/common";
 import { EstimateForm } from "../../estimate-form";
 import { DeleteEstimateForm } from "./delete-form";
@@ -48,9 +49,15 @@ export default async function EditEstimatePage({
       },
       supabase
         .from("clients")
-        .select("id, name, email")
+        .select("id, name, email, phone, address")
         .order("name") as unknown as {
-        data: Array<{ id: string; name: string; email: string | null }> | null;
+        data: Array<{
+          id: string;
+          name: string;
+          email: string | null;
+          phone: string | null;
+          address: string | null;
+        }> | null;
       },
       supabase
         .from("bookings")
@@ -75,9 +82,41 @@ export default async function EditEstimatePage({
     ? `${siteUrl}/e/${estimate.public_token}`
     : null;
 
+  const client = (clients ?? []).find((c) => c.id === estimate.client_id) ?? null;
+
   return (
     <PageShell title="Edit estimate">
       <div className="max-w-2xl space-y-6">
+        {/* Who this is for, and how to reach them. The client's contact
+            details used to live only on Leads / Clients; an estimate that
+            came in from the website showed a name and nothing to call. */}
+        {client && (
+          <div className="rounded-lg border border-border bg-card px-4 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <Link
+                href={`/app/clients/${client.id}/edit`}
+                className="text-sm font-semibold underline-offset-2 hover:underline"
+              >
+                {client.name}
+              </Link>
+              <span className="text-[11px] text-muted-foreground">
+                Client details
+              </span>
+            </div>
+            <ContactLine
+              email={client.email}
+              phone={client.phone}
+              address={client.address}
+              className="mt-1"
+            />
+            {!client.email && !client.phone && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                No email or phone on file.
+              </p>
+            )}
+          </div>
+        )}
+
         {linkedBooking ? (
           <Link
             href={`/app/bookings/${linkedBooking.id}`}

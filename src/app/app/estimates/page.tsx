@@ -34,7 +34,7 @@ export default async function EstimatesPage({
         decided_at,
         service_description,
         pdf_url,
-        client:clients ( name )
+        client:clients ( name, email, phone, address )
       `,
   );
 
@@ -59,7 +59,12 @@ export default async function EstimatesPage({
       decided_at: string | null;
       service_description: string | null;
       pdf_url: string | null;
-      client: { name: string } | null;
+      client: {
+        name: string;
+        email: string | null;
+        phone: string | null;
+        address: string | null;
+      } | null;
     }> | null;
     error: { message: string } | null;
   };
@@ -75,6 +80,9 @@ export default async function EstimatesPage({
     decided_at: e.decided_at,
     service_description: e.service_description,
     client_name: e.client?.name ?? "—",
+    client_email: e.client?.email ?? null,
+    client_phone: e.client?.phone ?? null,
+    client_address: e.client?.address ?? null,
     pdf_url: e.pdf_url,
   }));
 

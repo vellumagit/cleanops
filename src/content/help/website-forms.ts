@@ -5,7 +5,9 @@ Your website's estimate calculator and contact form post straight into Sollos �
 - Files an open **inquiry** on the Requests page, counted in its badge.
 - For estimate requests, drafts an **estimate** with their numbers attached.
 - Emails the visitor a branded confirmation from your org's sender.
-- Emails you and notifies every admin in-app.
+- Emails every owner and admin **and** your organization's contact email (Settings → Organization), and notifies every admin in-app.
+
+The lead, the inquiry and the estimate are the same submission seen from three places, and each shows the person's **email, phone and address** right there — on the inquiry card, under the client's name in the Estimates list, and at the top of the estimate — so you never have to go back to Leads to find out how to reach them.
 
 ## How the connection works
 
