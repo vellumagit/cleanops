@@ -488,6 +488,22 @@ export async function withinOrgEmailCap(
     const cap =
       org?.email_daily_cap ??
       (ageDays < NEW_ORG_DAYS ? EMAIL_DAILY_CAP_NEW_ORG : EMAIL_DAILY_CAP);
+    // A zero cap is not a rate limit — it's a workspace nobody has approved
+    // for sending yet, which is where every new signup now starts. Answer
+    // before touching the counter: these sends never happen, so counting them
+    // as "sent" would corrupt the number the tripwire reads. Saying "you hit
+    // your limit of 0, it resets at midnight" would be both confusing and a
+    // lie, since midnight changes nothing.
+    if (cap === 0) {
+      console.warn(
+        `[email] org ${organizationId} is not approved to send (cap 0) — refused`,
+      );
+      return {
+        ok: false,
+        reason:
+          "This workspace isn't approved to send email yet. Email support@sollos3.com and we'll turn it on.",
+      };
+    }
     const day = new Date().toISOString().slice(0, 10);
     const { data: sent, error } = (await admin.rpc(
       "bump_org_email_counter" as never,
