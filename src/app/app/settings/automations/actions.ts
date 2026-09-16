@@ -76,7 +76,11 @@ export type AutomationKey =
   // automatically shows each cleaner their share of the hours (duration ÷
   // crew) in the field app — no per-booking checkbox needed. Default OFF.
   | "divide_crew_hours"
-  | "product_changelog_email";
+  | "product_changelog_email"
+  // Website lead alerts (src/lib/lead-alerts.ts). Email is on unless turned
+  // off and ignores the master switch; the text is opt-in like every SMS.
+  | "lead_alert_email"
+  | "lead_alert_sms";
 
 /**
  * Runtime allowlist derived from the AutomationKey union. Keeps the type
@@ -132,6 +136,8 @@ const VALID_AUTOMATION_KEYS = new Set<AutomationKey>([
   "feed_visible",
   "divide_crew_hours",
   "product_changelog_email",
+  "lead_alert_email",
+  "lead_alert_sms",
 ]);
 
 /**

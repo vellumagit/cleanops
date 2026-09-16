@@ -6,6 +6,11 @@ import { newLeadPatch, type LeadSource } from "@/lib/lead-pipeline";
 import { sendEmail, getOrgSender, withinOrgEmailCap } from "@/lib/email";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { escapeHtml as e } from "@/lib/support-mail";
+import {
+  getLeadAlertTargets,
+  composeLeadAlertSms,
+  sendLeadAlertTexts,
+} from "@/lib/lead-alerts";
 
 /**
  * Public estimate-request intake — the website's quote calculator posts
@@ -366,32 +371,11 @@ ${cta}
     console.error("[estimate-request] notify failed:", err);
   }
 
+  const targets = await getLeadAlertTargets(orgId);
   try {
-    const { data: adminRows } = (await admin
-      .from("memberships")
-      .select("role, status, contact_email, profile:profiles ( email )")
-      .eq("organization_id", orgId)
-      .in("role", ["owner", "admin"])
-      .eq("status", "active")) as unknown as {
-      data: Array<{
-        contact_email: string | null;
-        profile: { email: string | null } | null;
-      }> | null;
-    };
-    // Every owner and admin, plus the business's own contact inbox
-    // (Settings → Organization). The inbox is the address the owner
-    // actually watches for customers; before 2026-09-15 only the
-    // people's login emails were told.
-    const recipients = [
-      ...new Set(
-        [
-          ...(adminRows ?? []).map((r) => r.contact_email ?? r.profile?.email ?? ""),
-          orgRow?.contact_email ?? "",
-        ]
-          .map((e) => e.trim().toLowerCase())
-          .filter((e) => e.includes("@")),
-      ),
-    ];
+    // Owners, admins and the org's contact inbox — unless the org turned the
+    // lead email off (Settings → Intake forms). src/lib/lead-alerts.ts.
+    const recipients = targets.emailOn ? targets.emails : [];
     const grid = detailLines
       .map(
         (l) =>
@@ -424,6 +408,23 @@ ${address ? `<div style="font-size:13px;color:#374151;margin-bottom:12px;">${e(a
   } catch (err) {
     console.error("[estimate-request] internal notify failed:", err);
   }
+
+  // The same news as a text from the org's own number. Opt-in
+  // (lead_alert_sms); sendOrgSms applies every SMS gate and the cap.
+  sendLeadAlertTexts(
+    orgId,
+    targets.phones,
+    composeLeadAlertSms({
+      orgName: targets.orgName,
+      kind: "estimate",
+      name: fullName,
+      phone,
+      email: emailOk ? email : null,
+      place: city || address || null,
+      summary: [schedule, notes].filter(Boolean).join(" · "),
+      path: "/app/estimates",
+    }),
+  );
 
   // Plain HTML forms navigate to the response. Give them somewhere real to
   // land: ?redirect=<https url> (or a `redirect` field) turns success into a

@@ -97,15 +97,21 @@ export async function SatelliteAutomations({
         </p>
       )}
 
-      <ul
-        className={`mt-4 divide-y divide-border/60 ${masterOn ? "" : "pointer-events-none opacity-50"}`}
-      >
+      <ul className="mt-4 divide-y divide-border/60">
         {items.map((a) => {
-          const on = resolveAutomationEnabled(settings, a.key);
+          // defaultOn: on unless the org explicitly turned it off. Everything
+          // else is opt-in (see resolveAutomationEnabled).
+          const on = a.defaultOn
+            ? settings[a.key]?.enabled !== false
+            : resolveAutomationEnabled(settings, a.key);
+          const live = masterOn || a.ignoresMaster === true;
           const audience = automationAudience(a.key);
           const s = AUDIENCE_STYLE[audience];
           return (
-            <li key={a.key} className="py-3 first:pt-0 last:pb-0">
+            <li
+              key={a.key}
+              className={`py-3 first:pt-0 last:pb-0 ${live ? "" : "pointer-events-none opacity-50"}`}
+            >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">

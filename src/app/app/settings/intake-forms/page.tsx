@@ -6,6 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { CopyUrl } from "./copy-url";
+import { SatelliteAutomations } from "@/app/app/settings/automations/satellite-automations";
+import { INTAKE_AUTOMATIONS } from "@/app/app/settings/automations/satellite-registry";
 import {
   createIntakeFormAction,
   regenerateIntakeTokenAction,
@@ -46,6 +48,8 @@ export default async function IntakeFormsPage() {
       description="Point any external form (your website, Typeform, Jotform, Zapier…) at one of these URLs and submissions land in Sollos automatically."
     >
       <div className="space-y-4">
+        <SatelliteAutomations title="Lead alerts" items={INTAKE_AUTOMATIONS} />
+
         {forms.map((f) => (
           <div
             key={f.id}

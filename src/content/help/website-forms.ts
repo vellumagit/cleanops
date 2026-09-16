@@ -6,6 +6,14 @@ Your website's estimate calculator and contact form post straight into Sollos �
 - For estimate requests, drafts an **estimate** with their numbers attached.
 - Emails the visitor a branded confirmation from your org's sender.
 - Emails every owner and admin **and** your organization's contact email (Settings → Organization), and notifies every admin in-app.
+- Optionally texts the same people from your own number.
+
+## Lead alerts: email and text
+
+Both alerts have a switch at the top of **Settings → Intake forms**.
+
+- **Email me when a lead comes in** is on by default and keeps working even when the automations master switch is off — a missed lead costs more than a stray email. Turn it off there if you'd rather rely on the in-app notification.
+- **Text me when a lead comes in** is off until you turn it on, like every other text. It needs SMS enabled (Settings → SMS), goes to each owner's and admin's profile phone plus your organization's contact phone, and counts against your included texts. The text carries the person's name, phone or email, where they are, and a snippet of what they asked.
 
 The lead, the inquiry and the estimate are the same submission seen from three places, and each shows the person's **email, phone and address** right there — on the inquiry card, under the client's name in the Estimates list, and at the top of the estimate — so you never have to go back to Leads to find out how to reach them.
 

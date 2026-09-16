@@ -8,7 +8,7 @@ The client-journey switches live at **Settings → Client automations**; the mac
 The page has two permanent sections:
 
 - **Client automations** — every message a client can receive, in the order of their journey: winning the work (estimate follow-ups, expiry), when a job is booked (confirmations, reschedule notices, crew assignment), the day before (24h reminder), job done & getting paid (review ask, overdue reminders, receipts), growing the business (Google review asks, rebooking nudges).
-- **Team alerts & housekeeping** — internal notifications and background bookkeeping that never reach a client: crew schedules, digests, training reminders, auto-complete and auto-archive timers. (Payroll, PTO, and invoicing machinery live on their own settings pages.)
+- **Team alerts & housekeeping** — internal notifications and background bookkeeping that never reach a client: crew schedules, digests, training reminders, auto-complete and auto-archive timers. (Payroll, PTO, and invoicing machinery live on their own settings pages; the two website lead alerts live on Intake forms.)
 
 ## Who actually receives a client message
 

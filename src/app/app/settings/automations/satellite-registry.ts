@@ -16,7 +16,34 @@ export type SatelliteAutomation = {
   title: string;
   description: string;
   trigger: string;
+  /**
+   * Resolves ON when the org has never set it — the one sanctioned exception
+   * to opt-in, for alerts that fired unconditionally before they had a switch
+   * and would go silent for every existing org otherwise.
+   */
+  defaultOn?: boolean;
+  /** Runs even when the automations master switch is off. */
+  ignoresMaster?: boolean;
 };
+
+export const INTAKE_AUTOMATIONS: SatelliteAutomation[] = [
+  {
+    key: "lead_alert_email",
+    title: "Email me when a lead comes in",
+    description:
+      "Every owner and admin, plus your organization's contact email (Settings → Organization), gets the website inquiry or estimate request with the person's name, phone, email and what they asked. On by default and not paused by the master switch — a missed lead costs more than a stray email.",
+    trigger: "Website form → Sollos",
+    defaultOn: true,
+    ignoresMaster: true,
+  },
+  {
+    key: "lead_alert_sms",
+    title: "Text me when a lead comes in",
+    description:
+      "The same news as a short text from your own number to every owner's and admin's profile phone plus your organization's contact phone. Needs SMS turned on (Settings → SMS) and counts against your included texts.",
+    trigger: "Website form → Sollos",
+  },
+];
 
 export const INVOICING_AUTOMATIONS: SatelliteAutomation[] = [
   {
