@@ -469,15 +469,26 @@ const NEW_ORG_DAYS = 7;
  */
 export async function withinOrgEmailCap(
   organizationId: string,
+  /** Subject of the message being attempted. Only used to give support
+   *  something recognisable when a blocked workspace asks to be enabled. */
+  subject?: string,
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
   try {
     const admin = createSupabaseAdminClient();
     const { data: org } = (await admin
       .from("organizations")
-      .select("created_at, email_daily_cap, suspended_at" as never)
+      .select(
+        "name, created_at, email_daily_cap, suspended_at, send_approval_requested_at" as never,
+      )
       .eq("id", organizationId)
       .maybeSingle()) as unknown as {
-      data: { created_at: string; email_daily_cap: number | null; suspended_at: string | null } | null;
+      data: {
+        name: string;
+        created_at: string;
+        email_daily_cap: number | null;
+        suspended_at: string | null;
+        send_approval_requested_at: string | null;
+      } | null;
     };
     if (org?.suspended_at) {
       return { ok: false, reason: "This workspace is suspended; nothing sends. Contact support@sollos3.com." };
@@ -498,6 +509,15 @@ export async function withinOrgEmailCap(
       console.warn(
         `[email] org ${organizationId} is not approved to send (cap 0) — refused`,
       );
+      // Fire-and-forget: a workspace waiting on approval must not also wait
+      // on an email to support being delivered.
+      void notifyNotApprovedToSend({
+        orgId: organizationId,
+        orgName: org?.name ?? organizationId,
+        ageDays,
+        lastAskedAt: org?.send_approval_requested_at ?? null,
+        subject,
+      }).catch(() => {});
       return {
         ok: false,
         reason:
@@ -536,6 +556,72 @@ export async function withinOrgEmailCap(
   }
 }
 
+/**
+ * Tell support that a workspace tried to send and couldn't.
+ *
+ * New orgs default to a zero cap, so the wall a spammer hits is the same wall
+ * a real cleaning company hits on their first invoice. The difference is that
+ * the real one is waiting on you and may not think to write in — they will
+ * just conclude the product is broken and leave. This turns their attempt
+ * into the notification.
+ *
+ * At most one a day per workspace, the same shape as the abuse tripwire's
+ * soft trip: a stuck automation can retry hundreds of times, and a hundred
+ * identical emails is the same as none.
+ *
+ * Best-effort throughout. Every failure here is swallowed — a workspace that
+ * cannot send must not also fail the caller because support couldn't be told.
+ */
+async function notifyNotApprovedToSend(args: {
+  orgId: string;
+  orgName: string;
+  ageDays: number;
+  lastAskedAt: string | null;
+  subject?: string;
+}): Promise<void> {
+  try {
+    const askedMs = args.lastAskedAt ? new Date(args.lastAskedAt).getTime() : 0;
+    if (Date.now() - askedMs < 86_400_000) return;
+
+    const admin = createSupabaseAdminClient();
+    // Stamp before sending. If the send throws we would rather lose one
+    // notification than send the same one on every retry of a stuck job.
+    await admin
+      .from("organizations")
+      .update({ send_approval_requested_at: new Date().toISOString() } as never)
+      .eq("id", args.orgId);
+
+    const site = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
+    const { emailSupport } = await import("@/lib/support-mail");
+    await emailSupport({
+      subject: `[Approve?] "${args.orgName}" tried to send email`,
+      fields: [
+        ["Workspace", `${args.orgName} (${args.orgId})`],
+        ["Age", `${args.ageDays.toFixed(1)} days`],
+        ["Tried to send", args.subject ?? "(unknown)"],
+        [
+          "Enable sending",
+          `update organizations set email_daily_cap = null where id = '${args.orgId}';`,
+        ],
+      ],
+      message:
+        "This workspace is on the default zero cap, so nothing it sends goes out. " +
+        "If it is real, run the SQL above — NULL restores the normal 50/day for " +
+        "the first week, 500/day after. If it is not, leave it: doing nothing " +
+        "keeps it silenced, and signing up again gets them another zero.\n\n" +
+        "Check the org name and its clients before enabling. Every spam signup " +
+        "so far carried 'dao' in the name and fabricated clients whose email " +
+        "addresses had nothing to do with their names.",
+      href: `${site}/app`,
+    });
+  } catch (err) {
+    console.warn(
+      "[email] could not tell support about a blocked send:",
+      err instanceof Error ? err.message : err,
+    );
+  }
+}
+
 export async function sendOrgEmailDetailed(
   organizationId: string,
   args: Omit<SendEmailArgs, "from" | "fromName" | "replyTo" | "replyToName"> & {
@@ -554,7 +640,7 @@ export async function sendOrgEmailDetailed(
     return { ok: false, reason: "Client-facing emails are paused at the platform level (CLIENT_EMAILS_PAUSED=true)." };
   }
 
-  const cap = await withinOrgEmailCap(organizationId);
+  const cap = await withinOrgEmailCap(organizationId, args.subject);
   if (!cap.ok) return { ok: false, reason: cap.reason };
 
   const sender = await getOrgSender(organizationId);
