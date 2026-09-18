@@ -45,6 +45,46 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
+/**
+ * An entry body is plain text: blank lines separate paragraphs, and lines that
+ * start with "- " or "• " are bullets. Until 2026-09-18 the body was dropped
+ * into one <div> as-is, so HTML collapsed every line break and a two-paragraph
+ * entry arrived as a single wall of text — Brian: "read like a short essay."
+ * The writing rules are short now too (see the weekly-sollos-changelog task),
+ * but the template has to honor the breaks it's given.
+ */
+function renderBody(body: string): string {
+  const P = "font-size:14px;line-height:1.55;color:#4b5563;margin:4px 0 0 0;";
+  return body
+    .split(/\n\s*\n/)
+    .map((block) => block.trim())
+    .filter(Boolean)
+    .map((block) => {
+      const lines = block.split("\n").map((l) => l.trim()).filter(Boolean);
+      const isList = lines.length > 0 && lines.every((l) => /^[-•]\s+/.test(l));
+      if (!isList) return `<p style="${P}">${escapeHtml(lines.join(" "))}</p>`;
+      const items = lines
+        .map(
+          (l) =>
+            `<li style="margin:2px 0;">${escapeHtml(l.replace(/^[-•]\s+/, ""))}</li>`,
+        )
+        .join("");
+      return `<ul style="${P}padding-left:18px;">${items}</ul>`;
+    })
+    .join("");
+}
+
+/** The same edition as plain text — mail with no text part scores worse. */
+export function renderChangelogText(args: {
+  entries: ChangelogEntry[];
+  unsubscribeUrl: string;
+}): string {
+  const items = args.entries
+    .map((e) => `${e.title.toUpperCase()}\n${e.body.trim()}`)
+    .join("\n\n");
+  return `What's new in Sollos\n\n${items}\n\n--\nYou're getting this because product updates are switched on for your account.\nUnsubscribe: ${args.unsubscribeUrl}`;
+}
+
 /** Minimal, brand-neutral HTML — matches the tone of the platform emails. */
 export function renderChangelogEmail(args: {
   entries: ChangelogEntry[];
@@ -55,7 +95,7 @@ export function renderChangelogEmail(args: {
       (e) => `
       <tr><td style="padding:0 0 18px 0;">
         <div style="font-size:15px;font-weight:600;color:#111827;">${escapeHtml(e.title)}</div>
-        <div style="font-size:14px;line-height:1.6;color:#4b5563;margin-top:4px;">${escapeHtml(e.body)}</div>
+        ${renderBody(e.body)}
       </td></tr>`,
     )
     .join("");
@@ -225,6 +265,7 @@ export async function sendProductChangelog(options?: {
         to: r.email,
         subject: `What's new in Sollos`,
         html: renderChangelogEmail({ entries, unsubscribeUrl }),
+        text: renderChangelogText({ entries, unsubscribeUrl }),
         unsubscribeUrl,
       });
       if (ok) sent += 1;
