@@ -16,7 +16,8 @@
  *   ...&client_ids=<uuid,uuid>   optional — scope to specific clients
  *   ...&dry_run=1                optional — count only, no writes
  *
- * Response: { ok, org_id, dry_run, found, synced_attempted, remaining_null }
+ * Response: { ok, org_id, dry_run, found, synced_attempted, created, relinked,
+ *             remaining_null }
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -70,8 +71,10 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  // Create the events (create-only; stamps google_calendar_event_id).
-  const attempted = await bulkSyncUpcomingBookings(
+  // Fill the gaps. Each booking is either ADOPTED (an event already on the
+  // calendar carries its id) or CREATED fresh — reported separately, because
+  // a single total cannot tell a clean re-link from 16 duplicates.
+  const fill = await bulkSyncUpcomingBookings(
     orgId,
     clientIds.length > 0 ? { clientIds } : undefined,
   );
@@ -95,7 +98,9 @@ export async function GET(request: NextRequest) {
     org_id: orgId,
     client_ids: clientIds,
     found: found ?? 0,
-    synced_attempted: attempted,
+    synced_attempted: fill.created + fill.relinked,
+    created: fill.created,
+    relinked: fill.relinked,
     remaining_null: remaining ?? 0,
   });
 }

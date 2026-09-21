@@ -1258,9 +1258,9 @@ export async function cleanupOrgCalendarEvents(
 export async function bulkSyncUpcomingBookings(
   organizationId: string,
   opts?: { clientIds?: string[] },
-): Promise<number> {
+): Promise<{ created: number; relinked: number }> {
   const conn = await getConnection(organizationId);
-  if (!conn) return 0;
+  if (!conn) return { created: 0, relinked: 0 };
 
   const admin = createSupabaseAdminClient();
   // Start of today (UTC), not the current instant, so already-started-today
@@ -1312,7 +1312,7 @@ export async function bulkSyncUpcomingBookings(
     }> | null;
   };
 
-  if (!fetched || fetched.length === 0) return 0;
+  if (!fetched || fetched.length === 0) return { created: 0, relinked: 0 };
   let bookings = fetched;
 
   // ── Re-link before creating ───────────────────────────────────────────────
@@ -1360,7 +1360,7 @@ export async function bulkSyncUpcomingBookings(
     console.error("[gcal] re-link pass failed, creating fresh:", err);
   }
 
-  if (bookings.length === 0) return relinked;
+  if (bookings.length === 0) return { created: 0, relinked };
 
   // Process in batches of 10 (parallel within batch, sequential between).
   const BATCH = 10;
@@ -1398,7 +1398,7 @@ export async function bulkSyncUpcomingBookings(
     );
   }
 
-  return bookings.length + relinked;
+  return { created: bookings.length, relinked };
 }
 
 /**
@@ -1580,9 +1580,9 @@ export async function reconcileOrgCalendarEvents(
 
   // Fill any bookings that have no event at all yet (null id) — including the
   // ones the sweep above just unlinked. Re-links where an event still exists.
-  const created = await bulkSyncUpcomingBookings(organizationId);
+  const fill = await bulkSyncUpcomingBookings(organizationId);
 
-  return { patched, failed, created, unlinked };
+  return { patched, failed, created: fill.created, unlinked };
 }
 
 /**
