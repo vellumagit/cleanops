@@ -724,10 +724,11 @@ export async function pruneOrgCalendarOrphans(
 
   const admin = createSupabaseAdminClient();
   const now = new Date().toISOString();
-  // 3-year horizon so far-future managed events are also considered.
-  const timeMax = new Date(
-    Date.now() + 1095 * 24 * 60 * 60 * 1000,
-  ).toISOString();
+  // Reaches the org's furthest booking, so far-future managed events are also
+  // considered. A short horizon is SAFE here in the under-delete direction
+  // (orphans = managed − valid, so a smaller list finds fewer orphans) but it
+  // also meant events past 3 years could never be cleaned up at all.
+  const timeMax = await orgCalendarHorizon(organizationId);
 
   // Valid ids = every event id referenced by ANY booking (no date filter, so a
   // still-running booking that started earlier today can't be mis-flagged).
@@ -738,6 +739,10 @@ export async function pruneOrgCalendarOrphans(
       .select("google_calendar_event_id")
       .eq("organization_id", organizationId)
       .not("google_calendar_event_id", "is", null)
+      // Ordered so the pages don't overlap or skip. Without a sort key
+      // Postgres may return rows in a different order per page, and a valid
+      // id missed that way is deleted off the customer's calendar.
+      .order("scheduled_at", { ascending: true })
       .range(from, from + 999)) as unknown as {
       data: Array<{ google_calendar_event_id: string | null }> | null;
     };
@@ -865,20 +870,70 @@ export async function listCalendarEvents(
 }
 
 /**
- * List the event IDs of Sollos-managed events on the org calendar within a
- * window. The inverse of listCalendarEvents (which excludes Sollos events).
- * Used by the orphan-prune tool to find events whose booking was deleted.
+ * How far out to look when listing an org's managed events.
+ *
+ * This was a hardcoded 3 years (1095 days) at every call site, which is
+ * SHORTER than a monthly series can generate. On 2026-09-21 that horizon
+ * landed on 2029-09-20; a client booked monthly into Dec 2030 had 16 live
+ * events sitting past it. Every caller reads "absent from the list" as
+ * "event deleted", so gcal-reconcile nulled those 16 good event ids and the
+ * next backfill would have duplicated all of them onto the customer's
+ * calendar.
+ *
+ * Derive it from the data instead: the org's furthest booking plus a day.
+ * Floored at the old 1095 days, so an org with no far-future work behaves
+ * exactly as before.
+ *
+ * Throws on a failed lookup rather than falling back to the floor. Callers
+ * treat a short list as evidence of deletion, so guessing low here is the
+ * one thing that must never happen quietly.
  */
-export async function listManagedEventIds(
+export async function orgCalendarHorizon(
+  organizationId: string,
+): Promise<string> {
+  const floor = new Date(Date.now() + 1095 * 24 * 60 * 60 * 1000);
+
+  const admin = createSupabaseAdminClient();
+  const { data, error } = (await admin
+    .from("bookings")
+    .select("scheduled_at")
+    .eq("organization_id", organizationId)
+    .order("scheduled_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()) as unknown as {
+    data: { scheduled_at: string } | null;
+    error: { message: string } | null;
+  };
+  if (error) {
+    throw new Error(`orgCalendarHorizon failed: ${error.message}`);
+  }
+  if (!data) return floor.toISOString();
+
+  const furthest = new Date(
+    new Date(data.scheduled_at).getTime() + 24 * 60 * 60 * 1000,
+  );
+  return (furthest > floor ? furthest : floor).toISOString();
+}
+
+/**
+ * List Sollos-managed events on the org calendar within a window, each with
+ * the booking id parsed out of the "Managed by Sollos — /app/bookings/{id}"
+ * marker in its description. The inverse of listCalendarEvents (which
+ * excludes Sollos events).
+ *
+ * The booking id is what lets the backfill ADOPT an existing event instead of
+ * creating a second one for the same job.
+ */
+export async function listOrgManagedEvents(
   organizationId: string,
   timeMin: string,
   timeMax: string,
-): Promise<string[]> {
+): Promise<Array<{ id: string; bookingId: string | null }>> {
   const conn = await getConnection(organizationId);
   if (!conn) return [];
 
   const calendarId = (conn.metadata?.calendar_id as string) || "primary";
-  const ids: string[] = [];
+  const out: Array<{ id: string; bookingId: string | null }> = [];
   // Paginate via nextPageToken so the result is COMPLETE — the reconcile
   // tool treats "not in this list" as "event deleted", so a truncated list
   // would mis-flag live events as stale and create duplicates on re-sync.
@@ -899,28 +954,42 @@ export async function listManagedEventIds(
     );
     if (!res.ok) {
       const body = await res.text();
-      console.error("[gcal] listManagedEventIds failed:", res.status, body);
+      console.error("[gcal] listOrgManagedEvents failed:", res.status, body);
       // Do NOT return a partial list. Callers (reconcile) treat "absent from
       // this list" as "event deleted" and would mass-null live bookings' event
       // ids on a transient mid-pagination error. Fail loudly so the caller
       // aborts instead of corrupting data.
-      throw new Error(`listManagedEventIds failed: HTTP ${res.status}`);
+      throw new Error(`listOrgManagedEvents failed: HTTP ${res.status}`);
     }
 
     const data = await res.json();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     for (const item of (data.items ?? []) as any[]) {
-      if (
-        item.status !== "cancelled" &&
-        (item.description ?? "").includes("Managed by Sollos")
-      ) {
-        ids.push(item.id as string);
+      const desc = (item.description ?? "") as string;
+      if (item.status === "cancelled" || !desc.includes("Managed by Sollos")) {
+        continue;
       }
+      const m = desc.match(
+        /\/app\/bookings\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i,
+      );
+      out.push({ id: item.id as string, bookingId: m ? m[1] : null });
     }
     pageToken = data.nextPageToken as string | undefined;
   } while (pageToken);
 
-  return ids;
+  return out;
+}
+
+/**
+ * Event ids only — the shape the prune + reconcile tools want.
+ */
+export async function listManagedEventIds(
+  organizationId: string,
+  timeMin: string,
+  timeMax: string,
+): Promise<string[]> {
+  const events = await listOrgManagedEvents(organizationId, timeMin, timeMax);
+  return events.map((e) => e.id);
 }
 
 /**
@@ -1225,7 +1294,7 @@ export async function bulkSyncUpcomingBookings(
   if (opts?.clientIds && opts.clientIds.length > 0) {
     query = query.in("client_id", opts.clientIds);
   }
-  const { data: bookings } = (await query) as unknown as {
+  const { data: fetched } = (await query) as unknown as {
     data: Array<{
       id: string;
       scheduled_at: string;
@@ -1243,7 +1312,55 @@ export async function bulkSyncUpcomingBookings(
     }> | null;
   };
 
-  if (!bookings || bookings.length === 0) return 0;
+  if (!fetched || fetched.length === 0) return 0;
+  let bookings = fetched;
+
+  // ── Re-link before creating ───────────────────────────────────────────────
+  // A null event id does NOT prove the calendar has no event for this job.
+  // gcal-reconcile nulls any id it can't find in its listing, and that listing
+  // used to stop at 3 years — so 16 of Svit's live 2029/2030 events were
+  // unlinked while still sitting on the customer's calendar. Creating blindly
+  // from that state puts a SECOND event on every one of those days and only
+  // tracks the new one, leaving the original permanently untrackable.
+  //
+  // So: look for an event that already carries this booking's id in its
+  // description and adopt it. The update is guarded on the id still being
+  // null, so a concurrent createCalendarEvent can't be clobbered.
+  let relinked = 0;
+  try {
+    const horizon = await orgCalendarHorizon(organizationId);
+    const byBooking = new Map<string, string>();
+    for (const e of await listOrgManagedEvents(
+      organizationId,
+      sinceIso,
+      horizon,
+    )) {
+      if (e.bookingId) byBooking.set(e.bookingId, e.id);
+    }
+
+    const adopted = new Set<string>();
+    for (const b of bookings) {
+      const existing = byBooking.get(b.id);
+      if (!existing) continue;
+      const { data: claimed } = (await admin
+        .from("bookings")
+        .update({ google_calendar_event_id: existing })
+        .eq("id", b.id)
+        .is("google_calendar_event_id", null)
+        .select("id")) as unknown as { data: Array<{ id: string }> | null };
+      if (claimed && claimed.length > 0) relinked++;
+      adopted.add(b.id);
+    }
+    if (adopted.size > 0) {
+      bookings = bookings.filter((b) => !adopted.has(b.id));
+    }
+  } catch (err) {
+    // A failed listing must not block the create path. Worst case we create a
+    // duplicate — recoverable by the prune. Skipping the sync is not.
+    console.error("[gcal] re-link pass failed, creating fresh:", err);
+  }
+
+  if (bookings.length === 0) return relinked;
 
   // Process in batches of 10 (parallel within batch, sequential between).
   const BATCH = 10;
@@ -1281,7 +1398,7 @@ export async function bulkSyncUpcomingBookings(
     );
   }
 
-  return bookings.length;
+  return bookings.length + relinked;
 }
 
 /**
@@ -1303,9 +1420,14 @@ export async function bulkSyncUpcomingBookings(
  */
 export async function reconcileOrgCalendarEvents(
   organizationId: string,
-): Promise<{ patched: number; failed: number; created: number }> {
+): Promise<{
+  patched: number;
+  failed: number;
+  created: number;
+  unlinked: number;
+}> {
   const conn = await getConnection(organizationId);
-  if (!conn) return { patched: 0, failed: 0, created: 0 };
+  if (!conn) return { patched: 0, failed: 0, created: 0, unlinked: 0 };
 
   const admin = createSupabaseAdminClient();
   const since = new Date();
@@ -1314,6 +1436,69 @@ export async function reconcileOrgCalendarEvents(
   // recurring occurrences every night would blow Google's write quota. Anything
   // further out is reconciled once it enters this window (the cron runs daily).
   const until = new Date(since.getTime() + 45 * 24 * 60 * 60 * 1000);
+
+  // ── Full-horizon staleness sweep (read-only against Google) ───────────────
+  // The PATCH loop below covers 45 days on purpose — re-pushing a year of
+  // occurrences nightly would blow the write quota. But a booking whose event
+  // was DELETED is a different problem from drift: it needs finding wherever
+  // it sits, and nothing looked past 45 days. A deleted event beyond that
+  // window stayed invisible for months, because bulkSyncUpcomingBookings only
+  // fills bookings whose id is NULL — a dead id looks synced forever.
+  //
+  // This is one paginated READ, so it costs no write quota. Nulling the dead
+  // ids hands them to the backfill at the end of this function.
+  //
+  // SAFETY: "absent from the list" means "deleted", so a list we don't trust
+  // must never null anything. listOrgManagedEvents throws rather than return a
+  // partial page, and an empty list is treated as "can't tell" and skipped —
+  // the same guard pruneOrgCalendarOrphans uses for shared calendars.
+  let unlinked = 0;
+  try {
+    const horizon = await orgCalendarHorizon(organizationId);
+    const liveIds = new Set(
+      await listManagedEventIds(organizationId, since.toISOString(), horizon),
+    );
+    if (liveIds.size > 0) {
+      // Read every page BEFORE writing anything. Nulling as we go would
+      // change which rows match `google_calendar_event_id is not null`, so
+      // the next .range() page would land on a shifted result set and skip
+      // rows — the same trap gcal-reconcile avoids by collecting first.
+      const dead: Array<{ id: string; eventId: string }> = [];
+      for (let from = 0; ; from += 1000) {
+        const { data: claiming, error } = (await admin
+          .from("bookings")
+          .select("id, google_calendar_event_id")
+          .eq("organization_id", organizationId)
+          .gte("scheduled_at", since.toISOString())
+          .not("google_calendar_event_id", "is", null)
+          .neq("status", "cancelled")
+          .order("scheduled_at", { ascending: true })
+          .range(from, from + 999)) as unknown as {
+          data: Array<{ id: string; google_calendar_event_id: string }> | null;
+          error: { message: string } | null;
+        };
+        if (error) throw new Error(error.message);
+        const page = claiming ?? [];
+        for (const r of page) {
+          if (liveIds.has(r.google_calendar_event_id)) continue;
+          dead.push({ id: r.id, eventId: r.google_calendar_event_id });
+        }
+        if (page.length < 1000) break;
+      }
+
+      for (const d of dead) {
+        await admin
+          .from("bookings")
+          .update({ google_calendar_event_id: null })
+          .eq("id", d.id)
+          // Only if it still holds the dead id we read.
+          .eq("google_calendar_event_id", d.eventId);
+        unlinked++;
+      }
+    }
+  } catch (err) {
+    console.error("[gcal] staleness sweep skipped:", err);
+  }
 
   const { data: bookings } = (await admin
     .from("bookings")
@@ -1393,10 +1578,11 @@ export async function reconcileOrgCalendarEvents(
     await new Promise((r) => setTimeout(r, 170)); // ~6 writes/sec
   }
 
-  // Fill any bookings that have no event at all yet (null id).
+  // Fill any bookings that have no event at all yet (null id) — including the
+  // ones the sweep above just unlinked. Re-links where an event still exists.
   const created = await bulkSyncUpcomingBookings(organizationId);
 
-  return { patched, failed, created };
+  return { patched, failed, created, unlinked };
 }
 
 /**

@@ -52,6 +52,7 @@ export async function GET(request: NextRequest) {
   let patched = 0;
   let created = 0;
   let failed = 0;
+  let unlinked = 0;
   const errors: Array<{ org_id: string; reason: string }> = [];
 
   for (const orgId of orgIds) {
@@ -60,6 +61,7 @@ export async function GET(request: NextRequest) {
       patched += r.patched;
       created += r.created;
       failed += r.failed;
+      unlinked += r.unlinked;
     } catch (err) {
       const reason = err instanceof Error ? err.message : "Unknown error";
       errors.push({ org_id: orgId, reason });
@@ -68,12 +70,13 @@ export async function GET(request: NextRequest) {
   }
 
   console.log(
-    `[cron/org-calendar-reconcile] orgs=${orgIds.length} patched=${patched} created=${created} failed=${failed}`,
+    `[cron/org-calendar-reconcile] orgs=${orgIds.length} patched=${patched} unlinked=${unlinked} created=${created} failed=${failed}`,
   );
 
   return NextResponse.json({
     orgs: orgIds.length,
     patched,
+    unlinked,
     created,
     failed,
     errors: errors.slice(0, 50),

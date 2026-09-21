@@ -19,7 +19,10 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { listManagedEventIds } from "@/lib/google-calendar";
+import {
+  listManagedEventIds,
+  orgCalendarHorizon,
+} from "@/lib/google-calendar";
 import { requireCronAuth } from "@/lib/cron-auth";
 
 export const maxDuration = 60;
@@ -40,11 +43,11 @@ export async function GET(request: NextRequest) {
   const since = new Date();
   since.setUTCHours(0, 0, 0, 0);
   const sinceIso = since.toISOString();
-  // 3-year horizon (well beyond how far series generate) so far-future
-  // bookings' events are in the list and never mis-flagged as stale.
-  const timeMax = new Date(
-    Date.now() + 1095 * 24 * 60 * 60 * 1000,
-  ).toISOString();
+  // Reach the org's furthest booking. The old fixed 3-year horizon was NOT
+  // "well beyond how far series generate" — a monthly series booked into 2030
+  // ran past it, and on 2026-09-21 this route nulled 16 live event ids on the
+  // strength of a list that simply stopped short.
+  const timeMax = await orgCalendarHorizon(orgId);
 
   // Live event ids currently on the calendar.
   const liveIds = new Set(
@@ -61,6 +64,10 @@ export async function GET(request: NextRequest) {
       .eq("organization_id", orgId)
       .gte("scheduled_at", sinceIso)
       .not("google_calendar_event_id", "is", null)
+      // Ordered so pages can't overlap or skip — an unsorted paginated read
+      // can drop a row, and a dropped row here is an event id nulled for no
+      // reason.
+      .order("scheduled_at", { ascending: true })
       .range(from, from + 999)) as unknown as {
       data: Array<{ id: string; google_calendar_event_id: string }> | null;
     };
