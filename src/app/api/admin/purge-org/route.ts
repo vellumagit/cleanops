@@ -57,6 +57,10 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Missing org_id" }, { status: 400 });
   }
   const dryRun = url.searchParams.get("dry_run") === "1";
+  // A tombstoned org normally means "done". It can also mean a purge stamped
+  // deleted_at while its deletes were failing — which hides the org from the
+  // cron AND from this route, stranding the rows. force=1 is the way back in.
+  const force = url.searchParams.get("force") === "1";
 
   const admin = createSupabaseAdminClient();
   const { data: org } = (await admin
@@ -76,16 +80,16 @@ export async function GET(request: NextRequest) {
   if (!org) {
     return NextResponse.json({ error: "No such organization" }, { status: 404 });
   }
-  if (org.deleted_at) {
+  if (org.deleted_at && !force) {
     return NextResponse.json({
       ok: true,
       org_id: orgId,
       org_name: org.name,
       already_purged_at: org.deleted_at,
-      note: "Already tombstoned — nothing to do.",
+      note: "Already tombstoned — nothing to do. Add &force=1 to re-run if rows survived.",
     });
   }
-  if (!org.suspended_at && !org.deletion_scheduled_at) {
+  if (!org.suspended_at && !org.deletion_scheduled_at && !org.deleted_at) {
     return NextResponse.json(
       {
         ok: false,

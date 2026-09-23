@@ -279,6 +279,80 @@ export async function cancelOrgDeletion(orgId: string): Promise<void> {
 // Hard purge — called by the cron
 // ---------------------------------------------------------------------------
 
+const DELETE_BATCH = 500;
+/** 500 x 400 = 200k rows per table, past which something is wrong. */
+const MAX_BATCH_PASSES = 400;
+
+/** Postgres cancelled the statement for taking too long. */
+function isStatementTimeout(error: { code?: string; message?: string }): boolean {
+  return (
+    error.code === "57014" ||
+    (error.message ?? "").toLowerCase().includes("statement timeout")
+  );
+}
+
+/**
+ * Delete every row of one table belonging to an org, and say how many went.
+ *
+ * Two things this does NOT do, both learned the hard way on 2026-09-23:
+ *
+ * 1. It never asks for the deleted rows back. The old loop ended in
+ *    .select("id"), so deleting 35,423 clients meant shipping 35,423 ids over
+ *    the wire for a number we then took .length of — and it also meant the
+ *    call failed outright on membership_admin_data, which has no id column at
+ *    all. { count: "exact" } is the same number for none of the cost.
+ *
+ * 2. It doesn't assume one statement is enough. The clients delete cascades
+ *    into client_emails, and the pair blew statement_timeout. On a timeout —
+ *    and only then — this walks the table in batches instead.
+ */
+async function deleteAllFor(
+  db: ReturnType<typeof createSupabaseAdminClient>,
+  table: string,
+  orgId: string,
+): Promise<number> {
+  const { count, error } = (await db
+    .from(table as never)
+    .delete({ count: "exact" })
+    .eq("organization_id" as never, orgId as never)) as unknown as {
+    count: number | null;
+    error: { code?: string; message: string } | null;
+  };
+  if (!error) return count ?? 0;
+  if (!isStatementTimeout(error)) throw new Error(error.message);
+
+  let removed = 0;
+  for (let pass = 0; pass < MAX_BATCH_PASSES; pass++) {
+    const { data, error: selErr } = (await db
+      .from(table as never)
+      .select("id")
+      .eq("organization_id" as never, orgId as never)
+      .limit(DELETE_BATCH)) as unknown as {
+      data: Array<{ id: string }> | null;
+      error: { message: string } | null;
+    };
+    if (selErr) {
+      throw new Error(
+        `timed out, and batching failed too: ${selErr.message}`,
+      );
+    }
+    const ids = (data ?? []).map((r) => r.id);
+    if (ids.length === 0) return removed;
+
+    const { error: delErr } = (await db
+      .from(table as never)
+      .delete()
+      .in("id" as never, ids as never)) as unknown as {
+      error: { message: string } | null;
+    };
+    if (delErr) throw new Error(`batch delete failed: ${delErr.message}`);
+    removed += ids.length;
+  }
+  throw new Error(
+    `still not empty after ${MAX_BATCH_PASSES} batches (${removed} removed)`,
+  );
+}
+
 /**
  * Permanently delete every row and file belonging to the org, then stamp
  * `deleted_at` on the organizations row. The organizations row itself is
@@ -405,10 +479,20 @@ export async function purgeOrgData(
   // DELETE CASCADE almost everywhere, so the dependency graph is loose,
   // but we still delete children before parents to avoid any accidental
   // constraint surprises on future migrations.
+  // booking_member_calendar_events and promo_codes used to be listed here and
+  // failed on EVERY purge: neither has an organization_id column, so the
+  // filter was rejected outright. The first cascades from bookings; the second
+  // is platform-level (code/created_by), not tenant data at all.
+  //
+  // client_emails is listed even though it cascades from clients, because that
+  // cascade is what made the clients delete time out — 32,255 rows going with
+  // 35,423 in a single statement. Taking it first makes both cheap.
+  //
+  // audit_log is NOT here: the append-only trigger refuses a plain DELETE, so
+  // it goes through purge_org_audit_log above.
   const DELETE_ORDER: readonly string[] = [
     // Booking-scoped children first (cascade on booking_id)
     "booking_checklist_items",
-    "booking_member_calendar_events",
     "booking_assignees",
     "job_photos",
     // Conversation / messaging
@@ -421,7 +505,6 @@ export async function purgeOrgData(
     "invoices",
     "invoice_series",
     "promo_redemptions",
-    "promo_codes",
     "estimate_line_items",
     "estimates",
     "bonuses",
@@ -462,6 +545,7 @@ export async function purgeOrgData(
     "freelancer_contacts",
     "network_contacts",
     "client_documents",
+    "client_emails",
     "clients",
     // Misc per-org
     "scheduler_views",
@@ -473,26 +557,58 @@ export async function purgeOrgData(
     "integration_events",
     "integration_connections",
     "invitations",
-    "audit_log",
     // Memberships last (other tables reference it)
     "membership_admin_data",
     "memberships",
     "subscriptions",
   ];
 
-  for (const tableName of DELETE_ORDER) {
-    const { data, error } = await db
-      .from(tableName as never)
-      .delete()
-      .eq("organization_id" as never, orgId as never)
-      .select("id");
-    if (error) {
-      console.error(`[tenant-purge] ${tableName} failed:`, error.message);
-      errors.push(`${tableName}: ${error.message}`);
-      tableCounts[tableName] = 0;
-      continue;
+  // audit_log first. Its rows hold the payload of everything this org ever
+  // did — for a client create that is {name, email} — so they are a second
+  // copy of the tenant's personal data and must go. The append-only trigger
+  // refuses a plain DELETE, so this goes through purge_org_audit_log, which
+  // opens the door for its own transaction only.
+  try {
+    let auditRemoved = 0;
+    for (let pass = 0; pass < MAX_BATCH_PASSES; pass++) {
+      const { data, error } = (await db.rpc("purge_org_audit_log" as never, {
+        p_org: orgId,
+        p_limit: DELETE_BATCH,
+      } as never)) as unknown as {
+        data: number | null;
+        error: { message: string } | null;
+      };
+      if (error) throw new Error(error.message);
+      const n = Number(data ?? 0);
+      auditRemoved += n;
+      if (n < DELETE_BATCH) break;
     }
-    tableCounts[tableName] = data?.length ?? 0;
+    tableCounts["audit_log"] = auditRemoved;
+
+    // Other orgs' audit rows may name this org's memberships as the actor.
+    // Left alone, deleting those memberships fires actor_id's ON DELETE SET
+    // NULL — an UPDATE the trigger rejects, which is what broke the
+    // memberships step even after this org's own audit rows were gone.
+    const { error: actorErr } = (await db.rpc(
+      "purge_org_audit_actors" as never,
+      { p_org: orgId } as never,
+    )) as unknown as { error: { message: string } | null };
+    if (actorErr) throw new Error(actorErr.message);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[tenant-purge] audit_log failed:", message);
+    errors.push(`audit_log: ${message}`);
+  }
+
+  for (const tableName of DELETE_ORDER) {
+    try {
+      tableCounts[tableName] = await deleteAllFor(db, tableName, orgId);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[tenant-purge] ${tableName} failed:`, message);
+      errors.push(`${tableName}: ${message}`);
+      tableCounts[tableName] = 0;
+    }
   }
 
   // Wipe storage files. Buckets that hold org-scoped files put the org id
@@ -595,6 +711,22 @@ export async function purgeOrgData(
 
   // Tombstone the org row itself. Keep the id to prevent reuse; blank the
   // identifying fields so no PII lingers on the tombstone.
+  // A purge that failed must NOT be marked done. daoSHOP was tombstoned on
+  // 2026-09-23 with all 135,343 of its rows still present: deleted_at hid it
+  // from purgeExpiredOrgs AND from the admin tool, so the data ended up both
+  // orphaned and invisible. Stop before the tombstone and let the caller retry.
+  if (errors.length > 0) {
+    console.error(
+      `[tenant-purge] ${orgId} left UNMARKED — ${errors.length} table(s) failed`,
+    );
+    return {
+      tables: tableCounts,
+      storageFilesRemoved,
+      authUsersDeleted: 0,
+      errors,
+    };
+  }
+
   // stripe_customer_id is NOT a column on organizations — it lives on
   // subscriptions, which DELETE_ORDER already wipes. Naming it here made
   // PostgREST reject this whole statement with a 400, and because the error
