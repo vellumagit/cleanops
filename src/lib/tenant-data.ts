@@ -292,9 +292,14 @@ export async function purgeOrgData(
   tables: Record<string, number>;
   storageFilesRemoved: number;
   authUsersDeleted: number;
+  errors: string[];
 }> {
   const db = createSupabaseAdminClient();
   const tableCounts: Record<string, number> = {};
+  // Every table-level failure, surfaced in the return value. These used to be
+  // console-only, so a purge that deleted nothing reported exactly like one
+  // that deleted everything.
+  const errors: string[] = [];
 
   // Capture member identities BEFORE their membership rows are deleted below.
   // After the purge we erase the auth users whose ONLY membership was in this
@@ -483,6 +488,7 @@ export async function purgeOrgData(
       .select("id");
     if (error) {
       console.error(`[tenant-purge] ${tableName} failed:`, error.message);
+      errors.push(`${tableName}: ${error.message}`);
       tableCounts[tableName] = 0;
       continue;
     }
@@ -589,7 +595,14 @@ export async function purgeOrgData(
 
   // Tombstone the org row itself. Keep the id to prevent reuse; blank the
   // identifying fields so no PII lingers on the tombstone.
-  await db
+  // stripe_customer_id is NOT a column on organizations — it lives on
+  // subscriptions, which DELETE_ORDER already wipes. Naming it here made
+  // PostgREST reject this whole statement with a 400, and because the error
+  // was never read, the tombstone silently never happened: deleted_at stayed
+  // null, so purgeExpiredOrgs re-selected the org and re-ran the entire purge
+  // every night. Three orgs sat in that loop from 2026-06-29 to 2026-09-22,
+  // emptied but never marked, their names and PII still on the row.
+  const { error: tombErr } = await db
     .from("organizations")
     .update({
       deleted_at: new Date().toISOString(),
@@ -601,9 +614,15 @@ export async function purgeOrgData(
       brand_color: null,
       logo_url: null,
       stripe_account_id: null,
-      stripe_customer_id: null,
     } as never)
     .eq("id", orgId);
+  // This one is not best-effort. Without the tombstone the org is neither
+  // deleted nor alive, and the cron will grind on it forever — so fail loudly.
+  if (tombErr) {
+    throw new Error(
+      `[tenant-purge] tombstone failed for ${orgId}: ${tombErr.message}. Rows were deleted; the org row was NOT marked.`,
+    );
+  }
 
   // Right-to-erasure: remove auth identities whose LAST membership was in this
   // org. A person can belong to multiple orgs, so only delete those with no
@@ -638,7 +657,7 @@ export async function purgeOrgData(
     );
   }
 
-  return { tables: tableCounts, storageFilesRemoved, authUsersDeleted };
+  return { tables: tableCounts, storageFilesRemoved, authUsersDeleted, errors };
 }
 
 /**
