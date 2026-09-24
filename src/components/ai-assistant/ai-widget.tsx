@@ -102,6 +102,11 @@ export function AIWidget() {
     }
   }
 
+  // Chat is a full-height surface with its own composer pinned to the bottom
+  // edge, so a floating button there covers the message list and the input.
+  // The assistant is one tap away from every other page.
+  if (pathname.startsWith("/app/chat")) return null;
+
   return (
     // bottom-24 below lg: the admin tab bar owns the bottom edge on
     // phones, and bottom-5 parked this button squarely on its More tab.

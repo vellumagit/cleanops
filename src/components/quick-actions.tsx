@@ -2,7 +2,7 @@
 
 import { hasCapability, type CapabilityKey, type CapabilityMap } from "@/lib/capabilities";
 import { useEffect, useState, useCallback } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { Command } from "cmdk";
 import {
   CalendarPlus,
@@ -113,6 +113,7 @@ export function QuickActions({
   hasAssistant?: boolean;
 }) {
   const router = useRouter();
+  const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
 
@@ -147,27 +148,35 @@ export function QuickActions({
     router.push(href);
   }
 
+  // Chat owns its bottom edge — it is a full-height surface with a composer
+  // pinned there, and this button sat on top of the message list and the
+  // input. Only the BUTTON goes; the palette below still renders, so Cmd+K
+  // keeps working on chat exactly as it does everywhere else.
+  const onChat = pathname.startsWith("/app/chat");
+
   return (
     <>
       {/* Floating "+" button — bottom-right on mobile, hidden on desktop
           (on desktop users use Cmd+K or the sidebar links). */}
-      <button
-        type="button"
-        onClick={toggle}
-        title="Quick actions (⌘K)"
-        className={cn(
-          "fixed z-40 flex h-12 w-12 items-center justify-center rounded-full bg-foreground text-background shadow-lg transition-transform active:scale-95 lg:h-10 lg:w-10",
-          // Stack above the AI assistant button when present (bottom-24 on
-          // phones now that the tab bar owns the bottom edge, bottom-5 on
-          // desktop); otherwise sit in the normal bottom-right FAB slot.
-          hasAssistant
-            ? "bottom-40 right-5 lg:bottom-20"
-            : "bottom-24 right-4 lg:bottom-6",
-        )}
-        aria-label="Quick actions"
-      >
-        {open ? <X className="h-5 w-5" /> : <Plus className="h-5 w-5" />}
-      </button>
+      {!onChat && (
+        <button
+          type="button"
+          onClick={toggle}
+          title="Quick actions (⌘K)"
+          className={cn(
+            "fixed z-40 flex h-12 w-12 items-center justify-center rounded-full bg-foreground text-background shadow-lg transition-transform active:scale-95 lg:h-10 lg:w-10",
+            // Stack above the AI assistant button when present (bottom-24 on
+            // phones now that the tab bar owns the bottom edge, bottom-5 on
+            // desktop); otherwise sit in the normal bottom-right FAB slot.
+            hasAssistant
+              ? "bottom-40 right-5 lg:bottom-20"
+              : "bottom-24 right-4 lg:bottom-6",
+          )}
+          aria-label="Quick actions"
+        >
+          {open ? <X className="h-5 w-5" /> : <Plus className="h-5 w-5" />}
+        </button>
+      )}
 
       {/* Backdrop + palette */}
       {open && (

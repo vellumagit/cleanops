@@ -31,11 +31,18 @@ export default async function AppChatPage({
     console.error("[chat] Failed to load threads/teammates:", err);
   }
 
+  // "?thread=" present but EMPTY means "show me the list" — what the mobile
+  // back arrow sets. Absent means "no preference", so a wide screen opens the
+  // first thread as before. Without the distinction, Back pushed a bare
+  // /app/chat, this re-selected threads[0], and the list was unreachable on a
+  // phone.
   const requested = params.thread ?? null;
   const activeThread =
-    (requested && threads.find((t) => t.id === requested)) ||
-    threads[0] ||
-    null;
+    requested === ""
+      ? null
+      : (requested && threads.find((t) => t.id === requested)) ||
+        threads[0] ||
+        null;
 
   let initialMessages: Awaited<ReturnType<typeof fetchChatMessages>> = [];
   if (activeThread) {

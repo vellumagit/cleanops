@@ -323,7 +323,17 @@ export function ChatView({
     return out;
   }, [messages, currentMembershipId]);
 
-  // On mobile we collapse to a single pane: thread list OR active thread.
+  // Two different jobs, both single-pane on a phone:
+  //
+  //   "mobile"  — the field app. One pane at EVERY width, chosen in JS.
+  //   "desktop" — the admin app. Really "responsive": one pane on a phone,
+  //               split from md up.
+  //
+  // The second used to render the split unconditionally, so on a phone a
+  // 16rem thread list sat beside a ~90px message column and the conversation
+  // was unreadable. Both panes render now and CSS picks between them —
+  // a JS breakpoint would paint the wrong layout for a frame first.
+  const responsive = !isMobile;
   const showThreadList = !isMobile || !activeThread;
   const showThreadPane = !isMobile || !!activeThread;
   const isGroup = activeThread?.kind === "group";
@@ -331,10 +341,11 @@ export function ChatView({
   return (
     <div
       className={cn(
-        "flex w-full",
-        isMobile
-          ? "h-[calc(100dvh-12rem)] flex-col"
-          : "h-[calc(100dvh-12rem)] overflow-hidden rounded-lg border border-border bg-card",
+        "flex h-[calc(100dvh-12rem)] w-full flex-col",
+        // The card chrome is desktop dressing: on a phone the panes should run
+        // edge to edge like the field app, not sit inside a rounded border.
+        responsive &&
+          "md:flex-row md:overflow-hidden md:rounded-lg md:border md:border-border md:bg-card",
       )}
     >
       {showThreadList && (
@@ -342,7 +353,9 @@ export function ChatView({
           className={cn(
             isMobile
               ? "w-full"
-              : "w-64 shrink-0 border-r border-border bg-background/60",
+              : "w-full md:w-64 md:shrink-0 md:border-r md:border-border md:bg-background/60",
+            // Phone + a thread open: the list steps aside for the conversation.
+            responsive && activeThread && "hidden md:block",
           )}
         >
           <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
@@ -472,20 +485,32 @@ export function ChatView({
       )}
 
       {showThreadPane && (
-        <section className="flex min-w-0 flex-1 flex-col bg-background/30">
+        <section
+          className={cn(
+            "flex min-w-0 flex-1 flex-col bg-background/30",
+            // Phone + nothing selected: the list owns the screen.
+            responsive && !activeThread && "hidden md:flex",
+          )}
+        >
           {activeThread ? (
             <>
               <header className="flex items-center gap-2.5 border-b border-border bg-card/80 px-3 py-2.5 backdrop-blur">
-                {isMobile && (
-                  <button
-                    type="button"
-                    onClick={() => router.push(basePath)}
-                    className="-ml-1 rounded-md px-1.5 py-1 text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
-                    aria-label="Back to threads"
-                  >
-                    ←
-                  </button>
-                )}
+                <button
+                  type="button"
+                  // "?thread=" — present but empty — means "show me the list".
+                  // Plain basePath would re-select threads[0] on the admin
+                  // page and Back would appear to do nothing.
+                  onClick={() =>
+                    router.push(responsive ? `${basePath}?thread=` : basePath)
+                  }
+                  className={cn(
+                    "-ml-1 rounded-md px-1.5 py-1 text-sm text-muted-foreground hover:bg-muted hover:text-foreground",
+                    responsive && "md:hidden",
+                  )}
+                  aria-label="Back to threads"
+                >
+                  ←
+                </button>
                 {activeThread.kind === "dm" ? (
                   <Avatar name={activeThread.display_name} />
                 ) : (
