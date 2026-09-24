@@ -237,6 +237,25 @@ export async function notify(input: NotifyInput): Promise<void> {
         }
       }
       if (doPush) await sendPushToOrg(input.organizationId, push);
+
+      // Email needs real people. The in-app row above is a single shared
+      // broadcast with no recipient, and sendPushToOrg addresses the org's
+      // subscriptions rather than its members — but there is no such thing as
+      // emailing "the org", so resolve the roster here.
+      //
+      // This branch used to return before reaching the email path at all, so
+      // org-wide and email were mutually exclusive by accident of shape: the
+      // one audience that means "tell everyone" was the one audience that
+      // could not send the channel most likely to actually be read.
+      if (doEmail) {
+        const everyone = await membershipIdsForRoles(db, input.organizationId, [
+          "owner",
+          "admin",
+          "manager",
+          "employee",
+        ]);
+        await emailRecipients(db, input, everyone, type);
+      }
       return;
     }
 

@@ -27,6 +27,7 @@ import {
   BarChart3,
   Banknote,
   Inbox,
+  Megaphone,
 } from "lucide-react";
 import { hasCapability, type CapabilityKey, type CapabilityMap } from "@/lib/capabilities";
 
@@ -157,6 +158,7 @@ export const NAV_SECTIONS: NavSection[] = [
     accent: "text-amber-400",
     activeBg: "bg-amber-500/10",
     items: [
+      { href: "/app/announce", label: "Announce", icon: Megaphone, roles: ["owner", "admin", "manager"], mobileTier: "more" },
       { href: "/app/feed", label: "Feed", icon: Rss, mobileTier: "more" },
       { href: "/app/chat", label: "Chat", icon: MessageSquare, mobileTier: "more" },
     ],
