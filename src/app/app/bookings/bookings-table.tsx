@@ -95,6 +95,8 @@ export type BookingRow = {
    *  needs it: a divided job ends at duration/crew, and measuring the full
    *  duration flagged every team job as a double-booking. */
   divides_hours: boolean;
+  /** Free on purpose — shows "Free clean" instead of "No price". */
+  is_free: boolean;
   /** Number of split-shift segments (rows carrying split metadata). 0 or
    *  1 = not a split; 2+ renders a "Split · N" chip. */
   segment_count: number;
@@ -748,9 +750,14 @@ function TableView({
                 </td>
                 <td className="px-3 py-2.5 text-right tabular-nums font-medium">
                   {/* "$0.00" reads like a legitimate free visit; "No price"
-                      reads like the loose end it usually is. */}
+                      reads like the loose end it usually is. A comp clean IS
+                      a legitimate free visit, so it gets its own word. */}
                   {r.total_cents ? (
                     formatCurrencyCents(r.total_cents)
+                  ) : r.is_free ? (
+                    <span className="inline-flex items-center rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-400">
+                      Free clean
+                    </span>
                   ) : (
                     <span className="inline-flex items-center rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400">
                     No price
@@ -939,6 +946,10 @@ function CardsView({
                   <span className="text-sm font-semibold tabular-nums">
                     {r.total_cents ? (
                       formatCurrencyCents(r.total_cents)
+                    ) : r.is_free ? (
+                      <span className="inline-flex items-center rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-400">
+                      Free clean
+                    </span>
                     ) : (
                       <span className="inline-flex items-center rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400">
                     No price

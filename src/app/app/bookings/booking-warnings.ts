@@ -53,6 +53,9 @@ export type WarnableBooking = {
    *  resolved by the caller because the org setting isn't on the row.
    *  Omitted by callers that don't load it; those keep the old behaviour. */
   divides_hours?: boolean | null;
+  /** Deliberately free of charge. A $0 job is only a mistake when nobody
+   *  meant it to be $0. */
+  is_free?: boolean | null;
 };
 
 const HOUR = 3_600_000;
@@ -243,7 +246,11 @@ export function computeBookingWarnings(
     if (
       !TERMINAL.has(b.status) &&
       b.total_cents === 0 &&
-      (b.hourly_rate_cents ?? 0) === 0
+      (b.hourly_rate_cents ?? 0) === 0 &&
+      // A comp clean is priced correctly at nothing. Warning on it made the
+      // badge fire on work that was exactly as intended, which is how a
+      // warning stops meaning anything.
+      !b.is_free
     ) {
       add(b.id, {
         code: "no_price",

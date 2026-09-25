@@ -169,6 +169,18 @@ describe("stuck and unpriced", () => {
       "no_price",
     );
   });
+
+  it("$0 marked free on purpose is not a missing price", () => {
+    const b = bk({ total_cents: 0, is_free: true });
+    expect(codes(computeBookingWarnings([b], NOW), b.id)).not.toContain(
+      "no_price",
+    );
+  });
+
+  it("$0 NOT marked free still warns — the flag is what changes it", () => {
+    const b = bk({ total_cents: 0, is_free: false });
+    expect(codes(computeBookingWarnings([b], NOW), b.id)).toContain("no_price");
+  });
 });
 
 describe("duplicates", () => {

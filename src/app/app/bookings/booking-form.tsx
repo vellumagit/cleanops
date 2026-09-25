@@ -84,6 +84,7 @@ export type BookingFormDefaults = {
   splits?: SplitSegment[];
   /** Show each cleaner their share (duration ÷ crew) in the field app. */
   divide_hours_evenly?: boolean;
+  is_free?: boolean;
 };
 
 type Option = {
@@ -487,6 +488,9 @@ export function BookingForm({
   const [totalValue, setTotalValue] = useState<string>(
     defaults?.total_dollars ?? "",
   );
+  // A comp clean. Kept beside Total rather than buried in a menu, because the
+  // moment you need it is the moment you are typing a price you don't want.
+  const [isFree, setIsFree] = useState<boolean>(defaults?.is_free ?? false);
   // DurationInput is uncontrolled internally — to pre-fill after mount
   // we swap its `key` so it remounts with a new defaultMinutes. Only
   // kicked when a service prefill lands AND duration is still empty.
@@ -1461,16 +1465,41 @@ export function BookingForm({
           htmlFor="total_cents"
           required
           error={state.errors?.total_cents}
-          hint={isRecurring ? "Per visit" : "What the client will be billed"}
+          hint={
+            isFree
+              ? "Free clean — nothing will be billed"
+              : isRecurring
+                ? "Per visit"
+                : "What the client will be billed"
+          }
         >
           <Input
             id="total_cents"
             name="total_cents"
             inputMode="decimal"
             required
-            value={totalValue}
+            value={isFree ? "0" : totalValue}
+            // readOnly, not disabled: a disabled input is not submitted, and
+            // total_cents is required — ticking the box would have failed
+            // validation on a field the user can no longer edit.
+            readOnly={isFree}
             onChange={(e) => setTotalValue(e.target.value)}
           />
+          <label className="mt-2 flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+            <input
+              type="checkbox"
+              name="is_free"
+              className="h-3.5 w-3.5"
+              checked={isFree}
+              onChange={(e) => setIsFree(e.target.checked)}
+            />
+            <span>
+              This one&apos;s free
+              <span className="ml-1 text-muted-foreground/70">
+                — no price warning on it
+              </span>
+            </span>
+          </label>
         </FormField>
       </div>
 

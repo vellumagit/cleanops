@@ -31,7 +31,7 @@ export default async function EditBookingPage({
       supabase
         .from("bookings")
         .select(
-          "id, client_id, assigned_to, scheduled_at, duration_minutes, service_type, service_type_id, status, total_cents, address, notes, series_id, splits, divide_hours_evenly, property_id",
+          "id, client_id, assigned_to, scheduled_at, duration_minutes, service_type, service_type_id, status, total_cents, address, notes, series_id, splits, divide_hours_evenly, is_free, property_id",
         )
         .eq("id", id)
         .maybeSingle() as unknown as Promise<{
@@ -54,6 +54,7 @@ export default async function EditBookingPage({
             duration_minutes: number;
           }> | null;
           divide_hours_evenly: boolean | null;
+          is_free: boolean | null;
           property_id: string | null;
         } | null;
         error: { message: string } | null;
@@ -141,6 +142,7 @@ export default async function EditBookingPage({
               scheduled_at_utc: booking.scheduled_at,
               splits: booking.splits ?? [],
               divide_hours_evenly: booking.divide_hours_evenly ?? false,
+              is_free: booking.is_free ?? false,
               // Series schedule — only present when booking is part of a series.
               ...(series
                 ? {

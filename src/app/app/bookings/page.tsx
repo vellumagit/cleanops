@@ -49,6 +49,7 @@ export default async function BookingsPage({
         notes,
         assigned_to,
         divide_hours_evenly,
+        is_free,
         client:clients ( id, name, notes ),
         assigned:memberships!bookings_assigned_to_fkey (
           id,
@@ -248,6 +249,7 @@ export default async function BookingsPage({
       true
         ? true
         : orgDividesHours,
+    is_free: (b as { is_free?: boolean | null }).is_free === true,
     segment_count: segmentCountByBooking.get(b.id) ?? 0,
     series_id: b.series_id ?? null,
     // Describes the SERIES RULE, which is not always what the bookings

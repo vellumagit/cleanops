@@ -116,6 +116,12 @@ export const BookingSchema = z.object({
     .string()
     .optional()
     .transform((s) => s === "on" || s === "true" || s === "1"),
+  // Checkbox: this job is free on purpose. Suppresses the "No price" warning,
+  // which otherwise fires on every comp clean. Absent when unchecked → false.
+  is_free: z
+    .string()
+    .optional()
+    .transform((s) => s === "on" || s === "true" || s === "1"),
 });
 
 export type BookingInput = z.infer<typeof BookingSchema>;

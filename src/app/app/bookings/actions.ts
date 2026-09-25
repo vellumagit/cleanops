@@ -66,6 +66,7 @@ function readFormValues(formData: FormData) {
     address: String(formData.get("address") ?? ""),
     notes: String(formData.get("notes") ?? ""),
     divide_hours_evenly: String(formData.get("divide_hours_evenly") ?? ""),
+    is_free: String(formData.get("is_free") ?? ""),
   };
 }
 
@@ -726,11 +727,14 @@ export async function createBookingAction(
       service_type_id: serviceExtras.service_type_id,
       service_type_label: serviceExtras.service_type_label,
       status: parsed.data.status,
-      total_cents: parsed.data.total_cents,
+      // A free clean is zero by definition — trust the flag over a stale
+      // number left in the box when the checkbox was ticked.
+      total_cents: parsed.data.is_free ? 0 : parsed.data.total_cents,
       address: parsed.data.address ?? null,
       property_id: propertyId,
       notes: parsed.data.notes ?? null,
       divide_hours_evenly: parsed.data.divide_hours_evenly,
+      is_free: parsed.data.is_free,
       splits: splits,
     })
     .select("id")
@@ -1477,11 +1481,12 @@ export async function updateBookingAction(
       service_type_id: updateServiceExtras.service_type_id,
       service_type_label: updateServiceExtras.service_type_label,
       status: parsed.data.status,
-      total_cents: parsed.data.total_cents,
+      total_cents: parsed.data.is_free ? 0 : parsed.data.total_cents,
       address: parsed.data.address ?? null,
       property_id: propertyId,
       notes: parsed.data.notes ?? null,
       divide_hours_evenly: parsed.data.divide_hours_evenly,
+      is_free: parsed.data.is_free,
       splits: updateSplits,
     })
     .eq("id", id);
