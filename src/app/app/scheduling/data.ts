@@ -3,6 +3,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { memberDisplayName } from "@/lib/member-display";
 import { orgDividesCrewHours } from "@/lib/crew-hours";
+import { describeRecurrence } from "@/lib/recurrence";
 
 export type SchedulerView = {
   id: string;
@@ -94,6 +95,10 @@ export type ScheduleBooking = {
    *  duration/crew, and measuring the full duration invented double-bookings
    *  on every team job. */
   dividesHours: boolean;
+  /** Human-readable recurrence rule when this booking belongs to a series,
+   *  e.g. "Every 4 weeks at 3:00 PM". The quick view had series_id and showed
+   *  nothing with it, so a repeating job looked identical to a one-off. */
+  seriesLabel: string | null;
 };
 
 export type ScheduleEmployee = {
@@ -392,6 +397,43 @@ export async function fetchScheduleWeek(
     dividesByBooking.set(row.id, row.divide_hours_evenly === true);
   }
 
+  // One lookup for every series represented on this board.
+  const schSeriesIds = [
+    ...new Set(
+      (bookingsRes.data ?? [])
+        .map((b) => (b as { series_id?: string | null }).series_id)
+        .filter(Boolean),
+    ),
+  ] as string[];
+  const seriesLabelById = new Map<string, string>();
+  if (schSeriesIds.length) {
+    const { data: rows } = (await supabase
+      .from("booking_series" as never)
+      .select("id, pattern, custom_days, start_time, monthly_nth, monthly_dow")
+      .in("id" as never, schSeriesIds as never)) as unknown as {
+      data: Array<{
+        id: string;
+        pattern: string;
+        custom_days: number[] | null;
+        start_time: string;
+        monthly_nth: number | null;
+        monthly_dow: number | null;
+      }> | null;
+    };
+    for (const r of rows ?? []) {
+      seriesLabelById.set(
+        r.id,
+        describeRecurrence(
+          r.pattern as Parameters<typeof describeRecurrence>[0],
+          r.custom_days,
+          r.start_time,
+          r.monthly_nth,
+          r.monthly_dow,
+        ),
+      );
+    }
+  }
+
   if (bookingsRes.error) throw bookingsRes.error;
   if (membersRes.error) throw membersRes.error;
 
@@ -456,6 +498,10 @@ export async function fetchScheduleWeek(
       // Per-booking flag wins; otherwise the org default. Same precedence as
       // resolveTeamDivision, which is the function everything else uses.
       dividesHours: dividesByBooking.get(b.id) === true ? true : orgDividesHours,
+      seriesLabel:
+        seriesLabelById.get(
+          (b as { series_id?: string | null }).series_id ?? "",
+        ) ?? null,
     };
   });
 

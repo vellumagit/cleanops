@@ -4,6 +4,7 @@ import { PageShell } from "@/components/page-shell";
 import { CalendarView } from "./calendar-view";
 import { listCalendarEvents } from "@/lib/google-calendar";
 import { memberDisplayName } from "@/lib/member-display";
+import { describeRecurrence } from "@/lib/recurrence";
 import { fetchBookingFormOptions } from "@/app/app/bookings/options";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { getOrgTimezone } from "@/lib/org-timezone";
@@ -30,6 +31,9 @@ type BookingEvent = {
     employee: string | null;
     service_type: string;
     address: string | null;
+    /** Human-readable recurrence rule when this booking belongs to a series,
+     *  e.g. "Every 4 weeks at 3:00 PM". Null for one-off bookings. */
+    recurrence: string | null;
   };
 };
 
@@ -134,7 +138,7 @@ export default async function CalendarPage() {
     supabase
       .from("bookings")
       .select(
-        `id, scheduled_at, duration_minutes, service_type, status, address,
+        `id, scheduled_at, duration_minutes, service_type, status, address, series_id,
          client:clients ( name ),
          assigned:memberships ( display_name, profile:profiles ( full_name ) )`,
       )
@@ -183,6 +187,46 @@ export default async function CalendarPage() {
     getOrgTimezone(membership.organization_id),
   ]);
 
+  // One batch lookup for the series behind whatever bookings are in range,
+  // so an event can say "Every 4 weeks" instead of just looking repeated.
+  const calSeriesIds = [
+    ...new Set(
+      (bookingsResult.data ?? [])
+        .map((b) => (b as { series_id?: string | null }).series_id)
+        .filter(Boolean),
+    ),
+  ] as string[];
+  const { data: calSeriesRows } = calSeriesIds.length
+    ? ((await supabase
+        .from("booking_series" as never)
+        .select(
+          "id, pattern, custom_days, start_time, monthly_nth, monthly_dow",
+        )
+        .in("id" as never, calSeriesIds as never)) as unknown as {
+        data: Array<{
+          id: string;
+          pattern: string;
+          custom_days: number[] | null;
+          start_time: string;
+          monthly_nth: number | null;
+          monthly_dow: number | null;
+        }> | null;
+      })
+    : { data: [] };
+  const calRecurrenceById = new Map<string, string>();
+  for (const sr of calSeriesRows ?? []) {
+    calRecurrenceById.set(
+      sr.id,
+      describeRecurrence(
+        sr.pattern as Parameters<typeof describeRecurrence>[0],
+        sr.custom_days,
+        sr.start_time,
+        sr.monthly_nth,
+        sr.monthly_dow,
+      ),
+    );
+  }
+
   const bookingEvents: CalendarEvent[] = (bookingsResult.data ?? []).map(
     (b) => {
       const start = new Date(b.scheduled_at);
@@ -212,6 +256,10 @@ export default async function CalendarPage() {
           employee: employeeName,
           service_type: b.service_type ?? "standard",
           address: b.address,
+          recurrence:
+            calRecurrenceById.get(
+              (b as { series_id?: string | null }).series_id ?? "",
+            ) ?? null,
         },
       };
     },

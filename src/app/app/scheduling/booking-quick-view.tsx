@@ -7,6 +7,7 @@ import {
   Pencil,
   ExternalLink,
   MapPin,
+  Repeat,
   Clock,
   User,
   Navigation,
@@ -257,6 +258,12 @@ export function BookingQuickView({
               segment data was found. Open in editor → toggle splits off
               and back on, then save to rebuild.
             </div>
+          )}
+
+          {booking.seriesLabel && (
+            <Row icon={<Repeat className="h-3.5 w-3.5" />} label="Repeats">
+              <span>{booking.seriesLabel}</span>
+            </Row>
           )}
 
           {booking.address && (

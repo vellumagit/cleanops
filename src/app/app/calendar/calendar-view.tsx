@@ -40,6 +40,7 @@ import {
   Plus,
   CheckSquare,
   RefreshCw,
+  Repeat,
 } from "lucide-react";
 import type { CalendarEvent } from "./page";
 import { MobileWeekView } from "./mobile-week-view";
@@ -1081,6 +1082,12 @@ function EventDetail({
                 {event.meta.employee ?? "Unassigned"} → {event.meta.client}
               </span>
             </div>
+            {event.meta.recurrence && (
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <Repeat className="h-3.5 w-3.5 shrink-0" />
+                <span>{event.meta.recurrence}</span>
+              </div>
+            )}
             {event.meta.address && (
               <div className="flex items-start gap-2 text-muted-foreground">
                 <MapPin className="h-3.5 w-3.5 shrink-0 mt-0.5" />
