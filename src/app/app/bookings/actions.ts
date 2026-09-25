@@ -2833,6 +2833,87 @@ export async function setBookingStatusAction(
   return { ok: true };
 }
 
+/** Most visits anyone can restatus in one go. A guard, not a policy. */
+const SERIES_STATUS_CAP = 60;
+
+/**
+ * The same status change, applied to this visit and every later one in its
+ * series.
+ *
+ * Svitlana was doing this by hand: the audit log for 2026-09-25 has eight
+ * `confirmed -> pending` rows between 16:06:39 and 16:07:55, one every couple
+ * of seconds, which is a person clicking down a list.
+ *
+ * It deliberately LOOPS setBookingStatusAction instead of issuing one bulk
+ * UPDATE. That write carries the transition table, the future-date guard, the
+ * billed-invoice refusal, the audit entry, the calendar teardown and the
+ * crew/client cancellation notices — and the file already warns against
+ * hand-writing "a fourth copy" of the status rules. Re-running the whole
+ * action per booking costs an auth lookup each, which at these volumes is
+ * nothing next to the guarantee that bulk and single behave identically.
+ *
+ * Partial success is the expected case, not an error: a completed visit with
+ * a live invoice SHOULD refuse while the rest go through. Every refusal comes
+ * back with its date and reason so the caller can say which ones and why.
+ */
+export async function setSeriesStatusAction(formData: FormData): Promise<{
+  ok: boolean;
+  error?: string;
+  changed?: number;
+  skipped?: Array<{ scheduled_at: string; reason: string }>;
+}> {
+  const id = String(formData.get("id") ?? "").trim();
+  const target = String(formData.get("status") ?? "").trim();
+  if (!id) return { ok: false, error: "Missing booking." };
+
+  const { membership, supabase } = await getActionContext();
+  if (!["owner", "admin", "manager"].includes(membership.role)) {
+    return { ok: false, error: "Not authorized." };
+  }
+
+  const { data: anchor } = (await supabase
+    .from("bookings")
+    .select("id, series_id, scheduled_at")
+    .eq("id", id)
+    .eq("organization_id", membership.organization_id)
+    .maybeSingle()) as unknown as {
+    data: { id: string; series_id: string | null; scheduled_at: string } | null;
+  };
+  if (!anchor) return { ok: false, error: "Booking not found." };
+  if (!anchor.series_id) {
+    return { ok: false, error: "This booking isn't part of a series." };
+  }
+
+  const { data: siblings } = (await supabase
+    .from("bookings")
+    .select("id, scheduled_at")
+    .eq("organization_id", membership.organization_id)
+    .eq("series_id", anchor.series_id)
+    .gte("scheduled_at", anchor.scheduled_at)
+    .order("scheduled_at", { ascending: true })
+    .limit(SERIES_STATUS_CAP)) as unknown as {
+    data: Array<{ id: string; scheduled_at: string }> | null;
+  };
+
+  let changed = 0;
+  const skipped: Array<{ scheduled_at: string; reason: string }> = [];
+  for (const b of siblings ?? []) {
+    const fd = new FormData();
+    fd.set("id", b.id);
+    fd.set("status", target);
+    const res = await setBookingStatusAction(fd);
+    if (res.ok) changed++;
+    else {
+      skipped.push({
+        scheduled_at: b.scheduled_at,
+        reason: res.error ?? "Refused.",
+      });
+    }
+  }
+
+  return { ok: true, changed, skipped };
+}
+
 export async function deleteBookingAction(formData: FormData) {
   const id = String(formData.get("id") ?? "");
   if (!id) return;

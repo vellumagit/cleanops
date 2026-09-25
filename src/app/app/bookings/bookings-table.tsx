@@ -746,6 +746,7 @@ function TableView({
                     status={r.status}
                     canEdit={canEdit}
                     scheduledAt={r.scheduled_at}
+                    seriesId={r.series_id}
                   />
                 </td>
                 <td className="px-3 py-2.5 text-right tabular-nums font-medium">
@@ -885,6 +886,7 @@ function CardsView({
                     status={r.status}
                     canEdit={canEdit}
                     scheduledAt={r.scheduled_at}
+                    seriesId={r.series_id}
                   />
                 </div>
 
