@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useReturnTo } from "@/components/return-to-field";
+import { useUrlSelection } from "@/components/use-url-selection";
 import { useUrlState } from "@/components/use-url-state";
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import {
@@ -187,9 +188,10 @@ export function CalendarView({
     },
     [currentDate, setDateParam],
   );
-  const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(
-    null,
-  );
+  // The id lives in the URL; the event is derived from the list already in
+  // scope. Holding the object in state meant Back left the calendar entirely
+  // and Forward came back with nothing selected.
+  const [selectedEventId, setSelectedEventId] = useUrlSelection("event");
   const [sheetOpen, setSheetOpen] = useState(false);
   const [bookingDefaults, setBookingDefaults] = useState<
     BookingFormDefaults | undefined
@@ -234,6 +236,16 @@ export function CalendarView({
     () => events.filter((e) => enabledSources.has(e.type)),
     [events, enabledSources],
   );
+
+  // Derived, not stored: the URL owns which event is open, so back/forward
+  // and a pasted link all resolve through the same lookup. Deriving also
+  // means a stale id (event filtered out, or gone) simply shows nothing
+  // rather than a panel describing something no longer on the board.
+  const selectedEvent = selectedEventId
+    ? (filteredEvents.find((e) => e.id === selectedEventId) ?? null)
+    : null;
+  const setSelectedEvent = (e: CalendarEvent | null) =>
+    setSelectedEventId(e ? e.id : null);
 
   function toggleSource(source: EventSource) {
     setEnabledSources((prev) => {

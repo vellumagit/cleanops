@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useUrlSelection } from "@/components/use-url-selection";
 import { useRouter } from "next/navigation";
 import {
   DndContext,
@@ -135,7 +136,9 @@ export function DispatchGrid({
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [quickViewId, setQuickViewId] = useState<string | null>(null);
+  // In the URL, not component state: an open panel is somewhere you can
+  // go Back from, and somewhere you can send a link to.
+  const [quickViewId, setQuickViewId] = useUrlSelection("booking");
   const scrollRef = useRef<HTMLDivElement>(null);
   const didInitialScroll = useRef(false);
 

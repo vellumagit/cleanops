@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useUrlSelection } from "@/components/use-url-selection";
 import { useRouter } from "next/navigation";
 import { Plus, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -157,7 +158,9 @@ export function DayAgenda({
   availability?: AvailabilityByEmployee;
 }) {
   const router = useRouter();
-  const [quickViewId, setQuickViewId] = useState<string | null>(null);
+  // In the URL, not component state: an open panel is somewhere you can
+  // go Back from, and somewhere you can send a link to.
+  const [quickViewId, setQuickViewId] = useUrlSelection("booking");
   const scrollRef = useRef<HTMLDivElement>(null);
   const didInitialScroll = useRef(false);
   // Set post-mount so SSR and the first client render agree (null = no line).
