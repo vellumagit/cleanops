@@ -42,6 +42,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import type { CalendarEvent } from "./page";
+import { MobileWeekView } from "./mobile-week-view";
 import { OpenInMaps } from "@/components/open-in-maps";
 import {
   Sheet,
@@ -397,13 +398,30 @@ export function CalendarView({
               />
             )}
             {view === "week" && (
-              <WeekView
-                currentDate={currentDate}
-                events={filteredEvents}
-                onSelectEvent={setSelectedEvent}
-                onNewBooking={openBookingSheet}
-                tz={tz}
-              />
+              <>
+                {/* The 7x24 grid needs width it does not have on a phone:
+                    45px per day column, and 1,344px of mostly-empty hours.
+                    Both render; CSS picks, so there is no hydration flash. */}
+                <div className="md:hidden">
+                  <MobileWeekView
+                    currentDate={currentDate}
+                    events={filteredEvents}
+                    onSelectEvent={setSelectedEvent}
+                    onNewBooking={openBookingSheet}
+                    tz={tz}
+                    fmtTime={fmtTimeInTz}
+                  />
+                </div>
+                <div className="hidden md:block">
+                  <WeekView
+                    currentDate={currentDate}
+                    events={filteredEvents}
+                    onSelectEvent={setSelectedEvent}
+                    onNewBooking={openBookingSheet}
+                    tz={tz}
+                  />
+                </div>
+              </>
             )}
             {view === "day" && (
               <DayView
