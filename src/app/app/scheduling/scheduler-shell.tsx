@@ -279,6 +279,9 @@ export function SchedulerShell({
         // Split shifts are a deliberate hand-off, not a clash. Without this
         // the two halves of one job flag each other as double-booked.
         assignee_segments: b.assigneeSegments,
+        // A divided team job ends at duration/crew, not duration. Without
+        // this every one of them collided with whatever came after.
+        divides_hours: b.dividesHours,
         // `staffed` already encodes the shared rule (assignee OR crew OR a
         // claimed bench offer). Feed it through the slot booking-warnings
         // uses for bench cover so the two agree on what "unstaffed" means.

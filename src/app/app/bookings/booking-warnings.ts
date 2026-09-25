@@ -48,6 +48,11 @@ export type WarnableBooking = {
     string,
     { start_offset_minutes: number; duration_minutes: number }
   > | null;
+  /** True when this job's hours divide across its crew — the per-booking
+   *  `divide_hours_evenly` flag OR the org's `divide_crew_hours` toggle,
+   *  resolved by the caller because the org setting isn't on the row.
+   *  Omitted by callers that don't load it; those keep the old behaviour. */
+  divides_hours?: boolean | null;
 };
 
 const HOUR = 3_600_000;
@@ -75,13 +80,23 @@ function endMs(b: WarnableBooking): number {
 }
 
 /**
- * One person's window on a booking.
+ * One person's window on a booking. Precedence mirrors resolveTeamDivision
+ * in src/lib/crew-hours.ts exactly, because the office list, the scheduler,
+ * the field card and the calendar must all agree on when someone is busy:
  *
- * On a SPLIT shift that is their segment, not the whole job — Maria works
- * 9–12 and Ana takes 12–3. Measuring the full booking for both made the two
- * halves of one deliberate hand-off report as a double-booking, and made
- * either cleaner look busy for hours on both sides of the part they actually
- * work, so a genuinely free slot read as occupied.
+ *   1. a split segment for this member  -> its own offset + duration
+ *   2. else the job divides crew hours  -> offset 0, duration / crewCount
+ *   3. else                             -> offset 0, full duration
+ *
+ * Step 2 was missing, and it is the whole bug: a 480-minute job with a crew
+ * of two runs 9:00–1:00 on screen, but this measured it 9:00–5:00 and called
+ * the 1:15 job a double-booking. Svit has divide_crew_hours on, so every
+ * team job produced a red badge that was never real — which is worse than no
+ * badge, because it teaches you to ignore the ones that are.
+ *
+ * A split shift is NOT a divided job: 240 minutes split 120/120 and 240
+ * divided across two people have the same durations but different START
+ * times, so the segment must win when both could apply.
  */
 function memberWindow(
   b: WarnableBooking,
@@ -91,10 +106,21 @@ function memberWindow(
   const start =
     new Date(b.scheduled_at).getTime() +
     (seg?.start_offset_minutes ?? 0) * 60_000;
-  return {
-    start,
-    end: start + (seg?.duration_minutes ?? b.duration_minutes ?? 0) * 60_000,
-  };
+
+  if (seg) {
+    return { start, end: start + (seg.duration_minutes ?? 0) * 60_000 };
+  }
+
+  const full = b.duration_minutes ?? 0;
+  const crewCount = new Set(
+    [b.assigned_to, ...b.additional_assignee_ids].filter(Boolean),
+  ).size;
+  const minutes =
+    b.divides_hours && crewCount >= 2
+      ? Math.max(1, Math.round(full / crewCount))
+      : full;
+
+  return { start, end: start + minutes * 60_000 };
 }
 
 /**

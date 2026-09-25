@@ -91,6 +91,10 @@ export type BookingRow = {
   /** Non-primary crew membership ids on this booking, sourced from
    *  the booking_assignees junction. Pre-checked in the dialog. */
   additional_assignee_ids: string[];
+  /** True when this job's hours divide across its crew. The overlap warning
+   *  needs it: a divided job ends at duration/crew, and measuring the full
+   *  duration flagged every team job as a double-booking. */
+  divides_hours: boolean;
   /** Number of split-shift segments (rows carrying split metadata). 0 or
    *  1 = not a split; 2+ renders a "Split · N" chip. */
   segment_count: number;

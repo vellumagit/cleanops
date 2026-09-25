@@ -7,6 +7,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { ArchivedToggle } from "@/components/archived-toggle";
 import { memberDisplayName } from "@/lib/member-display";
 import { getOrgTimezone } from "@/lib/org-timezone";
+import { orgDividesCrewHours } from "@/lib/crew-hours";
 import { getFlaggedCrewIds } from "@/lib/crew-accommodations";
 import { resolveFreelancerCoverageNames } from "@/lib/booking-coverage";
 import { BookingsTable, type BookingRow } from "./bookings-table";
@@ -23,6 +24,9 @@ export default async function BookingsPage({
   const supabase = await createSupabaseServerClient();
   // Fired, not awaited — resolves while the main bookings query runs.
   const tzPromise = getOrgTimezone(membership.organization_id);
+  // Same: the overlap warning needs to know whether a team job's hours split
+  // across its crew, and that lives on the org rather than the booking.
+  const dividesPromise = orgDividesCrewHours(membership.organization_id);
   const { archived, client } = await searchParams;
   const showArchived = archived === "1";
   const clientFilter = client?.trim() || null;
@@ -43,6 +47,7 @@ export default async function BookingsPage({
         address,
         notes,
         assigned_to,
+        divide_hours_evenly,
         client:clients ( id, name, notes ),
         assigned:memberships!bookings_assigned_to_fkey (
           id,
@@ -111,6 +116,7 @@ export default async function BookingsPage({
   if (error) throw error;
 
   const tz = await tzPromise;
+  const orgDividesHours = await dividesPromise;
   const { data: employeesData } = await employeesPromise;
   const flaggedCrew = await getFlaggedCrewIds(
     (employeesData ?? []).map((m) => m.id),
@@ -196,6 +202,13 @@ export default async function BookingsPage({
     covered_by_name: coverageMap.get(b.id)?.join(", ") ?? null,
     assigned_to: b.assigned_to,
     additional_assignee_ids: additionalByBooking.get(b.id) ?? [],
+    // Per-booking flag wins when set; otherwise the org default. Matches
+    // resolveTeamDivision, which is what the rest of the app divides by.
+    divides_hours:
+      (b as { divide_hours_evenly?: boolean | null }).divide_hours_evenly ===
+      true
+        ? true
+        : orgDividesHours,
     segment_count: segmentCountByBooking.get(b.id) ?? 0,
     series_id: b.series_id ?? null,
     address: b.address ?? null,

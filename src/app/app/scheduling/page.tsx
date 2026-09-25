@@ -167,10 +167,12 @@ export default async function SchedulingPage({
     currency,
     holidays,
   ] = await Promise.all([
-    fetchScheduleWeek(fetchStart, fetchEnd, {
-      startYmd: weekStartYmd,
-      endYmdExclusive: weekEndYmd,
-    }),
+    fetchScheduleWeek(
+      fetchStart,
+      fetchEnd,
+      { startYmd: weekStartYmd, endYmdExclusive: weekEndYmd },
+      membership.organization_id,
+    ),
     fetchSchedulerViews(membership.organization_id),
     getOrgCurrency(membership.organization_id),
     getOrgHolidays(membership.organization_id, weekStartYmd, weekEndYmd),

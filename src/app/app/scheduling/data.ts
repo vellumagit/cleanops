@@ -2,6 +2,7 @@ import "server-only";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { memberDisplayName } from "@/lib/member-display";
+import { orgDividesCrewHours } from "@/lib/crew-hours";
 
 export type SchedulerView = {
   id: string;
@@ -87,6 +88,12 @@ export type ScheduleBooking = {
     start_offset_minutes: number;
     duration_minutes: number;
   }>;
+  /** True when this job's hours divide across its crew — the per-booking
+   *  flag OR the org toggle, resolved here because the org setting is not on
+   *  the booking row. The overlap warning needs it: a divided job ends at
+   *  duration/crew, and measuring the full duration invented double-bookings
+   *  on every team job. */
+  dividesHours: boolean;
 };
 
 export type ScheduleEmployee = {
@@ -199,6 +206,11 @@ export async function fetchScheduleWeek(
   rangeStart: Date,
   rangeEnd?: Date,
   rangeDates?: { startYmd: string; endYmdExclusive: string },
+  /** Needed to resolve the org's divide_crew_hours toggle, which decides
+   *  whether a team job's hours split across its crew. Optional so existing
+   *  callers keep compiling; without it the per-booking flag decides alone,
+   *  which is the old (wrong for Svit) behaviour. */
+  organizationId?: string,
 ): Promise<{
   bookings: ScheduleBooking[];
   employees: ScheduleEmployee[];
@@ -215,6 +227,14 @@ export async function fetchScheduleWeek(
   availability: AvailabilityByEmployee;
 }> {
   const supabase = await createSupabaseServerClient();
+
+  // The org toggle, resolved once. Svit has it ON while every one of their
+  // team bookings carries divide_hours_evenly = false, so the per-booking
+  // flag alone gets the window wrong on every single one.
+  const orgDividesHours = organizationId
+    ? await orgDividesCrewHours(organizationId)
+    : false;
+
   const weekStart = rangeStart;
   const weekEnd = rangeEnd ?? addDays(weekStart, 7);
 
@@ -239,6 +259,7 @@ export async function fetchScheduleWeek(
     ptoRes,
     assigneesRes,
     slotsRes,
+    divideRes,
   ] = await Promise.all([
     supabase
       .from("bookings")
@@ -348,7 +369,28 @@ export async function fetchScheduleWeek(
       }> | null;
       error: { message: string } | null;
     }>,
+    // divide_hours_evenly, fetched on its own and cast.
+    //
+    // It belongs in the bookings select above, but the generated Supabase
+    // types predate the column: naming it there makes the whole row infer as
+    // SelectQueryError and every other field stops type-checking. Same range
+    // filters, so it covers exactly the rows above.
+    (supabase
+      .from("bookings" as never)
+      .select("id, divide_hours_evenly")
+      .gte("scheduled_at" as never, weekStart.toISOString() as never)
+      .lt("scheduled_at" as never, weekEnd.toISOString() as never)
+      .neq("status" as never, "cancelled" as never)) as unknown as Promise<{
+      data: Array<{ id: string; divide_hours_evenly: boolean | null }> | null;
+      error: { message: string } | null;
+    }>,
   ]);
+
+  // Per-booking override; the org toggle is the fallback.
+  const dividesByBooking = new Map<string, boolean>();
+  for (const row of divideRes.data ?? []) {
+    dividesByBooking.set(row.id, row.divide_hours_evenly === true);
+  }
 
   if (bookingsRes.error) throw bookingsRes.error;
   if (membersRes.error) throw membersRes.error;
@@ -411,6 +453,9 @@ export async function fetchScheduleWeek(
       total_cents: (b as { total_cents?: number | null }).total_cents ?? null,
       series_id: (b as { series_id?: string | null }).series_id ?? null,
       assigneeSegments: segmentsByBooking.get(b.id) ?? {},
+      // Per-booking flag wins; otherwise the org default. Same precedence as
+      // resolveTeamDivision, which is the function everything else uses.
+      dividesHours: dividesByBooking.get(b.id) === true ? true : orgDividesHours,
     };
   });
 

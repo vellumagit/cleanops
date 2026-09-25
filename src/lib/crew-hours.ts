@@ -3,6 +3,47 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { resolveAutomationEnabled } from "@/lib/automation-defaults";
 
 /**
+ * Does this org divide a team job's hours across its crew by default?
+ *
+ * resolveTeamDivision answers this per booking, which needs a booking id and
+ * two queries. The warning path needs the same answer for a whole page of
+ * bookings at once and can't pay that per row, so this exposes just the org
+ * half. Callers combine it with each row's `divide_hours_evenly`, which wins
+ * when it is true — the same precedence resolveTeamDivision uses.
+ *
+ * Worth knowing: on Svit every team booking carries divide_hours_evenly =
+ * false while this toggle is ON, so the per-booking flag alone is not a
+ * usable substitute for asking.
+ */
+export async function orgDividesCrewHours(
+  organizationId: string,
+): Promise<boolean> {
+  try {
+    const db = createSupabaseAdminClient();
+    const { data } = (await db
+      .from("organizations")
+      .select("automation_settings")
+      .eq("id", organizationId)
+      .maybeSingle()) as unknown as {
+      data: {
+        automation_settings: Record<
+          string,
+          { enabled?: boolean } | undefined
+        > | null;
+      } | null;
+    };
+    return resolveAutomationEnabled(
+      data?.automation_settings ?? null,
+      "divide_crew_hours",
+    );
+  } catch {
+    // Same posture as resolveTeamDivision: on doubt, don't divide. An
+    // over-long window can only produce a warning; too short hides a clash.
+    return false;
+  }
+}
+
+/**
  * A short client-facing note for a divided team booking, e.g.
  * "2 cleaners — finishing around 6:30 PM". Returns undefined when the booking
  * isn't divided, so callers only add it when relevant.

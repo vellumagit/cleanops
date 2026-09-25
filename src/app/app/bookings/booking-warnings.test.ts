@@ -261,6 +261,103 @@ describe("split shifts are a hand-off, not a clash", () => {
     expect(codes(out, split.id)).toContain("double_booked");
     expect(codes(out, clash.id)).toContain("double_booked");
   });
+
+  // Svit, 2026-09-30: Ken Hicks 9:00, crew of two, duration_minutes 480. On
+  // screen that runs 9:00–1:00 because the org divides crew hours. The
+  // warning measured 9:00–5:00 and called the 1:15 job a double-booking, on
+  // that job and on every other team job in the week.
+  it("a divided team job ends at duration/crew, not duration", () => {
+    const start = new Date(NOW + 48 * H).toISOString();
+    const divided = bk({
+      client_name: "Ken Hicks",
+      scheduled_at: start,
+      duration_minutes: 480, // 8h of labour across two people = 4h on site
+      assigned_to: "maria",
+      additional_assignee_ids: ["ana"],
+      divides_hours: true,
+    });
+    // 4h15m later — 15 minutes after the divided job actually ends.
+    const after = bk({
+      client_name: "Philip and Helena Lane",
+      scheduled_at: new Date(NOW + 48 * H + 4.25 * H).toISOString(),
+      duration_minutes: 360,
+      assigned_to: "maria",
+      additional_assignee_ids: ["ana"],
+      divides_hours: true,
+    });
+    const out = computeBookingWarnings([divided, after], NOW);
+    expect(codes(out, divided.id)).not.toContain("double_booked");
+    expect(codes(out, after.id)).not.toContain("double_booked");
+  });
+
+  it("still flags a real clash inside the divided window", () => {
+    const start = new Date(NOW + 48 * H).toISOString();
+    const divided = bk({
+      client_name: "Ken Hicks",
+      scheduled_at: start,
+      duration_minutes: 480,
+      assigned_to: "maria",
+      additional_assignee_ids: ["ana"],
+      divides_hours: true,
+    });
+    // 2h in — inside the 4h the crew is genuinely on site.
+    const clash = bk({
+      client_name: "Corner Cafe",
+      scheduled_at: new Date(NOW + 48 * H + 2 * H).toISOString(),
+      duration_minutes: 60,
+      assigned_to: "ana",
+    });
+    const out = computeBookingWarnings([divided, clash], NOW);
+    expect(codes(out, divided.id)).toContain("double_booked");
+    expect(codes(out, clash.id)).toContain("double_booked");
+  });
+
+  it("a split segment still wins over division when both could apply", () => {
+    const start = new Date(NOW + 48 * H).toISOString();
+    // 240 split 120/120 and 240 divided across two are the same durations
+    // but different START times, so the segment has to take precedence.
+    const split = bk({
+      client_name: "Long House",
+      scheduled_at: start,
+      duration_minutes: 240,
+      assigned_to: "maria",
+      additional_assignee_ids: ["ana"],
+      divides_hours: true,
+      assignee_segments: {
+        maria: { start_offset_minutes: 0, duration_minutes: 120 },
+        ana: { start_offset_minutes: 120, duration_minutes: 120 },
+      },
+    });
+    // 2:30 into the job — inside Ana's second half, but AFTER the 2h that
+    // division alone would have given her starting at 0.
+    const clash = bk({
+      client_name: "Corner Cafe",
+      scheduled_at: new Date(NOW + 48 * H + 2.5 * H).toISOString(),
+      duration_minutes: 30,
+      assigned_to: "ana",
+    });
+    const out = computeBookingWarnings([split, clash], NOW);
+    expect(codes(out, clash.id)).toContain("double_booked");
+  });
+
+  it("without the flag, the old whole-booking measure is unchanged", () => {
+    const start = new Date(NOW + 48 * H).toISOString();
+    const team = bk({
+      scheduled_at: start,
+      duration_minutes: 480,
+      assigned_to: "maria",
+      additional_assignee_ids: ["ana"],
+      // divides_hours omitted — callers that don't load it keep old behaviour
+    });
+    const after = bk({
+      client_name: "Beta",
+      scheduled_at: new Date(NOW + 48 * H + 4.25 * H).toISOString(),
+      duration_minutes: 60,
+      assigned_to: "maria",
+    });
+    const out = computeBookingWarnings([team, after], NOW);
+    expect(codes(out, team.id)).toContain("double_booked");
+  });
 });
 
 describe("overlaps that are not adjacent in time order", () => {
