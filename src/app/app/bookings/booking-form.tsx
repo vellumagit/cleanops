@@ -610,7 +610,16 @@ export function BookingForm({
       (seriesEndsIndefinite ? "" : seriesEndsAtValue) !==
         (defaults?.series_ends_at ?? "") ||
       seriesCustomDays.join(",") !==
-        (defaults?.series_custom_days ?? []).join(","));
+        (defaults?.series_custom_days ?? []).join(",") ||
+      // The nth/day-of-week pair was editable and never compared, so moving a
+      // monthly series from the 1st Saturday to the 2nd — which rewrites every
+      // visit the client has — counted as no schedule change at all. The
+      // question was skipped and notify_client stayed at its "1" default, so
+      // the client got messaged with nobody asked. Both fields only render
+      // for monthly_nth, and both initialise from the same fallback they are
+      // compared against, so a non-monthly series can't trip this.
+      seriesMonthlyNth !== String(defaults?.series_monthly_nth ?? "2") ||
+      seriesMonthlyDow !== String(defaults?.series_monthly_dow ?? "2"));
   // Pending bookings never notify (the client hasn't heard about the job
   // at all yet), matching the server's own gate.
   const wouldNotifyClient =
