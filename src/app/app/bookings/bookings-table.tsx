@@ -99,6 +99,9 @@ export type BookingRow = {
    *  1 = not a split; 2+ renders a "Split · N" chip. */
   segment_count: number;
   series_id: string | null;
+  /** Human-readable recurrence rule, e.g. "Every 4 weeks at 3:00 PM" or
+   *  "2nd Saturday of every month at 3:00 PM". Null when not recurring. */
+  series_label: string | null;
   address: string | null;
   notes: string | null;
   client_notes: string | null;
@@ -658,9 +661,14 @@ function TableView({
                     {r.series_id && (
                       <span
                         className="inline-flex items-center gap-0.5 rounded-full bg-blue-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-blue-600 dark:text-blue-400"
-                        title="Recurring booking"
+                        title={r.series_label ?? "Recurring booking"}
                       >
                         <Repeat className="h-2.5 w-2.5" />
+                        {r.series_label && (
+                          <span className="hidden whitespace-nowrap xl:inline">
+                            {r.series_label.replace(/ at .*$/, "")}
+                          </span>
+                        )}
                       </span>
                     )}
                     <WarningChips warnings={warnings.get(r.id) ?? []} />
@@ -840,7 +848,17 @@ function CardsView({
                       </span>
                       <WarningChips warnings={warnings.get(r.id) ?? []} />
                       {r.series_id && (
-                        <Repeat className="h-3 w-3 shrink-0 text-blue-500" />
+                        <span
+                          className="inline-flex shrink-0 items-center gap-1 text-[11px] text-blue-600 dark:text-blue-400"
+                          title={r.series_label ?? "Recurring booking"}
+                        >
+                          <Repeat className="h-3 w-3 shrink-0" />
+                          {r.series_label && (
+                            <span className="whitespace-nowrap">
+                              {r.series_label.replace(/ at .*$/, "")}
+                            </span>
+                          )}
+                        </span>
                       )}
                       {r.segment_count >= 2 && (
                         <span

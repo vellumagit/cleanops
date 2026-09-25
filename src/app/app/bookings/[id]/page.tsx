@@ -31,6 +31,7 @@ import { getFlaggedCrewIds } from "@/lib/crew-accommodations";
 import { resolveFreelancerCoverageNames } from "@/lib/booking-coverage";
 import { GenerateInvoiceButton } from "./generate-invoice-button";
 import { MakeRecurringButton } from "./make-recurring-button";
+import { describeRecurrence } from "@/lib/recurrence";
 import { JobPhotos } from "@/app/field/jobs/[id]/job-photos";
 import {
   BookingChecklist,
@@ -209,6 +210,40 @@ export default async function BookingDetailPage({
     (await resolveFreelancerCoverageNames([booking.id])).get(booking.id) ?? [];
 
   const bookingStatus = booking.status as BookingStatus;
+
+  // What rule does this booking's series actually claim? The page showed
+  // nothing at all, so telling every-4-weeks from monthly-on-a-Saturday meant
+  // opening the edit form. Note this describes the SERIES ROW, which is not
+  // guaranteed to match the dates that exist — on Amanda DeGroot the row says
+  // every 4 weeks while her bookings run 2nd-Saturday monthly. Showing the
+  // rule is precisely how you catch that.
+  const bookingSeriesId =
+    (booking as { series_id?: string | null }).series_id ?? null;
+  let seriesLabel: string | null = null;
+  if (bookingSeriesId) {
+    const { data: seriesRow } = (await supabase
+      .from("booking_series" as never)
+      .select("pattern, custom_days, start_time, monthly_nth, monthly_dow")
+      .eq("id" as never, bookingSeriesId as never)
+      .maybeSingle()) as unknown as {
+      data: {
+        pattern: string;
+        custom_days: number[] | null;
+        start_time: string;
+        monthly_nth: number | null;
+        monthly_dow: number | null;
+      } | null;
+    };
+    if (seriesRow) {
+      seriesLabel = describeRecurrence(
+        seriesRow.pattern as Parameters<typeof describeRecurrence>[0],
+        seriesRow.custom_days,
+        seriesRow.start_time,
+        seriesRow.monthly_nth,
+        seriesRow.monthly_dow,
+      );
+    }
+  }
 
   // Does this completed booking already have an invoice? If not AND
   // the status is completed, surface a "Generate invoice" escape
@@ -503,6 +538,14 @@ export default async function BookingDetailPage({
             </div>
 
             <dl className="mt-5 grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
+              {seriesLabel && (
+                <div>
+                  <dt className="text-xs text-muted-foreground">Repeats</dt>
+                  <dd className="mt-0.5 font-medium text-foreground">
+                    {seriesLabel}
+                  </dd>
+                </div>
+              )}
               <div>
                 <dt className="text-xs text-muted-foreground">Scheduled</dt>
                 <dd className="mt-0.5 font-medium text-foreground">

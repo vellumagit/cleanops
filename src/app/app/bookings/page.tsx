@@ -8,6 +8,7 @@ import { ArchivedToggle } from "@/components/archived-toggle";
 import { memberDisplayName } from "@/lib/member-display";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { orgDividesCrewHours } from "@/lib/crew-hours";
+import { describeRecurrence } from "@/lib/recurrence";
 import { getFlaggedCrewIds } from "@/lib/crew-accommodations";
 import { resolveFreelancerCoverageNames } from "@/lib/booking-coverage";
 import { BookingsTable, type BookingRow } from "./bookings-table";
@@ -132,6 +133,44 @@ export default async function BookingsPage({
   // current selection pre-filled. Single batch query keyed on the
   // bookings.id list keeps this cheap (one round trip, not N).
   const bookingIds = (data ?? []).map((b) => b.id);
+
+  // The repeat icon said "Recurring booking" and nothing else, so telling
+  // every-4-weeks from monthly-on-a-Saturday meant opening the edit form.
+  // One batch query for the series on this page turns the badge into the
+  // actual rule.
+  const seriesIds = [
+    ...new Set((data ?? []).map((b) => b.series_id).filter(Boolean)),
+  ] as string[];
+  const { data: seriesRows } = seriesIds.length
+    ? ((await supabase
+        .from("booking_series" as never)
+        .select(
+          "id, pattern, custom_days, start_time, monthly_nth, monthly_dow",
+        )
+        .in("id" as never, seriesIds as never)) as unknown as {
+        data: Array<{
+          id: string;
+          pattern: string;
+          custom_days: number[] | null;
+          start_time: string;
+          monthly_nth: number | null;
+          monthly_dow: number | null;
+        }> | null;
+      })
+    : { data: [] };
+  const seriesLabelById = new Map<string, string>();
+  for (const s of seriesRows ?? []) {
+    seriesLabelById.set(
+      s.id,
+      describeRecurrence(
+        s.pattern as Parameters<typeof describeRecurrence>[0],
+        s.custom_days,
+        s.start_time,
+        s.monthly_nth,
+        s.monthly_dow,
+      ),
+    );
+  }
   const { data: assigneesData } = bookingIds.length
     ? ((await supabase
         .from("booking_assignees" as never)
@@ -211,6 +250,12 @@ export default async function BookingsPage({
         : orgDividesHours,
     segment_count: segmentCountByBooking.get(b.id) ?? 0,
     series_id: b.series_id ?? null,
+    // Describes the SERIES RULE, which is not always what the bookings
+    // actually do — Amanda DeGroot's row says every 4 weeks while her dates
+    // run 2nd-Saturday monthly. Showing the rule is how you spot that.
+    series_label: b.series_id
+      ? (seriesLabelById.get(b.series_id) ?? null)
+      : null,
     address: b.address ?? null,
     notes: b.notes ?? null,
     client_notes: b.client?.notes ?? null,
