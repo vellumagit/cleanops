@@ -1,7 +1,10 @@
 "use client";
 
+import { useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { TriangleAlert } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { useUrlState } from "@/components/use-url-state";
 import { DataTable, type DataTableColumn } from "@/components/data-table";
 import { StatusBadge, invoiceStatusTone } from "@/components/status-badge";
 import {
@@ -34,6 +37,71 @@ export type InvoiceRow = {
   delivery: { kind: "skipped" | "held" | "scheduled"; note: string } | null;
 };
 
+/**
+ * What the list is FOR, in the order you work it.
+ *
+ * 245 invoices in one undivided list is not a ledger, it's a haystack: on
+ * Svit that was 156 drafts, 45 paid and 18 void burying the 26 that actually
+ * wanted doing. The split is by what you'd do next, not by status name —
+ * "sent" and "overdue" are the same job (chase the money) and belong together.
+ *
+ * Done is deliberately one tab, not two. Paid and refunded are both "no longer
+ * owed"; separating them would put 45 rows in one bin and a handful in another
+ * for a distinction nobody navigates by.
+ */
+const INVOICE_TABS = [
+  { key: "to_send", label: "To send" },
+  { key: "awaiting", label: "Awaiting payment" },
+  { key: "paid", label: "Paid" },
+  { key: "void", label: "Void" },
+  { key: "all", label: "All" },
+] as const;
+
+type InvoiceTab = (typeof INVOICE_TABS)[number]["key"];
+
+function tabFor(status: InvoiceRow["status"]): Exclude<InvoiceTab, "all"> {
+  switch (status) {
+    case "draft":
+      return "to_send";
+    case "sent":
+    case "partially_paid":
+    case "overdue":
+      return "awaiting";
+    case "paid":
+    case "refunded":
+      return "paid";
+    case "void":
+      return "void";
+  }
+}
+
+/**
+ * An empty tab means different things. Nothing awaiting payment is the best
+ * news on the page; the generic "No invoices yet" read like a fault.
+ */
+const EMPTY_BY_TAB: Record<
+  InvoiceTab,
+  { title: string; description?: string }
+> = {
+  to_send: {
+    title: "Nothing waiting to be sent",
+    description: "Drafts from completed bookings land here.",
+  },
+  awaiting: {
+    title: "Nothing outstanding",
+    description: "Every invoice you've sent has been paid.",
+  },
+  paid: {
+    title: "No paid invoices yet",
+    description: "Invoices move here once they're settled.",
+  },
+  void: { title: "No voided invoices" },
+  all: {
+    title: "No invoices yet",
+    description: "Invoices generated from completed bookings will show here.",
+  },
+};
+
 /** One date, three spellings — the display form ("Jul 6, 2026"), the long
  *  month ("July 6, 2026"), and ISO ("2026-07-06") — so a date typed any of
  *  the common ways matches. Rendered in the org timezone like the cell. */
@@ -63,6 +131,28 @@ export function InvoicesTable({
   tz: string;
 }) {
   const router = useRouter();
+  // Opens on the money that's owed, not on the whole ledger. Overdue and sent
+  // are what a morning actually starts with; drafts are a queue you work when
+  // you choose to, and paid is a record you consult rather than read.
+  const [tab, setTab] = useUrlState<InvoiceTab>("tab", "awaiting");
+
+  const tabCounts = useMemo(() => {
+    const counts: Record<InvoiceTab, number> = {
+      to_send: 0,
+      awaiting: 0,
+      paid: 0,
+      void: 0,
+      all: rows.length,
+    };
+    for (const r of rows) counts[tabFor(r.status)]++;
+    return counts;
+  }, [rows]);
+
+  const visibleRows = useMemo(
+    () => (tab === "all" ? rows : rows.filter((r) => tabFor(r.status) === tab)),
+    [rows, tab],
+  );
+
   const columns: DataTableColumn<InvoiceRow>[] = [
     {
       key: "number",
@@ -161,20 +251,48 @@ export function InvoicesTable({
     },
   ];
 
+  const empty = EMPTY_BY_TAB[tab];
+
   return (
-    <DataTable
-      data={rows}
-      columns={columns}
-      getRowId={(r) => r.id}
-      searchPlaceholder="Search client, invoice #, date, status, amount…"
-      onRowClick={
-        canEdit ? (r) => router.push(`/app/invoices/${r.id}`) : undefined
-      }
-      emptyState={{
-        title: "No invoices yet",
-        description:
-          "Invoices generated from completed bookings will show here.",
-      }}
-    />
+    <div className="space-y-3">
+      <div className="flex items-center gap-1 overflow-x-auto rounded-lg bg-muted p-1 w-fit">
+        {INVOICE_TABS.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => setTab(t.key)}
+            className={cn(
+              "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium whitespace-nowrap transition-colors",
+              tab === t.key
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {t.label}
+            <span
+              className={cn(
+                "inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-semibold",
+                tab === t.key
+                  ? "bg-foreground text-background"
+                  : "bg-muted-foreground/20 text-muted-foreground",
+              )}
+            >
+              {tabCounts[t.key]}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      <DataTable
+        data={visibleRows}
+        columns={columns}
+        getRowId={(r) => r.id}
+        searchPlaceholder="Search client, invoice #, date, status, amount…"
+        onRowClick={
+          canEdit ? (r) => router.push(`/app/invoices/${r.id}`) : undefined
+        }
+        emptyState={empty}
+      />
+    </div>
   );
 }
