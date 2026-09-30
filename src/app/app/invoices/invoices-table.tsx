@@ -131,10 +131,13 @@ export function InvoicesTable({
   tz: string;
 }) {
   const router = useRouter();
-  // Opens on the money that's owed, not on the whole ledger. Overdue and sent
-  // are what a morning actually starts with; drafts are a queue you work when
-  // you choose to, and paid is a record you consult rather than read.
-  const [tab, setTab] = useUrlState<InvoiceTab>("tab", "awaiting");
+  // Opens on "To send", because that is where the work is: 156 of Svit's 245
+  // invoices are drafts. This defaulted to "Awaiting payment" for three days
+  // on the theory that chasing money is the morning job — it isn't, and every
+  // client Svitlana opened (Emma, Kyrstie, Audry, Jody) has drafts and nothing
+  // awaiting, so each one looked like it had no invoices at all. A default
+  // that hides the majority of the list is a default that lies.
+  const [tab, setTab] = useUrlState<InvoiceTab>("tab", "to_send");
 
   const tabCounts = useMemo(() => {
     const counts: Record<InvoiceTab, number> = {
@@ -251,7 +254,22 @@ export function InvoicesTable({
     },
   ];
 
-  const empty = EMPTY_BY_TAB[tab];
+  // An empty tab is ambiguous: nothing exists, or nothing is HERE? Say which,
+  // and name where the rest are. Not knowing that is what turned a tab default
+  // into four separate "this client has no invoices" reports.
+  const elsewhere = INVOICE_TABS.filter(
+    (t) => t.key !== tab && t.key !== "all" && tabCounts[t.key] > 0,
+  );
+  const base = EMPTY_BY_TAB[tab];
+  const empty =
+    visibleRows.length === 0 && elsewhere.length > 0
+      ? {
+          title: base.title,
+          description: `${elsewhere
+            .map((t) => `${tabCounts[t.key]} in ${t.label}`)
+            .join(", ")}.`,
+        }
+      : base;
 
   return (
     <div className="space-y-3">
