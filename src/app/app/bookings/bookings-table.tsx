@@ -132,6 +132,29 @@ const STATUS_OPTIONS = [
   { key: "cancelled", label: "Cancelled" },
 ] as const;
 
+/**
+ * Soonest-first for anything that hasn't happened, most-recent-first for
+ * anything that has.
+ *
+ * The server hands these over scheduled_at DESC, which is right for history
+ * and backwards for everything else: searching a client opened on their
+ * furthest-out visit — October 2027 — and walked back toward today, so the
+ * next actual cleaning was buried pages down. Svitlana asked for "the current
+ * one first, then moving forward", which is this.
+ *
+ * Future ascending THEN past descending, rather than one direction: a search
+ * bypasses the time tab deliberately, so the result spans both, and today
+ * belongs at the top with history below it rather than the other way round.
+ */
+function compareForReading(a: BookingRow, b: BookingRow, dayStart: number) {
+  const ta = new Date(a.scheduled_at).getTime();
+  const tb = new Date(b.scheduled_at).getTime();
+  const aPast = ta < dayStart;
+  const bPast = tb < dayStart;
+  if (aPast !== bPast) return aPast ? 1 : -1; // upcoming block first
+  return aPast ? tb - ta : ta - tb;
+}
+
 function matchesTimeTab(row: BookingRow, tab: TimeTab): boolean {
   if (tab === "all") return true;
   const d = new Date(row.scheduled_at);
@@ -284,7 +307,15 @@ export function BookingsTable({
       result = result.filter((r) => r.client_id === clientFilter);
     }
 
-    return result;
+    // Sorted here rather than in the query: a search spans past and future,
+    // so no single SQL direction is right for both.
+    const now = new Date();
+    const dayStart = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
+    ).getTime();
+    return [...result].sort((a, b) => compareForReading(a, b, dayStart));
   }, [
     rows,
     tab,
