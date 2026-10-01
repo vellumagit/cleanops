@@ -434,7 +434,12 @@ export default async function BookingDetailPage({
               existingInvoice &&
               can(membership, "invoicing") && (
                 <Link
-                  href={`/app/invoices/${existingInvoice.id}`}
+                  // Back from the invoice returns to this booking, not to
+                  // the whole ledger. This is the route Svitlana takes from
+                  // scheduling: open the job, open its draft, come back.
+                  href={`/app/invoices/${existingInvoice.id}?_return=${encodeURIComponent(
+                    `/app/bookings/${booking.id}`,
+                  )}`}
                   className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/40 px-3 py-1.5 text-xs font-medium hover:bg-muted"
                 >
                   <Receipt className="h-3.5 w-3.5" />

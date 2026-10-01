@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useReturnTo } from "@/components/return-to-field";
 import { useActionState } from "react";
 import { Receipt } from "lucide-react";
 import { SubmitButton } from "@/components/submit-button";
@@ -28,6 +29,7 @@ export function GenerateInvoiceButton({
   /** The booking's price — a zero here means the draft will open at $0. */
   totalCents: number;
 }) {
+  const withReturn = useReturnTo();
   const [state, action] = useActionState<GenerateInvoiceState, FormData>(
     generateInvoiceFromBookingAction,
     EMPTY,
@@ -54,7 +56,8 @@ export function GenerateInvoiceButton({
         <div className="rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-400">
           Draft invoice {state.invoiceNumber ?? ""} created.{" "}
           <Link
-            href={`/app/invoices/${state.invoiceId}`}
+            // Just generated from a booking — Back belongs on that booking.
+            href={withReturn(`/app/invoices/${state.invoiceId}`)}
             className={buttonVariants({ variant: "link", size: "sm" })}
           >
             Open invoice →

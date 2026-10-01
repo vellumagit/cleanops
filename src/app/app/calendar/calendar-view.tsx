@@ -1205,7 +1205,7 @@ function EventDetail({
 
         {event.type === "invoice" && isLinkable && (
           <Link
-            href={`/app/invoices/${event.id}`}
+            href={withReturn(`/app/invoices/${event.id}`)}
             className="inline-flex items-center gap-1.5 rounded-md bg-foreground px-2.5 py-1.5 text-xs font-medium text-background transition-opacity hover:opacity-90"
           >
             <Receipt className="h-3.5 w-3.5" />

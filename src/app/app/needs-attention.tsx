@@ -239,7 +239,9 @@ export async function NeedsAttention({ tz }: { tz: string }) {
                 {draftRows.slice(0, MAX_SHOWN).map((d) => (
                   <li key={d.id}>
                     <Link
-                      href={`/app/invoices/${d.id}`}
+                      href={`/app/invoices/${d.id}?_return=${encodeURIComponent(
+                        "/app",
+                      )}`}
                       className="text-foreground underline-offset-2 hover:underline"
                     >
                       {d.number ?? "Draft"} · {d.client?.name ?? "—"}
