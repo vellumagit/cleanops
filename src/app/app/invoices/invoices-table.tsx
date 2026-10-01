@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { TriangleAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useUrlState } from "@/components/use-url-state";
+import { useReturnTo } from "@/components/return-to-field";
 import { DataTable, type DataTableColumn } from "@/components/data-table";
 import { StatusBadge, invoiceStatusTone } from "@/components/status-badge";
 import {
@@ -131,6 +132,9 @@ export function InvoicesTable({
   tz: string;
 }) {
   const router = useRouter();
+  // Rows carry the list you were looking at — tab, search, client filter — so
+  // Back from an invoice returns to that view rather than a bare list.
+  const withReturn = useReturnTo();
   // Opens on "To send", because that is where the work is: 156 of Svit's 245
   // invoices are drafts. This defaulted to "Awaiting payment" for three days
   // on the theory that chasing money is the morning job — it isn't, and every
@@ -307,7 +311,9 @@ export function InvoicesTable({
         getRowId={(r) => r.id}
         searchPlaceholder="Search client, invoice #, date, status, amount…"
         onRowClick={
-          canEdit ? (r) => router.push(`/app/invoices/${r.id}`) : undefined
+          canEdit
+            ? (r) => router.push(withReturn(`/app/invoices/${r.id}`))
+            : undefined
         }
         emptyState={empty}
       />

@@ -771,7 +771,11 @@ export default async function ClientDetailPage({
             {invoices.map((inv) => (
               <Link
                 key={inv.id}
-                href={`/app/invoices/${inv.id}`}
+                // Carry the origin so Back returns to this client rather than
+                // the whole ledger.
+                href={`/app/invoices/${inv.id}?_return=${encodeURIComponent(
+                  `/app/clients/${id}`,
+                )}`}
                 className="flex items-start justify-between gap-3 rounded-md px-2 py-2 transition-colors hover:bg-muted/50"
               >
                 <div className="min-w-0">

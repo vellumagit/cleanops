@@ -35,6 +35,7 @@ import {
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
 import { getOrgTimezone } from "@/lib/org-timezone";
+import { safeReturnPath } from "@/lib/return-to";
 import { HoursCheckCard } from "./hours-check-card";
 import {
   StatusBadge,
@@ -80,9 +81,16 @@ export default async function InvoiceDetailPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams?: Promise<{ error?: string }>;
+  searchParams?: Promise<{ error?: string; _return?: string }>;
 }) {
-  const errorFlag = (await searchParams)?.error;
+  const sp = await searchParams;
+  const errorFlag = sp?.error;
+  // Where Back goes. Working a client's invoices meant opening one, paying it,
+  // and being dropped on every invoice in the business — then filtering your
+  // way back to the person you were in the middle of. safeReturnPath refuses
+  // anything that isn't an internal path, so the param can't be used to bounce
+  // someone off-site.
+  const backHref = safeReturnPath(sp?._return) ?? "/app/invoices";
   const membership = await requireMembership(["owner", "admin", "manager"]);
   requireCapability(membership, "invoicing");
   const tz = await getOrgTimezone(membership.organization_id);
@@ -269,7 +277,7 @@ export default async function InvoiceDetailPage({
       actions={
         <div className="flex items-center gap-2">
           <Link
-            href="/app/invoices"
+            href={backHref}
             className={buttonVariants({ variant: "outline", size: "sm" })}
           >
             <ArrowLeft className="h-4 w-4" />
