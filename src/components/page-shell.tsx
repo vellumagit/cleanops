@@ -32,7 +32,18 @@ export function PageShell({
           )}
         </div>
         {actions && (
-          <div className="flex shrink-0 items-center gap-2">{actions}</div>
+          // shrink-0 alone let the actions slot claim its full max-content
+          // width and refuse to give any back. A booking with no price puts a
+          // whole sentence of hint text in here, so on a window under ~900px
+          // the title column was starved to nothing: "Standard clean" broke
+          // mid-word over the hint and the date wrapped one word per line.
+          // Svitlana photographed it on two different bookings.
+          //
+          // Capped instead, so the heading always keeps its share, and allowed
+          // to wrap so a long actions block stacks rather than pushes.
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 sm:max-w-[55%]">
+            {actions}
+          </div>
         )}
       </div>
       {children}

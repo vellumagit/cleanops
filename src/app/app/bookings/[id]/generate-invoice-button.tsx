@@ -36,7 +36,9 @@ export function GenerateInvoiceButton({
   );
 
   return (
-    <div className="flex flex-col gap-2">
+    // Bounded: this sits in the page header's actions slot, and an unbounded
+    // paragraph there is what collapsed the title.
+    <div className="flex max-w-[17rem] flex-col items-end gap-2">
       <form action={action}>
         <input type="hidden" name="booking_id" value={bookingId} />
         <SubmitButton variant="outline" size="sm" pendingLabel="Generating…">
@@ -45,7 +47,7 @@ export function GenerateInvoiceButton({
         </SubmitButton>
       </form>
       {totalCents === 0 && !state.ok && (
-        <p className="text-[11px] text-amber-700 dark:text-amber-400">
+        <p className="text-right text-[11px] text-amber-700 dark:text-amber-400">
           This job has no price, so the invoice will start at $0. Set the
           price on the booking first (Edit), or fill in the amount on the
           draft after generating.
