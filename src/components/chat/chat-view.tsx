@@ -341,11 +341,17 @@ export function ChatView({
   return (
     <div
       className={cn(
-        "flex h-[calc(100dvh-12rem)] w-full flex-col",
-        // The card chrome is desktop dressing: on a phone the panes should run
-        // edge to edge like the field app, not sit inside a rounded border.
+        // overflow-hidden at EVERY width. It was behind md: with the card
+        // chrome, which read like decoration and is not — it is what makes a
+        // fixed-height flex column actually contain its children. Without it
+        // on a phone the message list grew to its full content height and
+        // pushed the composer 579px below the fold: Veronika's cleaner could
+        // read the thread and had no box to reply in.
+        "flex h-[calc(100dvh-12rem)] w-full flex-col overflow-hidden",
+        // The border, rounding and background ARE desktop dressing: on a phone
+        // the panes run edge to edge like the field app.
         responsive &&
-          "md:flex-row md:overflow-hidden md:rounded-lg md:border md:border-border md:bg-card",
+          "md:flex-row md:rounded-lg md:border md:border-border md:bg-card",
       )}
     >
       {showThreadList && (
@@ -487,7 +493,10 @@ export function ChatView({
       {showThreadPane && (
         <section
           className={cn(
-            "flex min-w-0 flex-1 flex-col bg-background/30",
+            // min-h-0 beside min-w-0: a flex child defaults to min-height
+            // auto and refuses to shrink below its content, so the scroller
+            // inside never got a height to scroll within.
+            "flex min-h-0 min-w-0 flex-1 flex-col bg-background/30",
             // Phone + nothing selected: the list owns the screen.
             responsive && !activeThread && "hidden md:flex",
           )}
@@ -525,7 +534,7 @@ export function ChatView({
 
               <div
                 ref={scrollerRef}
-                className="flex-1 space-y-1 overflow-y-auto px-3 py-4"
+                className="min-h-0 flex-1 space-y-1 overflow-y-auto px-3 py-4"
               >
                 {messages.length === 0 ? (
                   <div className="flex h-full flex-col items-center justify-center gap-1 text-center">
