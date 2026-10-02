@@ -25,6 +25,12 @@ import { FormError, FormField, FormSelect } from "@/components/form-field";
 import { Tip } from "@/components/tip";
 import { SubmitButton } from "@/components/submit-button";
 import { DurationInput } from "@/components/duration-input";
+import {
+  formatSegmentWindow,
+  resolveSegmentWindows,
+  segmentsOverlap,
+  segmentsSpanMinutes,
+} from "@/lib/booking-segments";
 import { DayGlanceField } from "./day-glance-field";
 import { ReturnToField } from "@/components/return-to-field";
 import { AddressAutocomplete } from "@/components/address-autocomplete";
@@ -81,7 +87,16 @@ export type BookingFormDefaults = {
   series_monthly_nth?: number | null;
   series_monthly_dow?: number | null;
   /** Pre-existing split segments when editing a booking that has splits. */
-  splits?: SplitSegment[];
+  /** Segments as stored. `start_offset_minutes` is absent on anything saved
+   *  before 2026-10-02; resolveSegmentWindows fills those in end-to-end on
+   *  load, so the edit form opens showing the windows the booking already
+   *  has. Deliberately looser than the form's own SplitSegment. */
+  splits?: Array<{
+    id?: string;
+    assigned_to: string;
+    duration_minutes: number;
+    start_offset_minutes?: number;
+  }>;
   /** Show each cleaner their share (duration ÷ crew) in the field app. */
   divide_hours_evenly?: boolean;
   is_free?: boolean;
@@ -113,6 +128,10 @@ type SplitSegment = {
   id: string;
   assigned_to: string;
   duration_minutes: number;
+  /** Minutes after the booking's own start. Explicit since 2026-10-02 so
+   *  crew windows can overlap; older rows arrive without one and are
+   *  resolved end-to-end on load. See lib/booking-segments.ts. */
+  start_offset_minutes: number;
 };
 
 /**
@@ -131,6 +150,7 @@ function formatOffsetLabel(totalMinutes: number): string {
   if (h > 0) return `${h}h`;
   return `${m}m`;
 }
+
 
 /** Order categories the same way they were grouped in the old hardcoded
  *  dropdown (Cleaning → Appointments → Other) so the move to a dynamic
@@ -356,7 +376,17 @@ export function BookingForm({
   const [splitEnabled, setSplitEnabled] = useState(
     Boolean(defaults?.splits?.length),
   );
-  const [splits, setSplits] = useState<SplitSegment[]>(defaults?.splits ?? []);
+  // Resolve incoming segments through the same helper the server action uses,
+  // so a booking saved by the OLD end-to-end editor opens showing the exact
+  // windows it already has rather than every segment claiming to start at 0.
+  const [splits, setSplits] = useState<SplitSegment[]>(() =>
+    resolveSegmentWindows(defaults?.splits ?? []).map((s, i) => ({
+      id: defaults?.splits?.[i]?.id ?? crypto.randomUUID(),
+      assigned_to: s.assigned_to ?? "",
+      duration_minutes: s.duration_minutes,
+      start_offset_minutes: s.start_offset_minutes,
+    })),
+  );
   const [divideHours, setDivideHours] = useState<boolean>(
     defaults?.divide_hours_evenly ?? false,
   );
@@ -368,6 +398,14 @@ export function BookingForm({
         id: crypto.randomUUID(),
         assigned_to: "",
         duration_minutes: 120,
+        // Default a NEW person to starting where the last one ends. That is
+        // the old hand-off behaviour, which stays the common case; overlapping
+        // is a deliberate edit, not something you get by accident.
+        start_offset_minutes: prev.length
+          ? Math.max(
+              ...prev.map((s) => s.start_offset_minutes + s.duration_minutes),
+            )
+          : 0,
       },
     ]);
   }
@@ -1261,9 +1299,19 @@ export function BookingForm({
           </label>
         ))}
 
-      {/* ── Split shift ────────────────────────────────────────────────────
-          When enabled, the booking is divided into time segments, each
-          assigned to a different employee with their own rate.
+      {/* ── Per-cleaner times ──────────────────────────────────────────────
+          Each person on the booking gets their own start and length. They may
+          overlap (a crew working together for part of the day), run end-to-end
+          (a hand-off) or leave a gap (someone returns later).
+
+          This replaced a "Split shift (hand-off)" editor that laid segments
+          strictly end-to-end and told owners NOT to use it for people working
+          at the same time. That left the overlapping case with nowhere to go,
+          so a three-person 16-hour job on 2026-10-02 was saved with no segment
+          data at all — which disabled the crew guard in field/jobs and would
+          have let the first Complete end the job for everyone. Two concepts
+          over one data shape; now there is one.
+
           Segments are serialised as a JSON hidden field and saved to
           bookings.splits in the server action.
       ────────────────────────────────────────────────────────────────── */}
@@ -1276,16 +1324,21 @@ export function BookingForm({
               onChange={(e) => {
                 setSplitEnabled(e.target.checked);
                 if (e.target.checked && splits.length === 0) {
+                  const half = Math.round(defaultMinutes / 2) || 120;
                   setSplits([
                     {
                       id: crypto.randomUUID(),
                       assigned_to: "",
-                      duration_minutes: Math.round(defaultMinutes / 2) || 120,
+                      duration_minutes: half,
+                      start_offset_minutes: 0,
                     },
                     {
                       id: crypto.randomUUID(),
                       assigned_to: "",
-                      duration_minutes: Math.round(defaultMinutes / 2) || 120,
+                      duration_minutes: half,
+                      // End-to-end by default: a hand-off is still the
+                      // commonest shape, and overlap is one edit away.
+                      start_offset_minutes: half,
                     },
                   ]);
                 }
@@ -1293,13 +1346,16 @@ export function BookingForm({
               className="h-4 w-4 rounded border-input"
             />
             <SplitSquareVertical className="h-4 w-4 text-muted-foreground" />
-            <span className="text-sm font-medium">Split shift (hand-off)</span>
+            <span className="text-sm font-medium">
+              Different times for each cleaner
+            </span>
           </label>
           <p className="-mt-1 pl-7 text-xs text-muted-foreground">
-            One cleaner works the first part, another takes over partway through
-            — they do <strong>not</strong> overlap. For two cleaners working the{" "}
-            <strong>same hours together</strong>, don&rsquo;t split: just assign
-            them both as crew.
+            Give each person their own start and length on this one job. They
+            can <strong>overlap</strong> (working together for part of it),{" "}
+            <strong>hand off</strong> (one finishes as the next begins), or{" "}
+            <strong>leave a gap</strong>. Leave this off when everyone works the
+            same hours — just assign them all as crew.
           </p>
 
           {splitEnabled && (
@@ -1312,10 +1368,11 @@ export function BookingForm({
               />
 
               {splits.map((seg, idx) => {
-                // Compute start time for display
-                const startOffset = splits
-                  .slice(0, idx)
-                  .reduce((sum, s) => sum + s.duration_minutes, 0);
+                const window = formatSegmentWindow(
+                  scheduledAtLocal,
+                  seg.start_offset_minutes,
+                  seg.duration_minutes,
+                );
                 return (
                   <div
                     key={seg.id}
@@ -1323,10 +1380,16 @@ export function BookingForm({
                   >
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                        Segment {idx + 1}
-                        {startOffset > 0 && (
+                        Cleaner {idx + 1}
+                        {window && (
+                          <span className="ml-1.5 font-normal normal-case tabular-nums text-foreground">
+                            {window}
+                          </span>
+                        )}
+                        {!window && seg.start_offset_minutes > 0 && (
                           <span className="ml-1.5 font-normal normal-case">
-                            (starts at +{formatOffsetLabel(startOffset)})
+                            (starts at +
+                            {formatOffsetLabel(seg.start_offset_minutes)})
                           </span>
                         )}
                       </span>
@@ -1342,7 +1405,7 @@ export function BookingForm({
                       )}
                     </div>
 
-                    <div className="grid gap-2 sm:grid-cols-2">
+                    <div className="grid gap-2 sm:grid-cols-3">
                       <div>
                         <label className="mb-1 block text-xs text-muted-foreground">
                           Assigned to
@@ -1365,6 +1428,59 @@ export function BookingForm({
 
                       <div>
                         <label className="mb-1 block text-xs text-muted-foreground">
+                          Starts after job start
+                        </label>
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="number"
+                            min={0}
+                            step={1}
+                            aria-label={`Cleaner ${idx + 1} start hours`}
+                            value={Math.floor(seg.start_offset_minutes / 60)}
+                            onChange={(e) => {
+                              const hrs = Math.max(
+                                0,
+                                Number(e.target.value) || 0,
+                              );
+                              updateSplit(seg.id, {
+                                start_offset_minutes:
+                                  hrs * 60 + (seg.start_offset_minutes % 60),
+                              });
+                            }}
+                            className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm"
+                          />
+                          <span className="shrink-0 text-xs text-muted-foreground">
+                            hr
+                          </span>
+                          <input
+                            type="number"
+                            min={0}
+                            max={55}
+                            step={5}
+                            aria-label={`Cleaner ${idx + 1} start minutes`}
+                            value={seg.start_offset_minutes % 60}
+                            onChange={(e) => {
+                              const mins = Math.min(
+                                55,
+                                Math.max(0, Number(e.target.value) || 0),
+                              );
+                              updateSplit(seg.id, {
+                                start_offset_minutes:
+                                  Math.floor(seg.start_offset_minutes / 60) *
+                                    60 +
+                                  mins,
+                              });
+                            }}
+                            className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm"
+                          />
+                          <span className="shrink-0 text-xs text-muted-foreground">
+                            min
+                          </span>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-xs text-muted-foreground">
                           Duration
                         </label>
                         <div className="flex items-center gap-1">
@@ -1372,6 +1488,7 @@ export function BookingForm({
                             type="number"
                             min={0}
                             step={1}
+                            aria-label={`Cleaner ${idx + 1} duration hours`}
                             value={Math.floor(seg.duration_minutes / 60)}
                             onChange={(e) => {
                               const hrs = Math.max(
@@ -1432,21 +1549,39 @@ export function BookingForm({
                   cleaner's clocked time is priced at their own wage. */}
               {splits.length > 0 &&
                 (() => {
-                  const totalSplitMins = splits.reduce(
+                  const resolved = resolveSegmentWindows(splits);
+                  const labour = splits.reduce(
                     (s, seg) => s + seg.duration_minutes,
                     0,
                   );
+                  const span = segmentsSpanMinutes(resolved);
+                  const overlaps = segmentsOverlap(resolved);
                   return (
-                    <p className="text-xs text-muted-foreground">
-                      Total:{" "}
-                      <strong>
-                        {Math.floor(totalSplitMins / 60)}h
-                        {totalSplitMins % 60 > 0
-                          ? ` ${totalSplitMins % 60}m`
-                          : ""}
-                      </strong>{" "}
-                      across {splits.length} employees
-                    </p>
+                    <div className="space-y-1 text-xs text-muted-foreground">
+                      <p>
+                        Hours worked:{" "}
+                        <strong>{formatOffsetLabel(labour)}</strong> across{" "}
+                        {splits.length}{" "}
+                        {splits.length === 1 ? "cleaner" : "cleaners"}
+                      </p>
+                      {/* With overlapping windows these two numbers differ, and
+                          the span is the one that has to match the booking's own
+                          duration. Summing the labour would overstate how long
+                          the job actually runs. */}
+                      <p>
+                        Job runs: <strong>{formatOffsetLabel(span)}</strong>{" "}
+                        {overlaps
+                          ? "— some cleaners overlap"
+                          : "— no overlap between cleaners"}
+                      </p>
+                      {span > 0 && defaultMinutes > 0 && span !== defaultMinutes && (
+                        <p className="text-amber-600 dark:text-amber-400">
+                          This doesn&rsquo;t match the job&rsquo;s own duration
+                          of {formatOffsetLabel(defaultMinutes)}. Check the
+                          Duration field above.
+                        </p>
+                      )}
+                    </div>
                   );
                 })()}
             </div>

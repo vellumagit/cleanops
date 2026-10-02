@@ -18,6 +18,16 @@ export type SplitCue = {
   /** Name of the assignee this employee hands off TO (the next segment),
    *  or null if this is the last segment. */
   nextName: string | null;
+  /**
+   * True when this employee's window OVERLAPS the neighbouring one, i.e.
+   * they are on site together rather than handing over.
+   *
+   * Before 2026-10-02 segments were always laid end-to-end, so "→ then Ana"
+   * was always accurate. Windows can now overlap, and calling that a hand-off
+   * would tell the dispatcher the opposite of what is happening — the cue
+   * says "with Ana" instead.
+   */
+  concurrent: boolean;
 };
 
 /**
@@ -35,6 +45,7 @@ export function computeSplitCue(
     .map(([membershipId, s]) => ({
       membershipId,
       start_offset_minutes: s.start_offset_minutes,
+      duration_minutes: s.duration_minutes,
     }))
     .sort((a, b) => a.start_offset_minutes - b.start_offset_minutes);
 
@@ -43,12 +54,22 @@ export function computeSplitCue(
   const idx = ordered.findIndex((s) => s.membershipId === employeeId);
   if (idx < 0) return null;
 
+  const me = ordered[idx];
   const prev = ordered[idx - 1];
   const next = ordered[idx + 1];
+
+  const myEnd = me.start_offset_minutes + me.duration_minutes;
+  const concurrent =
+    (next != null && next.start_offset_minutes < myEnd) ||
+    (prev != null &&
+      me.start_offset_minutes <
+        prev.start_offset_minutes + prev.duration_minutes);
+
   return {
     index: idx + 1,
     total: ordered.length,
     prevName: prev ? (nameById.get(prev.membershipId) ?? null) : null,
     nextName: next ? (nameById.get(next.membershipId) ?? null) : null,
+    concurrent,
   };
 }

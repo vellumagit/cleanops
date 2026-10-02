@@ -765,16 +765,37 @@ function PositionedBooking({
                 <span
                   className="inline-flex max-w-full items-center gap-1 truncate rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
                   title={
-                    "Split shift — segment " +
+                    (splitCue.concurrent
+                      ? "Shared shift — cleaner "
+                      : "Split shift — segment ") +
                     splitCue.index +
                     " of " +
                     splitCue.total +
-                    (splitCue.prevName ? ` · after ${splitCue.prevName}` : "") +
-                    (splitCue.nextName ? ` · then ${splitCue.nextName}` : "")
+                    // "after"/"then" describe a hand-off. When the windows
+                    // overlap these people are on site together, and that
+                    // wording would say the opposite of what is happening.
+                    (splitCue.concurrent
+                      ? [splitCue.prevName, splitCue.nextName]
+                          .filter(Boolean)
+                          .map((n) => ` · with ${n}`)
+                          .join("")
+                      : (splitCue.prevName
+                          ? ` · after ${splitCue.prevName}`
+                          : "") +
+                        (splitCue.nextName
+                          ? ` · then ${splitCue.nextName}`
+                          : ""))
                   }
                 >
-                  Split {splitCue.index}/{splitCue.total}
-                  {splitCue.nextName ? (
+                  {splitCue.concurrent ? "Shared" : "Split"} {splitCue.index}/
+                  {splitCue.total}
+                  {splitCue.concurrent ? (
+                    (splitCue.nextName ?? splitCue.prevName) ? (
+                      <span className="truncate font-medium normal-case">
+                        with {splitCue.nextName ?? splitCue.prevName}
+                      </span>
+                    ) : null
+                  ) : splitCue.nextName ? (
                     <span className="truncate font-medium normal-case">
                       → {splitCue.nextName}
                     </span>

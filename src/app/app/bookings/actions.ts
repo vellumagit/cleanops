@@ -11,6 +11,7 @@ import {
   type WritableBookingStatus,
 } from "@/lib/booking-status";
 import { lifecycleByAssignee, withPriorLifecycle } from "@/lib/crew-sync";
+import { resolveSegmentWindows } from "@/lib/booking-segments";
 import { after } from "next/server";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
 import { can } from "@/lib/auth";
@@ -181,7 +182,13 @@ function readAdditionalAssignees(formData: FormData): string[] {
     .filter((v) => v.length > 0);
 }
 
-type SplitSegmentInput = { assigned_to: string; duration_minutes: number };
+type SplitSegmentInput = {
+  assigned_to: string;
+  duration_minutes: number;
+  /** Minutes after the booking start. Absent on segments saved before
+   *  2026-10-02, which fall back to cumulative — see lib/booking-segments.ts. */
+  start_offset_minutes?: number;
+};
 
 /**
  * Sync the booking_assignees junction table for a booking after a
@@ -280,26 +287,24 @@ async function syncBookingAssignees(
   }> = [];
 
   if (safeSplits.length > 0) {
-    // Split mode: derive booking_assignees from the segments array.
-    // Offsets are computed cumulatively from segment durations.
-    let offset = 0;
+    // Per-cleaner windows: derive booking_assignees from the segments array.
+    // Each segment carries its own start offset, so windows may overlap, run
+    // end-to-end, or leave a gap. Segments saved before 2026-10-02 have no
+    // offset and fall back to cumulative — see lib/booking-segments.ts.
+    const resolved = resolveSegmentWindows(safeSplits);
     const seen = new Set<string>();
-    safeSplits.forEach((seg, idx) => {
-      if (!seg.assigned_to || seen.has(seg.assigned_to)) {
-        offset += Number(seg.duration_minutes) || 0;
-        return;
-      }
+    resolved.forEach((seg) => {
+      if (!seg.assigned_to || seen.has(seg.assigned_to)) return;
       seen.add(seg.assigned_to);
       rows.push({
         organization_id: organizationId,
         booking_id: bookingId,
         membership_id: seg.assigned_to,
-        is_primary: idx === 0,
-        split_index: idx,
-        split_start_offset_minutes: offset,
-        split_duration_minutes: Number(seg.duration_minutes) || 0,
+        is_primary: seg.index === 0,
+        split_index: seg.index,
+        split_start_offset_minutes: seg.start_offset_minutes,
+        split_duration_minutes: seg.duration_minutes,
       });
-      offset += Number(seg.duration_minutes) || 0;
     });
     // Also persist any "additional crew" who aren't part of any segment.
     // Without this, owners who add helpers via the additional_assignees
@@ -461,24 +466,21 @@ async function syncBookingAssigneesBulk(
   const buildRowsForBooking = (bookingId: string): Row[] => {
     const out: Row[] = [];
     if (safeSplits.length > 0) {
-      let offset = 0;
+      // Same per-cleaner window rule as syncBookingAssignees above.
+      const resolved = resolveSegmentWindows(safeSplits);
       const seen = new Set<string>();
-      safeSplits.forEach((seg, idx) => {
-        if (!seg.assigned_to || seen.has(seg.assigned_to)) {
-          offset += Number(seg.duration_minutes) || 0;
-          return;
-        }
+      resolved.forEach((seg) => {
+        if (!seg.assigned_to || seen.has(seg.assigned_to)) return;
         seen.add(seg.assigned_to);
         out.push({
           organization_id: organizationId,
           booking_id: bookingId,
           membership_id: seg.assigned_to,
-          is_primary: idx === 0,
-          split_index: idx,
-          split_start_offset_minutes: offset,
-          split_duration_minutes: Number(seg.duration_minutes) || 0,
+          is_primary: seg.index === 0,
+          split_index: seg.index,
+          split_start_offset_minutes: seg.start_offset_minutes,
+          split_duration_minutes: seg.duration_minutes,
         });
-        offset += Number(seg.duration_minutes) || 0;
       });
       for (const id of safeAdditionalIds) {
         if (!id || seen.has(id)) continue;

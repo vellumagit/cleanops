@@ -60,6 +60,20 @@ export const SplitSegmentSchema = z.object({
     .number()
     .int()
     .positive("Segment duration must be greater than zero"),
+  /**
+   * Minutes after the booking's own start. OPTIONAL on purpose: segments
+   * written before 2026-10-02 carry no offset and were laid end-to-end, so
+   * leaving this absent preserves their meaning with no data migration
+   * (~20 live bookings). See lib/booking-segments.ts for the fallback.
+   *
+   * Uncapped upward for the same reason the durations are — a booking may
+   * legitimately run longer than 24h.
+   */
+  start_offset_minutes: z
+    .number()
+    .int()
+    .min(0, "A start offset can't be negative")
+    .optional(),
 });
 
 /**
