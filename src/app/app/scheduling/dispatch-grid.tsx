@@ -16,11 +16,12 @@ import {
   type DraggableSyntheticListeners,
 } from "@dnd-kit/core";
 import { toast } from "sonner";
-import { GripVertical, Plus } from "lucide-react";
+import { GripVertical, Plus, ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StatusBadge, bookingStatusTone } from "@/components/status-badge";
 import { humanizeEnum } from "@/lib/format";
 import { rescheduleBookingAction } from "./actions";
+import { orderCrewByWorkload } from "./crew-order";
 import type {
   AvailabilityByEmployee,
   ScheduleBooking,
@@ -293,6 +294,30 @@ export function DispatchGrid({
 
   const activeBooking = activeId ? (bookingById.get(activeId) ?? null) : null;
 
+  // Same problem as the week grid, rotated 90°: one COLUMN per active member
+  // at minmax(140px, 1fr) is ~2,240px of sideways scroll on a 16-person crew,
+  // for a day where two or three people work. Columns holding work come
+  // first; the rest hide behind one control. See crew-order.ts.
+  const crew = useMemo(
+    () => orderCrewByWorkload(employees, bookings),
+    [employees, bookings],
+  );
+
+  const [idleOpen, setIdleOpen] = useState(false);
+
+  // An idle column is a drop target — dragging a job onto someone who isn't
+  // working yet is how an unassigned shift gets filled — so a drag in flight
+  // forces them visible and they hide again on drop.
+  const idleVisible = idleOpen || activeId !== null;
+
+  // Everything below renders from this list, not `employees`: both grid
+  // templates and both column maps have to agree on the count or the header
+  // drifts out of line with the body.
+  const shownEmployees =
+    crew.partitioned && !idleVisible
+      ? crew.working
+      : [...crew.working, ...crew.idle];
+
   return (
     <WarningProvider warnings={warnings}>
       <DndContext
@@ -306,6 +331,33 @@ export function DispatchGrid({
             <div className="border-b border-border bg-violet-500/10 px-3 py-1.5 text-xs font-medium text-violet-700 dark:text-violet-300">
               {holidays[date]}
             </div>
+          )}
+          {/* Hidden-column disclosure. It sits ABOVE the scroller rather than
+              being a column of its own: a trailing "+12" column would be off
+              the right edge on exactly the narrow screens this exists to fix,
+              so the control would be hidden behind the scroll it is meant to
+              remove. */}
+          {crew.partitioned && (
+            <button
+              type="button"
+              onClick={() => setIdleOpen((o) => !o)}
+              aria-expanded={idleVisible}
+              className="flex w-full items-center gap-1.5 border-b border-border bg-muted/30 px-3 py-2 text-left text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              {idleVisible ? (
+                <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+              ) : (
+                <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+              )}
+              {idleVisible
+                ? `Hide ${crew.idle.length} with nothing scheduled`
+                : `${crew.idle.length} others — nothing scheduled today`}
+              {!idleVisible && canEdit && (
+                <span className="ml-1 font-normal text-muted-foreground/70">
+                  · drag a job here to assign one
+                </span>
+              )}
+            </button>
           )}
           {/* ONE scroller for both axes. The header used to live OUTSIDE the
               scroll container inside an overflow-hidden card: the body could
@@ -321,7 +373,7 @@ export function DispatchGrid({
               <div
                 className="sticky top-0 z-30 grid border-b border-border bg-card"
                 style={{
-                  gridTemplateColumns: `60px repeat(${Math.max(employees.length, 1)}, minmax(140px, 1fr))`,
+                  gridTemplateColumns: `60px repeat(${Math.max(shownEmployees.length, 1)}, minmax(140px, 1fr))`,
                 }}
               >
                 <div className="sticky left-0 z-40 border-r border-border bg-card px-2 py-2 text-[10px] uppercase tracking-wide text-muted-foreground">
@@ -332,7 +384,7 @@ export function DispatchGrid({
                     No active employees.
                   </div>
                 ) : (
-                  employees.map((emp, idx) => {
+                  shownEmployees.map((emp, idx) => {
                     const isOff = offEmployeeIds.has(emp.id);
                     const windows = isOff
                       ? []
@@ -386,7 +438,7 @@ export function DispatchGrid({
               <div
                 className="relative grid"
                 style={{
-                  gridTemplateColumns: `60px repeat(${Math.max(employees.length, 1)}, minmax(140px, 1fr))`,
+                  gridTemplateColumns: `60px repeat(${Math.max(shownEmployees.length, 1)}, minmax(140px, 1fr))`,
                   height: DAY_HEIGHT_PX,
                 }}
               >
@@ -413,7 +465,7 @@ export function DispatchGrid({
                 </div>
 
                 {/* Employee columns */}
-                {employees.map((emp, idx) => (
+                {shownEmployees.map((emp, idx) => (
                   <EmployeeColumn
                     key={emp.id}
                     employee={emp}
