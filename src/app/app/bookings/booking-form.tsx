@@ -1275,8 +1275,9 @@ export function BookingForm({
             <span className="font-medium text-foreground">
               Hours are divided evenly across the crew
             </span>{" "}
-            for all team jobs (Settings → Automations → Scheduling). Each
-            cleaner will see their share (job length ÷ crew) in the field app.
+            for all team jobs (Settings → Payroll → Payroll &amp; timesheet
+            automations). Each cleaner will see their share (job length ÷ crew)
+            in the field app.
           </p>
         ) : (
           <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-border bg-muted/20 p-4">

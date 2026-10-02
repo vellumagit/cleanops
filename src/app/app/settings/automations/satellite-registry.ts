@@ -11,8 +11,16 @@
  * it has to do with a client."
  */
 
+import type { AutomationKey } from "./actions";
+
 export type SatelliteAutomation = {
-  key: string;
+  /**
+   * Typed against the canonical union rather than `string`: a key that isn't
+   * a real automation renders a switch that silently never saves, and nothing
+   * would have flagged it. Type-only import, so no runtime cycle with the
+   * actions module that also reads this registry.
+   */
+  key: AutomationKey;
   title: string;
   description: string;
   trigger: string;
