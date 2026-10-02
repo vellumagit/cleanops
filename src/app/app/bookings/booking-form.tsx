@@ -1613,7 +1613,11 @@ export function BookingForm({
         />
       </FormField>
 
-      <FormField label="Notes" htmlFor="notes" error={state.errors?.notes}>
+      <FormField
+        label="Notes for this booking"
+        htmlFor="notes"
+        error={state.errors?.notes}
+      >
         <Textarea
           id="notes"
           name="notes"

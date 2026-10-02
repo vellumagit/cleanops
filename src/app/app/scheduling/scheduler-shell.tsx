@@ -6,6 +6,7 @@ import { WeekGrid } from "./week-grid";
 import { DispatchGrid } from "./dispatch-grid";
 import { DayAgenda } from "./day-agenda";
 import { MobileWeekAgenda } from "./mobile-week-agenda";
+import { bookingMatchesCrewFilter } from "./crew-filter";
 import { MonthGrid } from "./month-grid";
 import {
   SchedulerFilters,
@@ -228,10 +229,8 @@ export function SchedulerShell({
   const filteredBookings = useMemo(() => {
     return bookings.filter((b) => {
       if (filters.hideCancelled && b.status === "cancelled") return false;
-      // Unassigned bookings are shown regardless of the employee
-      // filter — otherwise they disappear from the unassigned tray.
-      if (!b.assigned_to) return true;
-      return visibleEmployeeSet.has(b.assigned_to);
+      // Matches on the WHOLE crew, not just the primary — see crew-filter.ts.
+      return bookingMatchesCrewFilter(b, visibleEmployeeSet);
     });
   }, [bookings, filters.hideCancelled, visibleEmployeeSet]);
 
