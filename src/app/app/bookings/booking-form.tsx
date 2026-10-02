@@ -25,6 +25,7 @@ import { FormError, FormField, FormSelect } from "@/components/form-field";
 import { Tip } from "@/components/tip";
 import { SubmitButton } from "@/components/submit-button";
 import { DurationInput } from "@/components/duration-input";
+import { HourMinuteField } from "@/components/hour-minute-field";
 import {
   formatSegmentWindow,
   resolveSegmentWindows,
@@ -150,6 +151,7 @@ function formatOffsetLabel(totalMinutes: number): string {
   if (h > 0) return `${h}h`;
   return `${m}m`;
 }
+
 
 
 /** Order categories the same way they were grouped in the old hardcoded
@@ -1426,110 +1428,23 @@ export function BookingForm({
                         </select>
                       </div>
 
-                      <div>
-                        <label className="mb-1 block text-xs text-muted-foreground">
-                          Starts after job start
-                        </label>
-                        <div className="flex items-center gap-1">
-                          <input
-                            type="number"
-                            min={0}
-                            step={1}
-                            aria-label={`Cleaner ${idx + 1} start hours`}
-                            value={Math.floor(seg.start_offset_minutes / 60)}
-                            onChange={(e) => {
-                              const hrs = Math.max(
-                                0,
-                                Number(e.target.value) || 0,
-                              );
-                              updateSplit(seg.id, {
-                                start_offset_minutes:
-                                  hrs * 60 + (seg.start_offset_minutes % 60),
-                              });
-                            }}
-                            className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm"
-                          />
-                          <span className="shrink-0 text-xs text-muted-foreground">
-                            hr
-                          </span>
-                          <input
-                            type="number"
-                            min={0}
-                            max={55}
-                            step={5}
-                            aria-label={`Cleaner ${idx + 1} start minutes`}
-                            value={seg.start_offset_minutes % 60}
-                            onChange={(e) => {
-                              const mins = Math.min(
-                                55,
-                                Math.max(0, Number(e.target.value) || 0),
-                              );
-                              updateSplit(seg.id, {
-                                start_offset_minutes:
-                                  Math.floor(seg.start_offset_minutes / 60) *
-                                    60 +
-                                  mins,
-                              });
-                            }}
-                            className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm"
-                          />
-                          <span className="shrink-0 text-xs text-muted-foreground">
-                            min
-                          </span>
-                        </div>
-                      </div>
+                      <HourMinuteField
+                        label="Starts after job start"
+                        ariaPrefix={`Cleaner ${idx + 1} start`}
+                        valueMinutes={seg.start_offset_minutes}
+                        onChangeMinutes={(start_offset_minutes) =>
+                          updateSplit(seg.id, { start_offset_minutes })
+                        }
+                      />
 
-                      <div>
-                        <label className="mb-1 block text-xs text-muted-foreground">
-                          Duration
-                        </label>
-                        <div className="flex items-center gap-1">
-                          <input
-                            type="number"
-                            min={0}
-                            step={1}
-                            aria-label={`Cleaner ${idx + 1} duration hours`}
-                            value={Math.floor(seg.duration_minutes / 60)}
-                            onChange={(e) => {
-                              const hrs = Math.max(
-                                0,
-                                Number(e.target.value) || 0,
-                              );
-                              updateSplit(seg.id, {
-                                duration_minutes:
-                                  hrs * 60 + (seg.duration_minutes % 60),
-                              });
-                            }}
-                            className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm"
-                          />
-                          <span className="shrink-0 text-xs text-muted-foreground">
-                            hr
-                          </span>
-                          <input
-                            type="number"
-                            min={0}
-                            max={55}
-                            step={5}
-                            value={seg.duration_minutes % 60}
-                            onChange={(e) => {
-                              const mins = Math.min(
-                                55,
-                                Math.max(0, Number(e.target.value) || 0),
-                              );
-                              updateSplit(seg.id, {
-                                duration_minutes:
-                                  Math.floor(seg.duration_minutes / 60) * 60 +
-                                  mins,
-                              });
-                            }}
-                            className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm"
-                          />
-                          <span className="shrink-0 text-xs text-muted-foreground">
-                            min
-                          </span>
-                        </div>
-                      </div>
-
+                      <HourMinuteField
+                        label="Duration"
+                        ariaPrefix={`Cleaner ${idx + 1} duration`}
+                        valueMinutes={seg.duration_minutes}
+                        onChangeMinutes={(duration_minutes) =>
+                          updateSplit(seg.id, { duration_minutes })
+                        }
+                      />
                     </div>
                   </div>
                 );
