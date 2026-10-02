@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { WeekGrid } from "./week-grid";
 import { DispatchGrid } from "./dispatch-grid";
 import { DayAgenda } from "./day-agenda";
+import { MobileWeekAgenda } from "./mobile-week-agenda";
 import { MonthGrid } from "./month-grid";
 import {
   SchedulerFilters,
@@ -403,21 +404,40 @@ export function SchedulerShell({
           </div>
         </>
       ) : (
-        <WeekGrid
-          weekStart={weekStart}
-          bookings={filteredBookings}
-          employees={filteredEmployees}
-          warnings={warnings}
-          canEdit={canEdit}
-          canEditStatus={canEditStatus}
-          view={view}
-          tz={tz}
-          offDays={offDays}
-          availability={availability}
-          holidays={holidays}
-          colorBy={filters.colorBy}
-          density={filters.density}
-        />
+        <>
+          {/* Phones get the day strip + agenda. A cleaner x day matrix needs
+              width the phone doesn't have: the name column takes ~140px of
+              375px and what's left shows a day and a half, so reading Thursday
+              meant scrolling sideways past clipped cards. Same split the day
+              view above already uses — CSS decides, so SSR never guesses. */}
+          <div className="sm:hidden">
+            <MobileWeekAgenda
+              weekStart={weekStart}
+              bookings={filteredBookings}
+              employees={filteredEmployees}
+              warnings={warnings}
+              tz={tz}
+              holidays={holidays}
+            />
+          </div>
+          <div className="hidden sm:block">
+            <WeekGrid
+              weekStart={weekStart}
+              bookings={filteredBookings}
+              employees={filteredEmployees}
+              warnings={warnings}
+              canEdit={canEdit}
+              canEditStatus={canEditStatus}
+              view={view}
+              tz={tz}
+              offDays={offDays}
+              availability={availability}
+              holidays={holidays}
+              colorBy={filters.colorBy}
+              density={filters.density}
+            />
+          </div>
+        </>
       )}
     </>
   );
