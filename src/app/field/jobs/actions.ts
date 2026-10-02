@@ -342,31 +342,48 @@ export async function completeJobAction(
     }
   }
 
-  // A split shift is a hand-off between people (2+ segments, each with its own
-  // duration). Don't finish (or invoice) the booking until EVERY segment is
-  // done — otherwise the first cleaner tapping Complete ends the job and bills
-  // the full duration while later cleaners still have to work. Team/solo jobs
-  // (no split segments) keep completing on the first tap.
+  // ANY multi-person booking stays open until everyone who actually worked it
+  // has finished.
+  //
+  // This used to engage only when 2+ assignees had split_duration_minutes set,
+  // on the theory that a hand-off is the only shape where one cleaner finishes
+  // before another. It isn't: a crew can simply arrive and leave at different
+  // times, and the owner has no way to record that today — Split shift forces
+  // strictly back-to-back segments. So on 2026-10-02 a 16-hour three-person job
+  // carried no split data at all, which left the guard disabled: whoever tapped
+  // Complete first would have ended the job for all three, and the other two
+  // would have been shown "Job complete. Nice work." with no Start button.
+  //
+  // Crew size is the right test, not split data. A job with more than one
+  // person on it is not over because one of them is done.
   const { data: allAssignees } = (await supabase
     .from("booking_assignees" as never)
-    .select("membership_id, split_duration_minutes, completed_at")
+    .select("membership_id, completed_at")
     .eq("booking_id" as never, bookingId as never)) as unknown as {
     data: Array<{
       membership_id: string;
-      split_duration_minutes: number | null;
       completed_at: string | null;
     }> | null;
   };
   const rows = allAssignees ?? [];
-  const isSplit =
-    rows.filter((r) => r.split_duration_minutes != null).length >= 2;
-  if (isSplit) {
-    // `rows` was read before our completed_at write landed, so count the caller
-    // as done and require every OTHER segment to already be complete.
-    const allDone = rows.every(
-      (r) => r.membership_id === membership.id || r.completed_at != null,
-    );
-    if (!allDone) {
+  if (rows.length >= 2) {
+    // Who actually showed up. Only they can hold the booking open — see
+    // crew-completion.ts for why a no-show must not.
+    const { data: workedRows } = (await supabase
+      .from("time_entries")
+      .select("employee_id")
+      .eq("booking_id", bookingId)) as unknown as {
+      data: Array<{ employee_id: string }> | null;
+    };
+
+    const { crewStillWorking } = await import("./crew-completion");
+    if (
+      crewStillWorking({
+        assignees: rows,
+        workedIds: (workedRows ?? []).map((r) => r.employee_id),
+        callerId: membership.id,
+      })
+    ) {
       // The caller's part is done; the booking stays open for the rest.
       revalidatePath("/field/jobs");
       revalidatePath(`/field/jobs/${bookingId}`);
