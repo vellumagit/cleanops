@@ -9,6 +9,7 @@ import { MonthGrid } from "./month-grid";
 import {
   SchedulerFilters,
   DEFAULT_FILTERS,
+  DensityToggle,
   type SchedulerFilters as SchedulerFiltersState,
 } from "./scheduler-filters";
 import { SavedViews } from "./saved-views";
@@ -308,6 +309,12 @@ export function SchedulerShell({
           canEdit={canEdit}
           onApply={setFilters}
         />
+        {view !== "month" && (
+          <DensityToggle
+            value={filters.density}
+            onChange={(density) => setFilters({ ...filters, density })}
+          />
+        )}
         <SchedulerFilters
           employees={employees}
           filters={filters}
@@ -409,6 +416,7 @@ export function SchedulerShell({
           availability={availability}
           holidays={holidays}
           colorBy={filters.colorBy}
+          density={filters.density}
         />
       )}
     </>

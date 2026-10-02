@@ -15,7 +15,7 @@ import {
   type DraggableSyntheticListeners,
 } from "@dnd-kit/core";
 import { toast } from "sonner";
-import { GripVertical } from "lucide-react";
+import { GripVertical, ChevronDown, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { StatusBadge, bookingStatusTone } from "@/components/status-badge";
 import { humanizeEnum } from "@/lib/format";
@@ -35,8 +35,23 @@ import { computeSplitCue, type SplitCue } from "./split-cue";
 import type { BookingWarning } from "@/app/app/bookings/booking-warnings";
 import { WarningDot, WarningProvider } from "./warning-dot";
 import { formatCalendarDate } from "@/lib/wall-clock";
+import { orderCrewByWorkload } from "./crew-order";
 
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+type Density = "comfortable" | "compact";
+
+/**
+ * Per-density class sets.
+ *
+ * Only the empty-cell FLOOR changes. A cell holding cards is sized by its
+ * cards either way, so compact never clips a job — it stops the 12 lanes
+ * with nothing scheduled from reserving 110px each.
+ */
+const DENSITY = {
+  comfortable: { cell: "min-h-[110px] space-y-2 p-2", lane: "py-3" },
+  compact: { cell: "min-h-[44px] space-y-1 p-1.5", lane: "py-1.5" },
+} as const satisfies Record<Density, { cell: string; lane: string }>;
 
 function dateKey(d: Date, tz?: string) {
   if (tz) {
@@ -108,6 +123,7 @@ export function WeekGrid({
    *  per-employee tone regardless. */
   colorBy = "employee",
   warnings = {},
+  density = "comfortable",
 }: {
   /** ISO date YYYY-MM-DD for Monday of the displayed week (or the day
    *  itself in day view). */
@@ -125,6 +141,9 @@ export function WeekGrid({
   colorBy?: ColorBy;
   /** booking id → warnings, computed once by the shell. */
   warnings?: Record<string, BookingWarning[]> | Map<string, BookingWarning[]>;
+  /** Row height. "compact" lowers the empty-cell floor only — cells
+   *  holding jobs still grow to fit them. See SchedulerFilters.density. */
+  density?: Density;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -260,6 +279,23 @@ export function WeekGrid({
 
   const activeBooking = activeId ? (bookingById.get(activeId) ?? null) : null;
 
+  // Lanes that hold work in this view come first; the rest collapse behind
+  // one row. See crew-order.ts for why.
+  const crew = useMemo(
+    () => orderCrewByWorkload(employees, bookings),
+    [employees, bookings],
+  );
+
+  const [idleOpen, setIdleOpen] = useState(false);
+
+  // An idle lane is a drop target: assigning a job to someone who isn't
+  // working yet is exactly what you do to fill an unassigned shift. Hiding
+  // those lanes would quietly remove that, so a drag in flight forces the
+  // group open and it snaps back on drop.
+  const idleVisible = idleOpen || activeId !== null;
+
+  const laneSpan = view === "day" ? "col-span-2" : "col-span-8";
+
   return (
     <WarningProvider warnings={warnings}>
       <DndContext
@@ -331,7 +367,7 @@ export function WeekGrid({
                 <div
                   className={cn(
                     "px-4 py-12 text-center text-sm text-muted-foreground",
-                    view === "day" ? "col-span-2" : "col-span-8",
+                    laneSpan,
                   )}
                 >
                   No active employees. Invite team members from Settings →
@@ -339,7 +375,7 @@ export function WeekGrid({
                 </div>
               ) : null}
 
-              {employees.map((emp, idx) => (
+              {crew.working.map((emp, idx) => (
                 <EmployeeRow
                   key={emp.id}
                   employee={emp}
@@ -354,8 +390,57 @@ export function WeekGrid({
                   availability={availability[emp.id]}
                   colorBy={colorBy}
                   nameById={nameById}
+                  density={density}
                 />
               ))}
+
+              {crew.partitioned && (
+                <button
+                  type="button"
+                  onClick={() => setIdleOpen((o) => !o)}
+                  aria-expanded={idleVisible}
+                  className={cn(
+                    "sticky left-0 flex items-center gap-1.5 border-b border-border bg-muted/30 px-4 py-2 text-left text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
+                    laneSpan,
+                  )}
+                >
+                  {idleVisible ? (
+                    <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+                  ) : (
+                    <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+                  )}
+                  {idleVisible
+                    ? `Hide ${crew.idle.length} with nothing scheduled`
+                    : `${crew.idle.length} others — nothing scheduled ${
+                        view === "day" ? "today" : "this week"
+                      }`}
+                  {!idleVisible && canEdit && (
+                    <span className="ml-1 font-normal text-muted-foreground/70">
+                      · drag a job here to assign one
+                    </span>
+                  )}
+                </button>
+              )}
+
+              {(!crew.partitioned || idleVisible) &&
+                crew.idle.map((emp, idx) => (
+                  <EmployeeRow
+                    key={emp.id}
+                    employee={emp}
+                    laneTone={toneForEmployee(crew.working.length + idx)}
+                    laneIdx={crew.working.length + idx}
+                    days={days}
+                    cellMap={cellMap}
+                    canEdit={canEdit}
+                    onQuickView={setQuickViewId}
+                    tz={tz}
+                    offDates={offDaysByEmployee.get(emp.id) ?? new Set()}
+                    availability={availability[emp.id]}
+                    colorBy={colorBy}
+                    nameById={nameById}
+                    density={density}
+                  />
+                ))}
             </div>
           </div>
         </div>
@@ -394,6 +479,7 @@ function EmployeeRow({
   availability,
   colorBy,
   nameById,
+  density,
 }: {
   employee: ScheduleEmployee;
   /** Hex color for the employee's lane header left border. */
@@ -414,14 +500,18 @@ function EmployeeRow({
   colorBy: ColorBy;
   /** membership_id → display name, for split-shift handoff labels. */
   nameById: Map<string, string>;
+  density: Density;
 }) {
   return (
     <>
       <div
-        className="sticky left-0 z-10 flex items-center gap-2 border-b border-r border-border bg-card px-4 py-3 text-sm font-medium border-l-4"
+        className={cn(
+          "sticky left-0 z-10 flex items-center gap-2 border-b border-r border-l-4 border-border bg-card px-4 text-sm font-medium",
+          DENSITY[density].lane,
+        )}
         style={{ borderLeftColor: laneTone }}
       >
-        {employee.name}
+        <span className="truncate">{employee.name}</span>
       </div>
       {days.map((d) => {
         const dateStr = dateKey(d);
@@ -441,6 +531,7 @@ function EmployeeRow({
             availableWindows={availabilityWindowsFor(availability, dateStr)}
             colorBy={colorBy}
             nameById={nameById}
+            density={density}
           />
         );
       })}
@@ -460,6 +551,7 @@ function DayCell({
   availableWindows,
   colorBy,
   nameById,
+  density,
 }: {
   employeeId: string;
   laneIdx: number;
@@ -477,6 +569,7 @@ function DayCell({
   colorBy: ColorBy;
   /** membership_id → display name, for split-shift handoff labels. */
   nameById: Map<string, string>;
+  density: Density;
 }) {
   const droppableId = `cell:${employeeId}:${date}`;
   const { setNodeRef, isOver } = useDroppable({
@@ -488,7 +581,8 @@ function DayCell({
     <div
       ref={setNodeRef}
       className={cn(
-        "min-h-[110px] space-y-2 border-b border-r border-border p-2 transition-colors",
+        "border-b border-r border-border transition-colors",
+        DENSITY[density].cell,
         isOver && "bg-primary/5 ring-2 ring-inset ring-primary/40",
         isOff &&
           !isOver &&

@@ -1,7 +1,14 @@
 "use client";
 
 import { useMemo } from "react";
-import { Filter, Check, Eye, EyeOff } from "lucide-react";
+import {
+  Filter,
+  Check,
+  Eye,
+  EyeOff,
+  AlignJustify,
+  StretchVertical,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ScheduleEmployee } from "./data";
 
@@ -21,12 +28,24 @@ export type SchedulerFilters = {
   /** What drives the lane / card color: employee (default), service
    *  type, client, or status. */
   colorBy: "employee" | "service" | "client" | "status";
+  /**
+   * Row height in the week grid / column width in dispatch.
+   *
+   * "comfortable" keeps the original 110px cell floor, sized for a cell
+   * holding three stacked jobs. Most cells hold zero or one, so on a
+   * 16-lane crew that floor is what makes the board three screens tall.
+   * "compact" lowers the floor only — a cell with cards still grows to
+   * fit them, so nothing is clipped, the empty ones just stop reserving
+   * room they never use.
+   */
+  density: "comfortable" | "compact";
 };
 
 export const DEFAULT_FILTERS: SchedulerFilters = {
   visibleEmployees: [],
   hideCancelled: false,
   colorBy: "employee",
+  density: "comfortable",
 };
 
 const COLOR_OPTIONS: Array<{
@@ -242,6 +261,50 @@ export function SchedulerFilters({
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * Row-height toggle, rendered in the toolbar rather than inside the
+ * Filters popover.
+ *
+ * The state lives in SchedulerFilters so it persists and saved views
+ * capture it, but the control stays visible: this is the fix for "I have
+ * to scroll all the way down", and an owner who never opens the popover
+ * would never find it in there.
+ */
+export function DensityToggle({
+  value,
+  onChange,
+}: {
+  value: SchedulerFilters["density"];
+  onChange: (next: SchedulerFilters["density"]) => void;
+}) {
+  const compact = value === "compact";
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(compact ? "comfortable" : "compact")}
+      aria-pressed={compact}
+      title={
+        compact
+          ? "Switch to comfortable rows"
+          : "Shrink empty rows to fit more of the week on screen"
+      }
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors",
+        compact
+          ? "border-foreground/40 bg-muted"
+          : "border-border bg-card hover:bg-muted",
+      )}
+    >
+      {compact ? (
+        <StretchVertical className="h-3.5 w-3.5" />
+      ) : (
+        <AlignJustify className="h-3.5 w-3.5" />
+      )}
+      {compact ? "Comfortable" : "Compact"}
+    </button>
   );
 }
 
