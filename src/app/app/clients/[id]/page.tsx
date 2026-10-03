@@ -1,3 +1,4 @@
+import { cn } from "@/lib/utils";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
@@ -111,10 +112,22 @@ export default async function ClientDetailPage({
       error: { message: string } | null;
     }>,
 
+    // Each of these four asks for `count: "exact"` alongside a .limit(10).
+    // PostgREST counts the WHOLE matching set and still returns only the
+    // capped rows, in one round trip — so the stat tiles can be honest while
+    // the lists stay short.
+    //
+    // They used to count the capped array itself, so every tile silently
+    // stopped at 10. On Svit that made seven clients' invoice counts wrong
+    // (Khual Tai Thul reads 10, has 20) and nearly every recurring client's
+    // booking count wrong, while "Recent invoices" showed 10 of 20 with
+    // nothing saying so — an owner working a client's invoices from this page
+    // was working off a truncated list and had no way to know.
     supabase
       .from("bookings")
       .select(
         "id, scheduled_at, duration_minutes, status, service_type, address, property_id",
+        { count: "exact" },
       )
       .eq("client_id", id)
       .order("scheduled_at", { ascending: false })
@@ -122,7 +135,9 @@ export default async function ClientDetailPage({
 
     supabase
       .from("invoices")
-      .select("id, number, status, amount_cents, due_date, sent_at")
+      .select("id, number, status, amount_cents, due_date, sent_at", {
+        count: "exact",
+      })
       .eq("client_id", id)
       .order("sent_at", { ascending: false, nullsFirst: false })
       .limit(10) as unknown as Promise<{
@@ -134,12 +149,15 @@ export default async function ClientDetailPage({
         due_date: string | null;
         sent_at: string | null;
       }> | null;
+      count: number | null;
       error: unknown;
     }>,
 
     supabase
       .from("estimates")
-      .select("id, status, total_cents, service_description, created_at")
+      .select("id, status, total_cents, service_description, created_at", {
+        count: "exact",
+      })
       .eq("client_id", id)
       .order("created_at", { ascending: false })
       .limit(10) as unknown as Promise<{
@@ -150,12 +168,13 @@ export default async function ClientDetailPage({
         service_description: string | null;
         created_at: string;
       }> | null;
+      count: number | null;
       error: unknown;
     }>,
 
     supabase
       .from("reviews")
-      .select("id, rating, comment, created_at")
+      .select("id, rating, comment, created_at", { count: "exact" })
       .eq("client_id", id)
       .order("created_at", { ascending: false })
       .limit(10),
@@ -197,6 +216,14 @@ export default async function ClientDetailPage({
   const invoices = invoicesResult.data ?? [];
   const estimates = estimatesResult.data ?? [];
   const reviews = reviewsResult.data ?? [];
+
+  // Totals for the whole set, not just the ten rows above. Falls back to the
+  // array length if a count ever comes back null, which is never worse than
+  // what this page did before.
+  const bookingsTotal = bookingsResult.count ?? bookings.length;
+  const invoicesTotal = invoicesResult.count ?? invoices.length;
+  const estimatesTotal = estimatesResult.count ?? estimates.length;
+  const reviewsTotal = reviewsResult.count ?? reviews.length;
 
   // Properties + how many jobs each has, so archiving can say what it
   // affects. Admin client because client_properties.access_notes holds door
@@ -634,25 +661,25 @@ export default async function ClientDetailPage({
           {[
             {
               label: "Bookings",
-              value: bookings.length,
+              value: bookingsTotal,
               icon: Calendar,
               href: `/app/bookings?client=${id}`,
             },
             {
               label: "Invoices",
-              value: invoices.length,
+              value: invoicesTotal,
               icon: Receipt,
               href: `/app/invoices?client=${id}`,
             },
             {
               label: "Estimates",
-              value: estimates.length,
+              value: estimatesTotal,
               icon: ClipboardList,
               href: `/app/estimates?client=${id}`,
             },
             {
               label: "Reviews",
-              value: reviews.length,
+              value: reviewsTotal,
               icon: Star,
               href: undefined,
             },
@@ -709,6 +736,7 @@ export default async function ClientDetailPage({
             title="Recent bookings"
             emptyText="No bookings yet."
             viewAllHref={`/app/bookings?client=${id}`}
+            total={bookingsTotal}
           >
             {bookings.map((b) => (
               <div
@@ -767,6 +795,7 @@ export default async function ClientDetailPage({
             // business, so following it lost the person you were reading
             // about and left you filtering your way back.
             viewAllHref={`/app/invoices?client=${id}`}
+            total={invoicesTotal}
           >
             {invoices.map((inv) => (
               <Link
@@ -825,6 +854,7 @@ export default async function ClientDetailPage({
             title="Recent estimates"
             emptyText="No estimates yet."
             viewAllHref={`/app/estimates`}
+            total={estimatesTotal}
           >
             {estimates.map((est) => (
               <Link
@@ -913,27 +943,49 @@ function Section({
   title,
   emptyText,
   viewAllHref,
+  total,
   children,
 }: {
   title: string;
   emptyText: string;
   viewAllHref?: string;
+  /** Size of the WHOLE set. These lists cap at 10, and saying so is the
+   *  point: a client with 20 invoices showed 10 with nothing to indicate
+   *  it, so anyone working a client's invoices from this page was reading a
+   *  truncated list and had no way to tell. */
+  total?: number;
   children: React.ReactNode;
 }) {
+  const shown = Array.isArray(children) ? children.filter(Boolean).length : 0;
   const hasItems = Array.isArray(children)
     ? children.filter(Boolean).length > 0
     : Boolean(children);
+  const truncated = total != null && total > shown && shown > 0;
 
   return (
     <div className="rounded-lg border border-border bg-card p-4">
       <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-semibold">{title}</h3>
+        <h3 className="flex items-baseline gap-2 text-sm font-semibold">
+          {title}
+          {truncated && (
+            <span className="text-xs font-normal text-muted-foreground">
+              Showing {shown} of {total}
+            </span>
+          )}
+        </h3>
         {viewAllHref && (
           <Link
             href={viewAllHref}
-            className="text-xs text-muted-foreground hover:text-foreground"
+            className={cn(
+              "shrink-0 text-xs hover:text-foreground",
+              // When the list is cut off, this link is the only way to the
+              // rest — stop it reading as decoration.
+              truncated
+                ? "font-medium text-foreground underline underline-offset-2"
+                : "text-muted-foreground",
+            )}
           >
-            View all →
+            {truncated ? `View all ${total} →` : "View all →"}
           </Link>
         )}
       </div>
