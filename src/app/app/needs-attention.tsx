@@ -47,12 +47,21 @@ export async function NeedsAttention({ tz }: { tz: string }) {
 
     const [unpricedDone, unpricedUpcoming, pricedDone, zeroDrafts] =
       await Promise.all([
+        // A FREE clean has no price on purpose, so it is not missing one.
+        // Both queries matched on total_cents alone and reported every free
+        // job as an unpriced one, which is the opposite of useful: the panel
+        // exists to surface jobs the owner forgot to price, and burying those
+        // in deliberate freebies is how a real missing price gets ignored.
+        //
+        // `not is true` rather than `eq false` — is_free is null on every row
+        // written before the flag existed, and null is not free.
         supabase
           .from("bookings")
           .select("id, scheduled_at, client:clients ( name )")
           .eq("status", "completed")
           .gte("scheduled_at", backIso)
           .or("total_cents.is.null,total_cents.eq.0")
+          .not("is_free" as never, "is", true as never)
           .order("scheduled_at", { ascending: false })
           .limit(50) as unknown as Promise<{ data: JobRow[] | null }>,
         supabase
@@ -62,6 +71,7 @@ export async function NeedsAttention({ tz }: { tz: string }) {
           .gte("scheduled_at", nowIso)
           .lte("scheduled_at", aheadIso)
           .or("total_cents.is.null,total_cents.eq.0")
+          .not("is_free" as never, "is", true as never)
           .order("scheduled_at", { ascending: true })
           .limit(50) as unknown as Promise<{ data: JobRow[] | null }>,
         supabase
