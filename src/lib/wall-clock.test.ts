@@ -9,6 +9,7 @@ import {
   zonedDayStartUtc,
   formatCalendarDate,
   toDatetimeLocal,
+  zonedParts,
 } from "./wall-clock";
 
 const EDM = "America/Edmonton"; // MDT (UTC-6) summer / MST (UTC-7) winter
@@ -290,5 +291,49 @@ describe("toDatetimeLocal", () => {
     expect(toDatetimeLocal("", EDM)).toBe("");
     expect(toDatetimeLocal("not-a-date", EDM)).toBe("");
     expect(toDatetimeLocal("2026-13-45T99:99Z", EDM)).toBe("");
+  });
+});
+
+describe("zonedParts", () => {
+  // Amanda DeGroot, 2026-10-03 15:00 in Edmonton = 21:00 UTC.
+  const instant = new Date("2026-10-03T21:00:00Z");
+
+  it("reads the org's clock face, not the viewer's", () => {
+    expect(zonedParts(instant, "America/Edmonton")).toEqual({
+      ymd: "2026-10-03",
+      hour: 15,
+      minute: 0,
+    });
+  });
+
+  it("gives a different hour for a different zone — the 2h gap Brian saw", () => {
+    // Same instant read from Toronto is 17:00, which is the row the grid was
+    // drawing the block in while its label said 3:00.
+    expect(zonedParts(instant, "America/Toronto").hour).toBe(17);
+  });
+
+  it("uses a 24-hour cycle, so midnight is 0 and not 24", () => {
+    const midnight = new Date("2026-10-03T06:00:00Z"); // 00:00 Edmonton
+    expect(zonedParts(midnight, "America/Edmonton")).toEqual({
+      ymd: "2026-10-03",
+      hour: 0,
+      minute: 0,
+    });
+  });
+
+  it("rolls the DATE back when the org is behind UTC", () => {
+    // 02:00 UTC on the 4th is still 20:00 on the 3rd in Edmonton. Bucketing
+    // on the UTC date would file this job on the wrong day entirely.
+    const lateEvening = new Date("2026-10-04T02:00:00Z");
+    expect(zonedParts(lateEvening, "America/Edmonton")).toEqual({
+      ymd: "2026-10-03",
+      hour: 20,
+      minute: 0,
+    });
+  });
+
+  it("keeps minutes", () => {
+    expect(zonedParts(new Date("2026-10-03T21:45:00Z"), "America/Edmonton"))
+      .toMatchObject({ hour: 15, minute: 45 });
   });
 });

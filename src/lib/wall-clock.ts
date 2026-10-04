@@ -157,6 +157,41 @@ export function zonedYmd(instant: Date, tz: string): string {
 }
 
 /**
+ * Where an instant sits on the ORG's clock face: its date, hour and minute.
+ *
+ * Calendar grids need this. Placing a block with date-fns — setHours,
+ * startOfDay, isSameDay, getHours — does the arithmetic in the BROWSER's zone,
+ * so a 21:00 UTC job (3 PM in Edmonton) is drawn in the 5 PM row for anyone
+ * viewing from Toronto, while the label beside it, formatted with the org's
+ * zone, still reads 3:00. The block and its own caption disagreed by exactly
+ * the offset between the two zones, and the further the viewer travelled the
+ * wronger the board got.
+ *
+ * Returns the parts rather than a Date on purpose: a Date is an instant and
+ * would just invite the same mistake downstream. These are clock-face numbers.
+ */
+export function zonedParts(
+  instant: Date,
+  tz: string,
+): { ymd: string; hour: number; minute: number } {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(instant);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "00";
+  return {
+    ymd: `${get("year")}-${get("month")}-${get("day")}`,
+    hour: Number(get("hour")),
+    minute: Number(get("minute")),
+  };
+}
+
+/**
  * A ?scheduled_at= value → the "YYYY-MM-DDTHH:mm" a datetime-local input wants.
  *
  * TWO SHAPES, and telling them apart is the point. The scheduler's

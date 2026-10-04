@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useReturnTo } from "@/components/return-to-field";
 import { useUrlSelection } from "@/components/use-url-selection";
+import { zonedParts } from "@/lib/wall-clock";
 import { useUrlState } from "@/components/use-url-state";
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import {
@@ -20,7 +21,6 @@ import {
   isSameDay,
   isToday,
   startOfDay,
-  endOfDay,
   differenceInMinutes,
   setHours,
 } from "date-fns";
@@ -153,6 +153,18 @@ function fmtTimeInTz(
 // ---------------------------------------------------------------------------
 
 /** "2026-09-14" -> that day at local midnight (new Date(str) would parse UTC). */
+/**
+ * The YYYY-MM-DD a calendar SQUARE represents.
+ *
+ * The grids build their days with date-fns (startOfWeek/addDays), which makes
+ * local-midnight Dates standing for calendar squares, not instants. Zoning one
+ * reads that midnight as a moment and slides it back a day for any viewer
+ * behind the org, so the square's own digits are what we want.
+ */
+function squareYmd(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 function parseYmdLocal(ymd: string): Date {
   const [y, m, d] = ymd.split("-").map(Number);
   if (!y || !m || !d) return new Date();
@@ -721,6 +733,23 @@ function WeekView({
   const hours = Array.from({ length: 24 }, (_, i) => i);
   const ROW_PX = 56; // matches h-14
 
+  // Each event's place on the ORG's clock face, resolved once.
+  //
+  // Cells used to be matched with date-fns — setHours/startOfDay/isSameDay —
+  // which does the arithmetic in the BROWSER's zone. The caption inside each
+  // block has always been formatted with the org's zone (fmtTimeInTz), so the
+  // two disagreed by the offset between viewer and org: Amanda DeGroot's 3 PM
+  // Edmonton job was drawn in the 5 PM row for a Toronto viewer, labelled
+  // "15:00", sitting two rows below its own start time.
+  //
+  // Resolved once per event rather than per cell: the old filter ran date
+  // math for all 168 cells against every event.
+  const placed = useMemo(
+    () =>
+      events.map((ev) => ({ ev, ...zonedParts(new Date(ev.start), tz) })),
+    [events, tz],
+  );
+
   // Auto-scroll to the current hour on mount so "now" is visible
   // without manual scrolling. Uses a one-shot ref guard so re-renders
   // from event filtering don't keep yanking the scroll back.
@@ -730,13 +759,17 @@ function WeekView({
     if (didInitialScroll.current) return;
     const el = scrollRef.current;
     if (!el) return;
-    const nowHour = new Date().getHours();
+    // The org's hour, not the browser's — otherwise the board scrolls to the
+    // wrong place for anyone outside the org's zone.
+    const nowHour = zonedParts(new Date(), tz).hour;
     // Land two hours before "now" so the current block is near the top
     // but the morning stuff is still glanceable.
     const target = Math.max(0, (nowHour - 2) * ROW_PX);
     el.scrollTop = target;
     didInitialScroll.current = true;
-  }, []);
+  // tz included because the scroll target is computed from it; the one-shot
+  // ref guard still keeps this to a single scroll per mount.
+  }, [tz]);
 
   return (
     <div className="overflow-x-auto">
@@ -784,16 +817,13 @@ function WeekView({
               </div>
               {/* Day columns */}
               {days.map((d) => {
-                const cellStart = setHours(startOfDay(d), hour);
-                const cellEnd = setHours(startOfDay(d), hour + 1);
-                const cellEvents = events.filter((e) => {
-                  const eStart = new Date(e.start);
-                  return (
-                    isSameDay(eStart, d) &&
-                    eStart >= cellStart &&
-                    eStart < cellEnd
-                  );
-                });
+                // `d` is a calendar SQUARE built from weekStart, not an
+                // instant — read its own digits rather than zoning it, which
+                // would slide it a day for any viewer behind the org.
+                const dayYmd = squareYmd(d);
+                const cellEvents = placed.filter(
+                  (p) => p.ymd === dayYmd && p.hour === hour,
+                );
 
                 return (
                   <div
@@ -811,14 +841,17 @@ function WeekView({
                     <span className="pointer-events-none absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                       <Plus className="h-3.5 w-3.5 text-muted-foreground/50" />
                     </span>
-                    {cellEvents.map((ev) => {
+                    {cellEvents.map(({ ev, minute }) => {
                       const evStart = new Date(ev.start);
                       const evEnd = new Date(ev.end);
                       const duration = Math.max(
                         differenceInMinutes(evEnd, evStart),
                         30,
                       );
-                      const topOffset = (evStart.getMinutes() / 60) * ROW_PX;
+                      // Org-zone minute, same reason as the hour above. A
+                      // half-hour zone (India, Newfoundland) made even this
+                      // disagree with the caption.
+                      const topOffset = (minute / 60) * ROW_PX;
                       const height = Math.max((duration / 60) * ROW_PX, 20);
 
                       return (
@@ -882,11 +915,21 @@ function DayView({
   tz: string;
 }) {
   const dayStart = startOfDay(currentDate);
-  const dayEnd = endOfDay(currentDate);
-  const dayEvents = events.filter((e) => {
-    const eStart = new Date(e.start);
-    return eStart >= dayStart && eStart <= dayEnd;
-  });
+
+  // Which events belong to this day, and where they sit on the ORG's clock —
+  // not the browser's. Same bug the week grid had: day membership and row
+  // placement were both computed with local date math while the caption used
+  // the org zone, so a 3 PM Edmonton job rendered in the 5 PM row from
+  // Toronto. The day bounds were wrong too — a late-evening job could fall on
+  // the wrong date entirely for a viewer behind the org.
+  const dayYmd = squareYmd(currentDate);
+  const placed = useMemo(
+    () =>
+      events
+        .map((ev) => ({ ev, ...zonedParts(new Date(ev.start), tz) }))
+        .filter((p) => p.ymd === dayYmd),
+    [events, tz, dayYmd],
+  );
 
   // Full 24-hour day. Clip the visual height with a scroll container
   // below so it doesn't push the rest of the page off-screen.
@@ -902,11 +945,11 @@ function DayView({
     const el = scrollRef.current;
     if (!el) return;
     const anchorHour = isToday(currentDate)
-      ? Math.max(0, new Date().getHours() - 2)
+      ? Math.max(0, zonedParts(new Date(), tz).hour - 2)
       : 6;
     el.scrollTop = anchorHour * ROW_PX;
     didInitialScroll.current = true;
-  }, [currentDate]);
+  }, [currentDate, tz]);
 
   return (
     <div>
@@ -931,7 +974,7 @@ function DayView({
             </span>
           </div>
           <span className="ml-auto text-xs text-muted-foreground">
-            {dayEvents.length} event{dayEvents.length !== 1 ? "s" : ""}
+            {placed.length} event{placed.length !== 1 ? "s" : ""}
           </span>
         </div>
       </div>
@@ -940,12 +983,7 @@ function DayView({
       <div ref={scrollRef} className="max-h-[72vh] overflow-y-auto">
         <div className="grid grid-cols-[60px_1fr]">
           {hours.map((hour) => {
-            const cellStart = setHours(dayStart, hour);
-            const cellEnd = setHours(dayStart, hour + 1);
-            const cellEvents = dayEvents.filter((e) => {
-              const eStart = new Date(e.start);
-              return eStart >= cellStart && eStart < cellEnd;
-            });
+            const cellEvents = placed.filter((p) => p.hour === hour);
 
             return (
               <div key={hour} className="contents">
@@ -971,14 +1009,14 @@ function DayView({
                   <span className="pointer-events-none absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                     <Plus className="h-3.5 w-3.5 text-muted-foreground/50" />
                   </span>
-                  {cellEvents.map((ev) => {
+                  {cellEvents.map(({ ev, minute }) => {
                     const evStart = new Date(ev.start);
                     const evEnd = new Date(ev.end);
                     const duration = Math.max(
                       differenceInMinutes(evEnd, evStart),
                       30,
                     );
-                    const topOffset = (evStart.getMinutes() / 60) * ROW_PX;
+                    const topOffset = (minute / 60) * ROW_PX;
                     const height = Math.max((duration / 60) * ROW_PX, 24);
 
                     return (
