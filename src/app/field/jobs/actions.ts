@@ -30,6 +30,42 @@ async function notDueYetMessage(
 
 export type JobActionResult = { ok: true } | { ok: false; error: string };
 
+/**
+ * Build a "decline and write it down" helper for one field action.
+ *
+ * Starting and finishing a job each have about ten ways to be refused, and
+ * until 2026-10-05 none of them recorded anything: the success path logged an
+ * audit event, every refusal returned a string to the phone and vanished. When
+ * a cleaner reported she could not clock in, the database held no trace of her
+ * attempts — not the reason, not the count, not whether she had tapped at all.
+ * Diagnosis came down to reasoning from the absence of rows, which cannot tell
+ * "refused ten times" from "never saw the button".
+ *
+ * `reason` is a stable snake_case code meant for searching; `error` is the
+ * sentence the cleaner reads. Never throws: logAuditEvent swallows its own
+ * failures, so logging can never become the reason a shift cannot start.
+ */
+function refusalLogger(
+  membership: Parameters<typeof logAuditEvent>[0]["membership"],
+  bookingId: string,
+  intent: "clock_in" | "complete",
+) {
+  return async (
+    reason: string,
+    error: string,
+    extra?: Record<string, unknown>,
+  ): Promise<JobActionResult> => {
+    await logAuditEvent({
+      membership,
+      action: "refused",
+      entity: "booking",
+      entity_id: bookingId,
+      after: { intent, reason, ...extra },
+    });
+    return { ok: false, error };
+  };
+}
+
 function parseCoord(value: FormDataEntryValue | null): number | null {
   if (value == null) return null;
   const s = String(value).trim();
@@ -51,14 +87,15 @@ export async function startJobAction(
   const lng = parseCoord(formData.get("lng"));
 
   const { membership, supabase } = await getActionContext();
+  const refuse = refusalLogger(membership, bookingId, "clock_in");
 
   const { data: booking, error: fetchError } = await supabase
     .from("bookings")
     .select("id, assigned_to, status, scheduled_at")
     .eq("id", bookingId)
     .maybeSingle();
-  if (fetchError) return { ok: false, error: fetchError.message };
-  if (!booking) return { ok: false, error: "Job not found" };
+  if (fetchError) return refuse("booking_fetch_failed", fetchError.message);
+  if (!booking) return refuse("booking_not_found", "Job not found");
 
   // Refuse clock-in on a cancelled booking. A cleaner could be
   // holding a bookmarked /field/jobs/[id] for a job that got
@@ -66,11 +103,10 @@ export async function startJobAction(
   // "Clock in" would create a time entry against the dead booking
   // and feed payroll for work that never happened.
   if (booking.status === "cancelled") {
-    return {
-      ok: false,
-      error:
-        "This job was cancelled. Talk to your manager if you think this is a mistake.",
-    };
+    return refuse(
+      "booking_cancelled",
+      "This job was cancelled. Talk to your manager if you think this is a mistake.",
+    );
   }
 
   // Authorization + acceptance in one lookup. The caller must be assigned to
@@ -89,7 +125,7 @@ export async function startJobAction(
     data: { id: string; acceptance_status: string | null } | null;
   };
   if (!isPrimary && !crewRow) {
-    return { ok: false, error: "This job isn't assigned to you" };
+    return refuse("not_assigned", "This job isn't assigned to you");
   }
   // The acceptance gate applies only BEFORE the job is under way — the same
   // rule the job page renders by. Once the lead clocks in, the page hides
@@ -103,7 +139,11 @@ export async function startJobAction(
     booking.status === "en_route" ||
     booking.status === "completed";
   if (crewRow?.acceptance_status === "pending" && !jobUnderWay) {
-    return { ok: false, error: "Please accept this shift before starting it." };
+    return refuse(
+      "shift_not_accepted",
+      "Please accept this shift before starting it.",
+      { acceptance_status: crewRow?.acceptance_status ?? null },
+    );
   }
   const acceptOnStart = crewRow?.acceptance_status === "pending";
 
@@ -113,14 +153,15 @@ export async function startJobAction(
   // that someone is very keen.
   const earlyErr = futureStatusError(booking.scheduled_at, "in_progress");
   if (earlyErr) {
-    return {
-      ok: false,
-      error: await notDueYetMessage(
+    return refuse(
+      "too_early",
+      await notDueYetMessage(
         membership.organization_id,
         booking.scheduled_at,
         "starting",
       ),
-    };
+      { scheduled_at: booking.scheduled_at },
+    );
   }
 
   // Update status if it's not already started or finished.
@@ -129,7 +170,8 @@ export async function startJobAction(
       .from("bookings")
       .update({ status: "in_progress" })
       .eq("id", bookingId);
-    if (updateError) return { ok: false, error: updateError.message };
+    if (updateError)
+      return refuse("status_update_failed", updateError.message);
     await logAuditEvent({
       membership,
       action: "status_change",
@@ -187,7 +229,8 @@ export async function startJobAction(
         })
         .eq("id", anyOpenEntry.id)
         .eq("employee_id", membership.id);
-      if (closeError) return { ok: false, error: closeError.message };
+      if (closeError)
+        return refuse("close_prior_entry_failed", closeError.message);
 
       const { error: insertError } = await supabase
         .from("time_entries")
@@ -204,9 +247,9 @@ export async function startJobAction(
       if (insertError) {
         const code = (insertError as { code?: string }).code;
         if (code === "23505") {
-          return { ok: false, error: "You're already clocked in." };
+          return refuse("already_clocked_in", "You're already clocked in.");
         }
-        return { ok: false, error: insertError.message };
+        return refuse("entry_insert_failed", insertError.message);
       }
     }
   } else {
@@ -224,9 +267,9 @@ export async function startJobAction(
     if (insertError) {
       const code = (insertError as { code?: string }).code;
       if (code === "23505") {
-        return { ok: false, error: "You're already clocked in." };
+        return refuse("already_clocked_in", "You're already clocked in.");
       }
-      return { ok: false, error: insertError.message };
+      return refuse("entry_insert_failed", insertError.message);
     }
   }
 
@@ -263,6 +306,7 @@ export async function completeJobAction(
   const lng = parseCoord(formData.get("lng"));
 
   const { membership, supabase } = await getActionContext();
+  const refuse = refusalLogger(membership, bookingId, "complete");
 
   const { data: booking, error: fetchError } = await supabase
     .from("bookings")
@@ -295,14 +339,14 @@ export async function completeJobAction(
     data: { id: string; acceptance_status: string | null } | null;
   };
   if (!isPrimary && !crewRow) {
-    return { ok: false, error: "This job isn't assigned to you" };
+    return refuse("not_assigned", "This job isn't assigned to you");
   }
   if (
     crewRow?.acceptance_status === "pending" &&
     booking.status !== "in_progress" &&
     booking.status !== "en_route"
   ) {
-    return { ok: false, error: "Please accept this shift first." };
+    return refuse("shift_not_accepted", "Please accept this shift first.");
   }
 
   const now = new Date().toISOString();
@@ -329,7 +373,8 @@ export async function completeJobAction(
     data: Array<{ id: string }> | null;
     error: { message: string } | null;
   };
-  if (closeEntryError) return { ok: false, error: closeEntryError.message };
+  if (closeEntryError)
+    return refuse("close_entry_failed", closeEntryError.message);
 
   // Finishing the job is a clock-out too, so the nudge has to go the same way.
   {
@@ -398,14 +443,15 @@ export async function completeJobAction(
   // booking reads completed).
   const notYetErr = futureStatusError(booking.scheduled_at, "completed");
   if (notYetErr) {
-    return {
-      ok: false,
-      error: await notDueYetMessage(
+    return refuse(
+      "too_early",
+      await notDueYetMessage(
         membership.organization_id,
         booking.scheduled_at,
         "finishing",
       ),
-    };
+      { scheduled_at: booking.scheduled_at },
+    );
   }
 
   // Through the admin client, because RLS only lets the PRIMARY assignee

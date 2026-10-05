@@ -61,7 +61,18 @@ export type AuditAction =
   // An owner/admin minted a single-use password recovery link for a
   // member from /app/employees/[id]/edit. Logged so the audit trail
   // shows who could have hijacked which account, and when.
-  | "generate_recovery_link";
+  | "generate_recovery_link"
+  // An action the app DECLINED to perform, with the reason in `after`.
+  //
+  // Added 2026-10-05 because a cleaner could not clock in and the system had
+  // kept no record of it: startJobAction had ten separate refusal paths and
+  // not one wrote anything down, so a failed clock-in produced a toast on her
+  // phone and nothing anywhere else. Diagnosing it meant inferring from the
+  // absence of rows, which cannot distinguish "refused ten times" from "never
+  // tapped the button".
+  //
+  // Successes were always logged. Refusals are the ones you go looking for.
+  | "refused";
 
 type LogArgs = {
   membership: CurrentMembership;
