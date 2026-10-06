@@ -853,8 +853,14 @@ export function TimesheetsView({
       <div className="flex flex-wrap items-end gap-3">
         {/* items-end, not center: the siblings are label+input stacks, so
             centering floated the Apply button above the input row. */}
-        <div className="flex items-end gap-2">
-          <div>
+        {/* flex-wrap and shrinkable inputs, or the Apply button leaves the
+            screen. Two native date inputs at 16px plus the button need ~435px;
+            a phone has 375. The outer row wrapped, this one did not, so the
+            button sat from x=374 to x=451 on a 375px viewport — about one
+            pixel of it visible, nothing to tap, and the page scrolling
+            sideways to reach it. It read as a dead button. */}
+        <div className="flex w-full flex-wrap items-end gap-2 sm:w-auto">
+          <div className="min-w-0 flex-1 sm:flex-none">
             <label className="text-xs font-medium text-muted-foreground">
               From
             </label>
@@ -862,10 +868,10 @@ export function TimesheetsView({
               type="date"
               value={localFrom}
               onChange={(e) => setLocalFrom(e.target.value)}
-              className="block h-8 rounded-lg border border-input bg-transparent px-2.5 text-base"
+              className="block h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-base sm:w-auto"
             />
           </div>
-          <div>
+          <div className="min-w-0 flex-1 sm:flex-none">
             <label className="text-xs font-medium text-muted-foreground">
               To
             </label>
@@ -873,10 +879,10 @@ export function TimesheetsView({
               type="date"
               value={localTo}
               onChange={(e) => setLocalTo(e.target.value)}
-              className="block h-8 rounded-lg border border-input bg-transparent px-2.5 text-base"
+              className="block h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-base sm:w-auto"
             />
           </div>
-          <div className="flex items-end">
+          <div className="flex shrink-0 items-end">
             <button
               type="button"
               onClick={applyDateRange}
