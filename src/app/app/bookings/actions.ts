@@ -1953,7 +1953,7 @@ export async function updateBookingAction(
         data: Array<{ id: string }> | null;
       };
 
-      await (admin
+      const { error: siblingUpdateErr } = (await admin
         .from("bookings")
         .update(propagatableFields)
         .eq("series_id", seriesId)
@@ -1964,7 +1964,19 @@ export async function updateBookingAction(
           "status",
           "in",
           '("completed","cancelled")',
-        ) as unknown as Promise<unknown>);
+        )) as unknown as { error: { message: string } | null };
+      if (siblingUpdateErr) {
+        console.error(
+          "[series-update] sibling propagation failed:",
+          siblingUpdateErr.message,
+        );
+        return {
+          errors: {
+            _form: `Couldn't update the later visits in this series: ${siblingUpdateErr.message}`,
+          },
+          values: raw,
+        };
+      }
 
       // Rebuild booking_assignees for ALL siblings in a single bulk
       // pass. Per-row sync would do ~3 sequential DB round-trips per
@@ -1988,14 +2000,47 @@ export async function updateBookingAction(
     // Always keep the series template in sync — both field values and
     // (when changed) the new schedule so the nightly extend cron picks up
     // the right rule for future generations.
-    await (admin
+    //
+    // WITHOUT `splits`. propagatableFields is shared with the sibling-bookings
+    // update above, and bookings has a splits column; booking_series does not.
+    // Spreading it in made PostgREST reject the WHOLE update (PGRST204: "Could
+    // not find the 'splits' column of 'booking_series'"), and the result was
+    // never read — this logged "saved changes" regardless. So since at least
+    // June every series edit silently failed to reach the template: pattern,
+    // duration, price, assignee, address, notes. The occurrences that already
+    // existed were updated, so the save LOOKED complete, and the form then
+    // reopened from the untouched template. Svitlana changing Philip and Helena
+    // Lane from 4 weeks to 3 regenerated the visits at 21 days and left the
+    // series reading quad_weekly, last touched 2026-06-01.
+    const seriesTemplateFields: Record<string, unknown> = {
+      ...propagatableFields,
+      ...scheduleFields,
+    };
+    delete seriesTemplateFields.splits;
+
+    const { error: seriesUpdateErr } = (await admin
       .from("booking_series")
-      .update({ ...propagatableFields, ...scheduleFields })
+      .update(seriesTemplateFields)
       .eq("id", seriesId)
       .eq(
         "organization_id",
         membership.organization_id,
-      ) as unknown as Promise<unknown>);
+      )) as unknown as { error: { message: string } | null };
+    // Read the result. Reporting success without checking it is how this went
+    // unnoticed for months; the next column mismatch should stop the save and
+    // say so, not leave the template quietly stale.
+    if (seriesUpdateErr) {
+      console.error(
+        `[series-update] series ${seriesId} template update failed:`,
+        seriesUpdateErr.message,
+      );
+      return {
+        errors: {
+          _form: `The visits were updated, but the recurring schedule itself didn't save: ${seriesUpdateErr.message}`,
+        },
+        values: raw,
+      };
+    }
 
     console.log(`[series-update] saved changes to series ${seriesId}`);
   }
