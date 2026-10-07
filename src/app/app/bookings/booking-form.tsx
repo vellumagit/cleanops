@@ -3,14 +3,7 @@
 import { useState, useActionState, useEffect, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
-import {
-  Repeat,
-  CalendarPlus,
-  SplitSquareVertical,
-  Plus,
-  Trash2,
-  AlertTriangle,
-} from "lucide-react";
+import { Repeat, CalendarPlus } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { buttonVariants } from "@/components/ui/button";
@@ -25,17 +18,11 @@ import { FormError, FormField, FormSelect } from "@/components/form-field";
 import { Tip } from "@/components/tip";
 import { SubmitButton } from "@/components/submit-button";
 import { DurationInput } from "@/components/duration-input";
-import { HourMinuteField } from "@/components/hour-minute-field";
-import {
-  formatSegmentWindow,
-  resolveSegmentWindows,
-  segmentsOverlap,
-  segmentsSpanMinutes,
-} from "@/lib/booking-segments";
 import { DayGlanceField } from "./day-glance-field";
+import { CrewPicker } from "./crew-picker";
+import { initialCrewState, type CrewState } from "./crew-state";
 import { ReturnToField } from "@/components/return-to-field";
 import { AddressAutocomplete } from "@/components/address-autocomplete";
-import { cn } from "@/lib/utils";
 import { RECURRENCE_OPTIONS } from "@/lib/recurrence";
 import { EARLY_START_GRACE_MINUTES } from "@/lib/booking-status";
 import {
@@ -124,35 +111,6 @@ export type ServiceOption = {
   default_duration_minutes: number | null;
   default_price_cents: number | null;
 };
-
-type SplitSegment = {
-  id: string;
-  assigned_to: string;
-  duration_minutes: number;
-  /** Minutes after the booking's own start. Explicit since 2026-10-02 so
-   *  crew windows can overlap; older rows arrive without one and are
-   *  resolved end-to-end on load. See lib/booking-segments.ts. */
-  start_offset_minutes: number;
-};
-
-/**
- * Render a cumulative-offset duration as a clean "Xh", "Ym", or "Xh Ym"
- * label. Used in the "(starts at +...)" label under each split segment.
- *
- * Previously this was inlined as `${Math.floor(n/60)}h${n%60}m` which
- * produced ugly outputs like "0h30m" (when sub-hour) or "1h30m" (no
- * space). Centralized here so the format is consistent everywhere.
- */
-function formatOffsetLabel(totalMinutes: number): string {
-  if (totalMinutes <= 0) return "0m";
-  const h = Math.floor(totalMinutes / 60);
-  const m = totalMinutes % 60;
-  if (h > 0 && m > 0) return `${h}h ${m}m`;
-  if (h > 0) return `${h}h`;
-  return `${m}m`;
-}
-
-
 
 /** Order categories the same way they were grouped in the old hardcoded
  *  dropdown (Cleaning → Appointments → Other) so the move to a dynamic
@@ -283,11 +241,16 @@ export function BookingForm({
   const [selectedDays, setSelectedDays] = useState<number[]>([]);
   const [monthlyNth, setMonthlyNth] = useState<string>("2");
   const [monthlyDow, setMonthlyDow] = useState<string>("2");
-  // Track the primary assignee in local state so the "additional crew"
-  // checkbox list can hide whoever's already the primary — can't assign
-  // the same person twice.
-  const [primaryAssignee, setPrimaryAssignee] = useState<string>(
-    defaults?.assigned_to ?? "",
+  // Who is on the job, and optionally when each of them is there — one
+  // picker, everyone equal. Replaced a "Primary assignee" dropdown, an
+  // "Additional crew" pill list and a per-row person picker inside the
+  // per-cleaner times editor. See ./crew-state.ts.
+  const [crewState, setCrewState] = useState<CrewState>(() =>
+    initialCrewState({
+      assignedTo: defaults?.assigned_to,
+      additional: defaults?.additional_assignees,
+      splits: defaults?.splits,
+    }),
   );
   // Default to indefinite. New series are almost always open-ended —
   // cleaning retainers with explicit end dates are the exception.
@@ -296,19 +259,6 @@ export function BookingForm({
   // avoids a subtle React bug where toggling the `disabled` prop on a date
   // input can leave the DOM value out of sync with what actually gets submitted.
   const [endsAtValue, setEndsAtValue] = useState("");
-  // Additional crew members on this booking (beyond the primary assignee).
-  // Submitted as repeated "additional_assignees" fields so FormData.getAll()
-  // picks them all up on the server side.
-  const [additionalAssignees, setAdditionalAssignees] = useState<string[]>(
-    defaults?.additional_assignees ?? [],
-  );
-
-  function toggleAdditional(id: string) {
-    setAdditionalAssignees((prev) =>
-      prev.includes(id) ? prev.filter((m) => m !== id) : [...prev, id],
-    );
-  }
-
   // ── Series schedule state (edit mode only) ──────────────────────────────
   // These are shown when editing a recurring booking with "this_and_future"
   // scope so the owner can change the recurrence rule, not just field values.
@@ -374,53 +324,9 @@ export function BookingForm({
   );
   const selectedService = services.find((s) => s.id === serviceTypeId);
 
-  // ── Split shifts ──────────────────────────────────────────────────────────
-  const [splitEnabled, setSplitEnabled] = useState(
-    Boolean(defaults?.splits?.length),
-  );
-  // Resolve incoming segments through the same helper the server action uses,
-  // so a booking saved by the OLD end-to-end editor opens showing the exact
-  // windows it already has rather than every segment claiming to start at 0.
-  const [splits, setSplits] = useState<SplitSegment[]>(() =>
-    resolveSegmentWindows(defaults?.splits ?? []).map((s, i) => ({
-      id: defaults?.splits?.[i]?.id ?? crypto.randomUUID(),
-      assigned_to: s.assigned_to ?? "",
-      duration_minutes: s.duration_minutes,
-      start_offset_minutes: s.start_offset_minutes,
-    })),
-  );
   const [divideHours, setDivideHours] = useState<boolean>(
     defaults?.divide_hours_evenly ?? false,
   );
-
-  function addSplit() {
-    setSplits((prev) => [
-      ...prev,
-      {
-        id: crypto.randomUUID(),
-        assigned_to: "",
-        duration_minutes: 120,
-        // Default a NEW person to starting where the last one ends. That is
-        // the old hand-off behaviour, which stays the common case; overlapping
-        // is a deliberate edit, not something you get by accident.
-        start_offset_minutes: prev.length
-          ? Math.max(
-              ...prev.map((s) => s.start_offset_minutes + s.duration_minutes),
-            )
-          : 0,
-      },
-    ]);
-  }
-
-  function removeSplit(id: string) {
-    setSplits((prev) => prev.filter((s) => s.id !== id));
-  }
-
-  function updateSplit(id: string, patch: Partial<SplitSegment>) {
-    setSplits((prev) =>
-      prev.map((s) => (s.id === id ? { ...s, ...patch } : s)),
-    );
-  }
 
   const defaultMinutes = defaults?.duration_minutes ?? 0;
 
@@ -567,16 +473,16 @@ export function BookingForm({
     }
     if (!addressValue && c.address) setAddressValue(c.address);
     if (!notesValue && c.notes) setNotesValue(c.notes);
-    // Pre-fill the primary assignee from the client's preferred cleaner
-    // when no assignee is chosen yet. Same "only-if-empty" rule as
-    // everything else — switching clients never clobbers a user
-    // deliberate pick.
-    if (!primaryAssignee && c.preferred_cleaner_id) {
+    // Pre-fill the crew with the client's preferred cleaner when nobody is
+    // picked yet. Same "only-if-empty" rule as everything else — switching
+    // clients never clobbers a deliberate pick.
+    if (crewState.crew.length === 0 && c.preferred_cleaner_id) {
       // Belt-and-braces: only auto-pick if the preferred cleaner is
       // actually in the employees list (they may have been
       // deactivated since the client was last edited).
-      const exists = employees.some((e) => e.id === c.preferred_cleaner_id);
-      if (exists) setPrimaryAssignee(c.preferred_cleaner_id);
+      const preferred = c.preferred_cleaner_id;
+      const exists = employees.some((e) => e.id === preferred);
+      if (exists) setCrewState((s) => ({ ...s, crew: [preferred] }));
     }
   }
 
@@ -1164,103 +1070,24 @@ export function BookingForm({
           </FormField>
         )}
 
-        <FormField
-          label="Primary assignee"
-          htmlFor="assigned_to"
-          error={state.errors?.assigned_to}
-        >
-          <FormSelect
-            id="assigned_to"
-            name="assigned_to"
-            defaultValue={v.assigned_to ?? defaults?.assigned_to ?? ""}
-            onChange={(e) => {
-              // Track the selected value in state only so the "additional
-              // crew" pill list can hide whoever's primary. The DOM value
-              // flows to FormData via defaultValue + the native selected
-              // attribute — not via React controlled-component binding,
-              // which had an edge case where quick select-then-submit
-              // could submit with the wrong value.
-              setPrimaryAssignee(e.target.value);
-              if (e.target.value) {
-                setAdditionalAssignees((prev) =>
-                  prev.filter((id) => id !== e.target.value),
-                );
-              }
-            }}
-          >
-            <option value="">Unassigned</option>
-            {employees.map((e) => (
-              <option key={e.id} value={e.id}>
-                {e.label}
-                {e.hasAccommodations ? " ⚠ (note on file)" : ""}
-              </option>
-            ))}
-          </FormSelect>
-        </FormField>
       </div>
 
-      {/* Additional crew — checkbox list. Hidden inputs below ensure the
-          server action receives each selected id as a separate value. */}
-      <FormField label="Additional crew" htmlFor="additional_assignees">
-        {employees.filter((e) => e.id !== primaryAssignee).length === 0 ? (
-          <p className="text-xs text-muted-foreground">
-            {employees.length === 0
-              ? "No active employees yet."
-              : "Everyone on the team is already assigned."}
-          </p>
-        ) : (
-          <>
-            <div className="flex flex-wrap gap-2">
-              {employees
-                .filter((e) => e.id !== primaryAssignee)
-                .map((e) => {
-                  const checked = additionalAssignees.includes(e.id);
-                  return (
-                    <button
-                      key={e.id}
-                      type="button"
-                      onClick={() => toggleAdditional(e.id)}
-                      className={cn(
-                        "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
-                        checked
-                          ? "border-foreground bg-foreground text-background"
-                          : "border-border bg-background text-muted-foreground hover:border-foreground/50 hover:text-foreground",
-                      )}
-                    >
-                      {checked ? "✓ " : ""}
-                      {e.label}
-                      {e.hasAccommodations && (
-                        <AlertTriangle
-                          className="ml-1 inline-block h-3 w-3 align-[-1px] text-amber-600 dark:text-amber-400"
-                          aria-label="Has accommodations on file"
-                        />
-                      )}
-                    </button>
-                  );
-                })}
-            </div>
-            <p className="mt-1.5 text-[11px] text-muted-foreground">
-              Pick one primary assignee above. Add additional crew here for
-              two-person jobs, deep cleans, or move-outs.
-            </p>
-            {additionalAssignees.map((id) => (
-              <input
-                key={id}
-                type="hidden"
-                name="additional_assignees"
-                value={id}
-              />
-            ))}
-          </>
-        )}
-      </FormField>
+      <CrewPicker
+        people={employees}
+        state={crewState}
+        onChange={setCrewState}
+        allowTimes={!isRecurring}
+        scheduledAtLocal={scheduledAtLocal}
+        jobMinutes={defaultMinutes}
+        error={state.errors?.assigned_to}
+      />
 
       {/* Divide hours evenly — only meaningful for a team of 2+ working the
-          same hours (not a hand-off split). Purely a field-app display: each
+          same hours (not per-person times). Purely a field-app display: each
           cleaner sees their share (duration ÷ crew). Does not change the
           window, payroll (clock-based), or the client's bill. */}
-      {!splitEnabled &&
-        (primaryAssignee ? 1 : 0) + additionalAssignees.length >= 2 &&
+      {!(crewState.timesOn && !isRecurring) &&
+        crewState.crew.length >= 2 &&
         (divideHoursDefault ? (
           <p className="rounded-lg border border-border bg-muted/20 p-4 text-xs text-muted-foreground">
             {/* Preserve this booking's own flag while the org-wide setting
@@ -1301,209 +1128,6 @@ export function BookingForm({
             </span>
           </label>
         ))}
-
-      {/* ── Per-cleaner times ──────────────────────────────────────────────
-          Each person on the booking gets their own start and length. They may
-          overlap (a crew working together for part of the day), run end-to-end
-          (a hand-off) or leave a gap (someone returns later).
-
-          This replaced a "Split shift (hand-off)" editor that laid segments
-          strictly end-to-end and told owners NOT to use it for people working
-          at the same time. That left the overlapping case with nowhere to go,
-          so a three-person 16-hour job on 2026-10-02 was saved with no segment
-          data at all — which disabled the crew guard in field/jobs and would
-          have let the first Complete end the job for everyone. Two concepts
-          over one data shape; now there is one.
-
-          Segments are serialised as a JSON hidden field and saved to
-          bookings.splits in the server action.
-      ────────────────────────────────────────────────────────────────── */}
-      {!isRecurring && (
-        <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-3">
-          <label className="flex cursor-pointer items-center gap-2.5">
-            <input
-              type="checkbox"
-              checked={splitEnabled}
-              onChange={(e) => {
-                setSplitEnabled(e.target.checked);
-                if (e.target.checked && splits.length === 0) {
-                  const half = Math.round(defaultMinutes / 2) || 120;
-                  setSplits([
-                    {
-                      id: crypto.randomUUID(),
-                      assigned_to: "",
-                      duration_minutes: half,
-                      start_offset_minutes: 0,
-                    },
-                    {
-                      id: crypto.randomUUID(),
-                      assigned_to: "",
-                      duration_minutes: half,
-                      // End-to-end by default: a hand-off is still the
-                      // commonest shape, and overlap is one edit away.
-                      start_offset_minutes: half,
-                    },
-                  ]);
-                }
-              }}
-              className="h-4 w-4 rounded border-input"
-            />
-            <SplitSquareVertical className="h-4 w-4 text-muted-foreground" />
-            <span className="text-sm font-medium">
-              Different times for each cleaner
-            </span>
-          </label>
-          <p className="-mt-1 pl-7 text-xs text-muted-foreground">
-            Give each person their own start and length on this one job. They
-            can <strong>overlap</strong> (working together for part of it),{" "}
-            <strong>hand off</strong> (one finishes as the next begins), or{" "}
-            <strong>leave a gap</strong>. Leave this off when everyone works the
-            same hours — just assign them all as crew.
-          </p>
-
-          {splitEnabled && (
-            <div className="space-y-3 pt-1">
-              {/* Hidden field: serialised splits JSON */}
-              <input
-                type="hidden"
-                name="splits"
-                value={JSON.stringify(splits)}
-              />
-
-              {splits.map((seg, idx) => {
-                const window = formatSegmentWindow(
-                  scheduledAtLocal,
-                  seg.start_offset_minutes,
-                  seg.duration_minutes,
-                );
-                return (
-                  <div
-                    key={seg.id}
-                    className="rounded-md border border-border bg-card p-3 space-y-2.5"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                        Cleaner {idx + 1}
-                        {window && (
-                          <span className="ml-1.5 font-normal normal-case tabular-nums text-foreground">
-                            {window}
-                          </span>
-                        )}
-                        {!window && seg.start_offset_minutes > 0 && (
-                          <span className="ml-1.5 font-normal normal-case">
-                            (starts at +
-                            {formatOffsetLabel(seg.start_offset_minutes)})
-                          </span>
-                        )}
-                      </span>
-                      {splits.length > 2 && (
-                        <button
-                          type="button"
-                          onClick={() => removeSplit(seg.id)}
-                          className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-destructive"
-                          aria-label="Remove segment"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      )}
-                    </div>
-
-                    <div className="grid gap-2 sm:grid-cols-3">
-                      <div>
-                        <label className="mb-1 block text-xs text-muted-foreground">
-                          Assigned to
-                        </label>
-                        <select
-                          value={seg.assigned_to}
-                          onChange={(e) =>
-                            updateSplit(seg.id, { assigned_to: e.target.value })
-                          }
-                          className="w-full rounded-md border border-input bg-background px-2.5 py-1.5 text-sm"
-                        >
-                          <option value="">Select employee…</option>
-                          {employees.map((emp) => (
-                            <option key={emp.id} value={emp.id}>
-                              {emp.label}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <HourMinuteField
-                        label="Starts after job start"
-                        ariaPrefix={`Cleaner ${idx + 1} start`}
-                        valueMinutes={seg.start_offset_minutes}
-                        onChangeMinutes={(start_offset_minutes) =>
-                          updateSplit(seg.id, { start_offset_minutes })
-                        }
-                      />
-
-                      <HourMinuteField
-                        label="Duration"
-                        ariaPrefix={`Cleaner ${idx + 1} duration`}
-                        valueMinutes={seg.duration_minutes}
-                        onChangeMinutes={(duration_minutes) =>
-                          updateSplit(seg.id, { duration_minutes })
-                        }
-                      />
-                    </div>
-                  </div>
-                );
-              })}
-
-              <button
-                type="button"
-                onClick={addSplit}
-                className="flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-input py-2 text-xs text-muted-foreground hover:border-foreground/30 hover:text-foreground"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                Add segment
-              </button>
-
-              {/* Summary row. The "$X estimated cost" that used to sit here
-                  multiplied a per-segment rate nobody was ever paid — each
-                  cleaner's clocked time is priced at their own wage. */}
-              {splits.length > 0 &&
-                (() => {
-                  const resolved = resolveSegmentWindows(splits);
-                  const labour = splits.reduce(
-                    (s, seg) => s + seg.duration_minutes,
-                    0,
-                  );
-                  const span = segmentsSpanMinutes(resolved);
-                  const overlaps = segmentsOverlap(resolved);
-                  return (
-                    <div className="space-y-1 text-xs text-muted-foreground">
-                      <p>
-                        Hours worked:{" "}
-                        <strong>{formatOffsetLabel(labour)}</strong> across{" "}
-                        {splits.length}{" "}
-                        {splits.length === 1 ? "cleaner" : "cleaners"}
-                      </p>
-                      {/* With overlapping windows these two numbers differ, and
-                          the span is the one that has to match the booking's own
-                          duration. Summing the labour would overstate how long
-                          the job actually runs. */}
-                      <p>
-                        Job runs: <strong>{formatOffsetLabel(span)}</strong>{" "}
-                        {overlaps
-                          ? "— some cleaners overlap"
-                          : "— no overlap between cleaners"}
-                      </p>
-                      {span > 0 && defaultMinutes > 0 && span !== defaultMinutes && (
-                        <p className="text-amber-600 dark:text-amber-400">
-                          This doesn&rsquo;t match the job&rsquo;s own duration
-                          of {formatOffsetLabel(defaultMinutes)}. Check the
-                          Duration field above.
-                        </p>
-                      )}
-                    </div>
-                  );
-                })()}
-            </div>
-          )}
-        </div>
-      )}
 
       {/* The "Hourly rate" field that used to sit beside Total is gone.
           It was the CLIENT'S time-and-materials price, but the pay code
