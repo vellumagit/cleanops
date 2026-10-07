@@ -12,6 +12,7 @@ import {
 } from "@/lib/booking-status";
 import { lifecycleByAssignee, withPriorLifecycle } from "@/lib/crew-sync";
 import { resolveSegmentWindows } from "@/lib/booking-segments";
+import { crewFromForm } from "@/lib/series-crew";
 import { after } from "next/server";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
 import { can } from "@/lib/auth";
@@ -1037,6 +1038,18 @@ export async function createRecurringBookingAction(
       address: parsed.data.address ?? null,
       property_id: propertyId,
       notes: parsed.data.notes ?? null,
+      // The whole crew, not just the selected cleaner, so the series can
+      // extend with everyone on it. See lib/series-crew.ts. Spread through
+      // `object` because `crew` is newer than the generated types — this keeps
+      // every OTHER field above type-checked, which a cast on the whole
+      // insert would quietly switch off.
+      ...({
+        crew: crewFromForm({
+          primaryId: parsed.data.assigned_to ?? null,
+          additionalIds: readAdditionalAssignees(formData),
+          splits: [],
+        }),
+      } as object),
     })
     .select("id")
     .single() as unknown as {
@@ -2015,6 +2028,14 @@ export async function updateBookingAction(
     const seriesTemplateFields: Record<string, unknown> = {
       ...propagatableFields,
       ...scheduleFields,
+      // The whole crew, built from exactly the inputs the visits above were
+      // just written from, so the template and the calendar describe the same
+      // people and the next extension reproduces them. See lib/series-crew.ts.
+      crew: crewFromForm({
+        primaryId: updateEffectiveAssignedTo,
+        additionalIds: readAdditionalAssignees(formData),
+        splits: updateSplits as SplitSegmentInput[],
+      }),
     };
     delete seriesTemplateFields.splits;
 

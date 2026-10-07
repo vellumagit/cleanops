@@ -14,6 +14,7 @@ import type { CurrencyCode } from "@/lib/format";
 import { resolveAutomationEnabled } from "@/lib/automation-defaults";
 import { localInputToUtcIso } from "@/lib/validators/common";
 import type { Database } from "@/lib/supabase/types";
+import { crewForGeneration, splitsFromCrew } from "@/lib/series-crew";
 
 type ServiceTypeEnum = Database["public"]["Enums"]["service_type"];
 type BonusInsert = Database["public"]["Tables"]["bonuses"]["Insert"];
@@ -4071,6 +4072,9 @@ export async function autoExtendRecurringSeries(): Promise<number> {
         address: string | null;
         notes: string | null;
         skip_dates: string[] | null;
+        // jsonb, read through parseSeriesCrew. Null on series saved before
+        // 2026-10-07 — crewForGeneration then falls back to assigned_to.
+        crew?: unknown;
       }> | null;
     };
 
@@ -4125,11 +4129,26 @@ export async function autoExtendRecurringSeries(): Promise<number> {
 
       if (occurrences.length === 0) continue;
 
+      // Everyone on the series, not just its one assigned_to. A template used
+      // to hold a single cleaner, so a two-person recurring job shrank to one
+      // person — and lost any per-cleaner times — each time it extended. See
+      // lib/series-crew.ts. Series saved before the crew column existed fall
+      // back to assigned_to and extend exactly as they always did.
+      const crew = crewForGeneration(s);
+      const crewSplits = splitsFromCrew(crew);
+      const firstMember = crew[0]?.membership_id ?? null;
+
       const rows = occurrences.map((scheduled_at) => ({
         organization_id: s.organization_id,
         client_id: s.client_id,
         package_id: s.package_id,
-        assigned_to: s.assigned_to,
+        // Mirrors the first crew member for code that still reads the
+        // single-cleaner column. Not a lead: nobody on the crew outranks
+        // anyone else.
+        assigned_to: firstMember,
+        // Same shape the booking form saves, so a generated visit opens in
+        // the editor showing the per-cleaner times it really has.
+        ...(crewSplits.length > 0 ? { splits: crewSplits } : {}),
         scheduled_at,
         duration_minutes: s.duration_minutes,
         service_type: s.service_type as ServiceTypeEnum,
@@ -4173,38 +4192,66 @@ export async function autoExtendRecurringSeries(): Promise<number> {
       // not bookings.assigned_to). Option 2: if the standing cleaner has
       // already confirmed this series, the new occurrences inherit 'accepted'
       // so they don't have to re-confirm every visit; otherwise 'pending'.
-      if (inserted && inserted.length > 0 && s.assigned_to) {
+      if (inserted && inserted.length > 0 && crew.length > 0) {
         const { data: seriesBookings } = (await db
           .from("bookings")
           .select("id")
           .eq("series_id", s.id)
           .limit(2000)) as unknown as { data: Array<{ id: string }> | null };
         const seriesIds = (seriesBookings ?? []).map((b) => b.id);
-        let seriesAccepted = false;
+
+        // Each member keeps their OWN standing: someone who has already
+        // confirmed visits in this series isn't asked again for every new
+        // one, and someone who hasn't still is. Deciding this from one person
+        // for the whole crew would either nag the regulars or silently accept
+        // on behalf of a newcomer.
+        const accepted = new Set<string>();
         if (seriesIds.length > 0) {
-          const { count } = (await db
+          const { data: acceptedRows } = (await db
             .from("booking_assignees")
-            .select("id", { count: "exact", head: true })
-            .eq("membership_id", s.assigned_to)
+            .select("membership_id")
+            .in(
+              "membership_id",
+              crew.map((m) => m.membership_id),
+            )
             .eq("acceptance_status", "accepted")
             .in("booking_id", seriesIds)) as unknown as {
-            count: number | null;
+            data: Array<{ membership_id: string }> | null;
           };
-          seriesAccepted = (count ?? 0) > 0;
+          for (const r of acceptedRows ?? []) accepted.add(r.membership_id);
         }
-        const status = seriesAccepted ? "accepted" : "pending";
-        const junctionRows = inserted.map((b) => ({
-          organization_id: s.organization_id,
-          booking_id: b.id,
-          membership_id: s.assigned_to as string,
-          is_primary: true,
-          acceptance_status: status,
-          responded_at: seriesAccepted ? new Date().toISOString() : null,
-        }));
-        await (db.from("booking_assignees").upsert(junctionRows, {
-          onConflict: "booking_id,membership_id",
-          ignoreDuplicates: true,
-        }) as unknown as Promise<unknown>);
+
+        const windows = crewSplits.length > 0;
+        const now = new Date().toISOString();
+        const junctionRows = inserted.flatMap((b) =>
+          crew.map((m, i) => ({
+            organization_id: s.organization_id,
+            booking_id: b.id,
+            membership_id: m.membership_id,
+            is_primary: i === 0,
+            split_index: windows && m.start_offset_minutes != null ? i : null,
+            split_start_offset_minutes: m.start_offset_minutes,
+            split_duration_minutes: m.duration_minutes,
+            acceptance_status: accepted.has(m.membership_id)
+              ? "accepted"
+              : "pending",
+            responded_at: accepted.has(m.membership_id) ? now : null,
+          })),
+        );
+        const { error: crewErr } = (await db
+          .from("booking_assignees")
+          .upsert(junctionRows, {
+            onConflict: "booking_id,membership_id",
+            ignoreDuplicates: true,
+          })) as unknown as { error: { message: string } | null };
+        // Read it. A visit generated with no crew rows is invisible to every
+        // cleaner's field app, so a failure here has to be loud.
+        if (crewErr) {
+          console.error(
+            `[extend-series] crew rows failed for series ${s.id}:`,
+            crewErr.message,
+          );
+        }
       }
 
       // Sync to calendar. Awaited (not fire-and-forget) so the cron's
