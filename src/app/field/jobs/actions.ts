@@ -166,12 +166,28 @@ export async function startJobAction(
 
   // Update status if it's not already started or finished.
   if (booking.status !== "in_progress" && booking.status !== "completed") {
-    const { error: updateError } = await supabase
+    // .select() so a write that matched NOTHING is visible. Postgres reports
+    // a zero-row update as success: until migration 20261007020000 the update
+    // policy only admitted the lead, so when anyone else on the crew clocked
+    // in first this "succeeded", changed nothing, and the job sat at
+    // "confirmed" while she was on the clock. If permissions ever drift like
+    // that again, say so instead of carrying on as if it had worked.
+    const { data: started, error: updateError } = (await supabase
       .from("bookings")
       .update({ status: "in_progress" })
-      .eq("id", bookingId);
+      .eq("id", bookingId)
+      .select("id")) as unknown as {
+      data: Array<{ id: string }> | null;
+      error: { message: string } | null;
+    };
     if (updateError)
       return refuse("status_update_failed", updateError.message);
+    if (!started || started.length === 0)
+      return refuse(
+        "status_update_matched_nothing",
+        "Couldn't start this job — your account isn't allowed to update it. Ask your manager to check you're on the crew.",
+        { is_primary: isPrimary },
+      );
     await logAuditEvent({
       membership,
       action: "status_change",
@@ -454,11 +470,14 @@ export async function completeJobAction(
     );
   }
 
-  // Through the admin client, because RLS only lets the PRIMARY assignee
-  // update the booking — for a second crew member the update used to match
-  // zero rows, return no error, and the code below drafted (and could
-  // auto-send) an invoice for a job still marked confirmed. The crew check
-  // at the top of this action is the authorization; this is the write.
+  // Through the admin client. This started as a workaround: the update policy
+  // only admitted the PRIMARY assignee, so for a second crew member the update
+  // matched zero rows, returned no error, and the code below drafted (and
+  // could auto-send) an invoice for a job still marked confirmed. Migration
+  // 20261007020000 now admits the whole crew, so the cleaner's own client
+  // would work here too; the admin client stays because the crew check at the
+  // top of this action is the authorization, and the .select() below already
+  // catches a write that matched nothing.
   const { data: completedRows, error: updateBookingError } = (await createSupabaseAdminClient()
     .from("bookings")
     .update({ status: "completed" })
