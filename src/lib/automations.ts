@@ -595,7 +595,9 @@ export async function notifyUpcomingJobs() {
     const now = new Date();
     const in1h = new Date(now.getTime() + 60 * 60 * 1000);
 
-    // Find jobs starting in the next hour that are assigned
+    // Find jobs starting in the next hour. Not filtered on assigned_to: a job
+    // staffed only through booking_assignees has no first person, and its
+    // crew still needs the heads-up. Jobs with nobody on them drop out below.
     const { data: jobs } = (await db
       .from("bookings")
       .select(
@@ -604,7 +606,6 @@ export async function notifyUpcomingJobs() {
         client:clients ( name )
       `,
       )
-      .not("assigned_to", "is", null)
       .gte("scheduled_at", now.toISOString())
       .lte("scheduled_at", in1h.toISOString())
       .in("status", ["pending", "confirmed"])) as unknown as {
@@ -666,9 +667,31 @@ export async function notifyUpcomingJobs() {
       (existingNotifs ?? []).map((n) => (n.href ?? "").split("/").pop()),
     );
 
-    const rows = gatedJobs
-      .filter((j) => !alreadyNotified.has(j.id))
-      .map((j) => {
+    // Everyone on each job, not just assigned_to. The second and third
+    // cleaners on a team job never got this push.
+    const pending = gatedJobs.filter((j) => !alreadyNotified.has(j.id));
+    const crewByJob = new Map<string, Set<string>>();
+    if (pending.length > 0) {
+      const { data: crewRows } = (await db
+        .from("booking_assignees")
+        .select("booking_id, membership_id")
+        .in(
+          "booking_id",
+          pending.map((j) => j.id),
+        )) as unknown as {
+        data: Array<{ booking_id: string; membership_id: string }> | null;
+      };
+      for (const r of crewRows ?? []) {
+        const set = crewByJob.get(r.booking_id) ?? new Set<string>();
+        set.add(r.membership_id);
+        crewByJob.set(r.booking_id, set);
+      }
+    }
+
+    const rows = pending.flatMap((j) => {
+        const crew = crewByJob.get(j.id) ?? new Set<string>();
+        if (j.assigned_to) crew.add(j.assigned_to);
+        if (crew.size === 0) return [];
         const clientName =
           (j.client as unknown as { name: string } | null)?.name ?? "a client";
         const orgTz =
@@ -678,19 +701,20 @@ export async function notifyUpcomingJobs() {
           minute: "2-digit",
           timeZone: orgTz,
         });
-        return {
+        const body = `${(j as { service_type_label?: string | null }).service_type_label ?? humanize(j.service_type)} for ${clientName} at ${when}${j.address ? ` — ${j.address}` : ""}`;
+        return [...crew].map((membershipId) => ({
           organization_id: j.organization_id,
-          recipient_membership_id: j.assigned_to,
+          recipient_membership_id: membershipId,
           type: "general" as const,
           title: "Job starting soon",
-          body: `${(j as { service_type_label?: string | null }).service_type_label ?? humanize(j.service_type)} for ${clientName} at ${when}${j.address ? ` — ${j.address}` : ""}`,
+          body,
           href: `/field/jobs/${j.id}`,
-        };
+        }));
       });
 
     if (rows.length === 0) return 0;
 
-    // Each row targets one assigned cleaner — in-app + push via the primitive.
+    // Each row targets one crew member — in-app + push via the primitive.
     await Promise.allSettled(
       rows.map((r) =>
         r.recipient_membership_id
@@ -5212,20 +5236,38 @@ export async function sendMonthlyOpsDigests(): Promise<{ orgsSent: number }> {
 
     const currency = await getOrgCurrency(org.id);
 
-    // Top performer by completed jobs.
-    const { data: completedByEmp } = (await db
-      .from("bookings")
-      .select("assigned_to")
-      .eq("organization_id", org.id)
-      .eq("status", "completed")
-      .not("assigned_to", "is", null)
-      .gte("scheduled_at", start.toISOString())
-      .lt("scheduled_at", end.toISOString())) as unknown as {
-      data: Array<{ assigned_to: string }> | null;
-    };
+    // Top performer by completed jobs. Every cleaner on a job gets credit
+    // for it — counting assigned_to alone credited a team job to whoever
+    // happened to be listed first. Paged: a busy month runs past the
+    // 1,000-row response cap.
+    const crewByBooking = new Map<string, Set<string>>();
+    const PAGE = 1000;
+    for (let from = 0; ; from += PAGE) {
+      const { data: page } = (await db
+        .from("bookings")
+        .select("id, assigned_to, crew:booking_assignees ( membership_id )")
+        .eq("organization_id", org.id)
+        .eq("status", "completed")
+        .gte("scheduled_at", start.toISOString())
+        .lt("scheduled_at", end.toISOString())
+        .order("id")
+        .range(from, from + PAGE - 1)) as unknown as {
+        data: Array<{
+          id: string;
+          assigned_to: string | null;
+          crew: Array<{ membership_id: string }> | null;
+        }> | null;
+      };
+      for (const bk of page ?? []) {
+        const set = new Set((bk.crew ?? []).map((c) => c.membership_id));
+        if (bk.assigned_to) set.add(bk.assigned_to);
+        crewByBooking.set(bk.id, set);
+      }
+      if (!page || page.length < PAGE) break;
+    }
     const empCount = new Map<string, number>();
-    for (const b of completedByEmp ?? []) {
-      empCount.set(b.assigned_to, (empCount.get(b.assigned_to) ?? 0) + 1);
+    for (const crew of crewByBooking.values()) {
+      for (const id of crew) empCount.set(id, (empCount.get(id) ?? 0) + 1);
     }
     let topEmployee: { name: string; jobs: number } | null = null;
     if (empCount.size > 0) {

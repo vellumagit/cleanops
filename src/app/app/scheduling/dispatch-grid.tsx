@@ -36,6 +36,7 @@ import { toneForBooking, toneForEmployee, type ColorBy } from "./color";
 import { computeSplitCue, type SplitCue } from "./split-cue";
 import type { BookingWarning } from "@/app/app/bookings/booking-warnings";
 import { WarningDot, WarningProvider } from "./warning-dot";
+import { dragIdFor, readDragInfo } from "./drag-crew";
 
 /**
  * Dispatch view: single-day, time-of-day axis, employee columns.
@@ -222,14 +223,15 @@ export function DispatchGrid({
   }, [date, tz]);
 
   function handleDragStart(event: DragStartEvent) {
-    setActiveId(String(event.active.id));
+    setActiveId(readDragInfo(event.active).bookingId);
   }
 
   function handleDragEnd(event: DragEndEvent) {
     setActiveId(null);
     const { active, over } = event;
     if (!over) return;
-    const bookingId = String(active.id);
+    // Whose card moved, not just which booking — see drag-crew.ts.
+    const { bookingId, fromMember } = readDragInfo(active);
     const target = parseDroppableId(String(over.id));
     if (!target) return;
 
@@ -237,9 +239,15 @@ export function DispatchGrid({
     if (!booking) return;
 
     if (target.kind === "unassigned") {
-      if (!booking.assigned_to) return; // already there
+      if (fromMember == null) return; // already there
       startTransition(async () => {
-        const result = await rescheduleBookingAction(bookingId, null, date);
+        const result = await rescheduleBookingAction(
+          bookingId,
+          null,
+          date,
+          undefined,
+          fromMember,
+        );
         if (result.ok) {
           toast.success("Moved to unassigned");
           router.refresh();
@@ -253,8 +261,10 @@ export function DispatchGrid({
     // Slot drop: (employee, HH:MM). No-op when it's already there.
     const currentMin = minutesOfDay(booking.scheduled_at, tz);
     const currentHH = `${pad(Math.floor(currentMin / 60))}:${pad(currentMin % 60)}`;
+    // Against the lane the card came FROM: a team job is in every crew
+    // member's column, not just the first person's.
     if (
-      booking.assigned_to === target.employeeId &&
+      fromMember === target.employeeId &&
       currentHH === target.time &&
       dateKey(new Date(booking.scheduled_at), tz) === date
     ) {
@@ -267,6 +277,7 @@ export function DispatchGrid({
         target.employeeId,
         date,
         target.time,
+        fromMember,
       );
       if (result.ok) {
         toast.success("Rescheduled");
@@ -606,6 +617,7 @@ function EmployeeColumn({
         return (
           <PositionedBooking
             key={b.id}
+            fromMember={employee.id}
             booking={b}
             top={top}
             height={height}
@@ -683,7 +695,10 @@ function PositionedBooking({
   hasConflict,
   onQuickView,
   splitCue,
+  fromMember,
 }: {
+  /** Whose column this copy of the card sits in. */
+  fromMember: string;
   booking: ScheduleBooking;
   top: number;
   height: number;
@@ -698,8 +713,10 @@ function PositionedBooking({
   /** Split-shift sequence cue for this lane's employee, or null. */
   splitCue?: SplitCue | null;
 }) {
+  // One id per copy of the card, carrying its column — see drag-crew.ts.
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
-    id: booking.id,
+    id: dragIdFor(booking.id, fromMember),
+    data: { bookingId: booking.id, fromMember },
     disabled: !canEdit,
   });
 

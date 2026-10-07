@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { getActionContext } from "@/lib/actions";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { futureStatusError } from "@/lib/booking-status";
+import { planCrewMove, type CrewMovePlan } from "./drag-crew";
 import {
   notifyBookingAssignment,
   sendBookingRescheduled,
@@ -64,6 +65,13 @@ export async function rescheduleBookingAction(
   targetDate: string,
   /** Optional new start time in HH:MM form (24h) for Dispatch-view drops. */
   newTimeLocal?: string,
+  /**
+   * Whose card was dragged — the lane it came FROM. null = the unassigned
+   * tray. Omitted by callers that can't say, which are treated as having
+   * dragged the first person's card. See drag-crew.ts: without this, grabbing
+   * a team job from a non-lead's lane wiped the rest of the crew.
+   */
+  fromMember?: string | null,
 ): Promise<RescheduleResult> {
   if (!id) return { ok: false, error: "Missing booking id" };
   if (!/^\d{4}-\d{2}-\d{2}$/.test(targetDate)) {
@@ -102,6 +110,36 @@ export async function rescheduleBookingAction(
   if (!current) return { ok: false, error: "Booking not found" };
 
   const hasSplits = Array.isArray(current.splits) && current.splits.length > 0;
+
+  // Who is on the job now, and what this drag does to them. Split bookings
+  // keep their crew and offsets untouched (only the start moves), as before.
+  const { data: crewRows } = (await supabase
+    .from("booking_assignees" as never)
+    .select("membership_id")
+    .eq("booking_id" as never, id as never)) as unknown as {
+    data: Array<{ membership_id: string }> | null;
+  };
+  const crewNow = Array.from(
+    new Set([
+      ...(current.assigned_to ? [current.assigned_to] : []),
+      ...(crewRows ?? []).map((r) => r.membership_id),
+    ]),
+  );
+  const plan: CrewMovePlan = hasSplits
+    ? { kind: "unchanged" }
+    : planCrewMove({
+        crew: crewNow,
+        lead: current.assigned_to,
+        mover: fromMember === undefined ? current.assigned_to : fromMember,
+        target: assignedTo,
+      });
+  if (plan.kind === "already_on") {
+    return {
+      ok: false,
+      error:
+        "That cleaner is already on this job. To change the day or time, drag the card along its own row. To take someone off, drop their card on Unassigned.",
+    };
+  }
 
   let targetHour: number;
   let targetMin: number;
@@ -156,17 +194,51 @@ export async function rescheduleBookingAction(
     const [y, m, d] = targetDate.split("-").map(Number);
     const dayStart = new Date(y, m - 1, d, 0, 0, 0, 0);
     const dayEnd = new Date(y, m - 1, d + 1, 0, 0, 0, 0);
-    const { data: sameDay, error: conflictError } = await supabase
-      .from("bookings")
-      .select("id, scheduled_at, duration_minutes")
-      .eq("assigned_to", assignedTo)
-      .gte("scheduled_at", dayStart.toISOString())
-      .lt("scheduled_at", dayEnd.toISOString())
-      .neq("id", id)
-      .limit(50);
+    // That person's other jobs that day — as first person OR as crew. This
+    // only looked at assigned_to, so a cleaner who was crew on another job at
+    // the same time read as free and got double-booked.
+    const [{ data: asLead, error: conflictError }, { data: asCrew }] =
+      await Promise.all([
+        supabase
+          .from("bookings")
+          .select("id, scheduled_at, duration_minutes")
+          .eq("assigned_to", assignedTo)
+          .gte("scheduled_at", dayStart.toISOString())
+          .lt("scheduled_at", dayEnd.toISOString())
+          .neq("id", id)
+          .neq("status", "cancelled")
+          .limit(50),
+        supabase
+          .from("booking_assignees" as never)
+          .select(
+            "booking:bookings!inner ( id, scheduled_at, duration_minutes, status )",
+          )
+          .eq("membership_id" as never, assignedTo as never)
+          .gte("booking.scheduled_at" as never, dayStart.toISOString() as never)
+          .lt("booking.scheduled_at" as never, dayEnd.toISOString() as never)
+          .limit(50) as unknown as Promise<{
+          data: Array<{
+            booking: {
+              id: string;
+              scheduled_at: string;
+              duration_minutes: number;
+              status: string;
+            } | null;
+          }> | null;
+        }>,
+      ]);
     if (conflictError) return { ok: false, error: conflictError.message };
+    const sameDay = [
+      ...(asLead ?? []),
+      ...(asCrew ?? [])
+        .map((r) => r.booking)
+        .filter(
+          (b): b is NonNullable<typeof b> =>
+            b != null && b.id !== id && b.status !== "cancelled",
+        ),
+    ];
 
-    const overlap = (sameDay ?? []).find((other) => {
+    const overlap = sameDay.find((other) => {
       const oStart = new Date(other.scheduled_at);
       const oEnd = new Date(oStart.getTime() + other.duration_minutes * 60_000);
       return oStart < nextEnd && oEnd > next;
@@ -183,12 +255,12 @@ export async function rescheduleBookingAction(
   // For split-shift bookings, only move the start time — never touch
   // assigned_to or booking_assignees. The segments stay with the same
   // crew, just shifted to the new slot (segment offsets are relative).
-  // For non-split bookings, allow reassignment as before.
+  // Otherwise assigned_to follows the crew plan, and only when it changed.
   const bookingUpdate: Record<string, unknown> = {
     scheduled_at: next.toISOString(),
   };
-  if (!hasSplits) {
-    bookingUpdate.assigned_to = assignedTo;
+  if (plan.kind === "changed") {
+    bookingUpdate.assigned_to = plan.lead;
   }
 
   // Did the actual INSTANT move? (A drag within the same slot can be a pure
@@ -225,60 +297,59 @@ export async function rescheduleBookingAction(
     );
   }
 
-  // Sync booking_assignees so all_assignee_ids in the scheduler grid
-  // reflects only the new primary. Without this, stale secondary-crew
-  // rows from a previous multi-person assignment stay in the junction
-  // table, causing the card to appear in every old assignee's column as
-  // well as the new one — the "duplicate booking" bug.
+  // Apply the crew plan: swap ONE person, never rebuild the crew. This used to
+  // delete every crew row and put back only the drop lane's person whenever
+  // that lane didn't match assigned_to — and since a team job's card shows in
+  // every crew member's lane, simply moving the day from a non-lead's lane
+  // took everyone else off the job. See drag-crew.ts.
   //
-  // SPLIT BOOKINGS: preserve booking_assignees entirely. The crew + their
-  // segment offsets/durations belong with the booking; rescheduling
-  // (which only changes scheduled_at above) doesn't affect them.
-  //
-  // ONLY when the primary actually changes. Dragging a card to a different
-  // TIME in the same lane is not a reassignment, and rewriting crew for it
-  // deleted every additional crew member on the booking — a 3-person job
-  // nudged 30 minutes silently became a 1-person job, with no notification
-  // and no calendar cleanup. Svit runs ~243 bookings a week and drags
-  // constantly.
-  const primaryChanged = assignedTo !== current.assigned_to;
-
-  if (!hasSplits && primaryChanged) {
-    // The incoming primary may already be on this job as additional crew.
-    // Carry their acceptance/completion across so a promotion doesn't re-ask
-    // someone to confirm a shift they already accepted.
-    const { data: priorRow } = assignedTo
-      ? ((await supabase
-          .from("booking_assignees" as never)
-          .select("acceptance_status, responded_at, completed_at")
-          .eq("booking_id" as never, id as never)
-          .eq("membership_id" as never, assignedTo as never)
-          .maybeSingle()) as unknown as {
-          data: Record<string, unknown> | null;
-        })
-      : { data: null };
-
-    (await supabase
+  // Split bookings never get here (their plan is always "unchanged"): their
+  // crew and segment offsets belong with the booking, and a reschedule only
+  // moves scheduled_at.
+  if (plan.kind === "changed") {
+    if (plan.removed) {
+      const { error: removeErr } = (await supabase
+        .from("booking_assignees" as never)
+        .delete()
+        .eq("booking_id" as never, id as never)
+        .eq("membership_id" as never, plan.removed as never)) as unknown as {
+        error: { message: string } | null;
+      };
+      if (removeErr) return { ok: false, error: removeErr.message };
+    }
+    if (plan.added) {
+      const { error: addErr } = (await supabase
+        .from("booking_assignees" as never)
+        .upsert(
+          {
+            organization_id: membership.organization_id,
+            booking_id: id,
+            membership_id: plan.added,
+            is_primary: false,
+          } as never,
+          { onConflict: "booking_id,membership_id", ignoreDuplicates: true },
+        )) as unknown as { error: { message: string } | null };
+      if (addErr) return { ok: false, error: addErr.message };
+    }
+    // Keep exactly one row flagged is_primary, matching assigned_to, for the
+    // code that still reads it. Nobody on the crew outranks anyone else.
+    await (supabase
       .from("booking_assignees" as never)
-      .delete()
-      .eq("booking_id" as never, id as never)) as unknown as Promise<unknown>;
-
-    if (assignedTo) {
-      (await supabase.from("booking_assignees" as never).insert({
-        organization_id: membership.organization_id,
-        booking_id: id,
-        membership_id: assignedTo,
-        is_primary: true,
-        ...(priorRow ?? {}),
-      } as never)) as unknown as Promise<unknown>;
+      .update({ is_primary: false } as never)
+      .eq("booking_id" as never, id as never) as unknown as Promise<unknown>);
+    if (plan.lead) {
+      await (supabase
+        .from("booking_assignees" as never)
+        .update({ is_primary: true } as never)
+        .eq("booking_id" as never, id as never)
+        .eq("membership_id" as never, plan.lead as never) as unknown as Promise<unknown>);
     }
   }
 
-  // Notify the newly-assigned cleaner when reassignment actually happens
-  // (non-split bookings only — split crew doesn't change on reschedule).
-  // Previously drag-drop silently moved jobs to a new cleaner without
-  // any push, so the new owner had no idea they were on the hook.
-  if (!hasSplits && assignedTo && assignedTo !== current.assigned_to) {
+  // Tell the person who was just added to the job. Previously drag-drop moved
+  // jobs to a new cleaner without any push, so they had no idea.
+  if (plan.kind === "changed" && plan.added) {
+    const addedId = plan.added;
     const { data: bookingForNotify } = (await supabase
       .from("bookings")
       .select("service_type, address, client:clients ( name )")
@@ -291,7 +362,7 @@ export async function rescheduleBookingAction(
       } | null;
     };
     if (bookingForNotify) {
-      notifyBookingAssignment(membership.organization_id, id, assignedTo, {
+      notifyBookingAssignment(membership.organization_id, id, addedId, {
         clientName: bookingForNotify.client?.name ?? "A client",
         scheduledAt: next.toISOString(),
         serviceType: bookingForNotify.service_type,

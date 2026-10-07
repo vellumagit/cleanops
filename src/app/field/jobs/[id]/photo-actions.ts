@@ -149,7 +149,20 @@ export async function uploadJobPhotoAction(
     return { ok: false, error: "Job not found" };
 
   const isManager = ["owner", "admin", "manager"].includes(membership.role);
-  const isAssigned = booking.assigned_to === membership.id;
+  // Anyone on the crew, not just the first person. This checked
+  // assigned_to alone, so the second cleaner on a team job was told "Only
+  // the assigned cleaner or a manager can add photos" on a job she was
+  // working.
+  let isAssigned = booking.assigned_to === membership.id;
+  if (!isAssigned && !isManager) {
+    const { data: crewRow } = (await supabase
+      .from("booking_assignees" as never)
+      .select("membership_id")
+      .eq("booking_id" as never, booking.id as never)
+      .eq("membership_id" as never, membership.id as never)
+      .maybeSingle()) as unknown as { data: { membership_id: string } | null };
+    isAssigned = crewRow != null;
+  }
   if (!isManager && !isAssigned) {
     return {
       ok: false,

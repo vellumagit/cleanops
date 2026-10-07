@@ -34,6 +34,7 @@ import { toneForBooking, toneForEmployee, type ColorBy } from "./color";
 import { computeSplitCue, type SplitCue } from "./split-cue";
 import type { BookingWarning } from "@/app/app/bookings/booking-warnings";
 import { WarningDot, WarningProvider } from "./warning-dot";
+import { dragIdFor, readDragInfo } from "./drag-crew";
 import { formatCalendarDate } from "@/lib/wall-clock";
 import { orderCrewByWorkload } from "./crew-order";
 
@@ -225,29 +226,29 @@ export function WeekGrid({
   }, [bookings, tz]);
 
   function handleDragStart(event: DragStartEvent) {
-    setActiveId(String(event.active.id));
+    setActiveId(readDragInfo(event.active).bookingId);
   }
 
   function handleDragEnd(event: DragEndEvent) {
     setActiveId(null);
     const { active, over } = event;
     if (!over) return;
-    const bookingId = String(active.id);
+    // Whose card moved, not just which booking — see drag-crew.ts.
+    const { bookingId, fromMember } = readDragInfo(active);
     const target = parseDroppableId(String(over.id));
     if (!target) return;
 
     const booking = bookingById.get(bookingId);
     if (!booking) return;
 
-    // No-op: dropped where it already is.
+    // No-op: dropped where it already is. Compared against the lane the card
+    // came FROM, not assigned_to — a team job's card is in every crew
+    // member's lane, so the first person's lane is only one of them.
     if (target.kind === "unassigned") {
-      if (!booking.assigned_to) return;
+      if (fromMember == null) return;
     } else {
       const currentDate = dateKey(new Date(booking.scheduled_at), tz);
-      if (
-        booking.assigned_to === target.employeeId &&
-        currentDate === target.date
-      ) {
+      if (fromMember === target.employeeId && currentDate === target.date) {
         return;
       }
     }
@@ -263,6 +264,8 @@ export function WeekGrid({
         bookingId,
         assignedTo,
         targetDate,
+        undefined,
+        fromMember,
       );
       if (result.ok) {
         toast.success(
@@ -613,6 +616,7 @@ function DayCell({
           tz={tz}
           accent={toneForBooking(b, colorBy, laneIdx)}
           splitCue={computeSplitCue(b, employeeId, nameById)}
+          fromMember={employeeId}
         />
       ))}
     </div>
@@ -638,7 +642,10 @@ function DraggableBooking({
   tz,
   accent,
   splitCue,
+  fromMember,
 }: {
+  /** Whose lane this copy of the card sits in. null = unassigned tray. */
+  fromMember: string | null;
   booking: ScheduleBooking;
   canEdit: boolean;
   onQuickView: (bookingId: string) => void;
@@ -650,8 +657,11 @@ function DraggableBooking({
   /** Split-shift sequence cue for this employee, or null when not a split. */
   splitCue?: SplitCue | null;
 }) {
+  // One id per COPY of the card (a team job renders in each crew member's
+  // lane), carrying the lane it sits in so a drop knows whose card moved.
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
-    id: booking.id,
+    id: dragIdFor(booking.id, fromMember),
+    data: { bookingId: booking.id, fromMember },
     disabled: !canEdit,
   });
 
@@ -856,6 +866,7 @@ function UnassignedTray({
           {bookings.map((b) => (
             <DraggableBooking
               key={b.id}
+              fromMember={null}
               booking={b}
               canEdit={canEdit}
               onQuickView={onQuickView}
