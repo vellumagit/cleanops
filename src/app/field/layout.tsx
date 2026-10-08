@@ -4,6 +4,9 @@ import { FieldShell } from "@/components/field-shell";
 import { BrandProvider } from "@/components/brand-provider";
 import { PushPrompt } from "@/components/push-prompt";
 import { isFeedVisible } from "@/lib/feed-visibility";
+import { getOrgTimezone } from "@/lib/org-timezone";
+import { buildTzProbe } from "@/lib/tz-probe";
+import { StaleTimezoneBanner } from "@/components/stale-timezone-banner";
 
 export default async function FieldLayout({
   children,
@@ -35,7 +38,7 @@ export default async function FieldLayout({
     }
   })();
 
-  const [{ data: profile }, { data: org }, feedEnabled, chatUnread] =
+  const [{ data: profile }, { data: org }, feedEnabled, chatUnread, orgTz] =
     await Promise.all([
       supabase
         .from("profiles")
@@ -51,6 +54,7 @@ export default async function FieldLayout({
       },
       isFeedVisible(membership.organization_id),
       chatUnreadPromise,
+      getOrgTimezone(membership.organization_id),
     ]);
 
   return (
@@ -64,6 +68,9 @@ export default async function FieldLayout({
         feedEnabled={feedEnabled}
         chatUnread={chatUnread}
       >
+        {/* Cleaners read job times on their own phones — the likeliest place
+            for out-of-date time zone rules. See lib/tz-probe.ts. */}
+        <StaleTimezoneBanner probe={buildTzProbe(orgTz)} />
         <PushPrompt
           membershipId={membership.id}
           organizationId={membership.organization_id}

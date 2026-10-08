@@ -15,6 +15,8 @@ import { PwaInstallBanner } from "@/components/pwa-install-banner";
 import { QuickActions } from "@/components/quick-actions";
 import { AIWidget } from "@/components/ai-assistant/ai-widget";
 import { getOrgTimezone } from "@/lib/org-timezone";
+import { buildTzProbe } from "@/lib/tz-probe";
+import { StaleTimezoneBanner } from "@/components/stale-timezone-banner";
 import { zonedDayBoundsUtc } from "@/lib/wall-clock";
 import { isFeedVisible } from "@/lib/feed-visibility";
 
@@ -171,6 +173,7 @@ export default async function AppLayout({
           where sideways movement belongs. */}
       <div className="flex min-w-0 flex-1 flex-col overflow-y-auto overflow-x-hidden overscroll-x-none pb-[calc(4rem+env(safe-area-inset-bottom))] pt-14 lg:pb-0 lg:pt-0">
         <DesktopToolRibbon />
+        <StaleTimezoneBanner probe={buildTzProbe(orgTz)} />
         <TrialBanner info={subscriptionInfo} role={membership.role} />
         <AutomationsOffBanner
           organizationId={membership.organization_id}
