@@ -316,17 +316,22 @@ export function WeekGrid({
             colorBy={colorBy}
           />
 
-          <div className="overflow-x-auto rounded-lg border border-border bg-card">
+          {/* The week fits its container: seven columns share the width rather
+              than each demanding 140px. Those minimums added up to 1,160px,
+              so on an ordinary laptop Sunday sat off the right edge behind a
+              scrollbar. Below 896px of board (a tablet, a narrowed window)
+              the columns would be too thin to read, so it scrolls there. */}
+          <div className="@container overflow-x-auto rounded-lg border border-border bg-card">
             <div
               className={cn(
                 "grid",
-                view === "day" ? "min-w-[360px]" : "min-w-[960px]",
+                view === "day" ? "min-w-[360px]" : "min-w-[900px] @4xl:min-w-0",
               )}
               style={{
                 gridTemplateColumns:
                   view === "day"
                     ? `180px minmax(220px, 1fr)`
-                    : `180px repeat(7, minmax(140px, 1fr))`,
+                    : `150px repeat(7, minmax(0, 1fr))`,
               }}
             >
               <div className="sticky left-0 z-10 border-b border-r border-border bg-card px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -337,7 +342,7 @@ export function WeekGrid({
                 return (
                   <div
                     key={d.toISOString()}
-                    className="border-b border-border px-3 py-3 text-center"
+                    className="min-w-0 border-b border-border px-1 py-3 text-center"
                   >
                     <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                       {DAY_LABELS[(d.getDay() + 6) % 7]}
@@ -584,7 +589,7 @@ function DayCell({
     <div
       ref={setNodeRef}
       className={cn(
-        "border-b border-r border-border transition-colors",
+        "min-w-0 border-b border-r border-border transition-colors",
         DENSITY[density].cell,
         isOver && "bg-primary/5 ring-2 ring-inset ring-primary/40",
         isOff &&
@@ -730,7 +735,7 @@ function BookingCard({
           : undefined
       }
       className={cn(
-        "rounded-md border border-border bg-background p-2 text-xs shadow-sm",
+        "min-w-0 overflow-hidden rounded-md border border-border bg-background p-2 text-xs shadow-sm",
         accent && "border-l-4",
         dragging && "shadow-lg ring-2 ring-primary",
         onClick &&
@@ -757,13 +762,16 @@ function BookingCard({
           </button>
         ) : null}
       </div>
-      <div className="tabular-nums text-muted-foreground">
+      <div className="truncate tabular-nums text-muted-foreground">
         {formatHourMinute(booking.scheduled_at, tz)} ·{" "}
         {booking.duration_minutes}m
       </div>
       <div className="mt-1 flex items-center gap-1 flex-wrap">
-        <StatusBadge tone={bookingStatusTone(booking.status)}>
-          {humanizeEnum(booking.status)}
+        <StatusBadge
+          tone={bookingStatusTone(booking.status)}
+          className="max-w-full"
+        >
+          <span className="truncate">{humanizeEnum(booking.status)}</span>
         </StatusBadge>
         {/* SPLIT cue — the grids are per-employee, so a split booking's
             segments live in separate lanes. Rather than a bare "Split"
