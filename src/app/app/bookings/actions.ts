@@ -43,6 +43,7 @@ import { canCreateData } from "@/lib/subscription";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { localInputToUtcIso } from "@/lib/validators/common";
 import { zonedYmd } from "@/lib/wall-clock";
+import { resolveSeriesMove } from "@/lib/series-move";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { redirectAfterSetup } from "@/lib/setup-return";
 import { logAuditEvent } from "@/lib/audit";
@@ -1618,6 +1619,22 @@ export async function updateBookingAction(
     // Identical rule ⇒ plain field propagation, nothing destroyed, nobody
     // emailed.
     let updateSchedule = updateScheduleRaw;
+
+    // Did THIS visit move to a different day? With "this and all future",
+    // that is a schedule change in itself: the rest of the series should
+    // follow it. Moving Helena Lane's Thu Nov 12 visit to Wed Nov 11 changed
+    // nothing else on the form, so the save read as "same rule" and left
+    // every later visit on Thursday.
+    const editedOldDate = seriesScheduledAt
+      ? zonedYmd(new Date(seriesScheduledAt), orgTz)
+      : "";
+    const seriesMove = resolveSeriesMove({
+      oldDate: editedOldDate,
+      newDate: zonedYmd(new Date(parsed.data.scheduled_at), orgTz),
+      postedStartsAt: String(formData.get("series_starts_at") ?? "").trim(),
+    });
+    const visitDayMoved = seriesMove.visitDayMoved;
+
     if (updateScheduleRaw) {
       const probe = {
         pattern: String(formData.get("series_pattern") ?? "").trim(),
@@ -1668,12 +1685,9 @@ export async function updateBookingAction(
         // every future visit — new row ids, calendar churn — and, because the
         // form saw no schedule change, it never asked whether to notify the
         // client. Patrick Hackett's series, 2026-10-07.
-        const editedVisitDate = seriesScheduledAt
-          ? zonedYmd(new Date(seriesScheduledAt), orgTz)
-          : "";
         const startsUnchanged =
           String(currentRule.starts_at ?? "") === probe.startsAt ||
-          (editedVisitDate !== "" && probe.startsAt === editedVisitDate);
+          (editedOldDate !== "" && probe.startsAt === editedOldDate);
         const sameRule =
           currentRule.pattern === probe.pattern &&
           normTime(currentRule.start_time) === normTime(probe.startTime) &&
@@ -1682,7 +1696,7 @@ export async function updateBookingAction(
           normDays(currentRule.custom_days) === normDays(probe.customDays) &&
           normNum(currentRule.monthly_nth) === normNum(probe.monthlyNth) &&
           normNum(currentRule.monthly_dow) === normNum(probe.monthlyDow);
-        if (sameRule) updateSchedule = false;
+        if (sameRule && !visitDayMoved) updateSchedule = false;
       }
     }
     let scheduleFields: Record<string, unknown> = {};
@@ -1692,7 +1706,8 @@ export async function updateBookingAction(
       const newStartTime = String(
         formData.get("series_start_time") ?? "",
       ).trim();
-      const newStartsAt = String(formData.get("series_starts_at") ?? "").trim();
+      // Where the visit now is, unless a different start was typed.
+      const newStartsAt = seriesMove.startsAt;
       const newEndsAt =
         String(formData.get("series_ends_at") ?? "").trim() || null;
       const newCustomDaysRaw = String(
@@ -1831,8 +1846,10 @@ export async function updateBookingAction(
             "confirmed",
           ]) as unknown as Promise<unknown>);
 
-        // Generate new occurrences strictly after the current booking's
-        // datetime so we don't create a duplicate for today's slot.
+        // Generate new occurrences strictly after the edited visit — at its NEW
+        // time. Stepping from the old time is what kept Lane on Thursdays
+        // after her visit moved to a Wednesday: every later visit was counted
+        // from where this one used to be.
         const rule: SeriesRule = {
           pattern: newPattern as SeriesRule["pattern"],
           custom_days: parsedCustomDays,
@@ -1848,7 +1865,7 @@ export async function updateBookingAction(
         const occurrences = generateOccurrences(
           rule,
           8,
-          new Date(seriesScheduledAt), // `after` — exclusive, so starts after current booking
+          new Date(parsed.data.scheduled_at), // `after` — exclusive
         );
 
         if (occurrences.length > 0) {
