@@ -280,7 +280,8 @@ export function DispatchGrid({
         fromMember,
       );
       if (result.ok) {
-        toast.success("Rescheduled");
+        if (result.notice) toast.warning(result.notice);
+        else toast.success("Rescheduled");
         router.refresh();
       } else {
         toast.error(result.error);

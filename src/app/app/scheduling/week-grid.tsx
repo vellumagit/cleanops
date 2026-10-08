@@ -268,11 +268,13 @@ export function WeekGrid({
         fromMember,
       );
       if (result.ok) {
-        toast.success(
-          target.kind === "unassigned"
-            ? "Moved to unassigned"
-            : "Booking rescheduled",
-        );
+        if (result.notice) toast.warning(result.notice);
+        else
+          toast.success(
+            target.kind === "unassigned"
+              ? "Moved to unassigned"
+              : "Booking rescheduled",
+          );
         router.refresh();
       } else {
         toast.error(result.error);

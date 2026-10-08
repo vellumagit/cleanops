@@ -5,12 +5,17 @@ import { getActionContext } from "@/lib/actions";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { futureStatusError } from "@/lib/booking-status";
 import { planCrewMove, type CrewMovePlan } from "./drag-crew";
+import { membersOffOn } from "@/lib/unavailability-notice";
+import { memberDisplayName } from "@/lib/member-display";
 import {
   notifyBookingAssignment,
   sendBookingRescheduled,
 } from "@/lib/automations";
 
-export type RescheduleResult = { ok: true } | { ok: false; error: string };
+export type RescheduleResult =
+  /** notice: saved, but worth a second look (someone's off that day). */
+  | { ok: true; notice?: string }
+  | { ok: false; error: string };
 
 /**
  * Mark a cleaner's "take me off the recurring client" request as handled.
@@ -371,8 +376,40 @@ export async function rescheduleBookingAction(
     }
   }
 
+  // Did this land on a day someone on the job said they're off? The move
+  // stands — the owner may know something the calendar doesn't — but they hear
+  // about it now, not when the cleaner doesn't show. The board's warning dot
+  // says the same thing afterwards.
+  let notice: string | undefined;
+  try {
+    const crewAfter = plan.kind === "changed" ? plan.crew : crewNow;
+    const off = await membersOffOn(
+      membership.organization_id,
+      crewAfter,
+      targetDate,
+    );
+    if (off.length > 0) {
+      const { data: people } = (await supabase
+        .from("memberships")
+        .select("id, display_name, profile:profiles ( full_name )")
+        .in("id", off)) as unknown as {
+        data: Array<{
+          id: string;
+          display_name: string | null;
+          profile: { full_name: string | null } | null;
+        }> | null;
+      };
+      const names = (people ?? []).map((p) => memberDisplayName(p));
+      notice = `Moved — but ${
+        names.length > 0 ? names.join(" and ") : "someone on this job"
+      } ${names.length > 1 ? "are" : "is"} off that day.`;
+    }
+  } catch (err) {
+    console.error("[reschedule] day-off check failed:", err);
+  }
+
   revalidatePath("/app/scheduling");
   revalidatePath("/app/bookings");
   revalidatePath("/app");
-  return { ok: true };
+  return { ok: true, notice };
 }

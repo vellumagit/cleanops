@@ -1,7 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { getActionContext } from "@/lib/actions";
+import { notifyManagersOfUnavailability } from "@/lib/unavailability-notice";
 
 type Result = { ok: true } | { ok: false; error: string };
 
@@ -133,6 +135,15 @@ export async function saveAvailabilityOverrideAction(
     }
   }
 
+  // Was this date already marked off? Re-saving it (a changed reason) is not
+  // news, and shouldn't notify the office a second time.
+  const { data: prior } = (await supabase
+    .from("availability_overrides" as never)
+    .select("kind")
+    .eq("membership_id" as never, membershipId as never)
+    .eq("date" as never, date as never)
+    .maybeSingle()) as unknown as { data: { kind: string } | null };
+
   // Upsert via delete-then-insert. UNIQUE(membership_id, date) keeps only
   // one row per date anyway.
   await (supabase
@@ -155,6 +166,21 @@ export async function saveAvailabilityOverrideAction(
     error: { message: string } | null;
   }>);
   if (error) return { ok: false, error: error.message };
+
+  // A cleaner marking a day off used to show up only as grey stripes on the
+  // board, unannounced. Only for their own day: a manager setting it for
+  // someone already knows.
+  if (kind === "off" && membershipId === membership.id && prior?.kind !== "off") {
+    after(() =>
+      notifyManagersOfUnavailability({
+        organizationId: membership.organization_id,
+        membershipId,
+        kind: "day_off",
+        startDate: date,
+        endDate: date,
+      }),
+    );
+  }
 
   revalidatePath("/field/availability", "page");
   revalidatePath("/app/scheduling", "page");

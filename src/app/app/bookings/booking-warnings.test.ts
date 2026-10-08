@@ -400,3 +400,63 @@ describe("overlaps that are not adjacent in time order", () => {
     expect(codes(out, long.id)).toContain("double_booked");
   });
 });
+
+describe("booked on a day off", () => {
+  const TZ = "America/Edmonton";
+  // Aug 1 2026, 9:00 PM MDT = Aug 2 03:00 UTC. The org-local date is Aug 1.
+  const lateEvening = "2026-08-02T03:00:00Z";
+  const names = new Map([
+    ["jim", "Jim"],
+    ["olha", "Olha"],
+  ]);
+
+  it("flags the job when anyone on the crew is off that org-local day", () => {
+    const b = bk({
+      scheduled_at: lateEvening,
+      additional_assignee_ids: ["olha"],
+    });
+    const out = computeBookingWarnings([b], NOW, {
+      byMember: { olha: ["2026-08-01"] },
+      tz: TZ,
+      nameById: names,
+    });
+    const w = (out.get(b.id) ?? []).find((x) => x.code === "on_day_off");
+    expect(w?.detail).toMatch(/^Olha is off that day/);
+  });
+
+  it("reads the date in the org's timezone, not UTC", () => {
+    const b = bk({ scheduled_at: lateEvening });
+    // In UTC this job is on Aug 2; Jim being off Aug 2 must not flag it.
+    const out = computeBookingWarnings([b], NOW, {
+      byMember: { jim: ["2026-08-02"] },
+      tz: TZ,
+    });
+    expect(codes(out, b.id)).not.toContain("on_day_off");
+  });
+
+  it("names everyone who is off", () => {
+    const b = bk({
+      scheduled_at: lateEvening,
+      additional_assignee_ids: ["olha"],
+    });
+    const out = computeBookingWarnings([b], NOW, {
+      byMember: { jim: ["2026-08-01"], olha: ["2026-08-01"] },
+      tz: TZ,
+      nameById: names,
+    });
+    const w = (out.get(b.id) ?? []).find((x) => x.code === "on_day_off");
+    expect(w?.detail).toMatch(/^Jim and Olha are off/);
+  });
+
+  it("ignores cancelled and completed jobs, and callers without the data", () => {
+    const off = { byMember: { jim: ["2026-08-01"] }, tz: TZ };
+    const done = bk({ scheduled_at: lateEvening, status: "completed" });
+    const live = bk({ scheduled_at: lateEvening });
+    expect(codes(computeBookingWarnings([done], NOW, off), done.id)).not.toContain(
+      "on_day_off",
+    );
+    expect(codes(computeBookingWarnings([live], NOW), live.id)).not.toContain(
+      "on_day_off",
+    );
+  });
+});

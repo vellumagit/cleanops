@@ -1,7 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { getActionContext } from "@/lib/actions";
+import { notifyManagersOfUnavailability } from "@/lib/unavailability-notice";
 import { logAuditEvent } from "@/lib/audit";
 import { notifyPtoStatus } from "@/lib/automations";
 import { getOrgTimezone } from "@/lib/org-timezone";
@@ -299,6 +301,19 @@ export async function submitSelfPtoRequestAction(
     }) as unknown as Promise<{ error: { message: string } | null }>);
 
   if (error) return { ok: false, error: error.message };
+
+  // Tell the office. Cancelling or changing a request notified management;
+  // making one didn't, so it sat on Timesheets until someone looked. after():
+  // the cleaner's save returns now, the notice goes out behind it.
+  after(() =>
+    notifyManagersOfUnavailability({
+      organizationId: membership.organization_id,
+      membershipId: membership.id,
+      kind: "time_off_request",
+      startDate: start_date,
+      endDate: end_date,
+    }),
+  );
 
   // Only revalidate the field-side page — the admin page will refresh
   // on their own view. Cross-surface revalidation was causing 30s+

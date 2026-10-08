@@ -292,8 +292,15 @@ export function SchedulerShell({
             : null,
       };
     });
-    return computeBookingWarnings(warnable);
-  }, [bookings]);
+    // Every crew member's name, for "Olha is off that day". From the full
+    // employee list, not the filtered one, for the same reason as above.
+    const nameById = new Map(employees.map((e) => [e.id, e.name]));
+    return computeBookingWarnings(warnable, undefined, {
+      byMember: offDays,
+      tz,
+      nameById,
+    });
+  }, [bookings, offDays, tz, employees]);
 
   return (
     <>

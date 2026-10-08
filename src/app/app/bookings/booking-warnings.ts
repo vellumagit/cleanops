@@ -11,13 +11,17 @@
  * for orgs that don't auto-complete).
  */
 
+import { zonedYmd } from "@/lib/wall-clock";
+import { crewOffOnJob } from "@/lib/unavailability";
+
 export type BookingWarningCode =
   | "double_booked"
   | "never_staffed"
   | "unassigned_soon"
   | "stuck_in_progress"
   | "no_price"
-  | "possible_duplicate";
+  | "possible_duplicate"
+  | "on_day_off";
 
 export type BookingWarning = {
   code: BookingWarningCode;
@@ -133,6 +137,16 @@ function memberWindow(
 export function computeBookingWarnings(
   bookings: WarnableBooking[],
   now: number = Date.now(),
+  /**
+   * Who is off when — approved time off and days marked unavailable, member →
+   * org-local YYYY-MM-DD dates — with the org timezone to read job dates in.
+   * Optional: only the scheduler loads it; other callers skip the check.
+   */
+  offDays?: {
+    byMember: Record<string, readonly string[]>;
+    tz: string;
+    nameById?: ReadonlyMap<string, string>;
+  },
 ): Map<string, BookingWarning[]> {
   const out = new Map<string, BookingWarning[]>();
   const add = (id: string, w: BookingWarning) => {
@@ -197,6 +211,37 @@ export function computeBookingWarnings(
         code: "possible_duplicate",
         label: "Possible duplicate",
         detail: `${list.length} bookings exist for this client at exactly this time. Double-submitting the form or regenerating a series can do this — it double-books the crew and double-bills the client.`,
+        severity: "high",
+      });
+    }
+  }
+
+  // ---- Per-row: someone on the job said they're off that day ----
+  // The board shades those days grey, but nothing stopped a drag or an
+  // assignment landing on one, and the stripes are easy to miss under a card.
+  if (offDays) {
+    for (const b of bookings) {
+      if (TERMINAL.has(b.status)) continue;
+      const crew = [
+        ...new Set(
+          [b.assigned_to, ...b.additional_assignee_ids].filter(
+            (x): x is string => Boolean(x),
+          ),
+        ),
+      ];
+      const off = crewOffOnJob(crew, offDays.byMember, (m) =>
+        zonedYmd(new Date(memberWindow(b, m).start), offDays.tz),
+      );
+      if (off.length === 0) continue;
+      const names = off.map((m) => offDays.nameById?.get(m) ?? "Someone");
+      const who =
+        names.length === 1
+          ? `${names[0]} is`
+          : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]} are`;
+      add(b.id, {
+        code: "on_day_off",
+        label: "Booked on a day off",
+        detail: `${who} off that day — approved time off, or marked unavailable. Move the job or put someone else on it.`,
         severity: "high",
       });
     }
