@@ -1,8 +1,10 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { TriangleAlert } from "lucide-react";
+import { Ban, TriangleAlert } from "lucide-react";
+import { toast } from "sonner";
+import { bulkVoidInvoicesAction } from "./actions";
 import { cn } from "@/lib/utils";
 import { useUrlState } from "@/components/use-url-state";
 import { useReturnTo } from "@/components/return-to-field";
@@ -103,6 +105,15 @@ const EMPTY_BY_TAB: Record<
   },
 };
 
+/**
+ * What "Void selected" can take. Anything with money on it (partly paid,
+ * paid, refunded) has to have the money undone first, and the server refuses
+ * it anyway, so it gets no checkbox rather than a confusing skip.
+ */
+function canVoid(status: InvoiceRow["status"]): boolean {
+  return status === "draft" || status === "sent" || status === "overdue";
+}
+
 /** One date, three spellings — the display form ("Jul 6, 2026"), the long
  *  month ("July 6, 2026"), and ISO ("2026-07-06") — so a date typed any of
  *  the common ways matches. Rendered in the org timezone like the cell. */
@@ -159,6 +170,47 @@ export function InvoicesTable({
     () => (tab === "all" ? rows : rows.filter((r) => tabFor(r.status) === tab)),
     [rows, tab],
   );
+
+  // Quick void. Selection is per tab: switching tabs clears it, so nothing
+  // selected on one tab can be voided from another where it isn't visible.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [voiding, startVoiding] = useTransition();
+  const selectable = canEdit && (tab === "to_send" || tab === "awaiting" || tab === "all");
+
+  function switchTab(next: InvoiceTab) {
+    setSelected(new Set());
+    setTab(next);
+  }
+
+  function voidSelected() {
+    const ids = [...selected];
+    if (ids.length === 0) return;
+    const n = ids.length;
+    if (
+      !confirm(
+        `Void ${n} invoice${n === 1 ? "" : "s"}? ${n === 1 ? "It moves" : "They move"} to the Void tab and can no longer be paid. Clients are not notified, and the jobs on ${n === 1 ? "it" : "them"} become billable again.`,
+      )
+    ) {
+      return;
+    }
+    startVoiding(async () => {
+      const res = await bulkVoidInvoicesAction(ids);
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
+      if (res.voided > 0) {
+        toast.success(`Voided ${res.voided} invoice${res.voided === 1 ? "" : "s"}.`);
+      }
+      if (res.hasPayments.length > 0) {
+        toast.warning(
+          `Not voided — money was received on ${res.hasPayments.join(", ")}. Refund or remove the payment first.`,
+        );
+      }
+      setSelected(new Set());
+      router.refresh();
+    });
+  }
 
   const columns: DataTableColumn<InvoiceRow>[] = [
     {
@@ -282,7 +334,7 @@ export function InvoicesTable({
           <button
             key={t.key}
             type="button"
-            onClick={() => setTab(t.key)}
+            onClick={() => switchTab(t.key)}
             className={cn(
               "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium whitespace-nowrap transition-colors",
               tab === t.key
@@ -305,8 +357,42 @@ export function InvoicesTable({
         ))}
       </div>
 
+      {selected.size > 0 && (
+        <div className="sticky top-2 z-10 flex items-center justify-between gap-3 rounded-lg border border-foreground/20 bg-foreground px-4 py-2.5 text-background shadow-lg">
+          <span className="text-sm font-medium">{selected.size} selected</span>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setSelected(new Set())}
+              disabled={voiding}
+              className="text-xs underline-offset-2 hover:underline"
+            >
+              Clear
+            </button>
+            <button
+              type="button"
+              onClick={voidSelected}
+              disabled={voiding}
+              className="inline-flex items-center gap-1.5 rounded-md bg-red-600 px-2.5 py-1 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+            >
+              <Ban className="h-3 w-3" />
+              {voiding ? "Voiding…" : "Void selected"}
+            </button>
+          </div>
+        </div>
+      )}
+
       <DataTable
         data={visibleRows}
+        selection={
+          selectable
+            ? {
+                selected,
+                onChange: setSelected,
+                canSelect: (r) => canVoid(r.status),
+              }
+            : undefined
+        }
         columns={columns}
         getRowId={(r) => r.id}
         searchPlaceholder="Search client, invoice #, date, status, amount…"

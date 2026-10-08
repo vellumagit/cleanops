@@ -54,6 +54,17 @@ type Props<T> = {
   };
   /** Click handler for a row (e.g. navigate to detail page). */
   onRowClick?: (row: T) => void;
+  /**
+   * Checkbox per row, for bulk actions. The caller owns the selected set and
+   * renders whatever acts on it. "Select all" in the header means all rows
+   * the search currently shows, never rows hidden by it.
+   */
+  selection?: {
+    selected: ReadonlySet<string>;
+    onChange: (next: Set<string>) => void;
+    /** Rows that can't take the bulk action get no checkbox. */
+    canSelect?: (row: T) => boolean;
+  };
 };
 
 export function DataTable<T>({
@@ -64,6 +75,7 @@ export function DataTable<T>({
   searchable = true,
   emptyState,
   onRowClick,
+  selection,
 }: Props<T>) {
   const [query, setQuery] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
@@ -82,6 +94,38 @@ export function DataTable<T>({
       return tokens.every((t) => haystacks.some((h) => h.includes(t)));
     });
   }, [query, data, columns]);
+
+  const selectableVisible = useMemo(
+    () =>
+      selection
+        ? filtered.filter((r) => selection.canSelect?.(r) ?? true).map(getRowId)
+        : [],
+    [selection, filtered, getRowId],
+  );
+  const allVisibleSelected =
+    selectableVisible.length > 0 &&
+    selectableVisible.every((id) => selection?.selected.has(id));
+  const someVisibleSelected =
+    !allVisibleSelected &&
+    selectableVisible.some((id) => selection?.selected.has(id));
+
+  function toggleAllVisible() {
+    if (!selection) return;
+    const next = new Set(selection.selected);
+    if (allVisibleSelected) for (const id of selectableVisible) next.delete(id);
+    else for (const id of selectableVisible) next.add(id);
+    selection.onChange(next);
+  }
+
+  function toggleRow(id: string) {
+    if (!selection) return;
+    const next = new Set(selection.selected);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    selection.onChange(next);
+  }
+
+  const extraCols = (onRowClick ? 1 : 0) + (selection ? 1 : 0);
 
   const showEmptyState = data.length === 0 && emptyState;
   const showNoMatches = data.length > 0 && filtered.length === 0;
@@ -177,6 +221,21 @@ export function DataTable<T>({
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border bg-muted/40">
+                    {selection && (
+                      <th className="w-10 px-3 py-2">
+                        <input
+                          type="checkbox"
+                          aria-label="Select all shown"
+                          className="h-4 w-4 cursor-pointer accent-foreground align-middle"
+                          checked={allVisibleSelected}
+                          ref={(el) => {
+                            if (el) el.indeterminate = someVisibleSelected;
+                          }}
+                          disabled={selectableVisible.length === 0}
+                          onChange={toggleAllVisible}
+                        />
+                      </th>
+                    )}
                     {columns.map((col) => (
                       <th
                         key={col.key}
@@ -197,7 +256,7 @@ export function DataTable<T>({
                   {showNoMatches ? (
                     <tr>
                       <td
-                        colSpan={columns.length + (onRowClick ? 1 : 0)}
+                        colSpan={columns.length + extraCols}
                         className="px-3 py-12 text-center text-xs text-muted-foreground"
                       >
                         No matches for &ldquo;{query}&rdquo;.
@@ -212,8 +271,33 @@ export function DataTable<T>({
                           "group border-b border-border last:border-0",
                           onRowClick &&
                             "cursor-pointer transition-colors hover:bg-muted/40",
+                          selection?.selected.has(getRowId(row)) && "bg-muted/40",
                         )}
                       >
+                        {selection && (
+                          // The whole cell is the hit area, and it never opens
+                          // the row: a near-miss on a checkbox shouldn't
+                          // navigate away from a half-made selection.
+                          <td
+                            className="w-10 px-3 py-2.5 align-middle"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if ((selection.canSelect?.(row) ?? true) && e.target === e.currentTarget) {
+                                toggleRow(getRowId(row));
+                              }
+                            }}
+                          >
+                            {(selection.canSelect?.(row) ?? true) && (
+                              <input
+                                type="checkbox"
+                                aria-label="Select row"
+                                className="h-4 w-4 cursor-pointer accent-foreground align-middle"
+                                checked={selection.selected.has(getRowId(row))}
+                                onChange={() => toggleRow(getRowId(row))}
+                              />
+                            )}
+                          </td>
+                        )}
                         {columns.map((col) => (
                           <td
                             key={col.key}

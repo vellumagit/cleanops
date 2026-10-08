@@ -1143,71 +1143,176 @@ export async function syncInvoiceToQuickBooksAction(
  * Void an invoice — soft-delete equivalent. Once voided, payments cannot
  * be recorded against it. The sync trigger flips status to 'void'.
  */
+type VoidOutcome = "voided" | "already_void" | "has_payments" | "not_found";
+
+/**
+ * The one way an invoice gets voided. The detail page's button and the list's
+ * "Void selected" both come through here, so the payment guard can't exist on
+ * one door and not the other.
+ */
+async function voidInvoices(
+  ctx: Awaited<ReturnType<typeof getActionContext>>,
+  ids: string[],
+): Promise<Map<string, VoidOutcome>> {
+  const { membership, supabase } = ctx;
+  const out = new Map<string, VoidOutcome>(ids.map((id) => [id, "not_found"]));
+  if (ids.length === 0) return out;
+
+  const { data: prevRows, error: readErr } = await supabase
+    .from("invoices")
+    .select("id, status, voided_at, payments:invoice_payments ( amount_cents, refunded_cents )")
+    .eq("organization_id", membership.organization_id)
+    .in("id", ids);
+  if (readErr) throw readErr;
+
+  const toVoid: Array<{ id: string; status: string }> = [];
+  for (const prev of prevRows ?? []) {
+    if (prev.voided_at) {
+      out.set(prev.id, "already_void");
+      continue;
+    }
+    // Void is for invoices that were never really owed — a duplicate, a
+    // mistake. An invoice with money actually received on it is a different
+    // animal: voiding it makes the public page tell the client "no payment
+    // required" while their money stays taken, with no refund ever issued and
+    // the payment rows orphaned under a void. Undo the money first (refund the
+    // card payment, or delete a mistyped manual row), then void.
+    const netPaid = netPaidCents(
+      (prev as { payments?: Array<{ amount_cents: number; refunded_cents: number | null }> })
+        .payments ?? [],
+    );
+    if (netPaid > 0) {
+      out.set(prev.id, "has_payments");
+      continue;
+    }
+    toVoid.push({ id: prev.id, status: prev.status });
+  }
+  if (toVoid.length === 0) return out;
+
+  const { data: updated, error } = await supabase
+    .from("invoices")
+    .update({ voided_at: new Date().toISOString(), status: "void" })
+    .eq("organization_id", membership.organization_id)
+    .in(
+      "id",
+      toVoid.map((r) => r.id),
+    )
+    .is("voided_at", null)
+    .select("id");
+  if (error) throw error;
+  const updatedIds = new Set((updated ?? []).map((r) => r.id));
+
+  // Un-stamp any bookings billed on these invoices — voided work is billable
+  // again. Without this (plus the now-partial period-key index), a voided
+  // consolidated invoice left its bookings stamped and its period key
+  // occupied, so the billing cron could never re-bill the period (audit P4).
+  if (updatedIds.size > 0) {
+    const { error: unstampErr } = await supabase
+      .from("bookings")
+      .update({ billing_invoice_id: null } as never)
+      .in("billing_invoice_id" as never, [...updatedIds] as never)
+      .eq("organization_id", membership.organization_id);
+    if (unstampErr) {
+      console.error(
+        `[invoices] void un-stamp failed for ${updatedIds.size} invoice(s):`,
+        unstampErr.message,
+      );
+    }
+  }
+
+  for (const r of toVoid) {
+    if (!updatedIds.has(r.id)) continue;
+    out.set(r.id, "voided");
+    await logAuditEvent({
+      membership,
+      action: "status_change",
+      entity: "invoice",
+      entity_id: r.id,
+      before: { status: r.status },
+      after: { status: "void" },
+    });
+  }
+  return out;
+}
+
 export async function voidInvoiceAction(formData: FormData) {
   const id = String(formData.get("id") ?? "");
   if (!id) return;
 
-  const { membership, supabase } = await getActionContext();
+  const ctx = await getActionContext();
 
   // Voiding reverses revenue recognition — owner/admin only.
-  if (!["owner", "admin"].includes(membership.role)) {
+  if (!["owner", "admin"].includes(ctx.membership.role)) {
     throw new Error("Only owners and admins can void invoices.");
   }
 
-  const { data: prev } = await supabase
-    .from("invoices")
-    .select("id, status, voided_at, payments:invoice_payments ( amount_cents, refunded_cents )")
-    .eq("id", id)
-    .maybeSingle();
-  if (!prev || prev.voided_at) return;
-
-  // Void is for invoices that were never really owed — a duplicate, a
-  // mistake. An invoice with money actually received on it is a different
-  // animal: voiding it makes the public page tell the client "no payment
-  // required" while their money stays taken, with no refund ever issued and
-  // the payment rows orphaned under a void. Undo the money first (refund the
-  // card payment, or delete a mistyped manual row), then void.
-  const netPaid = netPaidCents(
-    (prev as { payments?: Array<{ amount_cents: number; refunded_cents: number | null }> })
-      .payments ?? [],
-  );
-  if (netPaid > 0) {
+  const outcome = (await voidInvoices(ctx, [id])).get(id);
+  if (outcome === "has_payments") {
     redirect(`/app/invoices/${id}?error=void_has_payments`);
   }
 
-  const { error } = await supabase
-    .from("invoices")
-    .update({ voided_at: new Date().toISOString(), status: "void" })
-    .eq("id", id);
-  if (error) throw error;
-
-  // Un-stamp any bookings billed on this invoice — voided work is billable
-  // again. Without this (plus the now-partial period-key index), a voided
-  // consolidated invoice left its bookings stamped and its period key
-  // occupied, so the billing cron could never re-bill the period (audit P4).
-  const { error: unstampErr } = await supabase
-    .from("bookings")
-    .update({ billing_invoice_id: null } as never)
-    .eq("billing_invoice_id" as never, id as never)
-    .eq("organization_id", membership.organization_id);
-  if (unstampErr) {
-    console.error(
-      `[invoices] void un-stamp failed for invoice ${id}:`,
-      unstampErr.message,
-    );
-  }
-
-  await logAuditEvent({
-    membership,
-    action: "status_change",
-    entity: "invoice",
-    entity_id: id,
-    before: { status: prev.status },
-    after: { status: "void" },
-  });
-
   revalidatePath(`/app/invoices/${id}`);
   revalidatePath("/app/invoices");
+}
+
+export type BulkVoidResult =
+  | {
+      ok: true;
+      voided: number;
+      /** Invoice numbers left alone because money was received on them. */
+      hasPayments: string[];
+    }
+  | { ok: false; error: string };
+
+/**
+ * Void several invoices at once from the list: the quick way to clear out
+ * drafts that should never go out. Same rules as the single Void button:
+ * owner/admin only, and anything with money received on it is skipped and
+ * named, not voided.
+ */
+export async function bulkVoidInvoicesAction(
+  ids: string[],
+): Promise<BulkVoidResult> {
+  const clean = [...new Set(ids.filter((id) => typeof id === "string" && id))];
+  if (clean.length === 0) return { ok: false, error: "Nothing selected." };
+  if (clean.length > 500) {
+    return { ok: false, error: "Select 500 or fewer at a time." };
+  }
+
+  const ctx = await getActionContext();
+  if (!["owner", "admin"].includes(ctx.membership.role)) {
+    return { ok: false, error: "Only owners and admins can void invoices." };
+  }
+
+  let outcomes: Map<string, VoidOutcome>;
+  try {
+    outcomes = await voidInvoices(ctx, clean);
+  } catch (err) {
+    return {
+      ok: false,
+      error:
+        err instanceof Error ? err.message : "Could not void those invoices.",
+    };
+  }
+
+  const blocked = [...outcomes]
+    .filter(([, o]) => o === "has_payments")
+    .map(([id]) => id);
+  let hasPayments: string[] = [];
+  if (blocked.length > 0) {
+    const { data } = await ctx.supabase
+      .from("invoices")
+      .select("id, number")
+      .in("id", blocked);
+    hasPayments = (data ?? []).map((r) => r.number ?? r.id.slice(0, 8));
+  }
+
+  revalidatePath("/app/invoices");
+  return {
+    ok: true,
+    voided: [...outcomes.values()].filter((o) => o === "voided").length,
+    hasPayments,
+  };
 }
 
 /**
