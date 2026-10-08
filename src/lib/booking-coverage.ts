@@ -1,5 +1,6 @@
 import "server-only";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { selectInChunks } from "@/lib/supabase/chunked-in";
 
 /**
  * "Is anyone actually doing this job?" — the ONE answer.
@@ -48,34 +49,57 @@ export async function resolveBookingCoverage(
 
   const db = createSupabaseAdminClient();
 
+  // Chunked: callers pass up to 1,000 ids (the bookings list), and one
+  // `in` filter that long overflows the request URL — all three of these
+  // used to fail together and read every job as unstaffed.
   const [primary, crew, offers] = await Promise.all([
-    db
-      .from("bookings")
-      .select("id, assigned_to")
-      .in("id", ids) as unknown as Promise<{
-      data: Array<{ id: string; assigned_to: string | null }> | null;
-    }>,
-    db
-      .from("booking_assignees")
-      .select("booking_id, membership_id")
-      .in("booking_id", ids) as unknown as Promise<{
-      data: Array<{ booking_id: string; membership_id: string }> | null;
-    }>,
+    selectInChunks(ids, (chunk) =>
+      db
+        .from("bookings")
+        .select("id, assigned_to")
+        .in("id", chunk) as unknown as Promise<{
+        data: Array<{ id: string; assigned_to: string | null }> | null;
+        error: { message: string } | null;
+      }>,
+    ),
+    selectInChunks(ids, (chunk) =>
+      db
+        .from("booking_assignees")
+        .select("booking_id, membership_id")
+        .in("booking_id", chunk) as unknown as Promise<{
+        data: Array<{ booking_id: string; membership_id: string }> | null;
+        error: { message: string } | null;
+      }>,
+    ),
     // A claim is what matters, not the offer's own status: a 1-of-2 filled
-    // offer still means one real person is showing up.
-    db
-      .from("job_offer_claims")
-      .select(
-        "contact_id, membership_id, offer:job_offers ( booking_id )" as never,
-      )
-      .in("offer.booking_id" as never, ids as never) as unknown as Promise<{
-      data: Array<{
-        contact_id: string | null;
-        membership_id: string | null;
-        offer: { booking_id: string } | null;
-      }> | null;
-    }>,
+    // offer still means one real person is showing up. !inner so the filter
+    // limits the claims returned, rather than returning every claim with a
+    // null offer for the ones that don't match.
+    selectInChunks(ids, (chunk) =>
+      db
+        .from("job_offer_claims")
+        .select(
+          "contact_id, membership_id, offer:job_offers!inner ( booking_id )" as never,
+        )
+        .in("offer.booking_id" as never, chunk as never) as unknown as Promise<{
+        data: Array<{
+          contact_id: string | null;
+          membership_id: string | null;
+          offer: { booking_id: string } | null;
+        }> | null;
+        error: { message: string } | null;
+      }>,
+    ),
   ]);
+  for (const [name, r] of [
+    ["bookings", primary],
+    ["booking_assignees", crew],
+    ["job_offer_claims", offers],
+  ] as const) {
+    if (r.error) {
+      console.error(`[booking-coverage] ${name} lookup failed:`, r.error.message);
+    }
+  }
 
   for (const b of primary.data ?? []) {
     if (!b.assigned_to) continue;
@@ -113,13 +137,16 @@ export async function resolveBookingCoverage(
     new Set([...out.values()].flatMap((c) => c.employeeIds)),
   );
   if (allEmployeeIds.length > 0) {
-    const { data: activeRows } = (await db
-      .from("memberships")
-      .select("id")
-      .in("id", allEmployeeIds)
-      .eq("status", "active")) as unknown as {
-      data: Array<{ id: string }> | null;
-    };
+    const { data: activeRows } = await selectInChunks(allEmployeeIds, (chunk) =>
+      db
+        .from("memberships")
+        .select("id")
+        .in("id", chunk)
+        .eq("status", "active") as unknown as Promise<{
+        data: Array<{ id: string }> | null;
+        error: { message: string } | null;
+      }>,
+    );
     const active = new Set((activeRows ?? []).map((r) => r.id));
     for (const c of out.values()) {
       c.employeeIds = c.employeeIds.filter((mid) => active.has(mid));

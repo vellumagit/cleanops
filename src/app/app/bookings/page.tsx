@@ -11,6 +11,7 @@ import { orgDividesCrewHours } from "@/lib/crew-hours";
 import { describeRecurrence } from "@/lib/recurrence";
 import { getFlaggedCrewIds } from "@/lib/crew-accommodations";
 import { resolveFreelancerCoverageNames } from "@/lib/booking-coverage";
+import { selectInChunks } from "@/lib/supabase/chunked-in";
 import { BookingsTable, type BookingRow } from "./bookings-table";
 
 export const metadata = { title: "Bookings" };
@@ -172,30 +173,26 @@ export default async function BookingsPage({
       ),
     );
   }
-  const { data: assigneesData } = bookingIds.length
-    ? ((await supabase
-        .from("booking_assignees" as never)
-        .select(
-          "booking_id, membership_id, is_primary, split_start_offset_minutes, split_duration_minutes",
-        )
-        .in("booking_id" as never, bookingIds as never)) as unknown as {
-        data: Array<{
-          booking_id: string;
-          membership_id: string;
-          is_primary: boolean;
-          split_start_offset_minutes: number | null;
-          split_duration_minutes: number | null;
-        }> | null;
-      })
-    : {
-        data: [] as Array<{
-          booking_id: string;
-          membership_id: string;
-          is_primary: boolean;
-          split_start_offset_minutes: number | null;
-          split_duration_minutes: number | null;
-        }>,
-      };
+  // Chunked: up to 1,000 ids in one `in` filter overflowed the request URL
+  // and the whole lookup failed, so every team job showed only its first
+  // cleaner. See lib/supabase/chunked-in.ts.
+  const { data: assigneesData } = await selectInChunks(bookingIds, (chunk) =>
+    supabase
+      .from("booking_assignees" as never)
+      .select(
+        "booking_id, membership_id, is_primary, split_start_offset_minutes, split_duration_minutes",
+      )
+      .in("booking_id" as never, chunk as never) as unknown as Promise<{
+      data: Array<{
+        booking_id: string;
+        membership_id: string;
+        is_primary: boolean;
+        split_start_offset_minutes: number | null;
+        split_duration_minutes: number | null;
+      }> | null;
+      error: { message: string } | null;
+    }>,
+  );
   const additionalByBooking = new Map<string, string[]>();
   // Count split segments per booking (rows carrying split metadata). 2+
   // means the booking is a split shift — feeds the table's "Split" chip.

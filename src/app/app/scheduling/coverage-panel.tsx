@@ -37,8 +37,12 @@ export async function CoveragePanel({
   const [{ data: requests }, { data: openBookings }] = await Promise.all([
     supabase
       .from("shift_change_requests" as never)
+      // Named FK: the table points at memberships twice (who asked, and who
+      // resolved it), and a bare `memberships` embed is ambiguous — PostgREST
+      // refused it (PGRST201) on every board load, so the panel could never
+      // show a cleaner's request to come off a client.
       .select(
-        "id, reason, created_at, membership:memberships ( display_name, profile:profiles ( full_name ) ), booking:bookings ( scheduled_at, client:clients ( name ) )",
+        "id, reason, created_at, membership:memberships!shift_change_requests_membership_id_fkey ( display_name, profile:profiles ( full_name ) ), booking:bookings ( scheduled_at, client:clients ( name ) )",
       )
       .eq("organization_id" as never, organizationId as never)
       .eq("status" as never, "open" as never)
