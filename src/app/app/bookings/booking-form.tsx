@@ -629,7 +629,14 @@ export function BookingForm({
       onSubmit={(e) => {
         if (mode !== "edit") return;
         if (notifyDecidedRef.current) return;
-        if (!wouldNotifyClient) return;
+        if (!wouldNotifyClient) {
+          // Nobody was asked, so nobody gets messaged. If the server reads
+          // the save as a reschedule anyway (its check and this one ever
+          // disagree), it stays quiet rather than texting the client
+          // unannounced.
+          if (notifyInputRef.current) notifyInputRef.current.value = "0";
+          return;
+        }
         e.preventDefault();
         setNotifyDialogOpen(true);
       }}

@@ -42,6 +42,7 @@ import {
 import { canCreateData } from "@/lib/subscription";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { localInputToUtcIso } from "@/lib/validators/common";
+import { zonedYmd } from "@/lib/wall-clock";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { redirectAfterSetup } from "@/lib/setup-return";
 import { logAuditEvent } from "@/lib/audit";
@@ -1660,10 +1661,23 @@ export async function updateBookingAction(
           const n = typeof v === "number" ? v : Number(v);
           return Number.isFinite(n) && String(v ?? "").trim() !== "" ? n : null;
         };
+        // The form pre-fills "starts" with THIS visit's date — it means
+        // "regenerate from here", not a new anchor. Compared only against the
+        // series' original start date, it differed on every visit but the
+        // first, so a plain this-and-future save (crew, price, notes) rebuilt
+        // every future visit — new row ids, calendar churn — and, because the
+        // form saw no schedule change, it never asked whether to notify the
+        // client. Patrick Hackett's series, 2026-10-07.
+        const editedVisitDate = seriesScheduledAt
+          ? zonedYmd(new Date(seriesScheduledAt), orgTz)
+          : "";
+        const startsUnchanged =
+          String(currentRule.starts_at ?? "") === probe.startsAt ||
+          (editedVisitDate !== "" && probe.startsAt === editedVisitDate);
         const sameRule =
           currentRule.pattern === probe.pattern &&
           normTime(currentRule.start_time) === normTime(probe.startTime) &&
-          String(currentRule.starts_at ?? "") === probe.startsAt &&
+          startsUnchanged &&
           String(currentRule.ends_at ?? "") === String(probe.endsAt ?? "") &&
           normDays(currentRule.custom_days) === normDays(probe.customDays) &&
           normNum(currentRule.monthly_nth) === normNum(probe.monthlyNth) &&
