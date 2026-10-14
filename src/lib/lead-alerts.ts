@@ -65,19 +65,41 @@ export async function getLeadAlertTargets(orgId: string): Promise<LeadAlertTarge
         automation_settings: AutomationSettings;
       } | null;
     }>,
+    // profiles has no email column — sign-in email lives on auth.users.
+    // Asking for profiles.email failed the whole query (42703), so every
+    // owner and admin dropped off the lead alert and only the org's contact
+    // inbox was left on it.
     admin
       .from("memberships")
-      .select("contact_email, contact_phone, profile:profiles ( email, phone )")
+      .select("contact_email, contact_phone, profile_id, profile:profiles ( phone )")
       .eq("organization_id", orgId)
       .in("role", ["owner", "admin"])
       .eq("status", "active") as unknown as Promise<{
       data: Array<{
         contact_email: string | null;
         contact_phone: string | null;
-        profile: { email: string | null; phone: string | null } | null;
+        profile_id: string | null;
+        profile: { phone: string | null } | null;
       }> | null;
+      error: { message: string } | null;
     }>,
   ]);
+
+  // Sign-in emails for anyone without a contact email set on their
+  // membership. One admin-API read each; an org has a handful of owners.
+  const authEmailById = new Map<string, string>();
+  await Promise.all(
+    (people ?? [])
+      .filter((m) => !m.contact_email && m.profile_id)
+      .map(async (m) => {
+        try {
+          const { data } = await admin.auth.admin.getUserById(m.profile_id!);
+          if (data.user?.email) authEmailById.set(m.profile_id!, data.user.email);
+        } catch {
+          // A missing auth user just means no address for that person.
+        }
+      }),
+  );
 
   const emails = new Set<string>();
   const phones = new Set<string>();
@@ -90,7 +112,7 @@ export async function getLeadAlertTargets(orgId: string): Promise<LeadAlertTarge
     if (/^\+\d{7,15}$/.test(p)) phones.add(p);
   };
   for (const m of people ?? []) {
-    addEmail(m.contact_email ?? m.profile?.email);
+    addEmail(m.contact_email ?? (m.profile_id ? authEmailById.get(m.profile_id) : null));
     addPhone(m.profile?.phone ?? m.contact_phone);
   }
   addEmail(org?.contact_email);
@@ -131,13 +153,23 @@ export function composeLeadAlertSms(args: {
 }
 
 /**
- * Fire-and-forget: sends the text to every target phone. sendOrgSms decides
- * whether the org may text at all; a skipped send is not an error.
+ * Sends the text to every target phone. sendOrgSms decides whether the org
+ * may text at all; a skipped send is not an error. Resolves once every text
+ * has been attempted — callers hand it to after() so the serverless function
+ * isn't frozen mid-send.
  */
-export function sendLeadAlertTexts(orgId: string, phones: string[], body: string): void {
+export function sendLeadAlertTexts(
+  orgId: string,
+  phones: string[],
+  body: string,
+): Promise<unknown> {
+  const sends: Promise<unknown>[] = [];
   for (const to of phones) {
-    sendOrgSms(orgId, { to, body, automationKey: LEAD_ALERT_SMS_KEY }).catch((err) =>
-      console.error("[lead-alert] sms failed:", err),
+    sends.push(
+      sendOrgSms(orgId, { to, body, automationKey: LEAD_ALERT_SMS_KEY }).catch((err) =>
+        console.error("[lead-alert] sms failed:", err),
+      ),
     );
   }
+  return Promise.allSettled(sends);
 }

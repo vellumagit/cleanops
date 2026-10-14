@@ -1,9 +1,10 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse, after, type NextRequest } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
 import { findOrCreateClient } from "@/lib/find-or-create-client";
 import { newLeadPatch, type LeadSource } from "@/lib/lead-pipeline";
 import { sendEmail, getOrgSender, withinOrgEmailCap } from "@/lib/email";
+import { quoteRange } from "@/lib/estimate-quote";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { escapeHtml as e } from "@/lib/support-mail";
 import {
@@ -163,12 +164,12 @@ export async function POST(
   const cleaningDate = s(body.cleaningDate, 30);
   const hearAboutUs = s(body.hearAboutUs, 100);
 
-  const initialHigh = Number(body.priceInitialHigh);
-  const recurringHigh = Number(body.priceRecurringHigh);
-  const totalCents =
-    Number.isFinite(initialHigh) && initialHigh > 0
-      ? Math.round(initialHigh * 100)
-      : 0;
+  // The calculator sends a RANGE for both the first clean and the visits
+  // after it. Only the top of the first-clean range was read, so the
+  // estimate showed one bare number and nobody could tell it was the high
+  // end of a range, or the first clean rather than the recurring price.
+  const price = quoteRange(body);
+  const totalCents = price.totalCents;
 
   // ── 1. The lead ─────────────────────────────────────────────────────────
   const clientId = await findOrCreateClient(
@@ -200,10 +201,9 @@ export async function POST(
     `Add-ons: oven ${yn(body.oven)}, fridge ${yn(body.fridge)}, windows ${yn(
       body.windows,
     )}, blinds ${yn(body.blinds)}, carpets ${yn(body.carpets)}`,
-    Number.isFinite(initialHigh) &&
-      `Calculator quote — initial: $${initialHigh}${
-        Number.isFinite(recurringHigh) ? `, recurring: $${recurringHigh}` : ""
-      }`,
+    price.summary,
+    price.totalNote,
+    price.timeNote,
     body.travelFee != null && `Travel fee: $${s(body.travelFee, 20)}`,
     hearAboutUs && `Heard about us: ${hearAboutUs}`,
     notes && `Notes: ${notes}`,
@@ -303,6 +303,13 @@ export async function POST(
     return cap.ok;
   };
 
+  // Every email and text below is collected here and finished in after().
+  // They used to be fired and forgotten: the response went back to the
+  // website, Vercel froze the function, and a send still in flight could die
+  // with no error anywhere — Svitlana's new-request emails didn't arrive.
+  const pending: Promise<unknown>[] = [];
+  after(() => Promise.allSettled(pending));
+
   if (mailClient && (await orgMayEmail())) {
     const summaryRows = [
       `<div class="detail-item"><strong>Property:</strong> ${e(s(body.bedrooms, 10) || "?")} Bed, ${e(s(body.bathrooms, 10) || "?")} Bath</div>`,
@@ -316,7 +323,7 @@ export async function POST(
     const cta = orgPhone
       ? `<div class="cta-box"><div style="font-weight:700;margin-bottom:5px;">Call for instant booking:</div><a href="tel:${orgPhone}" style="font-size:20px;font-weight:800;color:#111827;text-decoration:none;">${orgPhone}</a></div>`
       : `<div class="cta-box">Reply to this email any time — we're happy to help.</div>`;
-    sendEmail({
+    pending.push(sendEmail({
       to: email,
       toName: fullName,
       subject: `${orgName} — your quote request is being reviewed, ${fullName}`,
@@ -348,7 +355,7 @@ ${cta}
 <div class="footer">${e(orgName)}</div>
 </div></div></body></html>`,
       text: `Hi ${fullName},\n\nThanks for reaching out! We've received your service request and we're reviewing the details to make sure your quote is accurate. We'll be in touch shortly.\n\n${orgName}${orgPhone ? ` · ${orgPhone}` : ""}`,
-    }).catch((err) => console.error("[estimate-request] client email:", err));
+    }).catch((err) => console.error("[estimate-request] client email:", err)));
   }
 
   // ── 4. Internal: the org's owners hear about it, in-app and by email ────
@@ -364,7 +371,7 @@ ${cta}
       title: "New estimate request",
       body: `${fullName}${city ? ` (${city})` : ""} — ${
         schedule || "estimate"
-      }${totalCents ? `, quoted ~$${(totalCents / 100).toFixed(0)}` : ""}. Lead + draft estimate created.`,
+      }${price.initial ? `, first clean ${price.initial}` : ""}. Lead + draft estimate created.`,
       href: `/app/estimates`,
     });
   } catch (err) {
@@ -384,7 +391,7 @@ ${cta}
       .join("\n");
     for (const to of recipients) {
       if (!(await orgMayEmail())) break;
-      sendEmail({
+      pending.push(sendEmail({
         to,
         subject: `New estimate request — ${fullName}`,
         from: sender.from,
@@ -403,7 +410,7 @@ ${address ? `<div style="font-size:13px;color:#374151;margin-bottom:12px;">${e(a
         text: `New estimate request — ${fullName}\n${phone}\n${email}\n${address}, ${city}\n\n${detailBlock}\n\nOpen: https://sollos3.com/app/estimates`,
       }).catch((err) =>
         console.error("[estimate-request] internal email:", err),
-      );
+      ));
     }
   } catch (err) {
     console.error("[estimate-request] internal notify failed:", err);
@@ -411,7 +418,7 @@ ${address ? `<div style="font-size:13px;color:#374151;margin-bottom:12px;">${e(a
 
   // The same news as a text from the org's own number. Opt-in
   // (lead_alert_sms); sendOrgSms applies every SMS gate and the cap.
-  sendLeadAlertTexts(
+  pending.push(sendLeadAlertTexts(
     orgId,
     targets.phones,
     composeLeadAlertSms({
@@ -424,7 +431,7 @@ ${address ? `<div style="font-size:13px;color:#374151;margin-bottom:12px;">${e(a
       summary: [schedule, notes].filter(Boolean).join(" · "),
       path: "/app/estimates",
     }),
-  );
+  ));
 
   // Plain HTML forms navigate to the response. Give them somewhere real to
   // land: ?redirect=<https url> (or a `redirect` field) turns success into a

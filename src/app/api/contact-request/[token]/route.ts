@@ -1,4 +1,4 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse, after, type NextRequest } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
 import { findOrCreateClient } from "@/lib/find-or-create-client";
@@ -236,6 +236,13 @@ export async function POST(
     return cap.ok;
   };
 
+  // Every email and text below is collected here and finished in after().
+  // They used to be fired and forgotten: the response went back to the
+  // website, Vercel froze the function, and a send still in flight could die
+  // with no error anywhere — Svitlana's new-request emails didn't arrive.
+  const pending: Promise<unknown>[] = [];
+  after(() => Promise.allSettled(pending));
+
   if (mailClient && (await orgMayEmail())) {
     const received = [
       `<strong>Name:</strong> ${e(name)}`,
@@ -245,7 +252,7 @@ export async function POST(
     ]
       .filter(Boolean)
       .join("<br>");
-    sendEmail({
+    pending.push(sendEmail({
       to: email,
       toName: name,
       subject: `${name}, we've received your message ✨`,
@@ -269,7 +276,7 @@ ${orgPhone ? `<p style="margin:0 0 14px 0;font-size:14px;color:#4b5563;">If it's
 <div style="margin-top:14px;font-size:11px;color:#9ca3af;text-align:center;">If you didn't submit a request, you can ignore this email.</div>
 </div></body></html>`,
       text: `Hi ${name},\n\nThanks for contacting ${orgName}. We've got your message and we'll reply shortly — typically within 1 business day.${orgPhone ? `\nIf it's time-sensitive, calling is fastest: ${orgPhone}` : ""}\n\n${orgName}`,
-    }).catch((err) => console.error("[contact-request] client email:", err));
+    }).catch((err) => console.error("[contact-request] client email:", err)));
   }
 
   try {
@@ -308,7 +315,7 @@ ${orgPhone ? `<p style="margin:0 0 14px 0;font-size:14px;color:#4b5563;">If it's
       .join("");
     for (const to of recipients) {
       if (!(await orgMayEmail())) break;
-      sendEmail({
+      pending.push(sendEmail({
         to,
         subject: `New website inquiry — ${name}`,
         from: sender.from,
@@ -327,7 +334,7 @@ ${notes ? `<p style="margin:10px 0 4px 0;font-size:13px;font-weight:900;color:#1
         text: `New website inquiry — ${name}\n${email}\n${phone}\n${city}${urgency ? `\nUrgency: ${urgency}` : ""}\n\n${notes}\n\nOpen: https://sollos3.com/app/leads`,
       }).catch((err) =>
         console.error("[contact-request] internal email:", err),
-      );
+      ));
     }
   } catch (err) {
     console.error("[contact-request] internal notify failed:", err);
@@ -335,7 +342,7 @@ ${notes ? `<p style="margin:10px 0 4px 0;font-size:13px;font-weight:900;color:#1
 
   // The same news as a text from the org's own number. Opt-in
   // (lead_alert_sms); sendOrgSms applies every SMS gate and the cap.
-  sendLeadAlertTexts(
+  pending.push(sendLeadAlertTexts(
     orgId,
     targets.phones,
     composeLeadAlertSms({
@@ -348,7 +355,7 @@ ${notes ? `<p style="margin:10px 0 4px 0;font-size:13px;font-weight:900;color:#1
       summary: notes,
       path: "/app/leads",
     }),
-  );
+  ));
 
   // Plain HTML forms navigate to the response. Give them somewhere real to
   // land: ?redirect=<https url> (or a `redirect` field) turns success into a
