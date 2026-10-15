@@ -2,6 +2,7 @@
 
 import { useActionState } from "react";
 import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/when-preview";
 import { Label } from "@/components/ui/label";
 import { SubmitButton } from "@/components/submit-button";
 import {
@@ -130,10 +131,9 @@ export function RecurringInvoiceForm({ clients, mode, id, defaults }: Props) {
           <Label htmlFor="next_run_at">
             {mode === "edit" ? "Next invoice date" : "First invoice date"}
           </Label>
-          <Input
+          <DateInput
             id="next_run_at"
             name="next_run_at"
-            type="date"
             required
             defaultValue={v.next_run_at ?? defaultStart}
             className="mt-1"

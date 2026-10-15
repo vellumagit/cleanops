@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/when-preview";
 import { FormSelect } from "@/components/form-field";
 import {
   PAY_SCHEDULE_LABELS,
@@ -78,9 +78,8 @@ export function PayScheduleForm({
             <label htmlFor="pay_anchor" className="text-xs font-medium">
               A date a pay period started
             </label>
-            <Input
+            <DateInput
               id="pay_anchor"
-              type="date"
               value={anchorValue}
               onChange={(e) => setAnchorValue(e.target.value)}
             />

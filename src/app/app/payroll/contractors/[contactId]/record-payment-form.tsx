@@ -14,6 +14,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/when-preview";
 import { FormField, FormSelect } from "@/components/form-field";
 import { recordPayoutAction } from "../actions";
 
@@ -72,10 +73,9 @@ export function RecordPaymentForm({ payee }: { payee: string }) {
             />
           </FormField>
           <FormField label="Paid on" htmlFor="paid_on">
-            <Input
+            <DateInput
               id="paid_on"
               name="paid_on"
-              type="date"
               defaultValue={today()}
             />
           </FormField>

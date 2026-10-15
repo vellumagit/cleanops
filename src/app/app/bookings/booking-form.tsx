@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Repeat, CalendarPlus } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/when-preview";
 import { Textarea } from "@/components/ui/textarea";
 import { buttonVariants } from "@/components/ui/button";
 import {
@@ -879,10 +880,9 @@ export function BookingForm({
 
           <div className="grid gap-4 sm:grid-cols-2">
             <FormField label="Start date" htmlFor="starts_at" required>
-              <Input
+              <DateInput
                 id="starts_at"
                 name="starts_at"
-                type="date"
                 required
                 defaultValue={v.starts_at ?? ""}
               />
@@ -922,10 +922,9 @@ export function BookingForm({
                     ))}
                   </div>
                 )}
-                <Input
+                <DateInput
                   id="ends_at"
                   name="ends_at"
-                  type="date"
                   value={endsIndefinite ? "" : endsAtValue}
                   onChange={(e) => setEndsAtValue(e.target.value)}
                   disabled={endsIndefinite}
@@ -1442,10 +1441,9 @@ export function BookingForm({
               required
               hint="New occurrences are generated from this date forward"
             >
-              <Input
+              <DateInput
                 id="series_starts_at"
                 name="series_starts_at"
-                type="date"
                 required
                 value={seriesStartsAt}
                 onChange={(e) => setSeriesStartsAt(e.target.value)}
@@ -1486,10 +1484,9 @@ export function BookingForm({
                     ))}
                   </div>
                 )}
-                <Input
+                <DateInput
                   id="series_ends_at"
                   name="series_ends_at"
-                  type="date"
                   value={seriesEndsIndefinite ? "" : seriesEndsAtValue}
                   onChange={(e) => setSeriesEndsAtValue(e.target.value)}
                   disabled={seriesEndsIndefinite}

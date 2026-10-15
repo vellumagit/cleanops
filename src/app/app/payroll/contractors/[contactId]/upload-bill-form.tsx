@@ -14,6 +14,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/when-preview";
 import { FormField } from "@/components/form-field";
 import { uploadBillAction } from "../actions";
 
@@ -77,7 +78,7 @@ export function UploadBillForm({ payee }: { payee: string }) {
             />
           </FormField>
           <FormField label="Invoice date" htmlFor="bill_date">
-            <Input id="bill_date" name="bill_date" type="date" />
+            <DateInput id="bill_date" name="bill_date" />
           </FormField>
           <DialogFooter>
             <Button

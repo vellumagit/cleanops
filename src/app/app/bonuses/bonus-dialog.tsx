@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/when-preview";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { FormSelect } from "@/components/form-field";
@@ -220,18 +221,16 @@ export function BonusDialog({
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="period_start">Period start</Label>
-                <Input
+                <DateInput
                   id="period_start"
-                  type="date"
                   value={periodStart}
                   onChange={(e) => setPeriodStart(e.target.value)}
                 />
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="period_end">Period end</Label>
-                <Input
+                <DateInput
                   id="period_end"
-                  type="date"
                   value={periodEnd}
                   onChange={(e) => setPeriodEnd(e.target.value)}
                 />

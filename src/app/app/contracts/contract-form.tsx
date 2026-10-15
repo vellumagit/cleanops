@@ -3,6 +3,7 @@
 import { useActionState, useState } from "react";
 import Link from "next/link";
 import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/when-preview";
 import { Textarea } from "@/components/ui/textarea";
 import { buttonVariants } from "@/components/ui/button";
 import { FormError, FormField, FormSelect } from "@/components/form-field";
@@ -204,10 +205,9 @@ export function ContractForm({
           required
           error={state.errors?.start_date}
         >
-          <Input
+          <DateInput
             id="start_date"
             name="start_date"
-            type="date"
             required
             defaultValue={v.start_date ?? defaults?.start_date ?? ""}
           />
@@ -219,10 +219,9 @@ export function ContractForm({
           error={state.errors?.end_date}
           hint="Leave blank for open-ended"
         >
-          <Input
+          <DateInput
             id="end_date"
             name="end_date"
-            type="date"
             defaultValue={v.end_date ?? defaults?.end_date ?? ""}
           />
         </FormField>

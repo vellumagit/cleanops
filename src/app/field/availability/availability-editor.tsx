@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Plus, Trash2, CalendarX } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/when-preview";
 import { Label } from "@/components/ui/label";
 import { FormSelect } from "@/components/form-field";
 import {
@@ -254,9 +255,8 @@ function OverrideList({ initialOverrides }: { initialOverrides: Override[] }) {
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1.5">
             <Label htmlFor="ov_date">Date</Label>
-            <Input
+            <DateInput
               id="ov_date"
-              type="date"
               value={date}
               onChange={(e) => setDate(e.target.value)}
               required

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useActionState } from "react";
 import { CalendarPlus, CheckCircle2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/when-preview";
 import { Textarea } from "@/components/ui/textarea";
 import { buttonVariants } from "@/components/ui/button";
 import { FormError, FormField, FormSelect } from "@/components/form-field";
@@ -80,7 +81,7 @@ export function RequestForm({
           htmlFor="preferred_date"
           hint="We'll confirm before finalizing."
         >
-          <Input id="preferred_date" name="preferred_date" type="date" />
+          <DateInput id="preferred_date" name="preferred_date" />
         </FormField>
 
         <FormField label="Preferred time" htmlFor="preferred_time_window">

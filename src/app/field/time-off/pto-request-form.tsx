@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { CheckCircle2, AlertCircle, Loader2, Calendar } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/when-preview";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { submitSelfPtoRequestAction } from "@/app/app/timesheets/actions";
@@ -45,10 +46,9 @@ export function PtoRequestForm({
           >
             Start date
           </label>
-          <Input
+          <DateInput
             id="start_date"
             name="start_date"
-            type="date"
             required
             disabled={isPending}
           />
@@ -57,10 +57,9 @@ export function PtoRequestForm({
           <label htmlFor="end_date" className="mb-1 block text-xs font-medium">
             End date
           </label>
-          <Input
+          <DateInput
             id="end_date"
             name="end_date"
-            type="date"
             required
             disabled={isPending}
           />

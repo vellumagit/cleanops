@@ -4,6 +4,7 @@ import { useActionState, useState, useMemo, useRef, useEffect } from "react";
 import Link from "next/link";
 import { Search, X, ChevronDown, Check } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/when-preview";
 import { buttonVariants } from "@/components/ui/button";
 import { FormError, FormField, FormSelect } from "@/components/form-field";
 import { Tip } from "@/components/tip";
@@ -644,10 +645,9 @@ export function InvoiceForm({
         htmlFor="due_date"
         error={state.errors?.due_date}
       >
-        <Input
+        <DateInput
           id="due_date"
           name="due_date"
-          type="date"
           defaultValue={v.due_date ?? defaults?.due_date ?? ""}
         />
       </FormField>

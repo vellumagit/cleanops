@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/when-preview";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
@@ -286,10 +287,9 @@ function PtoEditDialog({
               >
                 Start date
               </label>
-              <Input
+              <DateInput
                 id="pto-edit-start"
                 name="start_date"
-                type="date"
                 required
                 defaultValue={request.start_date}
                 disabled={isPending}
@@ -302,10 +302,9 @@ function PtoEditDialog({
               >
                 End date
               </label>
-              <Input
+              <DateInput
                 id="pto-edit-end"
                 name="end_date"
-                type="date"
                 required
                 defaultValue={request.end_date}
                 disabled={isPending}

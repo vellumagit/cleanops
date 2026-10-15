@@ -3,6 +3,7 @@
 import { useActionState } from "react";
 import Link from "next/link";
 import { Input } from "@/components/ui/input";
+import { DateTimeInput } from "@/components/when-preview";
 import { Textarea } from "@/components/ui/textarea";
 import { buttonVariants } from "@/components/ui/button";
 import { FormError, FormField, FormSelect } from "@/components/form-field";
@@ -97,10 +98,9 @@ export function TaskForm({
           htmlFor="due_at"
           error={state.errors?.due_at}
         >
-          <Input
+          <DateTimeInput
             id="due_at"
             name="due_at"
-            type="datetime-local"
             defaultValue={isoToLocalInput(v.due_at)}
           />
         </FormField>
@@ -111,10 +111,9 @@ export function TaskForm({
           hint="You'll get a push notification at this time."
           error={state.errors?.remind_at}
         >
-          <Input
+          <DateTimeInput
             id="remind_at"
             name="remind_at"
-            type="datetime-local"
             defaultValue={isoToLocalInput(v.remind_at)}
           />
         </FormField>

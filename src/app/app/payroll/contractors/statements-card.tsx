@@ -4,7 +4,7 @@ import { useTransition } from "react";
 import { toast } from "sonner";
 import { FileText, Loader2, Check, Trash2, BookOpen, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/when-preview";
 import { StatusBadge } from "@/components/status-badge";
 import {
   formatCurrencyCents,
@@ -119,10 +119,9 @@ export function StatementsCard({
               >
                 From
               </label>
-              <Input
+              <DateInput
                 id="stmt-start"
                 name="period_start"
-                type="date"
                 required
                 defaultValue={defaultStart}
                 disabled={isPending}
@@ -136,10 +135,9 @@ export function StatementsCard({
               >
                 To
               </label>
-              <Input
+              <DateInput
                 id="stmt-end"
                 name="period_end"
-                type="date"
                 required
                 defaultValue={defaultEnd}
                 disabled={isPending}

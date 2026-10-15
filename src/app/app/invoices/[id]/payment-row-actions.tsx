@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/when-preview";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { FormSelect } from "@/components/form-field";
@@ -171,9 +172,8 @@ export function PaymentRowActions({ payment }: { payment: Payment }) {
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="pp_received">Received on</Label>
-                <Input
+                <DateInput
                   id="pp_received"
-                  type="date"
                   value={receivedAt}
                   onChange={(e) => setReceivedAt(e.target.value)}
                   required

@@ -3,6 +3,7 @@
 import { useActionState, useState } from "react";
 import Link from "next/link";
 import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/when-preview";
 import { Textarea } from "@/components/ui/textarea";
 import { buttonVariants } from "@/components/ui/button";
 import { FormError, FormField, FormSelect } from "@/components/form-field";
@@ -346,10 +347,9 @@ export function ClientForm({
           error={state.errors?.billing_anchor_date}
           hint="Weekly and biweekly clients. Exact 7- or 14-day cycles counted from this date; the first invoice goes out one full cycle after it. Biweekly may leave it blank for the legacy 1st and 15th; weekly requires it."
         >
-          <Input
+          <DateInput
             id="billing_anchor_date"
             name="billing_anchor_date"
-            type="date"
             defaultValue={v.billing_anchor_date ?? ""}
           />
         </FormField>

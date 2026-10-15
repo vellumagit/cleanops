@@ -5,7 +5,7 @@ A booking is one visit: who, where, when, what kind of work, and what it costs. 
 
 From **Bookings → New**, from an empty slot on the scheduler, from **+Book** on a client's profile (client, address, and their usual service/length/price arrive pre-filled from their last job), from **Create booking** on a request (date, address, notes, and service arrive pre-filled — and saving marks the request scheduled), or from **Book this job** on an estimate (client, price, and description carried over; the estimate shows "converted" once saved). A completed booking also has **Book again** — the same job duplicated onto the same weekday and time next week, landing on the edit page to adjust.
 
-Under **Scheduled at**, the form names the day you picked — *Wednesday, September 16* — and lists what is already booked on it. A phone's date picker is a spinner that never says which weekday you landed on, so this is how you tell a free Tuesday from a full one without leaving the form.
+Under **Scheduled at**, the form names the day you picked — *Wednesday, September 16* — and lists what is already booked on it. A phone's date picker is a spinner that never says which weekday you landed on, so this is how you tell a free Tuesday from a full one without leaving the form. Every other date field in Sollos does the simpler half of this: pick a date anywhere — a contract, an invoice due date, time off, a pay period — and the weekday is spelled out underneath, so an Android picker that only shows digits can't land you on the wrong day.
 
 The fields that matter most:
 

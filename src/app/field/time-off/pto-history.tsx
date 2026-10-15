@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { Loader2, Pencil, Ban } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/when-preview";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
@@ -217,10 +218,9 @@ function SelfEditDialog({
               >
                 Start date
               </label>
-              <Input
+              <DateInput
                 id="self-pto-start"
                 name="start_date"
-                type="date"
                 required
                 defaultValue={request.start_date}
                 disabled={isPending}
@@ -233,10 +233,9 @@ function SelfEditDialog({
               >
                 End date
               </label>
-              <Input
+              <DateInput
                 id="self-pto-end"
                 name="end_date"
-                type="date"
                 required
                 defaultValue={request.end_date}
                 disabled={isPending}

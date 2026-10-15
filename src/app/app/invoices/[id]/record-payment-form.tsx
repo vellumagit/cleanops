@@ -2,6 +2,7 @@
 
 import { useActionState, useState } from "react";
 import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/when-preview";
 import { Textarea } from "@/components/ui/textarea";
 import { FormError, FormField, FormSelect } from "@/components/form-field";
 import { SubmitButton } from "@/components/submit-button";
@@ -102,10 +103,9 @@ export function RecordPaymentForm({ invoiceId, balanceCents }: Props) {
           required
           error={state.errors?.received_at}
         >
-          <Input
+          <DateInput
             id="received_at"
             name="received_at"
-            type="date"
             defaultValue={today}
             required
           />

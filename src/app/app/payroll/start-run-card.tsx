@@ -9,7 +9,7 @@ import {
   CalendarRange,
   Loader2,
 } from "lucide-react";
-import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/when-preview";
 import { Button } from "@/components/ui/button";
 import { preparePeriodAction } from "./actions";
 
@@ -172,10 +172,9 @@ export function StartRunCard({
             >
               Period start
             </label>
-            <Input
+            <DateInput
               id="period_start"
               name="period_start"
-              type="date"
               required
               defaultValue={suggestedStart}
               disabled={isPending}
@@ -188,10 +187,9 @@ export function StartRunCard({
             >
               Period end
             </label>
-            <Input
+            <DateInput
               id="period_end"
               name="period_end"
-              type="date"
               required
               defaultValue={suggestedEnd}
               disabled={isPending}

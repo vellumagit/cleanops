@@ -4,6 +4,7 @@ import { Tip } from "@/components/tip";
 import { useActionState, useState } from "react";
 import { Plus, Trash2, FileText } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { DateInput } from "@/components/when-preview";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/form-field";
 import { SubmitButton } from "@/components/submit-button";
@@ -378,8 +379,7 @@ export function PeriodInvoiceEditor({
       <div className="flex flex-wrap items-end justify-between gap-4 border-t border-border pt-4">
         <div className="space-y-1">
           <span className="text-xs text-muted-foreground">Due date</span>
-          <Input
-            type="date"
+          <DateInput
             value={dueDate}
             onChange={(e) => setDueDate(e.target.value)}
             className="w-44"

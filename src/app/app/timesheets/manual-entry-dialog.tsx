@@ -24,7 +24,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { DateTimeInput } from "@/components/when-preview";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { FormSelect } from "@/components/form-field";
@@ -591,10 +591,9 @@ export function ManualEntryDialog({
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="min-w-0 space-y-1.5">
               <Label htmlFor="start_at">Start</Label>
-              <Input
+              <DateTimeInput
                 id="start_at"
                 name="start_at"
-                type="datetime-local"
                 className="h-10 w-full min-w-0 tabular-nums"
                 value={startAt}
                 onChange={(e) => setStartAt(e.target.value)}
@@ -610,10 +609,9 @@ export function ManualEntryDialog({
                   </span>
                 )}
               </Label>
-              <Input
+              <DateTimeInput
                 id="end_at"
                 name="end_at"
-                type="datetime-local"
                 className="h-10 w-full min-w-0 tabular-nums"
                 value={endAt}
                 onChange={(e) => setEndAt(e.target.value)}
