@@ -15,6 +15,7 @@ import { localInputToUtcIso, parseDollarsToCents } from "@/lib/validators/common
 import { normalizeTipCents } from "@/lib/tip-split";
 import { generateClaimToken } from "@/lib/claim-token";
 import { autoOnInvoicePaid } from "@/lib/automations";
+import { applyPrepaymentsToInvoice } from "@/lib/booking-prepayments";
 import { canCreateData } from "@/lib/subscription";
 import { redirectAfterSetup } from "@/lib/setup-return";
 import { redirectBack } from "@/lib/return-to";
@@ -187,6 +188,13 @@ export async function createInvoiceAction(
       client_id: parsed.data.client_id,
     },
   });
+
+  if (parsed.data.booking_id) {
+    // Anything the client paid before the job was invoiced moves onto this
+    // invoice now — last, after tax and lines, so paid/partly-paid is judged
+    // on the final amount. See lib/booking-prepayments.ts.
+    await applyPrepaymentsToInvoice(inserted.id);
+  }
 
   revalidatePath("/app/invoices");
   revalidatePath("/app");
@@ -1742,6 +1750,11 @@ export async function createPeriodInvoiceAction(
       consolidated_drafts: absorbed,
     },
   });
+
+  // Anything the client paid before the job was invoiced moves onto this
+  // invoice now — last, after tax and lines, so paid/partly-paid is judged
+  // on the final amount. See lib/booking-prepayments.ts.
+  await applyPrepaymentsToInvoice(inv.id);
 
   revalidatePath("/app/invoices");
   revalidatePath("/app");

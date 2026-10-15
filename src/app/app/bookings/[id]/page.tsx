@@ -30,6 +30,8 @@ import { getOrgTimezone } from "@/lib/org-timezone";
 import { getFlaggedCrewIds } from "@/lib/crew-accommodations";
 import { resolveFreelancerCoverageNames } from "@/lib/booking-coverage";
 import { GenerateInvoiceButton } from "./generate-invoice-button";
+import { PrepaymentCard, type PrepaymentRow } from "./prepayment-card";
+import { zonedYmd } from "@/lib/wall-clock";
 import { MakeRecurringButton } from "./make-recurring-button";
 import { describeRecurrence } from "@/lib/recurrence";
 import { JobPhotos } from "@/app/field/jobs/[id]/job-photos";
@@ -281,6 +283,40 @@ export default async function BookingDetailPage({
     !existingInvoice &&
     can(membership, "invoicing");
   const showOfferShift = can(membership, "subcontractors");
+
+  // Money the client paid before this job was invoiced (owner/admin only,
+  // like every other payment). See lib/booking-prepayments.ts.
+  const { data: prepaymentData } = (canEdit
+    ? await supabase
+        .from("booking_prepayments" as never)
+        .select(
+          "id, amount_cents, method, reference, received_at, applied_invoice:invoices!booking_prepayments_applied_invoice_id_fkey ( id, number )",
+        )
+        .eq("booking_id" as never, id as never)
+        .order("received_at" as never)
+    : { data: null }) as unknown as {
+    data: Array<{
+      id: string;
+      amount_cents: number;
+      method: PrepaymentRow["method"];
+      reference: string | null;
+      received_at: string;
+      applied_invoice: { id: string; number: string | null } | null;
+    }> | null;
+  };
+  const prepayments: PrepaymentRow[] = (prepaymentData ?? []).map((p) => ({
+    id: p.id,
+    amount_cents: p.amount_cents,
+    method: p.method,
+    reference: p.reference,
+    received_label: new Date(p.received_at).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      timeZone: tz,
+    }),
+    applied_invoice: p.applied_invoice,
+  }));
 
   // Photos are read-visible to any org member (RLS enforces that). Upload
   // + delete UI only shows for owner/admin/manager on the admin side.
@@ -853,6 +889,18 @@ export default async function BookingDetailPage({
 
         {/* Right column */}
         <aside className="space-y-4">
+          {/* Shown on a cancelled job only when money is already on it — a
+              cancellation must never hide a payment that needs refunding or
+              moving to the client's next job. */}
+          {canEdit && (bookingStatus !== "cancelled" || prepayments.length > 0) && (
+            <PrepaymentCard
+              bookingId={booking.id}
+              canRecord={bookingStatus !== "cancelled"}
+              defaultCents={booking.total_cents ?? 0}
+              todayYmd={zonedYmd(new Date(), tz)}
+              rows={prepayments}
+            />
+          )}
           <div className="rounded-lg border border-border bg-card p-4">
             <p className="sollos-label">Client contact</p>
             <dl className="mt-3 space-y-2 text-xs">

@@ -570,6 +570,14 @@ export async function autoInvoiceOnJobComplete(
       }
     }
 
+    // Anything the client paid before the job was invoiced moves onto this
+    // invoice now — last, after tax and lines, so paid/partly-paid is judged
+    // on the final amount. See lib/booking-prepayments.ts.
+    {
+      const { applyPrepaymentsToInvoice } = await import("@/lib/booking-prepayments");
+      await applyPrepaymentsToInvoice(invoice.id);
+    }
+
     console.log(
       `[auto] Draft invoice ${invoice.number ?? invoice.id} created for booking ${bookingId}`,
     );

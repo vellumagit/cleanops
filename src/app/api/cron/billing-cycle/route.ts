@@ -449,6 +449,14 @@ async function generateClientInvoice(
     );
   }
 
+  // Anything the client paid before the job was invoiced moves onto this
+  // invoice now — last, after tax and lines, so paid/partly-paid is judged
+  // on the final amount. See lib/booking-prepayments.ts.
+  {
+    const { applyPrepaymentsToInvoice } = await import("@/lib/booking-prepayments");
+    await applyPrepaymentsToInvoice(invoice.id);
+  }
+
   // Schedule auto-send for consolidated invoices if the org opted in.
   try {
     const { scheduleAutoSendIfEnabled } = await import("@/lib/invoice-send");
