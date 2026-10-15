@@ -221,6 +221,8 @@ export async function createJobOfferAction(
   const parsed = parseForm(JobOfferSchema, raw);
   if (!parsed.ok) return { errors: parsed.errors, values: raw };
 
+  const replacesId =
+    String(formData.get("replaces_membership_id") ?? "").trim() || null;
   const contactIds = formData.getAll("contact_ids").map((v) => String(v));
   const memberIds = formData.getAll("member_ids").map((v) => String(v));
   if (contactIds.length === 0 && memberIds.length === 0) {
@@ -253,6 +255,23 @@ export async function createJobOfferAction(
 
   if (bookingErr || !booking) {
     return { errors: { _form: "Booking not found" }, values: raw };
+  }
+
+  // The person being replaced must be on this job now — the claim swaps
+  // them off it, so a stale or foreign id must not ride along.
+  if (replacesId) {
+    const { data: onJob } = await supabase
+      .from("booking_assignees")
+      .select("membership_id")
+      .eq("booking_id", booking.id)
+      .eq("membership_id", replacesId)
+      .maybeSingle();
+    if (!onJob) {
+      return {
+        errors: { _form: "The person you're replacing isn't on this job any more. Refresh and pick again." },
+        values: raw,
+      };
+    }
   }
 
   // Sanity-check the contacts are ours + active + not opted out of SMS.
@@ -364,6 +383,9 @@ export async function createJobOfferAction(
       expires_at: expiresAt,
       positions_needed: parsed.data.positions_needed,
       positions_filled: 0,
+      // Only sent when set, so offers keep working on a database that hasn't
+      // had 20261015010000_job_offer_replaces yet.
+      ...(replacesId ? { replaces_membership_id: replacesId } : {}),
     } as never)
     .select("id")
     .single();
@@ -499,6 +521,7 @@ export async function createJobOfferAction(
       oncall_count: activeContacts.length,
       roster_count: rosterMembers.length,
       expires_at: expiresAt,
+      replaces_membership_id: replacesId,
     },
   });
 

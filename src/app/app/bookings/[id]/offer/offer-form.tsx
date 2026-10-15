@@ -27,6 +27,9 @@ type Props = {
   /** The org's own roster subcontractors (memberships). Separate group with
    *  a separate deal: usual rate from clocked hours, never the flat pay. */
   members: Member[];
+  /** Everyone on the job now. The offer can replace one of them. */
+  crew: Array<{ id: string; name: string }>;
+  initialReplacing: string;
   booking: {
     scheduled_at: string;
     duration_minutes: number;
@@ -45,9 +48,12 @@ export function JobOfferForm({
   bookingId,
   contacts,
   members,
+  crew,
+  initialReplacing,
   booking,
   tz,
 }: Props) {
+  const [replacing, setReplacing] = useState(initialReplacing);
   const [state, formAction] = useActionState(createJobOfferAction, empty);
 
   const textableMembers = useMemo(
@@ -114,6 +120,33 @@ export function JobOfferForm({
     <form action={formAction} className="space-y-5">
       <FormError message={state.errors?._form} />
       <input type="hidden" name="booking_id" value={bookingId} />
+
+      {crew.length > 0 && (
+        <FormField
+          label="Replacing"
+          htmlFor="replaces_membership_id"
+          hint={
+            replacing
+              ? `Whoever claims first takes ${crew.find((c) => c.id === replacing)?.name ?? "their"}'s spot — same times on the job — and they come off it and are told. Not if the job has already started or they've clocked in.`
+              : "Pick who's out to swap them off automatically when someone claims. Leave as nobody to add an extra person."
+          }
+        >
+          <select
+            id="replaces_membership_id"
+            name="replaces_membership_id"
+            value={replacing}
+            onChange={(e) => setReplacing(e.target.value)}
+            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+          >
+            <option value="">Nobody — adding someone</option>
+            {crew.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </FormField>
+      )}
 
       <div className="grid gap-5 sm:grid-cols-3">
         {showPay ? (

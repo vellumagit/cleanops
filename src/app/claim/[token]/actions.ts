@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { formatDateTime, humanizeEnum } from "@/lib/format";
+import { planOfferSwap, type CrewRow } from "@/lib/offer-swap";
 
 /**
  * Claim a shift offer via the unique token sent to one freelancer.
@@ -186,31 +187,45 @@ export async function claimOfferAction(token: string): Promise<ClaimResult> {
       .eq("id", dispatch.contact_id);
   }
 
-  // 4b. A roster subcontractor's claim MEANS assignment. They're a
-  //     membership, so unlike an on-call claim the booking machinery can —
-  //     and must — record them directly: field tools, checklists, clock-in
-  //     and clocked-hours pay all key off the assignment, not the claim.
-  //     (Pay note: membership claims carry no flat pay; see the migration.)
-  if (dispatch.membership_id) {
+  // 4b. What the claim does to the job's crew.
+  //
+  //   - A roster member's claim MEANS assignment. They're a membership, so
+  //     the booking machinery can — and must — record them directly: field
+  //     tools, checklists, clock-in and clocked-hours pay all key off the
+  //     assignment, not the claim. (Pay note: membership claims carry no flat
+  //     pay; see the migration.)
+  //   - An offer posted to REPLACE someone swaps them off on the first claim,
+  //     whoever claims it. See lib/offer-swap.ts.
+  let replacedId: string | null = null;
+  let swap:
+    | { kind: "swapped"; replacedId: string }
+    | { kind: "blocked"; replacedId: string; reason: "started" | "clocked_in" }
+    | null = null;
+  {
+    // Separate read, tolerant of a database without the column yet.
+    const { data: repRow, error: repErr } = (await admin
+      .from("job_offers")
+      .select("replaces_membership_id" as never)
+      .eq("id", offer.id)
+      .maybeSingle()) as unknown as {
+      data: { replaces_membership_id: string | null } | null;
+      error: { message: string } | null;
+    };
+    replacedId = repErr ? null : (repRow?.replaces_membership_id ?? null);
+  }
+
+  if (offer.booking_id && (dispatch.membership_id || replacedId)) {
     try {
       const { data: bookingRow } = (await admin
         .from("bookings")
-        .select(
-          "id, organization_id, assigned_to, scheduled_at, duration_minutes, service_type, address, notes, google_calendar_event_id, client:clients ( name )",
-        )
-        .eq("id", offer.booking_id ?? "")
+        .select("id, organization_id, assigned_to, status")
+        .eq("id", offer.booking_id)
         .maybeSingle()) as unknown as {
         data: {
           id: string;
           organization_id: string;
           assigned_to: string | null;
-          scheduled_at: string;
-          duration_minutes: number;
-          service_type: string;
-          address: string | null;
-          notes: string | null;
-          google_calendar_event_id: string | null;
-          client: { name: string | null } | null;
+          status: string;
         } | null;
       };
 
@@ -220,115 +235,117 @@ export async function claimOfferAction(token: string): Promise<ClaimResult> {
           .select("membership_id, is_primary")
           .eq("booking_id", bookingRow.id);
 
-        const alreadyOn =
-          bookingRow.assigned_to === dispatch.membership_id ||
-          (assigneeRows ?? []).some(
-            (a) => a.membership_id === dispatch.membership_id,
-          );
+        let replacedClockedIn = false;
+        if (replacedId) {
+          const { data: entries } = await admin
+            .from("time_entries")
+            .select("id")
+            .eq("booking_id", bookingRow.id)
+            .eq("employee_id", replacedId)
+            .limit(1);
+          replacedClockedIn = (entries ?? []).length > 0;
+        }
 
-        if (!alreadyOn) {
-          const hasPrimary =
-            bookingRow.assigned_to != null ||
-            (assigneeRows ?? []).some((a) => a.is_primary);
+        const plan = planOfferSwap({
+          replacedId,
+          claimerMembershipId: dispatch.membership_id,
+          isFirstClaim: newFilledCount === 1,
+          crew: (assigneeRows ?? []) as CrewRow[],
+          assignedTo: bookingRow.assigned_to,
+          bookingStatus: bookingRow.status,
+          replacedClockedIn,
+        });
 
-          // Claiming IS accepting — don't re-ask them to confirm a shift
-          // they just grabbed on their own initiative.
-          await admin.from("booking_assignees").insert({
-            organization_id: dispatch.organization_id,
-            booking_id: bookingRow.id,
-            membership_id: dispatch.membership_id,
-            is_primary: !hasPrimary,
-            acceptance_status: "accepted",
-            responded_at: new Date().toISOString(),
-          } as never);
+        let crewChanged = false;
+        const now = new Date().toISOString();
 
-          // Keep the denormalised primary pointer consistent with the
-          // backfill invariant: assigned_to set ⇔ a primary assignee row.
-          if (!hasPrimary) {
-            await admin
-              .from("bookings")
-              .update({ assigned_to: dispatch.membership_id })
-              .eq("id", bookingRow.id)
-              .is("assigned_to", null);
-          }
-
-          // Calendars. Every other path that assigns someone syncs Google
-          // Calendar; a claim is an assignment, so it must too, or the one
-          // person who volunteered is the one person whose calendar never
-          // hears about it. Fire-and-forget — never fails the claim.
-          try {
-            const {
-              syncMemberCalendarEvents,
-              updateCalendarEvent,
-            } = await import("@/lib/google-calendar");
-            const { memberDisplayName } = await import("@/lib/member-display");
-
-            // Full current assignee set — syncMemberCalendarEvents DELETES
-            // events for members missing from this list, so passing only
-            // the claimer would wipe the rest of the crew's calendars.
-            const finalPrimary =
-              bookingRow.assigned_to ??
-              (assigneeRows ?? []).find((a) => a.is_primary)?.membership_id ??
-              dispatch.membership_id;
-            const allAssignees = Array.from(
-              new Set([
-                ...(bookingRow.assigned_to ? [bookingRow.assigned_to] : []),
-                ...(assigneeRows ?? []).map((a) => a.membership_id),
-                dispatch.membership_id,
-              ]),
+        // The claimer's own row — unless the swap hands them the replaced
+        // person's row instead.
+        if (
+          dispatch.membership_id &&
+          (plan.kind !== "swap" || plan.insertClaimer)
+        ) {
+          const alreadyOn =
+            bookingRow.assigned_to === dispatch.membership_id ||
+            (assigneeRows ?? []).some(
+              (a) => a.membership_id === dispatch.membership_id,
             );
-
-            const eventBooking = {
-              id: bookingRow.id,
-              scheduled_at: bookingRow.scheduled_at,
-              duration_minutes: bookingRow.duration_minutes,
-              service_type: bookingRow.service_type,
-              address: bookingRow.address,
-              notes: bookingRow.notes,
-              client_name: bookingRow.client?.name ?? undefined,
-            };
-
-            syncMemberCalendarEvents(
-              bookingRow.id,
-              allAssignees,
-              eventBooking,
-            ).catch((err) =>
-              console.error("[claim] member gcal sync failed:", err),
-            );
-
-            // Refresh the org event's assignee label too, so the calendar
-            // Svitlana looks at says who is coming.
-            if (bookingRow.google_calendar_event_id) {
-              const { data: primaryRow } = (await admin
-                .from("memberships")
-                .select("display_name, profile:profiles ( full_name )")
-                .eq("id", finalPrimary)
-                .maybeSingle()) as unknown as {
-                data: {
-                  display_name: string | null;
-                  profile: { full_name: string | null } | null;
-                } | null;
-              };
-              updateCalendarEvent(bookingRow.organization_id, {
-                ...eventBooking,
-                google_calendar_event_id: bookingRow.google_calendar_event_id,
-                employee_name: primaryRow
-                  ? memberDisplayName(primaryRow)
-                  : undefined,
-              }).catch((err) =>
-                console.error("[claim] org gcal update failed:", err),
-              );
+          if (!alreadyOn) {
+            const hasPrimary =
+              bookingRow.assigned_to != null ||
+              (assigneeRows ?? []).some((a) => a.is_primary);
+            // Claiming IS accepting — don't re-ask them to confirm a shift
+            // they just grabbed on their own initiative.
+            await admin.from("booking_assignees").insert({
+              organization_id: dispatch.organization_id,
+              booking_id: bookingRow.id,
+              membership_id: dispatch.membership_id,
+              is_primary: !hasPrimary,
+              acceptance_status: "accepted",
+              responded_at: now,
+            } as never);
+            // Keep the denormalised primary pointer consistent with the
+            // backfill invariant: assigned_to set ⇔ a primary assignee row.
+            if (!hasPrimary) {
+              await admin
+                .from("bookings")
+                .update({ assigned_to: dispatch.membership_id })
+                .eq("id", bookingRow.id)
+                .is("assigned_to", null);
             }
-          } catch (gcalErr) {
-            console.error("[claim] gcal sync setup failed:", gcalErr);
+            crewChanged = true;
           }
         }
+
+        if (plan.kind === "swap" && replacedId) {
+          if (plan.reassignRow && dispatch.membership_id) {
+            await admin
+              .from("booking_assignees")
+              .update({
+                membership_id: dispatch.membership_id,
+                acceptance_status: "accepted",
+                responded_at: now,
+              } as never)
+              .eq("booking_id", bookingRow.id)
+              .eq("membership_id", replacedId);
+          }
+          if (plan.deleteRow) {
+            await admin
+              .from("booking_assignees")
+              .delete()
+              .eq("booking_id", bookingRow.id)
+              .eq("membership_id", replacedId);
+          }
+          if (plan.assignedTo !== undefined) {
+            await admin
+              .from("bookings")
+              .update({ assigned_to: plan.assignedTo })
+              .eq("id", bookingRow.id);
+          }
+          if (plan.newPrimary) {
+            await admin
+              .from("booking_assignees")
+              .update({ is_primary: false } as never)
+              .eq("booking_id", bookingRow.id);
+            await admin
+              .from("booking_assignees")
+              .update({ is_primary: true } as never)
+              .eq("booking_id", bookingRow.id)
+              .eq("membership_id", plan.newPrimary);
+          }
+          swap = { kind: "swapped", replacedId };
+          crewChanged = true;
+        } else if (plan.kind === "blocked" && replacedId) {
+          swap = { kind: "blocked", replacedId, reason: plan.reason };
+        }
+
+        if (crewChanged) await syncClaimCalendars(admin, bookingRow.id);
       }
     } catch (assignErr) {
       // The claim stands even if the assignment write hiccups — the offer
       // detail page still shows who claimed, and a manager can assign by
       // hand. Losing the claim over this would be strictly worse.
-      console.error("[claim] roster assignment failed:", assignErr);
+      console.error("[claim] crew update failed:", assignErr);
     }
   }
 
@@ -352,6 +369,8 @@ export async function claimOfferAction(token: string): Promise<ClaimResult> {
       filled_contact_id: dispatch.contact_id,
       filled_membership_id: dispatch.membership_id,
       via: "public_claim_link",
+      replaced_membership_id: swap?.kind === "swapped" ? swap.replacedId : null,
+      swap_blocked: swap?.kind === "blocked" ? swap.reason : null,
     } as never,
   });
 
@@ -432,16 +451,54 @@ export async function claimOfferAction(token: string): Promise<ClaimResult> {
     const when = bookingRow
       ? ` on ${formatDateTime(bookingRow.scheduled_at, orgTz)}`
       : "";
+    // Who they covered for, by name — or why that person is still on it.
+    let swapLine = "";
+    let replacedName: string | null = null;
+    if (swap) {
+      const { data: rep } = (await admin
+        .from("memberships")
+        .select("display_name, profile:profiles ( full_name )")
+        .eq("id", swap.replacedId)
+        .maybeSingle()) as unknown as {
+        data: {
+          display_name: string | null;
+          profile: { full_name: string | null } | null;
+        } | null;
+      };
+      replacedName = rep ? memberDisplayName(rep) : "the cleaner they replaced";
+      swapLine =
+        swap.kind === "swapped"
+          ? ` They've taken ${replacedName}'s spot, and ${replacedName} is off the job.`
+          : ` ${replacedName} is still on the job — ${
+              swap.reason === "clocked_in"
+                ? "they've already clocked in"
+                : "it has already started"
+            } — so take them off by hand if they're not there.`;
+    }
     await notify({
       organizationId: dispatch.organization_id,
       audience: "org-management",
       type: "shift_claimed",
       title: "Shift claimed",
-      body: `${freelancerName} claimed the ${svc} shift${when}.`,
+      body: `${freelancerName} claimed the ${svc} shift${when}.${swapLine}`,
       href: offer.booking_id
         ? `/app/bookings/${offer.booking_id}`
         : `/app/freelancers/offers/${offer.id}`,
     });
+
+    // The person who was out hears they're off it — otherwise they find out
+    // from the board, or by turning up.
+    if (swap?.kind === "swapped" && bookingRow) {
+      const coverName = contact?.full_name ?? (member ? memberDisplayName(member) : "Someone");
+      await notify({
+        organizationId: dispatch.organization_id,
+        audience: "membership",
+        membershipId: swap.replacedId,
+        title: "You're off this shift",
+        body: `${coverName} is covering ${bookingRow.client?.name ?? "the"} ${svc} shift${when}. You don't need to go.`,
+        href: "/field/jobs",
+      });
+    }
 
     // Confirmation text to whoever claimed — on-call cleaner or roster
     // subcontractor — with the essentials + a link back to the full details
@@ -477,4 +534,93 @@ export async function claimOfferAction(token: string): Promise<ClaimResult> {
   revalidatePath(`/claim/${token}`);
 
   return { ok: true, spotsRemaining };
+}
+
+/**
+ * Bring every calendar in line with who is on the job NOW. Read fresh after
+ * the claim's writes: syncMemberCalendarEvents deletes events for anyone
+ * missing from the list, which is exactly what removes the replaced person's
+ * event — and exactly why a stale list would wipe someone still on the crew.
+ * Never fails the claim.
+ */
+async function syncClaimCalendars(
+  admin: ReturnType<typeof createSupabaseAdminClient>,
+  bookingId: string,
+): Promise<void> {
+  try {
+    const [{ data: b }, { data: rows }] = await Promise.all([
+      admin
+        .from("bookings")
+        .select(
+          "id, organization_id, assigned_to, scheduled_at, duration_minutes, service_type, address, notes, google_calendar_event_id, client:clients ( name )",
+        )
+        .eq("id", bookingId)
+        .maybeSingle() as unknown as Promise<{
+        data: {
+          id: string;
+          organization_id: string;
+          assigned_to: string | null;
+          scheduled_at: string;
+          duration_minutes: number;
+          service_type: string;
+          address: string | null;
+          notes: string | null;
+          google_calendar_event_id: string | null;
+          client: { name: string | null } | null;
+        } | null;
+      }>,
+      admin
+        .from("booking_assignees")
+        .select("membership_id")
+        .eq("booking_id", bookingId),
+    ]);
+    if (!b) return;
+
+    const { syncMemberCalendarEvents, updateCalendarEvent } = await import(
+      "@/lib/google-calendar"
+    );
+    const { memberDisplayName } = await import("@/lib/member-display");
+    const everyone = Array.from(
+      new Set([
+        ...(b.assigned_to ? [b.assigned_to] : []),
+        ...(rows ?? []).map((r) => r.membership_id),
+      ]),
+    );
+    const eventBooking = {
+      id: b.id,
+      scheduled_at: b.scheduled_at,
+      duration_minutes: b.duration_minutes,
+      service_type: b.service_type,
+      address: b.address,
+      notes: b.notes,
+      client_name: b.client?.name ?? undefined,
+    };
+    await syncMemberCalendarEvents(b.id, everyone, eventBooking).catch((err) =>
+      console.error("[claim] member gcal sync failed:", err),
+    );
+    // The org event's assignee label too, so the calendar Svitlana looks at
+    // says who is coming.
+    if (b.google_calendar_event_id) {
+      const lead = b.assigned_to ?? everyone[0] ?? null;
+      const { data: leadRow } = lead
+        ? ((await admin
+            .from("memberships")
+            .select("display_name, profile:profiles ( full_name )")
+            .eq("id", lead)
+            .maybeSingle()) as unknown as {
+            data: {
+              display_name: string | null;
+              profile: { full_name: string | null } | null;
+            } | null;
+          })
+        : { data: null };
+      await updateCalendarEvent(b.organization_id, {
+        ...eventBooking,
+        google_calendar_event_id: b.google_calendar_event_id,
+        employee_name: leadRow ? memberDisplayName(leadRow) : undefined,
+      }).catch((err) => console.error("[claim] org gcal update failed:", err));
+    }
+  } catch (err) {
+    console.error("[claim] calendar sync setup failed:", err);
+  }
 }

@@ -19,8 +19,11 @@ export const metadata = { title: "Offer this shift" };
 
 export default async function NewJobOfferPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  /** ?replacing=<membership id> preselects who this offer covers for. */
+  searchParams: Promise<{ replacing?: string }>;
 }) {
   const membership = await requireMembership(["owner", "admin", "manager"]);
   // Reached from a booking, so it needs its own gate — the On-call section's
@@ -28,17 +31,19 @@ export default async function NewJobOfferPage({
   requireCapability(membership, "subcontractors");
   const tz = await getOrgTimezone(membership.organization_id);
   const { id: bookingId } = await params;
+  const { replacing } = await searchParams;
   const supabase = await createSupabaseServerClient();
 
   const [
     { data: booking, error: bErr },
     { data: contacts, error: cErr },
     { data: rosterRows, error: mErr },
+    { data: crewRows },
   ] = await Promise.all([
     supabase
       .from("bookings")
       .select(
-        "id, scheduled_at, duration_minutes, service_type, address, total_cents, client:clients ( name )",
+        "id, scheduled_at, duration_minutes, service_type, address, total_cents, assigned_to, client:clients ( name )",
       )
       .eq("id", bookingId)
       .maybeSingle(),
@@ -57,6 +62,23 @@ export default async function NewJobOfferPage({
       .eq("organization_id", membership.organization_id)
       .eq("status", "active")
       .eq("engagement" as never, "subcontractor" as never),
+    // Who is on the job now — the offer can be posted to replace one of
+    // them, and the first claim swaps them out.
+    supabase
+      .from("booking_assignees")
+      .select(
+        "membership_id, member:memberships ( id, display_name, profile:profiles ( full_name ) )",
+      )
+      .eq("booking_id", bookingId) as unknown as Promise<{
+      data: Array<{
+        membership_id: string;
+        member: {
+          id: string;
+          display_name: string | null;
+          profile: { full_name: string | null } | null;
+        } | null;
+      }> | null;
+    }>,
   ]);
 
   if (bErr) throw bErr;
@@ -76,6 +98,11 @@ export default async function NewJobOfferPage({
       name: memberDisplayName(m),
       phone: m.contact_phone ?? m.profile?.phone ?? null,
     }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  const crew = (crewRows ?? [])
+    .filter((r) => r.member)
+    .map((r) => ({ id: r.membership_id, name: memberDisplayName(r.member!) }))
     .sort((a, b) => a.name.localeCompare(b.name));
 
   // Nobody to offer to at all — send the admin to the on-call page to add
@@ -109,6 +136,10 @@ export default async function NewJobOfferPage({
               phone: c.phone,
             }))}
             members={members}
+            crew={crew}
+            initialReplacing={
+              replacing && crew.some((c) => c.id === replacing) ? replacing : ""
+            }
             booking={{
               scheduled_at: booking.scheduled_at,
               duration_minutes: booking.duration_minutes,
