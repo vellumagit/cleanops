@@ -8,10 +8,74 @@ import { logAuditEvent } from "@/lib/audit";
 import { notifyPtoStatus } from "@/lib/automations";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { localInputToUtcIso } from "@/lib/validators/common";
+import { periodHref } from "@/lib/pay-period";
 import { endsAfterStart, preserveWithinMinute } from "@/lib/time-entry-edit";
 import { encryptField } from "@/lib/field-encryption";
 
-type Result = { ok: true } | { ok: false; error: string };
+type Result =
+  | { ok: true }
+  | {
+      ok: false;
+      error: string;
+      /** Where to go to fix it — set when the entry is locked by a pay run. */
+      fix?: { href: string; label: string };
+    };
+
+/**
+ * The "this entry is frozen" refusal, with a way out. It used to say
+ * "delete that statement" and nothing else — Svitlana, on the Pay periods
+ * list, couldn't find a delete anywhere, because it lives on Payroll →
+ * Contractors. Now it links to the statement (or the employee pay period)
+ * that holds the entry.
+ */
+async function lockedEntryResult(
+  supabase: Awaited<ReturnType<typeof getActionContext>>["supabase"],
+  entry: { payroll_run_id?: string | null; subcontractor_run_id?: string | null },
+  messages: { payroll: string; subcontractor: string },
+): Promise<Result> {
+  const fmt = (ymd: string) =>
+    new Date(`${ymd}T12:00:00Z`).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      timeZone: "UTC",
+    });
+  if (entry.payroll_run_id) {
+    const { data: run } = (await supabase
+      .from("payroll_runs")
+      .select("period_start, period_end")
+      .eq("id", entry.payroll_run_id)
+      .maybeSingle()) as unknown as {
+      data: { period_start: string; period_end: string } | null;
+    };
+    return {
+      ok: false,
+      error: messages.payroll,
+      fix: run
+        ? {
+            href: periodHref(run.period_start, run.period_end),
+            label: `Open the ${fmt(run.period_start)} – ${fmt(run.period_end)} pay period`,
+          }
+        : { href: "/app/payroll", label: "Open Payroll" },
+    };
+  }
+  const { data: run } = (await supabase
+    .from("subcontractor_pay_runs" as never)
+    .select("period_start, period_end")
+    .eq("id" as never, entry.subcontractor_run_id as never)
+    .maybeSingle()) as unknown as {
+    data: { period_start: string; period_end: string } | null;
+  };
+  return {
+    ok: false,
+    error: messages.subcontractor,
+    fix: {
+      href: `/app/payroll/contractors#statement-${entry.subcontractor_run_id}`,
+      label: run
+        ? `Open the ${fmt(run.period_start)} – ${fmt(run.period_end)} statement`
+        : "Open contractor statements",
+    },
+  };
+}
 
 /**
  * Fetch the edit history of a single time entry from audit_log.
@@ -1138,12 +1202,12 @@ export async function updateTimeEntryAction(
   // deliberate and loud: delete the run or statement (which releases its
   // entries), fix the hours, regenerate.
   if (before?.payroll_run_id || before?.subcontractor_run_id) {
-    return {
-      ok: false,
-      error: before.payroll_run_id
-        ? "This entry is part of a payroll run. Delete that pay period to unlock it, fix the hours, then create the period again."
-        : "This entry is on a subcontractor statement. Delete that statement to unlock it, fix the hours, then generate again.",
-    };
+    return lockedEntryResult(supabase, before, {
+      payroll:
+        "This entry is part of a payroll run. Delete that pay period to unlock it, fix the hours, then create the period again.",
+      subcontractor:
+        "This entry is on a subcontractor statement. Delete that statement (trash icon) to unlock it, fix the hours, then prepare the period again.",
+    });
   }
 
   // The edit form round-trips seconds; the stored punch has milliseconds. A
@@ -1473,12 +1537,11 @@ export async function attachEntryToBookingAction(
     return { ok: false, error: "This entry is already attached to a job." };
   }
   if (entry.payroll_run_id || entry.subcontractor_run_id) {
-    return {
-      ok: false,
-      error: entry.payroll_run_id
-        ? "This entry is part of a payroll run. Delete that pay period to unlock it first."
-        : "This entry is on a subcontractor statement. Delete that statement to unlock it first.",
-    };
+    return lockedEntryResult(supabase, entry, {
+      payroll: "This entry is part of a payroll run. Delete that pay period to unlock it first.",
+      subcontractor:
+        "This entry is on a subcontractor statement. Delete that statement (trash icon) to unlock it first.",
+    });
   }
 
   const { data: booking } = (await supabase
@@ -1815,12 +1878,11 @@ export async function deleteTimeEntryAction(
   // Same freeze as updateTimeEntryAction — deleting a paid entry is the
   // harsher version of editing one.
   if (before?.payroll_run_id || before?.subcontractor_run_id) {
-    return {
-      ok: false,
-      error: before.payroll_run_id
-        ? "This entry is part of a payroll run. Delete that pay period first to unlock it."
-        : "This entry is on a subcontractor statement. Delete that statement first to unlock it.",
-    };
+    return lockedEntryResult(supabase, before, {
+      payroll: "This entry is part of a payroll run. Delete that pay period first to unlock it.",
+      subcontractor:
+        "This entry is on a subcontractor statement. Delete that statement (trash icon) first to unlock it.",
+    });
   }
 
   const { error } = await supabase

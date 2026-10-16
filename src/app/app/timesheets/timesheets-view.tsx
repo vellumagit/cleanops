@@ -516,7 +516,10 @@ export function TimesheetsView({
         toast.success(`Attached to ${s.clientName}`);
         router.refresh();
       } else {
-        toast.error(result.error);
+        const fix = "fix" in result ? result.fix : undefined;
+        toast.error(result.error, fix
+          ? { action: { label: fix.label, onClick: () => router.push(fix.href) } }
+          : undefined);
       }
     } finally {
       setAttachPending(false);

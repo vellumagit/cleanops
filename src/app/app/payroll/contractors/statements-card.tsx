@@ -1,6 +1,7 @@
 "use client";
 
-import { useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
+import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { FileText, Loader2, Check, Trash2, BookOpen, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -44,6 +45,24 @@ export function StatementsCard({
   sageConnected?: boolean;
 }) {
   const [isPending, startTransition] = useTransition();
+
+  // A locked time entry links here as #statement-<id>. Client-side
+  // navigation doesn't reliably fire :target, so read the hash ourselves,
+  // bring that statement into view, and light it up.
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+  useEffect(() => {
+    function read() {
+      const m = window.location.hash.match(/^#statement-(.+)$/);
+      if (!m) return;
+      setHighlightId(m[1]);
+      document
+        .getElementById(`statement-${m[1]}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+    read();
+    window.addEventListener("hashchange", read);
+    return () => window.removeEventListener("hashchange", read);
+  }, []);
 
   function generate(formData: FormData) {
     startTransition(async () => {
@@ -162,7 +181,18 @@ export function StatementsCard({
       ) : (
         <ul className="divide-y divide-border">
           {runs.map((run) => (
-            <li key={run.id} className="px-5 py-4">
+            // Anchor + highlight: a locked time entry links straight here
+            // (timesheets lockedEntryResult), so the statement it names is
+            // the one lit up on arrival.
+            <li
+              key={run.id}
+              id={`statement-${run.id}`}
+              className={cn(
+                "scroll-mt-24 px-5 py-4 transition-colors",
+                highlightId === run.id &&
+                  "bg-amber-50 ring-2 ring-inset ring-amber-300 dark:bg-amber-950/30",
+              )}
+            >
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2 text-sm font-medium">
                   {run.periodStart}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -352,6 +353,8 @@ export function ManualEntryDialog({
   const [endAt, setEndAt] = useState("");
   const [notes, setNotes] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
+  // A locked entry's way out — the statement or pay period holding it.
+  const [formErrorFix, setFormErrorFix] = useState<{ href: string; label: string } | null>(null);
 
   // Inline edit history (audit_log entries for this time_entry). Lazy-loaded
   // when the dialog opens in edit mode; hidden by default to keep the
@@ -415,6 +418,7 @@ export function ManualEntryDialog({
       setNotes("");
     }
     setFormError(null);
+    setFormErrorFix(null);
     // Reset history + reassign state when dialog opens for a new entry
     setHistoryOpen(false);
     setHistory([]);
@@ -497,6 +501,7 @@ export function ManualEntryDialog({
       const result = await action(fd);
       if (!result.ok) {
         setFormError(result.error);
+        setFormErrorFix("fix" in result ? (result.fix ?? null) : null);
         return;
       }
       toast.success(mode === "edit" ? "Entry updated" : "Hours logged");
@@ -514,6 +519,7 @@ export function ManualEntryDialog({
       const result = await deleteTimeEntryAction(fd);
       if (!result.ok) {
         setFormError(result.error);
+        setFormErrorFix("fix" in result ? (result.fix ?? null) : null);
         return;
       }
       toast.success("Entry deleted");
@@ -543,6 +549,16 @@ export function ManualEntryDialog({
               className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"
             >
               {formError}
+              {formErrorFix && (
+                <div className="mt-2">
+                  <Link
+                    href={formErrorFix.href}
+                    className="inline-flex items-center gap-1 rounded-md border border-destructive/40 bg-background px-2.5 py-1 text-xs font-medium text-destructive hover:bg-destructive/10"
+                  >
+                    {formErrorFix.label} →
+                  </Link>
+                </div>
+              )}
             </div>
           )}
 
