@@ -142,3 +142,49 @@ export function segmentsSpanMinutes(segments: ResolvedSegment[]): number {
   );
   return end - start;
 }
+
+/** Minutes past midnight of the "HH:MM" in a datetime-local or time value. */
+function clockMinutes(value: string): number | null {
+  const hhmm = /(?:^|T)(\d{2}):(\d{2})/.exec(value);
+  if (!hhmm) return null;
+  return Number(hhmm[1]) * 60 + Number(hhmm[2]);
+}
+
+/**
+ * The "HH:MM" a cleaner arrives, for an <input type="time">.
+ *
+ * The form used to ask for this as "Starts after job start: 2h 0m", which is
+ * the stored shape but not how an owner thinks — they know Olha comes at
+ * eleven. Plain clock arithmetic, for the same reason as formatSegmentWindow.
+ */
+export function segmentStartClock(
+  scheduledAtLocal: string,
+  startOffsetMinutes: number,
+): string | null {
+  const base = clockMinutes(scheduledAtLocal);
+  if (base == null) return null;
+  const inDay = (((base + startOffsetMinutes) % 1440) + 1440) % 1440;
+  const h = Math.floor(inDay / 60);
+  return `${String(h).padStart(2, "0")}:${String(inDay % 60).padStart(2, "0")}`;
+}
+
+/**
+ * Turn a typed arrival time back into the offset that gets saved.
+ *
+ * A clock time earlier than the job's start is either the next morning of a
+ * job that runs past midnight — read it that way when the job is still going
+ * then — or a mistake, which returns null so the form can say so instead of
+ * quietly saving 23 hours.
+ */
+export function offsetFromArrivalClock(
+  scheduledAtLocal: string,
+  arrival: string,
+  jobMinutes: number,
+): number | null {
+  const base = clockMinutes(scheduledAtLocal);
+  const at = clockMinutes(arrival);
+  if (base == null || at == null) return null;
+  const delta = at - base;
+  if (delta >= 0) return delta;
+  return delta + 1440 < jobMinutes ? delta + 1440 : null;
+}

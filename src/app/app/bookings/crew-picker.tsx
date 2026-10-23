@@ -1,13 +1,16 @@
 "use client";
 
-import type { Dispatch, SetStateAction } from "react";
+import { useState, type Dispatch, type SetStateAction } from "react";
 import { AlertTriangle, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { FormField } from "@/components/form-field";
 import { HourMinuteField } from "@/components/hour-minute-field";
+import { Input } from "@/components/ui/input";
 import {
   formatSegmentWindow,
+  offsetFromArrivalClock,
   resolveSegmentWindows,
+  segmentStartClock,
   segmentsOverlap,
   segmentsSpanMinutes,
 } from "@/lib/booking-segments";
@@ -27,6 +30,66 @@ function minutesLabel(total: number): string {
   const m = total % 60;
   if (h > 0 && m > 0) return `${h}h ${m}m`;
   return h > 0 ? `${h}h` : `${m}m`;
+}
+
+/**
+ * When one person arrives, as a clock time.
+ *
+ * This was "Starts after job start: 2h 0m" — the stored offset, shown raw. An
+ * owner with three cleaners arriving at nine, eleven and one couldn't tell
+ * what that field wanted, and read "different times" as a hand-off.
+ *
+ * The typed text is the state, for the same reason as HourMinuteField: a time
+ * before the job start is rejected rather than saved, and if the field were
+ * controlled by the offset it would keep showing the rejected text with no
+ * sign anything was wrong. The parent remounts it (key) when the job's own
+ * start time changes.
+ */
+function ArrivalTimeField({
+  ariaLabel,
+  scheduledAtLocal,
+  startOffsetMinutes,
+  jobMinutes,
+  onChangeOffset,
+}: {
+  ariaLabel: string;
+  scheduledAtLocal: string;
+  startOffsetMinutes: number;
+  jobMinutes: number;
+  onChangeOffset: (minutes: number) => void;
+}) {
+  const [text, setText] = useState(
+    segmentStartClock(scheduledAtLocal, startOffsetMinutes) ?? "",
+  );
+  const offset = text
+    ? offsetFromArrivalClock(scheduledAtLocal, text, jobMinutes)
+    : null;
+  const jobStart = formatSegmentWindow(scheduledAtLocal, 0, 0)?.split(" – ")[0];
+  return (
+    <label className="block space-y-1">
+      <span className="text-xs font-medium">Arrives at</span>
+      <Input
+        type="time"
+        aria-label={ariaLabel}
+        value={text}
+        onChange={(e) => {
+          setText(e.target.value);
+          const next = offsetFromArrivalClock(
+            scheduledAtLocal,
+            e.target.value,
+            jobMinutes,
+          );
+          if (next != null) onChangeOffset(next);
+        }}
+      />
+      {text && offset == null && (
+        <span className="block text-[11px] text-amber-600 dark:text-amber-400">
+          That&rsquo;s before the job starts{jobStart ? ` at ${jobStart}` : ""}.
+          Move the job&rsquo;s time earlier if someone arrives first.
+        </span>
+      )}
+    </label>
+  );
 }
 
 /**
@@ -148,9 +211,11 @@ export function CrewPicker({
             <span className="text-sm font-medium">Different times for each person</span>
           </label>
           <p className="-mt-1 pl-7 text-xs text-muted-foreground">
-            Leave off when everyone works the whole visit together. Turn on to give
-            each person their own start and length — they can overlap, hand off, or
-            leave a gap.
+            Leave off when everyone arrives together. Turn on to set when each
+            person arrives and how long they stay — they can work at the same
+            time, hand off, or leave a gap. Each cleaner&rsquo;s phone shows
+            their own arrival time, and their hours count from their own
+            clock-in.
           </p>
 
           {state.timesOn && (
@@ -173,15 +238,30 @@ export function CrewPicker({
                       )}
                     </p>
                     <div className="grid gap-2 sm:grid-cols-2">
-                      <HourMinuteField
-                        key={`${id}-start`}
-                        label="Starts after job start"
-                        ariaPrefix={`Person ${idx + 1} start`}
-                        valueMinutes={w.start_offset_minutes}
-                        onChangeMinutes={(start_offset_minutes) =>
-                          setWindow(id, { start_offset_minutes })
-                        }
-                      />
+                      {clock ? (
+                        <ArrivalTimeField
+                          key={`${id}-start-${scheduledAtLocal}`}
+                          ariaLabel={`Person ${idx + 1} arrives at`}
+                          scheduledAtLocal={scheduledAtLocal}
+                          startOffsetMinutes={w.start_offset_minutes}
+                          jobMinutes={jobMinutes}
+                          onChangeOffset={(start_offset_minutes) =>
+                            setWindow(id, { start_offset_minutes })
+                          }
+                        />
+                      ) : (
+                        // No date/time picked yet, so there is no clock to
+                        // anchor an arrival to — fall back to the offset.
+                        <HourMinuteField
+                          key={`${id}-start`}
+                          label="Arrives after job start"
+                          ariaPrefix={`Person ${idx + 1} start`}
+                          valueMinutes={w.start_offset_minutes}
+                          onChangeMinutes={(start_offset_minutes) =>
+                            setWindow(id, { start_offset_minutes })
+                          }
+                        />
+                      )}
                       <HourMinuteField
                         key={`${id}-duration`}
                         label="Time on site"

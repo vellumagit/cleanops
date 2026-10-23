@@ -488,7 +488,9 @@ export default async function FieldJobDetailPage({
               <Users className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
               <div className="min-w-0 flex-1">
                 <div className="mb-1.5 text-sm font-semibold">
-                  Split shift — your window is highlighted
+                  {/* Not "Split shift": most crews with their own times
+                      overlap, and the cleaner read it as a hand-off. */}
+                  Crew times — yours is highlighted
                 </div>
                 <SplitShiftTimeline segments={splitSegments} />
               </div>

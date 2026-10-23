@@ -57,7 +57,7 @@ export const HELP_ARTICLES: HelpArticle[] = [
   {
     slug: "bookings",
     title: "Bookings",
-    blurb: "Creating and pricing visits, recurring schedules, split shifts, skips and deletes.",
+    blurb: "Creating and pricing visits, recurring schedules, crew arriving at different times, skips and deletes.",
     section: "Day to day",
     body: bookings,
   },

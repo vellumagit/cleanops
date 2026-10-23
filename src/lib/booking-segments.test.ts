@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   formatSegmentWindow,
+  offsetFromArrivalClock,
   resolveSegmentWindows,
   segmentsOverlap,
   segmentsSpanMinutes,
+  segmentStartClock,
 } from "./booking-segments";
 
 describe("formatSegmentWindow", () => {
@@ -210,5 +212,39 @@ describe("segmentsSpanMinutes", () => {
 
   it("is zero with nothing assigned", () => {
     expect(segmentsSpanMinutes(r([]))).toBe(0);
+  });
+});
+
+describe("arrival clock", () => {
+  const at = "2026-10-26T09:00";
+
+  it("shows the clock time a person arrives", () => {
+    expect(segmentStartClock(at, 0)).toBe("09:00");
+    expect(segmentStartClock(at, 150)).toBe("11:30");
+  });
+
+  it("wraps past midnight", () => {
+    expect(segmentStartClock("2026-10-02T22:00", 180)).toBe("01:00");
+  });
+
+  it("turns an arrival time back into the saved offset", () => {
+    expect(offsetFromArrivalClock(at, "11:30", 720)).toBe(150);
+    expect(offsetFromArrivalClock(at, "09:00", 720)).toBe(0);
+  });
+
+  it("refuses an arrival before the job starts", () => {
+    expect(offsetFromArrivalClock(at, "08:00", 720)).toBeNull();
+  });
+
+  it("reads an early clock as next morning on an overnight job", () => {
+    // 10 PM job, 8 hours long: 1 AM is three hours in.
+    expect(offsetFromArrivalClock("2026-10-02T22:00", "01:00", 480)).toBe(180);
+    // …but 7 AM is after it ends, so that is a mistake, not tomorrow.
+    expect(offsetFromArrivalClock("2026-10-02T22:00", "07:00", 480)).toBeNull();
+  });
+
+  it("returns null without a start time", () => {
+    expect(segmentStartClock("", 60)).toBeNull();
+    expect(offsetFromArrivalClock("", "10:00", 60)).toBeNull();
   });
 });

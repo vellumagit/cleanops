@@ -23,9 +23,9 @@ The recurring list shows each series' **billing state**: an amber "N unbilled" c
 
 When a save would **notify the client** — the visit time moved, or the recurring schedule was rewritten — Sollos stops and asks: **Save & notify client**, or **Save without notifying** (you tell them yourself). The notice goes out by the client's own channel preference: email, text, or both. Saves that change nothing client-visible never notify; a save with an untouched schedule doesn't touch future visits at all.
 
-## Split shifts
+## Crew arriving at different times
 
-A split shift is a hand-off: one cleaner does the first hours, another takes over — they don't overlap. For two cleaners working *together*, don't split; assign both as crew.
+Pick everyone in **Crew**. If they all arrive together, that's it. If they don't, tick **Different times for each person** and give each one an **Arrives at** time and a **Time on site** — say 9:00 AM for six hours, 11:00 AM for six, 1:00 PM for five. Times can overlap (working together), run end to end (a hand-off), or leave a gap. Each cleaner's phone shows their own arrival time, each clocks in and out for themselves, and pay comes from their own clocked hours. An arrival can't be earlier than the job's start time — move the job earlier if someone comes first.
 
 ## Availability on the scheduler
 

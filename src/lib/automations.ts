@@ -6350,13 +6350,32 @@ export async function sendShiftClockOutReminders(): Promise<{
       // late still gets their full window before we start nagging.
       let expectedEndMs: number;
       if (e.booking?.duration_minutes) {
-        const div = await resolveTeamDivision(
-          e.booking.id,
-          e.booking.duration_minutes,
-        );
-        const mins = div.effectiveMinutes;
+        // A person with their own arrival time and length on this job is
+        // measured against THAT window. Dividing the job instead nagged
+        // someone booked for 6h of a 12h, 3-person job at the 4h mark.
+        const { data: own } = (await db
+          .from("booking_assignees" as never)
+          .select("split_start_offset_minutes, split_duration_minutes")
+          .eq("booking_id" as never, e.booking.id as never)
+          .eq("membership_id" as never, e.employee_id as never)
+          .maybeSingle()) as unknown as {
+          data: {
+            split_start_offset_minutes: number | null;
+            split_duration_minutes: number | null;
+          } | null;
+        };
+        const ownStartOffset = own?.split_start_offset_minutes ?? 0;
+        const mins =
+          own?.split_duration_minutes ??
+          (
+            await resolveTeamDivision(
+              e.booking.id,
+              e.booking.duration_minutes,
+            )
+          ).effectiveMinutes;
         expectedEndMs = Math.max(
-          new Date(e.booking.scheduled_at).getTime() + mins * 60_000,
+          new Date(e.booking.scheduled_at).getTime() +
+            (ownStartOffset + mins) * 60_000,
           clockInMs + mins * 60_000,
         );
       } else {
