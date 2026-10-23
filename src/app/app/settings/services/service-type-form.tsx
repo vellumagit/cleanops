@@ -3,6 +3,8 @@
 import { useActionState, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { SERVICE_DESCRIPTION_MAX } from "@/lib/validators/service-types";
 import { FormError, FormField, FormSelect } from "@/components/form-field";
 import { Button } from "@/components/ui/button";
 import { SubmitButton } from "@/components/submit-button";
@@ -145,12 +147,13 @@ export function ServiceTypeForm({
         error={state.errors?.description}
         hint="Optional — shown as a hint under the name."
       >
-        <Input
+        <Textarea
           id={`description-${id ?? "new"}`}
           name="description"
           defaultValue={v.description ?? defaults.description}
           placeholder="e.g. Includes inside oven, fridge, and cabinets"
-          maxLength={280}
+          maxLength={SERVICE_DESCRIPTION_MAX}
+          rows={3}
         />
       </FormField>
 

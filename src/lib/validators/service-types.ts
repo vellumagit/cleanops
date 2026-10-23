@@ -13,6 +13,9 @@ import { ServiceTypeEnum } from "./bookings";
  * Default duration / price are pre-fill values for the booking form;
  * both optional. Empty strings come through as undefined.
  */
+/** Shared with the form's maxLength so the two can't disagree. */
+export const SERVICE_DESCRIPTION_MAX = 2000;
+
 export const ServiceTypeRowSchema = z.object({
   category: ServiceTypeEnum,
   name: z
@@ -20,9 +23,12 @@ export const ServiceTypeRowSchema = z.object({
     .trim()
     .min(1, "Name is required")
     .max(64, "Keep names under 64 characters"),
-  description: optionalText.refine((v) => (v ?? "").length <= 280, {
-    message: "Keep description under 280 characters",
-  }),
+  // 2,000, up from 280: Svitlana writes what a service includes, and 280
+  // cut her off mid-list. The column is unbounded text; this is the only cap.
+  description: optionalText.refine(
+    (v) => (v ?? "").length <= SERVICE_DESCRIPTION_MAX,
+    { message: `Keep description under ${SERVICE_DESCRIPTION_MAX.toLocaleString()} characters` },
+  ),
   default_duration_minutes: z
     .string()
     .transform((s) => (s === "" ? null : Number(s)))
