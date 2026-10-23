@@ -123,7 +123,7 @@ export default async function BookingDetailPage({
     .select(
       `
         id, scheduled_at, duration_minutes, service_type, service_type_label, status,
-        total_cents, hourly_rate_cents, address, notes, created_at,
+        total_cents, hourly_rate_cents, is_free, address, notes, created_at,
         estimate_id, series_id,
         client:clients ( id, name, phone, email, address, notes ),
         assigned:memberships!bookings_assigned_to_fkey (
@@ -604,6 +604,15 @@ export default async function BookingDetailPage({
                 <dd className="mt-0.5 font-semibold tabular-nums text-foreground">
                   {booking.total_cents ? (
                     formatCurrencyCents(booking.total_cents)
+                  ) : (booking as { is_free?: boolean | null }).is_free ? (
+                    // Marked free on purpose — $0 is the price, not a gap.
+                    <span className="inline-flex items-center rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-400">
+                      Free
+                    </span>
+                  ) : (booking.hourly_rate_cents ?? 0) > 0 ? (
+                    <span className="font-medium">
+                      {formatCurrencyCents(booking.hourly_rate_cents ?? 0)}/hr
+                    </span>
                   ) : (
                     <span className="inline-flex items-center rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400">
                       No price — set it in Edit

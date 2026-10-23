@@ -95,6 +95,9 @@ export type ScheduleBooking = {
    *  duration/crew, and measuring the full duration invented double-bookings
    *  on every team job. */
   dividesHours: boolean;
+  /** Deliberately free of charge — a comp clean is priced correctly at $0,
+   *  and the board's "No price" warning must not fire on it. */
+  isFree: boolean;
   /** Human-readable recurrence rule when this booking belongs to a series,
    *  e.g. "Every 4 weeks at 3:00 PM". The quick view had series_id and showed
    *  nothing with it, so a repeating job looked identical to a one-off. */
@@ -382,19 +385,28 @@ export async function fetchScheduleWeek(
     // filters, so it covers exactly the rows above.
     (supabase
       .from("bookings" as never)
-      .select("id, divide_hours_evenly")
+      // is_free rides along for the same reason: without it the board's
+      // warning flagged every comp clean as "No price" — the bookings list
+      // and dashboard already knew better.
+      .select("id, divide_hours_evenly, is_free")
       .gte("scheduled_at" as never, weekStart.toISOString() as never)
       .lt("scheduled_at" as never, weekEnd.toISOString() as never)
       .neq("status" as never, "cancelled" as never)) as unknown as Promise<{
-      data: Array<{ id: string; divide_hours_evenly: boolean | null }> | null;
+      data: Array<{
+        id: string;
+        divide_hours_evenly: boolean | null;
+        is_free: boolean | null;
+      }> | null;
       error: { message: string } | null;
     }>,
   ]);
 
   // Per-booking override; the org toggle is the fallback.
   const dividesByBooking = new Map<string, boolean>();
+  const freeBookings = new Set<string>();
   for (const row of divideRes.data ?? []) {
     dividesByBooking.set(row.id, row.divide_hours_evenly === true);
+    if (row.is_free === true) freeBookings.add(row.id);
   }
 
   // One lookup for every series represented on this board.
@@ -498,6 +510,7 @@ export async function fetchScheduleWeek(
       // Per-booking flag wins; otherwise the org default. Same precedence as
       // resolveTeamDivision, which is the function everything else uses.
       dividesHours: dividesByBooking.get(b.id) === true ? true : orgDividesHours,
+      isFree: freeBookings.has(b.id),
       seriesLabel:
         seriesLabelById.get(
           (b as { series_id?: string | null }).series_id ?? "",
