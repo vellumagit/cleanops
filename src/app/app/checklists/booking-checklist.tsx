@@ -17,6 +17,8 @@ export type BookingChecklistItem = {
   phase: "pre" | "during" | "post";
   is_required: boolean;
   checked_at: string | null;
+  /** section / subsection rows are headings: shown, never ticked or counted. */
+  kind?: "item" | "section" | "subsection";
 };
 
 type Props = {
@@ -80,8 +82,10 @@ export function BookingChecklist({ bookingId, items, canRemove }: Props) {
     grouped[it.phase].push(it);
   }
 
-  const total = items.length;
-  const done = items.filter((i) => localChecked[i.id]).length;
+  // Headings aren't tasks — "12/40 complete" used to count "KITCHEN".
+  const tasks = items.filter((i) => (i.kind ?? "item") === "item");
+  const total = tasks.length;
+  const done = tasks.filter((i) => localChecked[i.id]).length;
 
   return (
     <div className="space-y-4">
@@ -102,6 +106,31 @@ export function BookingChecklist({ bookingId, items, canRemove }: Props) {
             </h4>
             <ul className="space-y-1.5">
               {rows.map((it) => {
+                if (it.kind === "section" || it.kind === "subsection") {
+                  return (
+                    <li
+                      key={it.id}
+                      className={cn(
+                        "flex items-center gap-2",
+                        it.kind === "section"
+                          ? "pt-3 text-sm font-semibold uppercase tracking-wide text-foreground first:pt-0"
+                          : "pt-1.5 pl-1 text-xs font-semibold text-muted-foreground",
+                      )}
+                    >
+                      <span className="flex-1">{it.title}</span>
+                      {canRemove && (
+                        <button
+                          type="button"
+                          onClick={() => remove(it.id)}
+                          aria-label="Remove"
+                          className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-destructive"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </li>
+                  );
+                }
                 const isChecked = !!localChecked[it.id];
                 return (
                   <li

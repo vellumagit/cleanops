@@ -422,7 +422,7 @@ export default async function BookingDetailPage({
   const [{ data: checklistItems }, { data: templates }] = await Promise.all([
     supabase
       .from("booking_checklist_items" as never)
-      .select("id, ordinal, title, phase, is_required, checked_at")
+      .select("id, ordinal, title, phase, is_required, checked_at, kind")
       .eq("booking_id" as never, booking.id as never)
       .order(
         "ordinal" as never,

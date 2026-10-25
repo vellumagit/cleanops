@@ -277,7 +277,7 @@ export default async function FieldJobDetailPage({
       }>,
       supabase
         .from("booking_checklist_items" as never)
-        .select("id, ordinal, title, phase, is_required, checked_at")
+        .select("id, ordinal, title, phase, is_required, checked_at, kind")
         .eq("booking_id" as never, booking.id as never)
         .order(
           "ordinal" as never,

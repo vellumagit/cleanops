@@ -14,7 +14,7 @@ import { ServiceTypeEnum } from "./bookings";
  * both optional. Empty strings come through as undefined.
  */
 /** Shared with the form's maxLength so the two can't disagree. */
-export const SERVICE_DESCRIPTION_MAX = 2000;
+export const SERVICE_DESCRIPTION_MAX = 10000;
 
 export const ServiceTypeRowSchema = z.object({
   category: ServiceTypeEnum,
@@ -23,8 +23,10 @@ export const ServiceTypeRowSchema = z.object({
     .trim()
     .min(1, "Name is required")
     .max(64, "Keep names under 64 characters"),
-  // 2,000, up from 280: Svitlana writes what a service includes, and 280
-  // cut her off mid-list. The column is unbounded text; this is the only cap.
+  // 10,000 (was 280, then 2,000): Svitlana writes out what a service
+  // includes, and her deep-clean list alone is ~4,000. The column is
+  // unbounded text; this is the only cap. The tickable version of the same
+  // list belongs in a checklist, which has sections.
   description: optionalText.refine(
     (v) => (v ?? "").length <= SERVICE_DESCRIPTION_MAX,
     { message: `Keep description under ${SERVICE_DESCRIPTION_MAX.toLocaleString()} characters` },

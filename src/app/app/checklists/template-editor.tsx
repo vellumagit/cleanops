@@ -3,13 +3,14 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Plus, Trash2, GripVertical } from "lucide-react";
+import { Plus, Trash2, GripVertical, ClipboardPaste } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { FormSelect } from "@/components/form-field";
 import { cn } from "@/lib/utils";
+import { parseChecklistPaste, type ChecklistKind } from "@/lib/checklist-paste";
 import {
   createChecklistTemplateAction,
   updateChecklistTemplateAction,
@@ -20,6 +21,8 @@ type Item = {
   title: string;
   phase: "pre" | "during" | "post";
   is_required: boolean;
+  /** item = a task to tick; section / subsection = a heading over the tasks. */
+  kind: ChecklistKind;
 };
 
 type Props = {
@@ -34,12 +37,34 @@ type Props = {
   initialItems?: Item[];
 };
 
-function emptyItem(): Item {
+/** Row type: a task to tick, or a heading (section = room, group = within it). */
+function KindSelect({
+  value,
+  onChange,
+}: {
+  value: ChecklistKind;
+  onChange: (kind: ChecklistKind) => void;
+}) {
+  return (
+    <FormSelect
+      value={value}
+      onChange={(e) => onChange(e.target.value as ChecklistKind)}
+      aria-label="Row type"
+    >
+      <option value="item">Task</option>
+      <option value="section">Section</option>
+      <option value="subsection">Group</option>
+    </FormSelect>
+  );
+}
+
+function emptyItem(kind: ChecklistKind = "item"): Item {
   return {
     key: crypto.randomUUID(),
     title: "",
     phase: "during",
     is_required: false,
+    kind,
   };
 }
 
@@ -61,9 +86,39 @@ export function TemplateEditor({
     initialItems && initialItems.length > 0 ? initialItems : [emptyItem()],
   );
   const [formError, setFormError] = useState<string | null>(null);
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pasteText, setPasteText] = useState("");
 
-  function addItem() {
-    setItems((p) => [...p, emptyItem()]);
+  function addItem(kind: ChecklistKind = "item") {
+    setItems((p) => [...p, emptyItem(kind)]);
+  }
+
+  /**
+   * "Paste a list": a whole checklist written in an email becomes sections,
+   * groups and tasks in one go (lib/checklist-paste.ts). Replaces the rows
+   * when the editor only holds the empty starter row, appends otherwise —
+   * and every row's type stays editable, so a wrong guess is one click.
+   */
+  function applyPaste(mode: "append" | "replace") {
+    const parsed = parseChecklistPaste(pasteText).map((r) => ({
+      ...emptyItem(r.kind),
+      title: r.title,
+    }));
+    if (parsed.length === 0) {
+      toast.error("Nothing to add — paste a list with one item per line.");
+      return;
+    }
+    setItems((p) => {
+      const onlyBlank = p.every((i) => !i.title.trim());
+      return mode === "replace" || onlyBlank ? parsed : [...p, ...parsed];
+    });
+    const tasks = parsed.filter((r) => r.kind === "item").length;
+    const headings = parsed.length - tasks;
+    toast.success(
+      `Added ${tasks} task${tasks === 1 ? "" : "s"} under ${headings} heading${headings === 1 ? "" : "s"}. Check the types, then save.`,
+    );
+    setPasteText("");
+    setPasteOpen(false);
   }
   function removeItem(key: string) {
     setItems((p) => {
@@ -82,8 +137,8 @@ export function TemplateEditor({
       return;
     }
     const trimmedItems = items.filter((i) => i.title.trim().length > 0);
-    if (trimmedItems.length === 0) {
-      setFormError("Add at least one item.");
+    if (!trimmedItems.some((i) => i.kind === "item")) {
+      setFormError("Add at least one task — headings alone have nothing to tick.");
       return;
     }
 
@@ -97,7 +152,8 @@ export function TemplateEditor({
         JSON.stringify({
           title: it.title.trim(),
           phase: it.phase,
-          is_required: it.is_required,
+          is_required: it.kind === "item" && it.is_required,
+          kind: it.kind,
         }),
       );
     }
@@ -174,19 +230,128 @@ export function TemplateEditor({
       </div>
 
       <div className="rounded-lg border border-border bg-card p-4">
-        <div className="mb-3 flex items-center justify-between">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-sm font-semibold">Items</h3>
-          <Button type="button" size="sm" variant="outline" onClick={addItem}>
-            <Plus className="h-3.5 w-3.5" />
-            Add item
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => setPasteOpen((o) => !o)}
+            >
+              <ClipboardPaste className="h-3.5 w-3.5" />
+              Paste a list
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => addItem("section")}
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Section
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => addItem()}
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Task
+            </Button>
+          </div>
         </div>
 
+        {pasteOpen && (
+          <div className="mb-4 space-y-2 rounded-md border border-dashed border-border bg-muted/30 p-3">
+            <p className="text-xs text-muted-foreground">
+              One line each. <strong>ALL CAPS</strong> lines become sections
+              (rooms), short labels become groups (&ldquo;Appliances&rdquo;,
+              &ldquo;Sink &amp; Fixtures&rdquo;), and everything else is a
+              task. You can change any row&apos;s type afterwards.
+            </p>
+            <Textarea
+              value={pasteText}
+              onChange={(e) => setPasteText(e.target.value)}
+              rows={10}
+              placeholder={
+                "KITCHEN\nAppliances\nClean inside and outside of microwave\nDegrease range hood, filters and vents"
+              }
+              className="font-mono text-xs"
+            />
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => setPasteOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => applyPaste("append")}
+              >
+                Add below
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => applyPaste("replace")}
+              >
+                Replace all items
+              </Button>
+            </div>
+          </div>
+        )}
+
         <div className="space-y-2">
-          {items.map((it) => (
+          {items.map((it) =>
+            it.kind !== "item" ? (
+              // A heading row: just its name and level — no phase, nothing
+              // to require.
+              <div
+                key={it.key}
+                className={cn(
+                  "flex flex-col gap-2 rounded-md p-2 sm:grid sm:grid-cols-[16px_minmax(0,1fr)_88px_112px_96px_32px] sm:items-center sm:gap-2",
+                  it.kind === "section" ? "mt-3 bg-muted/60" : "bg-muted/30 sm:ml-3",
+                )}
+              >
+                <GripVertical className="hidden h-4 w-4 text-muted-foreground/40 sm:block" />
+                <Input
+                  value={it.title}
+                  onChange={(e) =>
+                    updateItem(it.key, { title: e.target.value })
+                  }
+                  placeholder={
+                    it.kind === "section" ? "e.g. KITCHEN" : "e.g. Appliances"
+                  }
+                  className={cn(
+                    "min-w-0",
+                    it.kind === "section" ? "font-semibold" : "font-medium",
+                  )}
+                />
+                <KindSelect
+                  value={it.kind}
+                  onChange={(kind) => updateItem(it.key, { kind })}
+                />
+                <span className="hidden sm:col-span-2 sm:block" />
+                <button
+                  type="button"
+                  onClick={() => removeItem(it.key)}
+                  aria-label="Remove heading"
+                  className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+            ) : (
             <div
               key={it.key}
-              className="flex flex-col gap-2 rounded-md border border-border bg-background p-3 sm:grid sm:grid-cols-[16px_1fr_120px_120px_32px] sm:items-center sm:gap-2"
+              className="flex flex-col gap-2 rounded-md border border-border bg-background p-3 sm:ml-6 sm:grid sm:grid-cols-[16px_minmax(0,1fr)_88px_112px_96px_32px] sm:items-center sm:gap-2"
             >
               <GripVertical className="hidden h-4 w-4 text-muted-foreground/40 sm:block" />
               <Input
@@ -196,6 +361,10 @@ export function TemplateEditor({
                 }
                 placeholder="e.g. Vacuum all floors"
                 className="min-w-0"
+              />
+              <KindSelect
+                value={it.kind}
+                onChange={(kind) => updateItem(it.key, { kind })}
               />
               <FormSelect
                 value={it.phase}
@@ -236,7 +405,8 @@ export function TemplateEditor({
                 <Trash2 className="h-4 w-4" />
               </button>
             </div>
-          ))}
+            ),
+          )}
         </div>
       </div>
 

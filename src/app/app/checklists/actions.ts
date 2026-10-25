@@ -51,9 +51,12 @@ async function sweepUpcomingTemplateCopies(
   }
 }
 
+type ChecklistKind = "item" | "section" | "subsection";
+
 /**
  * Read the repeated "items" field the editor posts. Each item is a JSON
- * string: { title, phase, is_required }.
+ * string: { title, phase, is_required, kind }. Headings (section /
+ * subsection) are never required — nobody ticks a heading.
  */
 function readItemsFromForm(formData: FormData) {
   const raw = formData.getAll("items").map((v) => String(v));
@@ -61,6 +64,7 @@ function readItemsFromForm(formData: FormData) {
     title: string;
     phase: "pre" | "during" | "post";
     is_required: boolean;
+    kind: ChecklistKind;
   }> = [];
   for (const s of raw) {
     try {
@@ -68,8 +72,10 @@ function readItemsFromForm(formData: FormData) {
       const title = String(j.title ?? "").trim();
       const phase =
         j.phase === "pre" || j.phase === "post" ? j.phase : "during";
-      const is_required = Boolean(j.is_required);
-      if (title) parsed.push({ title, phase, is_required });
+      const kind: ChecklistKind =
+        j.kind === "section" || j.kind === "subsection" ? j.kind : "item";
+      const is_required = kind === "item" && Boolean(j.is_required);
+      if (title) parsed.push({ title, phase, is_required, kind });
     } catch {
       // ignore malformed rows
     }
@@ -143,6 +149,7 @@ export async function createChecklistTemplateAction(
       title: it.title,
       phase: it.phase,
       is_required: it.is_required,
+      kind: it.kind,
     }));
     await (supabase
       .from("checklist_template_items")
@@ -236,6 +243,7 @@ export async function updateChecklistTemplateAction(
       title: it.title,
       phase: it.phase,
       is_required: it.is_required,
+      kind: it.kind,
     }));
     await (supabase
       .from("checklist_template_items")
@@ -316,7 +324,7 @@ export async function attachTemplateToBookingAction(
 
   const { data: items } = (await supabase
     .from("checklist_template_items")
-    .select("ordinal, title, phase, is_required")
+    .select("ordinal, title, phase, is_required, kind")
     .eq("template_id", template_id)
     .order("ordinal", {
       ascending: true,
@@ -326,6 +334,7 @@ export async function attachTemplateToBookingAction(
       title: string;
       phase: "pre" | "during" | "post";
       is_required: boolean;
+      kind: ChecklistKind;
     }> | null;
   };
 
@@ -352,6 +361,7 @@ export async function attachTemplateToBookingAction(
     title: it.title,
     phase: it.phase,
     is_required: it.is_required,
+    kind: it.kind,
   }));
 
   const { error } = (await supabase
@@ -477,7 +487,9 @@ export async function toggleChecklistItemAction(
       checked_at: checked ? new Date().toISOString() : null,
       checked_by: checked ? membership.id : null,
     })
-    .eq("id", id)) as unknown as {
+    .eq("id", id)
+    // Only tasks tick. A section or sub-section is a heading.
+    .eq("kind" as never, "item" as never)) as unknown as {
     error: { message: string } | null;
   };
   if (error) return { ok: false, error: error.message };

@@ -41,7 +41,7 @@ export default async function NewChecklistTemplatePage() {
         </Link>
       }
     >
-      <div className="mx-auto max-w-3xl">
+      <div className="mx-auto max-w-4xl">
         <TemplateEditor mode="create" services={services} />
       </div>
     </PageShell>

@@ -30,7 +30,7 @@ export default async function ChecklistsPage() {
     .select(
       `id, name, description, is_active,
        service:service_types!checklist_templates_applies_to_service_type_id_fkey ( name ),
-       items:checklist_template_items ( id )`,
+       items:checklist_template_items ( id, kind )`,
     )
     .order("created_at" as never, {
       ascending: false,
@@ -51,7 +51,10 @@ export default async function ChecklistsPage() {
     description: t.description,
     service_name: t.service?.name ?? null,
     is_active: t.is_active,
-    item_count: t.items?.length ?? 0,
+    // Tasks only — section headings aren't things to do.
+    item_count: (t.items ?? []).filter(
+      (i) => ((i as { kind?: string }).kind ?? "item") === "item",
+    ).length,
   }));
 
   return (

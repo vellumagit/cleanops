@@ -35,7 +35,7 @@ export default async function EditChecklistTemplatePage({
     }>,
     supabase
       .from("checklist_template_items" as never)
-      .select("id, ordinal, title, phase, is_required")
+      .select("id, ordinal, title, phase, is_required, kind")
       .eq("template_id" as never, id as never)
       .order("ordinal" as never, {
         ascending: true,
@@ -46,6 +46,7 @@ export default async function EditChecklistTemplatePage({
         title: string;
         phase: "pre" | "during" | "post";
         is_required: boolean;
+        kind: "item" | "section" | "subsection" | null;
       }> | null;
     }>,
     supabase
@@ -92,6 +93,7 @@ export default async function EditChecklistTemplatePage({
     title: it.title,
     phase: it.phase,
     is_required: it.is_required,
+    kind: it.kind ?? "item",
   }));
 
   return (
@@ -108,7 +110,7 @@ export default async function EditChecklistTemplatePage({
         </Link>
       }
     >
-      <div className="mx-auto max-w-3xl">
+      <div className="mx-auto max-w-4xl">
         <TemplateEditor
           mode="edit"
           templateId={tpl.id}
