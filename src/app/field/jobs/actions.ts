@@ -326,7 +326,7 @@ export async function completeJobAction(
 
   const { data: booking, error: fetchError } = await supabase
     .from("bookings")
-    .select("id, assigned_to, status, scheduled_at")
+    .select("id, assigned_to, status, scheduled_at, duration_minutes")
     .eq("id", bookingId)
     .maybeSingle();
   if (fetchError) return { ok: false, error: fetchError.message };
@@ -443,6 +443,10 @@ export async function completeJobAction(
         assignees: rows,
         workedIds: (workedRows ?? []).map((r) => r.employee_id),
         callerId: membership.id,
+        jobWindowOver:
+          Date.now() >=
+          new Date(booking.scheduled_at).getTime() +
+            (booking.duration_minutes ?? 0) * 60_000,
       })
     ) {
       // The caller's part is done; the booking stays open for the rest.

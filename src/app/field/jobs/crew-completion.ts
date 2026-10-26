@@ -26,12 +26,18 @@ export function crewStillWorking({
   assignees,
   workedIds,
   callerId,
+  jobWindowOver = true,
 }: {
   assignees: CrewCompletionRow[];
   /** Memberships with any time entry on this booking — i.e. who showed up. */
   workedIds: Iterable<string>;
   /** The cleaner tapping Complete right now. */
   callerId: string;
+  /**
+   * Has the job's scheduled window (start + duration) passed? Until it has,
+   * someone who hasn't clocked in yet is still coming, not a no-show.
+   */
+  jobWindowOver?: boolean;
 }): boolean {
   // Solo job (or an empty crew list): finishing it finishes it.
   if (assignees.length < 2) return false;
@@ -42,10 +48,15 @@ export function crewStillWorking({
     // The caller just finished — their row may not reflect the write yet, so
     // trust the call over the row.
     if (r.membership_id === callerId) return false;
-    // Rostered but never clocked in. They must not strand the booking in
-    // `in_progress` forever: that also withholds the draft invoice, so the org
-    // goes silently unpaid for work that did happen.
-    if (!worked.has(r.membership_id)) return false;
+    // Rostered but not clocked in. Once the job's window is over they're a
+    // no-show and must not strand the booking in `in_progress` forever (that
+    // also withholds the draft invoice, so the org goes silently unpaid for
+    // work that did happen). But BEFORE then they simply haven't started:
+    // on 2026-10-26 Olha clocked in first on a four-person job and tapped
+    // Finish six minutes later; the other three hadn't clocked in yet, so all
+    // three counted as no-shows, the job closed, and none of them could
+    // clock in.
+    if (!worked.has(r.membership_id)) return !jobWindowOver;
     return r.completed_at == null;
   });
 }

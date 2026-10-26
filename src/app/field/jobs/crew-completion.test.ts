@@ -92,3 +92,20 @@ describe("crewStillWorking", () => {
     ).toBe(false);
   });
 });
+
+describe("crew who haven't clocked in yet", () => {
+  it("keep the job open until its scheduled window is over (2026-10-26)", () => {
+    // Olha clocked in first and tapped Finish; three others hadn't started.
+    const crew = [row("pristine"), row("alona"), row("vira"), row("olha", true)];
+    expect(
+      crewStillWorking({ assignees: crew, workedIds: ["olha"], callerId: "olha", jobWindowOver: false }),
+    ).toBe(true);
+  });
+
+  it("count as no-shows once the window has passed, so the job can close", () => {
+    const crew = [row("pristine"), row("olha", true)];
+    expect(
+      crewStillWorking({ assignees: crew, workedIds: ["olha"], callerId: "olha", jobWindowOver: true }),
+    ).toBe(false);
+  });
+});
