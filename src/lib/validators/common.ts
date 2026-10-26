@@ -16,6 +16,21 @@ export const trimmed = z
 /** Optional trimmed string — coerces "" → undefined. */
 export const optionalText = trimmed.optional();
 
+/**
+ * optionalText with its own ceiling, for the few fields that legitimately run
+ * long. `trimmed` caps at 2,000 BEFORE any refine a caller adds, so a field
+ * built on optionalText can never exceed 2,000 whatever its own limit says —
+ * which is how the service description's 10,000 never took effect.
+ */
+export function optionalTextUpTo(max: number) {
+  return z
+    .string()
+    .max(max, `Text must be ${max.toLocaleString()} characters or fewer`)
+    .transform((s) => s.trim())
+    .transform((s) => (s.length === 0 ? undefined : s))
+    .optional();
+}
+
 /** Required non-empty trimmed string. */
 export function requiredText(label: string, max = 200) {
   return z

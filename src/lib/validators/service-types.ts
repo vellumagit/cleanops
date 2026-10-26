@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { optionalText, dollarStringToCents } from "./common";
+import { optionalTextUpTo, dollarStringToCents } from "./common";
 import { ServiceTypeEnum } from "./bookings";
 
 /**
@@ -27,10 +27,9 @@ export const ServiceTypeRowSchema = z.object({
   // includes, and her deep-clean list alone is ~4,000. The column is
   // unbounded text; this is the only cap. The tickable version of the same
   // list belongs in a checklist, which has sections.
-  description: optionalText.refine(
-    (v) => (v ?? "").length <= SERVICE_DESCRIPTION_MAX,
-    { message: `Keep description under ${SERVICE_DESCRIPTION_MAX.toLocaleString()} characters` },
-  ),
+  // optionalTextUpTo, not optionalText: the shared one caps at 2,000 first,
+  // and that cap is what Svitlana kept hitting after this said 10,000.
+  description: optionalTextUpTo(SERVICE_DESCRIPTION_MAX),
   default_duration_minutes: z
     .string()
     .transform((s) => (s === "" ? null : Number(s)))
