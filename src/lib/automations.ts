@@ -6244,7 +6244,6 @@ export async function sendShiftClockOutReminders(): Promise<{
 }> {
   const db = admin();
   const { notify } = await import("@/lib/notify");
-  const { resolveTeamDivision } = await import("@/lib/crew-hours");
   const { resolveResponsiblePhones } = await import("@/lib/org-roles");
   const { sendOrgSms } = await import("@/lib/sms");
 
@@ -6300,8 +6299,11 @@ export async function sendShiftClockOutReminders(): Promise<{
     };
   }
 
-  const { resolveClockOutThresholds, STANDALONE_SHIFT_MAX_MIN } =
-    await import("@/lib/shift-overrun");
+  const {
+    resolveClockOutThresholds,
+    clockOutWindowMinutes,
+    STANDALONE_SHIFT_MAX_MIN,
+  } = await import("@/lib/shift-overrun");
 
   const orgEnabled = new Map<string, boolean>();
   const orgThresholds = new Map<
@@ -6343,16 +6345,16 @@ export async function sendShiftClockOutReminders(): Promise<{
 
       const clockInMs = new Date(e.clock_in_at).getTime();
 
-      // Expected end. For a booked job that's the job's length — divided
-      // across the crew when the org divides team hours, so a 2-person 6h
-      // job expects 3h from each person, matching what the field app shows.
-      // Never earlier than clock-in + that length, so someone who started
-      // late still gets their full window before we start nagging.
+      // Expected end. For a booked job that's the hours the office entered:
+      // this person's own length if they have one, else the job's full
+      // length — never the divide-crew-hours share (see
+      // clockOutWindowMinutes for why). Never earlier than clock-in + that
+      // length, so someone who started late still gets their full window
+      // before we start nagging.
       let expectedEndMs: number;
       if (e.booking?.duration_minutes) {
         // A person with their own arrival time and length on this job is
-        // measured against THAT window. Dividing the job instead nagged
-        // someone booked for 6h of a 12h, 3-person job at the 4h mark.
+        // measured against THAT window.
         const { data: own } = (await db
           .from("booking_assignees" as never)
           .select("split_start_offset_minutes, split_duration_minutes")
@@ -6365,14 +6367,10 @@ export async function sendShiftClockOutReminders(): Promise<{
           } | null;
         };
         const ownStartOffset = own?.split_start_offset_minutes ?? 0;
-        const mins =
-          own?.split_duration_minutes ??
-          (
-            await resolveTeamDivision(
-              e.booking.id,
-              e.booking.duration_minutes,
-            )
-          ).effectiveMinutes;
+        const mins = clockOutWindowMinutes({
+          bookedMinutes: e.booking.duration_minutes,
+          ownMinutes: own?.split_duration_minutes,
+        });
         expectedEndMs = Math.max(
           new Date(e.booking.scheduled_at).getTime() +
             (ownStartOffset + mins) * 60_000,

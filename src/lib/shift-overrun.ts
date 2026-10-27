@@ -74,6 +74,32 @@ export function resolveClockOutThresholds(
 }
 
 /**
+ * How long a booked shift may run before the clock-out reminders start, and
+ * (plus grace) before the cron caps it.
+ *
+ *     the person's own length, if the office set one, else the job's length
+ *
+ * Only hours somebody actually typed in. Never the "divide crew hours"
+ * share: that is arithmetic, not a plan, and on 2026-10-26 it gave each of
+ * four cleaners on an 18-hour job a 4.5-hour window — anyone still working
+ * at 1:30 would have been texted every 15 minutes that the job had ended,
+ * then clocked out mid-clean at 2:30. A forgotten clock-out running long is
+ * fixable on the timesheet; a cleaner clocked out while working is the
+ * mistake this rule exists to make impossible.
+ */
+export function clockOutWindowMinutes({
+  bookedMinutes,
+  ownMinutes,
+}: {
+  /** bookings.duration_minutes, as entered. */
+  bookedMinutes: number;
+  /** booking_assignees.split_duration_minutes — this person's own length. */
+  ownMinutes: number | null | undefined;
+}): number {
+  return ownMinutes != null && ownMinutes > 0 ? ownMinutes : bookedMinutes;
+}
+
+/**
  * When a shift was due to end.
  *
  *     max(scheduledStart, clockIn) + length

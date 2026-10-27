@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   resolveClockOutThresholds,
   closedEntryOverrunMinutes,
+  clockOutWindowMinutes,
   expectedEndMs,
   DEFAULT_GRACE_MINUTES,
   DEFAULT_REMINDER_INTERVAL_MINUTES,
@@ -237,5 +238,30 @@ describe("closedEntryOverrunMinutes", () => {
         scheduledMinutes: 120,
       }),
     ).toBe(60);
+  });
+});
+
+describe("clockOutWindowMinutes", () => {
+  it("gives a crew member the job's full booked length, not a divided share", () => {
+    // 2026-10-27: 18h, four cleaners, divide crew hours on. The share is
+    // 4.5h; the window must still be the 18h the office entered.
+    expect(clockOutWindowMinutes({ bookedMinutes: 1080, ownMinutes: null })).toBe(1080);
+  });
+
+  it("uses a person's own length when the office set one", () => {
+    expect(clockOutWindowMinutes({ bookedMinutes: 720, ownMinutes: 360 })).toBe(360);
+  });
+
+  it("ignores an own length of zero", () => {
+    expect(clockOutWindowMinutes({ bookedMinutes: 240, ownMinutes: 0 })).toBe(240);
+  });
+
+  it("caps a full-length window at the booked end, not 4.5h in", () => {
+    const end = expectedEndMs({
+      clockInMs: T("2026-10-27T15:00:00Z"),
+      scheduledStartMs: T("2026-10-27T15:00:00Z"),
+      scheduledMinutes: clockOutWindowMinutes({ bookedMinutes: 1080, ownMinutes: null }),
+    });
+    expect(new Date(end).toISOString()).toBe("2026-10-28T09:00:00.000Z");
   });
 });
