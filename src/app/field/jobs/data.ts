@@ -24,6 +24,11 @@ export type FieldJob = {
    * they aren't on the clock for it. Drives the live counter on the card.
    */
   clocked_in_since: string | null;
+  /** People on this job, this member included. */
+  crew_size: number;
+  /** This member has punched in on this job at some point (open or closed).
+   *  On a team job, End job is only offered once they have. */
+  worked_here: boolean;
 };
 
 /** YYYY-MM-DD for an instant in the org's timezone (for day bucketing). */
@@ -93,7 +98,7 @@ export async function fetchMyFieldJobs(
   // (duration ÷ crew), so we need the full crew size per booking and the
   // flag. Both live outside the generated types / this member's own row, so
   // fetch them separately (cast around the untyped column).
-  const [crewRows, flagRows, orgAutoResp, openEntriesResp] = bookingIds.length
+  const [crewRows, flagRows, orgAutoResp, openEntriesResp, myEntriesResp] = bookingIds.length
     ? await Promise.all([
         supabase
           .from("booking_assignees" as never)
@@ -131,8 +136,25 @@ export async function fetchMyFieldJobs(
             clock_in_at: string;
           }> | null;
         }>,
+        // Which of these jobs this member has ever clocked in on. Bounded by
+        // date rather than by the id list: the listed jobs start no earlier
+        // than `since`, and nobody clocks in a day before their job.
+        supabase
+          .from("time_entries")
+          .select("booking_id")
+          .eq("employee_id", membership.id)
+          .not("booking_id", "is", null)
+          .gte(
+            "clock_in_at",
+            new Date(since.getTime() - 24 * 3_600_000).toISOString(),
+          ) as unknown as Promise<{
+          data: Array<{ booking_id: string | null }> | null;
+        }>,
       ])
-    : [{ data: [] }, { data: [] }, { data: null }, { data: [] }];
+    : [{ data: [] }, { data: [] }, { data: null }, { data: [] }, { data: [] }];
+  const workedHere = new Set(
+    (myEntriesResp?.data ?? []).map((e) => e.booking_id).filter(Boolean),
+  );
   // Org-level default: when on, EVERY team job divides hours automatically.
   const orgDivide = resolveAutomationEnabled(
     orgAutoResp?.data?.automation_settings ?? null,
@@ -186,6 +208,8 @@ export async function fetchMyFieldJobs(
         ? Math.round(b.duration_minutes / crewCount)
         : segDur ?? b.duration_minutes,
       clocked_in_since: clockedInSince.get(b.id) ?? null,
+      crew_size: crewCount,
+      worked_here: workedHere.has(b.id),
       client_notes: b.client?.notes ?? null,
     };
   });

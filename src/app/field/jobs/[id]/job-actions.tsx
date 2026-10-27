@@ -35,9 +35,15 @@ export function JobActionButtons({
   status,
   youCompleted = false,
   myOpenEntryHere = false,
+  clockInBeforeComplete = false,
   notDueYet = false,
   scheduledLabel,
 }: {
+  /** A team job this cleaner hasn't clocked in on yet. Complete would be
+   *  refused, and a mis-tap on it beside Clock in is exactly how someone
+   *  arriving at a job already under way gets it wrong — so offer only
+   *  Clock in until she has. */
+  clockInBeforeComplete?: boolean;
   bookingId: string;
   status: string;
   /** The job is more than the early-start grace away. Start would be refused
@@ -97,14 +103,30 @@ export function JobActionButtons({
     );
   }
 
-  // Split shift: this cleaner finished their segment, but the job stays open
-  // for the later crew — don't offer Complete again (it's already recorded).
+  // This cleaner finished their part, but the job stays open for the rest of
+  // the crew — don't offer Complete again (it's already recorded). Do offer a
+  // way back: a Finish tapped too early used to leave no route to the clock.
   if (youCompleted) {
     return (
-      <div className="flex items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-center text-base font-semibold text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-300">
-        <CheckCircle2 className="h-5 w-5 shrink-0" />
-        Your part is done — the job stays open until the rest of the crew
-        finishes.
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-center text-base font-semibold text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-300">
+          <CheckCircle2 className="h-5 w-5 shrink-0" />
+          Your part is done — the job stays open until the rest of the crew
+          finishes.
+        </div>
+        {!myOpenEntryHere ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="lg"
+            className="h-12 text-base"
+            onClick={handleStart}
+            disabled={isPending}
+          >
+            <Play className="mr-2 h-5 w-5" />
+            {isPending ? "Clocking in…" : "Not done? Clock back in"}
+          </Button>
+        ) : null}
       </div>
     );
   }
@@ -141,7 +163,7 @@ export function JobActionButtons({
               : "Start job"}
         </Button>
       ) : null}
-      {isStarted ? (
+      {isStarted && !clockInBeforeComplete ? (
         <Button
           type="button"
           size="lg"

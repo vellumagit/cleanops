@@ -303,6 +303,20 @@ export async function startJobAction(
       .eq("membership_id", membership.id) as unknown as Promise<unknown>);
   }
 
+  // Clocking back in after tapping Finish (too early, or by mistake) means
+  // her part isn't done after all. Left set, it would let the rest of the
+  // crew close the job while she's still on the clock, and her screen would
+  // keep saying "Your part is done".
+  if (booking.status !== "completed") {
+    await (createSupabaseAdminClient()
+      .from("booking_assignees")
+      .update({ completed_at: null } as never)
+      .eq("booking_id", bookingId)
+      .eq("membership_id", membership.id)
+      .eq("organization_id", membership.organization_id)
+      .not("completed_at", "is", null) as unknown as Promise<unknown>);
+  }
+
   revalidatePath("/field/jobs");
   revalidatePath(`/field/jobs/${bookingId}`);
   revalidatePath("/field/clock");
@@ -365,15 +379,47 @@ export async function completeJobAction(
     return refuse("shift_not_accepted", "Please accept this shift first.");
   }
 
+  // On a team job, "my part is done" from someone who never clocked in is a
+  // mis-tap, not a finish. Once the lead starts, everyone else's screen shows
+  // Clock in and Complete side by side (and the list card only End job), and
+  // a Complete there used to mark her part done with no hours behind it —
+  // after which her screen offered no way to clock in at all.
+  const { count: crewSize } = await supabase
+    .from("booking_assignees")
+    .select("id", { count: "exact", head: true })
+    .eq("booking_id", bookingId);
+  if ((crewSize ?? 0) >= 2) {
+    const { count: myEntries } = await supabase
+      .from("time_entries")
+      .select("id", { count: "exact", head: true })
+      .eq("booking_id", bookingId)
+      .eq("employee_id", membership.id);
+    if (!myEntries) {
+      return refuse(
+        "not_clocked_in",
+        "You haven't clocked in on this job yet. Tap Clock in first. If you forgot earlier, clock in now and tell your manager when you really started.",
+      );
+    }
+  }
+
   const now = new Date().toISOString();
 
   // Mark THIS cleaner's own segment complete, and close their open time entry.
   // (completed_at is cast around — it isn't in the generated types yet.)
-  await (supabase
+  //
+  // Admin client, scoped to the caller's own row (same as acceptShiftAction).
+  // booking_assignees has no member-level UPDATE policy, so through the
+  // cleaner's own client this matched zero rows for every employee and
+  // reported success: until 2026-10-26 Svit had 68 rows with completed_at,
+  // every one a manager's. With the mark dropped, crewStillWorking saw each
+  // employee who had finished as still working, so the LAST one to finish
+  // never closed the job — it sat in progress until the nightly sweep.
+  await (createSupabaseAdminClient()
     .from("booking_assignees")
     .update({ completed_at: now } as never)
     .eq("booking_id", bookingId)
-    .eq("membership_id", membership.id) as unknown as Promise<unknown>);
+    .eq("membership_id", membership.id)
+    .eq("organization_id", membership.organization_id) as unknown as Promise<unknown>);
 
   const { data: closedEntries, error: closeEntryError } = (await supabase
     .from("time_entries")

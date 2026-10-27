@@ -20,6 +20,11 @@ import { JobCardElapsed } from "./job-card-elapsed";
 
 export function JobCard({ job, tz }: { job: FieldJob; tz: string }) {
   const inProgress = job.status === "in_progress";
+  // A team job someone else started and this member hasn't clocked in on.
+  // Her card used to offer only End job here — the one action that's wrong
+  // for her, and the server now refuses it. Point her at the job instead.
+  const crewStartedWithoutYou =
+    inProgress && job.crew_size >= 2 && !job.worked_here;
   // The day, said out loud, before the client's name. Two cards for the same
   // client three weeks apart looked identical at arm's length (Anna,
   // 2026-09-05) — the date was the small grey line under the name.
@@ -94,7 +99,14 @@ export function JobCard({ job, tz }: { job: FieldJob; tz: string }) {
          * showed a bare "End job" and no timer, which reads as "the timer is
          * broken" rather than "the system stopped your clock hours ago".
          */}
-        {inProgress && !job.clocked_in_since ? (
+        {crewStartedWithoutYou ? (
+          <div className="mt-1.5">
+            <span className="inline-flex items-center gap-1.5 rounded-md bg-emerald-500/15 px-2 py-0.5 text-xs font-semibold text-emerald-800 dark:text-emerald-300">
+              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
+              Crew has started · open to clock in
+            </span>
+          </div>
+        ) : inProgress && !job.clocked_in_since ? (
           <div className="mt-1.5">
             <span className="inline-flex items-center gap-1.5 rounded-md bg-amber-500/15 px-2 py-0.5 text-xs font-semibold text-amber-800 dark:text-amber-300">
               <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" />
@@ -152,7 +164,7 @@ export function JobCard({ job, tz }: { job: FieldJob; tz: string }) {
         ) : null}
       </div>
 
-      {inProgress ? (
+      {inProgress && !crewStartedWithoutYou ? (
         <JobCardComplete bookingId={job.id} />
       ) : (
         <ChevronRight className="pointer-events-none h-5 w-5 shrink-0 text-muted-foreground" />

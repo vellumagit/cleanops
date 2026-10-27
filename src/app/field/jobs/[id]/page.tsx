@@ -73,6 +73,13 @@ export default async function FieldJobDetailPage({
     .is("clock_out_at", null)
     .limit(1)
     .maybeSingle();
+  // Any punch at all on this job, open or closed. On a team job Complete is
+  // only offered once you have one — the server refuses it otherwise.
+  const { count: myEntriesHere } = await supabaseEarly
+    .from("time_entries")
+    .select("id", { count: "exact", head: true })
+    .eq("employee_id", membership.id)
+    .eq("booking_id", id);
 
   const { data: bookingRow, error } = await supabase
     .from("bookings")
@@ -671,6 +678,7 @@ export default async function FieldJobDetailPage({
             status={booking.status}
             youCompleted={crewRow?.completed_at != null}
             myOpenEntryHere={Boolean(myOpenEntryHere)}
+            clockInBeforeComplete={crew.length >= 2 && !myEntriesHere}
             notDueYet={
               futureStatusError(booking.scheduled_at, "in_progress") !== null
             }
