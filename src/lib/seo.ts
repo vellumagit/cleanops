@@ -17,13 +17,14 @@ const ORG_ID = `${SITE_URL}/#organization`;
 const APP_ID = `${SITE_URL}/#software`;
 
 /**
- * The currency the $49 / $99 list prices are charged in. The marketing pages
- * print a bare "$", and the Stripe price IDs aren't in the local env, so this
- * stays null until someone confirms it — an Offer with the wrong currency is
- * worse than no Offer. Set it ("CAD" or "USD") and the plans appear as
- * Offers on the SoftwareApplication automatically.
+ * The currency the $49 / $99 list prices are charged in — USD, confirmed by
+ * the owner (the marketing pages print a bare "$"). Subscriptions only: what
+ * an org charges its own clients follows its currency_code, CAD or USD. If
+ * the subscription prices ever move to another currency, change this with
+ * them — an Offer with the wrong currency is worse than no Offer, and null
+ * drops the Offers entirely.
  */
-const PLAN_CURRENCY: "CAD" | "USD" | null = null;
+const PLAN_CURRENCY: "CAD" | "USD" | null = "USD";
 
 const PLANS = [
   { name: "Starter", price: "49", description: "For solo owners and small crews. Up to 5 employees." },
