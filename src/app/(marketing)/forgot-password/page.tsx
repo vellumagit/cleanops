@@ -5,6 +5,8 @@ import { ForgotPasswordForm } from "./forgot-password-form";
 export const metadata: Metadata = {
   title: "Forgot password",
   description: "Reset your Sollos 3 password.",
+  // An auth form is nothing to rank; keep it out of the index.
+  robots: { index: false, follow: true },
 };
 
 export default function ForgotPasswordPage() {

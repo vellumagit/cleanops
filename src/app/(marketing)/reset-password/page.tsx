@@ -5,6 +5,8 @@ import { ResetPasswordForm } from "./reset-password-form";
 export const metadata: Metadata = {
   title: "Set new password",
   description: "Choose a new password for your Sollos 3 account.",
+  // An auth form is nothing to rank; keep it out of the index.
+  robots: { index: false, follow: true },
 };
 
 export default function ResetPasswordPage() {

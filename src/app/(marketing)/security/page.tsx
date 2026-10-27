@@ -16,6 +16,7 @@ export const metadata = {
   title: "Security",
   description:
     "How Sollos protects your data: encryption, isolation, rate limiting, audit logging, and more.",
+  alternates: { canonical: "/security" },
 };
 
 const LAST_UPDATED = "April 18, 2026";

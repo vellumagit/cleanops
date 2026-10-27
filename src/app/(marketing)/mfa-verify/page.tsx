@@ -2,7 +2,10 @@ import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { MfaVerifyForm } from "./mfa-verify-form";
 
-export const metadata = { title: "Verify your sign-in" };
+export const metadata = {
+  title: "Verify your sign-in",
+  robots: { index: false, follow: false },
+};
 
 /**
  * Post-password MFA challenge.

@@ -7,16 +7,20 @@ import {
 } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { JsonLd } from "@/components/json-ld";
+import { faqPageJsonLd, softwareApplicationJsonLd } from "@/lib/seo";
 
 export const metadata = {
   title: "Pricing",
   description:
     "Simple, transparent pricing for Sollos 3. Start with a 14-day free trial — no credit card required.",
+  alternates: { canonical: "/pricing" },
 };
 
 export default function PricingPage() {
   return (
     <main className="sollos-wash relative flex flex-1 flex-col">
+      <JsonLd data={[softwareApplicationJsonLd(), faqPageJsonLd(FAQS)]} />
       <div className="sollos-dots absolute inset-0" aria-hidden />
 
       {/* Nav */}
@@ -327,6 +331,8 @@ export default function PricingPage() {
               <Link href="/privacy" className="hover:text-foreground">Privacy</Link>
               <span>·</span>
               <Link href="/terms" className="hover:text-foreground">Terms</Link>
+              <span>·</span>
+              <Link href="/help" className="hover:text-foreground">Help</Link>
               <span>·</span>
               <Link href="mailto:hello@sollos3.com" className="hover:text-foreground">Contact</Link>
             </nav>

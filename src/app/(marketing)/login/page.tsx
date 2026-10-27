@@ -5,6 +5,8 @@ import { LoginForm } from "./login-form";
 export const metadata: Metadata = {
   title: "Sign in",
   description: "Sign in to your Sollos 3 workspace.",
+  // An auth form is nothing to rank; keep it out of the index.
+  robots: { index: false, follow: true },
 };
 
 type SearchParams = Promise<{

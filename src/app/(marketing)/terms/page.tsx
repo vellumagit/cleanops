@@ -4,6 +4,7 @@ export const metadata = {
   title: "Terms of Service",
   description:
     "Sollos 3 terms of service — the agreement between you and Sollos 3.",
+  alternates: { canonical: "/terms" },
 };
 
 const LAST_UPDATED = "April 18, 2026";

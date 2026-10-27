@@ -6,6 +6,8 @@ import { SignupForm } from "./signup-form";
 export const metadata: Metadata = {
   title: "Sign up",
   description: "Create your Sollos 3 workspace.",
+  // An auth form is nothing to rank; keep it out of the index.
+  robots: { index: false, follow: true },
 };
 
 export default async function SignupPage({

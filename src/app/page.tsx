@@ -22,6 +22,19 @@ import {
   Building2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { JsonLd } from "@/components/json-ld";
+import {
+  faqPageJsonLd,
+  organizationJsonLd,
+  softwareApplicationJsonLd,
+} from "@/lib/seo";
+
+// Title and description come from the root layout; only the canonical is
+// page-specific. It can't live in the layout — every page would inherit it
+// and tell Google it's a duplicate of the homepage.
+export const metadata = {
+  alternates: { canonical: "/" },
+};
 
 export default async function Home() {
   // Authenticated employees belong in /field — they should never see the
@@ -41,6 +54,13 @@ export default async function Home() {
 
   return (
     <main className="sollos-wash relative flex flex-1 flex-col">
+      <JsonLd
+        data={[
+          organizationJsonLd(),
+          softwareApplicationJsonLd(),
+          faqPageJsonLd(FAQS),
+        ]}
+      />
       <div className="sollos-dots absolute inset-0" aria-hidden />
 
       {/* Nav */}
@@ -707,6 +727,7 @@ export default async function Home() {
                 <FooterLink href="#features">Features</FooterLink>
                 <FooterLink href="/pricing">Pricing</FooterLink>
                 <FooterLink href="#how-it-works">How it works</FooterLink>
+                <FooterLink href="/help">Help guides</FooterLink>
                 <FooterLink href="/signup">Start free trial</FooterLink>
                 <FooterLink href="/login">Sign in</FooterLink>
               </ul>

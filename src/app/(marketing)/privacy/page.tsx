@@ -4,6 +4,7 @@ export const metadata = {
   title: "Privacy Policy",
   description:
     "Sollos 3 privacy policy — what data we collect, how we use it, and how it's protected.",
+  alternates: { canonical: "/privacy" },
 };
 
 const LAST_UPDATED = "April 18, 2026";
