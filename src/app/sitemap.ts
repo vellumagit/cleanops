@@ -1,5 +1,6 @@
 import type { MetadataRoute } from "next";
 import { HELP_ARTICLES } from "@/content/help";
+import { LANDING_PAGES } from "@/content/landing";
 import { SITE_URL } from "@/lib/seo";
 
 /**
@@ -16,6 +17,11 @@ export default function sitemap(): MetadataRoute.Sitemap {
   const pages: Array<{ path: string; priority: number; changeFrequency: MetadataRoute.Sitemap[number]["changeFrequency"] }> = [
     { path: "/", priority: 1.0, changeFrequency: "weekly" },
     { path: "/pricing", priority: 0.9, changeFrequency: "weekly" },
+    ...LANDING_PAGES.map((l) => ({
+      path: `/${l.slug}`,
+      priority: 0.9,
+      changeFrequency: "monthly" as const,
+    })),
     { path: "/help", priority: 0.7, changeFrequency: "weekly" },
     ...HELP_ARTICLES.map((a) => ({
       path: `/help/${a.slug}`,

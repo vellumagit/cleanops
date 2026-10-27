@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { JsonLd } from "@/components/json-ld";
+import { LANDING_PAGES } from "@/content/landing";
 import {
   faqPageJsonLd,
   organizationJsonLd,
@@ -697,7 +698,7 @@ export default async function Home() {
       {/* Footer */}
       <footer className="relative z-10 border-t border-border bg-white/50 backdrop-blur-sm">
         <div className="mx-auto w-full max-w-6xl px-6 py-12">
-          <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-5">
             {/* Brand */}
             <div className="sm:col-span-2 lg:col-span-1">
               <Link href="/" className="flex items-center gap-2">
@@ -730,6 +731,20 @@ export default async function Home() {
                 <FooterLink href="/help">Help guides</FooterLink>
                 <FooterLink href="/signup">Start free trial</FooterLink>
                 <FooterLink href="/login">Sign in</FooterLink>
+              </ul>
+            </div>
+
+            {/* Solutions — one landing page per kind of cleaning business */}
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Solutions
+              </p>
+              <ul className="mt-3 space-y-2">
+                {LANDING_PAGES.map((l) => (
+                  <FooterLink key={l.slug} href={`/${l.slug}`}>
+                    {l.navLabel}
+                  </FooterLink>
+                ))}
               </ul>
             </div>
 
