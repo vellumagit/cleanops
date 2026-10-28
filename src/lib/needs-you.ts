@@ -74,7 +74,12 @@ export async function collectNeedsYou(
     divide_hours_evenly: boolean | null;
     client: { name: string | null } | null;
   };
-  const [{ data: live }, { data: unpriced }, { count: recentShifts }] = await Promise.all([
+  // Every query below throws on error rather than falling back to "no rows".
+  // Empty data is not a safe default here: no shifts means every crew
+  // member is late, no crew means every job tomorrow is unstaffed — and
+  // the alerts that follow are marked sent, so the false ones are never
+  // corrected and the real ones later are suppressed.
+  const [liveRes, unpricedRes, { count: recentShifts, error: countErr }] = await Promise.all([
     db
       .from("bookings")
       .select(cols)
@@ -82,7 +87,7 @@ export async function collectNeedsYou(
       .neq("status", "cancelled")
       .gte("scheduled_at", yesterdayStart.toISOString())
       .lt("scheduled_at", tomorrowEnd.toISOString())
-      .limit(300) as unknown as Promise<{ data: Row[] | null }>,
+      .limit(300) as unknown as Promise<{ data: Row[] | null; error: { message: string } | null }>,
     db
       .from("bookings")
       .select(cols)
@@ -91,13 +96,18 @@ export async function collectNeedsYou(
       .gte("scheduled_at", priceSince)
       .or("total_cents.is.null,total_cents.eq.0")
       .not("is_free", "is", true)
-      .limit(100) as unknown as Promise<{ data: Row[] | null }>,
+      .limit(100) as unknown as Promise<{ data: Row[] | null; error: { message: string } | null }>,
     db
       .from("time_entries")
       .select("id", { count: "exact", head: true })
       .eq("organization_id", organizationId)
       .gte("clock_in_at", new Date(now - 14 * 86_400_000).toISOString()),
   ]);
+
+  const firstErr = liveRes.error ?? unpricedRes.error ?? countErr;
+  if (firstErr) throw new Error(`needs-you bookings query failed: ${firstErr.message}`);
+  const live = liveRes.data;
+  const unpriced = unpricedRes.data;
 
   const byId = new Map<string, Row>();
   for (const r of [...(live ?? []), ...(unpriced ?? [])]) byId.set(r.id, r);
@@ -119,7 +129,7 @@ export async function collectNeedsYou(
     clock_in_at: string;
     clock_out_at: string | null;
   };
-  const [{ data: crewRows }, { data: shiftRows }] = await Promise.all([
+  const [{ data: crewRows, error: crewErr }, { data: shiftRows, error: shiftErr }] = await Promise.all([
     selectInChunks<CrewRow>(ids, (chunk) =>
       db
         .from("booking_assignees" as never)
@@ -141,6 +151,10 @@ export async function collectNeedsYou(
       }>,
     ),
   ]);
+
+  if (crewErr || shiftErr) {
+    throw new Error(`needs-you crew/shift query failed: ${(crewErr ?? shiftErr)?.message}`);
+  }
 
   const crewBy = new Map<string, NeedsYouBooking["crew"]>();
   const memberIds = new Set<string>();
@@ -166,7 +180,7 @@ export async function collectNeedsYou(
     shiftsBy.set(s.booking_id, list);
   }
 
-  const [offTomorrow, { data: stateRows }] = await Promise.all([
+  const [offTomorrow, { data: stateRows, error: stateErr }] = await Promise.all([
     membersOffOn(organizationId, [...memberIds], tomorrowYmd),
     db
       .from("needs_you_state" as never)
@@ -174,8 +188,10 @@ export async function collectNeedsYou(
       .eq("organization_id" as never, organizationId as never)
       .not("snoozed_until" as never, "is", null as never) as unknown as Promise<{
       data: Array<{ key: string; snoozed_until: string | null }> | null;
+      error: { message: string } | null;
     }>,
   ]);
+  if (stateErr) throw new Error(`needs-you snooze query failed: ${stateErr.message}`);
   const snoozed = new Map<string, number>();
   for (const r of stateRows ?? []) {
     if (r.snoozed_until) snoozed.set(r.key, new Date(r.snoozed_until).getTime());

@@ -6092,17 +6092,28 @@ export async function runJobWatch(): Promise<{
   // Staffing (assignee OR crew OR claimed offer) and clock-in evidence, both
   // in one pass for every candidate rather than per-booking round trips.
   const ids = candidates.map((b) => b.id);
-  const [coverage, { data: entryRows }] = await Promise.all([
+  const { selectInChunks } = await import("@/lib/supabase/chunked-in");
+  const [coverage, { data: entryRows, error: entryErr }] = await Promise.all([
     resolveBookingCoverage(ids),
-    db
-      .from("time_entries")
-      .select("booking_id")
-      .in("booking_id", ids) as unknown as Promise<{
-      data: Array<{ booking_id: string | null }> | null;
-    }>,
+    // Chunked, and the error is fatal for this run: up to 500 ids in one
+    // `.in()` overflowed the request before, and a failed read here looks
+    // exactly like "nobody clocked in anywhere" — which would nudge every
+    // crew and flag every job to the office, permanently.
+    selectInChunks<{ booking_id: string | null }>(ids, (chunk) =>
+      db
+        .from("time_entries")
+        .select("booking_id")
+        .in("booking_id", chunk) as unknown as PromiseLike<{
+        data: Array<{ booking_id: string | null }> | null;
+        error: { message: string } | null;
+      }>,
+    ),
   ]);
+  if (entryErr) {
+    throw new Error(`job watch: clock-in evidence query failed: ${entryErr.message}`);
+  }
   const clockedBookings = new Set(
-    (entryRows ?? []).map((r) => r.booking_id).filter(Boolean) as string[],
+    entryRows.map((r) => r.booking_id).filter(Boolean) as string[],
   );
 
   const byOrg = new Map<string, typeof candidates>();
@@ -6444,6 +6455,12 @@ export async function sendShiftClockOutReminders(): Promise<{
             membershipId: e.employee_id,
             entryId: e.id,
           });
+          // A cap is a clock-out, and every clock-out recomputes the job:
+          // hers may have been the last open shift, which makes it done.
+          if (e.booking_id) {
+            const { syncJob } = await import("@/lib/job-sync");
+            await syncJob(e.booking_id, "shift_capped");
+          }
         }
 
         // Whoever is responsible — manager, or the owner standing in when the
@@ -7238,11 +7255,52 @@ export async function autoCompletePastBookings(): Promise<{
     if (!completionEnabled) continue;
     if (staffedIds.length === 0) continue;
 
+    // Not while someone is still on the clock. Completing drafts the
+    // invoice, and a shift still running means the job is not over — the
+    // clock-out guardrail will cap that shift and the next clock-out will
+    // recompute the job. Say so to the office instead of closing around her.
+    const { selectInChunks } = await import("@/lib/supabase/chunked-in");
+    const { data: openShifts } = await selectInChunks<{ booking_id: string | null }>(
+      staffedIds,
+      (chunk) =>
+        db
+          .from("time_entries")
+          .select("booking_id")
+          .in("booking_id", chunk)
+          .is("clock_out_at", null) as unknown as PromiseLike<{
+          data: Array<{ booking_id: string | null }> | null;
+          error: { message: string } | null;
+        }>,
+    );
+    const stillWorking = new Set(
+      openShifts.map((r) => r.booking_id).filter(Boolean) as string[],
+    );
+    const toComplete = staffedIds.filter((id) => !stillWorking.has(id));
+    if (stillWorking.size > 0) {
+      const names = candidates
+        .filter((b) => stillWorking.has(b.id))
+        .slice(0, 3)
+        .map((b) => b.client?.name ?? "a client")
+        .join(", ");
+      await notify({
+        audience: "org-management",
+        organizationId: org.id,
+        type: "general",
+        title:
+          stillWorking.size === 1
+            ? "A past job still has someone on the clock"
+            : `${stillWorking.size} past jobs still have someone on the clock`,
+        body: `${names}${stillWorking.size > 3 ? ` and ${stillWorking.size - 3} more` : ""} — a shift is still running, so these were NOT completed or invoiced. Check Timesheets.`,
+        href: "/app/timesheets",
+      });
+    }
+    if (toComplete.length === 0) continue;
+
     const { data, error } = (await db
       .from("bookings")
       .update({ status: "completed" })
       .eq("organization_id", org.id)
-      .in("id", staffedIds)
+      .in("id", toComplete)
       .select("id")) as unknown as {
       data: Array<{ id: string }> | null;
       error: { message: string } | null;

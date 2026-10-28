@@ -133,11 +133,16 @@ export async function clockOutAtAction(
 
   const { data: entry } = await supabase
     .from("time_entries")
-    .select("id, clock_in_at, clock_out_at, employee_id")
+    .select("id, clock_in_at, clock_out_at, employee_id, booking_id")
     .eq("id", entryId)
     .eq("organization_id", membership.organization_id)
     .maybeSingle();
   if (!entry) return { ok: false, error: "Shift not found." };
+  // The job to recompute is the shift's own, never the id the client sent:
+  // syncJob runs on the admin client with no org filter.
+  if (bookingId !== entry.booking_id) {
+    return { ok: false, error: "That shift isn't on this job." };
+  }
   if (entry.clock_out_at) return { ok: true };
   if (at <= new Date(entry.clock_in_at).getTime()) {
     return { ok: false, error: "That's before she clocked in." };

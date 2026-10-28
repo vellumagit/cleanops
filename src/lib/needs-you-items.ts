@@ -143,7 +143,13 @@ export function buildJobItems(
   // it until the window ends; a person can, now.
   // (Not on a row already marked completed: the old closing rules, still
   // in charge until the computed state takes over, may have closed it.)
-  if (state.phase === "finished_on_site" && b.status !== "completed") {
+  // Not on a pending job either: "Close it" would be refused ("Confirm this
+  // job before closing it"), so the question would have no good answer.
+  if (
+    state.phase === "finished_on_site" &&
+    b.status !== "completed" &&
+    b.status !== "pending"
+  ) {
     const key = `no_show:${b.id}`;
     items.push({
       key,
@@ -237,6 +243,9 @@ export function buildJobItems(
       own?.split_duration_minutes && own.split_duration_minutes > 0
         ? own.split_duration_minutes
         : teamMinutes(b, b.crew.length);
+    // No length, no "over". (A zero-length job would ask to clock her out
+    // at the moment she clocked in, which the action rightly refuses.)
+    if (minutes <= 0) continue;
     const end = expectedEndMs({
       clockInMs: new Date(s.clock_in_at).getTime(),
       scheduledStartMs: startMs + (own?.split_start_offset_minutes ?? 0) * 60_000,

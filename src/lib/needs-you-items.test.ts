@@ -54,6 +54,29 @@ function ctx(over: Partial<NeedsYouContext> = {}): NeedsYouContext {
 }
 
 describe("buildJobItems", () => {
+  it("does not ask a no-show question on a pending job — Close it would be refused", () => {
+    const items = buildJobItems(
+      booking({
+        status: "pending",
+        shifts: [shift("s1", "p", "2026-10-27T15:00:00Z", "2026-10-27T18:30:00Z")],
+      }),
+      ctx({ now: T("2026-10-27T18:35:00Z") }),
+    );
+    expect(items.find((i) => i.kind === "no_show_decision")).toBeUndefined();
+  });
+
+  it("a zero-length job is never 'past her hours'", () => {
+    const items = buildJobItems(
+      booking({
+        status: "in_progress",
+        duration_minutes: 0,
+        shifts: [shift("s1", "p", "2026-10-27T15:00:00Z")],
+      }),
+      ctx({ now: T("2026-10-27T15:20:00Z") }),
+    );
+    expect(items.find((i) => i.kind === "over_hours")).toBeUndefined();
+  });
+
   it("measures 'past her hours' against the crew's shared length when hours divide", () => {
     // 18h entered, 3 crew, dividing → a 6-hour job ending 3:00 PM (21:00Z).
     // Pristine is still on the clock at 3:20 PM.

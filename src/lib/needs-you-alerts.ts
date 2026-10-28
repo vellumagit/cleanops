@@ -56,6 +56,11 @@ export async function sendNeedsYouAlerts(opts: { now?: number } = {}): Promise<{
 
       for (const it of urgent) {
         if (already.has(it.key)) continue;
+        // Mark first, then send. The other order repeats the same email
+        // every 30 minutes if the mark fails; this order loses at most one
+        // alert if the send fails, which is notify's best-effort contract
+        // anyway.
+        if (!(await markNotified(org.id, it.key, now))) continue;
         await notify({
           audience: "org-management",
           organizationId: org.id,
@@ -81,11 +86,14 @@ export async function sendNeedsYouAlerts(opts: { now?: number } = {}): Promise<{
             href: it.tell.href,
           });
         }
-        await markNotified(org.id, it.key, now);
         alerted++;
       }
 
-      if (localHour === NIGHT_BEFORE_HOUR && !already.has(digestKey)) {
+      if (
+        localHour === NIGHT_BEFORE_HOUR &&
+        !already.has(digestKey) &&
+        (await markNotified(org.id, digestKey, now))
+      ) {
         if (tomorrow.length > 0) {
           const lines = tomorrow.slice(0, 6).map((it) => `${it.title.replace(/^Tomorrow /, "")} — ${it.body}`);
           if (tomorrow.length > 6) lines.push(`and ${tomorrow.length - 6} more`);
@@ -103,7 +111,6 @@ export async function sendNeedsYouAlerts(opts: { now?: number } = {}): Promise<{
           });
           digests++;
         }
-        await markNotified(org.id, digestKey, now);
       }
     } catch (err) {
       console.error("[needs-you] alerts failed for org", org.id, err);
@@ -112,10 +119,16 @@ export async function sendNeedsYouAlerts(opts: { now?: number } = {}): Promise<{
   return { orgs: orgs?.length ?? 0, alerted, digests };
 }
 
-async function markNotified(organizationId: string, key: string, now: number) {
+/** True when the mark stuck. A false means: don't send, try next heartbeat. */
+async function markNotified(organizationId: string, key: string, now: number): Promise<boolean> {
   const db = createSupabaseAdminClient();
-  await (db.from("needs_you_state" as never).upsert(
+  const { error } = (await (db.from("needs_you_state" as never).upsert(
     { organization_id: organizationId, key, notified_at: new Date(now).toISOString() } as never,
     { onConflict: "organization_id,key" } as never,
-  ) as unknown as Promise<unknown>);
+  ) as unknown as Promise<{ error: { message: string } | null }>));
+  if (error) {
+    console.error("[needs-you] could not mark alert sent", { organizationId, key, error: error.message });
+    return false;
+  }
+  return true;
 }
