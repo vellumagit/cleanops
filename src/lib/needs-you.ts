@@ -58,8 +58,10 @@ export async function collectNeedsYou(
   const tomorrowYmd = new Date(now + 24 * 3_600_000).toLocaleDateString("en-CA", { timeZone: tz });
   const priceSince = new Date(now - PRICE_LOOKBACK_DAYS * 86_400_000).toISOString();
 
+  const orgDivides = resolveAutomationEnabled(org?.automation_settings ?? null, "divide_crew_hours");
+
   const cols =
-    "id, status, scheduled_at, duration_minutes, total_cents, hourly_rate_cents, is_free, closed_at, client:clients ( name )";
+    "id, status, scheduled_at, duration_minutes, total_cents, hourly_rate_cents, is_free, closed_at, divide_hours_evenly, client:clients ( name )";
   type Row = {
     id: string;
     status: string;
@@ -69,6 +71,7 @@ export async function collectNeedsYou(
     hourly_rate_cents: number | null;
     is_free: boolean | null;
     closed_at: string | null;
+    divide_hours_evenly: boolean | null;
     client: { name: string | null } | null;
   };
   const [{ data: live }, { data: unpriced }, { count: recentShifts }] = await Promise.all([
@@ -190,6 +193,7 @@ export async function collectNeedsYou(
       hourly_rate_cents: r.hourly_rate_cents,
       is_free: r.is_free,
       closed_at: r.closed_at,
+      divides_hours: r.divide_hours_evenly === true || orgDivides,
       crew: crewBy.get(id) ?? [],
       shifts: shiftsBy.get(id) ?? [],
     };

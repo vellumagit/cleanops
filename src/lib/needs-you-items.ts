@@ -7,8 +7,8 @@
  * it asks one question here. Pure: the loader (needs-you.ts) fetches, this
  * decides, and it can be tested without a database.
  */
-import { deriveJobState, type JobStateShift } from "@/lib/job-state";
-import { clockOutWindowMinutes, expectedEndMs } from "@/lib/shift-overrun";
+import { deriveJobState, teamMinutes, type JobStateShift } from "@/lib/job-state";
+import { expectedEndMs } from "@/lib/shift-overrun";
 
 export type NeedsYouKind =
   | "no_show_decision"
@@ -61,6 +61,8 @@ export type NeedsYouBooking = {
   hourly_rate_cents: number | null;
   is_free: boolean | null;
   closed_at: string | null;
+  /** Resolved "divide hours evenly": the row's flag or the org default. */
+  divides_hours: boolean;
   crew: NeedsYouCrew[];
   shifts: NeedsYouShift[];
 };
@@ -81,6 +83,13 @@ export type NeedsYouContext = {
 export const LATE_MINUTES = 30;
 /** How far past her hours before "still on the clock" is worth a line. */
 export const OVER_HOURS_MINUTES = 15;
+/**
+ * How far past before it's worth a push. Fifteen minutes over a shared
+ * estimate is a normal clean; an hour is a forgotten clock-out, and the
+ * cron that caps her shift measures against the full entered hours, so
+ * on a divided job nothing else would say anything for a long time.
+ */
+export const OVER_HOURS_ALERT_MINUTES = 60;
 
 const first = (name: string) => name.split(/\s+/)[0] || "Someone";
 
@@ -197,15 +206,18 @@ export function buildJobItems(
     }
   }
 
-  // Past her hours and still on the clock. The cron is already texting her;
-  // this is the manager's one-tap end to it.
+  // Past the job's expected end and still on the clock. Measured against
+  // the crew's shared length (teamMinutes) — the office's question is "the
+  // job should be over, is she?" — while the cron that caps her clock keeps
+  // the full entered hours, so this asks a manager long before anything
+  // automatic touches her shift.
   for (const s of b.shifts) {
     if (s.clock_out_at) continue;
     const own = b.crew.find((c) => c.membership_id === s.employee_id);
-    const minutes = clockOutWindowMinutes({
-      bookedMinutes: b.duration_minutes,
-      ownMinutes: own?.split_duration_minutes,
-    });
+    const minutes =
+      own?.split_duration_minutes && own.split_duration_minutes > 0
+        ? own.split_duration_minutes
+        : teamMinutes(b, b.crew.length);
     const end = expectedEndMs({
       clockInMs: new Date(s.clock_in_at).getTime(),
       scheduledStartMs: startMs + (own?.split_start_offset_minutes ?? 0) * 60_000,
@@ -221,7 +233,7 @@ export function buildJobItems(
       body: `${b.clientName} · on the clock since ${time(new Date(s.clock_in_at).getTime())}`,
       href: "/app/timesheets",
       atMs: end,
-      alert: false,
+      alert: overMin >= OVER_HOURS_ALERT_MINUTES,
       actions: [
         {
           kind: "clock_out_at",

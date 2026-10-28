@@ -6045,6 +6045,7 @@ export async function runJobWatch(): Promise<{
   const db = admin();
   const { notify } = await import("@/lib/notify");
   const { classifyJob, orgUsesClockIn } = await import("@/lib/job-watch");
+  const { teamMinutes } = await import("@/lib/job-state");
   const { resolveBookingCoverage } = await import("@/lib/booking-coverage");
   const { getOrgTimezone } = await import("@/lib/org-timezone");
   const { formatDateTime } = await import("@/lib/format");
@@ -6059,7 +6060,7 @@ export async function runJobWatch(): Promise<{
     .from("bookings")
     .select(
       `id, organization_id, scheduled_at, duration_minutes, status, assigned_to,
-       no_show_nudge_sent_at, no_clock_in_flagged_at,
+       no_show_nudge_sent_at, no_clock_in_flagged_at, divide_hours_evenly,
        client:clients ( name )`,
     )
     .in("status", ["confirmed", "in_progress"])
@@ -6071,6 +6072,7 @@ export async function runJobWatch(): Promise<{
       organization_id: string;
       scheduled_at: string;
       duration_minutes: number | null;
+      divide_hours_evenly: boolean | null;
       status: string;
       assigned_to: string | null;
       no_show_nudge_sent_at: string | null;
@@ -6112,9 +6114,10 @@ export async function runJobWatch(): Promise<{
 
   for (const [orgId, jobs] of byOrg) {
     try {
-      const [nudgeOn, alertOn] = await Promise.all([
+      const [nudgeOn, alertOn, orgDivides] = await Promise.all([
         isAutomationEnabled(orgId, "job_not_started_nudge"),
         isAutomationEnabled(orgId, "no_clock_in_alert"),
+        isAutomationEnabled(orgId, "divide_crew_hours"),
       ]);
       if (!nudgeOn && !alertOn) continue;
 
@@ -6136,9 +6139,19 @@ export async function runJobWatch(): Promise<{
       const toFlag: typeof jobs = [];
 
       for (const b of jobs) {
+        // "The whole window passed in silence" is measured against the
+        // crew's shared length, not the one-person hours entered: an
+        // 18-hour house with four rostered is a 4.5-hour window.
+        const crewCount = coverage.get(b.id)?.employeeIds?.length ?? 0;
         const verdict = classifyJob({
           scheduledAtMs: new Date(b.scheduled_at).getTime(),
-          durationMinutes: b.duration_minutes,
+          durationMinutes: teamMinutes(
+            {
+              duration_minutes: b.duration_minutes ?? 0,
+              divides_hours: b.divide_hours_evenly === true || orgDivides,
+            },
+            crewCount,
+          ),
           status: b.status,
           staffed: Boolean(coverage.get(b.id)?.staffed),
           hasClockIn: clockedBookings.has(b.id),

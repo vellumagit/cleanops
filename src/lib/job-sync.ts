@@ -59,16 +59,19 @@ type BookingRow = {
   hourly_rate_cents: number | null;
   is_free: boolean | null;
   closed_at: string | null;
+  divide_hours_evenly: boolean | null;
+  /** Resolved: the row's flag or the org default. See teamMinutes. */
+  divides_hours?: boolean;
 };
 
 async function load(bookingId: string) {
   const db = createSupabaseAdminClient();
   const { data: booking } = (await db
-    .from("bookings")
+    .from("bookings" as never)
     .select(
-      "id, organization_id, status, scheduled_at, duration_minutes, total_cents, hourly_rate_cents, is_free, closed_at",
+      "id, organization_id, status, scheduled_at, duration_minutes, total_cents, hourly_rate_cents, is_free, closed_at, divide_hours_evenly" as never,
     )
-    .eq("id", bookingId)
+    .eq("id" as never, bookingId as never)
     .maybeSingle()) as unknown as { data: BookingRow | null };
   if (!booking) return null;
 
@@ -126,6 +129,12 @@ async function load(bookingId: string) {
   const hours = org?.booking_auto_complete_hours;
   const autoCompleteAfterMinutes =
     autoOn && hours != null && hours >= 1 ? hours * 60 : null;
+  // Same precedence as the field app and resolveTeamDivision: the row's own
+  // flag, else the org default. On Svit every row says false and the org
+  // default is on, so the row alone would get this wrong.
+  booking.divides_hours =
+    booking.divide_hours_evenly === true ||
+    resolveAutomationEnabled(org?.automation_settings ?? null, "divide_crew_hours");
 
   const names = new Map<string, string>();
   const nm = (

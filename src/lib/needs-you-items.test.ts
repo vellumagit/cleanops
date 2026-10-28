@@ -35,6 +35,7 @@ function booking(over: Partial<NeedsYouBooking> = {}): NeedsYouBooking {
     hourly_rate_cents: null,
     is_free: false,
     closed_at: null,
+    divides_hours: false,
     crew: [crew("p"), crew("a"), crew("i")],
     shifts: [],
     ...over,
@@ -53,6 +54,47 @@ function ctx(over: Partial<NeedsYouContext> = {}): NeedsYouContext {
 }
 
 describe("buildJobItems", () => {
+  it("measures 'past her hours' against the crew's shared length when hours divide", () => {
+    // 18h entered, 3 crew, dividing → a 6-hour job ending 3:00 PM (21:00Z).
+    // Pristine is still on the clock at 3:20 PM.
+    const items = buildJobItems(
+      booking({
+        status: "in_progress",
+        divides_hours: true,
+        shifts: [
+          shift("s1", "p", "2026-10-27T15:00:00Z"),
+          shift("s2", "a", "2026-10-27T15:00:00Z", "2026-10-27T20:50:00Z"),
+          shift("s3", "i", "2026-10-27T15:00:00Z", "2026-10-27T20:55:00Z"),
+        ],
+      }),
+      ctx({ now: T("2026-10-27T21:20:00Z") }),
+    );
+    const over = items.find((i) => i.kind === "over_hours");
+    expect(over?.title).toBe("Pristine is 20 min past her hours");
+    expect(over?.actions[0]).toMatchObject({ kind: "clock_out_at", atIso: "2026-10-27T21:00:00.000Z" });
+    // Twenty minutes over is a normal clean: on the list, not a push. An
+    // hour over is a forgotten clock-out: push once.
+    expect(over?.alert).toBe(false);
+    const hourOver = buildJobItems(
+      booking({
+        status: "in_progress",
+        divides_hours: true,
+        shifts: [shift("s1", "p", "2026-10-27T15:00:00Z")],
+      }),
+      ctx({ now: T("2026-10-27T22:05:00Z") }),
+    ).find((i) => i.kind === "over_hours");
+    expect(hourOver?.alert).toBe(true);
+    // Without dividing the same picture is 18 hours of window: nothing to ask.
+    const flat = buildJobItems(
+      booking({
+        status: "in_progress",
+        shifts: [shift("s1", "p", "2026-10-27T15:00:00Z")],
+      }),
+      ctx({ now: T("2026-10-27T21:20:00Z") }),
+    );
+    expect(flat.find((i) => i.kind === "over_hours")).toBeUndefined();
+  });
+
   it("asks about a no-show once everyone who came has gone", () => {
     const items = buildJobItems(
       booking({

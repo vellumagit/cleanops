@@ -42,6 +42,10 @@ async function main() {
   );
   const h = org.booking_auto_complete_hours;
   const autoCompleteAfterMinutes = autoOn && h != null && h >= 1 ? h * 60 : null;
+  const orgDivides = resolveAutomationEnabled(
+    (org.automation_settings as Record<string, { enabled?: boolean } | undefined> | null) ?? null,
+    "divide_crew_hours",
+  );
   const fmt = (iso: string | null | undefined) =>
     iso
       ? new Date(iso).toLocaleString("en-CA", { timeZone: tz, month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
@@ -123,7 +127,7 @@ async function main() {
   const { end } = zonedDayBoundsUtc(new Date(now), tz, 1);
   const { data: rows, error: bErr } = await db
     .from("bookings")
-    .select("id, status, scheduled_at, duration_minutes, total_cents, hourly_rate_cents, is_free, closed_at, client:clients ( name )")
+    .select("id, status, scheduled_at, duration_minutes, total_cents, hourly_rate_cents, is_free, closed_at, divide_hours_evenly, client:clients ( name )")
     .eq("organization_id", orgId)
     .gte("scheduled_at", start.toISOString())
     .lt("scheduled_at", end.toISOString())
@@ -133,7 +137,7 @@ async function main() {
   type Row = {
     id: string; status: string; scheduled_at: string; duration_minutes: number;
     total_cents: number | null; hourly_rate_cents: number | null; is_free: boolean | null;
-    closed_at: string | null; client: { name: string | null } | null;
+    closed_at: string | null; divide_hours_evenly: boolean | null; client: { name: string | null } | null;
   };
   const jobs = (rows ?? []) as unknown as Row[];
   const ids = jobs.map((j) => j.id);
@@ -154,7 +158,13 @@ async function main() {
   for (const j of jobs) {
     const c = crewBy.get(j.id) ?? [];
     const s = shiftsBy.get(j.id) ?? [];
-    const st = deriveJobState({ booking: j, crew: c, shifts: s, now, autoCompleteAfterMinutes });
+    const st = deriveJobState({
+      booking: { ...j, divides_hours: j.divide_hours_evenly === true || orgDivides },
+      crew: c,
+      shifts: s,
+      now,
+      autoCompleteAfterMinutes,
+    });
     const flag = st.status !== j.status ? "  <-- DISAGREES" : "";
     const price = j.is_free ? "free" : j.total_cents ? `$${(j.total_cents / 100).toFixed(0)}` : j.hourly_rate_cents ? `$${(j.hourly_rate_cents / 100).toFixed(0)}/h` : "NO PRICE";
     console.log(`   ${fmt(j.scheduled_at)}  ${(j.client?.name ?? "?").padEnd(24)} row=${j.status.padEnd(11)} computed=${st.status.padEnd(11)} phase=${st.phase.padEnd(16)} ${price.padEnd(8)} ${st.needs.length ? "needs " + st.needs.join(",") : ""}${flag}`);

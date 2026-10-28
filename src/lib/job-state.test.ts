@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { deriveJobState, describeJobState, type JobStateInput } from "./job-state";
+import { deriveJobState, describeJobState, teamMinutes, type JobStateInput } from "./job-state";
 
 const T = (iso: string) => new Date(iso).getTime();
 // Lori Moeller, 2026-10-27: 9:00 AM Edmonton (15:00Z), 18h entered, 4 crew.
@@ -28,6 +28,55 @@ const shift = (who: string, inAt: string, outAt: string | null = null) => ({
   employee_id: who,
   clock_in_at: inAt,
   clock_out_at: outAt,
+});
+
+describe("teamMinutes — the hours entered are for one person", () => {
+  it("shares the hours across the crew when the job divides them", () => {
+    expect(teamMinutes({ duration_minutes: 1080, divides_hours: true }, 4)).toBe(270);
+    expect(teamMinutes({ duration_minutes: 1080, divides_hours: true }, 3)).toBe(360);
+    expect(teamMinutes({ duration_minutes: 100, divides_hours: true }, 3)).toBe(33);
+  });
+
+  it("leaves them alone for one person, or when dividing is off", () => {
+    expect(teamMinutes({ duration_minutes: 1080, divides_hours: true }, 1)).toBe(1080);
+    expect(teamMinutes({ duration_minutes: 1080, divides_hours: true }, 0)).toBe(1080);
+    expect(teamMinutes({ duration_minutes: 1080, divides_hours: false }, 4)).toBe(1080);
+    expect(teamMinutes({ duration_minutes: 1080 }, 4)).toBe(1080);
+  });
+
+  it("Lori Moeller with dividing on: the window ends at 1:30 PM, not 3 AM", () => {
+    const divided = { ...input().booking, divides_hours: true };
+    const s = deriveJobState(input({ booking: divided }));
+    expect(s.windowEndMs).toBe(T("2026-10-27T19:30:00Z"));
+    // Three worked 8:59–12:30, Ivanna never came. At 12:31 she's still
+    // "coming"; at 1:31 PM the job is over without anyone touching it.
+    const shifts = [
+      shift(P, "2026-10-27T15:00:00Z", "2026-10-27T18:30:00Z"),
+      shift(A, "2026-10-27T14:59:00Z", "2026-10-27T18:30:00Z"),
+      shift(N, "2026-10-27T14:59:00Z", "2026-10-27T18:30:00Z"),
+    ];
+    const waiting = deriveJobState(input({ booking: divided, shifts, now: T("2026-10-27T18:31:00Z") }));
+    expect(waiting.phase).toBe("finished_on_site");
+    expect(waiting.closesAtMs).toBe(T("2026-10-27T19:30:00Z"));
+    const over = deriveJobState(input({ booking: divided, shifts, now: T("2026-10-27T19:31:00Z") }));
+    expect(over.phase).toBe("done");
+    expect(over.status).toBe("completed");
+    expect(over.noShows).toEqual([I]);
+  });
+
+  it("a person's own later segment still stretches the window past the shared length", () => {
+    const divided = { ...input().booking, divides_hours: true };
+    const s = deriveJobState(input({
+      booking: divided,
+      crew: [
+        { membership_id: P },
+        { membership_id: A },
+        { membership_id: I, split_start_offset_minutes: 300, split_duration_minutes: 120 },
+      ],
+    }));
+    // 3 crew → 360 shared minutes ends 21:00Z; Ivanna's own 5h+2h ends 22:00Z.
+    expect(s.windowEndMs).toBe(T("2026-10-27T22:00:00Z"));
+  });
 });
 
 describe("deriveJobState", () => {

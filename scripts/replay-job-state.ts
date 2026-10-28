@@ -37,6 +37,7 @@ type Row = {
   is_free: boolean | null;
   closed_at?: string | null;
   updated_at: string;
+  divide_hours_evenly: boolean | null;
   client: { name: string | null } | null;
 };
 
@@ -53,6 +54,10 @@ async function main() {
   );
   const h = org.booking_auto_complete_hours;
   const autoCompleteAfterMinutes = autoOn && h != null && h >= 1 ? h * 60 : null;
+  const orgDivides = resolveAutomationEnabled(
+    (org.automation_settings as Record<string, { enabled?: boolean } | undefined> | null) ?? null,
+    "divide_crew_hours",
+  );
   const tz = org.timezone ?? "America/Edmonton";
 
   // closed_at only exists once migration 20261028010000 has run. Before
@@ -61,7 +66,7 @@ async function main() {
   const probe = await db.from("bookings").select("closed_at").limit(1);
   const hasClosedAt = !probe.error;
   const cols =
-    "id, status, scheduled_at, duration_minutes, total_cents, hourly_rate_cents, is_free, updated_at, client:clients ( name )" +
+    "id, status, scheduled_at, duration_minutes, total_cents, hourly_rate_cents, is_free, updated_at, divide_hours_evenly, client:clients ( name )" +
     (hasClosedAt ? ", closed_at" : "");
   const { data: rows, error } = await db
     .from("bookings")
@@ -108,7 +113,12 @@ async function main() {
     const crew = crewBy.get(b.id) ?? [];
     const shifts = shiftsBy.get(b.id) ?? [];
     const closedAt = hasClosedAt ? (b.closed_at ?? null) : b.status === "completed" ? b.updated_at : null;
-    const base = { ...b, total_cents: b.total_cents, closed_at: closedAt };
+    const base = {
+      ...b,
+      total_cents: b.total_cents,
+      closed_at: closedAt,
+      divides_hours: b.divide_hours_evenly === true || orgDivides,
+    };
 
     const h1 = deriveJobState({ booking: base, crew, shifts, now, autoCompleteAfterMinutes });
     if (h1.status !== b.status) {

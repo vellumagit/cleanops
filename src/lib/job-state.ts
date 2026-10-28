@@ -50,6 +50,12 @@ export type JobStateBooking = {
   is_free: boolean | null;
   /** A manager declared it over. */
   closed_at: string | null;
+  /**
+   * "Divide hours evenly" is on for this job (its own flag, or the org
+   * default). The hours entered are the one-person estimate and the crew
+   * shares them: 18 hours for four people is a 4.5-hour job.
+   */
+  divides_hours?: boolean;
 };
 
 export type JobStateCrewRow = {
@@ -90,18 +96,45 @@ export type JobState = {
   waitingOn: string[];
   /** Rostered, never clocked in, window over. */
   noShows: string[];
-  /** When the window ends: scheduled start + the hours entered. */
+  /** When the window ends: scheduled start + the time the crew together
+   *  should take (see teamMinutes), or later if someone has her own
+   *  later segment. */
   windowEndMs: number;
   /** When the job will close itself if nothing else happens, or null. */
   closesAtMs: number | null;
   needs: JobNeed[];
 };
 
+/**
+ * How long the job should take the crew together.
+ *
+ * The hours on a booking are the estimate for ONE person (that's the
+ * number the office knows: "this house is 18 hours"). When the job
+ * divides hours and two or more are rostered, the crew shares them, so
+ * four people finish an 18-hour house in 4.5. That shared length is what
+ * "finished" means for the job — when a no-show stops being "still
+ * coming", when the office is asked about silence, when the job can close
+ * itself. Lori Moeller, 2026-10-27: measured against 18 hours the job
+ * would have waited for Ivanna until 3 AM; the crew was done at 12:30.
+ *
+ * Deliberately NOT what caps a cleaner's own clock. A share is arithmetic,
+ * not a promise about one person's day, and a cleaner still working must
+ * never be clocked out by it (clockOutWindowMinutes in shift-overrun.ts).
+ */
+export function teamMinutes(
+  b: Pick<JobStateBooking, "duration_minutes" | "divides_hours">,
+  crewCount: number,
+): number {
+  const full = b.duration_minutes ?? 0;
+  if (!b.divides_hours || crewCount < 2 || full <= 0) return full;
+  return Math.max(1, Math.round(full / crewCount));
+}
+
 function windowEnd(b: JobStateBooking, crew: JobStateCrewRow[]): number {
   const start = new Date(b.scheduled_at).getTime();
   // A person with her own arrival and length can end later than the job's
   // own length. The window is the latest of all of them.
-  let end = start + (b.duration_minutes ?? 0) * 60_000;
+  let end = start + teamMinutes(b, crew.length) * 60_000;
   for (const c of crew) {
     if (c.split_start_offset_minutes != null && c.split_duration_minutes) {
       end = Math.max(
