@@ -51,6 +51,13 @@ export function NeedsYouButtons({ actions }: { actions: NeedsYouAction[] }) {
           r = await restoreSeriesTimesAction(a.seriesId);
           break;
         case "keep_series_times":
+          if (
+            a.adoptTime &&
+            !window.confirm(
+              `Make ${a.adoptTime} this client's regular time? The visits stay where they are, and the series books future visits at ${a.adoptTime}. Nobody is notified.`,
+            )
+          )
+            return;
           r = await keepSeriesTimesAction(a.seriesId);
           break;
         default:

@@ -10,6 +10,7 @@ import { syncJob } from "@/lib/job-sync";
 import { deleteMemberCalendarEvent } from "@/lib/google-calendar";
 import { collectSeriesDrift } from "@/lib/needs-you";
 import { resyncBookingCalendarsPaced } from "@/lib/booking-calendar-sync";
+import { wallClockForInstant } from "@/lib/scheduled-local";
 import { getOrgTimezone } from "@/lib/org-timezone";
 
 type Result = { ok: true } | { ok: false; error: string };
@@ -225,7 +226,18 @@ export async function restoreSeriesTimesAction(seriesId: string): Promise<Result
   return done();
 }
 
-/** "Keep these times": the visits are where she wants them; stop asking. */
+/**
+ * "Keep these times": the visits are where she wants them.
+ *
+ * When they all share one time, that time becomes the series' time. The
+ * series is the intent; leaving it at 9:00 while every visit sits at 10:00
+ * means the visits the generator adds next month come at 9:00, and the
+ * client's time changes with nobody deciding it. The visits already match
+ * the new time, so nothing moves and no hand-set marker is needed; a 9:00
+ * visit made on the right rules now shows as drift against 10:00, with
+ * Restore to put it in line. Mixed times can't be one series' time, so
+ * those visits are marked as set by hand and the check stops asking.
+ */
 export async function keepSeriesTimesAction(seriesId: string): Promise<Result> {
   const { membership } = await getActionContext();
   const denied = managerOnly(membership.role);
@@ -237,6 +249,37 @@ export async function keepSeriesTimesAction(seriesId: string): Promise<Result> {
   if (!drift) return { ok: true };
   const admin = createSupabaseAdminClient();
   const now = new Date().toISOString();
+
+  const deltas = new Set(drift.visits.map((v) => v.deltaMinutes));
+  if (deltas.size === 1) {
+    // "HH:MM" of the visits' wall clock in the org's zone, as the series
+    // stores it (the generator reads the first five characters).
+    const newStart = wallClockForInstant(drift.visits[0].scheduled_at, tz).slice(11, 16);
+    const { data: upd, error } = (await admin
+      .from("booking_series")
+      .update({ start_time: `${newStart}:00` } as never)
+      .eq("id", seriesId)
+      .eq("organization_id", membership.organization_id)
+      .select("id")) as unknown as { data: Array<{ id: string }> | null; error: { message: string } | null };
+    if (error) return { ok: false, error: error.message };
+    if (!upd || upd.length === 0) return { ok: false, error: "That series is gone." };
+    for (const v of drift.visits) {
+      await logAuditEvent({
+        membership,
+        action: "update",
+        entity: "booking",
+        entity_id: v.id,
+        after: {
+          series_start_time: newStart,
+          from_series_start_time: drift.startTime,
+          via: "series_drift_adopt",
+          series_id: seriesId,
+        },
+      });
+    }
+    return done();
+  }
+
   const { error } = await admin
     .from("bookings")
     .update({ time_set_by_hand_at: now } as never)

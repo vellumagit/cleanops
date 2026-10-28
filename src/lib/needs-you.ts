@@ -306,17 +306,28 @@ function seriesDriftItem(d: SeriesDrift, tz: string): NeedsYouItem {
       : "don't match";
   const dates = d.visits.slice(0, 4).map((v) => day(v.scheduled_at)).join(", ");
   const more = n > 4 ? ` and ${n - 4} more` : "";
+  // One shared time: keeping it means the series moves to it, so the visits
+  // added later come at the same hour. Mixed times can only be left alone.
+  const adoptTime = deltas.size === 1 ? time(d.visits[0].scheduled_at) : undefined;
+  const keep = adoptTime
+    ? `Keep makes ${adoptTime} the series' time, so later visits come at ${adoptTime} too.`
+    : "Keep leaves them and stops asking.";
   return {
     key: `drift:${d.seriesId}`,
     kind: "series_drift",
     title: `${d.clientName}: ${n} ${n === 1 ? "visit" : "visits"} ${how}`,
-    body: `The series says ${seriesTime}. ${dates}${more}. Restore puts them back at ${seriesTime}; Keep leaves them and stops asking. Nobody is notified either way.`,
+    body: `The series says ${seriesTime}. ${dates}${more}. Restore puts them back at ${seriesTime}; ${keep} Nobody is notified either way.`,
     href: `/app/bookings?series=${d.seriesId}`,
     atMs: new Date(d.visits[0].scheduled_at).getTime(),
     alert: false,
     actions: [
       { kind: "restore_series_times", label: `Restore to ${seriesTime}`, seriesId: d.seriesId, count: n },
-      { kind: "keep_series_times", label: "Keep these times", seriesId: d.seriesId },
+      {
+        kind: "keep_series_times",
+        label: adoptTime ? `Make ${adoptTime} the series' time` : "Keep these times",
+        seriesId: d.seriesId,
+        ...(adoptTime ? { adoptTime } : {}),
+      },
     ],
   };
 }

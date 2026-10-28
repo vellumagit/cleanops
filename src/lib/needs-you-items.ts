@@ -27,8 +27,13 @@ export type NeedsYouAction =
   | { kind: "link"; label: string; href: string }
   /** Move a series' drifted visits back to the series' time (series-drift.ts). */
   | { kind: "restore_series_times"; label: string; seriesId: string; count: number }
-  /** Mark them as set by hand so the drift check stops asking. */
-  | { kind: "keep_series_times"; label: string; seriesId: string };
+  /**
+   * Keep the visits where they are. When they all share one time, that time
+   * becomes the series' time (adoptTime, for the confirm), so the visits the
+   * generator adds later follow it instead of reverting to the old hour.
+   * Otherwise they're marked as set by hand so the check stops asking.
+   */
+  | { kind: "keep_series_times"; label: string; seriesId: string; adoptTime?: string };
 
 export type NeedsYouItem = {
   /** Stable across runs, so a snooze or a sent alert sticks to it. */
