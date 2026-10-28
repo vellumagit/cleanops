@@ -28,6 +28,22 @@ const sinceIso = new Date(now - hoursBack * 3_600_000).toISOString();
 type Member = { display_name: string | null; profile: { full_name: string | null } | null } | null;
 const nameOf = (m: Member) => m?.display_name?.trim() || m?.profile?.full_name?.trim() || "?";
 
+/**
+ * Alberta stopped changing its clocks (official 2026-06-18; IANA tzdata
+ * 2026c): America/Edmonton is UTC-6 year-round from 2026-11-01. Production
+ * has that data; a local Node on 2026b or older still falls Edmonton back
+ * to UTC-7 and would print every winter time an hour early. Regina has
+ * been on permanent UTC-6 all along, so it is the exact same clock.
+ */
+function localZoneFor(tz: string): string {
+  const tzdata = process.versions.tz ?? "";
+  if (tz === "America/Edmonton" && tzdata < "2026c") {
+    console.warn(`(local tzdata ${tzdata} predates Alberta's permanent UTC-6 — formatting Edmonton as America/Regina)`);
+    return "America/Regina";
+  }
+  return tz;
+}
+
 async function main() {
   const { data: org } = await db
     .from("organizations")
@@ -35,7 +51,7 @@ async function main() {
     .eq("id", orgId)
     .single();
   if (!org) throw new Error("org not found");
-  const tz = org.timezone ?? "America/Edmonton";
+  const tz = localZoneFor(org.timezone ?? "America/Edmonton");
   const autoOn = resolveAutomationEnabled(
     (org.automation_settings as Record<string, { enabled?: boolean } | undefined> | null) ?? null,
     "auto_complete_past_bookings",

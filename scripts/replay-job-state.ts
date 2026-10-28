@@ -58,7 +58,14 @@ async function main() {
     (org.automation_settings as Record<string, { enabled?: boolean } | undefined> | null) ?? null,
     "divide_crew_hours",
   );
-  const tz = org.timezone ?? "America/Edmonton";
+  // Alberta is UTC-6 year-round from 2026-11-01 (tzdata 2026c). A local
+  // Node on older data falls Edmonton back to UTC-7 and prints winter times
+  // an hour early; Regina has always been the same clock.
+  const tzdata = process.versions.tz ?? "";
+  const tz =
+    (org.timezone ?? "America/Edmonton") === "America/Edmonton" && tzdata < "2026c"
+      ? "America/Regina"
+      : (org.timezone ?? "America/Edmonton");
 
   // closed_at only exists once migration 20261028010000 has run. Before
   // that, treat completed as closed at its last update — the backfill does
