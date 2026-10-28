@@ -64,6 +64,41 @@ describe("teamMinutes — the hours entered are for one person", () => {
     expect(over.noShows).toEqual([I]);
   });
 
+  it("a split shift is not a divided job — the segments already fill the hours", () => {
+    // 480 min entered, two people back to back (4h + 4h). Legacy rows carry
+    // a length but no offset. Dividing by two would end the window at 4h
+    // and call the second cleaner a no-show when the first one finished.
+    const divided = { ...input().booking, duration_minutes: 480, divides_hours: true };
+    const legacy = deriveJobState(input({
+      booking: divided,
+      crew: [
+        { membership_id: P, split_duration_minutes: 240 },
+        { membership_id: A, split_duration_minutes: 240 },
+      ],
+    }));
+    expect(legacy.windowEndMs).toBe(T("2026-10-27T23:00:00Z"));
+    const withOffsets = deriveJobState(input({
+      booking: divided,
+      crew: [
+        { membership_id: P, split_start_offset_minutes: 0, split_duration_minutes: 240 },
+        { membership_id: A, split_start_offset_minutes: 240, split_duration_minutes: 240 },
+      ],
+    }));
+    expect(withOffsets.windowEndMs).toBe(T("2026-10-27T23:00:00Z"));
+  });
+
+  it("says who is still on the clock when the office closed the job around her", () => {
+    const s = deriveJobState(input({
+      booking: { ...input().booking, closed_at: "2026-10-27T18:00:00Z" },
+      shifts: [shift(P, "2026-10-27T15:00:00Z")],
+      now: T("2026-10-27T18:05:00Z"),
+    }));
+    expect(s.phase).toBe("done");
+    expect(describeJobState(s, { nameOf: (id) => id, formatTime: () => "", crewSize: 4 })).toContain(
+      "pristine still on the clock",
+    );
+  });
+
   it("a person's own later segment still stretches the window past the shared length", () => {
     const divided = { ...input().booking, divides_hours: true };
     const s = deriveJobState(input({

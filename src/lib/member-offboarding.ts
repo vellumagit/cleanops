@@ -142,6 +142,9 @@ export async function sweepDeactivatedMember(
         .eq("organization_id", organizationId)
         .eq("membership_id", membershipId)
         .in("booking_id", crewBookingIds);
+      // A crew change changes each job's window and who it is waiting on.
+      const { syncJob } = await import("@/lib/job-sync");
+      for (const id of crewBookingIds) await syncJob(id, "crew_offboarded");
     }
     result.unassignedBookings = [...byId.values()].sort((a, b) =>
       a.scheduled_at < b.scheduled_at ? -1 : 1,
@@ -165,8 +168,15 @@ export async function sweepDeactivatedMember(
       .eq("organization_id", organizationId)
       .eq("employee_id", membershipId)
       .is("clock_out_at", null)
-      .select("id")) as unknown as { data: Array<{ id: string }> | null };
+      .select("id, booking_id")) as unknown as {
+      data: Array<{ id: string; booking_id: string | null }> | null;
+    };
     result.closedEntryId = closed?.[0]?.id ?? null;
+    // A clock-out, so the job it was on gets recomputed like any other.
+    const { syncJob } = await import("@/lib/job-sync");
+    for (const row of closed ?? []) {
+      if (row.booking_id) await syncJob(row.booking_id, "clock_out");
+    }
   } catch (err) {
     console.error("[offboard] open-entry close failed:", err);
   }

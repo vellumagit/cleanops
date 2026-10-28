@@ -3713,6 +3713,10 @@ export async function assignBookingCrewAction(
       )) as unknown as Promise<unknown>;
   }
 
+  // The crew IS the job's shape: a fourth person shortens a divided window,
+  // removing the one who never came may make a finished job done.
+  await syncJob(id, "crew_changed");
+
   revalidatePath("/app/bookings");
   revalidatePath(`/app/bookings/${id}`);
   revalidatePath("/app/scheduling");

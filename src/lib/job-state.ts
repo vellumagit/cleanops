@@ -132,9 +132,24 @@ export function teamMinutes(
 
 function windowEnd(b: JobStateBooking, crew: JobStateCrewRow[]): number {
   const start = new Date(b.scheduled_at).getTime();
+  // A split shift — people working their own segments one after another —
+  // is not a divided job: the segments say who works when, and together
+  // they fill the hours entered. Segments with offsets extend the window
+  // below. Segments saved before 2026-10-02 carry a length but no offset,
+  // so their order is unknown; when the whole crew is on such segments the
+  // window is the hours entered, not a share of them — dividing a 4h+4h
+  // hand-off by two would call the second cleaner a no-show the moment the
+  // first one finished.
+  const legacySplit =
+    crew.length > 0 &&
+    crew.every((c) => (c.split_duration_minutes ?? 0) > 0) &&
+    crew.some((c) => c.split_start_offset_minutes == null);
+  let end =
+    start +
+    (legacySplit ? (b.duration_minutes ?? 0) : teamMinutes(b, crew.length)) *
+      60_000;
   // A person with her own arrival and length can end later than the job's
   // own length. The window is the latest of all of them.
-  let end = start + teamMinutes(b, crew.length) * 60_000;
   for (const c of crew) {
     if (c.split_start_offset_minutes != null && c.split_duration_minutes) {
       end = Math.max(
@@ -305,6 +320,9 @@ export function describeJobState(
       break;
     case "done":
       parts.push("Done");
+      // Closed by the office with someone's clock still running: say so,
+      // or "Done" hides a shift that is quietly running up payroll.
+      if (state.onSite.length > 0) parts.push(`${list(state.onSite)} still on the clock`);
       if (state.noShows.length > 0) parts.push(`${list(state.noShows)} never clocked in`);
       break;
   }

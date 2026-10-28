@@ -136,13 +136,31 @@ export const BookingSchema = z.object({
     .string()
     .optional()
     .transform((s) => s === "on" || s === "true" || s === "1"),
+  // Hidden on the edit form, carrying the row's existing hourly rate. The
+  // form has no hourly field (removed on purpose — one box, two meanings),
+  // but estimate conversion and the API still create hourly-priced jobs,
+  // and the price rule below must see that they ARE priced. Never written
+  // back by the actions; validation only.
+  hourly_rate_cents: z
+    .string()
+    .optional()
+    .transform((s) => {
+      const n = Number(s);
+      return Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
+    }),
 }).superRefine((b, ctx) => {
   // A confirmed job is a promise to do work and bill for it. Six finished
   // jobs with no price and no invoice (Oct 2026) all got there the same
   // way: confirmed unpriced, done, and nothing said so until after. Pending
   // can stay unpriced — it's still a plan — but confirming means deciding
   // what it costs, or saying it's free.
-  if (b.status !== "pending" && b.status !== "cancelled" && !b.is_free && b.total_cents === 0) {
+  if (
+    b.status !== "pending" &&
+    b.status !== "cancelled" &&
+    !b.is_free &&
+    b.total_cents === 0 &&
+    b.hourly_rate_cents === 0
+  ) {
     ctx.addIssue({
       code: "custom",
       path: ["total_cents"],

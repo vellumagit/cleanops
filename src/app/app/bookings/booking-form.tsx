@@ -89,6 +89,8 @@ export type BookingFormDefaults = {
   /** Show each cleaner their share (duration ÷ crew) in the field app. */
   divide_hours_evenly?: boolean;
   is_free?: boolean;
+  /** The row's hourly rate, if it has one — so the price rule knows. */
+  hourly_rate_cents?: number;
 };
 
 type Option = {
@@ -1140,6 +1142,13 @@ export function BookingForm({
           treated it as a per-booking wage override — a $35/hr-billed job
           paid the cleaner $35. One box, two meanings; Brian: "remove it
           entirely." Price a job with Total; wages live on the person. */}
+      {/* Validation only: an hourly-priced job (estimate conversion, API)
+          counts as priced even with no Total. The actions never write it. */}
+      <input
+        type="hidden"
+        name="hourly_rate_cents"
+        value={defaults?.hourly_rate_cents ?? 0}
+      />
       <div className="grid gap-5 sm:grid-cols-2">
         <FormField
           label={`Total (${currency})`}

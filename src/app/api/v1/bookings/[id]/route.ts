@@ -166,6 +166,19 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     }
   }
 
+  // A status set through the API is a human saying so, same as the edit
+  // form: completed carries closed_at (the one input the rules never
+  // overrule), anything else clears it. Without this the row said completed
+  // with no close on record, so the rules reverted it at the next event and
+  // the job never billed.
+  const statusChanging =
+    updates.status !== undefined && updates.status !== prev?.status;
+  if (statusChanging) {
+    updates.closed_at =
+      updates.status === "completed" ? new Date().toISOString() : null;
+    updates.closed_by = null;
+  }
+
   const { data, error } = (await admin
     .from("bookings")
     .update(updates)
@@ -189,6 +202,27 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   // Fire appropriate webhook
   const newStatus = data.status as string;
   const oldStatus = prev?.status as string | undefined;
+
+  if (statusChanging) {
+    // Same three things every other status writer does: say who did it,
+    // bill if it's done, and let the rules see the change.
+    const { logSystemAuditEvent } = await import("@/lib/audit");
+    await logSystemAuditEvent({
+      organizationId: auth.organizationId,
+      action: "status_change",
+      entity: "booking",
+      entity_id: id,
+      after: { status: newStatus, from: oldStatus ?? null, via: "api" },
+    });
+    if (newStatus === "completed") {
+      const { autoInvoiceOnJobComplete } = await import("@/lib/automations");
+      await autoInvoiceOnJobComplete(id).catch((err) =>
+        console.error("[api] auto-invoice after PATCH completed failed:", err),
+      );
+    }
+    const { syncJob } = await import("@/lib/job-sync");
+    await syncJob(id, "api_status");
+  }
   if (newStatus === "cancelled" && oldStatus !== "cancelled") {
     dispatchWebhookEvent(auth.organizationId, "booking.cancelled", data).catch(
       () => {},
