@@ -208,7 +208,7 @@ export async function startJobAction(
   // two simultaneous open entries, which breaks payroll calculations.
   const { data: anyOpenEntry } = await supabase
     .from("time_entries")
-    .select("id, booking_id")
+    .select("id, booking_id, clock_in_at")
     .eq("employee_id", membership.id)
     .is("clock_out_at", null)
     .limit(1)
@@ -241,19 +241,34 @@ export async function startJobAction(
     } else {
       // Clocked in on a different job or a standalone clock-in — close it first
       // so the employee is never double-counted on payroll.
+      const prior = anyOpenEntry as {
+        id: string;
+        booking_id: string | null;
+        clock_in_at: string;
+      };
+      // At the tap, like the new entry's start — otherwise a tap sent late
+      // from a dead zone leaves the two shifts overlapping. Never before
+      // the prior shift began, though: a tap saved on the phone at 9:00
+      // and replayed after a 9:16 clock-in elsewhere must not close that
+      // shift at 9:00.
+      const priorOut =
+        new Date(punchedAt).getTime() < new Date(prior.clock_in_at).getTime()
+          ? prior.clock_in_at
+          : punchedAt;
       const { error: closeError } = await supabase
         .from("time_entries")
         .update({
-          // At the tap, like the new entry's start — otherwise a tap sent
-          // late from a dead zone leaves the two shifts overlapping.
-          clock_out_at: punchedAt,
+          clock_out_at: priorOut,
           clock_out_lat: lat,
           clock_out_lng: lng,
         })
-        .eq("id", anyOpenEntry.id)
+        .eq("id", prior.id)
         .eq("employee_id", membership.id);
       if (closeError)
         return refuse("close_prior_entry_failed", closeError.message);
+      // That clock-out may be what finishes the job she just left — the
+      // last one out who forgot to tap I'm done and drove to the next job.
+      if (prior.booking_id) await syncJob(prior.booking_id, "clock_out");
 
       const { error: insertError } = await supabase
         .from("time_entries")
@@ -313,16 +328,16 @@ export async function startJobAction(
   // Clocking back in after tapping Finish (too early, or by mistake) means
   // her part isn't done after all. Left set, it would let the rest of the
   // crew close the job while she's still on the clock, and her screen would
-  // keep saying "Your part is done".
-  if (booking.status !== "completed") {
-    await (createSupabaseAdminClient()
-      .from("booking_assignees")
-      .update({ completed_at: null } as never)
-      .eq("booking_id", bookingId)
-      .eq("membership_id", membership.id)
-      .eq("organization_id", membership.organization_id)
-      .not("completed_at", "is", null) as unknown as Promise<unknown>);
-  }
+  // keep saying "Your part is done". On a job the office already closed
+  // too: if that job is ever reopened (a manager, or the rules once they
+  // write), a stale mark plus her open clock is a screen with no button.
+  await (createSupabaseAdminClient()
+    .from("booking_assignees")
+    .update({ completed_at: null } as never)
+    .eq("booking_id", bookingId)
+    .eq("membership_id", membership.id)
+    .eq("organization_id", membership.organization_id)
+    .not("completed_at", "is", null) as unknown as Promise<unknown>);
 
   await syncJob(bookingId, "clock_in");
 
@@ -394,11 +409,12 @@ export async function completeJobAction(
   // Clock in and Complete side by side (and the list card only End job), and
   // a Complete there used to mark her part done with no hours behind it —
   // after which her screen offered no way to clock in at all.
-  const { count: crewSize } = await supabase
-    .from("booking_assignees")
-    .select("id", { count: "exact", head: true })
-    .eq("booking_id", bookingId);
-  if ((crewSize ?? 0) >= 2) {
+  //
+  // Solo jobs too: "I'm done" is a statement about her shift, and with no
+  // shift there is nothing to say. Allowed through, it marked the job
+  // completed with zero hours behind it — and the rules, seeing no shifts
+  // and an open window, would have put it straight back to confirmed.
+  {
     const { count: myEntries } = await supabase
       .from("time_entries")
       .select("id", { count: "exact", head: true })
@@ -407,7 +423,7 @@ export async function completeJobAction(
     if (!myEntries) {
       return refuse(
         "not_clocked_in",
-        "You haven't clocked in on this job yet. Tap Clock in first. If you forgot earlier, clock in now and tell your manager when you really started.",
+        "You haven't clocked in on this job yet. Tap I'm here first. If you forgot earlier, tap it now and tell your manager when you really started.",
       );
     }
   }
@@ -529,15 +545,17 @@ export async function completeJobAction(
   // booking reads completed).
   const notYetErr = futureStatusError(booking.scheduled_at, "completed");
   if (notYetErr) {
-    return refuse(
-      "too_early",
-      await notDueYetMessage(
-        membership.organization_id,
-        booking.scheduled_at,
-        "finishing",
-      ),
-      { scheduled_at: booking.scheduled_at },
-    );
+    // Her clock has already stopped above, and that part stands: the tap
+    // is about her shift. What can't happen is the JOB being marked done
+    // for a date that hasn't come (the office moved it while she was on
+    // the clock). This used to refuse AFTER closing her entry, so the
+    // phone showed an error while her clock had in fact stopped, and the
+    // state was never recomputed.
+    await syncJob(bookingId, "finish");
+    revalidatePath("/field/jobs");
+    revalidatePath(`/field/jobs/${bookingId}`);
+    revalidatePath("/field/clock");
+    return { ok: true };
   }
 
   // Through the admin client. This started as a workaround: the update policy
@@ -837,6 +855,10 @@ async function dropShift(
     .delete()
     .eq("booking_id", bookingId)
     .eq("membership_id", membershipId) as unknown as Promise<unknown>);
+  // A crew change changes the job: with her gone the rest may already be
+  // finished (three done, waiting on the one who just declined), and the
+  // shared window is longer.
+  await syncJob(bookingId, "crew_dropped");
 
   // If they were the primary, promote a remaining crew member so a job
   // that still has crew doesn't read as "unfilled". Only null it out when

@@ -98,6 +98,27 @@ export function JobActionButtons({
     );
   }
 
+  // Her part is marked done but her clock is running (she tapped I'm done,
+  // then I'm here again on a job the office had closed, and the job was
+  // reopened). The clock is the truth; give her the button that stops it.
+  if (youCompleted && myOpenEntryHere) {
+    return (
+      <div className="flex flex-col gap-3">
+        {facts && <Facts text={facts} />}
+        <Button
+          type="button"
+          size="lg"
+          className="h-16 text-lg font-semibold"
+          onClick={() => run("done")}
+          disabled={isPending}
+        >
+          <CheckCircle2 className="mr-2 h-6 w-6" />
+          {isPending ? "One moment…" : "I'm done"}
+        </Button>
+      </div>
+    );
+  }
+
   if (youCompleted) {
     return (
       <div className="flex flex-col gap-3">

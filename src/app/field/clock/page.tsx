@@ -41,7 +41,7 @@ export default async function FieldClockPage() {
     supabase
       .from("booking_assignees" as never)
       .select(
-        "booking:bookings!inner ( id, scheduled_at, service_type, service_type_label, status, client:clients ( name ) )",
+        "acceptance_status, booking:bookings!inner ( id, scheduled_at, service_type, service_type_label, status, client:clients ( name ) )",
       )
       .eq("membership_id" as never, membership.id as never)
       // !inner + nested filters: without them this fetched the member's
@@ -65,11 +65,22 @@ export default async function FieldClockPage() {
   for (const b of (primaryJobs ?? []) as unknown as JobRow[]) {
     jobMap.set(b.id, b);
   }
+  // Only shifts she has said yes to. The jobs list hides "I'm here" behind
+  // the Confirm step for a pending one; this screen offered the same job as
+  // a one-tap start (and as the "finish & start the next" target), and the
+  // server then refused it — after her current shift had already been
+  // closed by the rollover.
+  const pendingBookingIds = new Set<string>();
   for (const r of (crewRows ?? []) as unknown as Array<{
+    acceptance_status: string | null;
     booking: JobRow | null;
   }>) {
     const b = r.booking;
     if (!b) continue;
+    if (r.acceptance_status === "pending") {
+      pendingBookingIds.add(b.id);
+      continue;
+    }
     if (b.scheduled_at < dayStart.toISOString()) continue;
     if (b.scheduled_at >= dayEnd.toISOString()) continue;
     if (!["pending", "confirmed", "in_progress"].includes(b.status)) continue;
@@ -78,6 +89,9 @@ export default async function FieldClockPage() {
   // Rollover prompt: while clocked into job A, the next assigned job whose
   // start has (nearly) arrived gets offered as "finish & start". Only jobs
   // nobody has started — pending/confirmed — qualify as "next".
+  // The primary-assignee query above knows nothing about acceptance; drop
+  // anything her own crew row says she hasn't accepted.
+  for (const id of pendingBookingIds) jobMap.delete(id);
   const rawJobs = [...jobMap.values()];
 
   const todaysJobs = rawJobs
