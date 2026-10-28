@@ -15,6 +15,7 @@ import { resolveSegmentWindows } from "@/lib/booking-segments";
 import { crewFromForm } from "@/lib/series-crew";
 import { after } from "next/server";
 import { syncJob } from "@/lib/job-sync";
+import { closeJob } from "@/lib/close-job";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
 import { can } from "@/lib/auth";
 import type { Database, Json } from "@/lib/supabase/types";
@@ -2730,58 +2731,10 @@ async function duplicateBookingImpl(
  */
 export async function markBookingCompleteAction(id: string) {
   const { membership, supabase } = await getActionContext();
-
-  // One click completes the job AND drafts an invoice for it. On a job that
-  // has not happened yet that bills the client for work nobody has done, and
-  // hides the shift from the crew — so read the date before writing.
-  const { data: booking } = await supabase
-    .from("bookings")
-    .select("scheduled_at, status")
-    .eq("id", id)
-    .eq("organization_id", membership.organization_id)
-    .maybeSingle();
-  if (!booking) return;
-  // The button is hidden for a pending booking; this is the same rule on the
-  // server, because a server action is a POST endpoint anyone can call.
-  if (
-    booking.status === "pending" ||
-    futureStatusError(booking.scheduled_at, "completed")
-  ) {
-    // This action has no error channel — it redirects either way. The detail
-    // page still shows the real status, so the click reads as a no-op rather
-    // than silently billing a job that has not happened.
-    redirect(`/app/bookings/${id}`, RedirectType.replace);
-  }
-
-  // closed_at is the human decision "this job is over" — what the computed
-  // state (src/lib/job-state.ts) can't reach on its own when someone
-  // rostered never clocked in.
-  const { error } = await supabase
-    .from("bookings")
-    .update({
-      status: "completed",
-      closed_at: new Date().toISOString(),
-      closed_by: membership.id,
-    } as never)
-    .eq("id", id)
-    .eq("organization_id", membership.organization_id);
-
-  if (error) return;
-
-  // Completing is a money-adjacent transition (it drafts the invoice), and
-  // reconstructing WHO completed a job from invoice timestamps is archaeology.
-  await logAuditEvent({
-    membership,
-    action: "status_change",
-    entity: "booking",
-    entity_id: id,
-    before: { status: booking.status },
-    after: { status: "completed" },
-  });
-
-  await autoInvoiceOnJobComplete(id);
-  await syncJob(id, "manager_close");
-
+  // The decision and its side effects live in lib/close-job.ts, shared with
+  // the dashboard's "Close it". This action has no error channel — it
+  // redirects either way, and the page shows the real status.
+  await closeJob({ membership, supabase, bookingId: id });
   revalidatePath("/app/bookings");
   revalidatePath(`/app/bookings/${id}`);
   // Same URL we came from — pushing would add a duplicate history entry.

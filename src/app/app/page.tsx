@@ -29,7 +29,7 @@ import {
 import { cn } from "@/lib/utils";
 import { memberDisplayName } from "@/lib/member-display";
 import { getOrgTimezone } from "@/lib/org-timezone";
-import { NeedsAttention } from "./needs-attention";
+import { NeedsYou } from "./needs-you";
 
 export const metadata = { title: "Dashboard" };
 
@@ -429,15 +429,16 @@ export default async function DashboardPage() {
         </div>
       )}
 
-      {/* The app saying what it knows before it becomes a support text —
-          money-shaped loose ends with the click that fixes each. Gated to
-          money-visible roles: every bucket is prices and invoices. */}
-      {/* Suspense: the card runs four scans of its own; the dashboard
-          paints without waiting and the card streams in when ready. */}
+      {/* Every question the jobs are asking right now, with its answers as
+          buttons: a no-show to close out, someone who hasn't clocked in, a
+          shift past its hours, a finished job with no price, tomorrow's
+          problems. Silent when there's nothing. */}
+      {/* Suspense: it runs its own scans; the dashboard paints without
+          waiting and the list streams in when ready. */}
       {canMoney && (
         <div className="order-2 lg:order-none">
           <Suspense fallback={null}>
-            <NeedsAttention tz={tz} />
+            <NeedsYou organizationId={membership.organization_id} />
           </Suspense>
         </div>
       )}

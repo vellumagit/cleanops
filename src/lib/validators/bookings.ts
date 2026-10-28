@@ -136,6 +136,19 @@ export const BookingSchema = z.object({
     .string()
     .optional()
     .transform((s) => s === "on" || s === "true" || s === "1"),
+}).superRefine((b, ctx) => {
+  // A confirmed job is a promise to do work and bill for it. Six finished
+  // jobs with no price and no invoice (Oct 2026) all got there the same
+  // way: confirmed unpriced, done, and nothing said so until after. Pending
+  // can stay unpriced — it's still a plan — but confirming means deciding
+  // what it costs, or saying it's free.
+  if (b.status !== "pending" && b.status !== "cancelled" && !b.is_free && b.total_cents === 0) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["total_cents"],
+      message: "Set a price, or tick Free if this job is on the house.",
+    });
+  }
 });
 
 export type BookingInput = z.infer<typeof BookingSchema>;

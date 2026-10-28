@@ -24,6 +24,7 @@ import {
   chaseUnconfirmedShifts,
 } from "@/lib/automations";
 import { requireCronAuth } from "@/lib/cron-auth";
+import { sendNeedsYouAlerts } from "@/lib/needs-you-alerts";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -74,7 +75,16 @@ export async function GET(request: Request) {
         error: confirmErr instanceof Error ? confirmErr.message : "Unknown error",
       };
     }
-    return Response.json({ ...result, watch, confirm });
+    // Fourth leg: the "Needs you" list, pushed to managers the first time an
+    // item appears, and the 6 PM night-before check.
+    let needsYou: Awaited<ReturnType<typeof sendNeedsYouAlerts>> | { error: string };
+    try {
+      needsYou = await sendNeedsYouAlerts();
+    } catch (nyErr) {
+      console.error("[cron/shift-reminders] needs-you error:", nyErr);
+      needsYou = { error: nyErr instanceof Error ? nyErr.message : "Unknown error" };
+    }
+    return Response.json({ ...result, watch, confirm, needsYou });
   } catch (err) {
     console.error("[cron/shift-reminders] error:", err);
     return Response.json(
