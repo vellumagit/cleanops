@@ -11,7 +11,7 @@ import { logAuditEvent } from "@/lib/audit";
 import { futureStatusError } from "@/lib/booking-status";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { formatDateTime } from "@/lib/format";
-import { syncJob } from "@/lib/job-sync";
+import { loadJobState, syncJob } from "@/lib/job-sync";
 import { punchTime, TAPPED_AT_FIELD } from "@/lib/punch-time";
 
 /**
@@ -495,15 +495,22 @@ export async function completeJobAction(
     };
 
     const { crewStillWorking } = await import("./crew-completion");
+    // The window is the rules' window (start + the crew's shared hours, or
+    // a later own segment), not start + the one-person hours entered: on a
+    // divided 18-hour job with four rostered, that's 1:30 PM, not 3 AM.
+    // Measured the old way, the last finisher at 1:35 kept the job open on
+    // a no-show for another thirteen hours.
+    const view = await loadJobState(bookingId);
+    const windowEndMs =
+      view?.windowEndMs ??
+      new Date(booking.scheduled_at).getTime() +
+        (booking.duration_minutes ?? 0) * 60_000;
     if (
       crewStillWorking({
         assignees: rows,
         workedIds: (workedRows ?? []).map((r) => r.employee_id),
         callerId: membership.id,
-        jobWindowOver:
-          Date.now() >=
-          new Date(booking.scheduled_at).getTime() +
-            (booking.duration_minutes ?? 0) * 60_000,
+        jobWindowOver: Date.now() >= windowEndMs,
       })
     ) {
       // The caller's part is done; the booking stays open for the rest.
