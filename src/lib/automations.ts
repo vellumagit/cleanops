@@ -6044,8 +6044,8 @@ export async function runJobWatch(): Promise<{
 }> {
   const db = admin();
   const { notify } = await import("@/lib/notify");
-  const { classifyJob, orgUsesClockIn } = await import("@/lib/job-watch");
-  const { teamMinutes } = await import("@/lib/job-state");
+  const { classifyJob, lateStarters, orgUsesClockIn } = await import("@/lib/job-watch");
+  const { jobWindowEndMs } = await import("@/lib/job-state");
   const { resolveBookingCoverage } = await import("@/lib/booking-coverage");
   const { getOrgTimezone } = await import("@/lib/org-timezone");
   const { formatDateTime } = await import("@/lib/format");
@@ -6148,23 +6148,48 @@ export async function runJobWatch(): Promise<{
       }
 
       const toFlag: typeof jobs = [];
+      // Late starts, each person measured from her own segment. Decided for
+      // the whole org first so the "already told her" lookup is one query.
+      type LateNudge = {
+        booking: (typeof jobs)[number];
+        membershipId: string;
+        dueAtMs: number;
+        key: string;
+        /** True when this nudge covers the last person on the job. */
+        last: boolean;
+      };
+      const lateNudges: LateNudge[] = [];
 
       for (const b of jobs) {
-        // "The whole window passed in silence" is measured against the
-        // crew's shared length, not the one-person hours entered: an
-        // 18-hour house with four rostered is a 4.5-hour window.
-        const crewCount = coverage.get(b.id)?.employeeIds?.length ?? 0;
+        // The window is the one the rules use (jobWindowEndMs): the crew's
+        // shared length — an 18-hour house with four rostered is a 4.5-hour
+        // window — or the end of the latest segment when people work their
+        // own. A split 4h + 4h shift is an 8-hour window, and measuring it
+        // as 4 asked the office about silence while the second cleaner's
+        // part had barely begun.
+        const cov = coverage.get(b.id);
+        const crewIds = cov?.employeeIds ?? [];
+        const segmentBy = new Map(
+          (cov?.segments ?? []).map((seg) => [seg.membership_id, seg] as const),
+        );
+        const crewRows = crewIds.map((membershipId) => ({
+          membership_id: membershipId,
+          split_start_offset_minutes: segmentBy.get(membershipId)?.split_start_offset_minutes ?? null,
+          split_duration_minutes: segmentBy.get(membershipId)?.split_duration_minutes ?? null,
+        }));
+        const scheduledAtMs = new Date(b.scheduled_at).getTime();
         const verdict = classifyJob({
-          scheduledAtMs: new Date(b.scheduled_at).getTime(),
-          durationMinutes: teamMinutes(
+          scheduledAtMs,
+          windowEndMs: jobWindowEndMs(
             {
+              scheduled_at: b.scheduled_at,
               duration_minutes: b.duration_minutes ?? 0,
               divides_hours: b.divide_hours_evenly === true || orgDivides,
             },
-            crewCount,
+            crewRows,
           ),
           status: b.status,
-          staffed: Boolean(coverage.get(b.id)?.staffed),
+          staffed: Boolean(cov?.staffed),
           hasClockIn: clockedBookings.has(b.id),
           nowMs,
           nudgedAtMs: b.no_show_nudge_sent_at
@@ -6178,31 +6203,91 @@ export async function runJobWatch(): Promise<{
         if (verdict.kind === "late_start" && nudgeOn) {
           // Straight to the people who can still fix it. The office is not
           // told yet — someone running fifteen minutes late is not news.
-          const crew = coverage.get(b.id)?.employeeIds ?? [];
-          const targets = new Set(crew);
-          if (b.assigned_to) targets.add(b.assigned_to);
-          if (targets.size === 0) continue;
-
-          const orgTz = await getOrgTimezone(orgId);
-          const when = formatDateTime(b.scheduled_at, orgTz);
-          for (const membershipId of targets) {
-            await notify({
-              organizationId: orgId,
-              audience: "membership",
-              membershipId,
-              type: "job_not_started",
-              title: "You're not clocked in",
-              body: `${b.client?.name ?? "A job"} started at ${when} and nobody has clocked in. Open the job to clock in, or tell the office if you can't make it.`,
-              href: `/field/jobs/${b.id}`,
+          // Each person from her OWN start: on a split shift the afternoon
+          // cleaner is not late at 9:15, and hears nothing until 1:15.
+          const targets = crewRows.map((c) => ({
+            membershipId: c.membership_id,
+            startOffsetMinutes: c.split_start_offset_minutes,
+          }));
+          if (b.assigned_to && !crewIds.includes(b.assigned_to)) {
+            targets.push({ membershipId: b.assigned_to, startOffsetMinutes: null });
+          }
+          if (targets.length === 0) continue;
+          const late = lateStarters({ scheduledAtMs, crew: targets, nowMs });
+          const last = late.length === targets.length;
+          for (const p of late) {
+            lateNudges.push({
+              booking: b,
+              membershipId: p.membershipId,
+              dueAtMs: p.dueAtMs,
+              key: `late_start:${b.id}:${p.membershipId}`,
+              last,
             });
           }
+        } else if (verdict.kind === "no_clock_in" && alertOn) {
+          toFlag.push(b);
+        }
+      }
+
+      if (lateNudges.length > 0) {
+        // Said once per person. The booking's own stamp can't carry that for
+        // a crew whose starts differ, so each nudge is remembered under its
+        // own key, and the stamp is written only once the last person on
+        // the job has had hers — after which classifyJob stops asking.
+        const { data: toldRows, error: toldErr } = (await db
+          .from("needs_you_state" as never)
+          .select("key")
+          .eq("organization_id" as never, orgId as never)
+          .in(
+            "key" as never,
+            lateNudges.map((n) => n.key) as never,
+          )) as unknown as {
+          data: Array<{ key: string }> | null;
+          error: { message: string } | null;
+        };
+        if (toldErr) {
+          throw new Error(`job watch: late-start memory query failed: ${toldErr.message}`);
+        }
+        const told = new Set((toldRows ?? []).map((r) => r.key));
+        const orgTz = await getOrgTimezone(orgId);
+        const stampBookings = new Set<string>();
+        for (const n of lateNudges) {
+          if (n.last) stampBookings.add(n.booking.id);
+          if (told.has(n.key)) continue;
+          // Mark first, then send: a failed mark means try next heartbeat,
+          // never the same push every 30 minutes.
+          const { error: markErr } = (await (db
+            .from("needs_you_state" as never)
+            .upsert(
+              { organization_id: orgId, key: n.key, notified_at: nowIso } as never,
+              { onConflict: "organization_id,key" } as never,
+            ) as unknown as Promise<{ error: { message: string } | null }>));
+          if (markErr) {
+            console.error("[auto] job watch: could not remember late-start nudge", {
+              key: n.key,
+              error: markErr.message,
+            });
+            stampBookings.delete(n.booking.id);
+            continue;
+          }
+          const when = formatDateTime(new Date(n.dueAtMs).toISOString(), orgTz);
+          const ownStart = n.dueAtMs !== new Date(n.booking.scheduled_at).getTime();
+          await notify({
+            organizationId: orgId,
+            audience: "membership",
+            membershipId: n.membershipId,
+            type: "job_not_started",
+            title: "You're not clocked in",
+            body: `${ownStart ? "Your part of " : ""}${n.booking.client?.name ?? "a job"} started at ${when} and you haven't clocked in. Open the job to clock in, or tell the office if you can't make it.`,
+            href: `/field/jobs/${n.booking.id}`,
+          });
+          nudged++;
+        }
+        if (stampBookings.size > 0) {
           await db
             .from("bookings")
             .update({ no_show_nudge_sent_at: nowIso } as never)
-            .eq("id", b.id);
-          nudged++;
-        } else if (verdict.kind === "no_clock_in" && alertOn) {
-          toFlag.push(b);
+            .in("id", [...stampBookings]);
         }
       }
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   classifyJob,
+  lateStarters,
   orgUsesClockIn,
   LATE_START_NUDGE_MINUTES,
   NO_CLOCK_IN_GRACE_MINUTES,
@@ -12,7 +13,7 @@ const MIN = 60_000;
 
 const job = (over: Partial<JobWatchInput> = {}): JobWatchInput => ({
   scheduledAtMs: START,
-  durationMinutes: 120,
+  windowEndMs: START + 120 * MIN,
   status: "confirmed",
   staffed: true,
   hasClockIn: false,
@@ -92,12 +93,52 @@ describe("classifyJob — no clock-in (the money guard)", () => {
     expect(classifyJob(nudgedThenPast).kind).toBe("no_clock_in");
   });
 
-  it("treats a null duration as a zero-length window rather than never flagging", () => {
+  it("treats a zero-length window as gone at once rather than never flagging", () => {
     const noDuration = job({
-      durationMinutes: null,
+      windowEndMs: START,
       nowMs: START + (NO_CLOCK_IN_GRACE_MINUTES + 1) * MIN,
     });
     expect(classifyJob(noDuration).kind).toBe("no_clock_in");
+  });
+
+  it("waits for the last segment on a split shift — 4h + 4h is an 8-hour window", () => {
+    // Two cleaners, 4h each, the second from 4h in. At start + 4h30 the job
+    // measured by its shared length would be over; the second cleaner's
+    // segment has barely begun.
+    const split = job({ windowEndMs: START + 8 * 60 * MIN });
+    expect(classifyJob({ ...split, nowMs: START + 270 * MIN }).kind).toBe("late_start");
+    expect(classifyJob({ ...split, nowMs: START + (480 + NO_CLOCK_IN_GRACE_MINUTES) * MIN }).kind).toBe(
+      "no_clock_in",
+    );
+  });
+});
+
+describe("lateStarters — each person measured from her own start", () => {
+  const crew = [
+    { membershipId: "morning", startOffsetMinutes: null },
+    { membershipId: "afternoon", startOffsetMinutes: 240 },
+  ];
+
+  it("nudges only the one whose start has passed", () => {
+    const at20 = lateStarters({ scheduledAtMs: START, crew, nowMs: START + 20 * MIN });
+    expect(at20.map((p) => p.membershipId)).toEqual(["morning"]);
+    expect(at20[0]).toMatchObject({ dueAtMs: START, minutesLate: 20 });
+  });
+
+  it("picks the second one up once her own start is 15 minutes gone", () => {
+    const early = lateStarters({ scheduledAtMs: START, crew, nowMs: START + 250 * MIN });
+    expect(early.map((p) => p.membershipId)).toEqual(["morning"]);
+    const late = lateStarters({ scheduledAtMs: START, crew, nowMs: START + 255 * MIN });
+    expect(late.map((p) => p.membershipId)).toEqual(["morning", "afternoon"]);
+    expect(late[1]).toMatchObject({ dueAtMs: START + 240 * MIN, minutesLate: 15 });
+  });
+
+  it("names a person once even when she is both primary and crew", () => {
+    const twice = [
+      { membershipId: "morning", startOffsetMinutes: null },
+      { membershipId: "morning", startOffsetMinutes: null },
+    ];
+    expect(lateStarters({ scheduledAtMs: START, crew: twice, nowMs: START + 20 * MIN })).toHaveLength(1);
   });
 });
 

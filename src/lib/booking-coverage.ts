@@ -22,18 +22,33 @@ import { selectInChunks } from "@/lib/supabase/chunked-in";
  * Use this instead of hand-rolling the check.
  */
 
+export type CoverageSegment = {
+  membership_id: string;
+  /** Minutes after the booking's start this person begins; null = at the start. */
+  split_start_offset_minutes: number | null;
+  /** This person's own length; null = the job's. */
+  split_duration_minutes: number | null;
+};
+
 export type BookingCoverage = {
   staffed: boolean;
   /** Membership ids of assigned employees (primary + crew). */
   employeeIds: string[];
   /** freelancer_contacts ids that claimed a bench offer for this booking. */
   freelancerContactIds: string[];
+  /**
+   * One row per employee with her own arrival and length, when the crew
+   * works a split shift. A member in employeeIds with no row here starts
+   * at the booking's start and works its length.
+   */
+  segments: CoverageSegment[];
 };
 
 const EMPTY: BookingCoverage = {
   staffed: false,
   employeeIds: [],
   freelancerContactIds: [],
+  segments: [],
 };
 
 /** Coverage for many bookings at once — one query per source, not per row. */
@@ -44,7 +59,7 @@ export async function resolveBookingCoverage(
   const ids = Array.from(new Set(bookingIds.filter(Boolean)));
   if (ids.length === 0) return out;
   for (const id of ids) {
-    out.set(id, { staffed: false, employeeIds: [], freelancerContactIds: [] });
+    out.set(id, { staffed: false, employeeIds: [], freelancerContactIds: [], segments: [] });
   }
 
   const db = createSupabaseAdminClient();
@@ -65,9 +80,16 @@ export async function resolveBookingCoverage(
     selectInChunks(ids, (chunk) =>
       db
         .from("booking_assignees")
-        .select("booking_id, membership_id")
+        .select(
+          "booking_id, membership_id, split_start_offset_minutes, split_duration_minutes",
+        )
         .in("booking_id", chunk) as unknown as Promise<{
-        data: Array<{ booking_id: string; membership_id: string }> | null;
+        data: Array<{
+          booking_id: string;
+          membership_id: string;
+          split_start_offset_minutes: number | null;
+          split_duration_minutes: number | null;
+        }> | null;
         error: { message: string } | null;
       }>,
     ),
@@ -108,8 +130,16 @@ export async function resolveBookingCoverage(
   }
   for (const a of crew.data ?? []) {
     const c = out.get(a.booking_id);
-    if (c && !c.employeeIds.includes(a.membership_id)) {
+    if (!c) continue;
+    if (!c.employeeIds.includes(a.membership_id)) {
       c.employeeIds.push(a.membership_id);
+    }
+    if (a.split_start_offset_minutes != null || a.split_duration_minutes != null) {
+      c.segments.push({
+        membership_id: a.membership_id,
+        split_start_offset_minutes: a.split_start_offset_minutes,
+        split_duration_minutes: a.split_duration_minutes,
+      });
     }
   }
   for (const claim of offers.data ?? []) {
@@ -150,6 +180,7 @@ export async function resolveBookingCoverage(
     const active = new Set((activeRows ?? []).map((r) => r.id));
     for (const c of out.values()) {
       c.employeeIds = c.employeeIds.filter((mid) => active.has(mid));
+      c.segments = c.segments.filter((s) => active.has(s.membership_id));
     }
   }
 

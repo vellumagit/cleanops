@@ -130,7 +130,16 @@ export function teamMinutes(
   return Math.max(1, Math.round(full / crewCount));
 }
 
-function windowEnd(b: JobStateBooking, crew: JobStateCrewRow[]): number {
+/**
+ * When the job's window ends: start + the crew's shared length, or later if
+ * someone has her own later segment. Exported so the watchers measure the
+ * same window the rules do (job watch asked about silence at start +
+ * duration, which for a split shift is before the last segment has begun).
+ */
+export function jobWindowEndMs(
+  b: Pick<JobStateBooking, "scheduled_at" | "duration_minutes" | "divides_hours">,
+  crew: JobStateCrewRow[],
+): number {
   const start = new Date(b.scheduled_at).getTime();
   // A split shift — people working their own segments one after another —
   // is not a divided job: the segments say who works when, and together
@@ -169,7 +178,7 @@ function hasPrice(b: JobStateBooking): boolean {
 
 export function deriveJobState(input: JobStateInput): JobState {
   const { booking, crew, shifts, now, autoCompleteAfterMinutes } = input;
-  const windowEndMs = windowEnd(booking, crew);
+  const windowEndMs = jobWindowEndMs(booking, crew);
   const windowOver = now >= windowEndMs;
 
   const onSite = new Set<string>();

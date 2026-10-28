@@ -35,7 +35,14 @@ const TERMINAL = new Set(["completed", "cancelled"]);
 
 export type JobWatchInput = {
   scheduledAtMs: number;
-  durationMinutes: number | null;
+  /**
+   * When the whole job's window ends — the crew's shared length, or the end
+   * of the latest segment when people work their own (jobWindowEndMs in
+   * job-state.ts). Measured from here, not start + duration: on a split
+   * shift the second cleaner's segment may not have begun at start +
+   * duration ÷ crew, and asking the office about silence then is wrong.
+   */
+  windowEndMs: number;
   status: string;
   /** Assigned member, crew, or a claimed offer — the shared coverage rule. */
   staffed: boolean;
@@ -62,7 +69,7 @@ export type JobWatchVerdict =
 export function classifyJob(input: JobWatchInput): JobWatchVerdict {
   const {
     scheduledAtMs,
-    durationMinutes,
+    windowEndMs,
     status,
     staffed,
     hasClockIn,
@@ -80,8 +87,7 @@ export function classifyJob(input: JobWatchInput): JobWatchVerdict {
   // there, the clock-OUT guardrail owns the rest of the shift.
   if (hasClockIn) return { kind: "none" };
 
-  const endMs = scheduledAtMs + (durationMinutes ?? 0) * 60_000;
-  const pastEndMs = nowMs - endMs;
+  const pastEndMs = nowMs - windowEndMs;
 
   // Window fully gone: a question for the office, asked once.
   if (pastEndMs >= NO_CLOCK_IN_GRACE_MINUTES * 60_000) {
@@ -100,6 +106,40 @@ export function classifyJob(input: JobWatchInput): JobWatchVerdict {
   }
 
   return { kind: "none" };
+}
+
+export type LateStartCrew = {
+  membershipId: string;
+  /** Minutes after the job's start this person is due; null = at the start. */
+  startOffsetMinutes: number | null;
+};
+
+/**
+ * Who, personally, is late enough to nudge: each crew member measured from
+ * her OWN start. On a split shift the afternoon cleaner is not late at 9:15
+ * because the morning one hasn't clocked in; her start is 1 PM, and she
+ * hears about it at 1:15 — in her own words, with her own time.
+ *
+ * Returns each late person with the start she was due at, so the message
+ * can say it. Someone whose start hasn't come yet is left out; the next
+ * heartbeat picks her up when it has.
+ */
+export function lateStarters(args: {
+  scheduledAtMs: number;
+  crew: LateStartCrew[];
+  nowMs: number;
+}): Array<{ membershipId: string; dueAtMs: number; minutesLate: number }> {
+  const out: Array<{ membershipId: string; dueAtMs: number; minutesLate: number }> = [];
+  const seen = new Set<string>();
+  for (const c of args.crew) {
+    if (seen.has(c.membershipId)) continue;
+    seen.add(c.membershipId);
+    const dueAtMs = args.scheduledAtMs + (c.startOffsetMinutes ?? 0) * 60_000;
+    const lateMs = args.nowMs - dueAtMs;
+    if (lateMs < LATE_START_NUDGE_MINUTES * 60_000) continue;
+    out.push({ membershipId: c.membershipId, dueAtMs, minutesLate: Math.floor(lateMs / 60_000) });
+  }
+  return out;
 }
 
 /**
