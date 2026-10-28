@@ -15,7 +15,7 @@ import {
 import { cn } from "@/lib/utils";
 import { dayLabel } from "@/lib/day-label";
 import type { FieldJob } from "./data";
-import { JobCardComplete } from "./job-card-complete";
+import { JobCardTap } from "./job-card-complete";
 import { JobCardElapsed } from "./job-card-elapsed";
 
 export function JobCard({ job, tz }: { job: FieldJob; tz: string }) {
@@ -29,6 +29,16 @@ export function JobCard({ job, tz }: { job: FieldJob; tz: string }) {
   // client three weeks apart looked identical at arm's length (Anna,
   // 2026-09-05) — the date was the small grey line under the name.
   const when = dayLabel(job.effective_scheduled_at, tz);
+  // "I'm here" right on the card, for a job that's today's and hers to
+  // start: not yet accepted jobs ask for the yes first, and anything not
+  // today has its own date to say. In progress without her counts too —
+  // that's the second cleaner arriving.
+  const canArrive =
+    when.isToday &&
+    !job.needs_acceptance &&
+    job.status !== "completed" &&
+    !job.clocked_in_since &&
+    (!inProgress || crewStartedWithoutYou);
 
   return (
     /*
@@ -103,7 +113,7 @@ export function JobCard({ job, tz }: { job: FieldJob; tz: string }) {
           <div className="mt-1.5">
             <span className="inline-flex items-center gap-1.5 rounded-md bg-emerald-500/15 px-2 py-0.5 text-xs font-semibold text-emerald-800 dark:text-emerald-300">
               <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
-              Crew has started · open to clock in
+              Crew has started · tap I&rsquo;m here when you arrive
             </span>
           </div>
         ) : inProgress && !job.clocked_in_since ? (
@@ -164,8 +174,10 @@ export function JobCard({ job, tz }: { job: FieldJob; tz: string }) {
         ) : null}
       </div>
 
-      {inProgress && !crewStartedWithoutYou ? (
-        <JobCardComplete bookingId={job.id} />
+      {job.clocked_in_since ? (
+        <JobCardTap bookingId={job.id} kind="done" />
+      ) : canArrive ? (
+        <JobCardTap bookingId={job.id} kind="here" />
       ) : (
         <ChevronRight className="pointer-events-none h-5 w-5 shrink-0 text-muted-foreground" />
       )}

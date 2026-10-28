@@ -27,6 +27,8 @@ import {
 } from "@/app/app/scheduling/split-shift-timeline";
 import { toneForEmployee } from "@/app/app/scheduling/color";
 import { JobActionButtons } from "./job-actions";
+import { loadJobState } from "@/lib/job-sync";
+import { jobFactsForMember } from "@/lib/job-facts";
 import { futureStatusError } from "@/lib/booking-status";
 import { dayLabel } from "@/lib/day-label";
 import { JobPhotos } from "./job-photos";
@@ -80,6 +82,10 @@ export default async function FieldJobDetailPage({
     .select("id", { count: "exact", head: true })
     .eq("employee_id", membership.id)
     .eq("booking_id", id);
+
+  // What's true about this job right now, from everyone's shifts: who's
+  // here, who's finished, who hasn't arrived. Computed, not stored.
+  const jobStatePromise = loadJobState(id);
 
   const { data: bookingRow, error } = await supabase
     .from("bookings")
@@ -678,7 +684,7 @@ export default async function FieldJobDetailPage({
             status={booking.status}
             youCompleted={crewRow?.completed_at != null}
             myOpenEntryHere={Boolean(myOpenEntryHere)}
-            clockInBeforeComplete={crew.length >= 2 && !myEntriesHere}
+            facts={jobFactsForMember(await jobStatePromise, membership.id, tz)}
             notDueYet={
               futureStatusError(booking.scheduled_at, "in_progress") !== null
             }

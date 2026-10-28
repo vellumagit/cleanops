@@ -82,6 +82,8 @@ async function getCoords(): Promise<Coords> {
 
 function buildFormData(coords: Coords, category?: string, note?: string) {
   const fd = new FormData();
+  // The phone's time, so a slow request still records when she tapped.
+  fd.set("tapped_at", new Date().toISOString());
   if (coords.lat != null) fd.set("lat", String(coords.lat));
   if (coords.lng != null) fd.set("lng", String(coords.lng));
   if (category) fd.set("work_category", category);
@@ -178,7 +180,7 @@ export function ClockCard({
       fd.set("booking_id", job.id);
       const result = await startJobAction(fd);
       if (result.ok) {
-        toast.success(`Clocked in — ${job.clientName}`);
+        toast.success(`You're here — ${job.clientName}`);
         router.refresh();
       } else {
         toast.error(result.error);
@@ -255,7 +257,7 @@ export function ClockCard({
           {todaysJobs.length > 0 && (
             <div>
               <div className="mb-2 text-xs font-medium text-muted-foreground">
-                Clock in for one of today&apos;s jobs
+                I&apos;m here at…
               </div>
               <div className="flex flex-col gap-2">
                 {todaysJobs.map((job) => (

@@ -5,6 +5,7 @@ import { getActionContext } from "@/lib/actions";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { syncJob } from "@/lib/job-sync";
 import { encryptField } from "@/lib/field-encryption";
+import { punchTime, TAPPED_AT_FIELD } from "@/lib/punch-time";
 
 export type ClockResult = { ok: true } | { ok: false; error: string };
 
@@ -92,7 +93,7 @@ export async function clockInAction(
     organization_id: membership.organization_id,
     employee_id: membership.id,
     booking_id: null,
-    clock_in_at: new Date().toISOString(),
+    clock_in_at: punchTime(formData.get(TAPPED_AT_FIELD)?.toString()),
     clock_in_lat: lat,
     clock_in_lng: lng,
     pay_rate_cents_snapshot: rateRow?.pay_rate_cents ?? null,
@@ -140,7 +141,7 @@ export async function clockOutAction(
   const { error: updateError } = await supabase
     .from("time_entries")
     .update({
-      clock_out_at: new Date().toISOString(),
+      clock_out_at: punchTime(formData.get(TAPPED_AT_FIELD)?.toString()),
       clock_out_lat: lat,
       clock_out_lng: lng,
     })

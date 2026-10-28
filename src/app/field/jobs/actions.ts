@@ -12,6 +12,7 @@ import { futureStatusError } from "@/lib/booking-status";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { formatDateTime } from "@/lib/format";
 import { syncJob } from "@/lib/job-sync";
+import { punchTime, TAPPED_AT_FIELD } from "@/lib/punch-time";
 
 /**
  * "Not due yet" with the date on it. Anna (2026-09-05) had two Amanda
@@ -86,6 +87,9 @@ export async function startJobAction(
   if (!bookingId) return { ok: false, error: "Missing booking id" };
   const lat = parseCoord(formData.get("lat"));
   const lng = parseCoord(formData.get("lng"));
+  // When she tapped, by her phone — a tap sent late from a dead zone still
+  // records the right time. See lib/punch-time.ts for the bounds.
+  const punchedAt = punchTime(formData.get(TAPPED_AT_FIELD)?.toString());
 
   const { membership, supabase } = await getActionContext();
   const refuse = refusalLogger(membership, bookingId, "clock_in");
@@ -255,7 +259,7 @@ export async function startJobAction(
           organization_id: membership.organization_id,
           employee_id: membership.id,
           booking_id: bookingId,
-          clock_in_at: new Date().toISOString(),
+          clock_in_at: punchedAt,
           clock_in_lat: lat,
           clock_in_lng: lng,
           pay_rate_cents_snapshot: payRateSnapshot,
@@ -275,7 +279,7 @@ export async function startJobAction(
       organization_id: membership.organization_id,
       employee_id: membership.id,
       booking_id: bookingId,
-      clock_in_at: new Date().toISOString(),
+      clock_in_at: punchedAt,
       clock_in_lat: lat,
       clock_in_lng: lng,
       pay_rate_cents_snapshot: payRateSnapshot,
@@ -337,6 +341,7 @@ export async function completeJobAction(
   if (!bookingId) return { ok: false, error: "Missing booking id" };
   const lat = parseCoord(formData.get("lat"));
   const lng = parseCoord(formData.get("lng"));
+  const punchedAt = punchTime(formData.get(TAPPED_AT_FIELD)?.toString());
 
   const { membership, supabase } = await getActionContext();
   const refuse = refusalLogger(membership, bookingId, "complete");
@@ -405,7 +410,8 @@ export async function completeJobAction(
     }
   }
 
-  const now = new Date().toISOString();
+  // Her clock stops when she tapped, not when the request landed.
+  const now = punchedAt;
 
   // Mark THIS cleaner's own segment complete, and close their open time entry.
   // (completed_at is cast around — it isn't in the generated types yet.)

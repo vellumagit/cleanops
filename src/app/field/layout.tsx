@@ -7,6 +7,7 @@ import { isFeedVisible } from "@/lib/feed-visibility";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { buildTzProbe } from "@/lib/tz-probe";
 import { StaleTimezoneBanner } from "@/components/stale-timezone-banner";
+import { TapQueueFlusher } from "./tap-queue-flusher";
 
 export default async function FieldLayout({
   children,
@@ -71,6 +72,8 @@ export default async function FieldLayout({
         {/* Cleaners read job times on their own phones — the likeliest place
             for out-of-date time zone rules. See lib/tz-probe.ts. */}
         <StaleTimezoneBanner probe={buildTzProbe(orgTz)} />
+        {/* Sends "I'm here" / "I'm done" taps that failed for lack of signal. */}
+        <TapQueueFlusher />
         <PushPrompt
           membershipId={membership.id}
           organizationId={membership.organization_id}

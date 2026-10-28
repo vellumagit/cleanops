@@ -1,98 +1,72 @@
 "use client";
 
-import { useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Play, CheckCircle2 } from "lucide-react";
+import { MapPin, CheckCircle2, Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { startJobAction, completeJobAction } from "../actions";
+import { tap, type TapKind } from "../../tap";
 
-type Coords = { lat: number | null; lng: number | null };
-
-async function getCoords(): Promise<Coords> {
-  if (typeof window === "undefined" || !("geolocation" in navigator)) {
-    return { lat: null, lng: null };
-  }
-  return new Promise((resolve) => {
-    navigator.geolocation.getCurrentPosition(
-      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-      () => resolve({ lat: null, lng: null }),
-      { enableHighAccuracy: true, timeout: 5000, maximumAge: 30_000 },
-    );
-  });
-}
-
-function buildFormData(bookingId: string, coords: Coords) {
-  const fd = new FormData();
-  fd.set("booking_id", bookingId);
-  if (coords.lat != null) fd.set("lat", String(coords.lat));
-  if (coords.lng != null) fd.set("lng", String(coords.lng));
-  return fd;
-}
-
+/**
+ * The only two things a cleaner says about a job: I'm here, I'm done. Both
+ * are about her own shift. What they mean for the job — whether it's over,
+ * who's still coming — is decided from everyone's shifts together, on the
+ * server, and shown in the facts line above the button.
+ */
 export function JobActionButtons({
   bookingId,
   status,
   youCompleted = false,
   myOpenEntryHere = false,
-  clockInBeforeComplete = false,
   notDueYet = false,
   scheduledLabel,
+  facts,
 }: {
-  /** A team job this cleaner hasn't clocked in on yet. Complete would be
-   *  refused, and a mis-tap on it beside Clock in is exactly how someone
-   *  arriving at a job already under way gets it wrong — so offer only
-   *  Clock in until she has. */
-  clockInBeforeComplete?: boolean;
   bookingId: string;
   status: string;
-  /** The job is more than the early-start grace away. Start would be refused
-   *  by the server, so don't offer it — show when it unlocks instead. This is
-   *  how a cleaner on the wrong card finds out it's the wrong card. */
+  /** More than the early-start grace away: "I'm here" would be refused, so
+   *  say when it unlocks instead. How a cleaner on the wrong card finds out. */
   notDueYet?: boolean;
   /** "Sep 26, 2026 · 3:00 PM" in the org's zone, for that message. */
   scheduledLabel?: string;
-  /** This cleaner finished their own segment of a split shift, but the booking
-   *  isn't fully complete yet (later segments are still outstanding). */
+  /** She tapped "I'm done" but the job isn't over for everyone yet. */
   youCompleted?: boolean;
-  /** THIS cleaner has an open time entry on THIS job. The start button keys
-   *  off this, not the booking's status — "in progress" only means SOMEONE
-   *  started it. Gating on status alone hid Start from the whole crew the
-   *  moment the lead clocked in, leaving the second cleaner with nothing but
-   *  a Complete button for a job she hadn't started. */
+  /** She has an open shift on THIS job right now. */
   myOpenEntryHere?: boolean;
+  /** "You arrived 8:59 · 3 of 4 here · Ivanna hasn't arrived" */
+  facts?: string | null;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+  const [armed, setArmed] = useState(false);
 
-  const isStarted = status === "in_progress";
+  // "I'm done" takes two taps: it stops her pay clock and can finish the
+  // job. The confirm resets itself so a stray first tap doesn't sit armed.
+  useEffect(() => {
+    if (!armed) return;
+    const t = setTimeout(() => setArmed(false), 5000);
+    return () => clearTimeout(t);
+  }, [armed]);
+
+  function run(kind: TapKind) {
+    startTransition(async () => {
+      const outcome = await tap(kind, bookingId);
+      setArmed(false);
+      if (outcome.status === "sent") {
+        toast.success(kind === "here" ? "You're here — clock started" : "Done — clock stopped");
+        router.refresh();
+      } else if (outcome.status === "queued") {
+        toast.warning(
+          "No signal. Saved on your phone with the time you tapped — it'll send when you're back in range.",
+        );
+        router.refresh();
+      } else {
+        toast.error(outcome.error);
+      }
+    });
+  }
+
   const isDone = status === "completed";
-
-  function handleStart() {
-    startTransition(async () => {
-      const coords = await getCoords();
-      const result = await startJobAction(buildFormData(bookingId, coords));
-      if (result.ok) {
-        toast.success("Job started — clocked in");
-        router.refresh();
-      } else {
-        toast.error(result.error);
-      }
-    });
-  }
-
-  function handleComplete() {
-    startTransition(async () => {
-      const coords = await getCoords();
-      const result = await completeJobAction(buildFormData(bookingId, coords));
-      if (result.ok) {
-        toast.success("Job complete — clocked out");
-        router.refresh();
-      } else {
-        toast.error(result.error);
-      }
-    });
-  }
 
   if (isDone) {
     return (
@@ -103,16 +77,14 @@ export function JobActionButtons({
     );
   }
 
-  // This cleaner finished their part, but the job stays open for the rest of
-  // the crew — don't offer Complete again (it's already recorded). Do offer a
-  // way back: a Finish tapped too early used to leave no route to the clock.
   if (youCompleted) {
     return (
       <div className="flex flex-col gap-3">
+        {facts && <Facts text={facts} />}
         <div className="flex items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-center text-base font-semibold text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-300">
           <CheckCircle2 className="h-5 w-5 shrink-0" />
-          Your part is done — the job stays open until the rest of the crew
-          finishes.
+          You&rsquo;re done here. The job stays open until the rest of the
+          crew is.
         </div>
         {!myOpenEntryHere ? (
           <Button
@@ -120,26 +92,27 @@ export function JobActionButtons({
             variant="outline"
             size="lg"
             className="h-12 text-base"
-            onClick={handleStart}
+            onClick={() => run("here")}
             disabled={isPending}
           >
-            <Play className="mr-2 h-5 w-5" />
-            {isPending ? "Clocking in…" : "Not done? Clock back in"}
+            <Undo2 className="mr-2 h-5 w-5" />
+            {isPending ? "One moment…" : "Not done? I'm back"}
           </Button>
         ) : null}
       </div>
     );
   }
 
-  if (notDueYet && !isStarted && !isDone) {
+  if (notDueYet && status !== "in_progress") {
     return (
       <div className="rounded-lg border border-dashed border-border bg-muted/40 px-4 py-3 text-sm">
         <p className="font-medium">
           This job is on {scheduledLabel ?? "a later date"}.
         </p>
         <p className="mt-1 text-muted-foreground">
-          Start job appears here four hours before it begins. If you&rsquo;re
-          working today, go back to My jobs and open the card dated today.
+          &ldquo;I&rsquo;m here&rdquo; appears four hours before it begins.
+          If you&rsquo;re working today, go back to Today and open the card
+          dated today.
         </p>
       </div>
     );
@@ -147,35 +120,42 @@ export function JobActionButtons({
 
   return (
     <div className="flex flex-col gap-3">
-      {!isDone && !youCompleted && !myOpenEntryHere ? (
+      {facts && <Facts text={facts} />}
+      {!myOpenEntryHere ? (
         <Button
           type="button"
           size="lg"
-          className="h-14 text-base font-semibold"
-          onClick={handleStart}
+          className="h-16 text-lg font-semibold"
+          onClick={() => run("here")}
           disabled={isPending}
         >
-          <Play className="mr-2 h-5 w-5" />
-          {isPending
-            ? "Starting…"
-            : isStarted
-              ? "Clock in — job in progress"
-              : "Start job"}
+          <MapPin className="mr-2 h-6 w-6" />
+          {isPending ? "One moment…" : "I'm here"}
         </Button>
-      ) : null}
-      {isStarted && !clockInBeforeComplete ? (
+      ) : (
         <Button
           type="button"
           size="lg"
-          className="h-14 text-base font-semibold"
-          variant="default"
-          onClick={handleComplete}
+          className={
+            armed
+              ? "h-16 bg-emerald-600 text-lg font-semibold text-white hover:bg-emerald-600"
+              : "h-16 text-lg font-semibold"
+          }
+          onClick={() => (armed ? run("done") : setArmed(true))}
           disabled={isPending}
         >
-          <CheckCircle2 className="mr-2 h-5 w-5" />
-          {isPending ? "Completing…" : "Complete job"}
+          <CheckCircle2 className="mr-2 h-6 w-6" />
+          {isPending ? "One moment…" : armed ? "Tap again — I'm done" : "I'm done"}
         </Button>
-      ) : null}
+      )}
     </div>
+  );
+}
+
+function Facts({ text }: { text: string }) {
+  return (
+    <p className="text-center text-sm font-medium text-muted-foreground">
+      {text}
+    </p>
   );
 }
