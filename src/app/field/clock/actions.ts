@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { getActionContext } from "@/lib/actions";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { syncJob } from "@/lib/job-sync";
 import { encryptField } from "@/lib/field-encryption";
 
 export type ClockResult = { ok: true } | { ok: false; error: string };
@@ -127,7 +128,7 @@ export async function clockOutAction(
 
   const { data: open, error: fetchError } = await supabase
     .from("time_entries")
-    .select("id")
+    .select("id, booking_id")
     .eq("employee_id", membership.id)
     .is("clock_out_at", null)
     .order("clock_in_at", { ascending: false })
@@ -151,6 +152,9 @@ export async function clockOutAction(
   // to let you clock out. See src/lib/clock-nag.ts.
   const { clearClockOutNag } = await import("@/lib/clock-nag");
   await clearClockOutNag({ membershipId: membership.id, entryId: open.id });
+
+  // Clocking out may be what finishes the job.
+  if (open.booking_id) await syncJob(open.booking_id, "clock_out");
 
   revalidatePath("/field/clock");
   revalidatePath("/field/jobs");

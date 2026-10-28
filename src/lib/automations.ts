@@ -7263,6 +7263,10 @@ export async function autoCompletePastBookings(): Promise<{
             err,
           );
         }
+        // The computed state measures from the END of the window, this
+        // sweep from the start; the shadow rows show where they differ.
+        const { syncJob } = await import("@/lib/job-sync");
+        await syncJob(b.id, "nightly_sweep");
       }
     }
   }

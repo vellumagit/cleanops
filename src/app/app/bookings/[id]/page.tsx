@@ -33,6 +33,8 @@ import { GenerateInvoiceButton } from "./generate-invoice-button";
 import { PrepaymentCard, type PrepaymentRow } from "./prepayment-card";
 import { zonedYmd } from "@/lib/wall-clock";
 import { MakeRecurringButton } from "./make-recurring-button";
+import { JobTimeline } from "./job-timeline";
+import { loadJobState, loadJobTimeline } from "@/lib/job-sync";
 import { describeRecurrence } from "@/lib/recurrence";
 import { JobPhotos } from "@/app/field/jobs/[id]/job-photos";
 import {
@@ -321,6 +323,13 @@ export default async function BookingDetailPage({
   // Photos are read-visible to any org member (RLS enforces that). Upload
   // + delete UI only shows for owner/admin/manager on the admin side.
   const photos = await fetchJobPhotos(booking.id);
+  // The computed state (one line) and how it got there. Both come from the
+  // shifts and the roster, not from the status column — while that column
+  // is still written by hand, this is what will replace it.
+  const [jobState, timeline] = await Promise.all([
+    loadJobState(booking.id),
+    loadJobTimeline(booking.id, membership.organization_id),
+  ]);
   const canManagePhotos = ["owner", "admin", "manager"].includes(
     membership.role,
   );
@@ -577,6 +586,17 @@ export default async function BookingDetailPage({
                 {formatBookingStatus(bookingStatus)}
               </StatusBadge>
             </div>
+            {jobState && (
+              <p
+                className={`mt-2 text-sm font-medium ${
+                  jobState.state.needs.length > 0
+                    ? "text-amber-700 dark:text-amber-400"
+                    : "text-muted-foreground"
+                }`}
+              >
+                {jobState.summary}
+              </p>
+            )}
 
             <dl className="mt-5 grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
               {seriesLabel && (
@@ -696,6 +716,7 @@ export default async function BookingDetailPage({
                 </ul>
               </div>
             )}
+            <JobTimeline events={timeline} tz={tz} />
 
 
             {clientSaid.length > 0 && (

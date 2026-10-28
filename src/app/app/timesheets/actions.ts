@@ -5,6 +5,7 @@ import { after } from "next/server";
 import { getActionContext } from "@/lib/actions";
 import { notifyManagersOfUnavailability } from "@/lib/unavailability-notice";
 import { logAuditEvent } from "@/lib/audit";
+import { syncJob } from "@/lib/job-sync";
 import { notifyPtoStatus } from "@/lib/automations";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { localInputToUtcIso } from "@/lib/validators/common";
@@ -1114,6 +1115,7 @@ export async function createManualTimeEntryAction(
     },
   });
 
+  if (parsed.booking_id) await syncJob(parsed.booking_id, "hours_added");
   revalidatePath("/app/timesheets", "page");
   revalidatePath("/app/payroll", "page");
   return { ok: true };
@@ -1334,6 +1336,9 @@ export async function updateTimeEntryAction(
     },
   });
 
+  for (const bid of new Set([before.booking_id, parsed.booking_id])) {
+    if (bid) await syncJob(bid, "hours_edited");
+  }
   revalidatePath("/app/timesheets", "page");
   revalidatePath("/app/payroll", "page");
   return { ok: true };
@@ -1620,6 +1625,7 @@ export async function attachEntryToBookingAction(
     after: { booking_id: bookingId, work_category: null },
   });
 
+  await syncJob(bookingId, "hours_attached");
   revalidatePath("/app/timesheets", "page");
   return { ok: true };
 }
@@ -1697,6 +1703,9 @@ export async function bulkDeleteTimeEntriesAction(
     });
   }
 
+  for (const bid of new Set((before ?? []).map((r) => r.booking_id))) {
+    if (bid) await syncJob(bid, "hours_deleted");
+  }
   revalidatePath("/app/timesheets", "page");
   revalidatePath("/app/payroll", "page");
   return { ok: true, deleted: before?.length ?? 0 };
@@ -1731,7 +1740,7 @@ export async function closeOpenShiftAction(
 
   const { data: before } = (await supabase
     .from("time_entries")
-    .select("clock_in_at, clock_out_at, employee_id, engagement_snapshot")
+    .select("clock_in_at, clock_out_at, employee_id, engagement_snapshot, booking_id")
     .eq("id", id)
     .eq("organization_id", membership.organization_id)
     .maybeSingle()) as unknown as {
@@ -1740,6 +1749,7 @@ export async function closeOpenShiftAction(
       clock_out_at: string | null;
       employee_id: string;
       engagement_snapshot: string | null;
+      booking_id: string | null;
     } | null;
   };
   if (!before) return { ok: false, error: "Entry not found." };
@@ -1833,6 +1843,7 @@ export async function closeOpenShiftAction(
     after: { clock_out_at: endUtc },
   });
 
+  if (before.booking_id) await syncJob(before.booking_id, "shift_closed_by_manager");
   revalidatePath("/app/timesheets", "page");
   revalidatePath("/app/payroll", "page");
   return { ok: true };
@@ -1900,6 +1911,7 @@ export async function deleteTimeEntryAction(
     before: before ?? null,
   });
 
+  if (before.booking_id) await syncJob(before.booking_id, "hours_deleted");
   revalidatePath("/app/timesheets", "page");
   revalidatePath("/app/payroll", "page");
   return { ok: true };

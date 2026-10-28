@@ -14,6 +14,7 @@ import { lifecycleByAssignee, withPriorLifecycle } from "@/lib/crew-sync";
 import { resolveSegmentWindows } from "@/lib/booking-segments";
 import { crewFromForm } from "@/lib/series-crew";
 import { after } from "next/server";
+import { syncJob } from "@/lib/job-sync";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
 import { can } from "@/lib/auth";
 import type { Database, Json } from "@/lib/supabase/types";
@@ -1498,6 +1499,14 @@ export async function updateBookingAction(
       service_type_id: updateServiceExtras.service_type_id,
       service_type_label: updateServiceExtras.service_type_label,
       status: parsed.data.status,
+      // The human close, kept in step with the status picked on the form:
+      // newly completed closes it now, leaving completed reopens it, and
+      // an already-closed job keeps its original close.
+      ...(parsed.data.status === "completed"
+        ? existing?.status === "completed"
+          ? {}
+          : { closed_at: new Date().toISOString(), closed_by: membership.id }
+        : { closed_at: null, closed_by: null }),
       total_cents: parsed.data.is_free ? 0 : parsed.data.total_cents,
       address: parsed.data.address ?? null,
       property_id: propertyId,
@@ -1509,6 +1518,20 @@ export async function updateBookingAction(
     .eq("id", id);
 
   if (error) return { errors: { _form: error.message }, values: raw };
+
+  // The other two status writers log this; the edit form never did, so a
+  // job closed from the form had no "closed by" on its timeline (Lori
+  // Moeller, 2026-10-27 5:25 PM: completed, by nobody the record could name).
+  if (existing?.status && parsed.data.status !== existing.status) {
+    await logAuditEvent({
+      membership,
+      action: "status_change",
+      entity: "booking",
+      entity_id: id,
+      before: { status: existing.status },
+      after: { status: parsed.data.status, via: "edit_form" },
+    });
+  }
 
   // Replace the booking_assignees rows to match the form's new primary +
   // additional selection. For split shifts, pass the segments array so
@@ -2163,6 +2186,7 @@ export async function updateBookingAction(
   if (existing?.status !== "completed" && parsed.data.status === "completed") {
     await autoInvoiceOnJobComplete(id);
   }
+  await syncJob(id, "edit_form");
 
   // Sync to Google Calendar
   const labels = await getBookingLabels(
@@ -2729,9 +2753,16 @@ export async function markBookingCompleteAction(id: string) {
     redirect(`/app/bookings/${id}`, RedirectType.replace);
   }
 
+  // closed_at is the human decision "this job is over" — what the computed
+  // state (src/lib/job-state.ts) can't reach on its own when someone
+  // rostered never clocked in.
   const { error } = await supabase
     .from("bookings")
-    .update({ status: "completed" })
+    .update({
+      status: "completed",
+      closed_at: new Date().toISOString(),
+      closed_by: membership.id,
+    } as never)
     .eq("id", id)
     .eq("organization_id", membership.organization_id);
 
@@ -2749,6 +2780,7 @@ export async function markBookingCompleteAction(id: string) {
   });
 
   await autoInvoiceOnJobComplete(id);
+  await syncJob(id, "manager_close");
 
   revalidatePath("/app/bookings");
   revalidatePath(`/app/bookings/${id}`);
@@ -2853,7 +2885,10 @@ export async function setBookingStatusAction(
     .from("bookings")
     .update({
       status: target as WritableBookingStatus,
-    })
+      // Completed by hand is a close; anything else reopens it.
+      closed_at: target === "completed" ? new Date().toISOString() : null,
+      closed_by: target === "completed" ? membership.id : null,
+    } as never)
     .eq("id", id)
     .eq("organization_id", membership.organization_id);
   if (error) return { ok: false, error: error.message };
@@ -2872,7 +2907,9 @@ export async function setBookingStatusAction(
 
   if (target === "completed") {
     await autoInvoiceOnJobComplete(id);
-  } else if (target === "cancelled") {
+  }
+  await syncJob(id, "status_set");
+  if (target === "cancelled") {
     // Calendar hygiene — mirror the edit-form cancellation cleanup so a
     // cancelled job doesn't linger on anyone's Google Calendar.
     if (booking.google_calendar_event_id) {

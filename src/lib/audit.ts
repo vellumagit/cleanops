@@ -72,7 +72,11 @@ export type AuditAction =
   // tapped the button".
   //
   // Successes were always logged. Refusals are the ones you go looking for.
-  | "refused";
+  | "refused"
+  // The computed job state (src/lib/job-state.ts) disagreed with the status
+  // on the row. While the computation runs in shadow it writes nothing else;
+  // these rows are how a week of real jobs is checked before it takes over.
+  | "state_check";
 
 type LogArgs = {
   membership: CurrentMembership;

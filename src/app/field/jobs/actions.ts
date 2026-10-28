@@ -11,6 +11,7 @@ import { logAuditEvent } from "@/lib/audit";
 import { futureStatusError } from "@/lib/booking-status";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { formatDateTime } from "@/lib/format";
+import { syncJob } from "@/lib/job-sync";
 
 /**
  * "Not due yet" with the date on it. Anna (2026-09-05) had two Amanda
@@ -317,6 +318,8 @@ export async function startJobAction(
       .not("completed_at", "is", null) as unknown as Promise<unknown>);
   }
 
+  await syncJob(bookingId, "clock_in");
+
   revalidatePath("/field/jobs");
   revalidatePath(`/field/jobs/${bookingId}`);
   revalidatePath("/field/clock");
@@ -496,6 +499,7 @@ export async function completeJobAction(
       })
     ) {
       // The caller's part is done; the booking stays open for the rest.
+      await syncJob(bookingId, "finish");
       revalidatePath("/field/jobs");
       revalidatePath(`/field/jobs/${bookingId}`);
       revalidatePath("/field/clock");
@@ -557,6 +561,7 @@ export async function completeJobAction(
   // revalidates and the owner reloads. The automation catches its own errors
   // internally, so awaiting it won't throw here.
   await autoInvoiceOnJobComplete(bookingId);
+  await syncJob(bookingId, "finish");
 
   revalidatePath("/field/jobs");
   revalidatePath(`/field/jobs/${bookingId}`);
