@@ -1,12 +1,14 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { getActionContext } from "@/lib/actions";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { futureStatusError } from "@/lib/booking-status";
 import { planCrewMove, type CrewMovePlan } from "./drag-crew";
 import { membersOffOn } from "@/lib/unavailability-notice";
 import { scheduleFromWallClock } from "@/lib/scheduled-local";
+import { resyncBookingCalendars } from "@/lib/booking-calendar-sync";
 import { memberDisplayName } from "@/lib/member-display";
 import {
   notifyBookingAssignment,
@@ -408,6 +410,14 @@ export async function rescheduleBookingAction(
   {
     const { syncJob } = await import("@/lib/job-sync");
     await syncJob(id, "rescheduled");
+  }
+
+  // The calendars. This path never told Google Calendar anything: a dragged
+  // job sat at its old time on the org calendar and on every cleaner's phone
+  // until the nightly reconcile, and a same-day move never caught up. After
+  // the response so the drop still feels instant.
+  if (instantChanged || plan.kind === "changed") {
+    after(() => resyncBookingCalendars(id));
   }
 
   revalidatePath("/app/scheduling");

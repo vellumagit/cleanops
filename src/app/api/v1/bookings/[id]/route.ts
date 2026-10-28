@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { authenticateApiKey } from "@/lib/api-key-auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { dispatchWebhookEvent } from "@/lib/webhooks";
@@ -234,6 +234,16 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   {
     const { syncJob } = await import("@/lib/job-sync");
     await syncJob(id, statusChanging ? "api_status" : "api_edit");
+  }
+  // A time, length or crew change through the API reached no calendar until
+  // the nightly reconcile. Same push the edit form makes, after the response.
+  if (
+    updates.scheduled_at !== undefined ||
+    updates.duration_minutes !== undefined ||
+    updates.assigned_to !== undefined
+  ) {
+    const { resyncBookingCalendars } = await import("@/lib/booking-calendar-sync");
+    after(() => resyncBookingCalendars(id));
   }
   if (newStatus === "cancelled" && oldStatus !== "cancelled") {
     dispatchWebhookEvent(auth.organizationId, "booking.cancelled", data).catch(

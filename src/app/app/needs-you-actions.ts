@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { getActionContext } from "@/lib/actions";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { logAuditEvent } from "@/lib/audit";
@@ -8,6 +9,7 @@ import { closeJob } from "@/lib/close-job";
 import { syncJob } from "@/lib/job-sync";
 import { deleteMemberCalendarEvent } from "@/lib/google-calendar";
 import { collectSeriesDrift } from "@/lib/needs-you";
+import { resyncBookingCalendarsPaced } from "@/lib/booking-calendar-sync";
 import { getOrgTimezone } from "@/lib/org-timezone";
 
 type Result = { ok: true } | { ok: false; error: string };
@@ -191,6 +193,7 @@ export async function restoreSeriesTimesAction(seriesId: string): Promise<Result
 
   const admin = createSupabaseAdminClient();
   let moved = 0;
+  const movedIds: string[] = [];
   for (const v of drift.visits) {
     const { data: upd, error } = (await admin
       .from("bookings")
@@ -202,6 +205,7 @@ export async function restoreSeriesTimesAction(seriesId: string): Promise<Result
     if (error) return { ok: false, error: error.message };
     if (!upd || upd.length === 0) continue;
     moved++;
+    movedIds.push(v.id);
     await logAuditEvent({
       membership,
       action: "update",
@@ -213,6 +217,10 @@ export async function restoreSeriesTimesAction(seriesId: string): Promise<Result
     await syncJob(v.id, "rescheduled");
   }
   if (moved === 0) return { ok: false, error: "Those visits changed under you — look again." };
+  // Org and member calendars, paced, after the response: the visits beyond
+  // the reconcile's 45-day window would otherwise show the old hour until
+  // they came within it.
+  after(() => resyncBookingCalendarsPaced(movedIds));
   revalidatePath("/app/scheduling");
   return done();
 }
