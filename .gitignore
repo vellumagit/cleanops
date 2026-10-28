@@ -43,3 +43,6 @@ next-env.d.ts
 
 .vercel
 scripts/export/
+
+# Shadow-week morning reports, written by the scheduled task
+reports/
