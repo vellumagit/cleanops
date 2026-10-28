@@ -177,6 +177,8 @@ describe("buildJobItems", () => {
     expect(items[0].body).toBe("Ivanna's part of Lori Moeller started 35 min ago · 1 of 2 there");
     expect(items[0].tell?.title).toBe("Your part of Lori Moeller started 35 min ago");
     expect(items[0].tell?.unlessSent).toEqual(["late_start:b1:i"]);
+    // Marks older than the job's start belong to a slot it was moved from.
+    expect(items[0].sinceMs).toBe(T("2026-10-27T15:00:00Z"));
   });
 
   it("stays quiet in the first 30 minutes, for pending crew, and for orgs that don't clock in", () => {

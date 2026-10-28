@@ -38,6 +38,13 @@ export type NeedsYouItem = {
   /** Push it to managers the first time it appears. */
   alert: boolean;
   /**
+   * A "sent" mark older than this was about an earlier schedule — the job
+   * has been moved since — and doesn't count. The booking's start for every
+   * booking-keyed item; absent for keys that can't outlive their subject
+   * (a shift id, a date).
+   */
+  sinceMs?: number;
+  /**
    * Also tell the one person who can fix it herself, once, in her words:
    * the cleaner who hasn't clocked in gets "tap I'm here when you arrive",
    * not the manager's question about her.
@@ -171,6 +178,7 @@ export function buildJobItems(
       href,
       atMs: ctx.now,
       alert: true,
+      sinceMs: startMs,
       actions: [
         { kind: "close_job", label: "Close it", bookingId: b.id },
         {
@@ -228,6 +236,7 @@ export function buildJobItems(
         href,
         atMs: ownStartMs,
         alert: true,
+        sinceMs: startMs,
         actions,
         // The 2026-10-27 gap: three clocked in, Ivanna didn't, and nothing
         // said a word to anyone — the job watcher stops looking at a job

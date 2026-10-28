@@ -56,7 +56,20 @@ export async function sendNeedsYouAlerts(opts: { now?: number } = {}): Promise<{
         .in("key" as never, keys as never)) as unknown as {
         data: Array<{ key: string; notified_at: string | null }> | null;
       };
-      const already = new Set((sent ?? []).filter((r) => r.notified_at).map((r) => r.key));
+      // A mark counts only if it was made about the job's current schedule.
+      // Nothing clears these on a reschedule, so a job moved after its
+      // alert went out would otherwise never alert again.
+      const sinceOf = new Map<string, number>();
+      for (const it of urgent) {
+        if (it.sinceMs == null) continue;
+        sinceOf.set(it.key, it.sinceMs);
+        for (const k of it.tell?.unlessSent ?? []) sinceOf.set(k, it.sinceMs);
+      }
+      const already = new Set(
+        (sent ?? [])
+          .filter((r) => r.notified_at && new Date(r.notified_at).getTime() >= (sinceOf.get(r.key) ?? 0))
+          .map((r) => r.key),
+      );
 
       for (const it of urgent) {
         if (already.has(it.key)) continue;

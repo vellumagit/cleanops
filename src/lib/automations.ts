@@ -6044,7 +6044,7 @@ export async function runJobWatch(): Promise<{
 }> {
   const db = admin();
   const { notify } = await import("@/lib/notify");
-  const { classifyJob, lateStarters, orgUsesClockIn } = await import("@/lib/job-watch");
+  const { classifyJob, lateStarters, orgUsesClockIn, saidForThisSchedule } = await import("@/lib/job-watch");
   const { jobWindowEndMs } = await import("@/lib/job-state");
   const { resolveBookingCoverage } = await import("@/lib/booking-coverage");
   const { getOrgTimezone } = await import("@/lib/org-timezone");
@@ -6239,24 +6239,28 @@ export async function runJobWatch(): Promise<{
         // the job has had hers — after which classifyJob stops asking.
         const { data: toldRows, error: toldErr } = (await db
           .from("needs_you_state" as never)
-          .select("key")
+          .select("key, notified_at")
           .eq("organization_id" as never, orgId as never)
           .in(
             "key" as never,
             lateNudges.map((n) => n.key) as never,
           )) as unknown as {
-          data: Array<{ key: string }> | null;
+          data: Array<{ key: string; notified_at: string | null }> | null;
           error: { message: string } | null;
         };
         if (toldErr) {
           throw new Error(`job watch: late-start memory query failed: ${toldErr.message}`);
         }
-        const told = new Set((toldRows ?? []).map((r) => r.key));
+        const toldAt = new Map(
+          (toldRows ?? []).map((r) => [r.key, r.notified_at ? new Date(r.notified_at).getTime() : null] as const),
+        );
         const orgTz = await getOrgTimezone(orgId);
         const stampBookings = new Set<string>();
         for (const n of lateNudges) {
           if (n.last) stampBookings.add(n.booking.id);
-          if (told.has(n.key)) continue;
+          // Told about THIS schedule — a mark from before the job's start
+          // is about the slot it was moved from.
+          if (saidForThisSchedule(toldAt.get(n.key), new Date(n.booking.scheduled_at).getTime())) continue;
           // Mark first, then send: a failed mark means try next heartbeat,
           // never the same push every 30 minutes.
           const { error: markErr } = (await (db

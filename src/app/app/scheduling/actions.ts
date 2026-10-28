@@ -408,6 +408,14 @@ export async function rescheduleBookingAction(
     console.error("[reschedule] day-off check failed:", err);
   }
 
+  // A move changes the window, and a crew swap changes who is rostered:
+  // both are inputs to the job's state. The edit form recomputes; the
+  // calendar drag — Svit's busiest reschedule path — didn't.
+  {
+    const { syncJob } = await import("@/lib/job-sync");
+    await syncJob(id, "rescheduled");
+  }
+
   revalidatePath("/app/scheduling");
   revalidatePath("/app/bookings");
   revalidatePath("/app");

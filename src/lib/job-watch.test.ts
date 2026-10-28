@@ -142,6 +142,37 @@ describe("lateStarters — each person measured from her own start", () => {
   });
 });
 
+describe("classifyJob — a moved job is a new job to watch", () => {
+  it("asks again about a job moved after it was flagged", () => {
+    // Flagged at 3:30 PM yesterday, then moved to today 9:00 AM: the flag
+    // was about yesterday's slot.
+    const movedStart = START + 24 * 60 * MIN;
+    const v = classifyJob(
+      job({
+        scheduledAtMs: movedStart,
+        windowEndMs: movedStart + 120 * MIN,
+        nowMs: movedStart + (120 + NO_CLOCK_IN_GRACE_MINUTES) * MIN,
+        flaggedAtMs: START + 150 * MIN,
+        nudgedAtMs: START + 20 * MIN,
+      }),
+    );
+    expect(v.kind).toBe("no_clock_in");
+  });
+
+  it("nudges again after a move later the same day", () => {
+    const movedStart = START + 180 * MIN;
+    const v = classifyJob(
+      job({
+        scheduledAtMs: movedStart,
+        windowEndMs: movedStart + 120 * MIN,
+        nowMs: movedStart + 20 * MIN,
+        nudgedAtMs: START + 20 * MIN,
+      }),
+    );
+    expect(v.kind).toBe("late_start");
+  });
+});
+
 describe("orgUsesClockIn", () => {
   it("is silent for an org that has never clocked in — every job would flag", () => {
     expect(orgUsesClockIn(0)).toBe(false);

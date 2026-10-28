@@ -49,10 +49,25 @@ export type JobWatchInput = {
   /** Any time entry against this booking, open or closed. */
   hasClockIn: boolean;
   nowMs: number;
-  /** Dedup stamps; a non-null value means that word was already said. */
+  /**
+   * Dedup stamps; a value means that word was already said — about THIS
+   * schedule. A stamp from before the job's current start was written about
+   * an earlier time slot (the job was moved since), and counts as unsaid:
+   * nothing clears these columns on a reschedule, so without this a job
+   * flagged at 3:30 PM and moved to tomorrow was never asked about again,
+   * and auto-complete billed it on no evidence.
+   */
   nudgedAtMs: number | null;
   flaggedAtMs: number | null;
 };
+
+/** Was this mark made about the job's current schedule? */
+export function saidForThisSchedule(
+  markedAtMs: number | null | undefined,
+  scheduledAtMs: number,
+): boolean {
+  return markedAtMs != null && markedAtMs >= scheduledAtMs;
+}
 
 export type JobWatchVerdict =
   | { kind: "none" }
@@ -91,7 +106,7 @@ export function classifyJob(input: JobWatchInput): JobWatchVerdict {
 
   // Window fully gone: a question for the office, asked once.
   if (pastEndMs >= NO_CLOCK_IN_GRACE_MINUTES * 60_000) {
-    if (flaggedAtMs != null) return { kind: "none" };
+    if (saidForThisSchedule(flaggedAtMs, scheduledAtMs)) return { kind: "none" };
     return {
       kind: "no_clock_in",
       minutesPastEnd: Math.floor(pastEndMs / 60_000),
@@ -101,7 +116,7 @@ export function classifyJob(input: JobWatchInput): JobWatchVerdict {
   // Still inside the window: nudge the person who can still fix it, once.
   const lateMs = nowMs - scheduledAtMs;
   if (lateMs >= LATE_START_NUDGE_MINUTES * 60_000) {
-    if (nudgedAtMs != null) return { kind: "none" };
+    if (saidForThisSchedule(nudgedAtMs, scheduledAtMs)) return { kind: "none" };
     return { kind: "late_start", minutesLate: Math.floor(lateMs / 60_000) };
   }
 

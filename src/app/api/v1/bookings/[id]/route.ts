@@ -220,8 +220,12 @@ export async function PATCH(request: NextRequest, { params }: Params) {
         console.error("[api] auto-invoice after PATCH completed failed:", err),
       );
     }
+  }
+  // Any edit can move the job's window (time, length) as well as its
+  // status, so the rules look after every PATCH, not just status changes.
+  {
     const { syncJob } = await import("@/lib/job-sync");
-    await syncJob(id, "api_status");
+    await syncJob(id, statusChanging ? "api_status" : "api_edit");
   }
   if (newStatus === "cancelled" && oldStatus !== "cancelled") {
     dispatchWebhookEvent(auth.organizationId, "booking.cancelled", data).catch(
