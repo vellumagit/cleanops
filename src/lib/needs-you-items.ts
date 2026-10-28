@@ -37,6 +37,12 @@ export type NeedsYouItem = {
   actions: NeedsYouAction[];
   /** Push it to managers the first time it appears. */
   alert: boolean;
+  /**
+   * Also tell the one person who can fix it herself, once, in her words:
+   * the cleaner who hasn't clocked in gets "tap I'm here when you arrive",
+   * not the manager's question about her.
+   */
+  tell?: { membershipId: string; title: string; body: string; href: string };
 };
 
 export type NeedsYouCrew = {
@@ -202,6 +208,19 @@ export function buildJobItems(
         atMs: startMs,
         alert: true,
         actions,
+        // The 2026-10-27 gap: three clocked in, Ivanna didn't, and nothing
+        // said a word to anyone — the job watcher stops looking at a job
+        // the moment ANYONE clocks in on it. Her own nudge goes with the
+        // manager's, so the person who can fix it hears first.
+        tell: {
+          membershipId: c.membership_id,
+          title: `${b.clientName} started ${minutesLabel(lateMin)} ago`,
+          body:
+            state.onSite.length > 0
+              ? `${state.onSite.length} of ${b.crew.length} are there. Tap I'm here when you arrive — or tell your manager if you can't make it.`
+              : "Tap I'm here when you arrive — or tell your manager if you can't make it.",
+          href: `/field/jobs/${b.id}`,
+        },
       });
     }
   }

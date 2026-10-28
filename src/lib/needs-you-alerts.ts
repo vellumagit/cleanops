@@ -63,7 +63,24 @@ export async function sendNeedsYouAlerts(opts: { now?: number } = {}): Promise<{
           title: it.title,
           body: `${it.body ?? ""} Answer it on your dashboard.`.trim(),
           href: "/app",
+          // Email too. Push only reaches a phone that has allowed it, and
+          // on 2026-10-28 the one manager who runs the day had never
+          // allowed it — so a push-only alert was an in-app badge she'd see
+          // whenever she next opened the app. These fire once per item, so
+          // the mailbox cost is one message per real problem.
+          channels: { email: true },
         });
+        if (it.tell) {
+          await notify({
+            audience: "membership",
+            membershipId: it.tell.membershipId,
+            organizationId: org.id,
+            type: "general",
+            title: it.tell.title,
+            body: it.tell.body,
+            href: it.tell.href,
+          });
+        }
         await markNotified(org.id, it.key, now);
         alerted++;
       }
