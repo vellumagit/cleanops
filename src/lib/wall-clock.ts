@@ -36,15 +36,16 @@ function tzOffsetMs(instant: Date, tz: string): number {
   return asUtc - instant.getTime();
 }
 
-/** The UTC instant when `tz`'s wall clock reads y-m-d h:00:00. */
+/** The UTC instant when `tz`'s wall clock reads y-m-d h:mm:00. */
 function utcForWallClock(
   y: number,
   m: number,
   d: number,
   hour: number,
   tz: string,
+  minute = 0,
 ): Date {
-  const guess = Date.UTC(y, m - 1, d, hour, 0, 0);
+  const guess = Date.UTC(y, m - 1, d, hour, minute, 0);
   let utc = guess - tzOffsetMs(new Date(guess), tz);
   // Refine once: if the first guess landed on the far side of a DST
   // transition, the offset read was stale by an hour.
@@ -225,6 +226,13 @@ export function toDatetimeLocal(value: string, tz: string): string {
   const get = (type: string) =>
     parts.find((p) => p.type === type)?.value ?? "00";
   return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}`;
+}
+
+/** The UTC instant when `tz`'s wall clock reads `dateYmd` at `hhmm` ("09:30"). */
+export function zonedWallClockUtc(dateYmd: string, hhmm: string, tz: string): Date {
+  const [y, m, d] = dateYmd.split("-").map(Number);
+  const [h, min] = hhmm.split(":").map(Number);
+  return utcForWallClock(y, m, d, h, tz, min || 0);
 }
 
 /** The UTC instant when `tz`'s wall clock reads `dateYmd` at 00:00. */

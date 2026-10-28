@@ -2136,9 +2136,11 @@ export async function updateBookingAction(
     // "at most once ever" via client_reminder_sent_at — without clearing it,
     // a booking that was already reminded and then moved out weeks never got
     // a reminder for its new date (audit B5).
+    // A person set this time. The series-drift check (series-drift.ts) leaves
+    // such a visit alone instead of asking whether to restore the series'.
     await supabase
       .from("bookings")
-      .update({ client_reminder_sent_at: null })
+      .update({ client_reminder_sent_at: null, time_set_by_hand_at: new Date().toISOString() } as never)
       .eq("id", id)
       .eq("organization_id", membership.organization_id);
     // Not for a booking the client has never been told about. Picking the

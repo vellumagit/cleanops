@@ -275,6 +275,8 @@ export async function rescheduleBookingAction(
   if (instantChanged) {
     // Re-arm the day-before reminder for the new date (audit B5).
     bookingUpdate.client_reminder_sent_at = null;
+    // A person set this time; the series-drift check leaves it alone.
+    bookingUpdate.time_set_by_hand_at = new Date().toISOString();
   }
 
   // The status/date rule has a second direction nobody guards: instead of

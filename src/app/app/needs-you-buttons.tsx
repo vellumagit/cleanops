@@ -11,6 +11,8 @@ import {
   snoozeItemAction,
   removeMemberAction,
   clockOutAtAction,
+  restoreSeriesTimesAction,
+  keepSeriesTimesAction,
 } from "./needs-you-actions";
 
 const btn =
@@ -38,6 +40,18 @@ export function NeedsYouButtons({ actions }: { actions: NeedsYouAction[] }) {
           break;
         case "clock_out_at":
           r = await clockOutAtAction(a.entryId, a.bookingId, a.atIso);
+          break;
+        case "restore_series_times":
+          if (
+            !window.confirm(
+              `Move ${a.count} ${a.count === 1 ? "visit" : "visits"} back to the series' time? Nobody is notified; calendars update overnight.`,
+            )
+          )
+            return;
+          r = await restoreSeriesTimesAction(a.seriesId);
+          break;
+        case "keep_series_times":
+          r = await keepSeriesTimesAction(a.seriesId);
           break;
         default:
           return;

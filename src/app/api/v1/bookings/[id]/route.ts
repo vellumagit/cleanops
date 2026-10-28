@@ -173,6 +173,14 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   // the job never billed.
   const statusChanging =
     updates.status !== undefined && updates.status !== prev?.status;
+  // A time set through the API is a person's (or their system's) word too.
+  if (
+    updates.scheduled_at !== undefined &&
+    prev &&
+    new Date(String(updates.scheduled_at)).getTime() !== new Date(prev.scheduled_at).getTime()
+  ) {
+    updates.time_set_by_hand_at = new Date().toISOString();
+  }
   if (statusChanging) {
     updates.closed_at =
       updates.status === "completed" ? new Date().toISOString() : null;

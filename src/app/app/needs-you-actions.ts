@@ -7,6 +7,8 @@ import { logAuditEvent } from "@/lib/audit";
 import { closeJob } from "@/lib/close-job";
 import { syncJob } from "@/lib/job-sync";
 import { deleteMemberCalendarEvent } from "@/lib/google-calendar";
+import { collectSeriesDrift } from "@/lib/needs-you";
+import { getOrgTimezone } from "@/lib/org-timezone";
 
 type Result = { ok: true } | { ok: false; error: string };
 
@@ -166,5 +168,81 @@ export async function clockOutAtAction(
     after: { clock_out_at: new Date(at).toISOString(), via: "needs_you" },
   });
   await syncJob(bookingId, "shift_closed_by_manager");
+  return done();
+}
+
+/**
+ * "Restore to 9:00 AM": move a series' drifted visits back to the series'
+ * time. Recomputed here, not trusted from the client: the list the manager
+ * saw may be minutes old. Each move is guarded on the time we read, audited,
+ * and recomputed by the rules. Clients and crew are NOT told — the client
+ * was told the series' time to begin with, and the calendars re-sync
+ * overnight (org and member reconcile, 45-day window).
+ */
+export async function restoreSeriesTimesAction(seriesId: string): Promise<Result> {
+  const { membership } = await getActionContext();
+  const denied = managerOnly(membership.role);
+  if (denied) return denied;
+  const tz = await getOrgTimezone(membership.organization_id);
+  const drift = (await collectSeriesDrift(membership.organization_id, tz)).find(
+    (d) => d.seriesId === seriesId,
+  );
+  if (!drift) return { ok: true };
+
+  const admin = createSupabaseAdminClient();
+  let moved = 0;
+  for (const v of drift.visits) {
+    const { data: upd, error } = (await admin
+      .from("bookings")
+      .update({ scheduled_at: v.expected_at, client_reminder_sent_at: null } as never)
+      .eq("id", v.id)
+      .eq("organization_id", membership.organization_id)
+      .eq("scheduled_at", v.scheduled_at)
+      .select("id")) as unknown as { data: Array<{ id: string }> | null; error: { message: string } | null };
+    if (error) return { ok: false, error: error.message };
+    if (!upd || upd.length === 0) continue;
+    moved++;
+    await logAuditEvent({
+      membership,
+      action: "update",
+      entity: "booking",
+      entity_id: v.id,
+      before: { scheduled_at: v.scheduled_at },
+      after: { scheduled_at: v.expected_at, via: "series_drift_restore", series_id: seriesId },
+    });
+    await syncJob(v.id, "rescheduled");
+  }
+  if (moved === 0) return { ok: false, error: "Those visits changed under you — look again." };
+  revalidatePath("/app/scheduling");
+  return done();
+}
+
+/** "Keep these times": the visits are where she wants them; stop asking. */
+export async function keepSeriesTimesAction(seriesId: string): Promise<Result> {
+  const { membership } = await getActionContext();
+  const denied = managerOnly(membership.role);
+  if (denied) return denied;
+  const tz = await getOrgTimezone(membership.organization_id);
+  const drift = (await collectSeriesDrift(membership.organization_id, tz)).find(
+    (d) => d.seriesId === seriesId,
+  );
+  if (!drift) return { ok: true };
+  const admin = createSupabaseAdminClient();
+  const now = new Date().toISOString();
+  const { error } = await admin
+    .from("bookings")
+    .update({ time_set_by_hand_at: now } as never)
+    .eq("organization_id", membership.organization_id)
+    .in("id", drift.visits.map((v) => v.id));
+  if (error) return { ok: false, error: error.message };
+  for (const v of drift.visits) {
+    await logAuditEvent({
+      membership,
+      action: "update",
+      entity: "booking",
+      entity_id: v.id,
+      after: { time_set_by_hand_at: now, via: "series_drift_keep", series_id: seriesId },
+    });
+  }
   return done();
 }

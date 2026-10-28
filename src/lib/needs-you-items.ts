@@ -15,7 +15,8 @@ export type NeedsYouKind =
   | "not_clocked_in"
   | "over_hours"
   | "needs_price"
-  | "tomorrow";
+  | "tomorrow"
+  | "series_drift";
 
 export type NeedsYouAction =
   | { kind: "close_job"; label: string; bookingId: string }
@@ -23,7 +24,11 @@ export type NeedsYouAction =
   | { kind: "remove_member"; label: string; bookingId: string; membershipId: string }
   | { kind: "clock_out_at"; label: string; entryId: string; bookingId: string; atIso: string }
   | { kind: "call"; label: string; phone: string }
-  | { kind: "link"; label: string; href: string };
+  | { kind: "link"; label: string; href: string }
+  /** Move a series' drifted visits back to the series' time (series-drift.ts). */
+  | { kind: "restore_series_times"; label: string; seriesId: string; count: number }
+  /** Mark them as set by hand so the drift check stops asking. */
+  | { kind: "keep_series_times"; label: string; seriesId: string };
 
 export type NeedsYouItem = {
   /** Stable across runs, so a snooze or a sent alert sticks to it. */
@@ -362,7 +367,8 @@ export function buildNeedsYou(
     not_clocked_in: 1,
     over_hours: 2,
     tomorrow: 3,
-    needs_price: 4,
+    series_drift: 4,
+    needs_price: 5,
   };
   return bookings
     .flatMap((b) => buildJobItems(b, ctx))

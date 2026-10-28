@@ -9,6 +9,7 @@ import {
   type NeedsYouBooking,
   type NeedsYouItem,
 } from "@/lib/needs-you-items";
+import { describeDelta, findSeriesDrift, type SeriesDrift } from "@/lib/series-drift";
 
 export type { NeedsYouItem, NeedsYouAction } from "@/lib/needs-you-items";
 
@@ -227,5 +228,95 @@ export async function collectNeedsYou(
     },
     snoozed,
   );
-  return { items, tz };
+  const drift = await collectSeriesDrift(organizationId, tz, now);
+  const driftItems = drift
+    .map((d) => seriesDriftItem(d, tz))
+    .filter((it) => (snoozed.get(it.key) ?? 0) <= now);
+  // Drift sits with tomorrow's problems: before money, after anything live.
+  const money = items.filter((it) => it.kind === "needs_price");
+  const rest = items.filter((it) => it.kind !== "needs_price");
+  return { items: [...rest, ...driftItems, ...money], tz };
+}
+
+/**
+ * Every future visit of a recurring series whose stored time no longer
+ * matches the series under the current zone rules, and that nobody set by
+ * hand. See series-drift.ts for why this is a question and not a fix.
+ */
+export async function collectSeriesDrift(
+  organizationId: string,
+  tz: string,
+  now = Date.now(),
+): Promise<SeriesDrift[]> {
+  const db = createSupabaseAdminClient();
+  const { data: seriesRows, error: seriesErr } = (await db
+    .from("booking_series")
+    .select("id, start_time, client:clients ( name )")
+    .eq("organization_id", organizationId)) as unknown as {
+    data: Array<{ id: string; start_time: string; client: { name: string | null } | null }> | null;
+    error: { message: string } | null;
+  };
+  if (seriesErr) throw new Error(`series drift: series query failed: ${seriesErr.message}`);
+  if (!seriesRows || seriesRows.length === 0) return [];
+
+  const { data: visitRows, error: visitErr } = (await db
+    .from("bookings")
+    .select("id, series_id, scheduled_at, status, time_set_by_hand_at" as never)
+    .eq("organization_id", organizationId)
+    .not("series_id", "is", null)
+    .in("status", ["pending", "confirmed", "en_route"])
+    .is("archived_at", null)
+    .gte("scheduled_at", new Date(now).toISOString())
+    .order("scheduled_at")
+    .limit(3000)) as unknown as {
+    data: Array<{
+      id: string;
+      series_id: string;
+      scheduled_at: string;
+      status: string;
+      time_set_by_hand_at: string | null;
+    }> | null;
+    error: { message: string } | null;
+  };
+  if (visitErr) throw new Error(`series drift: visits query failed: ${visitErr.message}`);
+
+  return findSeriesDrift({
+    series: seriesRows.map((s) => ({
+      id: s.id,
+      start_time: s.start_time,
+      clientName: s.client?.name ?? "A client",
+    })),
+    visits: visitRows ?? [],
+    tz,
+    now,
+  });
+}
+
+function seriesDriftItem(d: SeriesDrift, tz: string): NeedsYouItem {
+  const time = (iso: string) =>
+    new Date(iso).toLocaleTimeString("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit" });
+  const day = (iso: string) =>
+    new Date(iso).toLocaleDateString("en-US", { timeZone: tz, month: "short", day: "numeric" });
+  const n = d.visits.length;
+  const deltas = new Set(d.visits.map((v) => v.deltaMinutes));
+  const seriesTime = time(d.visits[0].expected_at);
+  const how =
+    deltas.size === 1
+      ? `${n === 1 ? "is" : "are"} ${describeDelta(d.visits[0].deltaMinutes)}, at ${time(d.visits[0].scheduled_at)}`
+      : "don't match";
+  const dates = d.visits.slice(0, 4).map((v) => day(v.scheduled_at)).join(", ");
+  const more = n > 4 ? ` and ${n - 4} more` : "";
+  return {
+    key: `drift:${d.seriesId}`,
+    kind: "series_drift",
+    title: `${d.clientName}: ${n} ${n === 1 ? "visit" : "visits"} ${how}`,
+    body: `The series says ${seriesTime}. ${dates}${more}. Restore puts them back at ${seriesTime}; Keep leaves them and stops asking. Nobody is notified either way.`,
+    href: `/app/bookings?series=${d.seriesId}`,
+    atMs: new Date(d.visits[0].scheduled_at).getTime(),
+    alert: false,
+    actions: [
+      { kind: "restore_series_times", label: `Restore to ${seriesTime}`, seriesId: d.seriesId, count: n },
+      { kind: "keep_series_times", label: "Keep these times", seriesId: d.seriesId },
+    ],
+  };
 }
