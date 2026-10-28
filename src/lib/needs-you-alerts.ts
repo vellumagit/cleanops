@@ -44,7 +44,11 @@ export async function sendNeedsYouAlerts(opts: { now?: number } = {}): Promise<{
         new Date(now).toLocaleString("en-US", { timeZone: tz, hour: "numeric", hour12: false }),
       );
 
-      const keys = [...urgent.map((it) => it.key), digestKey];
+      const keys = [
+        ...urgent.map((it) => it.key),
+        ...urgent.flatMap((it) => it.tell?.unlessSent ?? []),
+        digestKey,
+      ];
       const { data: sent } = (await db
         .from("needs_you_state" as never)
         .select("key, notified_at")
@@ -61,12 +65,13 @@ export async function sendNeedsYouAlerts(opts: { now?: number } = {}): Promise<{
         // alert if the send fails, which is notify's best-effort contract
         // anyway.
         if (!(await markNotified(org.id, it.key, now))) continue;
+        const body = (it.body ?? "").trim();
         await notify({
           audience: "org-management",
           organizationId: org.id,
           type: "general",
           title: it.title,
-          body: `${it.body ?? ""} Answer it on your dashboard.`.trim(),
+          body: `${body}${body && !/[.!?]$/.test(body) ? "." : ""} Answer it on your dashboard.`.trim(),
           href: "/app",
           // Email too. Push only reaches a phone that has allowed it, and
           // on 2026-10-28 the one manager who runs the day had never
@@ -75,7 +80,7 @@ export async function sendNeedsYouAlerts(opts: { now?: number } = {}): Promise<{
           // the mailbox cost is one message per real problem.
           channels: { email: true },
         });
-        if (it.tell) {
+        if (it.tell && !(it.tell.unlessSent ?? []).some((k) => already.has(k))) {
           await notify({
             audience: "membership",
             membershipId: it.tell.membershipId,

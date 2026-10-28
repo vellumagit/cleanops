@@ -42,7 +42,19 @@ export type NeedsYouItem = {
    * the cleaner who hasn't clocked in gets "tap I'm here when you arrive",
    * not the manager's question about her.
    */
-  tell?: { membershipId: string; title: string; body: string; href: string };
+  tell?: {
+    membershipId: string;
+    title: string;
+    body: string;
+    href: string;
+    /**
+     * Keys in needs_you_state that mean she has already been told by
+     * another watcher — skip the tell if any of them is marked sent. On
+     * 2026-10-28 the job watcher's "You're not clocked in" and this tell
+     * reached two cleaners four seconds apart, from the same cron tick.
+     */
+    unlessSent?: string[];
+  };
 };
 
 export type NeedsYouCrew = {
@@ -186,14 +198,17 @@ export function buildJobItems(
     for (const c of b.crew) {
       if (worked.has(c.membership_id)) continue;
       if (c.acceptance_status === "pending") continue;
-      // Her own later start isn't late yet.
-      if (
-        c.split_start_offset_minutes != null &&
-        ctx.now < startMs + (c.split_start_offset_minutes + LATE_MINUTES) * 60_000
-      )
-        continue;
+      // Measured from HER start: on a split shift the afternoon cleaner's
+      // part begins hours after the job does, and she isn't late until
+      // that has passed — nor is she "4h late" twenty minutes after it.
+      const ownStartMs = startMs + (c.split_start_offset_minutes ?? 0) * 60_000;
+      if (ctx.now < ownStartMs + LATE_MINUTES * 60_000) continue;
+      const ownPart = ownStartMs !== startMs;
       const key = `late:${b.id}:${c.membership_id}`;
-      const lateMin = Math.floor((ctx.now - startMs) / 60_000);
+      const lateMin = Math.floor((ctx.now - ownStartMs) / 60_000);
+      const started = ownPart
+        ? `${first(c.name)}'s part of ${b.clientName} started ${minutesLabel(lateMin)} ago`
+        : `${b.clientName} started ${minutesLabel(lateMin)} ago`;
       const actions: NeedsYouAction[] = [];
       if (c.phone) actions.push({ kind: "call", label: "Call", phone: c.phone });
       actions.push(
@@ -209,9 +224,9 @@ export function buildJobItems(
         key,
         kind: "not_clocked_in",
         title: `${first(c.name)} hasn't clocked in`,
-        body: `${b.clientName} started ${minutesLabel(lateMin)} ago${state.onSite.length > 0 ? ` · ${state.onSite.length} of ${b.crew.length} there` : ""}`,
+        body: `${started}${state.onSite.length > 0 ? ` · ${state.onSite.length} of ${b.crew.length} there` : ""}`,
         href,
-        atMs: startMs,
+        atMs: ownStartMs,
         alert: true,
         actions,
         // The 2026-10-27 gap: three clocked in, Ivanna didn't, and nothing
@@ -220,12 +235,17 @@ export function buildJobItems(
         // manager's, so the person who can fix it hears first.
         tell: {
           membershipId: c.membership_id,
-          title: `${b.clientName} started ${minutesLabel(lateMin)} ago`,
+          title: ownPart
+            ? `Your part of ${b.clientName} started ${minutesLabel(lateMin)} ago`
+            : `${b.clientName} started ${minutesLabel(lateMin)} ago`,
           body:
             state.onSite.length > 0
               ? `${state.onSite.length} of ${b.crew.length} are there. Tap I'm here when you arrive — or tell your manager if you can't make it.`
               : "Tap I'm here when you arrive — or tell your manager if you can't make it.",
           href: `/field/jobs/${b.id}`,
+          // The job watcher (runJobWatch) nudges her at 15 minutes under
+          // this key; if it did, this would be the same message again.
+          unlessSent: [`late_start:${b.id}:${c.membership_id}`],
         },
       });
     }

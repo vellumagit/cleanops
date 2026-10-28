@@ -25,6 +25,7 @@ import {
 } from "@/lib/automations";
 import { requireCronAuth } from "@/lib/cron-auth";
 import { sendNeedsYouAlerts } from "@/lib/needs-you-alerts";
+import { syncLiveJobs } from "@/lib/job-sync";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -97,7 +98,18 @@ export async function GET(request: Request) {
       console.error("[cron/shift-reminders] needs-you error:", nyErr);
       needsYou = { error: nyErr instanceof Error ? nyErr.message : "Unknown error" };
     }
-    return Response.json({ ...result, watch, confirm, needsYou });
+    // Fifth leg: recompute every live job, so a window ending or an
+    // auto-complete grace running out takes effect without waiting for a
+    // tap or the 2 AM sweep. Before the Needs-you leg would be wrong: the
+    // list should ask about a no-show while the question is still open.
+    let heartbeat: Awaited<ReturnType<typeof syncLiveJobs>> | { error: string };
+    try {
+      heartbeat = await syncLiveJobs();
+    } catch (hbErr) {
+      console.error("[cron/shift-reminders] job-state heartbeat error:", hbErr);
+      heartbeat = { error: hbErr instanceof Error ? hbErr.message : "Unknown error" };
+    }
+    return Response.json({ ...result, watch, confirm, needsYou, heartbeat });
   } catch (err) {
     console.error("[cron/shift-reminders] error:", err);
     return Response.json(

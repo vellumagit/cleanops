@@ -163,6 +163,22 @@ describe("buildJobItems", () => {
     expect(items[0].actions.map((a) => a.kind)).toEqual(["call", "remove_member", "snooze"]);
   });
 
+  it("measures a split-shift cleaner's lateness from her own start, and defers to the job watcher's nudge", () => {
+    // Ivanna's part begins 4h in (1:00 PM). At 1:20 she isn't late; at 1:35
+    // she is 35 minutes late, not 4h 35m.
+    const split = booking({
+      status: "in_progress",
+      crew: [crew("p"), crew("i", { split_start_offset_minutes: 240, split_duration_minutes: 240 })],
+      shifts: [shift("s1", "p", "2026-10-27T15:00:00Z")],
+    });
+    expect(buildJobItems(split, ctx({ now: T("2026-10-27T19:20:00Z") }))).toEqual([]);
+    const items = buildJobItems(split, ctx({ now: T("2026-10-27T19:35:00Z") }));
+    expect(items.map((i) => i.kind)).toEqual(["not_clocked_in"]);
+    expect(items[0].body).toBe("Ivanna's part of Lori Moeller started 35 min ago · 1 of 2 there");
+    expect(items[0].tell?.title).toBe("Your part of Lori Moeller started 35 min ago");
+    expect(items[0].tell?.unlessSent).toEqual(["late_start:b1:i"]);
+  });
+
   it("stays quiet in the first 30 minutes, for pending crew, and for orgs that don't clock in", () => {
     const late = booking({ shifts: [shift("s1", "p", "2026-10-27T15:00:00Z")] });
     expect(buildJobItems(late, ctx({ now: T("2026-10-27T15:20:00Z") }))).toEqual([]);

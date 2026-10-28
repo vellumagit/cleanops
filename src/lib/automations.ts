@@ -6063,9 +6063,12 @@ export async function runJobWatch(): Promise<{
        no_show_nudge_sent_at, no_clock_in_flagged_at, divide_hours_evenly,
        client:clients ( name )`,
     )
-    .in("status", ["confirmed", "in_progress"])
+    .in("status", ["confirmed", "en_route", "in_progress"])
     .gte("scheduled_at", sinceIso)
     .lte("scheduled_at", nowIso)
+    // Newest first: if the cap ever bites, the jobs that fall off are the
+    // oldest, whose window has long passed and whose flag already went.
+    .order("scheduled_at", { ascending: false })
     .limit(500)) as unknown as {
     data: Array<{
       id: string;
@@ -6370,6 +6373,9 @@ export async function sendShiftClockOutReminders(): Promise<{
        )`,
     )
     .is("clock_out_at", null)
+    // Oldest open shift first: the one that has run three days is the
+    // payroll problem, and must never be the one a cap leaves out.
+    .order("clock_in_at", { ascending: true })
     .limit(500)) as unknown as {
     data: Array<{
       id: string;

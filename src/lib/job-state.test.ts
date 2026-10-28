@@ -121,6 +121,8 @@ describe("deriveJobState", () => {
     expect(s.status).toBe("confirmed");
     expect(s.waitingOn).toEqual([P, A, N, I]);
     expect(deriveJobState(input({ booking: { ...input().booking, status: "pending" } })).status).toBe("pending");
+    // "En route" is the office's word too; the rules don't take it back.
+    expect(deriveJobState(input({ booking: { ...input().booking, status: "en_route" } })).status).toBe("en_route");
   });
 
   it("is in progress the moment one person clocks in; the rest are still coming", () => {

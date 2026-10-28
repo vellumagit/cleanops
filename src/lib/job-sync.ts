@@ -356,6 +356,24 @@ export async function syncJob(
       console.log(
         `[job-state shadow] ${bookingId} after ${reason}: row=${before} computed=${state.status} (${state.phase}) — ${summary}`,
       );
+      // One row per disagreement, not one per look. The heartbeat recomputes
+      // every live job each half hour, and a job that sits in progress all
+      // evening with a no-show rostered would otherwise write the same
+      // state_check row 20 times.
+      const { data: last } = (await db
+        .from("audit_log")
+        .select("after")
+        .eq("entity", "booking")
+        .eq("entity_id", bookingId)
+        .eq("action", "state_check")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle()) as unknown as {
+        data: { after: { actual?: string; derived?: string } | null } | null;
+      };
+      if (last?.after?.actual === before && last.after.derived === state.status) {
+        return { state, summary, mode, before, after: before };
+      }
       await logSystemAuditEvent({
         organizationId: booking.organization_id,
         action: "state_check",
@@ -401,4 +419,44 @@ export async function syncJob(
     console.error("[job-state] sync failed:", bookingId, reason, err);
     return null;
   }
+}
+
+/**
+ * The heartbeat: recompute every job that could change on its own.
+ *
+ * Taps and clicks call syncJob as they happen, but two transitions have no
+ * tap — the window ending while a rostered person never came, and the
+ * auto-complete grace running out on a job nobody tapped. Until this ran,
+ * closesAtMs was a forecast with nothing to carry it out; the 2 AM sweep
+ * closed those jobs by its own rule hours later. Every 30 minutes from the
+ * shift-reminders cron. In shadow mode it only writes a state_check row
+ * when the disagreement is new (see syncJob).
+ */
+export async function syncLiveJobs(now = Date.now()): Promise<{
+  considered: number;
+  changed: number;
+}> {
+  const db = createSupabaseAdminClient();
+  // Jobs that started in the last three days and haven't been closed. A
+  // job scheduled later than now can't have a window that has ended.
+  const since = new Date(now - 3 * 86_400_000).toISOString();
+  const { data: rows, error } = (await db
+    .from("bookings")
+    .select("id")
+    .in("status", ["confirmed", "en_route", "in_progress"])
+    .is("closed_at", null)
+    .gte("scheduled_at", since)
+    .lte("scheduled_at", new Date(now).toISOString())
+    .order("scheduled_at", { ascending: false })
+    .limit(300)) as unknown as {
+    data: Array<{ id: string }> | null;
+    error: { message: string } | null;
+  };
+  if (error) throw new Error(`job-state heartbeat query failed: ${error.message}`);
+  let changed = 0;
+  for (const r of rows ?? []) {
+    const res = await syncJob(r.id, "heartbeat");
+    if (res && res.after !== res.before) changed++;
+  }
+  return { considered: rows?.length ?? 0, changed };
 }

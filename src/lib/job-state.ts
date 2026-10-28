@@ -87,7 +87,7 @@ export type JobStateInput = {
 export type JobState = {
   phase: JobPhase;
   /** What bookings.status should read for this phase. */
-  status: "pending" | "confirmed" | "in_progress" | "completed" | "cancelled";
+  status: "pending" | "confirmed" | "en_route" | "in_progress" | "completed" | "cancelled";
   /** Membership ids currently on the clock. */
   onSite: string[];
   /** Clocked in and back out. */
@@ -270,7 +270,15 @@ export function deriveJobState(input: JobStateInput): JobState {
     priceNeed();
     return { ...base, phase: "done", status: "completed", closesAtMs: null, needs };
   }
-  const keep = booking.status === "pending" ? "pending" : "confirmed";
+  // Nobody has clocked in, so the row's own word on how far along the plan
+  // is stands: pending is still a plan, and "en route" is the office saying
+  // someone is on the way. Anything else reads as confirmed.
+  const keep =
+    booking.status === "pending"
+      ? "pending"
+      : booking.status === "en_route"
+        ? "en_route"
+        : "confirmed";
   return {
     ...base,
     phase: "not_started",

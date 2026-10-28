@@ -129,7 +129,7 @@ export async function clockOutAction(
 
   const { data: open, error: fetchError } = await supabase
     .from("time_entries")
-    .select("id, booking_id")
+    .select("id, booking_id, clock_in_at")
     .eq("employee_id", membership.id)
     .is("clock_out_at", null)
     .order("clock_in_at", { ascending: false })
@@ -138,10 +138,15 @@ export async function clockOutAction(
   if (fetchError) return { ok: false, error: fetchError.message };
   if (!open) return { ok: false, error: "You're not clocked in." };
 
+  // Never before the clock-in. The clock-in may have been stamped by the
+  // server (a phone clock the server didn't trust) and this tap by the
+  // phone, a few minutes behind it; a negative shift breaks payroll math.
+  const punched = punchTime(formData.get(TAPPED_AT_FIELD)?.toString());
+  const clockOutAt = punched < open.clock_in_at ? open.clock_in_at : punched;
   const { error: updateError } = await supabase
     .from("time_entries")
     .update({
-      clock_out_at: punchTime(formData.get(TAPPED_AT_FIELD)?.toString()),
+      clock_out_at: clockOutAt,
       clock_out_lat: lat,
       clock_out_lng: lng,
     })
