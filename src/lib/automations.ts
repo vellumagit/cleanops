@@ -4179,6 +4179,8 @@ export async function autoExtendRecurringSeries(): Promise<number> {
       const crew = crewForGeneration(s);
       const crewSplits = splitsFromCrew(crew);
       const firstMember = crew[0]?.membership_id ?? null;
+      const { zonedYmd } = await import("@/lib/wall-clock");
+      const { wallClockColumns } = await import("@/lib/scheduled-local");
 
       const rows = occurrences.map((scheduled_at) => ({
         organization_id: s.organization_id,
@@ -4192,6 +4194,9 @@ export async function autoExtendRecurringSeries(): Promise<number> {
         // the editor showing the per-cleaner times it really has.
         ...(crewSplits.length > 0 ? { splits: crewSplits } : {}),
         scheduled_at,
+        // The series' own words: this date at the series' start time. The
+        // instant above is derived from it and re-derived nightly.
+        ...wallClockColumns(`${zonedYmd(new Date(scheduled_at), orgTz)}T${String(s.start_time).slice(0, 5)}`, orgTz),
         duration_minutes: s.duration_minutes,
         service_type: s.service_type as ServiceTypeEnum,
         // Carry the FK + denormalized label forward so cron-generated

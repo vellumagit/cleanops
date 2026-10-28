@@ -6,6 +6,7 @@ import { getOrgTimezone } from "@/lib/org-timezone";
 import { futureStatusError } from "@/lib/booking-status";
 import { planCrewMove, type CrewMovePlan } from "./drag-crew";
 import { membersOffOn } from "@/lib/unavailability-notice";
+import { scheduleFromWallClock } from "@/lib/scheduled-local";
 import { memberDisplayName } from "@/lib/member-display";
 import {
   notifyBookingAssignment,
@@ -164,24 +165,13 @@ export async function rescheduleBookingAction(
     targetMin = Number(prevParts.find((p) => p.type === "minute")?.value ?? 0);
   }
 
-  // Build the new datetime and convert to UTC via the org's timezone.
+  // The wall clock the owner dropped the card on, and the instant it means
+  // in the org's zone. (This used to re-parse a formatted string with
+  // `new Date(...)`, which reads it in the SERVER's zone — right only while
+  // the server runs in UTC.)
   const pad = (n: number) => String(n).padStart(2, "0");
-  const naiveStr = `${targetDate}T${pad(targetHour)}:${pad(targetMin)}:00Z`;
-  const naiveMs = new Date(naiveStr).getTime();
-  const inTz = new Date(
-    new Intl.DateTimeFormat("en-CA", {
-      timeZone: orgTz,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: false,
-    }).format(new Date(naiveStr)),
-  );
-  const offsetMs = inTz.getTime() - naiveMs;
-  const next = new Date(naiveMs - offsetMs);
+  const wall = scheduleFromWallClock(`${targetDate}T${pad(targetHour)}:${pad(targetMin)}`, orgTz);
+  const next = new Date(wall.scheduled_at);
   const nextEnd = new Date(next.getTime() + current.duration_minutes * 60_000);
 
   // Hard-conflict check: same employee can't be in two places. Different
@@ -262,7 +252,9 @@ export async function rescheduleBookingAction(
   // crew, just shifted to the new slot (segment offsets are relative).
   // Otherwise assigned_to follows the crew plan, and only when it changed.
   const bookingUpdate: Record<string, unknown> = {
-    scheduled_at: next.toISOString(),
+    scheduled_at: wall.scheduled_at,
+    scheduled_local: wall.scheduled_local,
+    scheduled_tz: wall.scheduled_tz,
   };
   if (plan.kind === "changed") {
     bookingUpdate.assigned_to = plan.lead;

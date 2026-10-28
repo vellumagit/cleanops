@@ -45,6 +45,8 @@ import { canCreateData } from "@/lib/subscription";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { localInputToUtcIso } from "@/lib/validators/common";
 import { zonedYmd } from "@/lib/wall-clock";
+import { wallClockColumns } from "@/lib/scheduled-local";
+import { runtimeKnowsZone } from "@/lib/tz-probe";
 import { resolveSeriesMove } from "@/lib/series-move";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { redirectAfterSetup } from "@/lib/setup-return";
@@ -616,6 +618,18 @@ export async function createBookingAction(
   // the authoritative per-org timezone.
   const orgTz = await getOrgTimezone(membership.organization_id);
   parsed.data.scheduled_at = localInputToUtcIso(raw.scheduled_at, orgTz);
+  if (!runtimeKnowsZone(orgTz)) {
+    // Converting a typed time into an instant needs this zone's rules for
+    // that date. On stale rules the visit lands an hour off and nothing on
+    // screen says so (Alberta, 2026-11-01). Refuse rather than store it.
+    return {
+      errors: {
+        _form:
+          "This server's time zone rules are out of date, so the booking time can't be saved reliably right now. Tell Brian.",
+      },
+      values: raw,
+    };
+  }
 
   {
     const err = futureStatusError(parsed.data.scheduled_at, parsed.data.status);
@@ -729,6 +743,9 @@ export async function createBookingAction(
       client_id: parsed.data.client_id,
       assigned_to: effectiveAssignedTo,
       scheduled_at: parsed.data.scheduled_at,
+      // The time as typed, in the org's zone: the truth scheduled_at is
+      // derived from (scheduled-local.ts).
+      ...wallClockColumns(raw.scheduled_at, orgTz),
       duration_minutes: parsed.data.duration_minutes,
       service_type: parsed.data.service_type,
       service_type_id: serviceExtras.service_type_id,
@@ -1103,6 +1120,8 @@ export async function createRecurringBookingAction(
     client_id: parsed.data.client_id,
     assigned_to: parsed.data.assigned_to ?? null,
     scheduled_at,
+    // The series' own words for this visit — its date at its start time.
+    ...wallClockColumns(`${zonedYmd(new Date(scheduled_at), orgTz)}T${parsed.data.start_time}`, orgTz),
     duration_minutes: parsed.data.duration_minutes,
     service_type: parsed.data.service_type,
     service_type_id: recurringServiceExtras.service_type_id,
@@ -1323,6 +1342,18 @@ export async function updateBookingAction(
   // Re-interpret datetime-local with the org's tz (see createBookingAction).
   const orgTz = await getOrgTimezone(membership.organization_id);
   parsed.data.scheduled_at = localInputToUtcIso(raw.scheduled_at, orgTz);
+  if (!runtimeKnowsZone(orgTz)) {
+    // Converting a typed time into an instant needs this zone's rules for
+    // that date. On stale rules the visit lands an hour off and nothing on
+    // screen says so (Alberta, 2026-11-01). Refuse rather than store it.
+    return {
+      errors: {
+        _form:
+          "This server's time zone rules are out of date, so the booking time can't be saved reliably right now. Tell Brian.",
+      },
+      values: raw,
+    };
+  }
 
   {
     const err = futureStatusError(parsed.data.scheduled_at, parsed.data.status);
@@ -1496,6 +1527,7 @@ export async function updateBookingAction(
       client_id: parsed.data.client_id,
       assigned_to: updateEffectiveAssignedTo,
       scheduled_at: parsed.data.scheduled_at,
+      ...wallClockColumns(raw.scheduled_at, orgTz),
       duration_minutes: parsed.data.duration_minutes,
       service_type_id: updateServiceExtras.service_type_id,
       service_type_label: updateServiceExtras.service_type_label,
