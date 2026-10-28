@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildTzProbe, findTzMismatch, tzOffsetMinutes, type TzProbe } from "./tz-probe";
+import { buildTzProbe, findTzMismatch, runtimeKnowsZone, tzOffsetMinutes, type TzProbe } from "./tz-probe";
 
 // Server on current rules: Alberta is UTC-6 all year from 2026-11-01.
 const alberta: TzProbe = {
@@ -44,5 +44,23 @@ describe("buildTzProbe / tzOffsetMinutes", () => {
   it("reads a fixed zone exactly", () => {
     expect(tzOffsetMinutes("Asia/Kolkata", new Date("2026-12-01T00:00:00Z"))).toBe(330);
     expect(tzOffsetMinutes("UTC", new Date())).toBe(0);
+  });
+});
+
+describe("runtimeKnowsZone — refuse to turn wall times into instants on stale rules", () => {
+  const current = () => -360;
+  it("accepts a runtime that knows Alberta stays at UTC-6", () => {
+    expect(runtimeKnowsZone("America/Edmonton", current)).toBe(true);
+  });
+  it("refuses one that still falls Edmonton back to UTC-7", () => {
+    expect(runtimeKnowsZone("America/Edmonton", stalePhone)).toBe(false);
+  });
+  it("trusts zones with nothing on file, and refuses one it can't format", () => {
+    expect(runtimeKnowsZone("America/Toronto", stalePhone)).toBe(true);
+    expect(
+      runtimeKnowsZone("America/Edmonton", () => {
+        throw new RangeError("bad zone");
+      }),
+    ).toBe(false);
   });
 });

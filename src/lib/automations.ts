@@ -4142,6 +4142,16 @@ export async function autoExtendRecurringSeries(): Promise<number> {
       // so DST shifts + holidays don't silently drift the schedule).
       const { getOrgTimezone } = await import("@/lib/org-timezone");
       const orgTz = await getOrgTimezone(s.organization_id);
+      // A runtime with stale zone rules stores every visit an hour off and
+      // nothing on screen says so — 2026-10-28 found 115 Svit winter visits
+      // made that way. Better no new visits tonight than wrong ones.
+      const { runtimeKnowsZone } = await import("@/lib/tz-probe");
+      if (!runtimeKnowsZone(orgTz)) {
+        console.error(
+          `[extend-series] refusing to generate for ${s.id}: this runtime's rules for ${orgTz} are out of date (tzdata ${process.versions.tz ?? "?"})`,
+        );
+        continue;
+      }
       const occurrences = generateOccurrences(
         {
           pattern: s.pattern as import("@/lib/recurrence").RecurrencePattern,

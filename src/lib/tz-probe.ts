@@ -43,6 +43,40 @@ export function tzOffsetMinutes(tz: string, instant: Date): number {
   return Math.round((asUtc - Math.floor(instant.getTime() / 1000) * 1000) / 60_000);
 }
 
+/**
+ * Zone facts this server's runtime must know before it turns a wall-clock
+ * time into an instant for a future date. Each was missing from some
+ * runtime at some point and cost real visits.
+ *
+ * America/Edmonton: permanent UTC-6 from 2026-11-01. Until about 2026-09-29
+ * production still fell Edmonton back to UTC-7, and every winter visit the
+ * series generator made in that time was stored an hour late (a 9:00 AM
+ * clean saved as 10:00 — scripts/fix-alberta-winter-times.ts).
+ */
+const KNOWN_ZONE_FACTS: Record<string, Array<{ at: string; offsetMinutes: number }>> = {
+  "America/Edmonton": [{ at: "2026-12-15T18:00:00Z", offsetMinutes: -360 }],
+};
+
+/**
+ * True when this runtime's rules for `tz` agree with every known fact. A
+ * zone with no facts on file is trusted. Callers generating future times
+ * should refuse when this is false: a visit stored an hour off is worse
+ * than a visit not generated yet, because nothing says it's wrong.
+ */
+export function runtimeKnowsZone(
+  tz: string,
+  offset: (tz: string, instant: Date) => number = tzOffsetMinutes,
+): boolean {
+  for (const f of KNOWN_ZONE_FACTS[tz] ?? []) {
+    try {
+      if (offset(tz, new Date(f.at)) !== f.offsetMinutes) return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
 const SAMPLE_DAYS = [0, 45, 100, 160, 220, 280, 340];
 
 export function buildTzProbe(tz: string, now: Date = new Date()): TzProbe {
