@@ -35,6 +35,7 @@ export function JobCard({ job, tz }: { job: FieldJob; tz: string }) {
   // that's the second cleaner arriving.
   const canArrive =
     when.isToday &&
+    job.can_start_now &&
     !job.needs_acceptance &&
     job.status !== "completed" &&
     !job.clocked_in_since &&

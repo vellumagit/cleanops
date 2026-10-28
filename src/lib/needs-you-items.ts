@@ -126,7 +126,9 @@ export function buildJobItems(
 
   // Finished on site, someone rostered never showed. The rules won't close
   // it until the window ends; a person can, now.
-  if (state.phase === "finished_on_site") {
+  // (Not on a row already marked completed: the old closing rules, still
+  // in charge until the computed state takes over, may have closed it.)
+  if (state.phase === "finished_on_site" && b.status !== "completed") {
     const key = `no_show:${b.id}`;
     items.push({
       key,
@@ -153,6 +155,8 @@ export function buildJobItems(
   // office's side of it, with the two things the office can do.
   if (
     ctx.usesClockIn &&
+    b.status !== "pending" &&
+    b.status !== "completed" &&
     (state.phase === "not_started" || state.phase === "in_progress") &&
     ctx.now >= startMs + LATE_MINUTES * 60_000 &&
     ctx.now < state.windowEndMs

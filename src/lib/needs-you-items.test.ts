@@ -70,6 +70,19 @@ describe("buildJobItems", () => {
     expect(items[0].alert).toBe(true);
   });
 
+  it("doesn't ask about a no-show, or a late arrival, on a job already closed or still pending", () => {
+    const shifts = [
+      shift("s1", "p", "2026-10-27T15:00:00Z", "2026-10-27T18:30:00Z"),
+      shift("s2", "a", "2026-10-27T14:59:00Z", "2026-10-27T18:30:00Z"),
+    ];
+    expect(
+      buildJobItems(booking({ status: "completed", shifts }), ctx({ now: T("2026-10-27T18:35:00Z") })),
+    ).toEqual([]);
+    expect(
+      buildJobItems(booking({ status: "pending" }), ctx({ now: T("2026-10-27T15:40:00Z") })),
+    ).toEqual([]);
+  });
+
   it("flags who hasn't clocked in 30 minutes after the start, with call and remove", () => {
     const items = buildJobItems(
       booking({

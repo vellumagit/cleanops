@@ -435,7 +435,7 @@ export default async function DashboardPage() {
           problems. Silent when there's nothing. */}
       {/* Suspense: it runs its own scans; the dashboard paints without
           waiting and the list streams in when ready. */}
-      {canMoney && (
+      {["owner", "admin", "manager"].includes(membership.role) && (
         <div className="order-2 lg:order-none">
           <Suspense fallback={null}>
             <NeedsYou organizationId={membership.organization_id} />

@@ -2,7 +2,7 @@
 
 import { toast } from "sonner";
 import { startJobAction, completeJobAction } from "./jobs/actions";
-import { TAPPED_AT_FIELD } from "@/lib/punch-time";
+import { TAPPED_AT_FIELD, MAX_TAP_AGE_MS } from "@/lib/punch-time";
 
 /**
  * The two things a cleaner says about her own shift — "I'm here" and
@@ -98,7 +98,12 @@ export async function tap(kind: TapKind, bookingId: string): Promise<TapOutcome>
   const t: QueuedTap = { kind, bookingId, tappedAt, ...coords };
   try {
     const result = await send(t);
-    if (result.ok) return { status: "sent" };
+    if (result.ok) {
+      // A tap that got through makes any earlier, stuck copy of the same
+      // tap redundant — sending it later would clock her in a second time.
+      writeQueue(readQueue().filter((q) => !(q.bookingId === bookingId && q.kind === kind)));
+      return { status: "sent" };
+    }
     return { status: "refused", error: result.error };
   } catch (err) {
     if (!isNetworkFailure(err)) {
@@ -124,6 +129,18 @@ export async function flushTaps(opts: { quiet?: boolean } = {}): Promise<number>
     let q = readQueue();
     while (q.length > 0) {
       const t = q[0];
+      // Too old to trust: the server would record it as "now", which is the
+      // wrong time with the right name on it. Say so instead.
+      if (Date.now() - new Date(t.tappedAt).getTime() > MAX_TAP_AGE_MS) {
+        q = q.slice(1);
+        writeQueue(q);
+        if (!opts.quiet) {
+          toast.error(
+            `A saved "${t.kind === "here" ? "I'm here" : "I'm done"}" from more than 12 hours ago couldn't be sent. Tell your manager the real time.`,
+          );
+        }
+        continue;
+      }
       try {
         const result = await send(t);
         q = q.slice(1);

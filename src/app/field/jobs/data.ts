@@ -3,6 +3,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { resolveAutomationEnabled } from "@/lib/automation-defaults";
 import type { CurrentMembership } from "@/lib/auth";
+import { EARLY_START_GRACE_MINUTES } from "@/lib/booking-status";
 
 export type FieldJob = {
   id: string;
@@ -29,6 +30,8 @@ export type FieldJob = {
   /** This member has punched in on this job at some point (open or closed).
    *  On a team job, End job is only offered once they have. */
   worked_here: boolean;
+  /** Within the early-start grace of her start: "I'm here" would be accepted. */
+  can_start_now: boolean;
 };
 
 /** YYYY-MM-DD for an instant in the org's timezone (for day bucketing). */
@@ -210,6 +213,9 @@ export async function fetchMyFieldJobs(
       clocked_in_since: clockedInSince.get(b.id) ?? null,
       crew_size: crewCount,
       worked_here: workedHere.has(b.id),
+      can_start_now:
+        new Date(b.scheduled_at).getTime() + (offset ?? 0) * 60_000 - Date.now() <=
+        EARLY_START_GRACE_MINUTES * 60_000,
       client_notes: b.client?.notes ?? null,
     };
   });

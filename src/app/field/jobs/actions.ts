@@ -244,7 +244,9 @@ export async function startJobAction(
       const { error: closeError } = await supabase
         .from("time_entries")
         .update({
-          clock_out_at: new Date().toISOString(),
+          // At the tap, like the new entry's start — otherwise a tap sent
+          // late from a dead zone leaves the two shifts overlapping.
+          clock_out_at: punchedAt,
           clock_out_lat: lat,
           clock_out_lng: lng,
         })

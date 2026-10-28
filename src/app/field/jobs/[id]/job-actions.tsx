@@ -68,6 +68,27 @@ export function JobActionButtons({
 
   const isDone = status === "completed";
 
+  // Closed by the office while she's still on the clock: her shift keeps
+  // running until she says otherwise, so she needs the button, not a
+  // "nice work" with no way to stop her clock.
+  if (isDone && myOpenEntryHere) {
+    return (
+      <div className="flex flex-col gap-3">
+        <Facts text="The office closed this job. Tap I'm done to stop your clock." />
+        <Button
+          type="button"
+          size="lg"
+          className="h-16 text-lg font-semibold"
+          onClick={() => run("done")}
+          disabled={isPending}
+        >
+          <CheckCircle2 className="mr-2 h-6 w-6" />
+          {isPending ? "One moment…" : "I'm done"}
+        </Button>
+      </div>
+    );
+  }
+
   if (isDone) {
     return (
       <div className="flex items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-base font-semibold text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-300">
