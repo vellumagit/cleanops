@@ -124,7 +124,7 @@ async function main() {
   md.push("");
   md.push(`**Restore** (${rows.filter((r) => r.verdict === "restore").length} series, ${restoreVisits} visits): exactly an hour late, and the client's October visits were at the series' time. Safe to restore. **Ask Svitlana** (${rows.filter((r) => r.verdict === "ask").length} series, ${askVisits} visits): this client was already being booked off the series' time before November, so only she knows which time is right.`);
   md.push("");
-  md.push("Both buttons are on the dashboard under **Needs you**: *Restore to 9:00 AM* moves the visits back; *Keep these times* leaves them and stops asking. Nobody is notified either way; Google calendars update overnight.");
+  md.push("Both buttons are on the dashboard under **Needs you**: *Restore to 9:00 AM* moves the visits back; *Keep these times* leaves them and stops asking. Nobody is notified either way; Google calendars (org and crew) update within a couple of minutes of Restore.");
   md.push("");
   for (const verdict of ["restore", "ask"] as Verdict[]) {
     md.push(`## ${verdict === "restore" ? "Restore" : "Ask Svitlana"}`);

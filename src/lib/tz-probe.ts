@@ -51,7 +51,8 @@ export function tzOffsetMinutes(tz: string, instant: Date): number {
  * America/Edmonton: permanent UTC-6 from 2026-11-01. Until about 2026-09-29
  * production still fell Edmonton back to UTC-7, and every winter visit the
  * series generator made in that time was stored an hour late (a 9:00 AM
- * clean saved as 10:00 — scripts/fix-alberta-winter-times.ts).
+ * clean saved as 10:00). The series-drift list on the dashboard finds them;
+ * scripts/series-drift-report.ts writes the same list to a file.
  */
 const KNOWN_ZONE_FACTS: Record<string, Array<{ at: string; offsetMinutes: number }>> = {
   "America/Edmonton": [{ at: "2026-12-15T18:00:00Z", offsetMinutes: -360 }],
