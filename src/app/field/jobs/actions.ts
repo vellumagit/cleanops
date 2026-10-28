@@ -485,15 +485,12 @@ export async function completeJobAction(
   };
   const rows = allAssignees ?? [];
   if (rows.length >= 2) {
-    // Who actually showed up. Only they can hold the booking open — see
-    // crew-completion.ts for why a no-show must not.
-    const { data: workedRows } = (await supabase
-      .from("time_entries")
-      .select("employee_id")
-      .eq("booking_id", bookingId)) as unknown as {
-      data: Array<{ employee_id: string }> | null;
-    };
-
+    // Who showed up, and who is still on the clock — everyone's shifts, read
+    // the way the rules read them. The crew's entries used to be read with
+    // the caller's own client, and an employee can only see her OWN entries
+    // (time_entries RLS), so to the last finisher every crewmate looked like
+    // she had never clocked in: "still coming" before the window ended,
+    // a no-show after it — which closed the job on someone still working.
     const { crewStillWorking } = await import("./crew-completion");
     // The window is the rules' window (start + the crew's shared hours, or
     // a later own segment), not start + the one-person hours entered: on a
@@ -501,6 +498,7 @@ export async function completeJobAction(
     // Measured the old way, the last finisher at 1:35 kept the job open on
     // a no-show for another thirteen hours.
     const view = await loadJobState(bookingId);
+    const shifts = view?.shifts ?? [];
     const windowEndMs =
       view?.windowEndMs ??
       new Date(booking.scheduled_at).getTime() +
@@ -508,7 +506,10 @@ export async function completeJobAction(
     if (
       crewStillWorking({
         assignees: rows,
-        workedIds: (workedRows ?? []).map((r) => r.employee_id),
+        workedIds: shifts.map((s) => s.employee_id),
+        onClockIds: shifts
+          .filter((s) => s.clock_out_at == null)
+          .map((s) => s.employee_id),
         callerId: membership.id,
         jobWindowOver: Date.now() >= windowEndMs,
       })

@@ -74,13 +74,38 @@ describe("crewStillWorking", () => {
     ).toBe(true);
   });
 
-  it("still holds when a crewmate worked earlier and left without tapping", () => {
-    // They have a closed time entry but no completed_at — treat them as
-    // outstanding rather than assuming they are done.
+  it("without clock data, a crewmate who left without tapping still holds (old callers)", () => {
     expect(
       crewStillWorking({
         assignees: [row("a"), row("b")],
         workedIds: ["a", "b"],
+        callerId: "b",
+      }),
+    ).toBe(true);
+  });
+
+  it("with clock data, off the clock means finished — her tap only ever spoke for her shift", () => {
+    // 'a' stopped her clock from the Clock page ("Just stop my clock"), so
+    // she has a closed entry and no completed_at. The last finisher's I'm
+    // done must close the job, not wait for a mark she has no way to make.
+    expect(
+      crewStillWorking({
+        assignees: [row("a"), row("b")],
+        workedIds: ["a", "b"],
+        onClockIds: [],
+        callerId: "b",
+      }),
+    ).toBe(false);
+  });
+
+  it("with clock data, an open clock holds the job even if her row says done", () => {
+    // She tapped I'm done earlier, then "Not done? I'm back" — the clock-in
+    // is what matters, whatever the row got to.
+    expect(
+      crewStillWorking({
+        assignees: [row("a", true), row("b")],
+        workedIds: ["a", "b"],
+        onClockIds: ["a"],
         callerId: "b",
       }),
     ).toBe(true);
