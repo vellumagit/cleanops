@@ -44,7 +44,7 @@ export function NeedsYouButtons({ actions }: { actions: NeedsYouAction[] }) {
         case "restore_series_times":
           if (
             !window.confirm(
-              `Move ${a.count} ${a.count === 1 ? "visit" : "visits"} back to the series' time? Nobody is notified; calendars update overnight.`,
+              `Move ${a.count} ${a.count === 1 ? "visit" : "visits"} back to the series' time? Nobody is notified; the calendars update right away.`,
             )
           )
             return;
