@@ -10,6 +10,7 @@ import {
   CalendarDays,
   HeartPulse,
   StickyNote,
+  Clock,
 } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -22,6 +23,7 @@ import { formatCurrencyCents, formatDate, formatDateTime, humanizeEnum } from "@
 import { cn } from "@/lib/utils";
 import { DocumentsPanel, type EmployeeDocument } from "./documents-panel";
 import { getOrgTimezone } from "@/lib/org-timezone";
+import { loadAttendanceRecord } from "@/lib/attendance-record";
 
 export const metadata = { title: "Employee file" };
 
@@ -200,6 +202,14 @@ export default async function EmployeeFilePage({
     }>,
   ]);
 
+  // Attendance: late, never clocked in, ran over — per job, from the same
+  // facts the job rules read. The owner's record; the owner's call.
+  const attendancePromise = loadAttendanceRecord(
+    admin,
+    viewer.organization_id,
+    member.id,
+  );
+
   // ONE wave. Everything below depends only on `member`, `id` and `viewer`,
   // never on each other, so they all go at once instead of nose-to-tail.
   const [
@@ -209,6 +219,7 @@ export default async function EmployeeFilePage({
     settlement,
     { data: rawDocs },
     [{ data: orgModules }, { data: trainingRows }],
+    attendance,
   ] = await Promise.all([
     tzPromise,
     adminDataPromise,
@@ -216,6 +227,7 @@ export default async function EmployeeFilePage({
     settlementPromise,
     rawDocsPromise,
     trainingPair,
+    attendancePromise,
   ]);
 
   const lifecycle: Array<{ label: string; date: string | null }> = [];
@@ -598,6 +610,121 @@ export default async function EmployeeFilePage({
             </div>
           </div>
         )}
+
+        {/* Attendance — the record Svitlana asked for (2026-10-29): who was
+            late, who never clocked in, who ran over, written down per job
+            instead of remembered. Judged against the person's OWN window
+            (her segment or her share), with the Timesheets tolerance. It
+            records; what to do about it is the owner's call. */}
+        <div className="rounded-xl border border-border bg-card">
+          <div className="flex items-baseline justify-between gap-3 border-b border-border px-4 py-3">
+            <h2 className="flex items-center gap-2 text-sm font-semibold">
+              <Clock className="h-4 w-4 text-muted-foreground" />
+              Attendance
+            </h2>
+            <span className="text-xs text-muted-foreground">
+              last {attendance.windowDays} days ·{" "}
+              {attendance.summary.jobs} job{attendance.summary.jobs === 1 ? "" : "s"}
+            </span>
+          </div>
+          {attendance.summary.jobs === 0 ? (
+            <p className="px-4 py-6 text-center text-xs text-muted-foreground">
+              Not on any finished jobs in the last {attendance.windowDays} days.
+            </p>
+          ) : (
+            <>
+              <dl className="grid grid-cols-2 gap-x-6 gap-y-2 px-4 py-3 text-sm sm:grid-cols-4">
+                <div>
+                  <dt className="text-[11px] uppercase tracking-wide text-muted-foreground">On time</dt>
+                  <dd className="font-semibold tabular-nums">
+                    {attendance.summary.onTime}
+                    <span className="font-normal text-muted-foreground"> of {attendance.summary.jobs}</span>
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-[11px] uppercase tracking-wide text-muted-foreground">Late</dt>
+                  <dd
+                    className={cn(
+                      "font-semibold tabular-nums",
+                      attendance.summary.late > 0 && "text-amber-700 dark:text-amber-300",
+                    )}
+                  >
+                    {attendance.summary.late}
+                    {attendance.summary.late > 0 && (
+                      <span className="font-normal text-muted-foreground">
+                        {" "}· avg {attendance.summary.lateAverageMinutes}m
+                      </span>
+                    )}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-[11px] uppercase tracking-wide text-muted-foreground">Never clocked in</dt>
+                  <dd
+                    className={cn(
+                      "font-semibold tabular-nums",
+                      attendance.summary.noShows > 0 && "text-red-600 dark:text-red-400",
+                    )}
+                  >
+                    {attendance.summary.noShows}
+                    {attendance.summary.noShowsNobodyTapped > 0 && (
+                      <span className="font-normal text-muted-foreground">
+                        {" "}· {attendance.summary.noShowsNobodyTapped} where nobody did
+                      </span>
+                    )}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-[11px] uppercase tracking-wide text-muted-foreground">Ran over</dt>
+                  <dd className="font-semibold tabular-nums">{attendance.summary.ranOver}</dd>
+                </div>
+              </dl>
+              {attendance.exceptions.length === 0 ? (
+                <p className="border-t border-border px-4 py-3 text-xs text-muted-foreground">
+                  Every job on time, every clock stopped inside the window.
+                </p>
+              ) : (
+                <ul className="divide-y divide-border/60 border-t border-border">
+                  {attendance.exceptions.slice(0, 12).map((x) => (
+                    <li key={x.bookingId}>
+                      <Link
+                        href={`/app/bookings/${x.bookingId}`}
+                        className="flex items-center justify-between gap-3 px-4 py-2.5 transition-colors hover:bg-muted/50"
+                      >
+                        <span className="min-w-0 truncate text-sm">
+                          <span className="font-medium">{formatDateTime(x.scheduledAt, tz)}</span>
+                          {x.clientName && (
+                            <span className="text-muted-foreground"> · {x.clientName}</span>
+                          )}
+                        </span>
+                        <span className="flex shrink-0 items-center gap-1.5">
+                          {x.kind === "no_show" && (
+                            <StatusBadge tone={x.othersWorked ? "red" : "neutral"}>
+                              {x.othersWorked ? "Never clocked in" : "Nobody clocked in"}
+                            </StatusBadge>
+                          )}
+                          {x.kind === "late" && (
+                            <StatusBadge tone="amber">{x.lateByMinutes}m late</StatusBadge>
+                          )}
+                          {x.overByMinutes > 0 && (
+                            <StatusBadge tone="neutral">{x.overByMinutes}m over</StatusBadge>
+                          )}
+                        </span>
+                      </Link>
+                    </li>
+                  ))}
+                  {attendance.exceptions.length > 12 && (
+                    <li className="px-4 py-2 text-xs text-muted-foreground">
+                      and {attendance.exceptions.length - 12} more on{" "}
+                      <Link href="/app/timesheets" className="underline underline-offset-2">
+                        Timesheets
+                      </Link>
+                    </li>
+                  )}
+                </ul>
+              )}
+            </>
+          )}
+        </div>
 
         {/* Training */}
         <div className="rounded-xl border border-border bg-card">
