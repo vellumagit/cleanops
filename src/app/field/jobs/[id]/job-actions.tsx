@@ -16,6 +16,7 @@ import { tap, type TapKind } from "../../tap";
 export function JobActionButtons({
   bookingId,
   status,
+  closedBySollos = false,
   youCompleted = false,
   myOpenEntryHere = false,
   notDueYet = false,
@@ -24,6 +25,9 @@ export function JobActionButtons({
 }: {
   bookingId: string;
   status: string;
+  /** Completed because the last clock stopped, not because a person closed
+   *  it (no closed_at). Clocking in again reopens it, so offer the way back. */
+  closedBySollos?: boolean;
   /** More than the early-start grace away: "I'm here" would be refused, so
    *  say when it unlocks instead. How a cleaner on the wrong card finds out. */
   notDueYet?: boolean;
@@ -91,9 +95,28 @@ export function JobActionButtons({
 
   if (isDone) {
     return (
-      <div className="flex items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-base font-semibold text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-300">
-        <CheckCircle2 className="h-5 w-5" />
-        Job complete. Nice work.
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-base font-semibold text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-300">
+          <CheckCircle2 className="h-5 w-5" />
+          Job complete. Nice work.
+        </div>
+        {/* Sollos closed it when the last clock stopped. If that was too
+            soon — a break, a queued tap, a tap on the wrong job — clocking
+            in again puts the job back in progress. A job a person closed
+            stays closed; the office is the way back there. */}
+        {closedBySollos ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="lg"
+            className="h-12 text-base"
+            onClick={() => run("here")}
+            disabled={isPending}
+          >
+            <Undo2 className="mr-2 h-5 w-5" />
+            {isPending ? "One moment…" : "Not done? I'm back"}
+          </Button>
+        ) : null}
       </div>
     );
   }

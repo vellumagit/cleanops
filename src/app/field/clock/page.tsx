@@ -32,16 +32,19 @@ export default async function FieldClockPage() {
     supabase
       .from("bookings")
       .select(
-        "id, scheduled_at, service_type, service_type_label, status, client:clients ( name )",
+        "id, scheduled_at, service_type, service_type_label, status, closed_at, client:clients ( name )",
       )
       .eq("assigned_to", membership.id)
       .gte("scheduled_at", dayStart.toISOString())
       .lt("scheduled_at", dayEnd.toISOString())
-      .in("status", ["pending", "confirmed", "in_progress"]),
+      // Completed is in the list for one reason: a job Sollos closed when
+      // the last clock stopped can be clocked into again, which reopens
+      // it. stillClockable() below drops the ones a person closed.
+      .in("status", ["pending", "confirmed", "in_progress", "completed"]),
     supabase
       .from("booking_assignees" as never)
       .select(
-        "acceptance_status, booking:bookings!inner ( id, scheduled_at, service_type, service_type_label, status, client:clients ( name ) )",
+        "acceptance_status, booking:bookings!inner ( id, scheduled_at, service_type, service_type_label, status, closed_at, client:clients ( name ) )",
       )
       .eq("membership_id" as never, membership.id as never)
       // !inner + nested filters: without them this fetched the member's
@@ -50,7 +53,7 @@ export default async function FieldClockPage() {
       .lt("booking.scheduled_at" as never, dayEnd.toISOString() as never)
       .in(
         "booking.status" as never,
-        ["pending", "confirmed", "in_progress"] as never,
+        ["pending", "confirmed", "in_progress", "completed"] as never,
       ),
   ]);
   type JobRow = {
@@ -59,11 +62,15 @@ export default async function FieldClockPage() {
     service_type: string | null;
     service_type_label: string | null;
     status: string;
+    closed_at: string | null;
     client: { name: string } | null;
   };
+  const stillClockable = (b: JobRow) =>
+    ["pending", "confirmed", "in_progress"].includes(b.status) ||
+    (b.status === "completed" && b.closed_at == null);
   const jobMap = new Map<string, JobRow>();
   for (const b of (primaryJobs ?? []) as unknown as JobRow[]) {
-    jobMap.set(b.id, b);
+    if (stillClockable(b)) jobMap.set(b.id, b);
   }
   // Only shifts she has said yes to. The jobs list hides "I'm here" behind
   // the Confirm step for a pending one; this screen offered the same job as
@@ -83,7 +90,7 @@ export default async function FieldClockPage() {
     }
     if (b.scheduled_at < dayStart.toISOString()) continue;
     if (b.scheduled_at >= dayEnd.toISOString()) continue;
-    if (!["pending", "confirmed", "in_progress"].includes(b.status)) continue;
+    if (!stillClockable(b)) continue;
     jobMap.set(b.id, b);
   }
   // Rollover prompt: while clocked into job A, the next assigned job whose

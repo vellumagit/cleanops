@@ -95,6 +95,7 @@ export default async function FieldJobDetailPage({
         scheduled_at,
         duration_minutes,
         status,
+        closed_at,
         service_type,
         address,
         notes,
@@ -125,6 +126,7 @@ export default async function FieldJobDetailPage({
       | "in_progress"
       | "completed"
       | "cancelled";
+    closed_at: string | null;
     service_type: string;
     address: string | null;
     notes: string | null;
@@ -682,6 +684,7 @@ export default async function FieldJobDetailPage({
           <JobActionButtons
             bookingId={booking.id}
             status={booking.status}
+            closedBySollos={booking.status === "completed" && booking.closed_at == null}
             youCompleted={crewRow?.completed_at != null}
             myOpenEntryHere={Boolean(myOpenEntryHere)}
             facts={jobFactsForMember(await jobStatePromise, membership.id, tz)}
