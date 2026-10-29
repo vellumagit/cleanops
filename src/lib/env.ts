@@ -54,6 +54,12 @@ const BaseSchema = z.object({
   // that use sendEmail() directly are unaffected.
   CLIENT_EMAILS_PAUSED: z.enum(["true", "false"]).optional(),
 
+  // Morning check (/api/cron/morning-check, 8 AM Edmonton): who gets the
+  // email, and which org it watches (defaults to Svit). Unset recipient =
+  // the cron returns 500 and sends nothing.
+  MORNING_CHECK_EMAIL: z.string().optional(),
+  MORNING_CHECK_ORG_ID: z.string().optional(),
+
   // Sentry
   NEXT_PUBLIC_SENTRY_DSN: z.string().optional(),
   SENTRY_ORG: z.string().optional(),

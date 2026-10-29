@@ -203,6 +203,10 @@
     {
       "path": "/api/cron/rederive-times",
       "schedule": "10 4 * * *"
+    },
+    {
+      "path": "/api/cron/morning-check",
+      "schedule": "0 14 * * *"
     }
   ]
 }
