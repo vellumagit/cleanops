@@ -5,6 +5,7 @@ import { logSystemAuditEvent } from "@/lib/audit";
 import {
   deriveJobState,
   describeJobState,
+  finishesBeforeCutover,
   type JobState,
   type JobStateCrewRow,
   type JobStateShift,
@@ -22,9 +23,12 @@ import {
  *
  * Shadow mode, the default until JOB_STATE_WRITE=1: it computes and
  * compares, and when the answer differs from the row it writes one
- * audit_log row (action "state_check") and touches nothing else. The old
- * direct writes keep running alongside. A week of those rows on real jobs,
- * each one explained, is the test before the flip.
+ * audit_log row (action "state_check") and touches nothing else — with one
+ * exception: when the last clock stops and the job is done, it stores
+ * completed (finishesBeforeCutover in job-state.ts), because no old path
+ * did that except the cleaner's own "I'm done" tap. The old direct writes
+ * keep running alongside. A week of those rows on real jobs, each one
+ * explained, is the test before the flip.
  */
 
 export type JobSyncResult = {
@@ -296,7 +300,7 @@ export async function loadJobTimeline(
         status === "completed"
           ? a.actor_id
             ? `Closed by ${who(a.actor_id)}`
-            : `Closed by Sollos (${String(after.reason ?? "automatic")})`
+            : `Closed by Sollos (${String(after.reason ?? "automatic").replace(/_/g, " ")})`
           : status === "cancelled"
             ? `Cancelled by ${who(a.actor_id)}`
             : `Set to ${status.replace("_", " ")} by ${who(a.actor_id)}`;
@@ -352,7 +356,13 @@ export async function syncJob(
       return { state, summary, mode, before, after: before };
     }
 
-    if (mode === "shadow") {
+    // In shadow, one transition is stored anyway: the last clock stopped and
+    // the job is done (see finishesBeforeCutover). Everything else only logs.
+    const earlyFinish =
+      mode === "shadow" &&
+      finishesBeforeCutover(before, state, new Date(booking.scheduled_at).getTime(), now);
+
+    if (mode === "shadow" && !earlyFinish) {
       console.log(
         `[job-state shadow] ${bookingId} after ${reason}: row=${before} computed=${state.status} (${state.phase}) — ${summary}`,
       );
@@ -408,7 +418,13 @@ export async function syncJob(
       action: "status_change",
       entity: "booking",
       entity_id: bookingId,
-      after: { status: state.status, reason, phase: state.phase, summary },
+      after: {
+        status: state.status,
+        reason,
+        phase: state.phase,
+        summary,
+        ...(earlyFinish ? { mode: "shadow_finish" } : {}),
+      },
     });
     if (state.status === "completed") {
       const { autoInvoiceOnJobComplete } = await import("@/lib/automations");

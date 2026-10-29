@@ -292,6 +292,40 @@ export function deriveJobState(input: JobStateInput): JobState {
 }
 
 /**
+ * The one answer the rules may store while they are otherwise in shadow:
+ * everyone who came has clocked out, so the job is done.
+ *
+ * Only the cleaner's own "I'm done" tap used to finish a job. Every other
+ * way a last clock stops — the office closing the shift from Timesheets or
+ * Needs-you, the cleaner stopping her clock on the Clock page, the overnight
+ * cap — left it in progress until someone closed it by hand. Oliver Little,
+ * 2026-10-28: the office ended the last two shifts at 4:20 PM, the rules said
+ * done five seconds later, and the job sat open until Svitlana closed it at
+ * 5:22. The rules already wait for a rostered person who hasn't come until
+ * the window ends, so "done" here means everyone clocked out, or the window
+ * is over and nobody else is coming.
+ *
+ * Narrow on purpose: someone worked it (an untouched job auto-completing
+ * stays with the nightly sweep until cutover), it has started, and the row
+ * is open. It never moves a job backwards.
+ */
+export function finishesBeforeCutover(
+  rowStatus: string,
+  state: JobState,
+  scheduledAtMs: number,
+  now: number,
+): boolean {
+  return (
+    state.phase === "done" &&
+    state.status === "completed" &&
+    state.finished.length > 0 &&
+    state.onSite.length === 0 &&
+    scheduledAtMs <= now &&
+    (rowStatus === "in_progress" || rowStatus === "en_route" || rowStatus === "confirmed")
+  );
+}
+
+/**
  * The one line a manager reads instead of a status badge. Names come from
  * the caller so this stays free of lookups.
  */
