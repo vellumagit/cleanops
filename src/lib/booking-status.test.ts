@@ -7,6 +7,7 @@ import {
   allowedTransitionsFor,
   statusDropdownOptions,
   rendersAsStaticBadge,
+  invoiceDraftDueOnEdit,
 } from "./booking-status";
 
 const NOW = new Date("2026-08-04T16:00:00Z").getTime();
@@ -294,5 +295,25 @@ describe("every offered option is a writable status", () => {
         }
       }
     }
+  });
+});
+
+describe("invoiceDraftDueOnEdit — when an edit drafts the invoice", () => {
+  it("drafts when the job becomes completed", () => {
+    expect(invoiceDraftDueOnEdit({ status: "confirmed", total_cents: 14000 }, { status: "completed", total_cents: 14000 })).toBe(true);
+    expect(invoiceDraftDueOnEdit({ status: "in_progress", total_cents: 0 }, { status: "completed", total_cents: 0 })).toBe(true);
+  });
+  it("drafts when a completed job with no price gets one", () => {
+    expect(invoiceDraftDueOnEdit({ status: "completed", total_cents: 0 }, { status: "completed", total_cents: 14000 })).toBe(true);
+    expect(invoiceDraftDueOnEdit({ status: "completed", total_cents: null }, { status: "completed", total_cents: 1 })).toBe(true);
+  });
+  it("does not draft again for a priced job edited for something else", () => {
+    expect(invoiceDraftDueOnEdit({ status: "completed", total_cents: 14000 }, { status: "completed", total_cents: 14000 })).toBe(false);
+    expect(invoiceDraftDueOnEdit({ status: "completed", total_cents: 14000 }, { status: "completed", total_cents: 15000 })).toBe(false);
+  });
+  it("does not draft for a job marked free, or one that isn't done", () => {
+    expect(invoiceDraftDueOnEdit({ status: "completed", total_cents: 0 }, { status: "completed", total_cents: 0 })).toBe(false);
+    expect(invoiceDraftDueOnEdit({ status: "confirmed", total_cents: 0 }, { status: "confirmed", total_cents: 14000 })).toBe(false);
+    expect(invoiceDraftDueOnEdit({ status: "completed", total_cents: 14000 }, { status: "cancelled", total_cents: 14000 })).toBe(false);
   });
 });

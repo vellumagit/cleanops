@@ -11,6 +11,7 @@ import {
   futureStatusError,
   WRITABLE_BOOKING_STATUSES,
   WRITABLE_BOOKING_STATUS_LIST,
+  invoiceDraftDueOnEdit,
 } from "@/lib/booking-status";
 
 type Params = { params: Promise<{ id: string }> };
@@ -137,7 +138,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   // only inspects body.status, so both sides are merged before judging.
   const { data: prev } = await admin
     .from("bookings")
-    .select("status, scheduled_at")
+    .select("status, scheduled_at, total_cents")
     .eq("id", id)
     .eq("organization_id", auth.organizationId)
     .maybeSingle();
@@ -222,12 +223,22 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       entity_id: id,
       after: { status: newStatus, from: oldStatus ?? null, via: "api" },
     });
-    if (newStatus === "completed") {
-      const { autoInvoiceOnJobComplete } = await import("@/lib/automations");
-      await autoInvoiceOnJobComplete(id).catch((err) =>
-        console.error("[api] auto-invoice after PATCH completed failed:", err),
-      );
-    }
+  }
+  // Bill when this edit calls for it: the job became completed, or a job
+  // already done with no price just got one (same rule as the edit form).
+  if (
+    invoiceDraftDueOnEdit(
+      { status: oldStatus, total_cents: prev?.total_cents },
+      {
+        status: newStatus,
+        total_cents: (updates.total_cents as number | undefined) ?? prev?.total_cents,
+      },
+    )
+  ) {
+    const { autoInvoiceOnJobComplete } = await import("@/lib/automations");
+    await autoInvoiceOnJobComplete(id).catch((err) =>
+      console.error("[api] auto-invoice after PATCH failed:", err),
+    );
   }
   // Any edit can move the job's window (time, length) as well as its
   // status, so the rules look after every PATCH, not just status changes.

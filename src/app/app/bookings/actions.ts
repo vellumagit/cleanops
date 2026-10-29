@@ -9,6 +9,7 @@ import {
   WRITABLE_BOOKING_STATUSES,
   WRITABLE_BOOKING_STATUS_LIST,
   type WritableBookingStatus,
+  invoiceDraftDueOnEdit,
 } from "@/lib/booking-status";
 import { lifecycleByAssignee, withPriorLifecycle } from "@/lib/crew-sync";
 import { resolveSegmentWindows } from "@/lib/booking-segments";
@@ -1375,7 +1376,7 @@ export async function updateBookingAction(
   const { data: existing } = (await supabase
     .from("bookings")
     .select(
-      "google_calendar_event_id, assigned_to, scheduled_at, status, service_type",
+      "google_calendar_event_id, assigned_to, scheduled_at, status, service_type, total_cents",
     )
     .eq("id", id)
     .maybeSingle()) as unknown as {
@@ -1385,6 +1386,7 @@ export async function updateBookingAction(
       scheduled_at: string | null;
       status: string | null;
       service_type: string | null;
+      total_cents: number | null;
     } | null;
   };
 
@@ -2228,14 +2230,22 @@ export async function updateBookingAction(
     sendBookingCancelledToClient(id);
   }
 
-  // If the status flipped TO completed from something else, kick off the
-  // auto-invoice automation. Previously this only ran when an employee
-  // marked a job done from the field app — owners marking a job complete
-  // from the admin dashboard got no invoice at all, which looked like
-  // the auto-invoice feature was broken. Awaited so the draft invoice is
+  // Draft the invoice when this edit calls for it: the status flipped TO
+  // completed (owners marking a job done here used to get no invoice at
+  // all, which looked like the automation was broken), or a job already
+  // done with no price just got one — the "needs a price" answer, which
+  // used to leave the invoice to be made by hand. Awaited so the draft is
   // present by the time /app/invoices revalidates below. The automation
   // catches its own errors internally so this won't throw here.
-  if (existing?.status !== "completed" && parsed.data.status === "completed") {
+  if (
+    invoiceDraftDueOnEdit(
+      { status: existing?.status, total_cents: existing?.total_cents },
+      {
+        status: parsed.data.status,
+        total_cents: parsed.data.is_free ? 0 : parsed.data.total_cents,
+      },
+    )
+  ) {
     await autoInvoiceOnJobComplete(id);
   }
   await syncJob(id, "edit_form");

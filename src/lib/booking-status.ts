@@ -193,3 +193,24 @@ export function rendersAsStaticBadge(
 ): boolean {
   return !canEdit || statusDropdownOptions(status, scheduledAtIso).length === 0;
 }
+
+/**
+ * Does this edit call for the draft invoice? Two moments do: the job
+ * becoming completed (every status writer already asks), and a job that
+ * was completed with no price getting one. The second was missing: the
+ * draft is only attempted the moment a job completes, and a job with no
+ * price is skipped then (nothing to bill, and auto-send would mail a $0
+ * invoice). The manager answers "needs a price", sets it, and until now
+ * nothing happened — the invoice had to be made by hand.
+ *
+ * Marking it free is not a price: the "needs a price" flag clears, and no
+ * invoice is drafted, for the same $0 reason.
+ */
+export function invoiceDraftDueOnEdit(
+  before: { status: string | null | undefined; total_cents: number | null | undefined },
+  after: { status: string; total_cents: number | null | undefined },
+): boolean {
+  if (after.status !== "completed") return false;
+  if (before.status !== "completed") return true;
+  return (before.total_cents ?? 0) <= 0 && (after.total_cents ?? 0) > 0;
+}
