@@ -326,6 +326,27 @@ export function finishesBeforeCutover(
 }
 
 /**
+ * The reverse of finishesBeforeCutover, so a job Sollos closed is not stuck
+ * closed: someone is on the clock on a job the rules completed (no person
+ * said it was over — closed_at is null), so it is in progress again. A
+ * queued "I'm here" that flushes after the office ended the last shift, or
+ * a cleaner clocking back in after a break, lands here. The rules honour
+ * closed_at, so a job a person closed never reopens this way.
+ */
+export function reopensBeforeCutover(
+  rowStatus: string,
+  closedAt: string | null,
+  state: JobState,
+): boolean {
+  return (
+    rowStatus === "completed" &&
+    closedAt == null &&
+    state.phase === "in_progress" &&
+    state.onSite.length > 0
+  );
+}
+
+/**
  * The one line a manager reads instead of a status badge. Names come from
  * the caller so this stays free of lookups.
  */

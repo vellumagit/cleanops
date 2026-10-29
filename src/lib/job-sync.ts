@@ -6,6 +6,7 @@ import {
   deriveJobState,
   describeJobState,
   finishesBeforeCutover,
+  reopensBeforeCutover,
   type JobState,
   type JobStateCrewRow,
   type JobStateShift,
@@ -356,13 +357,17 @@ export async function syncJob(
       return { state, summary, mode, before, after: before };
     }
 
-    // In shadow, one transition is stored anyway: the last clock stopped and
-    // the job is done (see finishesBeforeCutover). Everything else only logs.
+    // In shadow, two transitions are stored anyway: the last clock stopped
+    // and the job is done, and its reverse, someone clocked in on a job
+    // Sollos had closed (see finishesBeforeCutover / reopensBeforeCutover).
+    // Everything else only logs.
     const earlyFinish =
       mode === "shadow" &&
       finishesBeforeCutover(before, state, new Date(booking.scheduled_at).getTime(), now);
+    const earlyReopen =
+      mode === "shadow" && reopensBeforeCutover(before, booking.closed_at, state);
 
-    if (mode === "shadow" && !earlyFinish) {
+    if (mode === "shadow" && !earlyFinish && !earlyReopen) {
       console.log(
         `[job-state shadow] ${bookingId} after ${reason}: row=${before} computed=${state.status} (${state.phase}) — ${summary}`,
       );
@@ -424,6 +429,7 @@ export async function syncJob(
         phase: state.phase,
         summary,
         ...(earlyFinish ? { mode: "shadow_finish" } : {}),
+        ...(earlyReopen ? { mode: "shadow_reopen" } : {}),
       },
     });
     if (state.status === "completed") {

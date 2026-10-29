@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { deriveJobState, describeJobState, finishesBeforeCutover, teamMinutes, type JobStateInput } from "./job-state";
+import { deriveJobState, describeJobState, finishesBeforeCutover, reopensBeforeCutover, teamMinutes, type JobStateInput } from "./job-state";
 
 const T = (iso: string) => new Date(iso).getTime();
 // Lori Moeller, 2026-10-27: 9:00 AM Edmonton (15:00Z), 18h entered, 4 crew.
@@ -328,5 +328,39 @@ describe("finishesBeforeCutover — the one answer stored while in shadow", () =
       now: T("2026-10-28T22:20:56Z"),
     }));
     expect(finishesBeforeCutover("in_progress", state, T("2026-11-02T15:00:00Z"), T("2026-10-28T22:20:56Z"))).toBe(false);
+  });
+});
+
+describe("reopensBeforeCutover — a job Sollos closed is not stuck closed", () => {
+  const OL = "2026-10-28T15:00:00Z";
+  const crew3 = [P, A, I].map((membership_id) => ({ membership_id }));
+  const at = (now: string, shifts: ReturnType<typeof shift>[], closed_at: string | null = null) =>
+    deriveJobState(input({
+      booking: { ...input().booking, status: "completed", scheduled_at: OL, divides_hours: true, closed_at },
+      crew: crew3,
+      shifts,
+      now: T(now),
+    }));
+  const twoOut = [
+    shift(P, "2026-10-28T15:15:00Z", "2026-10-28T21:24:31Z"),
+    shift(A, "2026-10-28T15:15:00Z", "2026-10-28T22:20:00Z"),
+  ];
+
+  it("reopens when a queued I'm here lands after the office ended the last shift", () => {
+    const late = [...twoOut, shift(I, "2026-10-28T19:00:00Z")];
+    expect(reopensBeforeCutover("completed", null, at("2026-10-28T22:30:00Z", late))).toBe(true);
+  });
+  it("reopens when someone clocks back in after a break", () => {
+    const back = [...twoOut, shift(I, "2026-10-28T15:15:00Z", "2026-10-28T18:00:00Z"), shift(I, "2026-10-28T18:40:00Z")];
+    expect(reopensBeforeCutover("completed", null, at("2026-10-28T18:41:00Z", back))).toBe(true);
+  });
+  it("never reopens a job a person closed", () => {
+    const late = [...twoOut, shift(I, "2026-10-28T19:00:00Z")];
+    expect(reopensBeforeCutover("completed", "2026-10-28T23:22:46Z", at("2026-10-28T23:30:00Z", late, "2026-10-28T23:22:46Z"))).toBe(false);
+  });
+  it("does nothing while everyone is out, or on a job that isn't completed", () => {
+    expect(reopensBeforeCutover("completed", null, at("2026-10-28T22:30:00Z", twoOut))).toBe(false);
+    const late = [...twoOut, shift(I, "2026-10-28T19:00:00Z")];
+    expect(reopensBeforeCutover("in_progress", null, at("2026-10-28T22:30:00Z", late))).toBe(false);
   });
 });
