@@ -1,17 +1,14 @@
 /**
- * CI guard against sub-daily Vercel cron schedules.
+ * CI guard for vercel.json crons. Fails if any entry would be rejected by
+ * Vercel (which blocks the whole deploy) or would never reach a handler
+ * (which fails silently every run).
  *
- * Vercel Hobby plan only allows daily-or-slower cron expressions.
- * Anything more frequent (hourly or "step every N minutes") fails
- * deployment with:
+ * Checks each entry for:
+ *   - a valid 5-field expression Vercel accepts (src/lib/cron-schedule.ts)
+ *   - a path whose route file exists and exports GET
  *
- *   "Hobby accounts are limited to daily cron jobs. This cron
- *    expression would run more than once per day."
- *
- * We learned this the hard way — a single sub-daily expression in
- * vercel.json froze ALL deploys for 2 days because every subsequent
- * commit failed the build gate. This script catches the same class
- * of mistake at PR time.
+ * Sub-daily schedules are fine: the project is on Vercel Pro. This script
+ * used to ban them for the Hobby plan and failed every push after the upgrade.
  *
  * Usage:
  *   tsx scripts/validate-cron-schedules.ts            (runs from repo root)
@@ -20,8 +17,9 @@
  * Exit code: 0 on clean, 1 on any violation.
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { exportsGet, routeFileFor, scheduleProblem } from "../src/lib/cron-schedule";
 
 type VercelConfig = {
   crons?: Array<{ path: string; schedule: string }>;
@@ -52,101 +50,36 @@ function main() {
     process.exit(0);
   }
 
-  const violations: Array<{
-    path: string;
-    schedule: string;
-    reason: string;
-  }> = [];
+  const violations: Array<{ path: string; schedule: string; reason: string }> = [];
 
   for (const cron of crons) {
-    const issue = validateSchedule(cron.schedule);
-    if (issue) {
-      violations.push({ path: cron.path, schedule: cron.schedule, reason: issue });
+    const problem = scheduleProblem(cron.schedule);
+    if (problem) {
+      violations.push({ ...cron, reason: problem });
+    }
+
+    const file = routeFileFor(cron.path);
+    if (!file) {
+      violations.push({ ...cron, reason: "path must start with '/'" });
+    } else if (!existsSync(resolve(process.cwd(), file))) {
+      violations.push({ ...cron, reason: `no route at ${file}` });
+    } else if (!exportsGet(readFileSync(resolve(process.cwd(), file), "utf-8"))) {
+      violations.push({ ...cron, reason: `${file} does not export GET` });
     }
   }
 
   if (violations.length === 0) {
-    console.log(`✓ All ${crons.length} cron schedules are daily-or-slower.`);
+    console.log(`✓ All ${crons.length} cron entries are valid and reach a GET handler.`);
     process.exit(0);
   }
 
-  console.error("\n✗ Sub-daily cron schedules detected — Vercel Hobby plan rejects these:\n");
+  console.error("\n✗ vercel.json cron entries that would fail:\n");
   for (const v of violations) {
     console.error(`  ${v.path}`);
     console.error(`    schedule: "${v.schedule}"`);
     console.error(`    reason:   ${v.reason}\n`);
   }
-  console.error(
-    "If you genuinely need sub-daily crons, upgrade to Vercel Pro and update\n" +
-      "this script's allowlist. Until then, keep schedules to at most one\n" +
-      "firing per day:\n" +
-      "  '0 10 * * *'  ✓ daily at 10:00 UTC\n" +
-      "  '0 7 1 * *'   ✓ monthly on the 1st at 07:00 UTC\n" +
-      "  '0 8 * * 1'   ✓ weekly on Monday at 08:00 UTC\n" +
-      "  '0 * * * *'   ✗ hourly\n" +
-      "  '*/30 * * * *'✗ every 30 minutes\n" +
-      "  '0 0,12 * * *'✗ twice daily\n",
-  );
   process.exit(1);
-}
-
-/**
- * Returns a human-readable reason if the schedule fires more than once
- * per day; null if it's daily-or-slower.
- *
- * Cron format: "minute hour day-of-month month day-of-week"
- * We only need to check the first two fields — month/day-of-week
- * constraints only NARROW the firing schedule, never widen it.
- */
-function validateSchedule(schedule: string): string | null {
-  const parts = schedule.trim().split(/\s+/);
-  if (parts.length !== 5) {
-    return `expected 5 cron fields, got ${parts.length}`;
-  }
-
-  const [minute, hour] = parts;
-
-  // Minute field check
-  if (minute === "*") {
-    return "minute is '*' — fires every minute (60x/hour)";
-  }
-  if (minute.includes("/")) {
-    return `minute uses '/' step — fires multiple times per hour (got '${minute}')`;
-  }
-  if (minute.includes("-")) {
-    return `minute uses '-' range — fires multiple times per hour (got '${minute}')`;
-  }
-  if (minute.includes(",")) {
-    return `minute uses ',' list — fires multiple times per hour (got '${minute}')`;
-  }
-  // Minute should now be a single digit 0-59
-  const minuteNum = Number(minute);
-  if (!Number.isInteger(minuteNum) || minuteNum < 0 || minuteNum > 59) {
-    return `minute must be a single integer 0-59 (got '${minute}')`;
-  }
-
-  // Hour field check
-  if (hour === "*") {
-    return "hour is '*' — fires every hour (sub-daily)";
-  }
-  if (hour.includes("/")) {
-    return `hour uses '/' step — fires multiple times per day (got '${hour}')`;
-  }
-  if (hour.includes("-")) {
-    return `hour uses '-' range — fires multiple times per day (got '${hour}')`;
-  }
-  if (hour.includes(",")) {
-    return `hour uses ',' list — fires multiple times per day (got '${hour}')`;
-  }
-  const hourNum = Number(hour);
-  if (!Number.isInteger(hourNum) || hourNum < 0 || hourNum > 23) {
-    return `hour must be a single integer 0-23 (got '${hour}')`;
-  }
-
-  // At this point minute + hour are both single specific values.
-  // The schedule fires at most once per day (further narrowed by
-  // day-of-month, month, day-of-week if those are constrained).
-  return null;
 }
 
 main();

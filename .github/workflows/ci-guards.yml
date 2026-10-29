@@ -1,10 +1,10 @@
-# Lightweight pre-merge guards that catch deploy-blocking mistakes
-# BEFORE they hit Vercel. The cron-schedule check exists because a
-# single sub-daily expression (the Hobby plan limit) froze ALL deploys
-# for 2 days — every subsequent build failed at Vercel's gate.
+# Pre-merge guards that catch deploy-blocking mistakes BEFORE they hit
+# Vercel. The cron check exists because one bad vercel.json cron entry
+# froze ALL deploys for 2 days — every subsequent build failed at
+# Vercel's gate. The type check exists because `next build` is the only
+# other place types are checked, and by then the push is already a deploy.
 #
-# Runs on every push + PR. Cheap, fast, catches a specific class of
-# mistake that's hard to find in code review otherwise.
+# Runs on every push + PR.
 
 name: CI guards
 
@@ -16,7 +16,7 @@ on:
 
 jobs:
   validate-vercel-config:
-    name: Validate Vercel cron schedules
+    name: Validate Vercel cron entries
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -29,8 +29,36 @@ jobs:
       - name: Install tsx (no full repo install needed)
         run: npm install --no-save tsx@4
 
-      - name: Validate cron schedules
+      - name: Validate cron entries
         run: npx tsx scripts/validate-cron-schedules.ts
+
+  typecheck:
+    name: Type check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # next-env.d.ts and the route types are gitignored; generate them
+      # the way `next build` would, so tsc sees what the build sees.
+      - name: Generate Next types
+        run: pnpm exec next typegen
+
+      - name: Type check
+        run: pnpm exec tsc --noEmit
 
   unit-tests:
     name: Unit tests
