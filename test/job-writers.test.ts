@@ -161,3 +161,34 @@ describe("every writer of a job fact recomputes the job", () => {
     }
   });
 });
+
+/**
+ * A cleaner's clock-in keeps her tap time.
+ *
+ * The Sep 13 insert guard (time_entries_employee_insert_guard) rewrites
+ * clock_in_at to now() for any non-manager writing through her own
+ * client, so a tap queued in a dead zone and sent twenty minutes later
+ * recorded her twenty minutes late. The service role is exempt, so every
+ * clock-in the field app inserts must go through the admin client, after
+ * the action's own checks. This keeps it that way.
+ */
+describe("the field app's clock-in inserts go through the admin client", () => {
+  it("has no time_entries insert under src/app/field on the user client", () => {
+    const offenders: string[] = [];
+    for (const file of walk(join(SRC, "app", "field"))) {
+      const src = readFileSync(file, "utf-8");
+      const re = /\.from\(\s*"time_entries"(?:\s+as\s+never)?\s*\)/g;
+      for (const m of src.matchAll(re)) {
+        const start = m.index!;
+        const end = src.indexOf(";", start);
+        const chain = src.slice(start, end === -1 ? undefined : end);
+        if (!/\.insert\s*\(/.test(chain)) continue;
+        const before = src.slice(Math.max(0, start - 80), start);
+        if (!/admin|createSupabaseAdminClient\(\)/.test(before)) {
+          offenders.push(`${relative(ROOT, file).replace(/\\/g, "/")}:${src.slice(0, start).split("\n").length}`);
+        }
+      }
+    }
+    expect(offenders, "clock-in inserts on the user client (the guard will overwrite clock_in_at)").toEqual([]);
+  });
+});

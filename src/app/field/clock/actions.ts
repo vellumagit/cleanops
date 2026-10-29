@@ -89,7 +89,11 @@ export async function clockInAction(
   };
 
   const { toEngagement } = await import("@/lib/engagement");
-  const { error } = await supabase.from("time_entries").insert({
+  // Admin client, own row only: through her own client the Sep 13 insert
+  // guard replaces clock_in_at with the server clock for non-managers, so
+  // a tap sent late from a dead zone was recorded at the time it arrived.
+  // The tap is already bounded by punchTime (12 h back, 5 min ahead).
+  const { error } = await admin.from("time_entries").insert({
     organization_id: membership.organization_id,
     employee_id: membership.id,
     booking_id: null,

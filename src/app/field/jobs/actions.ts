@@ -270,7 +270,14 @@ export async function startJobAction(
       // last one out who forgot to tap I'm done and drove to the next job.
       if (prior.booking_id) await syncJob(prior.booking_id, "clock_out");
 
-      const { error: insertError } = await supabase
+      // Admin client, own row only (same as the crew row below). Through
+      // her own client the Sep 13 insert guard rewrites clock_in_at to the
+      // server clock for anyone who isn't a manager, so a tap queued in a
+      // dead zone and sent at 9:40 recorded her as arriving at 9:40. The
+      // guard is for rows written around this action with the anon key;
+      // this action has checked she is on the job and bounded the tap
+      // (punchTime: 12 h back, 5 min ahead), which is the trust it wants.
+      const { error: insertError } = await createSupabaseAdminClient()
         .from("time_entries")
         .insert({
           organization_id: membership.organization_id,
@@ -291,8 +298,9 @@ export async function startJobAction(
       }
     }
   } else {
-    // No open entry anywhere — create one for this job.
-    const { error: insertError } = await supabase.from("time_entries").insert({
+    // No open entry anywhere — create one for this job. Admin client for
+    // the same reason as above: her tap time, not the server's.
+    const { error: insertError } = await createSupabaseAdminClient().from("time_entries").insert({
       organization_id: membership.organization_id,
       employee_id: membership.id,
       booking_id: bookingId,
