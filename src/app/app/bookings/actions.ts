@@ -10,6 +10,7 @@ import {
   WRITABLE_BOOKING_STATUS_LIST,
   type WritableBookingStatus,
   invoiceDraftDueOnEdit,
+  bookingTermsChange,
 } from "@/lib/booking-status";
 import { lifecycleByAssignee, withPriorLifecycle } from "@/lib/crew-sync";
 import { resolveSegmentWindows } from "@/lib/booking-segments";
@@ -1376,7 +1377,7 @@ export async function updateBookingAction(
   const { data: existing } = (await supabase
     .from("bookings")
     .select(
-      "google_calendar_event_id, assigned_to, scheduled_at, status, service_type, total_cents",
+      "google_calendar_event_id, assigned_to, scheduled_at, status, service_type, total_cents, duration_minutes, is_free",
     )
     .eq("id", id)
     .maybeSingle()) as unknown as {
@@ -1387,6 +1388,8 @@ export async function updateBookingAction(
       status: string | null;
       service_type: string | null;
       total_cents: number | null;
+      duration_minutes: number | null;
+      is_free: boolean | null;
     } | null;
   };
 
@@ -1572,6 +1575,27 @@ export async function updateBookingAction(
       entity_id: id,
       before: { status: existing.status },
       after: { status: parsed.data.status, via: "edit_form" },
+    });
+  }
+
+  // Hours and price changes go on the job's history too — the hours are
+  // what every share, "past her hours" alert and attendance mark is
+  // measured against. See bookingTermsChange.
+  const termsChange = existing
+    ? bookingTermsChange(existing, {
+        duration_minutes: parsed.data.duration_minutes,
+        total_cents: parsed.data.is_free ? 0 : parsed.data.total_cents,
+        is_free: parsed.data.is_free,
+      })
+    : null;
+  if (termsChange) {
+    await logAuditEvent({
+      membership,
+      action: "terms_change",
+      entity: "booking",
+      entity_id: id,
+      before: termsChange.before,
+      after: { ...termsChange.after, via: "edit_form" },
     });
   }
 

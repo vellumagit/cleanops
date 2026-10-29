@@ -214,3 +214,73 @@ export function invoiceDraftDueOnEdit(
   if (before.status !== "completed") return true;
   return (before.total_cents ?? 0) <= 0 && (after.total_cents ?? 0) > 0;
 }
+
+/** The hours and price facts an edit can change, as stored on the row. */
+export type BookingTerms = {
+  duration_minutes: number | null | undefined;
+  total_cents: number | null | undefined;
+  is_free: boolean | null | undefined;
+};
+
+/**
+ * What an edit changed about a job's hours or price, as before/after pairs
+ * holding only the fields that moved — or null when none did.
+ *
+ * Only status changes reached the job's history. Oliver Little, 2026-10-28:
+ * the job was 12 hours when three cleaners were alerted at 2:30 PM for
+ * running past their 4-hour shares, and 18 when it was priced at 5:27 —
+ * and nothing anywhere said who changed it or when, so the alert looked
+ * wrong after the fact. The hours are what every share, "past her hours"
+ * alert and attendance mark is measured against; a change to them is
+ * part of the job's story.
+ */
+export function bookingTermsChange(
+  before: BookingTerms,
+  after: BookingTerms,
+): { before: Partial<BookingTerms>; after: Partial<BookingTerms> } | null {
+  const b: Partial<BookingTerms> = {};
+  const a: Partial<BookingTerms> = {};
+  const norm = (k: keyof BookingTerms, v: BookingTerms[keyof BookingTerms]) =>
+    k === "is_free" ? v === true : (v ?? null);
+  for (const k of ["duration_minutes", "total_cents", "is_free"] as const) {
+    const was = norm(k, before[k]);
+    const now = norm(k, after[k]);
+    if (was === now) continue;
+    (b as Record<string, unknown>)[k] = was;
+    (a as Record<string, unknown>)[k] = now;
+  }
+  return Object.keys(a).length === 0 ? null : { before: b, after: a };
+}
+
+/**
+ * The timeline line for a terms change, e.g. "Hours 12h → 18h, price
+ * $1,015.00 by Svitlana". Formatting comes from the caller so this stays
+ * free of locale and currency choices.
+ */
+export function describeTermsChange(
+  before: Partial<BookingTerms>,
+  after: Partial<BookingTerms>,
+  fmt: { hours: (minutes: number) => string; money: (cents: number) => string },
+): string {
+  const parts: string[] = [];
+  if ("duration_minutes" in after) {
+    const was = before.duration_minutes;
+    const now = after.duration_minutes;
+    parts.push(
+      `hours ${was == null ? "none" : fmt.hours(was)} → ${now == null ? "none" : fmt.hours(now)}`,
+    );
+  }
+  if ("is_free" in after && after.is_free === true) {
+    parts.push("marked free");
+  } else if ("total_cents" in after) {
+    const was = before.total_cents ?? 0;
+    const now = after.total_cents ?? 0;
+    parts.push(
+      was > 0 ? `price ${fmt.money(was)} → ${fmt.money(now)}` : `priced at ${fmt.money(now)}`,
+    );
+  } else if ("is_free" in after) {
+    parts.push("no longer free");
+  }
+  const text = parts.join(", ");
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}

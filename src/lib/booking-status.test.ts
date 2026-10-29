@@ -8,6 +8,8 @@ import {
   statusDropdownOptions,
   rendersAsStaticBadge,
   invoiceDraftDueOnEdit,
+  bookingTermsChange,
+  describeTermsChange,
 } from "./booking-status";
 
 const NOW = new Date("2026-08-04T16:00:00Z").getTime();
@@ -315,5 +317,53 @@ describe("invoiceDraftDueOnEdit — when an edit drafts the invoice", () => {
     expect(invoiceDraftDueOnEdit({ status: "completed", total_cents: 0 }, { status: "completed", total_cents: 0 })).toBe(false);
     expect(invoiceDraftDueOnEdit({ status: "confirmed", total_cents: 0 }, { status: "confirmed", total_cents: 14000 })).toBe(false);
     expect(invoiceDraftDueOnEdit({ status: "completed", total_cents: 14000 }, { status: "cancelled", total_cents: 14000 })).toBe(false);
+  });
+});
+
+describe("bookingTermsChange / describeTermsChange", () => {
+  const fmt = {
+    hours: (m: number) => `${m / 60}h`,
+    money: (c: number) => `$${(c / 100).toFixed(2)}`,
+  };
+  const terms = (duration_minutes: number | null, total_cents: number | null, is_free: boolean | null = false) => ({
+    duration_minutes,
+    total_cents,
+    is_free,
+  });
+
+  it("is null when nothing about hours or price moved", () => {
+    expect(bookingTermsChange(terms(720, 101500), terms(720, 101500))).toBeNull();
+    // A null flag and false are the same answer: not free.
+    expect(bookingTermsChange(terms(720, 0, null), terms(720, 0, false))).toBeNull();
+    expect(bookingTermsChange(terms(720, null), terms(720, null))).toBeNull();
+  });
+
+  it("keeps only the fields that moved (Oliver Little: 12h to 18h, priced)", () => {
+    const c = bookingTermsChange(terms(720, 0), terms(1080, 101500));
+    expect(c).toEqual({
+      before: { duration_minutes: 720, total_cents: 0 },
+      after: { duration_minutes: 1080, total_cents: 101500 },
+    });
+    expect(describeTermsChange(c!.before, c!.after, fmt)).toBe("Hours 12h → 18h, priced at $1015.00");
+  });
+
+  it("says a price change and an hours change in the office's words", () => {
+    const price = bookingTermsChange(terms(180, 15000), terms(180, 18000))!;
+    expect(describeTermsChange(price.before, price.after, fmt)).toBe("Price $150.00 → $180.00");
+    const hours = bookingTermsChange(terms(180, 15000), terms(240, 15000))!;
+    expect(describeTermsChange(hours.before, hours.after, fmt)).toBe("Hours 3h → 4h");
+  });
+
+  it("calls marking free 'marked free', not a $0 price", () => {
+    const c = bookingTermsChange(terms(180, 15000, false), terms(180, 0, true))!;
+    expect(c.after).toEqual({ total_cents: 0, is_free: true });
+    expect(describeTermsChange(c.before, c.after, fmt)).toBe("Marked free");
+  });
+
+  it("says when a free job is priced, or just stops being free", () => {
+    const priced = bookingTermsChange(terms(180, 0, true), terms(180, 12000, false))!;
+    expect(describeTermsChange(priced.before, priced.after, fmt)).toBe("Priced at $120.00");
+    const unfree = bookingTermsChange(terms(180, 0, true), terms(180, 0, false))!;
+    expect(describeTermsChange(unfree.before, unfree.after, fmt)).toBe("No longer free");
   });
 });

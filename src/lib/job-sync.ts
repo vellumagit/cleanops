@@ -2,6 +2,8 @@ import "server-only";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { resolveAutomationEnabled } from "@/lib/automation-defaults";
 import { logSystemAuditEvent } from "@/lib/audit";
+import { describeTermsChange, type BookingTerms } from "@/lib/booking-status";
+import { formatCurrencyCents, formatDurationMinutes } from "@/lib/format";
 import {
   deriveJobState,
   describeJobState,
@@ -222,16 +224,17 @@ export async function loadJobTimeline(
       loadJobState(bookingId),
       db
         .from("audit_log")
-        .select("created_at, action, actor_id, after")
+        .select("created_at, action, actor_id, before, after")
         .eq("organization_id", organizationId)
         .eq("entity", "booking")
         .eq("entity_id", bookingId)
-        .in("action", ["status_change", "refused"])
+        .in("action", ["status_change", "refused", "terms_change"])
         .order("created_at") as unknown as Promise<{
         data: Array<{
           created_at: string;
           action: string;
           actor_id: string | null;
+          before: Record<string, unknown> | null;
           after: Record<string, unknown> | null;
         }> | null;
       }>,
@@ -306,6 +309,15 @@ export async function loadJobTimeline(
             ? `Cancelled by ${who(a.actor_id)}`
             : `Set to ${status.replace("_", " ")} by ${who(a.actor_id)}`;
       events.push({ atMs: ms(a.created_at), text: label, tone: "neutral" });
+    } else if (a.action === "terms_change") {
+      const text = describeTermsChange(
+        (a.before ?? {}) as Partial<BookingTerms>,
+        after as Partial<BookingTerms>,
+        { hours: formatDurationMinutes, money: (c) => formatCurrencyCents(c) },
+      );
+      if (text) {
+        events.push({ atMs: ms(a.created_at), text: `${text} by ${who(a.actor_id)}`, tone: "neutral" });
+      }
     } else if (a.action === "refused") {
       const intent = after.intent === "complete" ? "finish" : "clock in";
       events.push({

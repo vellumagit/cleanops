@@ -76,7 +76,11 @@ export type AuditAction =
   // The computed job state (src/lib/job-state.ts) disagreed with the status
   // on the row. While the computation runs in shadow it writes nothing else;
   // these rows are how a week of real jobs is checked before it takes over.
-  | "state_check";
+  | "state_check"
+  // A job's hours or price changed (bookingTermsChange in booking-status.ts).
+  // Before 2026-10-29 only status changes reached a job's history, so a job
+  // re-hoursed after its alerts fired made the alerts look wrong.
+  | "terms_change";
 
 type LogArgs = {
   membership: CurrentMembership;

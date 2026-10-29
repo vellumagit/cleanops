@@ -86,6 +86,14 @@ export async function sendNeedsYouAlerts(opts: { now?: number } = {}): Promise<{
           title: it.title,
           body: `${body}${body && !/[.!?]$/.test(body) ? "." : ""} Answer it on your dashboard.`.trim(),
           href: "/app",
+          // Not to the person the item is about. A manager who also cleans
+          // got "Olha hasn't clocked in — answer it on your dashboard" about
+          // herself (2026-10-28), on top of her own "you're not clocked in".
+          // Only when she is told in her own words (the tell below, or the
+          // watcher that already told her); an item with no tell — a clock
+          // left running — still reaches every manager, her included,
+          // because nothing else is sure to say it to her.
+          excludeMembershipId: it.tell?.membershipId,
           // Email too. Push only reaches a phone that has allowed it, and
           // on 2026-10-28 the one manager who runs the day had never
           // allowed it — so a push-only alert was an in-app badge she'd see
