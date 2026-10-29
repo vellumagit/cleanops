@@ -21,16 +21,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: "20"
+          cache: "pnpm"
 
-      - name: Install tsx (no full repo install needed)
-        run: npm install --no-save tsx@4
+      # A bare `npm install tsx` crashes in this pnpm repo (npm can't read
+      # the tree: "reading 'edgesOut'"), which failed this job on every push.
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
       - name: Validate cron entries
-        run: npx tsx scripts/validate-cron-schedules.ts
+        run: pnpm cron:check
 
   typecheck:
     name: Type check
