@@ -751,6 +751,13 @@ export async function createBookingAction(
       service_type_id: serviceExtras.service_type_id,
       service_type_label: serviceExtras.service_type_label,
       status: parsed.data.status,
+      // Created as already done (a back-filled past job): that is a
+      // person saying it's over, and closed_at is how the rules hear it.
+      // Without it the first recompute would read "no shifts, window
+      // open" and put the row back to confirmed.
+      ...(parsed.data.status === "completed"
+        ? { closed_at: new Date().toISOString(), closed_by: membership.id }
+        : {}),
       // A free clean is zero by definition — trust the flag over a stale
       // number left in the box when the checkbox was ticked.
       total_cents: parsed.data.is_free ? 0 : parsed.data.total_cents,
@@ -2044,13 +2051,13 @@ export async function updateBookingAction(
       // siblings so they stay consistent with the edited booking.
       const { data: siblingIds } = (await admin
         .from("bookings")
-        .select("id")
+        .select("id, status")
         .eq("series_id", seriesId)
         .eq("organization_id", membership.organization_id)
         .neq("id", id)
         .gte("scheduled_at", seriesScheduledAt)
         .not("status", "in", '("completed","cancelled")')) as unknown as {
-        data: Array<{ id: string }> | null;
+        data: Array<{ id: string; status: string }> | null;
       };
 
       const { error: siblingUpdateErr } = (await admin
@@ -2093,6 +2100,16 @@ export async function updateBookingAction(
         );
         if (siblingCrewErr) {
           return { errors: { _form: siblingCrewErr }, values: raw };
+        }
+        // Their hours and crew just changed, so their windows did. A visit
+        // that hasn't started computes to its own stored status whatever
+        // the window, so only the live ones (started early) can move;
+        // syncing every future row of a long series would be ~4 queries
+        // each for a guaranteed no-op.
+        for (const s of siblingIds ?? []) {
+          if (s.status === "in_progress" || s.status === "en_route") {
+            await syncJob(s.id, "edit_form");
+          }
         }
       }
     }
@@ -3344,6 +3361,10 @@ export async function cancelSeriesAction(formData: FormData) {
   if (!seriesId) return;
 
   const { membership, supabase } = await getActionContext();
+  // Ending a client's standing series is an office decision. The RLS
+  // update policy admits any crew member of a row for status, so without
+  // this a cleaner on one visit could cancel every future one.
+  if (!["owner", "admin", "manager"].includes(membership.role)) return;
   const now = new Date().toISOString();
 
   // Deactivate the series — explicit org filter guards against series_id
@@ -3363,13 +3384,14 @@ export async function cancelSeriesAction(formData: FormData) {
   // booking.status.
   const { data: affected } = (await supabase
     .from("bookings")
-    .select("id, google_calendar_event_id, scheduled_at")
+    .select("id, status, google_calendar_event_id, scheduled_at")
     .eq("series_id", seriesId)
     .eq("organization_id", membership.organization_id)
     .in("status", ["pending", "confirmed"])
     .gte("scheduled_at", now)) as unknown as {
     data: Array<{
       id: string;
+      status: string;
       google_calendar_event_id: string | null;
       scheduled_at: string;
     }> | null;
@@ -3383,6 +3405,21 @@ export async function cancelSeriesAction(formData: FormData) {
     .eq("organization_id", membership.organization_id)
     .in("status", ["pending", "confirmed"])
     .gte("scheduled_at", now) as unknown as Promise<unknown>);
+
+  // One audit row and one recompute per visit, like the status dropdown
+  // gives a single cancel. Cancelled is terminal to the rules, so the
+  // recompute agrees; the audit row is what a cancelled series had none of.
+  for (const r of affected ?? []) {
+    await logAuditEvent({
+      membership,
+      action: "status_change",
+      entity: "booking",
+      entity_id: r.id,
+      before: { status: r.status },
+      after: { status: "cancelled", via: "cancel_series" },
+    });
+    await syncJob(r.id, "status_set");
+  }
 
   // Delete the corresponding calendar events. Order matters: the booking
   // rows still exist (cancelled, not deleted), so booking_member_calendar_events
@@ -3676,13 +3713,13 @@ export async function assignBookingCrewAction(
     // organization_id filter is explicit because the admin client bypasses RLS.
     const { data: siblings } = (await admin
       .from("bookings")
-      .select("id")
+      .select("id, status")
       .eq("series_id", seriesId)
       .eq("organization_id", membership.organization_id)
       .gte("scheduled_at", seriesScheduledAt)
       .neq("id", id)
       .not("status", "in", '("completed","cancelled")')) as unknown as {
-      data: Array<{ id: string }> | null;
+      data: Array<{ id: string; status: string }> | null;
     };
 
     const siblingIds = (siblings ?? []).map((s) => s.id);
@@ -3731,6 +3768,13 @@ export async function assignBookingCrewAction(
         (await admin
           .from("booking_assignees")
           .insert(assigneeRows)) as unknown as Promise<unknown>;
+      }
+      // Same reasoning as the edit form's propagation: only a sibling
+      // already under way can compute differently after a crew change.
+      for (const s of siblings ?? []) {
+        if (s.status === "in_progress" || s.status === "en_route") {
+          await syncJob(s.id, "crew_changed");
+        }
       }
     }
 

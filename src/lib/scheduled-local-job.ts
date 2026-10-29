@@ -1,6 +1,7 @@
 import "server-only";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { logSystemAuditEvent } from "@/lib/audit";
+import { syncJob } from "@/lib/job-sync";
 import { planRederive, type RederiveRow } from "@/lib/scheduled-local";
 
 /**
@@ -86,6 +87,9 @@ export async function rederiveScheduledInstants(opts: { dryRun?: boolean; now?: 
       entity_id: c.id,
       after: { from: c.from, scheduled_at: c.to, scheduled_local: c.local, scheduled_tz: c.tz, via: "wall_clock_rederive" },
     });
+    // The start moved, so the window moved. Only a job started early is
+    // live this far ahead, but the rule is every writer, not most.
+    await syncJob(c.id, "rescheduled");
   }
   if (changed > 0) console.log(`[rederive] moved ${changed} visit(s) to match their wall clock`);
   return { considered: rows.length, changed, refusedZones, dbDisagreed, dryRun };

@@ -4,6 +4,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { dispatchWebhookEvent } from "@/lib/webhooks";
 import { findOrCreateClient } from "@/lib/find-or-create-client";
 import { findCrossOrgRef } from "@/lib/api/org-scope";
+import { syncJob } from "@/lib/job-sync";
 import {
   futureStatusError,
   WRITABLE_BOOKING_STATUSES,
@@ -215,6 +216,10 @@ export async function POST(request: NextRequest) {
       service_type_id: serviceCols.service_type_id,
       service_type_label: serviceCols.service_type_label,
       status: requestedStatus,
+      // Created as already done is a person saying it's over; closed_at is
+      // how the rules hear it (same as the booking form). Without it the
+      // first recompute reads "no shifts" and puts the row back.
+      closed_at: requestedStatus === "completed" ? new Date().toISOString() : null,
       total_cents: (body.total_cents as number) ?? 0,
       hourly_rate_cents: (body.hourly_rate_cents as number) ?? null,
       address: (body.address as string) ?? null,
@@ -229,6 +234,25 @@ export async function POST(request: NextRequest) {
 
   if (error)
     return NextResponse.json({ error: error.message }, { status: 500 });
+
+  const created = data as unknown as { id: string };
+  // The roster lives in booking_assignees; assigned_to is only the
+  // denormalised primary pointer. Until this row existed the rules saw an
+  // empty crew on every API-created job: nobody to wait on, no window to
+  // divide, and the cleaner's phone showed no shift to accept.
+  const assignedTo = (body.assigned_to as string | undefined) ?? null;
+  if (assignedTo) {
+    const { error: crewErr } = await admin
+      .from("booking_assignees")
+      .insert({
+        organization_id: auth.organizationId,
+        booking_id: created.id,
+        membership_id: assignedTo,
+        is_primary: true,
+      } as never);
+    if (crewErr) console.error("[api/bookings] crew row failed:", crewErr.message);
+  }
+  await syncJob(created.id, "api_create");
 
   dispatchWebhookEvent(auth.organizationId, "booking.created", data).catch(
     () => {},

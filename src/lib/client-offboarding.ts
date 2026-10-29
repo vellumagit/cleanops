@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { syncJob } from "@/lib/job-sync";
 
 /**
  * Everything that must stop the moment a client is archived.
@@ -137,6 +138,9 @@ export async function sweepArchivedClient(
       : { data: [] };
     const cancelledIds = new Set((cancelled ?? []).map((b) => b.id));
     result.cancelledBookingIds = [...cancelledIds];
+    // Every status write recomputes the job. Cancelled is terminal to the
+    // rules, so this is the audit trail catching up, not a disagreement.
+    for (const id of cancelledIds) await syncJob(id, "client_archived");
 
     const [
       { deleteCalendarEvent, syncMemberCalendarEvents },

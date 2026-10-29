@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { requireClient } from "@/lib/client-auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { syncJob } from "@/lib/job-sync";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { detectCardNumber, CARD_DETECTED_MESSAGE } from "@/lib/card-detection";
 import { notify } from "@/lib/notify";
@@ -235,6 +236,7 @@ export async function requestSkipAction(
       .eq("id", booking.id)
       .eq("client_id", client.id);
     if (cancelErr) return { error: cancelErr.message };
+    await syncJob(booking.id, "client_skip");
   }
 
   after(async () => {

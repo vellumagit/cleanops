@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { formatDateTime, humanizeEnum } from "@/lib/format";
 import { planOfferSwap, type CrewRow } from "@/lib/offer-swap";
+import { syncJob } from "@/lib/job-sync";
 
 /**
  * Claim a shift offer via the unique token sent to one freelancer.
@@ -339,7 +340,13 @@ export async function claimOfferAction(token: string): Promise<ClaimResult> {
           swap = { kind: "blocked", replacedId, reason: plan.reason };
         }
 
-        if (crewChanged) await syncClaimCalendars(admin, bookingRow.id);
+        if (crewChanged) {
+          await syncClaimCalendars(admin, bookingRow.id);
+          // The roster is the job's shape: who it waits on, and the window
+          // length when hours are divided. Recompute like every other crew
+          // change does.
+          await syncJob(bookingRow.id, "crew_changed");
+        }
       }
     } catch (assignErr) {
       // The claim stands even if the assignment write hiccups — the offer

@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { getActionContext } from "@/lib/actions";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { syncJob } from "@/lib/job-sync";
 
 export type ResolveState = { ok?: boolean; error?: string };
 
@@ -61,6 +62,7 @@ export async function resolveClientSkipAction(
       .eq("id", req.booking_id)
       .eq("organization_id", membership.organization_id);
     if (error) return { error: error.message };
+    await syncJob(req.booking_id, "client_skip");
   }
 
   const { error: reqErr } = (await admin
