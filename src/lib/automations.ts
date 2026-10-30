@@ -7182,8 +7182,12 @@ export async function autoVoidOldInvoices(): Promise<{ voided: number }> {
       .is("paid_at", null)
       .is("voided_at", null)
       .lt("due_date", cutoff)
-      .select("id")) as unknown as {
-      data: Array<{ id: string }> | null;
+      .select("id, number, amount_cents")) as unknown as {
+      data: Array<{
+        id: string;
+        number: string | null;
+        amount_cents: number | null;
+      }> | null;
       error: { message: string } | null;
     };
 
@@ -7196,6 +7200,36 @@ export async function autoVoidOldInvoices(): Promise<{ voided: number }> {
     }
     if (data && data.length > 0) {
       voided += data.length;
+      // This writes off money, so it never happens quietly. It used to leave
+      // no audit row and tell nobody: seven unpaid Svit invoices ($1,392.05)
+      // went to Void this way, and only a query found them (2026-10-30).
+      const { logSystemAuditEvent } = await import("@/lib/audit");
+      for (const inv of data) {
+        await logSystemAuditEvent({
+          organizationId: org.id,
+          action: "status_change",
+          entity: "invoice",
+          entity_id: inv.id,
+          after: { status: "void", via: "auto_void_overdue_invoices", days },
+        });
+      }
+      const { formatCurrencyCents } = await import("@/lib/format");
+      const list = data
+        .slice(0, 6)
+        .map((inv) => `${inv.number ?? "An invoice"} (${formatCurrencyCents(inv.amount_cents)})`)
+        .join(", ");
+      await notify({
+        audience: "org-admins",
+        organizationId: org.id,
+        type: "general",
+        title:
+          data.length === 1
+            ? "1 unpaid invoice was voided automatically"
+            : `${data.length} unpaid invoices were voided automatically`,
+        body: `${list}${data.length > 6 ? ` and ${data.length - 6} more` : ""}. Unpaid more than ${days} days past due. Turn this off in Settings → Automations.`,
+        href: "/app/invoices",
+        channels: { email: true },
+      });
       console.log(
         `[auto] Voided ${data.length} old overdue invoice(s) for org ${org.id}`,
       );

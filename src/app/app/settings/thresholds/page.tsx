@@ -4,6 +4,7 @@ import { requireMembership } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
+import { resolveAutomationEnabled } from "@/lib/automation-defaults";
 import { ThresholdsForm } from "./form";
 
 export const metadata = { title: "Automation thresholds" };
@@ -19,7 +20,8 @@ export default async function ThresholdsPage() {
        invoice_void_days,
        booking_auto_complete_hours,
        archive_after_days,
-       overtime_threshold_hours`,
+       overtime_threshold_hours,
+       automation_settings`,
     )
     .eq("id", membership.organization_id)
     .maybeSingle()) as unknown as {
@@ -29,6 +31,7 @@ export default async function ThresholdsPage() {
       booking_auto_complete_hours: number | null;
       archive_after_days: number | null;
       overtime_threshold_hours: number | null;
+      automation_settings: Record<string, { enabled?: boolean } | undefined> | null;
     } | null;
   };
 
@@ -56,6 +59,10 @@ export default async function ThresholdsPage() {
         </p>
       </div>
       <ThresholdsForm
+        autoVoidOn={resolveAutomationEnabled(
+          data?.automation_settings ?? null,
+          "auto_void_overdue_invoices",
+        )}
         defaults={{
           stale_estimate_expire_days: data?.stale_estimate_expire_days ?? null,
           invoice_void_days: data?.invoice_void_days ?? null,

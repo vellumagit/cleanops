@@ -14,7 +14,14 @@ type Defaults = {
   overtime_threshold_hours: number;
 };
 
-export function ThresholdsForm({ defaults }: { defaults: Defaults }) {
+export function ThresholdsForm({
+  defaults,
+  autoVoidOn,
+}: {
+  defaults: Defaults;
+  /** The Automations toggle. Off, this number does nothing, so say so. */
+  autoVoidOn: boolean;
+}) {
   const [state, formAction] = useActionState<ThresholdsState, FormData>(
     updateThresholdsAction,
     {},
@@ -36,7 +43,11 @@ export function ThresholdsForm({ defaults }: { defaults: Defaults }) {
         suffix="days"
         min={30}
         defaultValue={defaults.invoice_void_days}
-        description="An invoice overdue for this many days with no payment activity auto-flips to Void and stops overdue reminders. Default 90."
+        description={
+          autoVoidOn
+            ? "On: an unpaid invoice this many days past due is voided, logged, and owners and admins are emailed. Default 365 (1 year). Turn it off in Settings → Automations."
+            : "Off: Sollos never voids an invoice by itself. This number only applies if you turn on Auto-void in Settings → Automations. Default 365 (1 year)."
+        }
       />
       <Field
         label="Auto-complete past bookings after"

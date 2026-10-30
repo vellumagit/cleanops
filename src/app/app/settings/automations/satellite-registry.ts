@@ -72,7 +72,7 @@ export const INVOICING_AUTOMATIONS: SatelliteAutomation[] = [
     key: "auto_void_overdue_invoices",
     title: "Auto-void long-overdue invoices",
     description:
-      "Flips invoices to Void after 90 days past due with no payment activity. Stops the overdue reminder cron from continuing to email the client. Threshold configurable per-org.",
+      "Off means Sollos never voids an invoice by itself. On, it voids unpaid invoices once they are this far past due (1 year unless you change it in Settings → Thresholds), logs each one and emails owners and admins. Also stops overdue reminders to that client.",
     trigger: "Daily at 03:30 UTC",
   },
   {
