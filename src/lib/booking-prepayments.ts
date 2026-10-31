@@ -1,5 +1,7 @@
 import "server-only";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { logSystemAuditEvent } from "@/lib/audit";
+import { netPaidCents } from "@/lib/invoice-balance";
 
 /**
  * Prepayments: money a client paid before their job was invoiced.
@@ -16,6 +18,60 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
  */
 
 type Db = ReturnType<typeof createSupabaseAdminClient>;
+
+/**
+ * Why this payment can't go on the job's existing invoice, or null if it fits.
+ *
+ * The job page offered "paid in advance" on jobs whose invoice was already
+ * paid, and put the money straight on. Five such rows left four Svit invoices
+ * showing two or three times their total (INV-2026-0358: $1,260 against $420,
+ * 2026-10-29), each one money nobody received twice. A client who truly
+ * overpaid is rare and deliberate, so that goes through the invoice's own form.
+ */
+export function prepaymentRefusal(
+  invoice: { number: string | null; amountCents: number; netPaidCents: number },
+  newCents: number,
+  money: (cents: number) => string,
+): string | null {
+  const name = invoice.number ?? "This job's invoice";
+  const balance = invoice.amountCents - invoice.netPaidCents;
+  if (balance <= 0) {
+    return `${name} is already paid in full, so this wasn't recorded. If the client really paid twice, record it on the invoice.`;
+  }
+  if (newCents > balance) {
+    return `${name} only has ${money(balance)} left to pay, so ${money(newCents)} wasn't recorded. Enter the amount owing, or record an overpayment on the invoice.`;
+  }
+  return null;
+}
+
+/** What an invoice is owed and has received, for prepaymentRefusal. Null when
+ *  it can't be read: the caller must not record money it couldn't check. */
+export async function invoiceBalanceFor(invoiceId: string): Promise<{
+  number: string | null;
+  amountCents: number;
+  netPaidCents: number;
+} | null> {
+  const db = createSupabaseAdminClient();
+  const [{ data: invoice, error: invErr }, { data: payments, error: payErr }] = await Promise.all([
+    db.from("invoices").select("number, amount_cents").eq("id", invoiceId).maybeSingle() as unknown as Promise<{
+      data: { number: string | null; amount_cents: number } | null;
+      error: { message: string } | null;
+    }>,
+    db.from("invoice_payments").select("amount_cents, refunded_cents").eq("invoice_id", invoiceId) as unknown as Promise<{
+      data: Array<{ amount_cents: number; refunded_cents: number | null }> | null;
+      error: { message: string } | null;
+    }>,
+  ]);
+  if (invErr || payErr || !invoice) {
+    console.error("[prepayments] could not read invoice balance:", invErr?.message ?? payErr?.message);
+    return null;
+  }
+  return {
+    number: invoice.number,
+    amountCents: invoice.amount_cents,
+    netPaidCents: netPaidCents(payments ?? []),
+  };
+}
 
 /** Every job billed on this invoice: its own booking, plus any stamped onto
  *  it by period billing. */
@@ -76,8 +132,21 @@ export async function applyPrepaymentsToInvoice(invoiceId: string): Promise<numb
       }> | null;
     };
 
+    if ((prepaid ?? []).length === 0) return 0;
+
+    // Never onto an invoice that's already paid: it stays on the job, where
+    // someone can see it and decide. Couldn't read the balance means don't
+    // apply; the next invoice event tries again.
+    const balance = await invoiceBalanceFor(invoice.id);
+    if (!balance) return 0;
+    let paidSoFar = balance.netPaidCents;
+
     let applied = 0;
     for (const p of prepaid ?? []) {
+      if (paidSoFar >= invoice.amount_cents) {
+        console.log(`[prepayments] invoice ${invoice.id} is paid; prepayment ${p.id} stays on the job`);
+        break;
+      }
       const now = new Date().toISOString();
       // Claim first: only one caller can flip applied_at from null.
       const { data: claimed } = (await db
@@ -121,6 +190,20 @@ export async function applyPrepaymentsToInvoice(invoiceId: string): Promise<numb
         .update({ applied_payment_id: payment.id } as never)
         .eq("id" as never, p.id as never);
       applied++;
+      paidSoFar += p.amount_cents;
+      // The only payment path that left the invoice's history blank.
+      await logSystemAuditEvent({
+        organizationId: invoice.organization_id,
+        action: "mark_paid",
+        entity: "invoice",
+        entity_id: invoice.id,
+        after: {
+          payment_id: payment.id,
+          amount_cents: p.amount_cents,
+          method: p.method,
+          via: "prepayment",
+        },
+      });
 
       // The books follow, same as a payment recorded on the invoice.
       const [{ pushInvoicePaymentToSage }, { pushInvoicePaymentToQuickBooks }] =

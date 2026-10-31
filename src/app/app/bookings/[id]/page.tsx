@@ -925,7 +925,7 @@ export default async function BookingDetailPage({
           {canEdit && (bookingStatus !== "cancelled" || prepayments.length > 0) && (
             <PrepaymentCard
               bookingId={booking.id}
-              canRecord={bookingStatus !== "cancelled"}
+              canRecord={bookingStatus !== "cancelled" && existingInvoice?.status !== "paid"}
               defaultCents={booking.total_cents ?? 0}
               todayYmd={zonedYmd(new Date(), tz)}
               rows={prepayments}

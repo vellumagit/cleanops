@@ -4,11 +4,15 @@ import { revalidatePath } from "next/cache";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
 import { logAuditEvent } from "@/lib/audit";
 import { getOrgTimezone } from "@/lib/org-timezone";
+import { getOrgCurrency } from "@/lib/org-currency";
+import { formatCurrencyCents } from "@/lib/format";
 import { localInputToUtcIso } from "@/lib/validators/common";
 import { InvoicePaymentSchema, PAYMENT_METHODS } from "@/lib/validators/invoice-payment";
 import {
   applyPrepaymentsToInvoice,
+  invoiceBalanceFor,
   invoiceForBooking,
+  prepaymentRefusal,
 } from "@/lib/booking-prepayments";
 
 export type PrepaymentState = ActionState<
@@ -66,6 +70,24 @@ export async function recordBookingPrepaymentAction(
       },
       values: raw,
     };
+  }
+
+  // Already invoiced? This money goes straight onto that invoice, so it has to
+  // fit. See prepaymentRefusal.
+  const existingInvoiceId = await invoiceForBooking(booking.id);
+  if (existingInvoiceId) {
+    const balance = await invoiceBalanceFor(existingInvoiceId);
+    if (!balance) {
+      return {
+        errors: { _form: "Couldn't check this job's invoice, so nothing was recorded. Try again." },
+        values: raw,
+      };
+    }
+    const currency = await getOrgCurrency(membership.organization_id);
+    const refusal = prepaymentRefusal(balance, parsed.data.amount_dollars, (c) =>
+      formatCurrencyCents(c, currency),
+    );
+    if (refusal) return { errors: { _form: refusal }, values: raw };
   }
 
   const tz = await getOrgTimezone(membership.organization_id);
