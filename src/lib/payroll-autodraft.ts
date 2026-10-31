@@ -7,6 +7,7 @@ import { preparePayPeriod, periodHref } from "@/lib/pay-period";
 import { notify } from "@/lib/notify";
 import { formatCurrencyCents } from "@/lib/format";
 import { getOrgCurrency } from "@/lib/org-currency";
+import { describeRateGaps, loadRateGaps } from "@/lib/pay-rate-gaps";
 
 /**
  * The morning after a pay period ends, prepare it and tell the owner it's
@@ -92,6 +93,13 @@ export async function runPayrollAutodraft(): Promise<{
         (ownerRow ?? []).find((r) => r.role === "owner") ?? (ownerRow ?? [])[0];
       if (!creator) continue;
 
+      // Read before preparing and said in either notice. A failed read must
+      // not stop the period: the warning is extra, the draft is the job.
+      const gaps = await loadRateGaps(admin, org.id, p.start, p.end, tz).catch((err) => {
+        console.error(`[payroll-autodraft] org ${org.id}: could not check pay rates:`, err);
+        return [];
+      });
+
       const result = await preparePayPeriod({
         organizationId: org.id,
         createdByMembershipId: creator.id,
@@ -109,8 +117,16 @@ export async function runPayrollAutodraft(): Promise<{
           organizationId: org.id,
           audience: "org-management",
           title: "Pay period ready for review",
-          body: `${p.start} to ${p.end} — ${formatCurrencyCents(total, currency)} across employees and contractors. Nothing is paid until you finalize.`,
+          body: [
+            `${p.start} to ${p.end} — ${formatCurrencyCents(total, currency)} across employees and contractors. Nothing is paid until you finalize.`,
+            describeRateGaps(gaps, "prepared"),
+          ]
+            .filter(Boolean)
+            .join(" "),
           href: periodHref(p.start, p.end),
+          // Email too: this fires once a period, and push only reaches a phone
+          // that has allowed it (see needs-you-alerts.ts).
+          channels: { email: true },
         });
       } else if (result.flagged) {
         // Blocked on unreviewed capped shifts. Nag only on the first
@@ -123,8 +139,16 @@ export async function runPayrollAutodraft(): Promise<{
             organizationId: org.id,
             audience: "org-management",
             title: "Payroll is waiting on flagged shifts",
-            body: `${result.flagged} shift${result.flagged === 1 ? "" : "s"} need review before the ${p.start}–${p.end} period can be prepared.`,
+            body: [
+              `${result.flagged} shift${result.flagged === 1 ? "" : "s"} need review before the ${p.start}–${p.end} period can be prepared.`,
+              // Clearing the flag lets the next morning's draft run, so this
+              // is the moment a rate can still be set in time.
+              describeRateGaps(gaps, "before_prepare"),
+            ]
+              .filter(Boolean)
+              .join(" "),
             href: "/app/timesheets",
+            channels: { email: true },
           });
         }
       }

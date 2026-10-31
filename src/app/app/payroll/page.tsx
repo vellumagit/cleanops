@@ -28,6 +28,7 @@ import { KeepTipsButton } from "./keep-tips-button";
 import { getTipsOwed } from "@/lib/invoice-tips";
 import { getSubcontractorPayables } from "@/lib/subcontractor-payables";
 import { getOrgTimezone } from "@/lib/org-timezone";
+import { describeRateGaps, loadRateGaps } from "@/lib/pay-rate-gaps";
 import { zonedDayStartUtc, zonedMidnightUtc } from "@/lib/wall-clock";
 
 export const metadata = { title: "Payroll" };
@@ -412,12 +413,28 @@ export default async function PayrollPage() {
   // settled outside a payroll run — same shape of problem as contractor pay.
   const tipsOwed = await getTipsOwed(membership.organization_id);
 
+  // Said here because this is where a period gets prepared, and preparing is
+  // what makes a missing rate expensive to fix. See lib/pay-rate-gaps.ts.
+  const rateGapWarning = describeRateGaps(
+    await loadRateGaps(admin, membership.organization_id, suggestedStart, suggestedEnd, tz).catch((err) => {
+      console.error("[payroll] could not check pay rates:", err);
+      return [];
+    }),
+    "before_prepare",
+  );
+
   return (
     <PageShell
       title="Payroll"
       description="What you owe, who you owe it to, and the one next step."
     >
       <div className="max-w-4xl space-y-6">
+        {rateGapWarning && (
+          <p className="rounded-lg border border-amber-300/60 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-200">
+            {rateGapWarning}
+          </p>
+        )}
+
         {/* ── THE one next action ─────────────────────────────────────────
             Either finish the run already in flight, or start the next one.
             Never both — two "next steps" is how pages get confusing. */}

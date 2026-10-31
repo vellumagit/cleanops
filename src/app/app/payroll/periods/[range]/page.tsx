@@ -11,6 +11,7 @@ import { getOrgCurrency } from "@/lib/org-currency";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { periodContaining, type PaySchedule } from "@/lib/pay-schedule";
 import { periodHref } from "@/lib/pay-period";
+import { describeRateGaps, loadRateGaps } from "@/lib/pay-rate-gaps";
 
 export const metadata = { title: "Pay period" };
 
@@ -137,6 +138,15 @@ export default async function PayPeriodPage({
 
   const payrollRun = payrollRuns?.[0] ?? null;
   const subRun = subRuns?.[0] ?? null;
+
+  // Hours nobody can price. A warning, so a failed read just goes without it.
+  const rateGapWarning = describeRateGaps(
+    await loadRateGaps(admin, membership.organization_id, periodStart, periodEnd, tz).catch((err) => {
+      console.error("[payroll/period] could not check pay rates:", err);
+      return [];
+    }),
+    payrollRun || subRun ? "prepared" : "before_prepare",
+  );
 
   // ── On-call bench, inside the period ─────────────────────────────────
   // Brian: "there's always gonna be subcontractors even from the bench
@@ -277,6 +287,12 @@ export default async function PayPeriodPage({
               </span>
             )}
           </div>
+        )}
+
+        {rateGapWarning && (
+          <p className="rounded-lg border border-amber-300/60 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-200">
+            {rateGapWarning}
+          </p>
         )}
 
         {!payrollRun && !subRun && (
