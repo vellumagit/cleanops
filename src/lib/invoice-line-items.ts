@@ -3,6 +3,8 @@ import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { parseDollarsToCents } from "@/lib/validators/common";
 import { computeTax, parseTaxRate } from "@/lib/invoice-tax";
+import { matchLineToJob, resolveBilledBookings } from "@/lib/billed-bookings";
+import { getOrgTimezone } from "@/lib/org-timezone";
 
 /**
  * Line-item reconciliation, extracted from the old standalone
@@ -104,6 +106,8 @@ export async function reconcileInvoiceLineItems(
     if (delErr) return { ok: false, error: delErr.message };
   }
 
+  await linkHandAddedLines(supabase, invoice, parsed);
+
   for (const row of parsed) {
     const payload = {
       invoice_id: invoice.id,
@@ -127,6 +131,27 @@ export async function reconcileInvoiceLineItems(
         .from("invoice_line_items")
         .insert(payload);
       if (error) return { ok: false, error: error.message };
+    }
+  }
+
+  // The stamp is what the billing run reads, and an edited invoice never set
+  // it: the line said billed and the job said not. Guarded on still-null so a
+  // job billed elsewhere is never re-pointed here.
+  const billedIds = [
+    ...new Set(parsed.map((r) => r.booking_id).filter((id): id is string => !!id)),
+  ];
+  if (billedIds.length > 0) {
+    const { error: stampErr } = await supabase
+      .from("bookings")
+      .update({ billing_invoice_id: invoice.id } as never)
+      .in("id", billedIds)
+      .eq("organization_id", invoice.organization_id)
+      .is("billing_invoice_id" as never, null as never);
+    if (stampErr) {
+      console.error(
+        `[invoices] invoice ${invoice.id}: billing stamp failed (lines still saved):`,
+        stampErr.message,
+      );
     }
   }
 
@@ -164,4 +189,76 @@ export async function reconcileInvoiceLineItems(
     taxRateBps: tax.rateBps,
     taxLabel,
   };
+}
+
+/**
+ * Give a line added by hand its job, when there is exactly one it can be. See
+ * matchLineToJob. Sets booking_id on the rows in place. Best effort: a line
+ * that can't be linked saves exactly as typed, and a failed read must never
+ * stop someone saving an invoice.
+ */
+async function linkHandAddedLines(
+  supabase: SupabaseClient,
+  invoice: { id: string; organization_id: string },
+  rows: Array<{
+    label: string;
+    quantity: number;
+    unit_price_dollars: number | null;
+    booking_id?: string | null;
+  }>,
+): Promise<void> {
+  const unlinked = rows.filter((r) => !r.booking_id);
+  if (unlinked.length === 0) return;
+  try {
+    const { data: inv } = (await supabase
+      .from("invoices")
+      .select("client_id")
+      .eq("id", invoice.id)
+      .maybeSingle()) as unknown as { data: { client_id: string | null } | null };
+    if (!inv?.client_id) return;
+
+    const { data: jobs, error } = (await supabase
+      .from("bookings")
+      .select("id, scheduled_at, total_cents")
+      .eq("client_id", inv.client_id)
+      .eq("organization_id", invoice.organization_id)
+      .eq("status", "completed")
+      .order("scheduled_at", { ascending: false })
+      .limit(500)) as unknown as {
+      data: Array<{ id: string; scheduled_at: string; total_cents: number | null }> | null;
+      error: { message: string } | null;
+    };
+    if (error) throw new Error(error.message);
+    const candidates = jobs ?? [];
+    if (candidates.length === 0) return;
+
+    const billedBy = await resolveBilledBookings(
+      supabase,
+      candidates.map((j) => j.id),
+      { failClosed: true },
+    );
+    const taken = new Set(rows.map((r) => r.booking_id).filter(Boolean));
+    let open = candidates.filter((j) => {
+      if (taken.has(j.id)) return false;
+      const by = billedBy.get(j.id);
+      return !by || by.id === invoice.id;
+    });
+    const tz = await getOrgTimezone(invoice.organization_id);
+    for (const row of unlinked) {
+      const jobId = matchLineToJob(
+        {
+          label: row.label,
+          quantity: row.quantity,
+          unit_price_cents: row.unit_price_dollars ?? 0,
+        },
+        open,
+        tz,
+      );
+      if (!jobId) continue;
+      row.booking_id = jobId;
+      open = open.filter((j) => j.id !== jobId);
+    }
+  } catch (err) {
+    console.error(`[invoices] invoice ${invoice.id}: could not link hand-added lines:`, err);
+  }
 }

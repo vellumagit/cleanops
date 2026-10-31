@@ -228,7 +228,7 @@ export async function autoInvoiceOnJobComplete(
     const { data: booking } = (await db
       .from("bookings")
       .select(
-        "id, organization_id, client_id, status, total_cents, service_type, service_type_label, address, duration_minutes, scheduled_at, billing_invoice_id, property:client_properties ( label ), client:clients ( address )",
+        "id, organization_id, client_id, status, total_cents, service_type, service_type_label, address, duration_minutes, scheduled_at, billing_invoice_id, billing_released_at, property:client_properties ( label ), client:clients ( address )",
       )
       .eq("id", bookingId)
       .maybeSingle()) as unknown as {
@@ -244,6 +244,7 @@ export async function autoInvoiceOnJobComplete(
         duration_minutes: number;
         scheduled_at: string;
         billing_invoice_id: string | null;
+        billing_released_at: string | null;
         client: { address: string | null } | null;
       } | null;
     };
@@ -267,6 +268,14 @@ export async function autoInvoiceOnJobComplete(
       console.log(
         `[auto] autoInvoiceOnJobComplete: booking ${bookingId} has no client_id`,
       );
+      return { ok: false, reason };
+    }
+    // A person voided this job's invoice. Nothing automatic bills it again:
+    // not a re-save, not a recompute. The "Generate invoice now" button can,
+    // because that is a person deciding (see billed-bookings.ts).
+    if (booking.billing_released_at && !options?.force) {
+      const reason = `An invoice for booking ${bookingId} was voided, so it isn't billed again automatically.`;
+      console.log(`[auto] autoInvoiceOnJobComplete: ${reason}`);
       return { ok: false, reason };
     }
 

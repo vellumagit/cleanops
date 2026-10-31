@@ -188,7 +188,7 @@ export function InvoicesTable({
     const n = ids.length;
     if (
       !confirm(
-        `Void ${n} invoice${n === 1 ? "" : "s"}? ${n === 1 ? "It moves" : "They move"} to the Void tab and can no longer be paid. Clients are not notified, and the jobs on ${n === 1 ? "it" : "them"} become billable again.`,
+        `Void ${n} invoice${n === 1 ? "" : "s"}? ${n === 1 ? "It moves" : "They move"} to the Void tab and can no longer be paid. Clients are not notified. The jobs on ${n === 1 ? "it" : "them"} won't be billed again automatically; to bill one, use its job page or Bill for a period.`,
       )
     ) {
       return;

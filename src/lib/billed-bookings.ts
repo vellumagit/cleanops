@@ -22,7 +22,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
  * longer makes a billed job look free and invite a duplicate.
  *
  * Voided invoices never count — voiding is precisely how you free a job to be
- * billed again.
+ * billed again. By a person: billing_released_at keeps the automatic paths off
+ * it (see billableInSweep), so a void doesn't come back on the next run.
  */
 
 export type BilledBy = {
@@ -58,10 +59,121 @@ export function noteBilled(
   });
 }
 
-/** booking id → the invoice already billing it. Absent means unbilled. */
+/**
+ * What the billing run may bill: not billed already, by any of the three
+ * signals, and not voided off an invoice by a person.
+ *
+ * The run only ever looked at the stamp. That is how Promotional Wearhouse
+ * would have been billed for April to June, which Svitlana voided the day
+ * before, and for four visits already on the $882 invoice she had just sent.
+ */
+export function billableInSweep<
+  T extends { id: string; billing_released_at?: string | null },
+>(rows: readonly T[], billedBy: ReadonlyMap<string, BilledBy>): T[] {
+  return rows.filter((r) => !r.billing_released_at && !billedBy.has(r.id));
+}
+
+/**
+ * Which job a hand-added invoice line bills, or null if that isn't certain.
+ *
+ * Someone adding a visit to an invoice types (or pastes) a line with no link
+ * to the job, so the job still looks unbilled and the next run bills it again.
+ * Linked only when the line names the job's date, in the form every invoice
+ * line uses ("Thu, Oct 15, 2026"), the price matches, and exactly one job fits.
+ * The time isn't compared: Oct 15's line on INV-2026-0312 says 10:30 for a job
+ * moved to 1:30. A guess here could hide work that was never billed, so
+ * anything short of one clear match stays unlinked.
+ */
+export function matchLineToJob(
+  line: { label: string; quantity: number; unit_price_cents: number },
+  jobs: ReadonlyArray<{ id: string; scheduled_at: string; total_cents: number | null }>,
+  tz: string,
+): string | null {
+  if (line.quantity !== 1) return null;
+  const fits = jobs.filter((j) => {
+    if (j.total_cents !== line.unit_price_cents) return false;
+    const date = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    }).format(new Date(j.scheduled_at));
+    return line.label.includes(date);
+  });
+  return fits.length === 1 ? fits[0].id : null;
+}
+
+/**
+ * A person voided these invoices: free their jobs, and mark them so only a
+ * person bills them again. Finds jobs by all three signals, because older
+ * invoices carry a stamp with no line link, or a link with no stamp.
+ *
+ * Never throws: the invoices are already void by the time this runs.
+ */
+export async function releaseJobsFromVoidedInvoices(
+  supabase: SupabaseClient,
+  organizationId: string,
+  invoiceIds: readonly string[],
+  nowIso: string,
+): Promise<void> {
+  if (invoiceIds.length === 0) return;
+  const ids = [...invoiceIds];
+  const [perJob, lines] = await Promise.all([
+    supabase.from("invoices").select("booking_id").in("id", ids) as unknown as Promise<{
+      data: Array<{ booking_id: string | null }> | null;
+      error: { message: string } | null;
+    }>,
+    supabase.from("invoice_line_items").select("booking_id").in("invoice_id", ids) as unknown as Promise<{
+      data: Array<{ booking_id: string | null }> | null;
+      error: { message: string } | null;
+    }>,
+  ]);
+  const readErr = perJob.error ?? lines.error;
+  if (readErr) {
+    console.error("[billing] void: could not read the jobs on these invoices:", readErr.message);
+  }
+
+  const { error: stampedErr } = await supabase
+    .from("bookings")
+    .update({ billing_invoice_id: null, billing_released_at: nowIso } as never)
+    .in("billing_invoice_id", ids)
+    .eq("organization_id", organizationId);
+  if (stampedErr) {
+    console.error(`[billing] void: un-stamp failed for ${ids.length} invoice(s):`, stampedErr.message);
+  }
+
+  const linked = [
+    ...new Set(
+      [...(perJob.data ?? []), ...(lines.data ?? [])]
+        .map((r) => r.booking_id)
+        .filter((id): id is string => !!id),
+    ),
+  ];
+  if (linked.length === 0) return;
+  // Still stamped means another live invoice bills it, so it stays as it is.
+  const { error: linkedErr } = await supabase
+    .from("bookings")
+    .update({ billing_released_at: nowIso } as never)
+    .in("id", linked)
+    .eq("organization_id", organizationId)
+    .is("billing_invoice_id", null);
+  if (linkedErr) {
+    console.error(`[billing] void: release failed for ${linked.length} job(s):`, linkedErr.message);
+  }
+}
+
+/**
+ * booking id → the invoice already billing it. Absent means unbilled.
+ *
+ * `failClosed` throws when a read fails. A screen can show a stale answer; the
+ * billing run can't treat "couldn't check" as "not billed", because that is a
+ * double bill.
+ */
 export async function resolveBilledBookings(
   supabase: SupabaseClient,
   bookingIds: readonly string[],
+  opts: { failClosed?: boolean } = {},
 ): Promise<Map<string, BilledBy>> {
   const billedBy = new Map<string, BilledBy>();
   if (bookingIds.length === 0) return billedBy;
@@ -80,12 +192,14 @@ export async function resolveBilledBookings(
         amount_cents: number | null;
         booking_id: string | null;
       }> | null;
+      error?: { message: string } | null;
     }>,
     supabase
       .from("invoice_line_items")
       .select("booking_id, invoice:invoices!inner ( id, number, status, amount_cents )")
       .in("booking_id", ids) as unknown as Promise<{
       data: Array<{ booking_id: string | null; invoice: Invoiceish }> | null;
+      error?: { message: string } | null;
     }>,
     supabase
       .from("bookings")
@@ -93,8 +207,13 @@ export async function resolveBilledBookings(
       .in("id", ids)
       .not("billing_invoice_id", "is", null) as unknown as Promise<{
       data: Array<{ id: string; invoice: Invoiceish }> | null;
+      error?: { message: string } | null;
     }>,
   ]);
+  if (opts.failClosed) {
+    const failed = invRes.error ?? liRes.error ?? stampRes.error;
+    if (failed) throw new Error(`could not read what is billed: ${failed.message}`);
+  }
 
   for (const r of invRes.data ?? []) {
     noteBilled(billedBy, r.booking_id, {

@@ -1210,22 +1210,18 @@ async function voidInvoices(
   if (error) throw error;
   const updatedIds = new Set((updated ?? []).map((r) => r.id));
 
-  // Un-stamp any bookings billed on these invoices — voided work is billable
-  // again. Without this (plus the now-partial period-key index), a voided
-  // consolidated invoice left its bookings stamped and its period key
-  // occupied, so the billing cron could never re-bill the period (audit P4).
+  // Un-stamp any bookings billed on these invoices, and leave billing them
+  // again to a person. Left stamped, a voided job could never be billed at all
+  // (audit P4); released with no mark, the billing run re-billed everything
+  // Svitlana voided, month after month.
   if (updatedIds.size > 0) {
-    const { error: unstampErr } = await supabase
-      .from("bookings")
-      .update({ billing_invoice_id: null } as never)
-      .in("billing_invoice_id" as never, [...updatedIds] as never)
-      .eq("organization_id", membership.organization_id);
-    if (unstampErr) {
-      console.error(
-        `[invoices] void un-stamp failed for ${updatedIds.size} invoice(s):`,
-        unstampErr.message,
-      );
-    }
+    const { releaseJobsFromVoidedInvoices } = await import("@/lib/billed-bookings");
+    await releaseJobsFromVoidedInvoices(
+      supabase,
+      membership.organization_id,
+      [...updatedIds],
+      new Date().toISOString(),
+    );
   }
 
   for (const r of toVoid) {
@@ -1458,7 +1454,10 @@ export async function bulkGenerateInvoicesAction(): Promise<BulkInvoiceResult> {
     .eq("organization_id" as never, membership.organization_id as never)
     .eq("status", "completed")
     .not("total_cents", "is", null)
-    .is("archived_at" as never, null as never);
+    .is("archived_at" as never, null as never)
+    // One button shouldn't undo every void at once. Billing a voided job is a
+    // decision about that job: its own page, or Bill for a period.
+    .is("billing_released_at" as never, null as never);
 
   if (error) return { created: 0, skipped: 0, errors: [error.message] };
   if (!bookings?.length) return { created: 0, skipped: 0, errors: [] };

@@ -100,6 +100,7 @@ export default async function SeriesPage() {
       .in("series_id" as never, seriesIds as never)
       .eq("status" as never, "completed" as never)
       .is("billing_invoice_id" as never, null as never)
+      .is("billing_released_at" as never, null as never)
       .lt("scheduled_at" as never, now as never) as unknown as Promise<{
       data: Array<{ series_id: string }> | null;
     }>);

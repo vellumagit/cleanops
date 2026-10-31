@@ -11,7 +11,8 @@
  *
  * For each eligible client the cron collects all bookings that:
  *   1. Belong to that client.
- *   2. Have billing_invoice_id IS NULL (not yet billed).
+ *   2. Have billing_invoice_id IS NULL, are on no live invoice by any other
+ *      signal, and weren't voided off an invoice by a person (billableInSweep).
  *   3. Scheduled before the cron run date (period closes at midnight UTC
  *      on the cron date — jobs scheduled today are included next cycle).
  *   4. Status is `completed` (itemized) or `completed | cancelled` (flat_rate,
@@ -46,6 +47,7 @@ import {
   weeklyAnchorPeriodEnding,
   type AnchoredPeriod,
 } from "@/lib/billing-anchor";
+import { billableInSweep, resolveBilledBookings } from "@/lib/billed-bookings";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -88,6 +90,8 @@ type BookingRow = {
   scheduled_at: string;
   /** Drives the time range on the invoice line. */
   duration_minutes: number | null;
+  /** A person voided this job's invoice. See billableInSweep. */
+  billing_released_at: string | null;
 };
 
 type InvoiceRow = {
@@ -194,7 +198,7 @@ async function generateClientInvoice(
   const { data: bookingsRaw } = (await db
     .from("bookings")
     .select(
-      "id, status, total_cents, service_type, service_type_label, address, scheduled_at, duration_minutes, property:client_properties ( label )",
+      "id, status, total_cents, service_type, service_type_label, address, scheduled_at, duration_minutes, billing_released_at, property:client_properties ( label )",
     )
     .eq("client_id", client.id)
     .is("billing_invoice_id", null)
@@ -209,7 +213,21 @@ async function generateClientInvoice(
     data: BookingRow[] | null;
   };
 
-  const bookings = bookingsRaw ?? [];
+  // Couldn't check means don't bill: the sweep is catch-all, so skipping a
+  // client costs a month's delay at worst, and a double bill costs trust.
+  let bookings: BookingRow[];
+  try {
+    const candidates = bookingsRaw ?? [];
+    const billedBy = await resolveBilledBookings(
+      db,
+      candidates.map((b) => b.id),
+      { failClosed: true },
+    );
+    bookings = billableInSweep(candidates, billedBy);
+  } catch (err) {
+    console.error(`[billing-cycle] skipped client ${client.id}:`, err);
+    return null;
+  }
 
   if (bookings.length === 0) {
     // Nothing to bill — skip silently.
