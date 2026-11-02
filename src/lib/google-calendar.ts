@@ -1281,7 +1281,7 @@ export async function bulkSyncUpcomingBookings(
       `id, scheduled_at, duration_minutes, service_type, address, notes,
        assigned_to, splits,
        client:clients!inner ( name ),
-       assignee:memberships ( display_name, profile:profiles ( full_name ) )`,
+       assignee:memberships!bookings_assigned_to_fkey ( display_name, profile:profiles ( full_name ) )`,
     )
     .eq("organization_id", organizationId)
     .gte("scheduled_at", sinceIso)
@@ -1506,7 +1506,7 @@ export async function reconcileOrgCalendarEvents(
       `id, scheduled_at, duration_minutes, service_type, address, notes,
        google_calendar_event_id, splits,
        client:clients ( name ),
-       assignee:memberships ( display_name, profile:profiles ( full_name ) )`,
+       assignee:memberships!bookings_assigned_to_fkey ( display_name, profile:profiles ( full_name ) )`,
     )
     .eq("organization_id", organizationId)
     .gte("scheduled_at", since.toISOString())

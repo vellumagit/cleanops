@@ -32,7 +32,7 @@ export async function resyncBookingCalendars(
       `id, organization_id, status, archived_at, scheduled_at, duration_minutes,
        service_type, address, notes, assigned_to, google_calendar_event_id, splits,
        client:clients ( name ),
-       assignee:memberships ( display_name, profile:profiles ( full_name ) )`,
+       assignee:memberships!bookings_assigned_to_fkey ( display_name, profile:profiles ( full_name ) )`,
     )
     .eq("id", bookingId)
     .maybeSingle()) as unknown as {

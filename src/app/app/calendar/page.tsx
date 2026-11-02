@@ -140,7 +140,7 @@ export default async function CalendarPage() {
       .select(
         `id, scheduled_at, duration_minutes, service_type, status, address, series_id,
          client:clients ( name ),
-         assigned:memberships ( display_name, profile:profiles ( full_name ) )`,
+         assigned:memberships!bookings_assigned_to_fkey ( display_name, profile:profiles ( full_name ) )`,
       )
       .gte("scheduled_at", rangeStart.toISOString())
       .lte("scheduled_at", rangeEnd.toISOString())
