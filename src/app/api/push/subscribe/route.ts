@@ -7,6 +7,7 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 export async function POST(request: NextRequest) {
   try {
@@ -56,8 +57,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
     }
 
-    // Upsert — if the endpoint already exists, update the keys (they can rotate)
-    await (supabase
+    // Upsert on the endpoint: one row per device, and it belongs to whoever
+    // last turned push on from it. Written with the admin client because the
+    // table has no UPDATE policy, so the user's own client could only insert:
+    // re-enabling on a device already on file — or on a phone shared by two
+    // logins, like an owner's and a manager's account — failed in the
+    // database, and this route ignored the error and answered ok. The
+    // membership was verified as the caller's just above.
+    const admin = createSupabaseAdminClient();
+    const { error: saveErr } = (await admin
       .from("push_subscriptions" as never)
       .upsert(
         {
@@ -69,7 +77,11 @@ export async function POST(request: NextRequest) {
           keys_auth: subscription.keys.auth,
         } as never,
         { onConflict: "endpoint" },
-      ) as unknown as Promise<unknown>);
+      )) as unknown as { error: { message: string } | null };
+    if (saveErr) {
+      console.error("[push/subscribe] save failed:", saveErr.message);
+      return NextResponse.json({ error: "save failed" }, { status: 500 });
+    }
 
     return NextResponse.json({ ok: true });
   } catch (err) {
