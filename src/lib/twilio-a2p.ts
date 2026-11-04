@@ -621,12 +621,23 @@ export async function advanceAllUsRegistrations(): Promise<{ checked: number; ch
   const db = createSupabaseAdminClient();
   const { data } = (await db
     .from("sms_registrations" as never)
-    .select("organization_id, status")
-    .in("status" as never, ["brand_review", "campaign_review"] as never)) as unknown as {
-    data: Array<{ organization_id: string; status: string }> | null;
+    .select("organization_id, status, updated_at")
+    .in("status" as never, ["submitted", "brand_review", "campaign_review"] as never)) as unknown as {
+    data: Array<{ organization_id: string; status: string; updated_at: string }> | null;
   };
   let changed = 0;
   for (const r of data ?? []) {
+    // "Submitting…" that hasn't moved for ten minutes was cut off midway
+    // (the request timed out, the phone closed). Every step resumes from
+    // the ids already saved, so finishing it here is safe; left alone it
+    // would sit at "Submitting…" with the form locked.
+    if (r.status === "submitted") {
+      if (Date.now() - new Date(r.updated_at).getTime() < 10 * 60_000) continue;
+      const res = await submitUsRegistration(r.organization_id);
+      if (res.ok) changed++;
+      await new Promise((ok) => setTimeout(ok, 1100));
+      continue;
+    }
     const next = await advanceUsRegistration(r.organization_id);
     if (next && next !== r.status) changed++;
     // Twilio asks for one brand/campaign request per second.

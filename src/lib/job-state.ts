@@ -267,23 +267,25 @@ export function deriveJobState(input: JobStateInput): JobState {
     // Moeller sat in progress from 12:30 to 10 PM), and an early finisher
     // must not close it on people still coming (2026-10-26: Olha tapped
     // Finish six minutes in; the other three were locked out).
-    if (!windowOver && notArrived.length > 0) {
-      needs.push("no_show_decision");
+    // Someone stopped her clock for a break (Stop my clock) and hasn't said
+    // she's done. Olha, 2026-11-03: stopping the clock used to be finishing
+    // the job, so a break closed it and drafted the invoice. Checked before
+    // "finished on site": with someone on a break the job isn't finished,
+    // whoever else hasn't arrived (the late alert covers them).
+    if (onBreak.length > 0) {
       return {
         ...base,
-        phase: "finished_on_site",
+        phase: "on_break",
         status: "in_progress",
         closesAtMs: windowEndMs,
         needs,
       };
     }
-    // Someone stopped her clock for a break (Stop my clock) and hasn't said
-    // she's done. Olha, 2026-11-03: stopping the clock used to be finishing
-    // the job, so a break closed it and drafted the invoice.
-    if (onBreak.length > 0) {
+    if (!windowOver && notArrived.length > 0) {
+      needs.push("no_show_decision");
       return {
         ...base,
-        phase: "on_break",
+        phase: "finished_on_site",
         status: "in_progress",
         closesAtMs: windowEndMs,
         needs,

@@ -27,7 +27,7 @@ When a save would **notify the client** — the visit time moved, or the recurri
 
 ## Moving a job
 
-Drag a job to a new time or person on the scheduler, or change it on the booking. Either way the client is told (by their own email/text preference), the crew gets a push, and Google Calendar — yours and each cleaner's — moves within a minute or two. A move to a day someone marked off still goes through, with a warning naming who is off.
+Drag a job to a new time or person on the scheduler, or change it on the booking. A drag tells the client the new time (by their own email/text preference); the booking form asks first, with **Save without notifying** for when you've told them yourself. Either way the crew gets a push, and Google Calendar — yours and each cleaner's — moves within a minute or two. A move to a day someone marked off still goes through, with a warning naming who is off.
 
 ## Photos
 

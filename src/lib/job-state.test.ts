@@ -498,3 +498,19 @@ describe("Stop my clock is a break, not a finish (Olha, 2026-11-03)", () => {
     expect(s.onBreak).toEqual([]);
   });
 });
+
+describe("a break outranks 'finished on site'", () => {
+  it("one on a break, one not yet arrived: on a break, no close-it question", () => {
+    const s = deriveJobState(
+      input({
+        booking: { ...input().booking, status: "in_progress" },
+        crew: [{ membership_id: P, completed_at: null }, { membership_id: A }],
+        shifts: [shift(P, "2026-10-27T15:00:00Z", "2026-10-27T16:00:00Z")],
+        now: T("2026-10-27T16:30:00Z"),
+      }),
+    );
+    expect(s.phase).toBe("on_break");
+    expect(s.needs).not.toContain("no_show_decision");
+    expect(s.waitingOn).toEqual([A]);
+  });
+});

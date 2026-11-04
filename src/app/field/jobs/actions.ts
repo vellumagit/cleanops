@@ -399,9 +399,15 @@ export async function pauseJobAction(
   // Already stopped (a queued tap arriving after another): nothing to do.
   if (!open) return { ok: true };
 
-  // Never before the clock-in (a server-stamped start and a phone-stamped
-  // stop can be a minute apart the wrong way).
-  const clockOutAt = punchedAt < open.clock_in_at ? open.clock_in_at : punchedAt;
+  // A pause tapped well before this shift began is about an earlier one: a
+  // "Stop my clock" saved in a dead zone and sent after she had clocked back
+  // in would otherwise end the new shift the moment it started. A minute of
+  // slack covers a server-stamped start and a phone-stamped stop that
+  // disagree slightly.
+  const startMs = new Date(open.clock_in_at).getTime();
+  const tapMs = new Date(punchedAt).getTime();
+  if (tapMs < startMs - 60_000) return { ok: true };
+  const clockOutAt = tapMs < startMs ? open.clock_in_at : punchedAt;
   const { error: updateError } = await supabase
     .from("time_entries")
     .update({ clock_out_at: clockOutAt, clock_out_lat: lat, clock_out_lng: lng })
