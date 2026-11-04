@@ -3,13 +3,15 @@
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { MapPin, CheckCircle2, Undo2 } from "lucide-react";
+import { MapPin, CheckCircle2, Undo2, PauseCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { tap, type TapKind } from "../../tap";
 
 /**
- * The only two things a cleaner says about a job: I'm here, I'm done. Both
- * are about her own shift. What they mean for the job — whether it's over,
+ * What a cleaner says about a job: I'm here, Stop my clock, I'm done. All
+ * are about her own shift, and she can go round as many times as the day
+ * needs — a break, a supply run, a wrong tap — without finishing the job.
+ * Only I'm done says her part is over. What they mean for the job — whether it's over,
  * who's still coming — is decided from everyone's shifts together, on the
  * server, and shown in the facts line above the button.
  */
@@ -22,8 +24,15 @@ export function JobActionButtons({
   notDueYet = false,
   scheduledLabel,
   facts,
+  workedHere = false,
+  today = false,
 }: {
   bookingId: string;
+  /** She has clocked in here before (so the button reads I'm back). */
+  workedHere?: boolean;
+  /** The job is on today's date in the org's zone: clocking back in stays
+   *  open all day, even on a job the office closed. */
+  today?: boolean;
   status: string;
   /** Completed because the last clock stopped, not because a person closed
    *  it (no closed_at). Clocking in again reopens it, so offer the way back. */
@@ -57,7 +66,13 @@ export function JobActionButtons({
       const outcome = await tap(kind, bookingId);
       setArmed(false);
       if (outcome.status === "sent") {
-        toast.success(kind === "here" ? "You're here — clock started" : "Done — clock stopped");
+        toast.success(
+          kind === "here"
+            ? "You're here — clock started"
+            : kind === "pause"
+              ? "Clock stopped — the job stays open"
+              : "Done — clock stopped",
+        );
         router.refresh();
       } else if (outcome.status === "queued") {
         toast.warning(
@@ -72,23 +87,47 @@ export function JobActionButtons({
 
   const isDone = status === "completed";
 
+  // On the clock: stop it for a while (the job stays open), or say she's
+  // done. I'm done keeps its two taps; Stop my clock is one, because it
+  // changes nothing she can't undo with I'm here.
+  const onTheClock = (
+    <>
+      <Button
+        type="button"
+        size="lg"
+        className={
+          armed
+            ? "h-16 bg-emerald-600 text-lg font-semibold text-white hover:bg-emerald-600"
+            : "h-16 text-lg font-semibold"
+        }
+        onClick={() => (armed ? run("done") : setArmed(true))}
+        disabled={isPending}
+      >
+        <CheckCircle2 className="mr-2 h-6 w-6" />
+        {isPending ? "One moment…" : armed ? "Tap again — I'm done" : "I'm done"}
+      </Button>
+      <Button
+        type="button"
+        variant="outline"
+        size="lg"
+        className="h-12 text-base"
+        onClick={() => run("pause")}
+        disabled={isPending}
+      >
+        <PauseCircle className="mr-2 h-5 w-5" />
+        {isPending ? "One moment…" : "Stop my clock — job stays open"}
+      </Button>
+    </>
+  );
+
   // Closed by the office while she's still on the clock: her shift keeps
   // running until she says otherwise, so she needs the button, not a
   // "nice work" with no way to stop her clock.
   if (isDone && myOpenEntryHere) {
     return (
       <div className="flex flex-col gap-3">
-        <Facts text="The office closed this job. Tap I'm done to stop your clock." />
-        <Button
-          type="button"
-          size="lg"
-          className="h-16 text-lg font-semibold"
-          onClick={() => run("done")}
-          disabled={isPending}
-        >
-          <CheckCircle2 className="mr-2 h-6 w-6" />
-          {isPending ? "One moment…" : "I'm done"}
-        </Button>
+        <Facts text="The office closed this job. Your time still counts — stop your clock when you leave." />
+        {onTheClock}
       </div>
     );
   }
@@ -100,11 +139,11 @@ export function JobActionButtons({
           <CheckCircle2 className="h-5 w-5" />
           Job complete. Nice work.
         </div>
-        {/* Sollos closed it when the last clock stopped. If that was too
-            soon — a break, a queued tap, a tap on the wrong job — clocking
-            in again puts the job back in progress. A job a person closed
-            stays closed; the office is the way back there. */}
-        {closedBySollos ? (
+        {/* Clocking back in stays open all day. On a job Sollos closed when
+            the last clock stopped, it puts the job back in progress. On one
+            the office closed, the job stays closed (its invoice untouched)
+            and her time still counts. */}
+        {closedBySollos || today ? (
           <Button
             type="button"
             variant="outline"
@@ -128,16 +167,7 @@ export function JobActionButtons({
     return (
       <div className="flex flex-col gap-3">
         {facts && <Facts text={facts} />}
-        <Button
-          type="button"
-          size="lg"
-          className="h-16 text-lg font-semibold"
-          onClick={() => run("done")}
-          disabled={isPending}
-        >
-          <CheckCircle2 className="mr-2 h-6 w-6" />
-          {isPending ? "One moment…" : "I'm done"}
-        </Button>
+        {onTheClock}
       </div>
     );
   }
@@ -195,23 +225,10 @@ export function JobActionButtons({
           disabled={isPending}
         >
           <MapPin className="mr-2 h-6 w-6" />
-          {isPending ? "One moment…" : "I'm here"}
+          {isPending ? "One moment…" : workedHere ? "I'm back — start my clock" : "I'm here"}
         </Button>
       ) : (
-        <Button
-          type="button"
-          size="lg"
-          className={
-            armed
-              ? "h-16 bg-emerald-600 text-lg font-semibold text-white hover:bg-emerald-600"
-              : "h-16 text-lg font-semibold"
-          }
-          onClick={() => (armed ? run("done") : setArmed(true))}
-          disabled={isPending}
-        >
-          <CheckCircle2 className="mr-2 h-6 w-6" />
-          {isPending ? "One moment…" : armed ? "Tap again — I'm done" : "I'm done"}
-        </Button>
+        onTheClock
       )}
     </div>
   );

@@ -75,7 +75,15 @@ export function crewStillWorking({
     // three counted as no-shows, the job closed, and none of them could
     // clock in.
     if (!worked.has(r.membership_id)) return !jobWindowOver;
-    if (onClock) return onClock.has(r.membership_id);
+    // On the clock, or off it on a break (stopped her clock without saying
+    // she's done) while the window lasts. A break never outlives the
+    // window: past it, off the clock is finished, as before.
+    if (onClock) {
+      return (
+        onClock.has(r.membership_id) ||
+        (!jobWindowOver && r.completed_at == null)
+      );
+    }
     return r.completed_at == null;
   });
 }

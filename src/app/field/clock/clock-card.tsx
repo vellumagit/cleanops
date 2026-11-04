@@ -173,21 +173,6 @@ export function ClockCard({
     });
   }
 
-  function handleStartJob(job: TodayJob) {
-    startTransition(async () => {
-      const coords = await getCoords();
-      const fd = buildFormData(coords);
-      fd.set("booking_id", job.id);
-      const result = await startJobAction(fd);
-      if (result.ok) {
-        toast.success(`You're here — ${job.clientName}`);
-        router.refresh();
-      } else {
-        toast.error(result.error);
-      }
-    });
-  }
-
   function handleOut() {
     startTransition(async () => {
       const coords = await getCoords();
@@ -257,16 +242,18 @@ export function ClockCard({
           {todaysJobs.length > 0 && (
             <div>
               <div className="mb-2 text-xs font-medium text-muted-foreground">
-                I&apos;m here at…
+                Today&apos;s jobs — open one to clock in
               </div>
               <div className="flex flex-col gap-2">
+                {/* Links into the job, not clock-ins. These rows look like
+                    the way into a job, and tapping one used to clock her in
+                    on the spot (Olha, 2026-11-03: twice by accident). The
+                    clock lives on the job, with Stop my clock beside it. */}
                 {todaysJobs.map((job) => (
-                  <button
+                  <Link
                     key={job.id}
-                    type="button"
-                    disabled={isPending}
-                    onClick={() => handleStartJob(job)}
-                    className="flex h-12 w-full items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 text-left transition-colors hover:bg-muted active:bg-muted disabled:opacity-50"
+                    href={`/field/jobs/${job.id}`}
+                    className="flex h-12 w-full items-center justify-between gap-3 rounded-lg border border-border bg-background px-3 text-left transition-colors hover:bg-muted active:bg-muted"
                   >
                     <span className="flex min-w-0 items-center gap-2">
                       <Briefcase className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -284,7 +271,7 @@ export function ClockCard({
                     <span className="shrink-0 text-sm font-medium tabular-nums text-muted-foreground">
                       {job.timeLabel}
                     </span>
-                  </button>
+                  </Link>
                 ))}
               </div>
             </div>

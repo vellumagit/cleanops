@@ -34,13 +34,21 @@ export function jobFactsForMember(
     parts.push(`You arrived ${time(open.clock_in_at)}`);
   } else if (mine.length > 0) {
     const last = mine[mine.length - 1];
-    if (last.clock_out_at) parts.push(`You finished ${time(last.clock_out_at)}`);
+    if (last.clock_out_at) {
+      parts.push(
+        state.onBreak.includes(membershipId)
+          ? `Your clock stopped ${time(last.clock_out_at)}`
+          : `You finished ${time(last.clock_out_at)}`,
+      );
+    }
   }
 
   if (crew.length >= 2) {
     parts.push(`${state.onSite.length} of ${crew.length} here`);
     const finished = others(state.finished).map(first);
     if (finished.length > 0) parts.push(`${finished.join(", ")} finished`);
+    const away = others(state.onBreak).map(first);
+    if (away.length > 0) parts.push(`${away.join(", ")} on a break`);
     const waiting = others(state.waitingOn).map(first);
     if (waiting.length > 0) {
       parts.push(`${waiting.join(", ")} ${waiting.length === 1 ? "hasn't" : "haven't"} arrived`);

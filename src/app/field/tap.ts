@@ -1,7 +1,7 @@
 "use client";
 
 import { toast } from "sonner";
-import { startJobAction, completeJobAction } from "./jobs/actions";
+import { startJobAction, completeJobAction, pauseJobAction } from "./jobs/actions";
 import { TAPPED_AT_FIELD, MAX_TAP_AGE_MS } from "@/lib/punch-time";
 
 /**
@@ -15,7 +15,14 @@ import { TAPPED_AT_FIELD, MAX_TAP_AGE_MS } from "@/lib/punch-time";
  * as there's signal, with the time she actually tapped.
  */
 
-export type TapKind = "here" | "done";
+/** here: clock in. done: her part is finished. pause: stop the clock, job stays open. */
+export type TapKind = "here" | "done" | "pause";
+
+const TAP_LABEL: Record<TapKind, string> = {
+  here: "I'm here",
+  done: "I'm done",
+  pause: "Stop my clock",
+};
 
 type QueuedTap = {
   kind: TapKind;
@@ -79,7 +86,9 @@ function isNetworkFailure(err: unknown): boolean {
 
 async function send(t: QueuedTap): Promise<{ ok: true } | { ok: false; error: string }> {
   const fd = toFormData(t);
-  return t.kind === "here" ? startJobAction(fd) : completeJobAction(fd);
+  if (t.kind === "here") return startJobAction(fd);
+  if (t.kind === "pause") return pauseJobAction(fd);
+  return completeJobAction(fd);
 }
 
 export type TapOutcome =
@@ -136,7 +145,7 @@ export async function flushTaps(opts: { quiet?: boolean } = {}): Promise<number>
         writeQueue(q);
         if (!opts.quiet) {
           toast.error(
-            `A saved "${t.kind === "here" ? "I'm here" : "I'm done"}" from more than 12 hours ago couldn't be sent. Tell your manager the real time.`,
+            `A saved "${TAP_LABEL[t.kind]}" from more than 12 hours ago couldn't be sent. Tell your manager the real time.`,
           );
         }
         continue;
@@ -158,12 +167,14 @@ export async function flushTaps(opts: { quiet?: boolean } = {}): Promise<number>
             toast.success(
               t.kind === "here"
                 ? `Sent: you arrived at ${at}`
-                : `Sent: you finished at ${at}`,
+                : t.kind === "pause"
+                  ? `Sent: your clock stopped at ${at}`
+                  : `Sent: you finished at ${at}`,
             );
           }
         } else if (!opts.quiet) {
           toast.error(
-            `Couldn't record "${t.kind === "here" ? "I'm here" : "I'm done"}": ${result.error}`,
+            `Couldn't record "${TAP_LABEL[t.kind]}": ${result.error}`,
           );
         }
       } catch (err) {

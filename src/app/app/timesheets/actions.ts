@@ -1336,6 +1336,11 @@ export async function updateTimeEntryAction(
     },
   });
 
+  // An edit that gives an open shift its end is the office ending it.
+  if (before.clock_out_at == null && end_at && parsed.booking_id) {
+    const { markPartDone } = await import("@/lib/part-done");
+    await markPartDone(parsed.booking_id, parsed.employee_id, end_at);
+  }
   for (const bid of new Set([before.booking_id, parsed.booking_id])) {
     if (bid) await syncJob(bid, "hours_edited");
   }
@@ -1843,7 +1848,12 @@ export async function closeOpenShiftAction(
     after: { clock_out_at: endUtc },
   });
 
-  if (before.booking_id) await syncJob(before.booking_id, "shift_closed_by_manager");
+  if (before.booking_id) {
+    // The office ended her shift: her part is over, not paused.
+    const { markPartDone } = await import("@/lib/part-done");
+    await markPartDone(before.booking_id, before.employee_id, endUtc);
+    await syncJob(before.booking_id, "shift_closed_by_manager");
+  }
   revalidatePath("/app/timesheets", "page");
   revalidatePath("/app/payroll", "page");
   return { ok: true };

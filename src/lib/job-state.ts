@@ -29,6 +29,10 @@ export type JobPhase =
   /** Everyone who clocked in has clocked out, but the job isn't over: a
    *  rostered person hasn't arrived and the window hasn't passed. */
   | "finished_on_site"
+  /** Nobody is on the clock, but someone stopped hers without saying she's
+   *  done ("Stop my clock") and the window hasn't passed: a break, not an
+   *  end. In progress until she's back, says I'm done, or the window ends. */
+  | "on_break"
   /** Over. Closed by a person, or by the rules. */
   | "done";
 
@@ -62,6 +66,13 @@ export type JobStateCrewRow = {
   membership_id: string;
   split_start_offset_minutes?: number | null;
   split_duration_minutes?: number | null;
+  /**
+   * When she said her part is done: her own I'm done, the office ending her
+   * shift, or her starting another job. Null = she hasn't, so a stopped
+   * clock is a break. Left out (undefined) by loaders that don't read it,
+   * which keeps the old reading: off the clock means finished.
+   */
+  completed_at?: string | null;
 };
 
 export type JobStateShift = {
@@ -90,8 +101,10 @@ export type JobState = {
   status: "pending" | "confirmed" | "en_route" | "in_progress" | "completed" | "cancelled";
   /** Membership ids currently on the clock. */
   onSite: string[];
-  /** Clocked in and back out. */
+  /** Clocked in and back out, and done. */
   finished: string[];
+  /** Clocked in and back out without saying she's done: on a break. */
+  onBreak: string[];
   /** Rostered, not clocked in, and the window hasn't passed — still coming. */
   waitingOn: string[];
   /** Rostered, never clocked in, window over. */
@@ -187,7 +200,19 @@ export function deriveJobState(input: JobStateInput): JobState {
     worked.add(s.employee_id);
     if (s.clock_out_at == null) onSite.add(s.employee_id);
   }
-  const finished = [...worked].filter((id) => !onSite.has(id));
+  // Off the clock without saying she's done. Only crew rows that carry the
+  // mark count; a break ends with the window, so it can never hold a job
+  // open past it.
+  const pausedIds = new Set(
+    crew
+      .filter((c) => c.completed_at === null)
+      .map((c) => c.membership_id)
+      .filter((id) => worked.has(id) && !onSite.has(id)),
+  );
+  const onBreak = windowOver ? [] : [...pausedIds];
+  const finished = [...worked].filter(
+    (id) => !onSite.has(id) && !onBreak.includes(id),
+  );
   const notArrived = crew
     .map((c) => c.membership_id)
     .filter((id) => !worked.has(id));
@@ -195,6 +220,7 @@ export function deriveJobState(input: JobStateInput): JobState {
   const base = {
     onSite: [...onSite],
     finished,
+    onBreak,
     waitingOn: windowOver ? [] : notArrived,
     noShows: windowOver ? notArrived : [],
     windowEndMs,
@@ -246,6 +272,18 @@ export function deriveJobState(input: JobStateInput): JobState {
       return {
         ...base,
         phase: "finished_on_site",
+        status: "in_progress",
+        closesAtMs: windowEndMs,
+        needs,
+      };
+    }
+    // Someone stopped her clock for a break (Stop my clock) and hasn't said
+    // she's done. Olha, 2026-11-03: stopping the clock used to be finishing
+    // the job, so a break closed it and drafted the invoice.
+    if (onBreak.length > 0) {
+      return {
+        ...base,
+        phase: "on_break",
         status: "in_progress",
         closesAtMs: windowEndMs,
         needs,
@@ -384,6 +422,11 @@ export function describeJobState(
       if (state.finished.length > 0) parts.push(`${list(state.finished)} finished`);
       if (state.waitingOn.length > 0) parts.push(`waiting on ${list(state.waitingOn)}`);
       if (state.noShows.length > 0) parts.push(`${list(state.noShows)} never clocked in`);
+      break;
+    case "on_break":
+      parts.push(`${list(state.onBreak)} on a break`);
+      if (state.finished.length > 0) parts.push(`${list(state.finished)} finished`);
+      if (state.closesAtMs) parts.push(`closes itself ${formatTime(state.closesAtMs)}`);
       break;
     case "finished_on_site":
       parts.push("Finished on site");

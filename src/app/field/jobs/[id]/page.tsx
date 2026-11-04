@@ -39,6 +39,7 @@ import { ManageShift } from "./manage-shift";
 import { OpenInMaps } from "@/components/open-in-maps";
 import { fetchJobPhotos } from "@/lib/job-photos";
 import { getOrgTimezone } from "@/lib/org-timezone";
+import { zonedYmd } from "@/lib/wall-clock";
 import { resolveAutomationEnabled } from "@/lib/automation-defaults";
 import {
   BookingChecklist,
@@ -705,6 +706,8 @@ export default async function FieldJobDetailPage({
             closedBySollos={booking.status === "completed" && booking.closed_at == null}
             youCompleted={crewRow?.completed_at != null}
             myOpenEntryHere={Boolean(myOpenEntryHere)}
+            workedHere={(myEntriesHere ?? 0) > 0}
+            today={zonedYmd(new Date(booking.scheduled_at), tz) === zonedYmd(new Date(), tz)}
             facts={jobFactsForMember(await jobStatePromise, membership.id, tz)}
             notDueYet={
               futureStatusError(booking.scheduled_at, "in_progress") !== null

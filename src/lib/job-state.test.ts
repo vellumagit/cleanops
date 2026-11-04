@@ -449,3 +449,52 @@ describe("finish/reopen invariants over random jobs", () => {
     }
   });
 });
+
+describe("Stop my clock is a break, not a finish (Olha, 2026-11-03)", () => {
+  // Solo, 9:00 AM for 4h: the window ends 1:00 PM (19:00Z).
+  const solo = (completed_at: string | null | undefined) =>
+    input({
+      booking: { ...input().booking, duration_minutes: 240, status: "in_progress" },
+      crew: [{ membership_id: P, completed_at }],
+      shifts: [shift(P, "2026-10-27T15:00:00Z", "2026-10-27T16:30:00Z")],
+      now: T("2026-10-27T16:45:00Z"),
+    });
+
+  it("a stopped clock with no I'm done keeps the job in progress while the window lasts", () => {
+    const s = deriveJobState(solo(null));
+    expect(s.phase).toBe("on_break");
+    expect(s.status).toBe("in_progress");
+    expect(s.onBreak).toEqual([P]);
+    expect(s.finished).toEqual([]);
+    expect(s.closesAtMs).toBe(T("2026-10-27T19:00:00Z"));
+    expect(finishesBeforeCutover("in_progress", s, T(START), T("2026-10-27T16:45:00Z"))).toBe(false);
+    expect(describeJobState(s, { nameOf: () => "Pristine", formatTime: () => "1:00 PM", crewSize: 1 })).toBe(
+      "Pristine on a break · closes itself 1:00 PM",
+    );
+  });
+
+  it("her I'm done still finishes it at once", () => {
+    const s = deriveJobState(solo("2026-10-27T16:30:00Z"));
+    expect(s.phase).toBe("done");
+    expect(s.finished).toEqual([P]);
+  });
+
+  it("a break never outlives the window", () => {
+    const s = deriveJobState({ ...solo(null), now: T("2026-10-27T19:01:00Z") });
+    expect(s.phase).toBe("done");
+    expect(s.onBreak).toEqual([]);
+  });
+
+  it("a loader that doesn't read the mark keeps the old reading: off the clock is finished", () => {
+    expect(deriveJobState(solo(undefined)).phase).toBe("done");
+  });
+
+  it("back on the clock is simply in progress", () => {
+    const back = solo(null);
+    back.shifts = [...back.shifts, shift(P, "2026-10-27T16:50:00Z")];
+    back.now = T("2026-10-27T17:00:00Z");
+    const s = deriveJobState(back);
+    expect(s.phase).toBe("in_progress");
+    expect(s.onBreak).toEqual([]);
+  });
+});

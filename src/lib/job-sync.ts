@@ -87,7 +87,7 @@ async function load(bookingId: string) {
       db
         .from("booking_assignees" as never)
         .select(
-          "membership_id, split_start_offset_minutes, split_duration_minutes, membership:memberships ( display_name, profile:profiles ( full_name ) )" as never,
+          "membership_id, split_start_offset_minutes, split_duration_minutes, completed_at, membership:memberships ( display_name, profile:profiles ( full_name ) )" as never,
         )
         .eq("booking_id" as never, bookingId as never) as unknown as Promise<{
         data: Array<

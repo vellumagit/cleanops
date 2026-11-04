@@ -121,6 +121,7 @@ export async function collectNeedsYou(
     acceptance_status: string | null;
     split_start_offset_minutes: number | null;
     split_duration_minutes: number | null;
+    completed_at: string | null;
     membership: MemberRow | null;
   };
   type ShiftRow = {
@@ -135,7 +136,7 @@ export async function collectNeedsYou(
       db
         .from("booking_assignees" as never)
         .select(
-          "booking_id, membership_id, acceptance_status, split_start_offset_minutes, split_duration_minutes, membership:memberships ( id, display_name, contact_phone, profile_id, profile:profiles ( full_name, phone ) )" as never,
+          "booking_id, membership_id, acceptance_status, split_start_offset_minutes, split_duration_minutes, completed_at, membership:memberships ( id, display_name, contact_phone, profile_id, profile:profiles ( full_name, phone ) )" as never,
         )
         .in("booking_id" as never, chunk as never) as unknown as PromiseLike<{
         data: CrewRow[] | null;
@@ -171,6 +172,9 @@ export async function collectNeedsYou(
       has_login: Boolean(m?.profile_id),
       split_start_offset_minutes: c.split_start_offset_minutes,
       split_duration_minutes: c.split_duration_minutes,
+      // Her own "I'm done" (or the office ending her shift): without it a
+      // stopped clock is a break and the rules keep the job open.
+      completed_at: c.completed_at,
     });
     crewBy.set(c.booking_id, list);
   }

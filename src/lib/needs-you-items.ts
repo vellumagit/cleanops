@@ -82,6 +82,9 @@ export type NeedsYouCrew = {
   has_login: boolean;
   split_start_offset_minutes: number | null;
   split_duration_minutes: number | null;
+  /** Her part is done (job-state.ts JobStateCrewRow). Optional so tests and
+   *  callers that don't read it keep the old reading. */
+  completed_at?: string | null;
 };
 
 export type NeedsYouShift = JobStateShift & { id: string };
@@ -208,7 +211,9 @@ export function buildJobItems(
     ctx.usesClockIn &&
     b.status !== "pending" &&
     b.status !== "completed" &&
-    (state.phase === "not_started" || state.phase === "in_progress") &&
+    (state.phase === "not_started" ||
+      state.phase === "in_progress" ||
+      state.phase === "on_break") &&
     ctx.now >= startMs + LATE_MINUTES * 60_000 &&
     ctx.now < state.windowEndMs
   ) {

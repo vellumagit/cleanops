@@ -134,3 +134,43 @@ describe("crew who haven't clocked in yet", () => {
     ).toBe(false);
   });
 });
+
+describe("a crewmate on a break (Stop my clock, 2026-11-03)", () => {
+  const row = (id: string, done = false) => ({
+    membership_id: id,
+    completed_at: done ? "2026-11-03T20:00:00Z" : null,
+  });
+  it("holds the job open for the others while the window lasts", () => {
+    expect(
+      crewStillWorking({
+        assignees: [row("a"), row("b")],
+        workedIds: ["a", "b"],
+        onClockIds: [],
+        callerId: "b",
+        jobWindowOver: false,
+      }),
+    ).toBe(true);
+  });
+  it("lets it close once the window has passed", () => {
+    expect(
+      crewStillWorking({
+        assignees: [row("a"), row("b")],
+        workedIds: ["a", "b"],
+        onClockIds: [],
+        callerId: "b",
+        jobWindowOver: true,
+      }),
+    ).toBe(false);
+  });
+  it("doesn't hold it for someone who said she's done", () => {
+    expect(
+      crewStillWorking({
+        assignees: [row("a", true), row("b")],
+        workedIds: ["a", "b"],
+        onClockIds: [],
+        callerId: "b",
+        jobWindowOver: false,
+      }),
+    ).toBe(false);
+  });
+});

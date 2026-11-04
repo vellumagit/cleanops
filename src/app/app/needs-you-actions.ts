@@ -162,6 +162,11 @@ export async function clockOutAtAction(
 
   const { clearClockOutNag } = await import("@/lib/clock-nag");
   await clearClockOutNag({ membershipId: entry.employee_id, entryId });
+  // The office ended her shift: her part is over, not paused.
+  if (entry.booking_id) {
+    const { markPartDone } = await import("@/lib/part-done");
+    await markPartDone(entry.booking_id, entry.employee_id, new Date(at).toISOString());
+  }
   await logAuditEvent({
     membership,
     action: "update",

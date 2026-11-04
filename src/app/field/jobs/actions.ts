@@ -50,7 +50,7 @@ export type JobActionResult = { ok: true } | { ok: false; error: string };
 function refusalLogger(
   membership: Parameters<typeof logAuditEvent>[0]["membership"],
   bookingId: string,
-  intent: "clock_in" | "complete",
+  intent: "clock_in" | "complete" | "pause",
 ) {
   return async (
     reason: string,
@@ -268,7 +268,12 @@ export async function startJobAction(
         return refuse("close_prior_entry_failed", closeError.message);
       // That clock-out may be what finishes the job she just left — the
       // last one out who forgot to tap I'm done and drove to the next job.
-      if (prior.booking_id) await syncJob(prior.booking_id, "clock_out");
+      // Moving on is finishing, not a break, so say so before the rules look.
+      if (prior.booking_id) {
+        const { markPartDone } = await import("@/lib/part-done");
+        await markPartDone(prior.booking_id, membership.id, priorOut);
+        await syncJob(prior.booking_id, "clock_out");
+      }
 
       // Admin client, own row only (same as the crew row below). Through
       // her own client the Sep 13 insert guard rewrites clock_in_at to the
@@ -348,6 +353,65 @@ export async function startJobAction(
     .not("completed_at", "is", null) as unknown as Promise<unknown>);
 
   await syncJob(bookingId, "clock_in");
+
+  revalidatePath("/field/jobs");
+  revalidatePath(`/field/jobs/${bookingId}`);
+  revalidatePath("/field/clock");
+  return { ok: true };
+}
+
+/**
+ * "Stop my clock": end her shift on this job without saying she's done.
+ *
+ * Olha, 2026-11-03: the job screen's only way to stop her clock was I'm
+ * done, which marks her part finished and, for the last one out, completes
+ * the job and drafts the invoice. A break, a drive for supplies, a tap on
+ * the wrong job — all of those finished the job. This stops the clock and
+ * leaves her part open: the rules read it as a break (job-state.ts,
+ * on_break) until she taps I'm here again, says I'm done, or the job's
+ * window ends. She can do it as many times as the day needs.
+ */
+export async function pauseJobAction(
+  formData: FormData,
+): Promise<JobActionResult> {
+  const bookingId = String(formData.get("booking_id") ?? "");
+  if (!bookingId) return { ok: false, error: "Missing booking id" };
+  const lat = parseCoord(formData.get("lat"));
+  const lng = parseCoord(formData.get("lng"));
+  const punchedAt = punchTime(formData.get(TAPPED_AT_FIELD)?.toString());
+
+  const { membership, supabase } = await getActionContext();
+  const refuse = refusalLogger(membership, bookingId, "pause");
+
+  const { data: open, error: fetchError } = (await supabase
+    .from("time_entries")
+    .select("id, clock_in_at")
+    .eq("employee_id", membership.id)
+    .eq("booking_id", bookingId)
+    .is("clock_out_at", null)
+    .order("clock_in_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()) as unknown as {
+    data: { id: string; clock_in_at: string } | null;
+    error: { message: string } | null;
+  };
+  if (fetchError) return refuse("open_entry_fetch_failed", fetchError.message);
+  // Already stopped (a queued tap arriving after another): nothing to do.
+  if (!open) return { ok: true };
+
+  // Never before the clock-in (a server-stamped start and a phone-stamped
+  // stop can be a minute apart the wrong way).
+  const clockOutAt = punchedAt < open.clock_in_at ? open.clock_in_at : punchedAt;
+  const { error: updateError } = await supabase
+    .from("time_entries")
+    .update({ clock_out_at: clockOutAt, clock_out_lat: lat, clock_out_lng: lng })
+    .eq("id", open.id)
+    .is("clock_out_at", null);
+  if (updateError) return refuse("pause_failed", updateError.message);
+
+  const { clearClockOutNag } = await import("@/lib/clock-nag");
+  await clearClockOutNag({ membershipId: membership.id, entryId: open.id });
+  await syncJob(bookingId, "clock_out");
 
   revalidatePath("/field/jobs");
   revalidatePath(`/field/jobs/${bookingId}`);
