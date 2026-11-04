@@ -217,16 +217,34 @@ export function JobActionButtons({
     <div className="flex flex-col gap-3">
       {facts && <Facts text={facts} />}
       {!myOpenEntryHere ? (
-        <Button
-          type="button"
-          size="lg"
-          className="h-16 text-lg font-semibold"
-          onClick={() => run("here")}
-          disabled={isPending}
-        >
-          <MapPin className="mr-2 h-6 w-6" />
-          {isPending ? "One moment…" : workedHere ? "I'm back — start my clock" : "I'm here"}
-        </Button>
+        <>
+          <Button
+            type="button"
+            size="lg"
+            className="h-16 text-lg font-semibold"
+            onClick={() => run("here")}
+            disabled={isPending}
+          >
+            <MapPin className="mr-2 h-6 w-6" />
+            {isPending ? "One moment…" : workedHere ? "I'm back — start my clock" : "I'm here"}
+          </Button>
+          {/* Off the clock after a break and not coming back: say so here
+              rather than clocking in just to clock out. Otherwise the job
+              waits on her break until its window ends. */}
+          {workedHere && (
+            <Button
+              type="button"
+              variant="outline"
+              size="lg"
+              className={armed ? "h-12 border-emerald-600 text-base text-emerald-700" : "h-12 text-base"}
+              onClick={() => (armed ? run("done") : setArmed(true))}
+              disabled={isPending}
+            >
+              <CheckCircle2 className="mr-2 h-5 w-5" />
+              {isPending ? "One moment…" : armed ? "Tap again — I'm done here" : "Not coming back? I'm done here"}
+            </Button>
+          )}
+        </>
       ) : (
         onTheClock
       )}

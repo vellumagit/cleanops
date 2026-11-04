@@ -114,7 +114,7 @@ export function ClockCard({
   /** Orders the category list — managers see "Manager / admin" first,
    *  everyone else sees it last. Nobody gets a preselected answer. */
   elevated: boolean;
-  /** The member's assigned jobs today — the one-tap right answers. */
+  /** The member's assigned jobs today, listed as links into each job. */
   todaysJobs: TodayJob[];
   /** While clocked into a job: the next assigned job whose start has
    *  arrived, offered as one tap that finishes this one and starts it. */
@@ -124,6 +124,13 @@ export function ClockCard({
   const [isPending, startTransition] = useTransition();
   const [category, setCategory] = useState("");
   const [note, setNote] = useState("");
+  // "Done here? Start next" finishes this job — two taps, like I'm done.
+  const [rolloverArmed, setRolloverArmed] = useState(false);
+  useEffect(() => {
+    if (!rolloverArmed) return;
+    const t = setTimeout(() => setRolloverArmed(false), 4000);
+    return () => clearTimeout(t);
+  }, [rolloverArmed]);
   const categories = elevated ? ELEVATED_CATEGORIES : CREW_CATEGORIES;
   const readyToClockIn =
     category !== "" && (category !== "other" || note.trim().length >= 3);
@@ -330,12 +337,21 @@ export function ClockCard({
               <button
                 type="button"
                 disabled={isPending}
-                onClick={() => handleRollover(nextJob)}
+                onClick={() => {
+                  if (!rolloverArmed) {
+                    setRolloverArmed(true);
+                    return;
+                  }
+                  setRolloverArmed(false);
+                  handleRollover(nextJob);
+                }}
                 className="flex h-12 w-full items-center justify-between gap-3 rounded-lg border border-sky-300/60 bg-sky-500/10 px-3 text-left transition-colors hover:bg-sky-500/20 disabled:opacity-50 dark:border-sky-900/50"
               >
                 <span className="min-w-0">
                   <span className="block truncate text-sm font-semibold text-sky-800 dark:text-sky-300">
-                    Done here? Start {nextJob.clientName}
+                    {rolloverArmed
+                      ? `Tap again — finish this job and start ${nextJob.clientName}`
+                      : `Done here? Start ${nextJob.clientName}`}
                   </span>
                   <span className="block truncate text-[11px] text-sky-800/70 dark:text-sky-300/70">
                     {nextJob.serviceLabel
@@ -380,10 +396,10 @@ export function ClockCard({
             {isPending ? "Clocking out…" : "Clock out"}
           </Button>
         ) : (
-          /* The button answers only for the category path — job punches fire
-             from their own buttons above. Disabled until a category is a
-             real choice (and "Other" has its few words), because a punch
-             with no answer to "for what?" no longer exists. */
+          /* Off-job time only. Jobs above open the job, where its clock
+             lives. Disabled until a category is a real choice (and "Other"
+             has its few words), because a punch with no answer to "for
+             what?" no longer exists. */
           <Button
             type="button"
             size="lg"
@@ -396,7 +412,9 @@ export function ClockCard({
               ? "Clocking in…"
               : category
                 ? `Clock in — ${categories.find((c) => c.key === category)?.label ?? category}`
-                : "Pick a job or category above"}
+                : todaysJobs.length > 0
+                  ? "Not a job? Pick a category above"
+                  : "Pick what this time is for"}
           </Button>
         )}
         <p className="mt-3 flex items-center justify-center gap-1.5 text-xs text-muted-foreground">

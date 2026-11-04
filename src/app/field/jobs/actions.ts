@@ -246,6 +246,19 @@ export async function startJobAction(
         booking_id: string | null;
         clock_in_at: string;
       };
+      // An "I'm here" saved in a dead zone and sent after she had already
+      // started a NEWER shift elsewhere: applying it would end that shift
+      // at its own start and backdate this one over it. Say so instead.
+      if (
+        new Date(punchedAt).getTime() <
+        new Date(prior.clock_in_at).getTime() - 60_000
+      ) {
+        return refuse(
+          "stale_tap",
+          "A saved “I'm here” from before your current shift couldn't be applied. Tell your manager the real time if it matters.",
+          { tapped_at: punchedAt, open_since: prior.clock_in_at },
+        );
+      }
       // At the tap, like the new entry's start — otherwise a tap sent late
       // from a dead zone leaves the two shifts overlapping. Never before
       // the prior shift began, though: a tap saved on the phone at 9:00
@@ -508,6 +521,27 @@ export async function completeJobAction(
 
   // Her clock stops when she tapped, not when the request landed.
   const now = punchedAt;
+
+  // An "I'm done" saved offline and sent after she had clocked back in on
+  // this job is about the earlier shift. Applied, it would close the new
+  // shift before it began and mark her part done while she's working.
+  {
+    const { data: openHere } = (await supabase
+      .from("time_entries")
+      .select("clock_in_at")
+      .eq("employee_id", membership.id)
+      .eq("booking_id", bookingId)
+      .is("clock_out_at", null)
+      .order("clock_in_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()) as unknown as { data: { clock_in_at: string } | null };
+    if (
+      openHere &&
+      new Date(now).getTime() < new Date(openHere.clock_in_at).getTime() - 60_000
+    ) {
+      return { ok: true };
+    }
+  }
 
   // Mark THIS cleaner's own segment complete, and close their open time entry.
   // (completed_at is cast around — it isn't in the generated types yet.)

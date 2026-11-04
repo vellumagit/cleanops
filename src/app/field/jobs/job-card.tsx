@@ -178,7 +178,14 @@ export function JobCard({ job, tz }: { job: FieldJob; tz: string }) {
       {job.clocked_in_since ? (
         <JobCardTap bookingId={job.id} kind="done" />
       ) : canArrive ? (
-        <JobCardTap bookingId={job.id} kind="here" />
+        /* A label, not a button: the card opens the job, and the clock
+           starts there. A one-tap "I'm here" sat on the card that cleaners
+           tap to open the job, so a tap meant for the job clocked them in
+           (Olha, 2026-11-03: twice). */
+        <span className="pointer-events-none inline-flex shrink-0 items-center gap-1 rounded-lg border border-border px-3 py-2 text-sm font-semibold text-foreground">
+          Open to start
+          <ChevronRight className="h-4 w-4" />
+        </span>
       ) : (
         <ChevronRight className="pointer-events-none h-5 w-5 shrink-0 text-muted-foreground" />
       )}
