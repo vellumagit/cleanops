@@ -24,6 +24,10 @@ function isIOS(): boolean {
   return /iPad|iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
 }
 
+function isAndroid(): boolean {
+  return /Android/i.test(navigator.userAgent);
+}
+
 function isStandalone(): boolean {
   return (
     window.matchMedia("(display-mode: standalone)").matches ||
@@ -47,9 +51,16 @@ function blockerText(b: Exclude<Blocker, null>): string {
     case "ios_browser":
       return "On iPhone, notifications only work from the home-screen app. In Safari tap Share, then Add to Home Screen, open Sollos from the new icon, and turn them on there.";
     case "denied":
-      return isIOS()
-        ? "Notifications are blocked for Sollos on this phone. Open Settings, then Notifications, then Sollos, and allow them. Then come back here."
-        : "Notifications are blocked for Sollos on this device. Allow them in the browser's site settings (the icon beside the address) or the app's notification settings, then come back here.";
+      // Android was read the desktop wording on 2026-11-03 and nobody on the
+      // call knew where "site settings" was. An installed app has no address
+      // bar at all, so each case names the actual screens.
+      if (isIOS())
+        return "Notifications are blocked for Sollos on this phone. Open Settings, then Notifications, then Sollos, and allow them. Then come back here.";
+      if (isAndroid())
+        return isStandalone()
+          ? "Notifications are blocked for Sollos on this phone. Press and hold the Sollos icon on your home screen, tap App info, then Notifications, and turn them on. Then come back here and tap again."
+          : "Notifications are blocked for Sollos in Chrome. Tap the icon to the left of the web address, then Permissions, then Notifications, and choose Allow. Then reload this page.";
+      return "Notifications are blocked for Sollos in this browser. Click the icon to the left of the web address, allow Notifications, then reload this page.";
     case "unsupported":
       return "This browser can't receive notifications. Open Sollos in Chrome, Safari or Edge instead.";
   }

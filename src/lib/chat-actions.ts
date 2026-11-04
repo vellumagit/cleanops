@@ -2,6 +2,7 @@
 
 import "server-only";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { getActionContext } from "@/lib/actions";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { sendPushToMembership } from "@/lib/push";
@@ -55,35 +56,60 @@ export async function sendChatMessageAction(
     return { ok: false, error: error?.message ?? "Could not send message" };
   }
 
-  // Fire-and-forget push notifications to other thread members
-  const adminDb = createSupabaseAdminClient();
-  Promise.all([
-    adminDb
-      .from("chat_thread_members")
-      .select("membership_id")
-      .eq("thread_id", threadId)
-      .neq("membership_id", membership.id),
-    adminDb
-      .from("profiles")
-      .select("full_name")
-      .eq("id", membership.profile_id)
-      .maybeSingle(),
-  ])
-    .then(([membersResult, profileResult]) => {
-      const members = membersResult?.data;
-      if (!members || members.length === 0) return;
-      const senderName = profileResult?.data?.full_name ?? "Someone";
-      const preview =
-        trimmed.length > 80 ? trimmed.slice(0, 80) + "..." : trimmed;
-      for (const m of members) {
+  // Push the other thread members. Inside after(), not fire-and-forget:
+  // a promise left running when a server action returns is frozen with the
+  // function on Vercel, so the push often never left — managers heard
+  // nothing when a cleaner wrote in chat (Olha, 2026-11-03). after() keeps
+  // the function alive until the sends finish, without holding up the reply.
+  const senderMembershipId = membership.id;
+  const senderProfileId = membership.profile_id;
+  after(async () => {
+    const adminDb = createSupabaseAdminClient();
+    const [membersResult, senderResult] = await Promise.all([
+      adminDb
+        .from("chat_thread_members")
+        .select("membership_id, member:memberships ( role )")
+        .eq("thread_id", threadId)
+        .neq("membership_id", senderMembershipId) as unknown as Promise<{
+        data: Array<{ membership_id: string; member: { role: string } | null }> | null;
+      }>,
+      adminDb
+        .from("memberships")
+        .select("display_name, profile:profiles ( full_name )")
+        .eq("id", senderMembershipId)
+        .maybeSingle() as unknown as Promise<{
+        data: { display_name: string | null; profile: { full_name: string | null } | null } | null;
+      }>,
+    ]);
+    const members = membersResult?.data ?? [];
+    if (members.length === 0) return;
+    const sender = senderResult?.data;
+    let senderName = sender?.display_name?.trim() || sender?.profile?.full_name?.trim() || "";
+    if (!senderName) {
+      const { data: prof } = await adminDb
+        .from("profiles")
+        .select("full_name")
+        .eq("id", senderProfileId)
+        .maybeSingle();
+      senderName = prof?.full_name?.trim() || "Someone";
+    }
+    const preview = trimmed.length > 80 ? trimmed.slice(0, 80) + "..." : trimmed;
+    await Promise.allSettled(
+      members.map((m) =>
         sendPushToMembership(m.membership_id, {
           title: `New message from ${senderName}`,
           body: preview,
-          href: "/field/chat",
-        }).catch(() => {});
-      }
-    })
-    .catch(() => {});
+          // Office staff read chat in the office app; cleaners in the field app.
+          href: ["owner", "admin", "manager"].includes(m.member?.role ?? "")
+            ? "/app/chat"
+            : "/field/chat",
+          // One notification per conversation, replaced by the newest line,
+          // instead of a pile of them.
+          tag: `chat:${threadId}`,
+        }),
+      ),
+    );
+  });
 
   revalidatePath("/app/chat");
   revalidatePath("/field/chat");
