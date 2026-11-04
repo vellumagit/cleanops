@@ -71,7 +71,20 @@ function areaCodeFromPhone(phone: string | null): string | null {
  * returns it without buying another. Stores `sms_from_number` + `sms_number_sid`
  * on success.
  */
-export async function provisionOrgNumber(orgId: string): Promise<ProvisionResult> {
+export async function provisionOrgNumber(
+  orgId: string,
+  opts: {
+    /** Which country's numbers to search. Canada unless a US registration is approved. */
+    country?: "CA" | "US";
+    /**
+     * A US number has to sit in the business's approved A2P Messaging
+     * Service or carriers block it (twilio-a2p.ts). Joined right after the
+     * purchase.
+     */
+    messagingServiceSid?: string;
+  } = {},
+): Promise<ProvisionResult> {
+  const country = opts.country ?? "CA";
   const admin = createSupabaseAdminClient();
 
   const { data: orgRow } = (await admin
@@ -110,12 +123,12 @@ export async function provisionOrgNumber(orgId: string): Promise<ProvisionResult
 
   const creds = twilioCreds()!;
 
-  // ── 1. Search for an available CA local, SMS-enabled number. ──
+  // ── 1. Search for an available local, SMS-enabled number. ──
   const searchParams = new URLSearchParams({ SmsEnabled: "true", Limit: "1" });
   if (areaCode) searchParams.set("AreaCode", areaCode);
   const searchUrl =
     `https://api.twilio.com/2010-04-01/Accounts/${creds.accountSid}` +
-    `/AvailablePhoneNumbers/CA/Local.json?${searchParams.toString()}`;
+    `/AvailablePhoneNumbers/${country}/Local.json?${searchParams.toString()}`;
 
   let candidate: string | null = null;
   try {
@@ -135,7 +148,7 @@ export async function provisionOrgNumber(orgId: string): Promise<ProvisionResult
     if (!candidate && areaCode) {
       const wideRes = await fetch(
         `https://api.twilio.com/2010-04-01/Accounts/${creds.accountSid}` +
-          `/AvailablePhoneNumbers/CA/Local.json?SmsEnabled=true&Limit=1`,
+          `/AvailablePhoneNumbers/${country}/Local.json?SmsEnabled=true&Limit=1`,
         { headers: { Authorization: authHeader(creds) } },
       );
       if (wideRes.ok) {
@@ -153,7 +166,10 @@ export async function provisionOrgNumber(orgId: string): Promise<ProvisionResult
   }
 
   if (!candidate) {
-    return { ok: false, error: "No available Canadian SMS numbers found" };
+    return {
+      ok: false,
+      error: `No available ${country === "US" ? "US" : "Canadian"} SMS numbers found`,
+    };
   }
 
   // ── 2. Purchase it, wiring the inbound webhook now for Phase 2. ──
@@ -183,6 +199,31 @@ export async function provisionOrgNumber(orgId: string): Promise<ProvisionResult
     const sid = json.sid;
     const number = json.phone_number ?? candidate;
     if (!sid) return { ok: false, error: "Twilio buy: no SID returned" };
+
+    if (opts.messagingServiceSid) {
+      const join = new URLSearchParams({ PhoneNumberSid: sid });
+      const joinRes = await fetch(
+        `https://messaging.twilio.com/v1/Services/${opts.messagingServiceSid}/PhoneNumbers`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: authHeader(creds),
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+          body: join.toString(),
+        },
+      );
+      if (!joinRes.ok) {
+        // Keep the number on record either way — it's bought and billing —
+        // and say what's left to do.
+        await persistNumber(admin, orgId, number, sid);
+        const text = await joinRes.text();
+        return {
+          ok: false,
+          error: `Bought ${number} but couldn't add it to the messaging service (${joinRes.status}): ${text.slice(0, 200)}`,
+        };
+      }
+    }
 
     await persistNumber(admin, orgId, number, sid);
     return { ok: true, number, sid, simulated: false };

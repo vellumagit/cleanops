@@ -6,7 +6,8 @@ import { logAuditEvent } from "@/lib/audit";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { canCreateData } from "@/lib/subscription";
 import { provisionOrgNumber } from "@/lib/twilio-provision";
-import { ensureSmsOverageItem, removeSmsOverageItem } from "@/lib/stripe";
+import { removeSmsOverageItem } from "@/lib/stripe";
+import { turnOnOrgSms } from "@/lib/sms-enable";
 
 export type SmsSettingsFormState = {
   errors?: Partial<Record<"_form" | "cap", string>>;
@@ -41,6 +42,52 @@ export async function enableSmsAction(
     };
   }
 
+  // A US business can't text from a bare number: carriers block it until
+  // the business is registered (the registration below on this page). The
+  // number is bought when that's approved, not here.
+  {
+    const admin = createSupabaseAdminClient();
+    const { data: org } = (await admin
+      .from("organizations")
+      .select("holiday_region, timezone")
+      .eq("id", orgId)
+      .maybeSingle()) as unknown as {
+      data: { holiday_region: string | null; timezone: string | null } | null;
+    };
+    const { smsCountryFor } = await import("@/lib/sms-registration-rules");
+    if (org && smsCountryFor(org) === "US") {
+      const { data: reg } = (await admin
+        .from("sms_registrations" as never)
+        .select("status")
+        .eq("organization_id" as never, orgId as never)
+        .maybeSingle()) as unknown as { data: { status: string } | null };
+      const { data: num } = (await admin
+        .from("organizations")
+        .select("sms_from_number")
+        .eq("id", orgId)
+        .maybeSingle()) as unknown as { data: { sms_from_number: string | null } | null };
+      if (reg?.status === "approved" && num?.sms_from_number) {
+        const on = await turnOnOrgSms(orgId);
+        if (!on.ok) return { errors: { _form: on.error } };
+        await logAuditEvent({
+          membership,
+          action: "update",
+          entity: "settings",
+          entity_id: orgId,
+          after: { sms_enabled: true, sms_from_number: num.sms_from_number },
+        });
+        revalidatePath("/app/settings/sms");
+        return { success: true };
+      }
+      return {
+        errors: {
+          _form:
+            "US businesses register with the carriers before texting. Fill in the registration below; texting turns on by itself once it's approved.",
+        },
+      };
+    }
+  }
+
   const provision = await provisionOrgNumber(orgId);
   if (!provision.ok) {
     return {
@@ -50,45 +97,8 @@ export async function enableSmsAction(
     };
   }
 
-  // Attach the metered overage item (best-effort; comped/no-Stripe orgs get null).
-  try {
-    await ensureSmsOverageItem(orgId);
-  } catch (err) {
-    console.error("[sms-settings] ensureSmsOverageItem failed:", err);
-  }
-
-  const admin = createSupabaseAdminClient();
-
-  // Turn ON the SMS automations too. They default OFF, so flipping only the
-  // master switch would send nothing — a classic "I enabled SMS but no texts
-  // go out" trap. Merge into existing automation_settings so other toggles are
-  // preserved; the owner can still turn individual ones back off.
-  const { data: settingsRow } = (await admin
-    .from("organizations")
-    .select("automation_settings")
-    .eq("id", orgId)
-    .maybeSingle()) as unknown as {
-    data: { automation_settings: Record<string, unknown> | null } | null;
-  };
-  const automation_settings: Record<string, unknown> = {
-    ...(settingsRow?.automation_settings ?? {}),
-  };
-  for (const key of [
-    "booking_confirmation_sms",
-    "booking_reminder_client_sms",
-    "booking_assignment_sms",
-  ]) {
-    automation_settings[key] = {
-      ...(automation_settings[key] as Record<string, unknown> | undefined),
-      enabled: true,
-    };
-  }
-
-  const { error } = await admin
-    .from("organizations")
-    .update({ sms_enabled: true, automation_settings } as never)
-    .eq("id", orgId);
-  if (error) return { errors: { _form: error.message } };
+  const on = await turnOnOrgSms(orgId);
+  if (!on.ok) return { errors: { _form: on.error } };
 
   await logAuditEvent({
     membership,

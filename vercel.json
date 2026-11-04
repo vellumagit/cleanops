@@ -205,6 +205,10 @@
       "schedule": "10 4 * * *"
     },
     {
+      "path": "/api/cron/sms-registrations",
+      "schedule": "25 * * * *"
+    },
+    {
       "path": "/api/cron/morning-check",
       "schedule": "0 14 * * *"
     }

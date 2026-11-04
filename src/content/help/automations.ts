@@ -21,6 +21,8 @@ Turning a toggle on never spams anyone by itself. Every client message passes a 
 
 An org that wants nothing sent to unconfigured clients sets the house default to "No notifications" and opts clients in one by one.
 
+**Texting in the US.** US carriers block business texts until the business is registered with them. A US business turns texting on from **Settings → SMS / Texting** by filling in the registration there once: legal name and EIN, business address, website, an owner or officer as the contact (with an email on the business's own domain), and where customers get help. Sollos submits it, checks on it every hour, and as soon as the carriers approve it buys a local number in the business's area code and turns texting on by itself. Approval usually takes one to three weeks, and the carriers charge a registration fee and a monthly fee. If they ask for changes, the page says what and the registration can be fixed and sent again. A business without a privacy policy or texting terms page can use the ones Sollos hosts for it. Canadian businesses don't register; **Enable SMS** gives them a number straight away.
+
 ## Asking rarely: the cadence knobs
 
 Two automations have an **"At most"** cadence dropdown right beside their toggle, because asking too often is worse than not asking:
