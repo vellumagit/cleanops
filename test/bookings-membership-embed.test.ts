@@ -65,7 +65,7 @@ describe("embeds of memberships off bookings", () => {
       }
     }
     expect(offenders).toEqual([]);
-  });
+  }, 30_000); // walks every source file; slow under a full parallel run
 
   it("would have caught the bare embed", () => {
     const text = `admin.from("bookings").select(\`id, client:clients ( name ),
