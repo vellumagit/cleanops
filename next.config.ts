@@ -52,6 +52,10 @@ const csp = [
     : `script-src 'self' 'unsafe-inline' 'unsafe-eval' https://js.stripe.com https://challenges.cloudflare.com https://www.googletagmanager.com`,
   `style-src 'self' 'unsafe-inline'`,
   `img-src 'self' data: blob: ${supabaseHttp} https://www.google-analytics.com https://www.googletagmanager.com`,
+  // Home videos on a client (client-media) play straight from storage.
+  // Without this, media-src falls back to default-src 'self' and every
+  // <video> from Supabase is blocked.
+  `media-src 'self' blob: ${supabaseHttp}`,
   `font-src 'self' data:`,
   `connect-src 'self' ${supabaseHttp} ${supabaseWs} https://api.stripe.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://fcm.googleapis.com https://updates.push.services.mozilla.com https://nominatim.openstreetmap.org https://www.google-analytics.com https://*.google-analytics.com https://*.analytics.google.com https://www.googletagmanager.com`,
   `frame-src https://js.stripe.com https://hooks.stripe.com https://challenges.cloudflare.com`,

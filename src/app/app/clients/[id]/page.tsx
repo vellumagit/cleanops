@@ -41,6 +41,8 @@ import { fetchOrgNotificationContext } from "../org-contact-default";
 import { SmsOptInButton } from "./sms-opt-in-button";
 import { ClientPropertiesCard, type PropertyRow } from "./properties-card";
 import { ClientDocumentsCard, type ClientDocument } from "./documents-card";
+import { ClientMediaCard } from "@/components/client-media-card";
+import { fetchClientMedia } from "@/lib/client-media";
 import { EmailClientDialog } from "./email-client-dialog";
 import { SentEmailsCard, type SentEmail } from "./sent-emails-card";
 import { memberDisplayName } from "@/lib/member-display";
@@ -358,6 +360,7 @@ export default async function ClientDetailPage({
     }> | null;
   };
   // Sign each file so the card can offer a (short-lived) download link.
+  const homeMedia = await fetchClientMedia(id);
   const clientDocuments: ClientDocument[] = await Promise.all(
     (rawDocs ?? []).map(async (d) => {
       const { data } = await adminDb.storage
@@ -834,6 +837,9 @@ export default async function ClientDetailPage({
               </Link>
             ))}
           </Section>
+
+          {/* ── Home photos & videos ── */}
+          <ClientMediaCard clientId={id} items={homeMedia} canManage={canEdit} />
 
           {/* ── Documents ── */}
           <ClientDocumentsCard

@@ -37,6 +37,8 @@ import { JobTimeline } from "./job-timeline";
 import { loadJobState, loadJobTimeline } from "@/lib/job-sync";
 import { describeRecurrence } from "@/lib/recurrence";
 import { JobPhotos } from "@/app/field/jobs/[id]/job-photos";
+import { ClientMediaCard } from "@/components/client-media-card";
+import { fetchClientMedia } from "@/lib/client-media";
 import {
   BookingChecklist,
   type BookingChecklistItem,
@@ -323,6 +325,9 @@ export default async function BookingDetailPage({
   // Photos are read-visible to any org member (RLS enforces that). Upload
   // + delete UI only shows for owner/admin/manager on the admin side.
   const photos = await fetchJobPhotos(booking.id);
+  const homeMedia = booking.client?.id
+    ? await fetchClientMedia(booking.client.id, { bookingId: booking.id })
+    : [];
   // The computed state (one line) and how it got there. Both come from the
   // shifts and the roster, not from the status column — while that column
   // is still written by hand, this is what will replace it.
@@ -824,6 +829,16 @@ export default async function BookingDetailPage({
             photos={photos}
             canManage={canManagePhotos}
           />
+
+          {/* The home itself: what the client sent, where the key is. */}
+          {booking.client?.id && (
+            <ClientMediaCard
+              clientId={booking.client.id}
+              bookingId={booking.id}
+              items={homeMedia}
+              canManage={canManagePhotos}
+            />
+          )}
 
           {/* Checklist */}
           <div className="rounded-lg border border-border bg-card p-5">

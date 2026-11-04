@@ -32,6 +32,8 @@ import { jobFactsForMember } from "@/lib/job-facts";
 import { futureStatusError } from "@/lib/booking-status";
 import { dayLabel } from "@/lib/day-label";
 import { JobPhotos } from "./job-photos";
+import { ClientMediaCard } from "@/components/client-media-card";
+import { fetchClientMedia } from "@/lib/client-media";
 import { ShiftAcceptance } from "./shift-acceptance";
 import { ManageShift } from "./manage-shift";
 import { OpenInMaps } from "@/components/open-in-maps";
@@ -102,6 +104,7 @@ export default async function FieldJobDetailPage({
         assigned_to,
         series_id,
         property_id,
+        client_id,
         property:client_properties ( id, label, address, access_notes ),
         client:clients ( name, phone, address, notes )
       `,
@@ -133,6 +136,7 @@ export default async function FieldJobDetailPage({
     assigned_to: string | null;
     series_id: string | null;
     property_id: string | null;
+    client_id: string | null;
     property: {
       id: string;
       label: string;
@@ -269,7 +273,7 @@ export default async function FieldJobDetailPage({
   // booking.id — fetch them in parallel. Serializing these round-trips made
   // the detail page slow to first paint (a stuck-feeling loader on a poor
   // mobile connection).
-  const [photos, segResult, checklistResult, flagResult, orgAutoResult] =
+  const [photos, segResult, checklistResult, flagResult, orgAutoResult, homeMedia] =
     await Promise.all([
       fetchJobPhotos(booking.id),
       supabase
@@ -323,6 +327,9 @@ export default async function FieldJobDetailPage({
           > | null;
         } | null;
       }>,
+      booking.client_id
+        ? fetchClientMedia(booking.client_id, { bookingId: booking.id })
+        : Promise.resolve([]),
     ]);
   const allSegRows = segResult.data;
   const checklistItems = checklistResult.data;
@@ -666,6 +673,17 @@ export default async function FieldJobDetailPage({
           what the Accept button was buried beneath. */}
       {!needsAcceptance && (
         <JobPhotos bookingId={booking.id} photos={photos} canManage={true} />
+      )}
+
+      {/* The home itself, as the client showed it: worth seeing before
+          deciding on a shift too, so it isn't behind acceptance. */}
+      {booking.client_id && (
+        <ClientMediaCard
+          clientId={booking.client_id}
+          bookingId={booking.id}
+          items={homeMedia}
+          canManage={["owner", "admin", "manager"].includes(membership.role)}
+        />
       )}
 
       {!needsAcceptance && checklistItems && checklistItems.length > 0 && (
