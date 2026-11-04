@@ -9,7 +9,9 @@ export type PhotoActionResult =
 
 export type DeletePhotoResult = { ok: true } | { ok: false; error: string };
 
-const MAX_BYTES = 10 * 1024 * 1024; // 10 MB — mirrors the bucket limit
+// The bucket allows 10 MB, but the request carrying the file can't exceed
+// Vercel's 4.5 MB body cap; the client shrinks photos to fit (shrink-photo.ts).
+const MAX_BYTES = 10 * 1024 * 1024;
 const ALLOWED_MIME = new Set([
   "image/jpeg",
   "image/png",

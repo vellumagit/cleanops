@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { uploadJobPhotoAction, deleteJobPhotoAction } from "./photo-actions";
 import type { JobPhoto } from "@/lib/job-photos";
+import { shrinkPhoto, SERVER_ACTION_UPLOAD_LIMIT } from "@/lib/shrink-photo";
 
 type OptimisticPhoto = {
   id: string; // local id while uploading
@@ -73,7 +74,18 @@ export function JobPhotos({ bookingId, photos, canManage }: Props) {
       let uploaded = 0;
       // One at a time: each is a server action body, and a phone on site
       // data shouldn't push several 8 MB photos at once.
-      for (const { file, opt } of queued) {
+      for (const { file: original, opt } of queued) {
+        // Shrink first: the upload rides in a server action, which Vercel
+        // caps at 4.5 MB, and Android cameras save photos bigger than that.
+        const file = await shrinkPhoto(original);
+        if (file.size > SERVER_ACTION_UPLOAD_LIMIT) {
+          URL.revokeObjectURL(opt.preview);
+          setOptimistic((prev) => prev.filter((p) => p.id !== opt.id));
+          toast.error(
+            `${original.name} is too large to upload from this phone. Try taking it again, or send a smaller copy.`,
+          );
+          continue;
+        }
         const fd = new FormData();
         fd.set("booking_id", bookingId);
         fd.set("kind", kind);
@@ -85,7 +97,7 @@ export function JobPhotos({ bookingId, photos, canManage }: Props) {
         URL.revokeObjectURL(opt.preview);
         setOptimistic((prev) => prev.filter((p) => p.id !== opt.id));
         if (!result.ok) {
-          toast.error(files.length > 1 ? `${file.name}: ${result.error}` : result.error);
+          toast.error(files.length > 1 ? `${original.name}: ${result.error}` : result.error);
           continue;
         }
         uploaded++;
