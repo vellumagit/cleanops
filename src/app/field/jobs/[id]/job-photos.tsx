@@ -3,7 +3,7 @@
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Camera, ImagePlus, Trash2, Loader2 } from "lucide-react";
+import { Camera, ImagePlus, Images, Trash2, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { uploadJobPhotoAction, deleteJobPhotoAction } from "./photo-actions";
@@ -26,53 +26,74 @@ type Props = {
 
 export function JobPhotos({ bookingId, photos, canManage }: Props) {
   const router = useRouter();
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [kind, setKind] = useState<"before" | "after" | "other">("before");
+  const cameraInputRef = useRef<HTMLInputElement | null>(null);
+  const galleryInputRef = useRef<HTMLInputElement | null>(null);
+  // Which kind the next pick is for. A ref, not only state: the change event
+  // fires after the picker closes and must read the kind chosen before it
+  // opened, not whatever the last render captured.
+  const kindRef = useRef<"before" | "after" | "other">("before");
+  const [choosing, setChoosing] = useState<"before" | "after" | "other" | null>(null);
   const [optimistic, setOptimistic] = useState<OptimisticPhoto[]>([]);
   const [pending, startTransition] = useTransition();
 
-  function triggerFilePicker(selectedKind: "before" | "after" | "other") {
-    setKind(selectedKind);
-    // Defer so React commits the kind update before the picker opens — the
-    // click handler on the hidden input reads state via the submission flow.
-    setTimeout(() => fileInputRef.current?.click(), 0);
+  function choose(selectedKind: "before" | "after" | "other") {
+    kindRef.current = selectedKind;
+    setChoosing(selectedKind);
+  }
+
+  // Two pickers, because one can't serve both phones. The input used to
+  // carry capture="environment": iPhone still offers "Photo Library" from
+  // that, but Android opens the camera and nothing else, so a photo already
+  // on the phone could never be added. The camera input keeps capture; the
+  // gallery input has none and takes several at once.
+  function openPicker(source: "camera" | "gallery") {
+    setChoosing(null);
+    (source === "camera" ? cameraInputRef : galleryInputRef).current?.click();
   }
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-    const file = files[0];
+    const files = Array.from(e.target.files ?? []);
     // Clear the input so picking the same file twice in a row still fires.
     e.target.value = "";
+    if (files.length === 0) return;
+    const kind = kindRef.current;
 
-    const tempId = crypto.randomUUID();
-    const preview = URL.createObjectURL(file);
-    const opt: OptimisticPhoto = {
-      id: tempId,
-      preview,
-      kind,
-      uploading: true,
-    };
-    setOptimistic((prev) => [...prev, opt]);
+    const queued = files.map((file) => ({
+      file,
+      opt: {
+        id: crypto.randomUUID(),
+        preview: URL.createObjectURL(file),
+        kind,
+        uploading: true as const,
+      },
+    }));
+    setOptimistic((prev) => [...prev, ...queued.map((q) => q.opt)]);
 
     startTransition(async () => {
-      const fd = new FormData();
-      fd.set("booking_id", bookingId);
-      fd.set("kind", kind);
-      fd.set("photo", file);
-      const result = await uploadJobPhotoAction(fd);
-
-      // Always clean up the blob URL and remove the optimistic card —
-      // the server refresh below will show the real row.
-      URL.revokeObjectURL(preview);
-      setOptimistic((prev) => prev.filter((p) => p.id !== tempId));
-
-      if (!result.ok) {
-        toast.error(result.error);
-        return;
+      let uploaded = 0;
+      // One at a time: each is a server action body, and a phone on site
+      // data shouldn't push several 8 MB photos at once.
+      for (const { file, opt } of queued) {
+        const fd = new FormData();
+        fd.set("booking_id", bookingId);
+        fd.set("kind", kind);
+        fd.set("photo", file);
+        const result = await uploadJobPhotoAction(fd).catch(() => ({
+          ok: false as const,
+          error: "Upload failed. Check your connection and try again.",
+        }));
+        URL.revokeObjectURL(opt.preview);
+        setOptimistic((prev) => prev.filter((p) => p.id !== opt.id));
+        if (!result.ok) {
+          toast.error(files.length > 1 ? `${file.name}: ${result.error}` : result.error);
+          continue;
+        }
+        uploaded++;
       }
-      toast.success("Photo uploaded");
-      router.refresh();
+      if (uploaded > 0) {
+        toast.success(uploaded === 1 ? "Photo uploaded" : `${uploaded} photos uploaded`);
+        router.refresh();
+      }
     });
   }
 
@@ -113,7 +134,7 @@ export function JobPhotos({ bookingId, photos, canManage }: Props) {
               type="button"
               variant="outline"
               size="sm"
-              onClick={() => triggerFilePicker("before")}
+              onClick={() => choose("before")}
               disabled={pending}
             >
               <Camera className="h-4 w-4" />
@@ -123,7 +144,7 @@ export function JobPhotos({ bookingId, photos, canManage }: Props) {
               type="button"
               variant="outline"
               size="sm"
-              onClick={() => triggerFilePicker("after")}
+              onClick={() => choose("after")}
               disabled={pending}
             >
               <Camera className="h-4 w-4" />
@@ -133,7 +154,7 @@ export function JobPhotos({ bookingId, photos, canManage }: Props) {
               type="button"
               variant="ghost"
               size="sm"
-              onClick={() => triggerFilePicker("other")}
+              onClick={() => choose("other")}
               disabled={pending}
               aria-label="Add other photo"
             >
@@ -143,13 +164,47 @@ export function JobPhotos({ bookingId, photos, canManage }: Props) {
         )}
       </div>
 
-      {/* Hidden file input — `capture="environment"` opens the rear camera
-          on most mobile browsers but still allows a photo library pick. */}
+      {choosing && (
+        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/40 p-2">
+          <span className="px-1 text-xs font-medium text-muted-foreground">
+            {choosing === "before" ? "Before photo" : choosing === "after" ? "After photo" : "Other photo"}
+          </span>
+          <Button type="button" size="sm" onClick={() => openPicker("camera")}>
+            <Camera className="h-4 w-4" />
+            Take photo
+          </Button>
+          <Button type="button" size="sm" variant="outline" onClick={() => openPicker("gallery")}>
+            <Images className="h-4 w-4" />
+            From gallery
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={() => setChoosing(null)}
+            aria-label="Cancel"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
+
+      {/* image/* rather than a list of types: Android hides gallery apps
+          that don't advertise one of the listed types, and the server
+          checks the real type from the file's bytes anyway. */}
       <input
-        ref={fileInputRef}
+        ref={cameraInputRef}
         type="file"
-        accept="image/jpeg,image/png,image/heic,image/webp"
+        accept="image/*"
         capture="environment"
+        className="hidden"
+        onChange={handleFileChange}
+      />
+      <input
+        ref={galleryInputRef}
+        type="file"
+        accept="image/*"
+        multiple
         className="hidden"
         onChange={handleFileChange}
       />
@@ -157,7 +212,7 @@ export function JobPhotos({ bookingId, photos, canManage }: Props) {
       {photos.length === 0 && optimistic.length === 0 ? (
         <p className="mt-4 text-sm text-muted-foreground">
           {canManage
-            ? "No photos yet. Tap Before or After above to capture one."
+            ? "No photos yet. Tap Before or After above to take or add one."
             : "No photos yet."}
         </p>
       ) : (

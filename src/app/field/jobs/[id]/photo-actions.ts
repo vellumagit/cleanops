@@ -95,6 +95,31 @@ async function validateMagicBytes(
 }
 
 /**
+ * The image's real type from its bytes, as one of the four types the
+ * job-photos bucket accepts, or null.
+ *
+ * Android's gallery is loose about what it claims: a photo picked from
+ * Samsung Gallery or Google Photos can arrive as "image/heif", "image/jpg",
+ * or with no type at all. Checking the claim against a fixed list refused
+ * those even though the bytes were a perfectly good photo. The bytes decide
+ * now; any HEIF-family file is stored as image/heic, which is what the
+ * bucket allows.
+ */
+async function sniffPhotoType(file: File): Promise<"image/jpeg" | "image/png" | "image/webp" | "image/heic" | null> {
+  for (const t of ["image/jpeg", "image/png", "image/webp", "image/heic"] as const) {
+    if (await validateMagicBytes(file, t)) return t;
+  }
+  return null;
+}
+
+const EXT_FOR: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+  "image/heic": "heic",
+};
+
+/**
  * Upload a job photo. Accepts a single image; the caller can call this
  * multiple times to add several. Returns the storage path and public URL
  * so the UI can optimistically show the new photo immediately.
@@ -119,19 +144,16 @@ export async function uploadJobPhotoAction(
     return { ok: false, error: "No photo attached" };
   if (file.size > MAX_BYTES)
     return { ok: false, error: "Photo must be under 10 MB" };
-  if (!ALLOWED_MIME.has(file.type))
-    return { ok: false, error: "Only JPG, PNG, HEIC, and WebP are allowed" };
   if (!["before", "after", "other"].includes(kind))
     return { ok: false, error: "Invalid photo kind" };
 
-  // Browsers will happily lie about Content-Type. Verify the actual file
-  // contents match what's claimed — otherwise an attacker could upload
-  // executable bytes as "image/jpeg" and we'd serve them via signed URL.
-  if (!(await validateMagicBytes(file, file.type))) {
-    return {
-      ok: false,
-      error: "File does not appear to be a valid image of the claimed type.",
-    };
+  // Browsers will happily lie about Content-Type, so the bytes decide what
+  // this is (sniffPhotoType) and that is what gets stored and served.
+  // Executable bytes labelled "image/jpeg" match no image signature and are
+  // refused.
+  const photoType = await sniffPhotoType(file);
+  if (!photoType || !ALLOWED_MIME.has(photoType)) {
+    return { ok: false, error: "Only JPG, PNG, HEIC, and WebP photos can be added." };
   }
 
   const { membership, supabase } = await getActionContext();
@@ -172,15 +194,13 @@ export async function uploadJobPhotoAction(
 
   // Storage path: org/booking/photoId.ext — lets us prefix-delete per booking.
   const photoId = crypto.randomUUID();
-  const ext =
-    (file.name.split(".").pop() ?? "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") ||
-    "jpg";
+  const ext = EXT_FOR[photoType] ?? "jpg";
   const storagePath = `${booking.organization_id}/${booking.id}/${photoId}.${ext}`;
 
   const { error: uploadErr } = await supabase.storage
     .from("job-photos")
     .upload(storagePath, file, {
-      contentType: file.type,
+      contentType: photoType,
       upsert: false,
     });
   if (uploadErr) {
@@ -198,7 +218,7 @@ export async function uploadJobPhotoAction(
       kind,
       caption,
       file_size: file.size,
-      mime_type: file.type,
+      mime_type: photoType,
       uploaded_by: membership.id,
     } as never)) as unknown as { error: { message: string } | null };
   if (insertErr) {
