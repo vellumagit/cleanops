@@ -21,7 +21,19 @@ Tick **Repeats** and set the pattern; Sollos generates the visits ahead of time 
 
 The recurring list shows each series' **billing state**: an amber "N unbilled" chip means completed visits no invoice has claimed — click it to bill them. And the two recurring engines guard each other: if a client is on a billing cycle AND has a standing recurring invoice, the standing one is held with a warning instead of double-billing them.
 
+**When visits drift from their series.** Every visit remembers the time it was booked for, in your workspace's time zone, and Sollos keeps the exact moment matched to that time overnight — so a change in clock rules (Alberta staying on one time from November 2026) can't quietly move a 9:00 visit to 10:00. If a recurring client's upcoming visits ever stop matching their series' time, **Needs you** asks about it: **Restore** puts them back at the series' time, and **Make 10:00 AM the series' time** keeps the visits where they are and moves the series to match, so future visits follow. Visits you moved by hand are left alone. Neither button messages anyone.
+
 When a save would **notify the client** — the visit time moved, or the recurring schedule was rewritten — Sollos stops and asks: **Save & notify client**, or **Save without notifying** (you tell them yourself). The notice goes out by the client's own channel preference: email, text, or both. Saves that change nothing client-visible never notify; a save with an untouched schedule doesn't touch future visits at all.
+
+## Moving a job
+
+Drag a job to a new time or person on the scheduler, or change it on the booking. Either way the client is told (by their own email/text preference), the crew gets a push, and Google Calendar — yours and each cleaner's — moves within a minute or two. A move to a day someone marked off still goes through, with a warning naming who is off.
+
+## Photos
+
+**Job photos** are taken on the job: tap **Before**, **After**, or the extra-photo button, then **Take photo** to use the camera or **From gallery** to add pictures already on the phone (several at once is fine). Big photos are shrunk on the phone before they upload, so they go through on slow data too. The office sees them on the booking.
+
+**Home photos & videos** are about the place itself, not one clean: the pictures and videos a client sends for a quote, where the key is, the state the home was in before you started. Add them on the client's profile or on a booking (owners, admins and managers) with **Take photo**, **Record video** or **From gallery**, plus an optional note. On a booking you choose whether one stays with the client — shown on every visit — or belongs to that booking only. Everyone on the team sees them on the job, so a cleaner going somewhere for the first time knows what to expect. Videos can be up to 50 MB each, roughly 30 seconds of phone video.
 
 ## Crew arriving at different times
 
