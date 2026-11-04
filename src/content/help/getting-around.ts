@@ -9,7 +9,7 @@ All of it is one installable app: on a phone, the install banner (or the card in
 
 ## The sidebar, in one pass
 
-Work flows top to bottom: **Operations** (dashboard, scheduling, bookings, requests), **People** (leads, clients, employees), **Hiring** (applicants, the hiring library, training), **Money** (invoices, timesheets, payroll, reports — in the order money flows), **Comms** (feed, chat). Notifications and Settings sit at the bottom.
+Work flows top to bottom: **Operations** (dashboard, scheduling, bookings, requests), **People** (leads, clients, employees), **Hiring** (applicants, the hiring library, training), **Money** (invoices, timesheets, payroll, reports — in the order money flows), **Comms** (feed, chat — DMs and #general, with photos: tap the camera to snap one or the gallery icon to pick a few, add words or not, and send). Notifications and Settings sit at the bottom.
 
 The small numbers beside some entries are live counts — today's bookings, pending requests, overdue invoices. A badge is the app telling you something is waiting on a human; a clear sidebar is a clear conscience.
 

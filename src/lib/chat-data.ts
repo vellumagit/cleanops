@@ -3,6 +3,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { CurrentMembership } from "@/lib/auth";
 import { memberDisplayName } from "@/lib/member-display";
+import { CHAT_MEDIA_BUCKET, parseChatAttachments } from "@/lib/chat-media-rules";
 
 export type ChatThreadSummary = {
   id: string;
@@ -16,12 +17,21 @@ export type ChatThreadSummary = {
   last_message_at: string | null;
 };
 
+/** A photo on a message: its storage path plus a short-lived URL to show it. */
+export type ChatMessageAttachment = {
+  path: string;
+  mime: string;
+  /** Signed URL (2 hours), or null when signing failed or hasn't happened yet. */
+  url: string | null;
+};
+
 export type ChatMessage = {
   id: string;
   thread_id: string;
   sender_id: string | null;
   sender_name: string | null;
   body: string;
+  attachments: ChatMessageAttachment[];
   created_at: string;
 };
 
@@ -163,6 +173,7 @@ export async function fetchChatMessages(
         thread_id,
         sender_id,
         body,
+        attachments,
         created_at,
         sender:memberships ( display_name, profile:profiles ( full_name ) )
       `,
@@ -176,12 +187,30 @@ export async function fetchChatMessages(
     return [];
   }
 
-  const rows = (data ?? []).map((m) => ({
+  // Photos live in a private bucket; sign every path in one round trip so
+  // the page can show them. The rows themselves came through RLS, so only
+  // a thread member gets this far.
+  const parsed = (data ?? []).map((m) => ({ m, atts: parseChatAttachments(m.attachments) }));
+  const allPaths = parsed.flatMap((p) => p.atts.map((a) => a.path));
+  const urlByPath = new Map<string, string>();
+  if (allPaths.length > 0) {
+    const admin = createSupabaseAdminClient();
+    const { data: signed, error: signErr } = await admin.storage
+      .from(CHAT_MEDIA_BUCKET)
+      .createSignedUrls(allPaths, 60 * 60 * 2);
+    if (signErr) console.error("[chat] photo signing failed:", signErr.message);
+    for (const s of signed ?? []) {
+      if (s.path && s.signedUrl) urlByPath.set(s.path, s.signedUrl);
+    }
+  }
+
+  const rows: ChatMessage[] = parsed.map(({ m, atts }) => ({
     id: m.id,
     thread_id: m.thread_id,
     sender_id: m.sender_id,
     sender_name: m.sender ? memberDisplayName(m.sender) : null,
     body: m.body,
+    attachments: atts.map((a) => ({ path: a.path, mime: a.mime, url: urlByPath.get(a.path) ?? null })),
     created_at: m.created_at,
   }));
 

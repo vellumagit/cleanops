@@ -2,19 +2,42 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
-import { Hash, MessageCircle, Plus, Send, Check, RotateCw } from "lucide-react";
+import {
+  Hash,
+  MessageCircle,
+  Plus,
+  Send,
+  Check,
+  RotateCw,
+  Camera,
+  Images,
+  Loader2,
+  X,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { FormSelect } from "@/components/form-field";
 import { cn } from "@/lib/utils";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import { shrinkPhoto } from "@/lib/shrink-photo";
+import {
+  CHAT_MEDIA_BUCKET,
+  CHAT_PHOTO_MAX_BYTES,
+  CHAT_PHOTOS_PER_MESSAGE,
+  chatPhotoType,
+  parseChatAttachments,
+  type ChatAttachment,
+} from "@/lib/chat-media-rules";
 import {
   sendChatMessageAction,
   createDmThreadAction,
   markThreadReadAction,
+  prepareChatPhotoUploadAction,
+  signChatPhotosAction,
 } from "@/lib/chat-actions";
 import type {
   ChatMessage,
+  ChatMessageAttachment,
   ChatThreadSummary,
   TeammateOption,
 } from "@/lib/chat-data";
@@ -33,6 +56,17 @@ type Props = {
 type UiMessage = ChatMessage & {
   clientKey?: string;
   status?: "sending" | "failed";
+};
+
+// A photo picked for the next message. It uploads straight to storage the
+// moment it is picked, so Send only has to name it; the thumbnail is the
+// phone's own copy until the server hands back a signed URL.
+type PendingPhoto = {
+  key: string;
+  name: string;
+  previewUrl: string;
+  status: "uploading" | "ready" | "failed";
+  attachment?: ChatAttachment;
 };
 
 const GROUP_GAP_MS = 5 * 60 * 1000; // start a new visual group after 5 min
@@ -76,6 +110,58 @@ function ThreadIcon({ kind }: { kind: ChatThreadSummary["kind"] }) {
   );
 }
 
+/**
+ * The photos on one message. One photo fills the bubble; several sit in a
+ * two-column grid. Each opens full size in a new tab (the signed URL lasts
+ * two hours, long enough to look; a reload signs again).
+ */
+function MessagePhotos({
+  photos,
+  withText,
+}: {
+  photos: ChatMessageAttachment[];
+  withText: boolean;
+}) {
+  const single = photos.length === 1;
+  return (
+    <div
+      className={cn(
+        "grid gap-1",
+        single ? "grid-cols-1" : "grid-cols-2",
+        withText && "mb-2 -mx-2 -mt-1",
+      )}
+    >
+      {photos.map((p) => (
+        <a
+          key={p.path}
+          href={p.url ?? undefined}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={cn(
+            "block overflow-hidden rounded-xl bg-muted",
+            single ? "max-h-72 w-56 sm:w-72" : "aspect-square w-28 sm:w-36",
+            !p.url && "pointer-events-none",
+          )}
+        >
+          {p.url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={p.url}
+              alt="Photo"
+              loading="lazy"
+              className={cn("h-full w-full", single ? "object-contain" : "object-cover")}
+            />
+          ) : (
+            <div className="flex h-28 w-full items-center justify-center text-xs text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+            </div>
+          )}
+        </a>
+      ))}
+    </div>
+  );
+}
+
 function Avatar({ name }: { name: string | null | undefined }) {
   return (
     <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted text-[11px] font-semibold text-muted-foreground">
@@ -99,11 +185,14 @@ export function ChatView({
 
   const [messages, setMessages] = useState<UiMessage[]>(initialMessages);
   const [draft, setDraft] = useState("");
+  const [pending, setPending] = useState<PendingPhoto[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [otherId, setOtherId] = useState("");
   const [, startSending] = useTransition();
   const [creatingDm, startCreatingDm] = useTransition();
   const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const cameraRef = useRef<HTMLInputElement | null>(null);
+  const galleryRef = useRef<HTMLInputElement | null>(null);
   const keyCounter = useRef(0);
 
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
@@ -117,10 +206,15 @@ export function ChatView({
   const resolveName = (m: UiMessage) =>
     m.sender_name ?? (dmOtherName || "Teammate");
 
-  // Reset to server state whenever the active thread changes.
+  // Reset to server state whenever the active thread changes. Photos picked
+  // for the old thread don't follow: their upload paths belong to it.
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setMessages(initialMessages);
+    setPending((prev) => {
+      prev.forEach((p) => URL.revokeObjectURL(p.previewUrl));
+      return [];
+    });
   }, [initialMessages, activeThreadId]);
 
   // Keep pinned to the newest message.
@@ -155,17 +249,21 @@ export function ChatView({
             thread_id: string;
             sender_id: string | null;
             body: string;
+            attachments?: unknown;
             created_at: string;
           };
+          const atts = parseChatAttachments(row.attachments);
           setMessages((prev) => {
             if (prev.some((m) => m.id === row.id)) return prev;
-            // Replace our own optimistic message (matched by body + sender)
-            // rather than appending a duplicate.
+            // Replace our own optimistic message (matched by body, sender and
+            // photo count) rather than appending a duplicate. Keep its
+            // previews: they are the same pictures, already on screen.
             const optimisticIdx = prev.findIndex(
               (m) =>
                 m.status === "sending" &&
                 m.sender_id === row.sender_id &&
-                m.body === row.body,
+                m.body === row.body &&
+                m.attachments.length === atts.length,
             );
             const next: UiMessage = {
               id: row.id,
@@ -173,15 +271,38 @@ export function ChatView({
               sender_id: row.sender_id,
               sender_name: null,
               body: row.body,
+              attachments: atts.map((a) => ({ path: a.path, mime: a.mime, url: null })),
               created_at: row.created_at,
             };
             if (optimisticIdx >= 0) {
               const copy = prev.slice();
-              copy[optimisticIdx] = next;
+              copy[optimisticIdx] = { ...next, attachments: prev[optimisticIdx].attachments };
               return copy;
             }
             return [...prev, next];
           });
+          // The row carries storage paths, not pictures: ask for URLs a
+          // thread member may see. Our own send already has them.
+          if (atts.length > 0 && row.sender_id !== currentMembershipId) {
+            signChatPhotosAction(activeThreadId, atts.map((a) => a.path))
+              .then((res) => {
+                if (!res.ok) return;
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === row.id
+                      ? {
+                          ...m,
+                          attachments: m.attachments.map((a) => ({
+                            ...a,
+                            url: res.urls[a.path] ?? a.url,
+                          })),
+                        }
+                      : m,
+                  ),
+                );
+              })
+              .catch(() => {});
+          }
           // We're looking at this thread, so anything that lands is read.
           if (row.sender_id !== currentMembershipId) {
             markThreadReadAction(activeThreadId).catch(() => {});
@@ -201,9 +322,14 @@ export function ChatView({
     router.push(`${pathname}?${next.toString()}`);
   }
 
-  function deliver(threadId: string, body: string, clientKey: string) {
+  function deliver(
+    threadId: string,
+    body: string,
+    clientKey: string,
+    attachments: ChatAttachment[],
+  ) {
     startSending(async () => {
-      const res = await sendChatMessageAction(threadId, body);
+      const res = await sendChatMessageAction(threadId, body, attachments);
       if (!res.ok) {
         setMessages((prev) =>
           prev.map((m) =>
@@ -214,23 +340,131 @@ export function ChatView({
         return;
       }
       // Promote the optimistic message to a real one (unless realtime already
-      // swapped it in).
+      // swapped it in), and swap the phone's previews for the stored copies.
       setMessages((prev) =>
         prev.map((m) =>
           m.clientKey === clientKey
-            ? { ...m, id: res.id, status: undefined, clientKey: undefined }
+            ? {
+                ...m,
+                id: res.id,
+                status: undefined,
+                clientKey: undefined,
+                attachments: m.attachments.map((a) => ({
+                  ...a,
+                  url: res.urls[a.path] ?? a.url,
+                })),
+              }
             : m,
         ),
       );
     });
   }
 
+  // Pick → shrink → signed upload → ready. Each photo on its own, so one bad
+  // file doesn't block the others, and the thumbnail shows up at once.
+  async function addPhotos(files: File[]) {
+    if (!activeThreadId) return;
+    const threadId = activeThreadId;
+    const room = CHAT_PHOTOS_PER_MESSAGE - pending.length;
+    if (room <= 0) {
+      toast.error(`Up to ${CHAT_PHOTOS_PER_MESSAGE} photos per message.`);
+      return;
+    }
+    const take = files.slice(0, room);
+    if (take.length < files.length) {
+      toast.error(`Only the first ${room} added — up to ${CHAT_PHOTOS_PER_MESSAGE} photos per message.`);
+    }
+    const supabase = createSupabaseBrowserClient();
+    const entries: PendingPhoto[] = take.map((f) => ({
+      key: `p-${(keyCounter.current += 1)}`,
+      name: f.name,
+      previewUrl: URL.createObjectURL(f),
+      status: "uploading",
+    }));
+    setPending((prev) => [...prev, ...entries]);
+
+    const mark = (key: string, patch: Partial<PendingPhoto>) =>
+      setPending((prev) => prev.map((p) => (p.key === key ? { ...p, ...patch } : p)));
+
+    await Promise.all(
+      take.map(async (original, i) => {
+        const key = entries[i].key;
+        try {
+          const file = await shrinkPhoto(original);
+          const mime = chatPhotoType(file.type, file.name);
+          if (!mime) {
+            toast.error(`${original.name}: only photos can be sent here.`);
+            mark(key, { status: "failed" });
+            return;
+          }
+          if (file.size > CHAT_PHOTO_MAX_BYTES) {
+            toast.error(`${original.name} is over 20 MB.`);
+            mark(key, { status: "failed" });
+            return;
+          }
+          const prep = await prepareChatPhotoUploadAction({
+            threadId,
+            fileName: file.name,
+            mimeType: mime,
+            size: file.size,
+          });
+          if (!prep.ok) {
+            toast.error(prep.error);
+            mark(key, { status: "failed" });
+            return;
+          }
+          const { error: upErr } = await supabase.storage
+            .from(CHAT_MEDIA_BUCKET)
+            .uploadToSignedUrl(prep.path, prep.token, file, { contentType: prep.mimeType });
+          if (upErr) {
+            toast.error(`Upload failed: ${upErr.message}`);
+            mark(key, { status: "failed" });
+            return;
+          }
+          mark(key, {
+            status: "ready",
+            attachment: { path: prep.path, mime: prep.mimeType, size: file.size },
+          });
+        } catch {
+          toast.error("Upload failed. Check your connection and try again.");
+          mark(key, { status: "failed" });
+        }
+      }),
+    );
+  }
+
+  function onPickPhotos(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = "";
+    if (files.length > 0) void addPhotos(files);
+  }
+
+  function removePending(key: string) {
+    setPending((prev) => {
+      const gone = prev.find((p) => p.key === key);
+      if (gone) URL.revokeObjectURL(gone.previewUrl);
+      return prev.filter((p) => p.key !== key);
+    });
+  }
+
+  const uploading = pending.some((p) => p.status === "uploading");
+  const readyPhotos = pending.filter(
+    (p): p is PendingPhoto & { attachment: ChatAttachment } =>
+      p.status === "ready" && !!p.attachment,
+  );
+  const canSend = !uploading && (draft.trim().length > 0 || readyPhotos.length > 0);
+
   function handleSend(e: React.FormEvent) {
     e.preventDefault();
-    if (!activeThreadId) return;
+    if (!activeThreadId || !canSend) return;
     const body = draft.trim();
-    if (!body) return;
+    const photos = readyPhotos;
     setDraft("");
+    // Failed uploads are dropped with the send; the toast already said why.
+    setPending((prev) => {
+      prev.filter((p) => p.status === "failed").forEach((p) => URL.revokeObjectURL(p.previewUrl));
+      return [];
+    });
     const clientKey = `local-${(keyCounter.current += 1)}`;
     const optimistic: UiMessage = {
       id: clientKey,
@@ -239,11 +473,16 @@ export function ChatView({
       sender_id: currentMembershipId,
       sender_name: null,
       body,
+      attachments: photos.map((p) => ({
+        path: p.attachment.path,
+        mime: p.attachment.mime,
+        url: p.previewUrl,
+      })),
       created_at: new Date().toISOString(),
       status: "sending",
     };
     setMessages((prev) => [...prev, optimistic]);
-    deliver(activeThreadId, body, clientKey);
+    deliver(activeThreadId, body, clientKey, photos.map((p) => p.attachment));
   }
 
   function retry(m: UiMessage) {
@@ -253,7 +492,12 @@ export function ChatView({
         x.clientKey === m.clientKey ? { ...x, status: "sending" } : x,
       ),
     );
-    deliver(m.thread_id, m.body, m.clientKey);
+    deliver(
+      m.thread_id,
+      m.body,
+      m.clientKey,
+      m.attachments.map((a) => ({ path: a.path, mime: a.mime, size: 0 })),
+    );
   }
 
   function handleCreateDm(e: React.FormEvent) {
@@ -590,7 +834,8 @@ export function ChatView({
                           )}
                           <div
                             className={cn(
-                              "px-3 py-2 text-sm leading-relaxed shadow-xs",
+                              "overflow-hidden text-sm leading-relaxed shadow-xs",
+                              m.body ? "px-3 py-2" : "p-1",
                               mine
                                 ? "bg-primary text-primary-foreground"
                                 : "bg-card text-foreground ring-1 ring-border",
@@ -606,9 +851,17 @@ export function ChatView({
                               m.status === "failed" && "opacity-70",
                             )}
                           >
-                            <span className="whitespace-pre-wrap break-words">
-                              {m.body}
-                            </span>
+                            {m.attachments.length > 0 && (
+                              <MessagePhotos
+                                photos={m.attachments}
+                                withText={m.body.length > 0}
+                              />
+                            )}
+                            {m.body && (
+                              <span className="whitespace-pre-wrap break-words">
+                                {m.body}
+                              </span>
+                            )}
                           </div>
                           {lastOfGroup && (
                             <div
@@ -647,8 +900,83 @@ export function ChatView({
 
               <form
                 onSubmit={handleSend}
-                className="flex items-end gap-2 border-t border-border bg-card/80 px-3 py-3 backdrop-blur"
+                className="border-t border-border bg-card/80 px-3 py-3 backdrop-blur"
               >
+                {pending.length > 0 && (
+                  <div className="mb-2 flex gap-2 overflow-x-auto pb-1">
+                    {pending.map((p) => (
+                      <div
+                        key={p.key}
+                        className="relative h-16 w-16 shrink-0 overflow-hidden rounded-lg border border-border bg-muted"
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={p.previewUrl}
+                          alt={p.name}
+                          className={cn(
+                            "h-full w-full object-cover",
+                            p.status !== "ready" && "opacity-50",
+                          )}
+                        />
+                        {p.status === "uploading" && (
+                          <Loader2 className="absolute left-1/2 top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 animate-spin text-foreground" />
+                        )}
+                        {p.status === "failed" && (
+                          <span className="absolute inset-x-0 bottom-0 bg-red-600/90 px-1 text-center text-[10px] font-medium text-white">
+                            Failed
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => removePending(p.key)}
+                          aria-label="Remove photo"
+                          className="absolute right-0.5 top-0.5 rounded-full bg-black/60 p-0.5 text-white hover:bg-black/80"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="flex items-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => cameraRef.current?.click()}
+                  disabled={pending.length >= CHAT_PHOTOS_PER_MESSAGE}
+                  aria-label="Take a photo"
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
+                >
+                  <Camera className="h-5 w-5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => galleryRef.current?.click()}
+                  disabled={pending.length >= CHAT_PHOTOS_PER_MESSAGE}
+                  aria-label="Choose photos from the gallery"
+                  className="-ml-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
+                >
+                  <Images className="h-5 w-5" />
+                </button>
+                {/* Two pickers, as on the job page: capture= makes Android
+                    open the camera and nothing else, so the gallery gets its
+                    own input. Both accept image/*, or Android hides gallery
+                    apps that don't advertise one of a listed set of types. */}
+                <input
+                  ref={cameraRef}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  className="hidden"
+                  onChange={onPickPhotos}
+                />
+                <input
+                  ref={galleryRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={onPickPhotos}
+                />
                 <textarea
                   value={draft}
                   onChange={(e) => setDraft(e.target.value)}
@@ -666,19 +994,24 @@ export function ChatView({
                       });
                     }, 300);
                   }}
-                  placeholder="Message…"
+                  placeholder={pending.length > 0 ? "Add a note (optional)…" : "Message…"}
                   rows={1}
                   className="flex max-h-32 min-h-10 flex-1 resize-none rounded-2xl border border-input bg-background px-4 py-2.5 text-base shadow-xs outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
                 />
                 <Button
                   type="submit"
                   size="icon"
-                  disabled={draft.trim().length === 0}
-                  aria-label="Send"
+                  disabled={!canSend}
+                  aria-label={uploading ? "Waiting for photos to upload" : "Send"}
                   className="h-10 w-10 shrink-0 rounded-full"
                 >
-                  <Send className="h-4 w-4" />
+                  {uploading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Send className="h-4 w-4" />
+                  )}
                 </Button>
+                </div>
               </form>
             </>
           ) : (
