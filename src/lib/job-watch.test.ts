@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   classifyJob,
+  enteredAfterStart,
   lateStarters,
   orgUsesClockIn,
   LATE_START_NUDGE_MINUTES,
@@ -46,6 +47,32 @@ describe("classifyJob — nothing to say", () => {
     const pending = job({ status: "pending", nowMs: START + 10 * 60 * MIN });
     expect(classifyJob(unstaffed).kind).toBe("none");
     expect(classifyJob(pending).kind).toBe("none");
+  });
+
+  it("says nothing about a job written down after it started", () => {
+    // Oct 30, 2026: an 8:45 meeting entered at 10:05. Inside the window it
+    // is not a late start, and once the window is gone it is not a
+    // no-clock-in question — the entry is the evidence.
+    const entered = START + 80 * MIN;
+    const inside = job({ createdAtMs: entered, nowMs: START + 100 * MIN });
+    const after = job({ createdAtMs: entered, nowMs: START + 10 * 60 * MIN });
+    expect(classifyJob(inside).kind).toBe("none");
+    expect(classifyJob(after).kind).toBe("none");
+  });
+
+  it("enteredAfterStart is the one test both the watch and the assignment notice use", () => {
+    expect(enteredAfterStart(START + 1, START)).toBe(true);
+    expect(enteredAfterStart(START, START)).toBe(false);
+    expect(enteredAfterStart(START - 7 * 24 * 60 * MIN, START)).toBe(false);
+    expect(enteredAfterStart(null, START)).toBe(false);
+    expect(enteredAfterStart(undefined, START)).toBe(false);
+  });
+
+  it("still watches a job booked ahead, however late it was booked", () => {
+    const booked = job({ createdAtMs: START - 1, nowMs: START + 10 * 60 * MIN });
+    expect(classifyJob(booked).kind).toBe("no_clock_in");
+    const unknown = job({ createdAtMs: null, nowMs: START + 10 * 60 * MIN });
+    expect(classifyJob(unknown).kind).toBe("no_clock_in");
   });
 });
 

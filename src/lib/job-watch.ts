@@ -59,7 +59,22 @@ export type JobWatchInput = {
    */
   nudgedAtMs: number | null;
   flaggedAtMs: number | null;
+  /**
+   * When the booking row was made. A job entered AFTER its start is a record
+   * of something already underway or over — the office writing down a
+   * meeting it just had, or a visit it forgot to book — and the person
+   * entering it is the evidence. Null when unknown: judged as if booked ahead.
+   */
+  createdAtMs?: number | null;
 };
+
+/** Was this job written down after it had already started? */
+export function enteredAfterStart(
+  createdAtMs: number | null | undefined,
+  scheduledAtMs: number,
+): boolean {
+  return createdAtMs != null && createdAtMs > scheduledAtMs;
+}
 
 /** Was this mark made about the job's current schedule? */
 export function saidForThisSchedule(
@@ -91,10 +106,16 @@ export function classifyJob(input: JobWatchInput): JobWatchVerdict {
     nowMs,
     nudgedAtMs,
     flaggedAtMs,
+    createdAtMs,
   } = input;
 
   // Someone said what happened. Believe them.
   if (TERMINAL.has(status)) return { kind: "none" };
+  // Entered after it started: nobody was late to it and nobody needs to
+  // confirm it happened — the person who typed it in just did. On 2026-10-30
+  // a manager logged that morning's meeting at 10:05; by 10:30 three people
+  // had been emailed to "confirm the work happened before it's billed".
+  if (enteredAfterStart(createdAtMs, scheduledAtMs)) return { kind: "none" };
   // Pending is the office's own loose end, and unstaffed has its own watcher.
   if (status === "pending") return { kind: "none" };
   if (!staffed) return { kind: "none" };

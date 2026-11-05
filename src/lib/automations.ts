@@ -3684,6 +3684,26 @@ export async function notifyBookingAssignment(
 
     const db = admin();
 
+    // A job written down after it started is a record, not a shift to
+    // confirm: "tap to confirm" an 8:45 meeting at 10:05 asks for a decision
+    // that was made by entering it. The row, not meta, says when it was
+    // made; the same test keeps the job watch quiet about it (job-watch.ts).
+    const { enteredAfterStart } = await import("@/lib/job-watch");
+    const { data: row } = (await db
+      .from("bookings")
+      .select("scheduled_at, created_at")
+      .eq("id", bookingId)
+      .maybeSingle()) as unknown as {
+      data: { scheduled_at: string; created_at: string } | null;
+    };
+    if (
+      row &&
+      enteredAfterStart(new Date(row.created_at).getTime(), new Date(row.scheduled_at).getTime())
+    ) {
+      console.log(`[auto] Booking ${bookingId} was entered after its start; no assignment notice`);
+      return;
+    }
+
     // Fetch org name + timezone in one query (name used for SMS body, timezone
     // for local-time formatting in the notification body).
     const { data: orgData } = (await db
@@ -6084,7 +6104,7 @@ export async function runJobWatch(): Promise<{
     .from("bookings")
     .select(
       `id, organization_id, scheduled_at, duration_minutes, status, assigned_to,
-       no_show_nudge_sent_at, no_clock_in_flagged_at, divide_hours_evenly,
+       no_show_nudge_sent_at, no_clock_in_flagged_at, divide_hours_evenly, created_at,
        client:clients ( name )`,
     )
     .in("status", ["confirmed", "en_route", "in_progress"])
@@ -6104,6 +6124,7 @@ export async function runJobWatch(): Promise<{
       assigned_to: string | null;
       no_show_nudge_sent_at: string | null;
       no_clock_in_flagged_at: string | null;
+      created_at: string;
       client: { name: string | null } | null;
     }> | null;
   };
@@ -6225,6 +6246,7 @@ export async function runJobWatch(): Promise<{
           flaggedAtMs: b.no_clock_in_flagged_at
             ? new Date(b.no_clock_in_flagged_at).getTime()
             : null,
+          createdAtMs: new Date(b.created_at).getTime(),
         });
 
         if (verdict.kind === "late_start" && nudgeOn) {
