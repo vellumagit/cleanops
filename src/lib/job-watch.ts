@@ -24,6 +24,8 @@
  * for one problem trains people to ignore both.
  */
 
+import { jobWindowEndMs, type JobStateCrewRow } from "@/lib/job-state";
+
 /** How late a start has to be before nudging the cleaner. */
 export const LATE_START_NUDGE_MINUTES = 15;
 
@@ -74,6 +76,33 @@ export function enteredAfterStart(
   scheduledAtMs: number,
 ): boolean {
   return createdAtMs != null && createdAtMs > scheduledAtMs;
+}
+
+/**
+ * May the nightly sweep close this job now? Only once the org's
+ * auto-complete grace has run out counted from the job's END — the same
+ * window classifyJob measures silence against, so the office's "finished
+ * with no clock-in" question (due at end + 30 min) always comes before the
+ * close (due at end + the grace, hours later). Counted from the start, a
+ * long job was closed first and the question never asked.
+ */
+export function autoCompleteDue(input: {
+  scheduledAt: string;
+  durationMinutes: number | null;
+  dividesHours: boolean;
+  crew: JobStateCrewRow[];
+  graceHours: number;
+  nowMs: number;
+}): boolean {
+  const endMs = jobWindowEndMs(
+    {
+      scheduled_at: input.scheduledAt,
+      duration_minutes: input.durationMinutes ?? 0,
+      divides_hours: input.dividesHours,
+    },
+    input.crew,
+  );
+  return input.nowMs >= endMs + input.graceHours * 60 * 60_000;
 }
 
 /** Was this mark made about the job's current schedule? */

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  autoCompleteDue,
   classifyJob,
   enteredAfterStart,
   lateStarters,
@@ -73,6 +74,47 @@ describe("classifyJob — nothing to say", () => {
     expect(classifyJob(booked).kind).toBe("no_clock_in");
     const unknown = job({ createdAtMs: null, nowMs: START + 10 * 60 * MIN });
     expect(classifyJob(unknown).kind).toBe("no_clock_in");
+  });
+});
+
+describe("autoCompleteDue — the sweep counts from the job's end", () => {
+  // Ranj Asi, 2026-11-05: 9:30 AM, ten hours, one cleaner, 4-hour grace.
+  const at = (hhmm: string) => Date.parse(`2026-11-05T${hhmm}:00-06:00`);
+  const ranj = (nowMs: number) =>
+    autoCompleteDue({
+      scheduledAt: new Date(at("09:30")).toISOString(),
+      durationMinutes: 600,
+      dividesHours: false,
+      crew: [{ membership_id: "anna", split_start_offset_minutes: null, split_duration_minutes: null }],
+      graceHours: 4,
+      nowMs,
+    });
+
+  it("is not due at the 8 PM sweep — the window only ended at 7:30", () => {
+    expect(ranj(at("20:00"))).toBe(false);
+    expect(ranj(at("23:29"))).toBe(false);
+  });
+
+  it("is due at 11:30 PM, four hours after the end, when the office has been asked", () => {
+    expect(ranj(at("23:30"))).toBe(true);
+  });
+
+  it("uses the crew's shared window when the org divides hours", () => {
+    // Ten hours shared three ways is a 3h20m window: due at 9:00 + 3:20 + 4h.
+    const crew = ["a", "b", "c"].map((membership_id) => ({ membership_id, split_start_offset_minutes: null, split_duration_minutes: null }));
+    const divided = (nowMs: number) =>
+      autoCompleteDue({ scheduledAt: new Date(at("09:00")).toISOString(), durationMinutes: 600, dividesHours: true, crew, graceHours: 4, nowMs });
+    expect(divided(at("16:19"))).toBe(false);
+    expect(divided(at("16:20"))).toBe(true);
+  });
+
+  it("the question comes first: silence is asked about half an hour after the end", () => {
+    // classifyJob asks at end + NO_CLOCK_IN_GRACE_MINUTES; the sweep waits
+    // end + hours. With any grace of an hour or more the order is fixed.
+    const end = at("19:30");
+    const asked = classifyJob(job({ scheduledAtMs: at("09:30"), windowEndMs: end, nowMs: end + NO_CLOCK_IN_GRACE_MINUTES * MIN }));
+    expect(asked.kind).toBe("no_clock_in");
+    expect(ranj(end + NO_CLOCK_IN_GRACE_MINUTES * MIN)).toBe(false);
   });
 });
 

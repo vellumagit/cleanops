@@ -149,11 +149,16 @@ export async function runMorningCheck(
   failed("notifications", nErr);
   const grouped = new Map<string, { n: number; first: string; body: string | null }>();
   const perPerson = new Map<string, number>();
+  // Said again on purpose every half hour while the condition holds, with
+  // the push replacing the last one. Two of these to one person is the
+  // design working, not a message sent twice.
+  const repeatsByDesign = new Set(["clock_out_reminder"]);
   for (const n of notes ?? []) {
     const k = `${n.type} | ${n.title}`;
     const g = grouped.get(k);
     if (g) g.n++;
     else grouped.set(k, { n: 1, first: n.created_at, body: n.body });
+    if (repeatsByDesign.has(n.type)) continue;
     const p = `${n.recipient_membership_id}|${n.type}|${n.title}|${n.href}`;
     perPerson.set(p, (perPerson.get(p) ?? 0) + 1);
   }

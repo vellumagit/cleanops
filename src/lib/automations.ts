@@ -7359,16 +7359,20 @@ export async function autoCompletePastBookings(): Promise<{
     // a client a bill) for a job the system has no record of anyone doing.
     const { data: candidates, error: findErr } = (await db
       .from("bookings")
-      .select("id, scheduled_at, client:clients ( name )")
+      .select("id, scheduled_at, duration_minutes, divide_hours_evenly, client:clients ( name )")
       .eq("organization_id", org.id)
       // Confirmed OR in progress; completed/cancelled are terminal, and
       // pending is handled above — it must never auto-complete.
       .in("status", ["confirmed", "in_progress"])
+      // Started long enough ago to be worth a look. Whether it may CLOSE
+      // is decided below from the job's end, not its start.
       .lt("scheduled_at", cutoff)
       .limit(200)) as unknown as {
       data: Array<{
         id: string;
         scheduled_at: string;
+        duration_minutes: number | null;
+        divide_hours_evenly: boolean | null;
         client: { name: string | null } | null;
       }> | null;
       error: { message: string } | null;
@@ -7430,13 +7434,43 @@ export async function autoCompletePastBookings(): Promise<{
     if (!completionEnabled) continue;
     if (staffedIds.length === 0) continue;
 
+    // The grace runs from the job's END — the same window the job watch and
+    // the computed state use — not from its start. Counted from the start,
+    // a 10-hour job booked for 9:30 was closed by this sweep at 8:00 PM,
+    // the very minute the job watch was due to ask the office whether it
+    // happened; completed is terminal, so the question was never asked
+    // (Ranj Asi, 2026-11-05). From the end, that job closes at 11:30 PM,
+    // after the office has been asked.
+    const { autoCompleteDue } = await import("@/lib/job-watch");
+    const orgDivides = await isAutomationEnabled(org.id, "divide_crew_hours");
+    const byId = new Map(candidates.map((b) => [b.id, b]));
+    const nowMs = Date.now();
+    const dueIds = staffedIds.filter((id) => {
+      const b = byId.get(id)!;
+      const cov = coverage.get(id);
+      const segmentBy = new Map((cov?.segments ?? []).map((s) => [s.membership_id, s] as const));
+      return autoCompleteDue({
+        scheduledAt: b.scheduled_at,
+        durationMinutes: b.duration_minutes,
+        dividesHours: b.divide_hours_evenly === true || orgDivides,
+        crew: (cov?.employeeIds ?? []).map((membershipId) => ({
+          membership_id: membershipId,
+          split_start_offset_minutes: segmentBy.get(membershipId)?.split_start_offset_minutes ?? null,
+          split_duration_minutes: segmentBy.get(membershipId)?.split_duration_minutes ?? null,
+        })),
+        graceHours: hours,
+        nowMs,
+      });
+    });
+    if (dueIds.length === 0) continue;
+
     // Not while someone is still on the clock. Completing drafts the
     // invoice, and a shift still running means the job is not over — the
     // clock-out guardrail will cap that shift and the next clock-out will
     // recompute the job. Say so to the office instead of closing around her.
     const { selectInChunks } = await import("@/lib/supabase/chunked-in");
     const { data: openShifts } = await selectInChunks<{ booking_id: string | null }>(
-      staffedIds,
+      dueIds,
       (chunk) =>
         db
           .from("time_entries")
@@ -7450,7 +7484,7 @@ export async function autoCompletePastBookings(): Promise<{
     const stillWorking = new Set(
       openShifts.map((r) => r.booking_id).filter(Boolean) as string[],
     );
-    const toComplete = staffedIds.filter((id) => !stillWorking.has(id));
+    const toComplete = dueIds.filter((id) => !stillWorking.has(id));
     if (stillWorking.size > 0) {
       const names = candidates
         .filter((b) => stillWorking.has(b.id))
