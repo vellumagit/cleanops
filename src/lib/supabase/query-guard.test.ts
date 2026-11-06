@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { guardQueries } from "./query-guard";
+import { guardQueries, inFailClosedScope, runFailClosed, runFailOpen } from "./query-guard";
 
 /** Minimal stand-in for a PostgREST builder: chainable and thenable. */
 type Result = { data?: unknown; error?: unknown };
@@ -110,5 +110,70 @@ describe("non-schema errors", () => {
     expect(errSpy).toHaveBeenCalledWith(
       expect.stringContaining("[db-error] secrets"),
     );
+  });
+});
+
+describe("an ambiguous relationship is a schema error too", () => {
+  it("throws outside production — two links, the embed names neither", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    const db = guardQueries(
+      fakeClient({
+        data: null,
+        error: {
+          code: "PGRST201",
+          message: "Could not embed because more than one relationship was found for 'bookings' and 'memberships'",
+        },
+      }),
+    );
+    await expect(db.from("bookings").select("assignee:memberships ( display_name )")).rejects.toThrow(
+      /bookings/,
+    );
+  });
+});
+
+describe("background work fails closed", () => {
+  const permissionBlip = { data: null, error: { code: "42501", message: "permission denied for table x" } };
+  const ambiguous = {
+    data: null,
+    error: { code: "PGRST201", message: "Could not embed because more than one relationship was found" },
+  };
+
+  it("inside the scope, ANY error rejects — in production too", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const db = guardQueries(fakeClient(ambiguous));
+    await expect(
+      runFailClosed(() => db.from("bookings").select("assignee:memberships ( display_name )")),
+    ).rejects.toThrow(/Background work stops here/);
+    const db2 = guardQueries(fakeClient(permissionBlip));
+    await expect(runFailClosed(() => db2.from("secrets").select("id"))).rejects.toThrow(/secrets/);
+  });
+
+  it("outside the scope, production still only logs", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const db = guardQueries(fakeClient(ambiguous));
+    const res = await db.from("bookings").select("x");
+    expect(res).toBe(ambiguous);
+    expect(inFailClosedScope()).toBe(false);
+  });
+
+  it("a .single() with no row is not a failure, even inside the scope", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const noRow = { data: null, error: { code: "PGRST116", message: "JSON object requested, multiple (or no) rows returned" } };
+    const db = guardQueries(fakeClient(noRow));
+    const res = await runFailClosed(() => db.from("organizations").select("timezone").single());
+    expect(res).toBe(noRow);
+  });
+
+  it("covers everything awaited after the scope is entered, and runFailOpen steps out", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const db = guardQueries(fakeClient(permissionBlip));
+    await runFailClosed(async () => {
+      await Promise.resolve();
+      expect(inFailClosedScope()).toBe(true);
+      await expect(db.from("a").select("id")).rejects.toThrow(/db-error/);
+      const res = await runFailOpen(() => db.from("a").select("id"));
+      expect(res).toBe(permissionBlip);
+      expect(inFailClosedScope()).toBe(true);
+    });
   });
 });

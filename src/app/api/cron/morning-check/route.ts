@@ -20,6 +20,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireCronAuth } from "@/lib/cron-auth";
 import { sendEmailDetailed } from "@/lib/email";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { runFailOpen } from "@/lib/supabase/query-guard";
 import { escapeHtml } from "@/lib/support-mail";
 import { runMorningCheck } from "@/lib/morning-check";
 
@@ -42,9 +43,14 @@ export async function GET(request: NextRequest) {
   let text: string;
   let html: string;
   try {
-    const report = await runMorningCheck(createSupabaseAdminClient(), {
-      orgId: process.env.MORNING_CHECK_ORG_ID || undefined,
-    });
+    // The check reads every error itself and prints it in the report, which
+    // is more useful at 8 AM than a "FAILED to run" email; so it runs with
+    // the page behaviour inside the cron's fail-closed scope.
+    const report = await runFailOpen(() =>
+      runMorningCheck(createSupabaseAdminClient(), {
+        orgId: process.env.MORNING_CHECK_ORG_ID || undefined,
+      }),
+    );
     if (dryRun) return NextResponse.json({ ok: true, dry_run: true, ...report });
 
     const n = report.flags.length;

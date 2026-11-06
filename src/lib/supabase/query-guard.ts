@@ -17,12 +17,62 @@
  * OUTSIDE production it throws — so the next one dies the first time it runs
  * instead of hiding for months.
  *
- * Deliberately NOT throwing in production: these queries are already failing
- * today. Turning silent degradation into a 500 for a live customer is a
- * worse outcome than a loud log we act on.
+ * Deliberately NOT throwing in production for a page or an action: these
+ * queries are already failing today, and turning silent degradation into a
+ * 500 for a live customer is a worse outcome than a loud log we act on.
+ *
+ * BACKGROUND WORK IS THE EXCEPTION — it fails closed. A cron that reads
+ * "no rows" where there was an error goes on to send, mark sent, complete
+ * or invoice on nothing, and nobody is at a screen to notice. Inside a
+ * fail-closed scope (every cron route enters one in requireCronAuth) ANY
+ * error rejects the await, in production too; the per-org try/catch in the
+ * job then skips that org and logs, instead of acting on a lie. 2026-10-28
+ * to 11-01: a second bookings→memberships link made four embeds ambiguous
+ * (PGRST201); the nightly calendar reconcile read the error as an empty
+ * list and did nothing for five days.
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
+
 type MaybeResult = { error?: unknown; data?: unknown } | null | undefined;
+
+const failClosedScope = new AsyncLocalStorage<boolean>();
+
+/**
+ * From here to the end of the current async flow, a failed query rejects
+ * instead of returning. For a request handler: call it synchronously at the
+ * top, before the first await, and everything the handler awaits is covered.
+ */
+export function enterFailClosed(): void {
+  failClosedScope.enterWith(true);
+}
+
+/** Run `fn` with failed queries rejecting. */
+export function runFailClosed<T>(fn: () => T): T {
+  return failClosedScope.run(true, fn);
+}
+
+/**
+ * Run `fn` with the page/action behaviour (log, return the result) inside a
+ * fail-closed scope — for the rare caller that checks every error itself
+ * and reports them, like the morning check.
+ */
+export function runFailOpen<T>(fn: () => T): T {
+  return failClosedScope.run(false, fn);
+}
+
+export function inFailClosedScope(): boolean {
+  return failClosedScope.getStore() === true;
+}
+
+/**
+ * `.single()` with no row answers PGRST116. That is the one error a caller
+ * routinely means as "not there" (`data` null, carry on with defaults), so
+ * fail-closed leaves it alone.
+ */
+function isNoRow(err: unknown): boolean {
+  return Boolean(err && typeof err === "object" && (err as { code?: string }).code === "PGRST116");
+}
 
 function describe(err: unknown): string {
   if (!err || typeof err !== "object") return String(err);
@@ -37,15 +87,17 @@ function describe(err: unknown): string {
  * always bugs, never bad input or a transient blip, so they're the ones worth
  * failing hard on in dev.
  *   42703 undefined_column · 42P01 undefined_table · PGRST200 no relationship
+ *   PGRST201 ambiguous relationship (two links, embed names neither)
  */
 function isSchemaError(err: unknown): boolean {
   if (!err || typeof err !== "object") return false;
   const { code, message } = err as { code?: string; message?: string };
-  if (code === "42703" || code === "42P01" || code === "PGRST200") return true;
+  if (code === "42703" || code === "42P01" || code === "PGRST200" || code === "PGRST201") return true;
   return Boolean(
     message &&
       (message.includes("does not exist") ||
-        message.includes("Could not find a relationship")),
+        message.includes("Could not find a relationship") ||
+        message.includes("more than one relationship")),
   );
 }
 
@@ -55,16 +107,25 @@ function isSchemaError(err: unknown): boolean {
  * a throw there is swallowed by the await machinery and hangs the caller
  * forever. The wrapper routes what we return into the rejection path instead.
  */
-function inspect(result: MaybeResult, table: string): Error | null {
+function inspect(result: MaybeResult, table: string, failClosed: boolean): Error | null {
   if (!result || typeof result !== "object" || !result.error) return null;
   const err = result.error;
   const detail = describe(err);
 
   console.error(`[db-error] ${table}: ${detail}`);
 
-  // Only schema errors stop the caller, and only outside production. A
-  // permissions or network blip in dev shouldn't halt work; a typo'd column
-  // should, loudly and immediately.
+  // Background work: every error stops the caller, in production too. The
+  // alternative is a cron acting on "no rows" that were really a failure.
+  if (failClosed && !isNoRow(err)) {
+    return new Error(
+      `[db-error] ${table}: ${detail}\n` +
+        `Background work stops here rather than treating a failed read as "no rows".`,
+    );
+  }
+
+  // Elsewhere only schema errors stop the caller, and only outside
+  // production. A permissions or network blip in dev shouldn't halt work; a
+  // typo'd column should, loudly and immediately.
   if (isSchemaError(err) && process.env.NODE_ENV !== "production") {
     return new Error(
       `[db-error] ${table}: ${detail}\n` +
@@ -76,8 +137,13 @@ function inspect(result: MaybeResult, table: string): Error | null {
   return null;
 }
 
-/** Wrap one PostgREST builder so awaiting it inspects the result. */
-function wrapBuilder<T extends object>(builder: T, table: string): T {
+/**
+ * Wrap one PostgREST builder so awaiting it inspects the result. Whether a
+ * failure rejects was decided when the query was issued (`.from()`), where
+ * the scope is unambiguous; by the time the promise settles the async
+ * context may be a different one.
+ */
+function wrapBuilder<T extends object>(builder: T, table: string, failClosed: boolean): T {
   return new Proxy(builder, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
@@ -91,7 +157,7 @@ function wrapBuilder<T extends object>(builder: T, table: string): T {
           (value as (...a: unknown[]) => unknown).call(
             target,
             (res: MaybeResult) => {
-              const failure = inspect(res, table);
+              const failure = inspect(res, table, failClosed);
               if (failure) {
                 // Route into the REJECTION path. `await` passes its own
                 // resolve/reject here; throwing instead would be swallowed
@@ -114,7 +180,7 @@ function wrapBuilder<T extends object>(builder: T, table: string): T {
             args,
           );
           return out && typeof out === "object" && "then" in (out as object)
-            ? wrapBuilder(out as object, table)
+            ? wrapBuilder(out as object, table, failClosed)
             : out;
         };
       }
@@ -140,7 +206,7 @@ export function guardQueries<T extends object>(client: T): T {
           );
           const table = typeof args[0] === "string" ? args[0] : "unknown";
           return builder && typeof builder === "object"
-            ? wrapBuilder(builder as object, table)
+            ? wrapBuilder(builder as object, table, inFailClosedScope())
             : builder;
         };
       }

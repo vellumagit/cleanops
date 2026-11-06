@@ -1,7 +1,13 @@
 import "server-only";
 
+import { enterFailClosed } from "@/lib/supabase/query-guard";
+
 /**
- * Cron endpoint auth guard.
+ * Cron endpoint auth guard — and the point where background work starts
+ * failing closed: once the caller is authorized, every database read for
+ * the rest of the request rejects on error instead of handing back null
+ * data that reads as "no rows" (see supabase/query-guard.ts). Call this
+ * synchronously at the top of the handler, before the first await.
  *
  * Vercel Cron sends the header `Authorization: Bearer <CRON_SECRET>` when
  * invoking endpoints listed in vercel.json. Any other caller that wants to
@@ -29,5 +35,6 @@ export function requireCronAuth(request: Request): Response | null {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  enterFailClosed();
   return null; // authorized — caller continues
 }
