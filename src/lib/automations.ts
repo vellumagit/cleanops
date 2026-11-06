@@ -726,6 +726,7 @@ export async function notifyUpcomingJobs() {
           title: "Job starting soon",
           body,
           href: `/field/jobs/${j.id}`,
+          fact: `job_starting_soon:${j.id}:${j.scheduled_at}`,
         }));
       });
 
@@ -742,6 +743,7 @@ export async function notifyUpcomingJobs() {
               title: r.title,
               body: r.body,
               href: r.href,
+              fact: r.fact,
             })
           : Promise.resolve(),
       ),
@@ -3733,6 +3735,9 @@ export async function notifyBookingAssignment(
       title,
       body,
       href: `/field/jobs/${bookingId}`,
+      // Once per person per (job, start): five paths call this, and a form
+      // save that re-adds the same crew must not re-buzz them.
+      fact: `assigned:${bookingId}:${row?.scheduled_at ?? meta.scheduledAt}`,
     });
 
     // SMS to the employee's phone (when Twilio is on, they have a phone,
@@ -6333,6 +6338,7 @@ export async function runJobWatch(): Promise<{
             title: "You're not clocked in",
             body: `${ownStart ? "Your part of " : ""}${n.booking.client?.name ?? "a job"} started at ${when} and you haven't clocked in. Open the job to clock in, or tell the office if you can't make it.`,
             href: `/field/jobs/${n.booking.id}`,
+            fact: `${n.key}@${new Date(n.booking.scheduled_at).getTime()}`,
           });
           nudged++;
         }
@@ -6369,6 +6375,7 @@ export async function runJobWatch(): Promise<{
               : "/app/bookings",
           // Money is about to move on the strength of no evidence. Email it.
           channels: { email: true },
+          fact: `no_clock_in:${toFlag.map((b) => `${b.id}@${b.scheduled_at}`).sort().join(",")}`,
         });
         await db
           .from("bookings")
@@ -6610,6 +6617,7 @@ export async function sendShiftClockOutReminders(): Promise<{
           audience: "org-management",
           organizationId: e.organization_id,
           type: "shift_auto_closed",
+          fact: `shift_auto_closed:${e.id}`,
           title: "A shift was auto-closed",
           body: `${firstName} was still clocked in ${hoursOver}h past the end of their job (${hoursOpen}h total). We capped the shift and flagged it for review.`,
           href: "/app/timesheets",
@@ -7260,6 +7268,7 @@ export async function autoVoidOldInvoices(): Promise<{ voided: number }> {
         body: `${list}${data.length > 6 ? ` and ${data.length - 6} more` : ""}. Unpaid more than ${days} days past due. Turn this off in Settings → Automations.`,
         href: "/app/invoices",
         channels: { email: true },
+        fact: `auto_void:${data.map((inv) => inv.id).sort().join(",")}`,
       });
       console.log(
         `[auto] Voided ${data.length} old overdue invoice(s) for org ${org.id}`,
@@ -7350,6 +7359,9 @@ export async function autoCompletePastBookings(): Promise<{
             ? `/app/bookings/${stalePending[0].id}`
             : "/app/bookings?status=pending",
         channels: { email: true },
+        // Dated: this is meant to come back every night the jobs stay
+        // pending; the fact only stops the same night saying it twice.
+        fact: `stale_pending:${cutoff.slice(0, 10)}:${stalePending.map((b) => b.id).sort().join(",")}`,
       });
     }
 
@@ -7423,6 +7435,7 @@ export async function autoCompletePastBookings(): Promise<{
             : "/app/bookings",
         // Work that never happened and was never billed. Email it.
         channels: { email: true },
+        fact: `unstaffed_past:${cutoff.slice(0, 10)}:${unstaffed.map((b) => b.id).sort().join(",")}`,
       });
       console.log(
         `[auto] ${unstaffed.length} unstaffed past booking(s) left alone for org ${org.id}`,
@@ -7501,6 +7514,7 @@ export async function autoCompletePastBookings(): Promise<{
             : `${stillWorking.size} past jobs still have someone on the clock`,
         body: `${names}${stillWorking.size > 3 ? ` and ${stillWorking.size - 3} more` : ""} — a shift is still running, so these were NOT completed or invoiced. Check Timesheets.`,
         href: "/app/timesheets",
+        fact: `past_job_on_clock:${cutoff.slice(0, 10)}:${[...stillWorking].sort().join(",")}`,
       });
     }
     if (toComplete.length === 0) continue;
@@ -8162,6 +8176,7 @@ export async function chaseUnconfirmedShifts(): Promise<{
           body: `${client}, ${day.toLowerCase() === "today" ? "today" : day} at ${time}. You haven't confirmed this shift. Open it and tap Accept, or tell the office you can't make it.`,
           href,
           push: { sticky: true },
+          fact: `shift_unconfirmed_soon:${r.booking.id}:${r.membership_id}:${r.booking.scheduled_at}`,
         });
         const who = memberDisplayName(r.member);
         await notify({
@@ -8171,6 +8186,7 @@ export async function chaseUnconfirmedShifts(): Promise<{
           title: `${who} hasn't confirmed ${day.toLowerCase() === "today" ? "today's" : `${day}'s`} ${time} at ${client}`,
           body: `The shift starts in under two hours and ${who} hasn't accepted it. Check with them, or reassign the job.`,
           href: `/app/bookings/${r.booking.id}`,
+          fact: `shift_unconfirmed_escalated:${r.booking.id}:${r.membership_id}:${r.booking.scheduled_at}`,
         });
         await db
           .from("booking_assignees")
@@ -8189,6 +8205,7 @@ export async function chaseUnconfirmedShifts(): Promise<{
           title: `Please confirm: ${day} ${time} at ${client}`,
           body: `This shift is waiting for your yes. Open it and tap Accept, or tell the office if you can't make it.`,
           href,
+          fact: `shift_unconfirmed:${r.booking.id}:${r.membership_id}:${r.booking.scheduled_at}`,
         });
         await db
           .from("booking_assignees")

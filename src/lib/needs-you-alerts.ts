@@ -94,6 +94,9 @@ export async function sendNeedsYouAlerts(opts: { now?: number } = {}): Promise<{
           // left running — still reaches every manager, her included,
           // because nothing else is sure to say it to her.
           excludeMembershipId: it.tell?.membershipId,
+          // The item's own key, pinned to the job's current schedule so a
+          // moved job can be alerted about again (same rule as `already`).
+          fact: it.sinceMs != null ? `${it.key}@${it.sinceMs}` : it.key,
           // Email too. Push only reaches a phone that has allowed it, and
           // on 2026-10-28 the one manager who runs the day had never
           // allowed it — so a push-only alert was an in-app badge she'd see
@@ -110,6 +113,7 @@ export async function sendNeedsYouAlerts(opts: { now?: number } = {}): Promise<{
             title: it.tell.title,
             body: it.tell.body,
             href: it.tell.href,
+            fact: `${it.sinceMs != null ? `${it.key}@${it.sinceMs}` : it.key}:tell`,
           });
         }
         alerted++;
@@ -134,6 +138,7 @@ export async function sendNeedsYouAlerts(opts: { now?: number } = {}): Promise<{
             body: lines.join("\n"),
             href: "/app",
             channels: { email: true },
+            fact: digestKey,
           });
           digests++;
         }

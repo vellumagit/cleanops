@@ -59,6 +59,18 @@ type NotifyBase = {
    * recipient to exclude.
    */
   excludeMembershipId?: string;
+  /**
+   * What this message is about: one key per (event, job), such as
+   * "no_clock_in:<booking>" or "assigned:<booking>:<start>". With it, one
+   * person is told one fact once — the database refuses a second row for
+   * the same fact to the same person (notifications_one_fact_per_person),
+   * and only the people whose row went in get the push and the email. That
+   * holds across ticks and retries, not just within one call, so a sender
+   * whose own "already said" stamp failed to write still can't repeat
+   * itself. Leave it off for a message that repeats on purpose (the
+   * half-hourly clock-out reminder). Not applied to `org-wide` rows.
+   */
+  fact?: string;
 };
 
 export type NotifyInput = NotifyBase &
@@ -267,26 +279,60 @@ export async function notify(input: NotifyInput): Promise<void> {
 
     if (recipientIds.length === 0) return;
 
-    if (doInApp) {
+    if (doInApp || input.fact) {
       // The result used to be discarded. notifications.type is an ENUM, and
       // seven of the eight types this app sends were never members of it —
       // so every insert failed 22P02 and nobody found out for weeks. Check
       // it, and shout, because a silent notification is worse than none.
-      const { error: insErr } = (await db.from("notifications").insert(
-        recipientIds.map((id) => ({
-          organization_id: input.organizationId,
-          recipient_membership_id: id,
-          type,
-          title: input.title,
-          body: input.body,
-          href: input.href,
-          min_role: minRole,
-        })) as never,
-      )) as unknown as { error: { message: string } | null };
-      if (insErr) {
-        console.error(
-          `[notify] in-app insert FAILED (type="${type}", audience=${input.audience}): ${insErr.message}`,
-        );
+      const rows = recipientIds.map((id) => ({
+        organization_id: input.organizationId,
+        recipient_membership_id: id,
+        type,
+        title: input.title,
+        body: input.body,
+        href: input.href,
+        min_role: minRole,
+        ...(input.fact ? { fact: input.fact } : {}),
+      }));
+      if (input.fact) {
+        // A fact is told once per person. The unique index decides; the rows
+        // that come back are the people who had not heard it, and they are
+        // the only ones pushed or emailed below. (in-app is always written
+        // for a fact — the row IS the memory of having said it.)
+        const { data: told, error: insErr } = (await db
+          .from("notifications")
+          .upsert(rows as never, {
+            onConflict: "organization_id,recipient_membership_id,fact",
+            ignoreDuplicates: true,
+          })
+          .select("recipient_membership_id")) as unknown as {
+          data: Array<{ recipient_membership_id: string }> | null;
+          error: { message: string } | null;
+        };
+        if (insErr) {
+          console.error(
+            `[notify] in-app insert FAILED (type="${type}", audience=${input.audience}, fact="${input.fact}"): ${insErr.message}`,
+          );
+          return;
+        }
+        const fresh = new Set((told ?? []).map((r) => r.recipient_membership_id));
+        const repeats = recipientIds.filter((id) => !fresh.has(id));
+        if (repeats.length > 0) {
+          console.log(
+            `[notify] already told ${repeats.length} of ${recipientIds.length} about "${input.fact}"; not repeating`,
+          );
+        }
+        recipientIds = recipientIds.filter((id) => fresh.has(id));
+        if (recipientIds.length === 0) return;
+      } else {
+        const { error: insErr } = (await db
+          .from("notifications")
+          .insert(rows as never)) as unknown as { error: { message: string } | null };
+        if (insErr) {
+          console.error(
+            `[notify] in-app insert FAILED (type="${type}", audience=${input.audience}): ${insErr.message}`,
+          );
+        }
       }
     }
     if (doPush) {

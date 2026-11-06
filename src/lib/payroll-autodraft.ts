@@ -127,6 +127,7 @@ export async function runPayrollAutodraft(): Promise<{
           // Email too: this fires once a period, and push only reaches a phone
           // that has allowed it (see needs-you-alerts.ts).
           channels: { email: true },
+          fact: `payroll_ready:${p.start}:${p.end}`,
         });
       } else if (result.flagged) {
         // Blocked on unreviewed capped shifts. Nag only on the first
@@ -149,6 +150,7 @@ export async function runPayrollAutodraft(): Promise<{
               .join(" "),
             href: "/app/timesheets",
             channels: { email: true },
+            fact: `payroll_blocked:${p.start}:${p.end}`,
           });
         }
       }
