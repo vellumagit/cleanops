@@ -19,6 +19,7 @@ import { after } from "next/server";
 import { syncJob } from "@/lib/job-sync";
 import { closeJob } from "@/lib/close-job";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
+import { readServiceExtras } from "@/lib/service-extras";
 import { can } from "@/lib/auth";
 import type { Database } from "@/lib/supabase/types";
 
@@ -91,18 +92,6 @@ function readFormValues(formData: FormData) {
  * for both columns, so a partial caller (e.g. the public client
  * portal request form) won't break.
  */
-function readServiceExtras(formData: FormData): {
-  service_type_id: string | null;
-  service_type_label: string | null;
-} {
-  const id = String(formData.get("service_type_id") ?? "").trim();
-  const label = String(formData.get("service_type_label") ?? "").trim();
-  return {
-    service_type_id: id.length > 0 ? id : null,
-    service_type_label: label.length > 0 ? label : null,
-  };
-}
-
 /**
  * Which of the client's properties this job is at.
  *

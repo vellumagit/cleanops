@@ -11,6 +11,7 @@ import { sendOrgEmailDetailed, isClientEmailPaused } from "@/lib/email";
 import { contractSignInvitationEmail } from "@/lib/email-templates";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { formatCurrencyCents, humanizeEnum } from "@/lib/format";
+import { readServiceExtras } from "@/lib/service-extras";
 
 type Field = keyof typeof ContractSchema.shape;
 export type ContractFormState = ActionState<Field>;
@@ -28,22 +29,6 @@ function readFormValues(formData: FormData) {
   };
 }
 
-/**
- * Read the FK + label hidden inputs the contract form ships alongside
- * the legacy enum value. Mirrors readServiceExtras() in bookings/actions.
- */
-function readContractServiceExtras(formData: FormData): {
-  service_type_id: string | null;
-  service_type_label: string | null;
-} {
-  const id = String(formData.get("service_type_id") ?? "").trim();
-  const label = String(formData.get("service_type_label") ?? "").trim();
-  return {
-    service_type_id: id.length > 0 ? id : null,
-    service_type_label: label.length > 0 ? label : null,
-  };
-}
-
 export async function createContractAction(
   _prev: ContractFormState,
   formData: FormData,
@@ -58,7 +43,7 @@ export async function createContractAction(
     return { errors: { _form: "Your subscription has expired. Subscribe to create new contracts." }, values: raw };
   }
 
-  const extras = readContractServiceExtras(formData);
+  const extras = readServiceExtras(formData);
   // Server-side gate: submit-button disable doesn't catch Enter-key
   // submission. Without a real service_type_id the contract would
   // save with NULL FK + empty label.
@@ -101,7 +86,7 @@ export async function updateContractAction(
   if (!parsed.ok) return { errors: parsed.errors, values: raw };
 
   const { membership, supabase } = await getActionContext();
-  const extras = readContractServiceExtras(formData);
+  const extras = readServiceExtras(formData);
   // Server-side gate matching createContractAction — Enter-key on an
   // edit form with an empty service catalog would otherwise write
   // service_type_id=NULL. Refuse with a friendly error.

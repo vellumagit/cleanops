@@ -20,6 +20,13 @@ import { BookingQuickView } from "./booking-quick-view";
 import { toneForEmployee } from "./color";
 import type { BookingWarning } from "@/app/app/bookings/booking-warnings";
 import { WarningDot, WarningProvider } from "./warning-dot";
+import {
+  dateKey,
+  formatHourLabel,
+  formatTimeLabel,
+  minutesOfDay,
+  pad2,
+} from "./time-axis";
 
 /**
  * The phone's day view: ONE time lane for the whole operation.
@@ -44,48 +51,6 @@ const SLOT_MINUTES = 30;
 const SLOT_PX = 40; // same scale as the dispatch grid: 1h = 80px
 const SLOTS_PER_DAY = 48;
 const DAY_HEIGHT_PX = SLOTS_PER_DAY * SLOT_PX;
-
-function pad(n: number) {
-  return String(n).padStart(2, "0");
-}
-
-function dateKey(d: Date, tz: string): string {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: tz,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(d);
-  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "00";
-  return `${get("year")}-${get("month")}-${get("day")}`;
-}
-
-function minutesOfDay(iso: string, tz: string): number {
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: tz,
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).formatToParts(new Date(iso));
-  const h = Number(parts.find((p) => p.type === "hour")?.value ?? 0);
-  const m = Number(parts.find((p) => p.type === "minute")?.value ?? 0);
-  return h * 60 + m;
-}
-
-function formatHourLabel(hour: number): string {
-  if (hour === 0) return "12 AM";
-  if (hour < 12) return `${hour} AM`;
-  if (hour === 12) return "12 PM";
-  return `${hour - 12} PM`;
-}
-
-function timeLabel(minutes: number): string {
-  const h24 = Math.floor(minutes / 60) % 24;
-  const m = minutes % 60;
-  const suffix = h24 < 12 ? "AM" : "PM";
-  const h = h24 % 12 === 0 ? 12 : h24 % 12;
-  return m === 0 ? `${h} ${suffix}` : `${h}:${pad(m)} ${suffix}`;
-}
 
 /**
  * Calendar-style lane packing for overlapping jobs: each booking gets a
@@ -243,7 +208,7 @@ export function DayAgenda({
 
   function addAt(minutes: number) {
     if (!canEdit) return;
-    const hhmm = `${pad(Math.floor(minutes / 60))}:${pad(minutes % 60)}`;
+    const hhmm = `${pad2(Math.floor(minutes / 60))}:${pad2(minutes % 60)}`;
     // Wall clock, no timezone — same contract as the dispatch grid's slot
     // click: the time the owner tapped is the time the form shows.
     router.push(
@@ -405,8 +370,8 @@ export function DayAgenda({
                       <span className="truncate">{b.client_name}</span>
                     </div>
                     <div className="truncate text-[10px] leading-tight text-muted-foreground">
-                      {timeLabel(pos.startMin)} –{" "}
-                      {timeLabel(pos.startMin + b.duration_minutes)}
+                      {formatTimeLabel(pos.startMin)} –{" "}
+                      {formatTimeLabel(pos.startMin + b.duration_minutes)}
                       {assignees.length > 0 ? (
                         <> · {assignees.join(", ")}</>
                       ) : b.staffed ? (

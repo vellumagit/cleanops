@@ -37,6 +37,7 @@ import { computeSplitCue, type SplitCue } from "./split-cue";
 import type { BookingWarning } from "@/app/app/bookings/booking-warnings";
 import { WarningDot, WarningProvider } from "./warning-dot";
 import { dragIdFor, readDragInfo } from "./drag-crew";
+import { dateKey, formatHourLabel, minutesOfDay, pad2 } from "./time-axis";
 
 /**
  * Dispatch view: single-day, time-of-day axis, employee columns.
@@ -60,42 +61,6 @@ const SLOT_MINUTES = 30;
 const SLOT_PX = 40; // 30 min = 40px → hour = 80px
 const SLOTS_PER_DAY = 48; // 24h × 2
 const DAY_HEIGHT_PX = SLOTS_PER_DAY * SLOT_PX;
-
-function pad(n: number) {
-  return String(n).padStart(2, "0");
-}
-
-/** "2026-04-24" for a Date in the given tz. */
-function dateKey(d: Date, tz: string): string {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: tz,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(d);
-  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "00";
-  return `${get("year")}-${get("month")}-${get("day")}`;
-}
-
-/** Minutes from midnight for a UTC iso, interpreted in the given tz. */
-function minutesOfDay(iso: string, tz: string): number {
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: tz,
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).formatToParts(new Date(iso));
-  const h = Number(parts.find((p) => p.type === "hour")?.value ?? 0);
-  const m = Number(parts.find((p) => p.type === "minute")?.value ?? 0);
-  return h * 60 + m;
-}
-
-function formatHourLabel(hour: number): string {
-  if (hour === 0) return "12 AM";
-  if (hour < 12) return `${hour} AM`;
-  if (hour === 12) return "12 PM";
-  return `${hour - 12} PM`;
-}
 
 export function DispatchGrid({
   /** YYYY-MM-DD for the day this view renders. */
@@ -260,7 +225,7 @@ export function DispatchGrid({
 
     // Slot drop: (employee, HH:MM). No-op when it's already there.
     const currentMin = minutesOfDay(booking.scheduled_at, tz);
-    const currentHH = `${pad(Math.floor(currentMin / 60))}:${pad(currentMin % 60)}`;
+    const currentHH = `${pad2(Math.floor(currentMin / 60))}:${pad2(currentMin % 60)}`;
     // Against the lane the card came FROM: a team job is in every crew
     // member's column, not just the first person's.
     if (
@@ -293,7 +258,7 @@ export function DispatchGrid({
     if (!canEdit) return;
     const h = Math.floor(minutesFromMidnight / 60);
     const m = minutesFromMidnight % 60;
-    const hhmm = `${pad(h)}:${pad(m)}`;
+    const hhmm = `${pad2(h)}:${pad2(m)}`;
     // A WALL CLOCK, with no timezone on it — the owner pointed at the 2 PM
     // row and the form must say 2 PM. It used to carry a "Z", which made the
     // new-booking page read it as a UTC instant and re-render it in the org's
@@ -590,7 +555,7 @@ function EmployeeColumn({
           <DroppableSlot
             key={slotIdx}
             employeeId={employee.id}
-            time={`${pad(h)}-${pad(m)}`}
+            time={`${pad2(h)}-${pad2(m)}`}
             canEdit={canEdit}
             isHourStart={m === 0}
             onClick={() => onSlotClick(employee.id, minutes)}

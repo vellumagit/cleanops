@@ -6,6 +6,7 @@ import { newLeadPatch, type LeadSource } from "@/lib/lead-pipeline";
 import { sendEmail, getOrgSender, withinOrgEmailCap } from "@/lib/email";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { escapeHtml as e } from "@/lib/support-mail";
+import { readRequestBody } from "@/lib/request-body";
 import {
   getLeadAlertTargets,
   composeLeadAlertSms,
@@ -43,36 +44,6 @@ function s(v: unknown, cap = 300): string {
   return String(v ?? "").trim().slice(0, cap);
 }
 
-
-/**
- * Read the submission however the browser sent it. The estimate page posts
- * JSON; a plain HTML form posts urlencoded; some builders post multipart.
- * The first live cutover taught this the honest way: the contact form's
- * posts bounced with invalid_json while the endpoint insisted on one
- * content type. A public intake endpoint takes what it's given.
- */
-async function readBody(request: NextRequest): Promise<Record<string, unknown>> {
-  const ct = (request.headers.get("content-type") ?? "").toLowerCase();
-  try {
-    if (ct.includes("multipart/form-data")) {
-      const fd = await request.formData();
-      const out: Record<string, unknown> = {};
-      for (const [k, v] of fd.entries()) out[k] = typeof v === "string" ? v : "";
-      return out;
-    }
-    const raw = await request.text();
-    if (!raw) return {};
-    try {
-      return JSON.parse(raw) as Record<string, unknown>;
-    } catch {
-      const out: Record<string, unknown> = {};
-      for (const [k, v] of new URLSearchParams(raw).entries()) out[k] = v;
-      return out;
-    }
-  } catch {
-    return {};
-  }
-}
 
 export async function POST(
   request: NextRequest,
@@ -120,7 +91,7 @@ export async function POST(
     );
   }
 
-  const body = await readBody(request);
+  const body = await readRequestBody(request);
 
   // Honeypot: the form ships an invisible `website` field. Humans leave it
   // empty; bots helpfully fill it in. They get a success and we get peace.

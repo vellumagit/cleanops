@@ -3,6 +3,7 @@
 import { toast } from "sonner";
 import { startJobAction, completeJobAction, pauseJobAction } from "./jobs/actions";
 import { TAPPED_AT_FIELD, MAX_TAP_AGE_MS } from "@/lib/punch-time";
+import { getCurrentCoordinates } from "./geolocation";
 
 /**
  * The two things a cleaner says about her own shift — "I'm here" and
@@ -55,19 +56,6 @@ export function queuedTapCount(): number {
   return readQueue().length;
 }
 
-async function getCoords(): Promise<{ lat: number | null; lng: number | null }> {
-  if (typeof window === "undefined" || !("geolocation" in navigator)) {
-    return { lat: null, lng: null };
-  }
-  return new Promise((resolve) => {
-    navigator.geolocation.getCurrentPosition(
-      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-      () => resolve({ lat: null, lng: null }),
-      { enableHighAccuracy: true, timeout: 5000, maximumAge: 30_000 },
-    );
-  });
-}
-
 function toFormData(t: QueuedTap): FormData {
   const fd = new FormData();
   fd.set("booking_id", t.bookingId);
@@ -103,7 +91,7 @@ export type TapOutcome =
  */
 export async function tap(kind: TapKind, bookingId: string): Promise<TapOutcome> {
   const tappedAt = new Date().toISOString();
-  const coords = await getCoords();
+  const coords = await getCurrentCoordinates();
   const t: QueuedTap = { kind, bookingId, tappedAt, ...coords };
   try {
     const result = await send(t);

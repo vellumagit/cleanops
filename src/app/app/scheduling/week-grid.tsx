@@ -37,6 +37,7 @@ import { WarningDot, WarningProvider } from "./warning-dot";
 import { dragIdFor, readDragInfo } from "./drag-crew";
 import { formatCalendarDate } from "@/lib/wall-clock";
 import { orderCrewByWorkload } from "./crew-order";
+import { dateKey } from "./time-axis";
 
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -53,27 +54,6 @@ const DENSITY = {
   comfortable: { cell: "min-h-[110px] space-y-2 p-2", lane: "py-3" },
   compact: { cell: "min-h-[44px] space-y-1 p-1.5", lane: "py-1.5" },
 } as const satisfies Record<Density, { cell: string; lane: string }>;
-
-function dateKey(d: Date, tz?: string) {
-  if (tz) {
-    // Render the date components in the org's timezone so cellMap
-    // bucketing matches what the user sees (e.g. a 10pm Edmonton job
-    // stays on the same day it was scheduled for, not the next day
-    // when the browser is in a later tz).
-    const parts = new Intl.DateTimeFormat("en-CA", {
-      timeZone: tz,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).formatToParts(d);
-    const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "00";
-    return `${get("year")}-${get("month")}-${get("day")}`;
-  }
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
 
 function formatHourMinute(iso: string, tz?: string) {
   return new Date(iso).toLocaleTimeString("en-US", {

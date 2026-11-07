@@ -16,8 +16,7 @@ import { clockInAction, clockOutAction } from "./actions";
 import { startJobAction, completeJobAction } from "../jobs/actions";
 import { JobCardComplete } from "../jobs/job-card-complete";
 import { useElapsed, formatElapsed, STALE_SHIFT_MS } from "../use-elapsed";
-
-type Coords = { lat: number | null; lng: number | null };
+import { getCurrentCoordinates, type Coordinates } from "../geolocation";
 
 // Categories for an off-job clock-in (not tied to a booking). Nothing is
 // preselected — every punch is an explicit choice. Order differs by who's
@@ -67,20 +66,7 @@ function useAppBadge(hoursOnClock: number | null) {
   }, [hoursOnClock]);
 }
 
-async function getCoords(): Promise<Coords> {
-  if (typeof window === "undefined" || !("geolocation" in navigator)) {
-    return { lat: null, lng: null };
-  }
-  return new Promise((resolve) => {
-    navigator.geolocation.getCurrentPosition(
-      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-      () => resolve({ lat: null, lng: null }),
-      { enableHighAccuracy: true, timeout: 5000, maximumAge: 30_000 },
-    );
-  });
-}
-
-function buildFormData(coords: Coords, category?: string, note?: string) {
+function buildFormData(coords: Coordinates, category?: string, note?: string) {
   const fd = new FormData();
   // The phone's time, so a slow request still records when she tapped.
   fd.set("tapped_at", new Date().toISOString());
@@ -143,7 +129,7 @@ export function ClockCard({
 
   function handleIn() {
     startTransition(async () => {
-      const coords = await getCoords();
+      const coords = await getCurrentCoordinates();
       const result = await clockInAction(
         buildFormData(coords, category, note.trim()),
       );
@@ -159,7 +145,7 @@ export function ClockCard({
   function handleRollover(next: TodayJob) {
     if (!openBookingId) return;
     startTransition(async () => {
-      const coords = await getCoords();
+      const coords = await getCurrentCoordinates();
       const done = buildFormData(coords);
       done.set("booking_id", openBookingId);
       const finish = await completeJobAction(done);
@@ -182,7 +168,7 @@ export function ClockCard({
 
   function handleOut() {
     startTransition(async () => {
-      const coords = await getCoords();
+      const coords = await getCurrentCoordinates();
       const result = await clockOutAction(buildFormData(coords));
       if (result.ok) {
         toast.success("Clocked out");
