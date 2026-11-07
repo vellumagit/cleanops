@@ -18,6 +18,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireCronAuth } from "@/lib/cron-auth";
 import { sendProductChangelog } from "@/lib/product-changelog";
+import { withCronRun } from "@/lib/cron-run";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -37,7 +38,7 @@ function localHour(tz: string): number {
   );
 }
 
-export async function GET(request: NextRequest) {
+async function cronGet(request: NextRequest) {
   const unauthorized = requireCronAuth(request);
   if (unauthorized) return unauthorized;
 
@@ -68,3 +69,7 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+
+// Every run leaves a row in cron_runs (src/lib/cron-run.ts); the morning
+// check lists what failed and what stopped running.
+export const GET = withCronRun("/api/cron/product-changelog", cronGet);

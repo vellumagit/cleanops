@@ -1,10 +1,11 @@
 import { requireCronAuth } from "@/lib/cron-auth";
 import { sendDailyEmployeeSchedules } from "@/lib/automations";
+import { withCronRun } from "@/lib/cron-run";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-export async function GET(request: Request) {
+async function cronGet(request: Request) {
   const unauthorized = requireCronAuth(request);
   if (unauthorized) return unauthorized;
 
@@ -18,3 +19,7 @@ export async function GET(request: Request) {
     );
   }
 }
+
+// Every run leaves a row in cron_runs (src/lib/cron-run.ts); the morning
+// check lists what failed and what stopped running.
+export const GET = withCronRun("/api/cron/employee-daily-schedule", cronGet);

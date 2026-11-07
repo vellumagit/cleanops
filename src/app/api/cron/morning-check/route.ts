@@ -23,12 +23,13 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { runFailOpen } from "@/lib/supabase/query-guard";
 import { escapeHtml } from "@/lib/support-mail";
 import { runMorningCheck } from "@/lib/morning-check";
+import { withCronRun } from "@/lib/cron-run";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
 export const dynamic = "force-dynamic";
 
-export async function GET(request: NextRequest) {
+async function cronGet(request: NextRequest) {
   const unauthorized = requireCronAuth(request);
   if (unauthorized) return unauthorized;
 
@@ -74,3 +75,7 @@ export async function GET(request: NextRequest) {
   }
   return NextResponse.json({ ok: true, subject, id: sent.id });
 }
+
+// Every run leaves a row in cron_runs (src/lib/cron-run.ts); the morning
+// check lists what failed and what stopped running.
+export const GET = withCronRun("/api/cron/morning-check", cronGet);

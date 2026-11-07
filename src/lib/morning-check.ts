@@ -18,6 +18,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { deriveJobState, type JobStateShift } from "./job-state";
 import { resolveAutomationEnabled } from "./automation-defaults";
 import { zonedDayBoundsUtc } from "./wall-clock";
+import { summarizeCronRuns, type CronRunRow } from "./cron-run-summary";
+import vercelConfig from "../../vercel.json";
 
 /** Svit's org — the one the shadow week watches. */
 export const MORNING_CHECK_DEFAULT_ORG = "4cf4c402-5889-43c9-91f3-7186f66ee08b";
@@ -32,11 +34,16 @@ export type MorningFlagInput = {
   longOpenClocks: number;
   duplicateMessages: number;
   readErrors: string[];
+  cronsFailed?: number;
+  cronsMissing?: number;
 };
 
 /** What the reader should look at, most serious first. Empty means clean. */
 export function morningFlags(f: MorningFlagInput): string[] {
   const out = f.readErrors.map((e) => `Could not read ${e} — this report is incomplete`);
+  // A cron that failed or stopped is the one thing nothing else surfaces.
+  if (f.cronsMissing) out.push(`${f.cronsMissing} cron(s) have stopped running (section 6)`);
+  if (f.cronsFailed) out.push(`${f.cronsFailed} cron run(s) failed (section 6)`);
   if (f.disagreeingJobs) out.push(`${f.disagreeingJobs} job(s) disagree with the computed state right now (section 4)`);
   if (f.stateChecks) out.push(`${f.stateChecks} state check(s) logged a disagreement (section 1)`);
   if (f.duplicateMessages) out.push(`${f.duplicateMessages} message(s) went to the same person twice (section 3)`);
@@ -248,6 +255,32 @@ export async function runMorningCheck(
     out.push(`   ${nameOf(o.employee).padEnd(18)} since ${fmt(o.clock_in_at)} (${mins} min)  ${o.booking?.client?.name ?? "no job"}`);
   }
 
+  // 6. The crons themselves ---------------------------------------------------
+  // Not org-scoped: the jobs run for every org, and a job that fails or
+  // stops running is invisible everywhere else (Vercel keeps ~50 log lines).
+  const { data: runRows, error: runErr } = (await db
+    .from("cron_runs" as never)
+    .select("path, started_at, finished_at, ok, status, error")
+    .gte("started_at", new Date(now - 7 * 86_400_000).toISOString())
+    .order("started_at", { ascending: false })
+    .limit(4000)) as unknown as { data: CronRunRow[] | null; error: { message: string } | null };
+  failed("cron runs", runErr);
+  const cronSummary = runErr
+    ? { lines: [`6. CRONS: the ledger could not be read (${runErr.message})`], failed: 0, missing: 0 }
+    : summarizeCronRuns(
+        (vercelConfig as { crons: Array<{ path: string; schedule: string }> }).crons,
+        runRows ?? [],
+        { nowMs: now, sinceMs: now - hoursBack * 3_600_000, fmt },
+      );
+  out.push("", ...cronSummary.lines);
+  // Housekeeping: the ledger keeps a month.
+  if (!runErr) {
+    await db
+      .from("cron_runs" as never)
+      .delete()
+      .lt("started_at", new Date(now - 30 * 86_400_000).toISOString());
+  }
+
   const flags = morningFlags({
     stateChecks: checks?.length ?? 0,
     disagreeingJobs,
@@ -255,6 +288,8 @@ export async function runMorningCheck(
     longOpenClocks,
     duplicateMessages,
     readErrors,
+    cronsFailed: runErr ? 0 : cronSummary.failed,
+    cronsMissing: runErr ? 0 : cronSummary.missing,
   });
   return { orgName: org.name, flags, lines: out };
 }

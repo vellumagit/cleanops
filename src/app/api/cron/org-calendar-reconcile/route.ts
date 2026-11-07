@@ -18,12 +18,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { reconcileOrgCalendarEvents } from "@/lib/google-calendar";
 import { requireCronAuth } from "@/lib/cron-auth";
+import { withCronRun } from "@/lib/cron-run";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
 
-export async function GET(request: NextRequest) {
+async function cronGet(request: NextRequest) {
   // Auth: header-only (Vercel cron sends the Bearer header).
   const unauthorized = requireCronAuth(request);
   if (unauthorized) return unauthorized;
@@ -82,3 +83,7 @@ export async function GET(request: NextRequest) {
     errors: errors.slice(0, 50),
   });
 }
+
+// Every run leaves a row in cron_runs (src/lib/cron-run.ts); the morning
+// check lists what failed and what stopped running.
+export const GET = withCronRun("/api/cron/org-calendar-reconcile", cronGet);
