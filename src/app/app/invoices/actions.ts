@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
 import { logAuditEvent } from "@/lib/audit";
 import { netPaidCents } from "@/lib/invoice-balance";
+import { billedRefusal, resolveBilledBookings } from "@/lib/billed-bookings";
 import { InvoiceSchema } from "@/lib/validators/invoices";
 import { autoInvoiceOnJobComplete } from "@/lib/automations";
 import {
@@ -114,6 +115,16 @@ export async function createInvoiceAction(
       .eq("organization_id", membership.organization_id)
       .maybeSingle()) as unknown as { data: { id: string } | null };
     if (!own) return { errors: { client_id: "Pick a client from this workspace." }, values: raw };
+  }
+
+  // A job already billed — by a direct invoice, a line on a consolidated
+  // invoice, or its own stamp — is not invoiced twice. The unique index
+  // only knows the first kind, which is how a job on a monthly invoice got
+  // offered an invoice of its own.
+  if (parsed.data.booking_id) {
+    const billed = await resolveBilledBookings(supabase, [parsed.data.booking_id]);
+    const refusal = billedRefusal(billed.get(parsed.data.booking_id), "invoice it again");
+    if (refusal) return { errors: { _form: refusal }, values: raw };
   }
 
   const stamps = maybeStamp(parsed.data.status);
@@ -257,29 +268,13 @@ export async function updateInvoiceAction(
   // afterwards (on the UPDATE) left the items rewritten while the invoice
   // kept its old totals — the invoice disagreeing with its own rows. There
   // is no transaction to lean on here, so the check has to come first.
+  // All three ways a job can be billed, not just a direct invoice: a line on
+  // a consolidated invoice or the booking's own stamp counts too.
   if (parsed.data.booking_id) {
-    const { data: clash } = (await supabase
-      .from("invoices")
-      .select("id, number")
-      .eq("booking_id", parsed.data.booking_id)
-      .is("voided_at" as never, null as never)
-      .neq("id", id)
-      .limit(1)
-      .maybeSingle()) as unknown as {
-      data: { id: string; number: number | null } | null;
-    };
-    if (clash) {
-      const label =
-        clash.number != null
-          ? `invoice INV-${String(clash.number).padStart(3, "0")}`
-          : "another invoice";
-      return {
-        errors: {
-          _form: `That booking is already billed by ${label} — a booking can only carry one live invoice. Open that invoice instead, or void it first if this is a correction.`,
-        },
-        values: raw,
-      };
-    }
+    const billed = await resolveBilledBookings(supabase, [parsed.data.booking_id]);
+    const inv = billed.get(parsed.data.booking_id);
+    const refusal = inv && inv.id !== id ? billedRefusal(inv, "point this invoice at it") : null;
+    if (refusal) return { errors: { _form: refusal }, values: raw };
   }
 
   const tax = computeTax(parsed.data.subtotal_cents, {

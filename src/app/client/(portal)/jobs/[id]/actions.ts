@@ -206,7 +206,11 @@ export async function requestSkipAction(
   const nowIso = new Date().toISOString();
   const autoApplies = state.skipAutoApplies;
 
-  const { error: reqErr } = (await admin
+  // Recorded OPEN first, and marked resolved only once the booking is
+  // actually cancelled. Written resolved up front, a failed cancel left the
+  // portal saying "Cancelled" over a visit still on the schedule; an open
+  // request at least reaches the office queue.
+  const { data: req, error: reqErr } = (await admin
     .from("client_job_requests" as never)
     .insert({
       organization_id: booking.organization_id,
@@ -216,13 +220,13 @@ export async function requestSkipAction(
       occurrence_date: occurrenceDate(booking.scheduled_at, tz),
       kind: "skip_occurrence",
       body: reason || null,
-      // An auto-applied skip has already happened, so it is not a decision
-      // anyone has to make — the office queue only holds open questions.
-      status: autoApplies ? "resolved" : "open",
-      resolved_at: autoApplies ? nowIso : null,
-      auto_applied: autoApplies,
-    } as never)) as unknown as { error: { message: string } | null };
-  if (reqErr) return { error: reqErr.message };
+      status: "open",
+      resolved_at: null,
+      auto_applied: false,
+    } as never)
+    .select("id")
+    .single()) as unknown as { data: { id: string } | null; error: { message: string } | null };
+  if (reqErr || !req) return { error: reqErr?.message ?? "Couldn't record the request." };
 
   if (autoApplies) {
     // Cancel rather than delete. skipBookingOccurrenceAction hard-deletes and
@@ -237,6 +241,15 @@ export async function requestSkipAction(
       .eq("client_id", client.id);
     if (cancelErr) return { error: cancelErr.message };
     await syncJob(booking.id, "client_skip");
+    // An auto-applied skip has happened, so it is not a decision anyone has
+    // to make — the office queue only holds open questions.
+    const { error: resolveErr } = await admin
+      .from("client_job_requests" as never)
+      .update({ status: "resolved", resolved_at: nowIso, auto_applied: true } as never)
+      .eq("id", req.id);
+    if (resolveErr) {
+      console.error("[portal] skip applied but its request stayed open:", resolveErr.message);
+    }
   }
 
   after(async () => {

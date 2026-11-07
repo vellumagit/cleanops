@@ -165,6 +165,15 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     if (statusErr) {
       return NextResponse.json({ error: statusErr }, { status: 400 });
     }
+    // Same guard as the edit form and the status dropdown: a completed job
+    // an invoice bills doesn't leave completed from under it. The API was
+    // the one writer without the twin.
+    if (prev.status === "completed" && nextStatus !== "completed") {
+      const { resolveBilledBookings, billedRefusal } = await import("@/lib/billed-bookings");
+      const billed = await resolveBilledBookings(admin, [id]);
+      const refusal = billedRefusal(billed.get(id), "change the booking's status");
+      if (refusal) return NextResponse.json({ error: refusal }, { status: 409 });
+    }
   }
 
   // A status set through the API is a human saying so, same as the edit

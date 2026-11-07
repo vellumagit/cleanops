@@ -219,3 +219,20 @@ describe("resolveBilledBookings fails closed by default", () => {
     expect(m.size).toBe(0);
   });
 });
+
+describe("billedRefusal — the one sentence every writer says", () => {
+  it("names the invoice, its status, and what to do after voiding it", async () => {
+    const { billedRefusal } = await import("./billed-bookings");
+    expect(
+      billedRefusal({ id: "i", number: 64, status: "sent", amountCents: 100 }, "change the booking's status"),
+    ).toBe("invoice INV-064 (sent) already bills this job. Void or fix that invoice first, then change the booking's status.");
+  });
+
+  it("copes with an unnumbered draft, and says nothing for an unbilled job", async () => {
+    const { billedRefusal } = await import("./billed-bookings");
+    expect(billedRefusal({ id: "i", number: null, status: "draft", amountCents: 0 }, "invoice it again")).toMatch(
+      /^another invoice \(draft\) already bills this job/,
+    );
+    expect(billedRefusal(undefined, "anything")).toBeNull();
+  });
+});

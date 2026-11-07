@@ -233,6 +233,40 @@ export async function resolveBilledBookings(
   return billedBy;
 }
 
+/** "invoice INV-064 (sent)" — how a billing invoice is named in a refusal. */
+export function billedByLabel(inv: BilledBy): string {
+  const num = inv.number != null ? `INV-${String(inv.number).padStart(3, "0")}` : "another invoice";
+  return `${inv.number != null ? "invoice " : ""}${num} (${inv.status})`;
+}
+
+/**
+ * The one sentence every writer says when a job is already billed, whether
+ * the writer is the invoice form, the booking API or the status dropdown.
+ * `then` is what the caller wanted to do: "change the booking's status",
+ * "invoice it again".
+ */
+export function billedRefusal(inv: BilledBy | undefined, then: string): string | null {
+  if (!inv) return null;
+  return `${billedByLabel(inv)} already bills this job. Void or fix that invoice first, then ${then}.`;
+}
+
+/**
+ * resolveBilledBookings for a long list: PostgREST puts the ids in the
+ * query string, and 500 uuids is past the usual 8 KB request line.
+ */
+export async function resolveBilledBookingsChunked(
+  supabase: SupabaseClient,
+  bookingIds: readonly string[],
+  chunk = 200,
+): Promise<Map<string, BilledBy>> {
+  const out = new Map<string, BilledBy>();
+  for (let i = 0; i < bookingIds.length; i += chunk) {
+    const part = await resolveBilledBookings(supabase, bookingIds.slice(i, i + chunk));
+    for (const [k, v] of part) out.set(k, v);
+  }
+  return out;
+}
+
 export type UnbilledBooking = {
   id: string;
   scheduled_at: string;

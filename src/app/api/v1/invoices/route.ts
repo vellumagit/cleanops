@@ -101,6 +101,16 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // A job billed any of the three ways (a direct invoice, a line on a
+  // consolidated one, the booking's stamp) can't be invoiced again. The
+  // unique index only knows the first way.
+  if (body.booking_id) {
+    const { resolveBilledBookings, billedRefusal } = await import("@/lib/billed-bookings");
+    const billed = await resolveBilledBookings(admin, [String(body.booking_id)]);
+    const refusal = billedRefusal(billed.get(String(body.booking_id)), "invoice it again");
+    if (refusal) return NextResponse.json({ error: refusal }, { status: 409 });
+  }
+
   const amount_cents = body.amount_cents as number | undefined;
   const due_date = body.due_date as string | undefined;
 
