@@ -166,15 +166,19 @@ export async function releaseJobsFromVoidedInvoices(
 /**
  * booking id → the invoice already billing it. Absent means unbilled.
  *
- * `failClosed` throws when a read fails. A screen can show a stale answer; the
- * billing run can't treat "couldn't check" as "not billed", because that is a
- * double bill.
+ * A failed read throws. "Couldn't check" must never read as "not billed":
+ * for the billing run that is a double bill, and for the edit, status and
+ * delete guards it is a billed job changed or deleted past the protection
+ * the screen says it has. Until 2026-11-07 only the billing run opted in
+ * (`failClosed`); the option stays for the signature, but it is on unless a
+ * caller says otherwise, and no caller does.
  */
 export async function resolveBilledBookings(
   supabase: SupabaseClient,
   bookingIds: readonly string[],
   opts: { failClosed?: boolean } = {},
 ): Promise<Map<string, BilledBy>> {
+  const failClosed = opts.failClosed ?? true;
   const billedBy = new Map<string, BilledBy>();
   if (bookingIds.length === 0) return billedBy;
   const ids = [...bookingIds];
@@ -210,7 +214,7 @@ export async function resolveBilledBookings(
       error?: { message: string } | null;
     }>,
   ]);
-  if (opts.failClosed) {
+  if (failClosed) {
     const failed = invRes.error ?? liRes.error ?? stampRes.error;
     if (failed) throw new Error(`could not read what is billed: ${failed.message}`);
   }

@@ -87,10 +87,16 @@ export async function reconcileInvoiceLineItems(
     return { ok: false, error: "Invalid line items payload" };
   }
 
-  const { data: existingItems } = await supabase
+  const { data: existingItems, error: existingErr } = await supabase
     .from("invoice_line_items")
     .select("id")
     .eq("invoice_id", invoice.id);
+  // A failed read is not "no lines yet". Carrying on would insert every
+  // submitted row beside the ones it couldn't see: the invoice doubles its
+  // lines while its total, computed from the form, says otherwise.
+  if (existingErr) {
+    return { ok: false, error: `Couldn't read the invoice's current lines: ${existingErr.message}` };
+  }
 
   const existingIds = new Set((existingItems ?? []).map((r) => r.id));
   const incomingIds = new Set(

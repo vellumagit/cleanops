@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { runFailClosed } from "@/lib/supabase/query-guard";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { zonedDayStartUtc, zonedMidnightUtc } from "@/lib/wall-clock";
 import { memberDisplayName } from "@/lib/member-display";
@@ -19,13 +20,24 @@ export type CreateStatementOutcome =
   | { ok: true; id: string; totalCents: number }
   | { ok: false; error: string; nothing?: boolean; flagged?: number };
 
-export async function createContractorRunForOrg(opts: {
+type CreateStatementOpts = {
   organizationId: string;
   createdByMembershipId: string;
   periodStart: string;
   periodEnd: string;
   includeStragglers?: boolean;
-}): Promise<CreateStatementOutcome> {
+};
+
+/**
+ * Same rule as the employee run (payroll-run-create.ts): a statement is
+ * money, so a failed read rejects the prepare rather than counting as no
+ * hours and producing a short statement that looks finished.
+ */
+export function createContractorRunForOrg(opts: CreateStatementOpts): Promise<CreateStatementOutcome> {
+  return runFailClosed(() => createContractorRunForOrgImpl(opts));
+}
+
+async function createContractorRunForOrgImpl(opts: CreateStatementOpts): Promise<CreateStatementOutcome> {
   const {
     organizationId,
     createdByMembershipId,

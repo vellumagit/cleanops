@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { runFailClosed } from "@/lib/supabase/query-guard";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { zonedDayStartUtc, zonedMidnightUtc } from "@/lib/wall-clock";
 
@@ -34,13 +35,25 @@ export type CreateRunOutcome =
       flagged?: number;
     };
 
-export async function createPayrollRunForOrg(opts: {
+type CreateRunOpts = {
   organizationId: string;
   createdByMembershipId: string;
   periodStart: string;
   periodEnd: string;
   includeStragglers?: boolean;
-}): Promise<CreateRunOutcome> {
+};
+
+/**
+ * Money is written from what is read here, so every read fails closed: a
+ * hours, bonus or PTO query that errors rejects the whole prepare instead of
+ * counting as "none" and producing a short draft that looks finished.
+ * Crons already run this way (cron-auth.ts); the Prepare button didn't.
+ */
+export function createPayrollRunForOrg(opts: CreateRunOpts): Promise<CreateRunOutcome> {
+  return runFailClosed(() => createPayrollRunForOrgImpl(opts));
+}
+
+async function createPayrollRunForOrgImpl(opts: CreateRunOpts): Promise<CreateRunOutcome> {
   const {
     organizationId,
     createdByMembershipId,

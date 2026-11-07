@@ -182,3 +182,40 @@ describe("releaseJobsFromVoidedInvoices", () => {
     expect(updates).toHaveLength(0);
   });
 });
+
+describe("resolveBilledBookings fails closed by default", () => {
+  // A client whose every query answers with an error and no rows — the shape
+  // a bad embed or a dropped connection produces.
+  function failingClient(message: string) {
+    const builder = (): unknown =>
+      new Proxy(
+        {},
+        {
+          get: (_t, prop) =>
+            prop === "then"
+              ? (resolve: (v: unknown) => void) => resolve({ data: null, error: { message } })
+              : () => builder(),
+        },
+      );
+    return { from: () => builder() } as never;
+  }
+
+  it("throws when a read fails — 'couldn't check' is never 'not billed'", async () => {
+    const { resolveBilledBookings } = await import("./billed-bookings");
+    await expect(resolveBilledBookings(failingClient("connection reset"), ["bk1"])).rejects.toThrow(
+      /could not read what is billed/,
+    );
+  });
+
+  it("only a caller that says so gets the old behaviour", async () => {
+    const { resolveBilledBookings } = await import("./billed-bookings");
+    const m = await resolveBilledBookings(failingClient("connection reset"), ["bk1"], { failClosed: false });
+    expect(m.size).toBe(0);
+  });
+
+  it("asks nothing of the database for no bookings", async () => {
+    const { resolveBilledBookings } = await import("./billed-bookings");
+    const m = await resolveBilledBookings(failingClient("would have thrown"), []);
+    expect(m.size).toBe(0);
+  });
+});

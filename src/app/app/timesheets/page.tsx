@@ -679,6 +679,12 @@ export default async function TimesheetsPage({
           )}
         </div>
       )}
+      {(entries ?? []).length >= 1000 && (
+        <p className="mb-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          This range has more than 1,000 shifts; only the newest 1,000 are
+          shown, so the totals below are incomplete. Pick a shorter range.
+        </p>
+      )}
       <TimesheetsView
         entries={rows}
         employees={empMeta}
