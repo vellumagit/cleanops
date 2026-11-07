@@ -122,7 +122,7 @@ Kind legend: SA = server action, API = `/api/v1` route (API key), CRON = Vercel 
 
 | # | file:line | kind | who | fields changed | recompute after? | audit_log? | notes |
 |---|---|---|---|---|---|---|---|
-| 66 | `scripts/seed.ts:441` | SCRIPT | developer | INSERT demo bookings with `confirmed/in_progress/pending/cancelled/completed`, `assigned_to` only (no `booking_assignees`, no `time_entries`) | no | no | Dev seed. |
+| 66 | `scripts/seed-demo-org.ts` | SCRIPT | developer | INSERT a demo org's bookings in every status, with `booking_assignees`, `time_entries` (one auto-closed and flagged, one entered by hand), series visits from `generateOccurrences`, invoices, a prepayment, pay runs via `preparePayPeriod` | no | no | Demo/test seed; dated from today. Replaced `scripts/seed.ts` 2026-11-06. |
 | 67 | `scripts/import-all-data.ts:259` / `:269` | SCRIPT | developer | UPSERT `bookings` and `time_entries` from a JSON export (`onConflict: id`) | no | no | Also `booking_series`, `job_offers`; no `booking_assignees` import line in the shown block. |
 | 68 | `scripts/wipe.ts:139` | SCRIPT | developer | DELETE every row of `time_entries`, `bookings`, … | n/a | n/a (audit_log wiped too) | |
 | 69 | `src/lib/tenant-data.ts:496-538` org purge (`DELETE_ORDER`) | LIB | platform admin flow | DELETE `booking_assignees`, `time_entries`, `bookings` for a tombstoned org | n/a | via `purge_org_audit_log` RPC | |

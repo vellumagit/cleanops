@@ -84,7 +84,7 @@ cleanops/
 | `pnpm build` | Production build |
 | `pnpm start` | Run the production build |
 | `pnpm lint` | Lint with ESLint |
-| `pnpm seed` | Reset and seed the dev database with realistic fake data (added in Phase 9) |
+| `pnpm seed -- --org <uuid> --reset` | Fill a demo/test org with a complete cleaning company, dated from today (scripts/seed-demo-org.ts) |
 
 ## Pre-launch hardening (Phase 10)
 

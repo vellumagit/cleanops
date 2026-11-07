@@ -10,7 +10,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "cron:check": "tsx scripts/validate-cron-schedules.ts",
-    "seed": "tsx --env-file=.env.local scripts/seed.ts",
+    "seed": "tsx --tsconfig scripts/tsconfig.json --env-file=.env.local scripts/seed-demo-org.ts",
     "wipe": "tsx --env-file=.env.local scripts/wipe.ts",
     "db:push": "supabase db push --linked --include-all",
     "db:types": "supabase gen types typescript --linked --schema public > src/lib/supabase/types.ts"
