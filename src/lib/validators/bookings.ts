@@ -243,6 +243,13 @@ export const RecurringBookingSchema = z.object({
   total_cents: dollarStringToCents,
   address: optionalText,
   notes: cardSafeOptionalText,
+}).superRefine((s, ctx) => {
+  // An end before the start generates nothing: the series row was created
+  // and sat active with no visits, and the nightly extender, which counts
+  // from the latest visit, never picked it up.
+  if (s.ends_at && s.ends_at < s.starts_at) {
+    ctx.addIssue({ code: "custom", path: ["ends_at"], message: "The end date is before the start date." });
+  }
 });
 
 export type RecurringBookingInput = z.infer<typeof RecurringBookingSchema>;

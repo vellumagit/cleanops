@@ -7887,17 +7887,22 @@ export async function autoGenerateRecurringInvoices(): Promise<{
       const { error: liErr } = await db
         .from("invoice_line_items")
         .insert(rows as never);
-      if (liErr) {
-        console.error(
-          `[auto] recurring invoice ${inserted.id}: line item insert failed (invoice still created):`,
-          liErr.message,
-        );
-      }
+      if (liErr) throw new Error(liErr.message);
     } catch (liErr) {
+      // A standing invoice with no lines is a total with no breakdown, and
+      // it would go out that way on auto-send. Take the draft back out and
+      // give the series its turn back, exactly as a failed insert does.
       console.error(
-        `[auto] recurring invoice ${inserted.id}: line item step threw:`,
+        `[auto] recurring invoice ${inserted.id}: line items failed; removing the draft:`,
         liErr,
       );
+      await db.from("invoices").delete().eq("id", inserted.id).eq("status", "draft");
+      await db
+        .from("invoice_series")
+        .update({ next_run_at: series.next_run_at })
+        .eq("id", series.id)
+        .eq("next_run_at", next.toISOString());
+      continue;
     }
 
     // Link the generated invoice back to the series (claim already advanced

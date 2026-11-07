@@ -162,3 +162,43 @@ describe("generateOccurrences — guardrails that must keep holding", () => {
     expect(next).toHaveLength(2); // Sep 8 + Sep 15 only
   });
 });
+
+describe("generateOccurrences — a hand-moved last visit does not re-anchor the series", () => {
+  // "Just this booking" is the edit form's default scope, so the latest visit
+  // the extender counts from can sit on any day. Copilot, 2026-11-07.
+  const inTz = (iso: string) =>
+    new Date(iso).toLocaleDateString("en-US", { timeZone: TZ, weekday: "short", month: "short", day: "numeric" });
+
+  it("Tuesday weekly series, last visit moved to Wednesday: next visits are Tuesdays", () => {
+    // Series anchored Tue Sep 1; the Tue Oct 13 visit was moved to Wed Oct 14.
+    const moved = new Date("2026-10-14T19:00:00-06:00");
+    const next = generateOccurrences(rule({}), 3, moved).map(inTz);
+    expect(next).toEqual(["Tue, Oct 20", "Tue, Oct 27", "Tue, Nov 3"]);
+  });
+
+  it("…moved EARLIER to Monday: the Tuesday it stood for is not generated again", () => {
+    const moved = new Date("2026-10-12T19:00:00-06:00");
+    const next = generateOccurrences(rule({}), 2, moved).map(inTz);
+    expect(next).toEqual(["Tue, Oct 20", "Tue, Oct 27"]);
+  });
+
+  it("bi-weekly keeps its fortnight after a moved visit", () => {
+    // Anchored Tue Sep 1 → Sep 15, 29, Oct 13, 27. Oct 13 moved to Thu Oct 15.
+    const moved = new Date("2026-10-15T19:00:00-06:00");
+    const next = generateOccurrences(rule({ pattern: "bi_weekly" }), 2, moved).map(inTz);
+    expect(next).toEqual(["Tue, Oct 27", "Tue, Nov 10"]);
+  });
+
+  it("monthly keeps its day of month after a moved visit", () => {
+    // Anchored the 1st; the Oct 1 visit was moved to Oct 5.
+    const moved = new Date("2026-10-05T10:00:00-06:00");
+    const next = generateOccurrences(rule({ pattern: "monthly", start_time: "10:00" }), 2, moved).map(inTz);
+    expect(next).toEqual(["Sun, Nov 1", "Tue, Dec 1"]);
+  });
+
+  it("an unmoved cursor behaves exactly as before", () => {
+    const onTime = new Date("2026-10-13T19:00:00-06:00");
+    const next = generateOccurrences(rule({}), 2, onTime).map(inTz);
+    expect(next).toEqual(["Tue, Oct 20", "Tue, Oct 27"]);
+  });
+});

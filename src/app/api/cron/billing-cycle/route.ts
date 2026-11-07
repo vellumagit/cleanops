@@ -384,10 +384,21 @@ async function generateClientInvoice(
   }
 
   // ── Create line items ────────────────────────────────────────────────────
+  // An invoice whose lines didn't all land is not an invoice: a total with
+  // no breakdown, and jobs stamped as billed that no line names. If any
+  // line fails, the draft comes back out and nothing is stamped; the next
+  // run finds the jobs unbilled and tries again. (In the cron's fail-closed
+  // scope a failed insert rejects, so the catch does the same removal.)
   const { getOrgTimezone } = await import("@/lib/org-timezone");
   const { bookingLineLabel } = await import("@/lib/invoice-line-label");
   const lineTz = await getOrgTimezone(org.id);
-
+  const removeDraft = async (why: string) => {
+    console.error(`[billing-cycle] removing draft ${invoice.id} for client ${client.id}: ${why}`);
+    await db.from("invoice_line_items").delete().eq("invoice_id", invoice.id);
+    await db.from("invoices").delete().eq("id", invoice.id).eq("status", "draft");
+  };
+  let lineFailed: string | null = null;
+  try {
   if (client.billing_type === "flat_rate") {
     // Single retainer line item
     const { error: liErr } = await db.from("invoice_line_items").insert({
@@ -399,12 +410,7 @@ async function generateClientInvoice(
       sort_order: 0,
     } as never);
 
-    if (liErr) {
-      console.error(
-        `[billing-cycle] line item insert failed for invoice ${invoice.id}:`,
-        liErr.message,
-      );
-    }
+    if (liErr) lineFailed = liErr.message;
   } else {
     // One line item per completed booking
     for (let i = 0; i < completedBookings.length; i++) {
@@ -437,12 +443,18 @@ async function generateClientInvoice(
       } as never);
 
       if (liErr) {
-        console.error(
-          `[billing-cycle] line item insert failed (booking ${b.id}):`,
-          liErr.message,
-        );
+        lineFailed = `booking ${b.id}: ${liErr.message}`;
+        break;
       }
     }
+  }
+  } catch (err) {
+    await removeDraft(err instanceof Error ? err.message : String(err));
+    throw err;
+  }
+  if (lineFailed) {
+    await removeDraft(`line item insert failed (${lineFailed})`);
+    return null;
   }
 
   // ── Stamp billing_invoice_id on all included bookings ───────────────────

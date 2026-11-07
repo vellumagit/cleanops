@@ -9,6 +9,8 @@ import {
   addDays,
   addWeeks,
   addMonths,
+  differenceInCalendarDays,
+  differenceInCalendarMonths,
   getDay,
   isBefore,
   isAfter,
@@ -242,11 +244,15 @@ export function generateOccurrences(
 
   // For standard patterns: weekly/bi_weekly/tri_weekly/monthly
   // The recurrence is anchored to the start date's day of week (or day of month)
-  let cursor = after ? dayCursorFromInstant(after, rule.tz) : new Date(startDate);
+  let cursor: Date;
 
-  // If we have an "after" date, advance to the next occurrence
   if (after) {
-    cursor = advanceToNext(cursor, rule.pattern, startDate);
+    // The cursor is the latest existing visit, and a visit can have been
+    // moved by hand ("just this one", Tuesday → Wednesday). Stepping a week
+    // from the moved day dragged every later visit to Wednesday too. So the
+    // next visit is the series' own next slot: the anchored occurrence the
+    // moved visit stands for, plus one step.
+    cursor = nextAnchoredAfter(dayCursorFromInstant(after, rule.tz), rule.pattern, startDate);
   } else {
     // Start from the start date itself
     cursor = new Date(startDate);
@@ -275,6 +281,59 @@ export function generateOccurrences(
   }
 
   return results;
+}
+
+/** Weeks per step for the weekly family; null for the monthly family. */
+function weeksPerStep(pattern: RecurrencePattern): number | null {
+  switch (pattern) {
+    case "weekly":
+      return 1;
+    case "bi_weekly":
+      return 2;
+    case "tri_weekly":
+      return 3;
+    case "quad_weekly":
+      return 4;
+    default:
+      return null;
+  }
+}
+
+/** Months per step for the monthly family; null for the weekly family. */
+function monthsPerStep(pattern: RecurrencePattern): number | null {
+  switch (pattern) {
+    case "monthly":
+      return 1;
+    case "every_2_months":
+      return 2;
+    case "every_3_months":
+      return 3;
+    case "every_6_months":
+      return 6;
+    default:
+      return null;
+  }
+}
+
+/**
+ * The series' own slot after `day`, counted from the anchor: the occurrence
+ * nearest to `day` (the one a hand-moved visit stands for, whichever way it
+ * was moved) plus one step. Stepping from `day` itself lets a moved visit
+ * re-anchor the whole series; stepping from the NEXT slot after `day` would
+ * regenerate the slot a visit was moved away from, giving that week two.
+ */
+function nextAnchoredAfter(day: Date, pattern: RecurrencePattern, anchor: Date): Date {
+  const weeks = weeksPerStep(pattern);
+  if (weeks != null) {
+    const k = Math.round(differenceInCalendarDays(day, anchor) / (7 * weeks));
+    return addWeeks(anchor, (k + 1) * weeks);
+  }
+  const months = monthsPerStep(pattern);
+  if (months != null) {
+    const k = Math.round(differenceInCalendarMonths(day, anchor) / months);
+    return reanchorMonth(anchor, (k + 1) * months, anchor);
+  }
+  return advanceToNext(day, pattern, anchor);
 }
 
 function advanceToNext(

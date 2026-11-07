@@ -1114,6 +1114,10 @@ export async function createRecurringBookingAction(
   );
 
   if (occurrences.length === 0) {
+    // The template was inserted above; without visits it is an active series
+    // the nightly extender can never pick up (it needs a latest visit to count
+    // from). Take it back out rather than leave it.
+    await supabase.from("booking_series").delete().eq("id", series.id);
     return {
       errors: {
         _form:
