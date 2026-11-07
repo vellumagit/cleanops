@@ -202,3 +202,37 @@ describe("generateOccurrences — a hand-moved last visit does not re-anchor the
     expect(next).toEqual(["Tue, Oct 20", "Tue, Oct 27"]);
   });
 });
+
+describe("generateOccurrences — custom-weekly and monthly-nth after a hand-moved visit", () => {
+  const inTz = (iso: string) =>
+    new Date(iso).toLocaleDateString("en-US", { timeZone: TZ, weekday: "short", month: "short", day: "numeric" });
+  // Mon/Thu series anchored Mon Aug 31 2026.
+  const monThu = rule({ pattern: "custom_weekly", custom_days: [1, 4], starts_at: "2026-08-31" });
+
+  it("custom weekly: Thursday moved to Tuesday is not generated again as Thursday", () => {
+    const moved = new Date("2026-10-13T19:00:00-06:00"); // the Thu Oct 15 visit, moved to Tue
+    expect(generateOccurrences(monThu, 2, moved).map(inTz)).toEqual(["Mon, Oct 19", "Thu, Oct 22"]);
+  });
+
+  it("custom weekly: Thursday moved to Friday still resumes on Monday", () => {
+    const moved = new Date("2026-10-16T19:00:00-06:00");
+    expect(generateOccurrences(monThu, 2, moved).map(inTz)).toEqual(["Mon, Oct 19", "Thu, Oct 22"]);
+  });
+
+  it("custom weekly: an unmoved Thursday behaves as before", () => {
+    const onTime = new Date("2026-10-15T19:00:00-06:00");
+    expect(generateOccurrences(monThu, 2, onTime).map(inTz)).toEqual(["Mon, Oct 19", "Thu, Oct 22"]);
+  });
+
+  it("monthly nth: a 2nd-Tuesday visit moved earlier is not regenerated behind itself", () => {
+    const secondTue = rule({ pattern: "monthly_nth", monthly_nth: 2, monthly_dow: 2, starts_at: "2026-09-01", start_time: "10:00" });
+    const moved = new Date("2026-10-06T10:00:00-06:00"); // Oct 13's visit, moved to Oct 6
+    expect(generateOccurrences(secondTue, 2, moved).map(inTz)).toEqual(["Tue, Nov 10", "Tue, Dec 8"]);
+  });
+
+  it("monthly nth: unmoved behaves as before", () => {
+    const secondTue = rule({ pattern: "monthly_nth", monthly_nth: 2, monthly_dow: 2, starts_at: "2026-09-01", start_time: "10:00" });
+    const onTime = new Date("2026-10-13T10:00:00-06:00");
+    expect(generateOccurrences(secondTue, 2, onTime).map(inTz)).toEqual(["Tue, Nov 10", "Tue, Dec 8"]);
+  });
+});

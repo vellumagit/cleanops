@@ -395,8 +395,15 @@ function generateMonthlyNth(
   const startDate = parseISO(rule.starts_at);
   const endDate = rule.ends_at ? parseISO(rule.ends_at) : null;
 
-  // Walk month-by-month from the series start.
+  // Walk month-by-month from the series start — or, when extending, from
+  // the month after the latest visit's. That visit stands for its own
+  // month's slot wherever in the month it was moved to; a 2nd-Tuesday visit
+  // moved to the 1st must not have the 2nd Tuesday generated behind it.
   let cursor = startOfMonth(startDate);
+  if (after) {
+    const monthAfter = startOfMonth(addMonths(dayCursorFromInstant(after, rule.tz), 1));
+    if (isAfter(monthAfter, cursor)) cursor = monthAfter;
+  }
   const maxMonths = 120; // 10-year safety cap
   let iterations = 0;
 
@@ -446,12 +453,24 @@ function generateCustomWeekly(
   const endDate = rule.ends_at ? parseISO(rule.ends_at) : null;
   const startDate = parseISO(rule.starts_at);
 
-  // Start scanning from the start date (or the day after "after" — the
-  // org-local day, or an evening visit pushes the scan start a day late
-  // and the immediately-following weekday gets skipped).
-  let cursor = after
-    ? addDays(dayCursorFromInstant(after, rule.tz), 1)
-    : new Date(startDate);
+  // Start scanning from the start date, or when extending from the day
+  // after the slot the latest visit stands for. That visit may have been
+  // moved by hand off its configured day: it stands for the configured slot
+  // in its own week — the first on or after it (a Thursday visit moved to
+  // Tuesday still stands for Thursday, which must not be generated again),
+  // else the last one before it (moved later in the week). The org-local
+  // day is used, or an evening visit pushes the scan a day late.
+  let cursor: Date;
+  if (after) {
+    const afterDay = dayCursorFromInstant(after, rule.tz);
+    const dow = getDay(afterDay);
+    const weekStart = addDays(afterDay, -dow);
+    const onOrAfter = days.find((d) => d >= dow);
+    const standsFor = addDays(weekStart, onOrAfter ?? days[days.length - 1]);
+    cursor = addDays(standsFor, 1);
+  } else {
+    cursor = new Date(startDate);
+  }
 
   // Safety: don't generate more than 365 days out
   const maxIterations = 365;

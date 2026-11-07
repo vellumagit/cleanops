@@ -516,35 +516,46 @@ export async function autoInvoiceOnJobComplete(
     // the owner sees something when they open the invoice.
     const { bookingLineLabel } = await import("@/lib/invoice-line-label");
 
-    const { error: liErr } = await db.from("invoice_line_items").insert({
-      organization_id: booking.organization_id,
-      invoice_id: invoice.id,
-      // Carries the job's date, time window and address — this label is the
-      // only description the client ever sees, on both the web invoice and
-      // the PDF.
-      label: bookingLineLabel({
-        serviceLabel:
-          booking.service_type_label ?? humanize(booking.service_type),
-        scheduledAt: booking.scheduled_at,
-        durationMinutes: booking.duration_minutes,
-        address: booking.address,
-        propertyLabel: (booking as { property?: { label?: string } | null }).property?.label ?? null,
-        fallbackAddress: booking.client?.address ?? null,
-        tz: orgTz,
-      }),
-      // Mirrors the billing-cycle path: the line records which job it bills,
-      // so the line-item dedup can see this work is already invoiced.
-      booking_id: booking.id,
-      quantity: 1,
-      unit_price_cents: subtotalCents,
-      sort_order: 0,
-    });
-
-    if (liErr) {
+    // An invoice whose line didn't land is a total with no breakdown, and
+    // the stamp below would mark the job billed by a line that doesn't
+    // exist. If the line fails, the draft comes back out and the job stays
+    // unbilled for the next attempt.
+    let lineFailure: string | null = null;
+    try {
+      const { error: liErr } = await db.from("invoice_line_items").insert({
+        organization_id: booking.organization_id,
+        invoice_id: invoice.id,
+        // Carries the job's date, time window and address — this label is
+        // the only description the client ever sees, on both the web
+        // invoice and the PDF.
+        label: bookingLineLabel({
+          serviceLabel:
+            booking.service_type_label ?? humanize(booking.service_type),
+          scheduledAt: booking.scheduled_at,
+          durationMinutes: booking.duration_minutes,
+          address: booking.address,
+          propertyLabel: (booking as { property?: { label?: string } | null }).property?.label ?? null,
+          fallbackAddress: booking.client?.address ?? null,
+          tz: orgTz,
+        }),
+        // Mirrors the billing-cycle path: the line records which job it
+        // bills, so the line-item dedup can see this work is already invoiced.
+        booking_id: booking.id,
+        quantity: 1,
+        unit_price_cents: subtotalCents,
+        sort_order: 0,
+      });
+      if (liErr) lineFailure = liErr.message;
+    } catch (err) {
+      lineFailure = err instanceof Error ? err.message : String(err);
+    }
+    if (lineFailure) {
       console.error(
-        "[auto] autoInvoiceOnJobComplete line item insert failed (invoice still created):",
-        liErr.message,
+        `[auto] autoInvoiceOnJobComplete: line item failed for invoice ${invoice.id}; removing the draft:`,
+        lineFailure,
       );
+      await db.from("invoices").delete().eq("id", invoice.id).eq("status", "draft");
+      return { ok: false, reason: `Line item failed: ${lineFailure}` };
     }
 
     // Stamp the booking as billed so the consolidated billing-cycle cron never

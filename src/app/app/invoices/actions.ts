@@ -1641,7 +1641,12 @@ export async function createPeriodInvoiceAction(
     .insert(itemsPayload as never) as unknown as Promise<{
     error: { message: string } | null;
   }>));
-  if (itemsErr) return { errors: { _form: itemsErr.message } };
+  if (itemsErr) {
+    // The invoice was inserted above; without its lines it is a total with
+    // no breakdown. Take the draft back out rather than leave it.
+    await supabase.from("invoices").delete().eq("id", inv.id).eq("status", "draft");
+    return { errors: { _form: itemsErr.message } };
+  }
 
   // Stamp every booking on this invoice as billed — the same guard
   // createInvoiceAction applies at the top of this file, which the period
@@ -1715,10 +1720,24 @@ export async function createPeriodInvoiceAction(
         .update({ status: "void", voided_at: nowIso })
         .in("id", ids);
       if (voidErr) {
+        // The new invoice and the old drafts would both bill this work. Undo
+        // the new one — unstamp, lines, invoice — and say why; the drafts
+        // are still there to try again from.
         console.error(
-          `[invoices] period invoice ${inv.id}: consolidating drafts failed (invoice still created):`,
+          `[invoices] period invoice ${inv.id}: consolidating drafts failed; removing the new invoice:`,
           voidErr.message,
         );
+        await supabase
+          .from("bookings")
+          .update({ billing_invoice_id: null } as never)
+          .eq("billing_invoice_id" as never, inv.id as never);
+        await supabase.from("invoice_line_items").delete().eq("invoice_id", inv.id);
+        await supabase.from("invoices").delete().eq("id", inv.id).eq("status", "draft");
+        return {
+          errors: {
+            _form: `Couldn't void the drafts being consolidated (${voidErr.message}); nothing was created. Try again.`,
+          },
+        };
       } else {
         absorbed = ids.length;
         // Point the freed bookings at the invoice that now bills them. The
