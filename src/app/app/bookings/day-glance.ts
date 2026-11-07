@@ -2,7 +2,7 @@
 
 import { getActionContext } from "@/lib/actions";
 import { getOrgTimezone } from "@/lib/org-timezone";
-import { zonedMidnightUtc } from "@/lib/wall-clock";
+import { zonedDayStartUtc, zonedMidnightUtc } from "@/lib/wall-clock";
 import { memberDisplayName } from "@/lib/member-display";
 
 /**
@@ -49,7 +49,10 @@ export async function getDayGlanceAction(
     // day lives at 2 AM UTC the next day and would otherwise vanish from
     // its own date.
     const start = zonedMidnightUtc(dateYmd, tz);
-    const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+    // The next local midnight, not start + 24h: a clock-change day is 23 or
+    // 25 hours long, and a flat day showed tomorrow's 1 AM job as today's
+    // or lost today's last hour (an org that still changes clocks).
+    const end = zonedDayStartUtc(start, tz, 1);
 
     const { data, error } = (await supabase
       .from("bookings")

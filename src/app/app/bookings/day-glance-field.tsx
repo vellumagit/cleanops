@@ -38,29 +38,41 @@ export function DayGlanceField({
   excludeBookingId?: string;
 }) {
   const dateYmd = /^\d{4}-\d{2}-\d{2}/.exec(value)?.[0] ?? null;
-  const [jobs, setJobs] = useState<DayGlanceJob[] | null>(null);
-  const [loading, setLoading] = useState(false);
+  // The answer is kept with the date it answers, so the previous date's jobs
+  // never stand in for this one's while it loads. A lookup that failed is
+  // not an empty day: "Nothing else booked" on a failed read is the one
+  // answer that makes someone double-book with confidence, so the failure
+  // is shown as itself.
+  const [result, setResult] = useState<{
+    ymd: string;
+    jobs: DayGlanceJob[] | null;
+    error: string | null;
+  } | null>(null);
 
   useEffect(() => {
-    if (!dateYmd) {
-      setJobs(null);
-      return;
-    }
+    if (!dateYmd) return;
     let cancelled = false;
-    setLoading(true);
     // Small debounce: a datetime-local fires per keystroke on desktop, and
     // the first two are usually a half-typed year.
     const t = setTimeout(async () => {
       const res = await getDayGlanceAction(dateYmd);
       if (cancelled) return;
-      setJobs(res.ok ? res.jobs : []);
-      setLoading(false);
+      setResult(
+        res.ok
+          ? { ymd: dateYmd, jobs: res.jobs, error: null }
+          : { ymd: dateYmd, jobs: null, error: res.error },
+      );
     }, 250);
     return () => {
       cancelled = true;
       clearTimeout(t);
     };
   }, [dateYmd]);
+
+  const current = result && result.ymd === dateYmd ? result : null;
+  const loading = dateYmd !== null && current === null;
+  const failed = current?.error ?? null;
+  const jobs = current?.jobs ?? null;
 
   if (!dateYmd) return null;
 
@@ -86,10 +98,14 @@ export function DayGlanceField({
         {named}
       </p>
 
-      {loading && jobs === null ? (
+      {loading ? (
         <p className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
           <Loader2 className="h-3 w-3 animate-spin" />
           Checking that day…
+        </p>
+      ) : failed ? (
+        <p className="mt-1 text-[11px] text-destructive">
+          Couldn&apos;t check that day ({failed}). Look at the schedule before you save.
         </p>
       ) : others.length === 0 ? (
         <p className="mt-1 text-[11px] text-muted-foreground">

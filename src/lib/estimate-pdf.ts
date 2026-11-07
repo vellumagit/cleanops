@@ -79,10 +79,10 @@ export async function renderEstimatePdf(opts: {
   const [{ data: org }, currency] = await Promise.all([
     admin
       .from("organizations")
-      .select("name, brand_color")
+      .select("name, brand_color, timezone")
       .eq("id", est.organization_id)
       .maybeSingle() as unknown as Promise<{
-      data: { name: string | null; brand_color: string | null } | null;
+      data: { name: string | null; brand_color: string | null; timezone: string | null } | null;
     }>,
     getOrgCurrency(est.organization_id) as Promise<CurrencyCode>,
   ]);
@@ -169,9 +169,13 @@ export async function renderEstimatePdf(opts: {
     }
   }
 
+  // The org's calendar, not the server's: an estimate sent at 11 PM in
+  // Edmonton is dated tomorrow in UTC, and the server is in UTC.
+  const tz = org?.timezone ?? "America/Edmonton";
   const dateFmt = (iso: string | null) =>
     iso
       ? new Date(iso).toLocaleDateString("en-US", {
+          timeZone: tz,
           month: "short",
           day: "numeric",
           year: "numeric",
