@@ -238,22 +238,10 @@ export async function applyPrepaymentsToInvoice(invoiceId: string): Promise<numb
  * already exists goes straight onto it.
  */
 export async function invoiceForBooking(bookingId: string): Promise<string | null> {
-  const db = createSupabaseAdminClient();
-  const [{ data: own }, { data: booking }] = await Promise.all([
-    db
-      .from("invoices")
-      .select("id")
-      .eq("booking_id", bookingId)
-      .is("voided_at", null)
-      .limit(1)
-      .maybeSingle() as unknown as Promise<{ data: { id: string } | null }>,
-    db
-      .from("bookings")
-      .select("billing_invoice_id" as never)
-      .eq("id", bookingId)
-      .maybeSingle() as unknown as Promise<{
-      data: { billing_invoice_id: string | null } | null;
-    }>,
-  ]);
-  return own?.id ?? booking?.billing_invoice_id ?? null;
+  // All three ways a job is billed, and a failed read throws: this decides
+  // whether a prepayment is refused for exceeding the invoice's balance, so
+  // "couldn't look" must not become "no invoice".
+  const { resolveBilledBookings } = await import("@/lib/billed-bookings");
+  const billed = await resolveBilledBookings(createSupabaseAdminClient(), [bookingId]);
+  return billed.get(bookingId)?.id ?? null;
 }

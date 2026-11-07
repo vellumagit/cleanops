@@ -281,6 +281,15 @@ export async function rescheduleBookingAction(
   const dateErr = futureStatusError(next.toISOString(), current.status);
   if (dateErr) return { ok: false, error: dateErr };
 
+  // A finished job an invoice bills doesn't move: the invoice's line says
+  // when it was. Same rule as the edit form and the API.
+  if (current.status === "completed" && instantChanged) {
+    const { resolveBilledBookings, billedRefusal } = await import("@/lib/billed-bookings");
+    const billed = await resolveBilledBookings(supabase, [id]);
+    const refusal = billedRefusal(billed.get(id), "move this job");
+    if (refusal) return { ok: false, error: refusal };
+  }
+
   const { error: updateError } = await supabase
     .from("bookings")
     .update(bookingUpdate)

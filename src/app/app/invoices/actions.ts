@@ -1583,6 +1583,18 @@ export async function createPeriodInvoiceAction(
     return { errors: { _form: "Add at least one line item." } };
   }
 
+  // The period page offered only unbilled jobs, but the ids come back from
+  // the form, and a stale tab or a crafted post can name a job billed since.
+  // Checked again here, all three ways, before anything is written.
+  const namedJobs = Array.from(new Set(lineRows.map((r) => r.booking_id).filter((b): b is string => Boolean(b))));
+  if (namedJobs.length > 0) {
+    const billedBy = await resolveBilledBookings(supabase, namedJobs);
+    const first = billedBy.values().next().value;
+    if (first) {
+      return { errors: { _form: billedRefusal(first, "bill it here") ?? "One of these jobs is already billed." } };
+    }
+  }
+
   const subtotalCents = lineRows.reduce((s, r) => s + r.line_cents, 0);
   const rateBps = parseTaxRate(String(formData.get("tax_rate_percent") ?? ""));
   const taxLabelRaw = String(formData.get("tax_label") ?? "").trim();

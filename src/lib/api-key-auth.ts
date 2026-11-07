@@ -15,6 +15,7 @@ import "server-only";
 import { NextResponse, type NextRequest } from "next/server";
 import { hashApiKey, isValidKeyFormat } from "@/lib/api-keys";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { enterFailClosed } from "@/lib/supabase/query-guard";
 import { checkRateLimit } from "@/lib/rate-limit";
 
 type AuthSuccess = {
@@ -47,6 +48,11 @@ function jsonError(status: number, message: string, headers?: Record<string, str
 export async function authenticateApiKey(
   request: NextRequest,
 ): Promise<ApiKeyAuth> {
+  // An API caller writes on the strength of what the route reads, with
+  // nobody at a screen. From here on a failed read rejects (query-guard.ts),
+  // as it does for crons; before the first await so the route's continuation
+  // is covered.
+  enterFailClosed();
   // 1. Extract Bearer token
   const authHeader = request.headers.get("authorization");
   if (!authHeader?.startsWith("Bearer ")) {

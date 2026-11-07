@@ -473,10 +473,11 @@ async function generateClientInvoice(
     .is("billing_invoice_id", null);
 
   if (stampErr) {
-    console.error(
-      `[billing-cycle] billing_invoice_id stamp failed for invoice ${invoice.id}:`,
-      stampErr.message,
-    );
+    // Unstamped jobs are re-billed next period — for a flat-rate client,
+    // whose invoice carries no per-job lines, nothing else says they were
+    // billed. Better no invoice than one that bills them twice.
+    await removeDraft(`stamp failed: ${stampErr.message}`);
+    return null;
   }
 
   // Anything the client paid before the job was invoiced moves onto this

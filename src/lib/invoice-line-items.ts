@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { parseDollarsToCents } from "@/lib/validators/common";
 import { computeTax, parseTaxRate } from "@/lib/invoice-tax";
-import { matchLineToJob, resolveBilledBookings } from "@/lib/billed-bookings";
+import { billedRefusal, matchLineToJob, resolveBilledBookings } from "@/lib/billed-bookings";
 import { getOrgTimezone } from "@/lib/org-timezone";
 
 /**
@@ -99,6 +99,19 @@ export async function reconcileInvoiceLineItems(
   }
 
   const existingIds = new Set((existingItems ?? []).map((r) => r.id));
+
+  // A line that names a job must not name one another invoice already
+  // bills. The hand-added matcher below asks this for the jobs it guesses;
+  // explicit booking_ids from the form were taken on trust.
+  const namedJobs = Array.from(new Set(parsed.map((r) => r.booking_id).filter((b): b is string => Boolean(b))));
+  if (namedJobs.length > 0) {
+    const billedBy = await resolveBilledBookings(supabase, namedJobs);
+    for (const [jobId, inv] of billedBy) {
+      if (inv.id !== invoice.id) {
+        return { ok: false, error: billedRefusal(inv, `add job ${jobId.slice(0, 8)} to this one`) ?? "That job is already billed." };
+      }
+    }
+  }
   const incomingIds = new Set(
     parsed.filter((r) => r.db_id).map((r) => r.db_id!),
   );

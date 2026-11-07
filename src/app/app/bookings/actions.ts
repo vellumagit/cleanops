@@ -1421,23 +1421,30 @@ export async function updateBookingAction(
       };
     }
 
-    // Un-completing is allowed, but not out from under an invoice -- the
-    // exact guard the status dropdown enforces. Without this twin, the edit
-    // form is the bypass.
-    // Any exit from completed, not just cancelling — see the twin guard in
-    // setBookingStatusAction.
-    if (existing.status === "completed") {
-      const { resolveBilledBookings } = await import("@/lib/billed-bookings");
+  }
+
+  // A completed job an invoice bills doesn't leave completed, move, or change
+  // its hours or price from under that invoice: its line says when the job
+  // was and what it cost. The status half is the twin of the dropdown's
+  // guard; the terms half was missing here, in the API and on the scheduler
+  // until 2026-11-07.
+  if (existing?.status === "completed") {
+    const leaves = parsed.data.status !== "completed";
+    const moves =
+      parsed.data.scheduled_at != null &&
+      existing.scheduled_at != null &&
+      new Date(parsed.data.scheduled_at).getTime() !== new Date(existing.scheduled_at).getTime();
+    const repriced =
+      (parsed.data.total_cents != null && parsed.data.total_cents !== existing.total_cents) ||
+      (parsed.data.duration_minutes != null && parsed.data.duration_minutes !== existing.duration_minutes);
+    if (leaves || moves || repriced) {
+      const { resolveBilledBookings, billedRefusal } = await import("@/lib/billed-bookings");
       const billed = await resolveBilledBookings(supabase, [id]);
-      const inv = billed.get(id);
-      if (inv) {
-        return {
-          errors: {
-            status: `Invoice ${inv.number ?? ""} (${inv.status}) bills this job. Void or fix that invoice first, then change the booking's status.`,
-          },
-          values: raw,
-        };
-      }
+      const refusal = billedRefusal(
+        billed.get(id),
+        leaves ? "change the booking's status" : "change this job's time, hours or price",
+      );
+      if (refusal) return { errors: { [leaves ? "status" : "_form"]: refusal }, values: raw };
     }
   }
 

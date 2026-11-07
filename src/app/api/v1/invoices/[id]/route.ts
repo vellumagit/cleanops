@@ -67,6 +67,15 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       { status: 400 },
     );
   }
+  // Pointing this invoice at a job another invoice already bills — directly,
+  // by a consolidated line, or by the booking's stamp — is a double bill.
+  if (updates.booking_id) {
+    const { resolveBilledBookings, billedRefusal } = await import("@/lib/billed-bookings");
+    const bookingId = String(updates.booking_id);
+    const inv = (await resolveBilledBookings(preAdmin, [bookingId])).get(bookingId);
+    const refusal = inv && inv.id !== id ? billedRefusal(inv, "point this invoice at it") : null;
+    if (refusal) return NextResponse.json({ error: refusal }, { status: 409 });
+  }
 
   // Handle timestamp logic for status changes
   if (updates.status) {

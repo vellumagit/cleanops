@@ -421,6 +421,18 @@ export async function syncJob(
 
     // Write mode. Guard on the status we read so a human changing it in the
     // same moment wins — the next event recomputes anyway.
+    // The rules can reopen a finished job (a late clock-in on a job the
+    // sweep closed), but not out from under an invoice: the money has moved
+    // on the strength of "completed". Same guard as every human writer.
+    if (before === "completed" && state.status !== "completed") {
+      const { resolveBilledBookings } = await import("@/lib/billed-bookings");
+      const inv = (await resolveBilledBookings(db, [bookingId])).get(bookingId);
+      if (inv) {
+        console.log(`[job-state] ${bookingId}: rules say ${state.status} but invoice ${inv.number ?? inv.id} bills it; left completed`);
+        return { state, summary, mode, before, after: before };
+      }
+    }
+
     const { data: written } = (await db
       .from("bookings")
       .update({ status: state.status } as never)

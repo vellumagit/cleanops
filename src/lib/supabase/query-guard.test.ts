@@ -177,3 +177,22 @@ describe("background work fails closed", () => {
     });
   });
 });
+
+describe("entering the scope from an awaited helper", () => {
+  it("covers the caller's continuation when entered before the helper's first await", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const { enterFailClosed } = await import("./query-guard");
+    // Shaped like getActionContext(): enterFailClosed() first, then awaits.
+    const helper = async () => {
+      enterFailClosed();
+      await Promise.resolve();
+      return "ctx";
+    };
+    const action = async () => {
+      await helper();
+      await Promise.resolve();
+      return inFailClosedScope();
+    };
+    expect(await action()).toBe(true);
+  });
+});

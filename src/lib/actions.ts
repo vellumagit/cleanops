@@ -16,6 +16,7 @@ import "server-only";
 import { z } from "zod";
 import { requireMembership, type CurrentMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { enterFailClosed } from "@/lib/supabase/query-guard";
 
 /** A field-level error map keyed by form field name. */
 export type FieldErrors<F extends string> = Partial<Record<F | "_form", string>>;
@@ -33,6 +34,13 @@ export async function getActionContext(): Promise<{
   membership: CurrentMembership;
   supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>;
 }> {
+  // Every server action starts here, and from here on a failed read rejects
+  // instead of returning null data that reads as "no rows" (see
+  // supabase/query-guard.ts). An action writes — money, status, hours —
+  // from what it reads, and a dropped error upstream of a write is how a
+  // billed job got re-billed and a short pay run looked finished. Before
+  // the first await, so the scope covers the caller's continuation too.
+  enterFailClosed();
   const membership = await requireMembership();
   const supabase = await createSupabaseServerClient();
   return { membership, supabase };
