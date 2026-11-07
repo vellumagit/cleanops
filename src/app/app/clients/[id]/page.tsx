@@ -15,7 +15,6 @@ import {
   RotateCw,
   UserCheck,
 } from "lucide-react";
-import { rebookBookingAction } from "../../bookings/actions";
 import { requireMembership, can } from "@/lib/auth";
 import { getUnbilledCompletedBookings } from "@/lib/billed-bookings";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -759,17 +758,16 @@ export default async function ClientDetailPage({
                 </Link>
                 <span className="flex shrink-0 items-center gap-1.5">
                   {/* Repeating last month's job shouldn't require opening
-                      it first — same rebook the booking page offers. */}
+                      it first — same Book again the booking page offers:
+                      the new-booking form, filled in from this job. */}
                   {b.status === "completed" && canEdit && (
-                    <form action={rebookBookingAction.bind(null, b.id)}>
-                      <button
-                        type="submit"
-                        title="Book again — same job, next open week"
-                        className="rounded-md border border-border p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-                      >
-                        <RotateCw className="h-3.5 w-3.5" />
-                      </button>
-                    </form>
+                    <Link
+                      href={`/app/bookings/new?from_booking=${b.id}`}
+                      title="Book again — same job, you pick the date"
+                      className="rounded-md border border-border p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                    >
+                      <RotateCw className="h-3.5 w-3.5" />
+                    </Link>
                   )}
                   <StatusBadge
                     tone={bookingStatusTone(

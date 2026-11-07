@@ -6,6 +6,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
 import { BookingForm, type BookingFormDefaults } from "../booking-form";
 import { fetchBookingFormOptions } from "../options";
+import { rebookDefaults, type RebookAssignee, type RebookSource } from "../rebook-defaults";
 
 export const metadata = { title: "New booking" };
 
@@ -19,6 +20,8 @@ export default async function NewBookingPage({
     scheduled_at?: string;
     from_request?: string;
     estimate_id?: string;
+    from_booking?: string;
+    keep_date?: string;
   }>;
 }) {
   const membership = await requireMembership(["owner", "admin", "manager"]);
@@ -26,6 +29,41 @@ export default async function NewBookingPage({
   const currency = await getOrgCurrency(membership.organization_id);
   const tz = await getOrgTimezone(membership.organization_id);
   const params = await searchParams;
+
+  // "Book again" / "Duplicate" on a job: the form opens knowing everything
+  // that job knew, and nothing is created until the owner presses Create
+  // (see rebook-defaults.ts). Book again leaves the date empty; Duplicate
+  // keeps it.
+  if (params.from_booking) {
+    const supabase = await createSupabaseServerClient();
+    const [{ data: source }, { data: crew }] = await Promise.all([
+      supabase
+        .from("bookings")
+        .select(
+          "client_id, assigned_to, scheduled_at, duration_minutes, service_type, service_type_id, total_cents, is_free, hourly_rate_cents, address, property_id, notes, splits, divide_hours_evenly",
+        )
+        .eq("id", params.from_booking)
+        .eq("organization_id", membership.organization_id)
+        .maybeSingle() as unknown as Promise<{ data: RebookSource | null }>,
+      supabase
+        .from("booking_assignees")
+        .select("membership_id, is_primary")
+        .eq("booking_id", params.from_booking) as unknown as Promise<{ data: RebookAssignee[] | null }>,
+    ]);
+    if (source) {
+      const defaults = rebookDefaults(source, crew ?? [], { tz, keepDate: params.keep_date === "1" });
+      return (
+        <PageShell
+          title={params.keep_date === "1" ? "Duplicate booking" : "Book again"}
+          description="Everything from that job is filled in. Change what you need, then create it."
+        >
+          <div className="max-w-3xl rounded-lg border border-border bg-card p-6">
+            <BookingForm mode="create" currency={currency} defaults={defaults} {...options} />
+          </div>
+        </PageShell>
+      );
+    }
+  }
 
   // "Create booking" on a portal request should arrive with everything
   // the client already told us — their date, address, and notes. These

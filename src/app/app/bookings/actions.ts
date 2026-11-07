@@ -20,7 +20,7 @@ import { syncJob } from "@/lib/job-sync";
 import { closeJob } from "@/lib/close-job";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
 import { can } from "@/lib/auth";
-import type { Database, Json } from "@/lib/supabase/types";
+import type { Database } from "@/lib/supabase/types";
 
 type ServiceTypeEnum = Database["public"]["Enums"]["service_type"];
 import {
@@ -2219,9 +2219,9 @@ export async function updateBookingAction(
       .eq("id", id)
       .eq("organization_id", membership.organization_id);
     // Not for a booking the client has never been told about. Picking the
-    // real date is the whole point of a pending placeholder — both Duplicate
-    // and the estimate conversion create one — so "your job has been moved"
-    // would be the first thing the client ever heard about it.
+    // real date is the whole point of a pending placeholder — the estimate
+    // conversion creates one — so "your job has been moved" would be the
+    // first thing the client ever heard about it.
     if (existing.status !== "pending" && notifyClient) {
       sendBookingRescheduled(id, existing.scheduled_at);
     }
@@ -2623,190 +2623,6 @@ export async function convertBookingToRecurringAction(
   return { ok: true };
 }
 
-/**
- * Create a copy of an existing booking (same client, service, crew, price)
- * with status reset to "pending". Redirects to the new booking's edit page
- * so the owner can adjust the date before confirming.
- */
-/** "Book again" from a finished job — duplicate, advanced to the next
- *  future occurrence of the same weekday/time. Form-bindable wrapper. */
-export async function rebookBookingAction(id: string) {
-  return duplicateBookingImpl(id, { advance: true });
-}
-
-export async function duplicateBookingAction(id: string) {
-  return duplicateBookingImpl(id, {});
-}
-
-async function duplicateBookingImpl(
-  id: string,
-  opts: { advance?: boolean },
-) {
-  const { membership, supabase } = await getActionContext();
-
-  const { data: source } = (await supabase
-    .from("bookings")
-    .select(
-      "client_id, package_id, assigned_to, scheduled_at, duration_minutes, service_type, service_type_id, service_type_label, total_cents, hourly_rate_cents, address, notes, splits, property_id",
-    )
-    .eq("id", id)
-    .maybeSingle()) as unknown as {
-    data: {
-      client_id: string;
-      package_id: string | null;
-      assigned_to: string | null;
-      scheduled_at: string;
-      duration_minutes: number;
-      service_type: string;
-      service_type_id: string | null;
-      service_type_label: string | null;
-      total_cents: number;
-      hourly_rate_cents: number | null;
-      address: string | null;
-      notes: string | null;
-      splits: Json;
-      property_id: string | null;
-    } | null;
-  };
-
-  if (!source) return;
-
-  // "Book again" on a finished job: same weekday, same time, next FUTURE
-  // occurrence — a completed job's date is in the past, and rebooking a
-  // cleaning is almost always "the same slot, next week". Plain Duplicate
-  // keeps the source's date (the owner is editing anyway).
-  let scheduledAt = source.scheduled_at;
-  if (opts?.advance) {
-    const d = new Date(source.scheduled_at);
-    while (d.getTime() <= Date.now()) {
-      d.setUTCDate(d.getUTCDate() + 7);
-    }
-    scheduledAt = d.toISOString();
-  }
-
-  const { data: copy, error } = await supabase
-    .from("bookings")
-    .insert({
-      organization_id: membership.organization_id,
-      client_id: source.client_id,
-      package_id: source.package_id ?? null,
-      assigned_to: source.assigned_to ?? null,
-      scheduled_at: scheduledAt,
-      duration_minutes: source.duration_minutes,
-      service_type: source.service_type as ServiceTypeEnum,
-      service_type_id: source.service_type_id,
-      service_type_label: source.service_type_label,
-      // PENDING, matching the docstring — the copy lands at the SOURCE's date
-      // and the owner is expected to edit it. "confirmed" made it look live and
-      // the reminder cron would announce a duplicate visit at the same slot if
-      // the owner walked away mid-edit. The reminder pre-stamp is belt and
-      // braces; rescheduling clears it, so the real date reminds normally.
-      status: "pending" as const,
-      client_reminder_sent_at: new Date().toISOString(),
-      total_cents: source.total_cents,
-      hourly_rate_cents: source.hourly_rate_cents ?? null,
-      address: source.address ?? null,
-      notes: source.notes ?? null,
-      splits: source.splits ?? [],
-      property_id: source.property_id ?? null,
-    })
-    .select("id")
-    .single();
-
-  if (error || !copy) return;
-
-  // Mirror the crew assignees — including split-shift segment metadata
-  // so a duplicated split booking lands in the same per-segment state
-  // as the source, not a degraded multi-crew-no-segments state.
-  const { data: assignees } = (await supabase
-    .from("booking_assignees")
-    .select(
-      "membership_id, is_primary, split_index, split_start_offset_minutes, split_duration_minutes",
-    )
-    .eq("booking_id", id)) as unknown as {
-    data: Array<{
-      membership_id: string;
-      is_primary: boolean;
-      split_index: number | null;
-      split_start_offset_minutes: number | null;
-      split_duration_minutes: number | null;
-    }> | null;
-  };
-
-  if (assignees && assignees.length > 0) {
-    await supabase.from("booking_assignees").insert(
-      assignees.map((a) => ({
-        booking_id: copy.id,
-        membership_id: a.membership_id,
-        organization_id: membership.organization_id,
-        is_primary: a.is_primary,
-        split_index: a.split_index,
-        split_start_offset_minutes: a.split_start_offset_minutes,
-        split_duration_minutes: a.split_duration_minutes,
-      })),
-    );
-  }
-
-  // Push to Google Calendar (org + per-member) so the duplicate is
-  // visible even if the owner never opens the edit page after the
-  // redirect. Use the same effective-duration logic as create: sum of
-  // segments if splits exist, otherwise the booking's duration.
-  {
-    const sourceSplits = (
-      Array.isArray(source.splits) ? source.splits : []
-    ) as Array<{ assigned_to?: string; duration_minutes?: number }>;
-    const dupEffectiveDuration =
-      sourceSplits.length > 0
-        ? sourceSplits.reduce(
-            (sum, s) => sum + (Number(s.duration_minutes) || 0),
-            0,
-          )
-        : source.duration_minutes;
-
-    const labels = await getBookingLabels(
-      supabase,
-      source.client_id,
-      source.assigned_to ?? null,
-    );
-
-    createCalendarEvent(membership.organization_id, {
-      id: copy.id,
-      scheduled_at: scheduledAt,
-      duration_minutes: dupEffectiveDuration,
-      service_type: source.service_type,
-      address: source.address,
-      notes: source.notes,
-      client_name: labels.clientName,
-      employee_name: labels.employeeName,
-      split_count: new Set(
-        sourceSplits.map((s) => s.assigned_to).filter(Boolean),
-      ).size,
-    }).catch((err) => console.error("[gcal] sync error on duplicate:", err));
-
-    // Personal calendars for every assignee (segment crew + primary).
-    const everyAssignee = Array.from(
-      new Set(
-        [
-          source.assigned_to,
-          ...(assignees ?? []).map((a) => a.membership_id),
-          ...sourceSplits.map((s) => s.assigned_to ?? null),
-        ].filter(Boolean) as string[],
-      ),
-    );
-    syncMemberCalendarEvents(copy.id, everyAssignee, {
-      id: copy.id,
-      scheduled_at: scheduledAt,
-      duration_minutes: dupEffectiveDuration,
-      service_type: source.service_type,
-      address: source.address,
-      notes: source.notes,
-      client_name: labels.clientName,
-    }).catch(() => {});
-  }
-
-  revalidatePath("/app/bookings");
-  redirect(`/app/bookings/${copy.id}/edit`);
-}
 
 // ─── Mark booking complete ────────────────────────────────────────────────────
 

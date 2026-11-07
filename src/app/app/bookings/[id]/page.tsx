@@ -47,11 +47,7 @@ import { AttachTemplateButton } from "@/app/app/checklists/attach-template-butto
 import { AssignCrewButton } from "@/app/app/bookings/assign-crew-button";
 import { SubmitButton } from "@/components/submit-button";
 import { relayVisitNoteAction } from "../actions";
-import {
-  duplicateBookingAction,
-  rebookBookingAction,
-  markBookingCompleteAction,
-} from "@/app/app/bookings/actions";
+import { markBookingCompleteAction } from "@/app/app/bookings/actions";
 
 export const metadata = { title: "Booking" };
 
@@ -517,26 +513,26 @@ export default async function BookingDetailPage({
                   </button>
                 </form>
               )}
-            {/* On a finished job the natural next step is the NEXT visit —
-                same client, service, crew, price; date advanced to the same
-                weekday/time next week, landing on the edit page to adjust. */}
+            {/* Both are shortcuts into the new-booking form with this job's
+                details filled in; nothing is created until the owner presses
+                Create. Book again leaves the date empty (a finished job's
+                date is the one thing certainly wrong); Duplicate keeps it. */}
             {bookingStatus === "completed" && (
-              <form action={rebookBookingAction.bind(null, booking.id)}>
-                <button type="submit" className={buttonVariants()}>
-                  <CalendarPlus className="h-4 w-4" />
-                  Book again
-                </button>
-              </form>
-            )}
-            <form action={duplicateBookingAction.bind(null, booking.id)}>
-              <button
-                type="submit"
-                className={buttonVariants({ variant: "outline" })}
+              <Link
+                href={`/app/bookings/new?from_booking=${booking.id}`}
+                className={buttonVariants()}
               >
-                <Copy className="h-4 w-4" />
-                Duplicate
-              </button>
-            </form>
+                <CalendarPlus className="h-4 w-4" />
+                Book again
+              </Link>
+            )}
+            <Link
+              href={`/app/bookings/new?from_booking=${booking.id}&keep_date=1`}
+              className={buttonVariants({ variant: "outline" })}
+            >
+              <Copy className="h-4 w-4" />
+              Duplicate
+            </Link>
             {!(booking as { series_id?: string | null }).series_id &&
               bookingStatus !== "cancelled" && (
                 <MakeRecurringButton bookingId={booking.id} />
