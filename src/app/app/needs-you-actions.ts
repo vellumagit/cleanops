@@ -34,6 +34,33 @@ function done(): Result {
   return { ok: true };
 }
 
+function restoreFailure(error: unknown, movedIds: string[]): Result {
+  if (movedIds.length > 0) {
+    after(() => resyncBookingCalendarsPaced(movedIds));
+    revalidatePath("/app");
+    revalidatePath("/app/scheduling");
+  }
+
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "object" &&
+          error !== null &&
+          "message" in error &&
+          typeof error.message === "string"
+        ? error.message
+        : "";
+  const progress =
+    movedIds.length === 0
+      ? "No visits were restored."
+      : `${movedIds.length} visit${movedIds.length === 1 ? "" : "s"} were restored before it stopped. Refresh and review the series.`;
+  const reason = message.includes("[23P01]")
+    ? "A cleaner already has an overlapping booking."
+    : "The visit times could not be restored.";
+
+  return { ok: false, error: `${reason} ${progress}` };
+}
+
 /** "Close it": the job is over, whoever is still rostered. */
 export async function closeJobAction(bookingId: string): Promise<Result> {
   const { membership, supabase } = await getActionContext();
@@ -198,19 +225,26 @@ export async function restoreSeriesTimesAction(seriesId: string): Promise<Result
   if (!drift) return { ok: true };
 
   const admin = createSupabaseAdminClient();
-  let moved = 0;
   const movedIds: string[] = [];
   for (const v of drift.visits) {
-    const { data: upd, error } = (await admin
-      .from("bookings")
-      .update({ scheduled_at: v.expected_at, client_reminder_sent_at: null } as never)
-      .eq("id", v.id)
-      .eq("organization_id", membership.organization_id)
-      .eq("scheduled_at", v.scheduled_at)
-      .select("id")) as unknown as { data: Array<{ id: string }> | null; error: { message: string } | null };
-    if (error) return { ok: false, error: error.message };
+    let upd: Array<{ id: string }> | null;
+    let error: { message: string } | null;
+    try {
+      ({ data: upd, error } = (await admin
+        .from("bookings")
+        .update({ scheduled_at: v.expected_at, client_reminder_sent_at: null } as never)
+        .eq("id", v.id)
+        .eq("organization_id", membership.organization_id)
+        .eq("scheduled_at", v.scheduled_at)
+        .select("id")) as unknown as {
+        data: Array<{ id: string }> | null;
+        error: { message: string } | null;
+      });
+    } catch (cause) {
+      return restoreFailure(cause, movedIds);
+    }
+    if (error) return restoreFailure(error, movedIds);
     if (!upd || upd.length === 0) continue;
-    moved++;
     movedIds.push(v.id);
     await logAuditEvent({
       membership,
@@ -222,7 +256,7 @@ export async function restoreSeriesTimesAction(seriesId: string): Promise<Result
     });
     await syncJob(v.id, "rescheduled");
   }
-  if (moved === 0) return { ok: false, error: "Those visits changed under you — look again." };
+  if (movedIds.length === 0) return { ok: false, error: "Those visits changed under you — look again." };
   // Org and member calendars, paced, after the response: the visits beyond
   // the reconcile's 45-day window would otherwise show the old hour until
   // they came within it.
