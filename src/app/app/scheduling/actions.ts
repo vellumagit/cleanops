@@ -5,6 +5,7 @@ import { after } from "next/server";
 import { getActionContext } from "@/lib/actions";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { futureStatusError } from "@/lib/booking-status";
+import { orgLocalDayUtcRange } from "./day-range";
 import { planCrewMove, type CrewMovePlan } from "./drag-crew";
 import { membersOffOn } from "@/lib/unavailability-notice";
 import { scheduleFromWallClock } from "@/lib/scheduled-local";
@@ -188,9 +189,10 @@ export async function rescheduleBookingAction(
   // follow-up; for now the dispatch grid's visual conflict ring covers
   // most cases.
   if (assignedTo && !hasSplits) {
-    const [y, m, d] = targetDate.split("-").map(Number);
-    const dayStart = new Date(y, m - 1, d, 0, 0, 0, 0);
-    const dayEnd = new Date(y, m - 1, d + 1, 0, 0, 0, 0);
+    const { start: dayStart, end: dayEnd } = orgLocalDayUtcRange(
+      targetDate,
+      orgTz,
+    );
     // That person's other jobs that day — as first person OR as crew. This
     // only looked at assigned_to, so a cleaner who was crew on another job at
     // the same time read as free and got double-booked.
