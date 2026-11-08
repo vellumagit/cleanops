@@ -7,6 +7,7 @@ import { getOrgTimezone } from "@/lib/org-timezone";
 import { futureStatusError } from "@/lib/booking-status";
 import { orgLocalDayUtcRange } from "./day-range";
 import { planCrewMove, type CrewMovePlan } from "./drag-crew";
+import { hasSplitScheduleConflict } from "./segment-conflicts";
 import { membersOffOn } from "@/lib/unavailability-notice";
 import { scheduleFromWallClock } from "@/lib/scheduled-local";
 import { resyncBookingCalendars } from "@/lib/booking-calendar-sync";
@@ -118,16 +119,29 @@ export async function rescheduleBookingAction(
   if (fetchError) return { ok: false, error: fetchError.message };
   if (!current) return { ok: false, error: "Booking not found" };
 
-  const hasSplits = Array.isArray(current.splits) && current.splits.length > 0;
-
   // Who is on the job now, and what this drag does to them. Split bookings
   // keep their crew and offsets untouched (only the start moves), as before.
-  const { data: crewRows } = (await supabase
+  const { data: crewRows, error: crewError } = (await supabase
     .from("booking_assignees" as never)
-    .select("membership_id")
+    .select(
+      "membership_id, split_start_offset_minutes, split_duration_minutes",
+    )
     .eq("booking_id" as never, id as never)) as unknown as {
-    data: Array<{ membership_id: string }> | null;
+    data: Array<{
+      membership_id: string;
+      split_start_offset_minutes: number | null;
+      split_duration_minutes: number | null;
+    }> | null;
+    error: { message: string } | null;
   };
+  if (crewError) return { ok: false, error: crewError.message };
+  const hasSplits =
+    (Array.isArray(current.splits) && current.splits.length > 0) ||
+    (crewRows ?? []).some(
+      (row) =>
+        row.split_start_offset_minutes != null ||
+        row.split_duration_minutes != null,
+    );
   const crewNow = Array.from(
     new Set([
       ...(current.assigned_to ? [current.assigned_to] : []),
@@ -182,13 +196,127 @@ export async function rescheduleBookingAction(
   // here. The Dispatch view separately paints informational red borders
   // so the owner sees overlaps at a glance.
   //
-  // SPLIT BOOKINGS: skip the drop-target conflict check entirely. The
-  // booking's crew + offsets are preserved on reschedule (see below),
-  // so the drop target's `assignedTo` is irrelevant — the booking will
-  // never touch that lane. A proper per-segment conflict check is a
-  // follow-up; for now the dispatch grid's visual conflict ring covers
-  // most cases.
-  if (assignedTo && !hasSplits) {
+  if (hasSplits) {
+    const { start: dayStart, end: dayEnd } = orgLocalDayUtcRange(
+      targetDate,
+      orgTz,
+    );
+    const memberIds = Array.from(
+      new Set([
+        ...(current.assigned_to ? [current.assigned_to] : []),
+        ...(crewRows ?? []).map((row) => row.membership_id),
+      ]),
+    );
+    const segments = memberIds.map((membershipId) => {
+      const row = crewRows?.find(
+        (candidate) => candidate.membership_id === membershipId,
+      );
+      return {
+        membership_id: membershipId,
+        start_offset_minutes: row?.split_start_offset_minutes ?? null,
+        duration_minutes: row?.split_duration_minutes ?? null,
+      };
+    });
+
+    if (memberIds.length > 0) {
+      const [
+        { data: asLead, error: leadError },
+        { data: asCrew, error: crewConflictError },
+      ] = await Promise.all([
+        supabase
+          .from("bookings")
+          .select("id, scheduled_at, duration_minutes, status, assigned_to")
+          .in("assigned_to", memberIds)
+          .gte("scheduled_at", dayStart.toISOString())
+          .lt("scheduled_at", dayEnd.toISOString())
+          .neq("id", id)
+          .neq("status", "cancelled")
+          .limit(1000),
+        supabase
+          .from("booking_assignees" as never)
+          .select(
+            `booking_id, membership_id, split_start_offset_minutes,
+             split_duration_minutes,
+             booking:bookings!inner ( id, scheduled_at, duration_minutes, status )`,
+          )
+          .in("membership_id" as never, memberIds as never)
+          .gte("booking.scheduled_at" as never, dayStart.toISOString() as never)
+          .lt("booking.scheduled_at" as never, dayEnd.toISOString() as never)
+          .neq("booking.status" as never, "cancelled" as never)
+          .limit(1000) as unknown as Promise<{
+            data: Array<{
+              booking_id: string;
+              membership_id: string;
+              split_start_offset_minutes: number | null;
+              split_duration_minutes: number | null;
+              booking: {
+                id: string;
+                scheduled_at: string;
+                duration_minutes: number;
+                status: string;
+              } | null;
+            }> | null;
+            error: { message: string } | null;
+          }>,
+      ]);
+      if (leadError) return { ok: false, error: leadError.message };
+      if (crewConflictError)
+        return { ok: false, error: crewConflictError.message };
+
+      const assignments = [
+        ...(asLead ?? [])
+          .filter(
+            (booking): booking is typeof booking & { assigned_to: string } =>
+              booking.assigned_to != null,
+          )
+          .map((booking) => {
+            const crewAssignment = asCrew?.find(
+              (row) =>
+                row.booking_id === booking.id &&
+                row.membership_id === booking.assigned_to,
+            );
+            return {
+              booking_id: booking.id,
+              membership_id: booking.assigned_to,
+              scheduled_at: booking.scheduled_at,
+              booking_duration_minutes: booking.duration_minutes,
+              status: booking.status,
+              split_start_offset_minutes:
+                crewAssignment?.split_start_offset_minutes ?? null,
+              split_duration_minutes:
+                crewAssignment?.split_duration_minutes ?? null,
+            };
+          }),
+        ...(asCrew ?? [])
+          .filter((row) => row.booking != null)
+          .map((row) => ({
+            booking_id: row.booking!.id,
+            membership_id: row.membership_id,
+            scheduled_at: row.booking!.scheduled_at,
+            booking_duration_minutes: row.booking!.duration_minutes,
+            status: row.booking!.status,
+            split_start_offset_minutes: row.split_start_offset_minutes,
+            split_duration_minutes: row.split_duration_minutes,
+          })),
+      ];
+
+      if (
+        hasSplitScheduleConflict({
+          bookingId: id,
+          scheduledAt: next.toISOString(),
+          bookingDuration: current.duration_minutes,
+          segments,
+          otherAssignments: assignments,
+        })
+      ) {
+        return {
+          ok: false,
+          error:
+            "A cleaner on this job is already booked at that time. Move the other job first or pick a different slot.",
+        };
+      }
+    }
+  } else if (assignedTo) {
     const { start: dayStart, end: dayEnd } = orgLocalDayUtcRange(
       targetDate,
       orgTz,
