@@ -33,6 +33,7 @@ import {
   createCalendarEvent,
   updateCalendarEvent,
   deleteCalendarEvent,
+  deleteMemberCalendarEventById,
   syncMemberCalendarEvents,
 } from "@/lib/google-calendar";
 import { generateOccurrences, type SeriesRule } from "@/lib/recurrence";
@@ -1083,6 +1084,24 @@ export async function createRecurringBookingAction(
     };
   }
 
+  const cleanupFailedSeries = async () => {
+    const admin = createSupabaseAdminClient();
+    const cleanupErrors: string[] = [];
+    const { error: bookingsDeleteErr } = await admin
+      .from("bookings")
+      .delete()
+      .eq("organization_id", membership.organization_id)
+      .eq("series_id", series.id);
+    if (bookingsDeleteErr) cleanupErrors.push(bookingsDeleteErr.message);
+    const { error: seriesDeleteErr } = await admin
+      .from("booking_series")
+      .delete()
+      .eq("id", series.id)
+      .eq("organization_id", membership.organization_id);
+    if (seriesDeleteErr) cleanupErrors.push(seriesDeleteErr.message);
+    return cleanupErrors;
+  };
+
   // 2. Generate the first batch of occurrences
   const rule: SeriesRule = {
     pattern: parsed.data.recurrence_pattern,
@@ -1154,8 +1173,13 @@ export async function createRecurringBookingAction(
   });
 
   if (bookingsErr) {
+    const cleanupErrors = await cleanupFailedSeries();
     return {
-      errors: { _form: bookingsErr.message },
+      errors: {
+        _form: cleanupErrors.length
+          ? `${bookingsErr.message} Cleanup also failed: ${cleanupErrors.join("; ")}`
+          : bookingsErr.message,
+      },
       values: raw,
     };
   }
@@ -1190,7 +1214,15 @@ export async function createRecurringBookingAction(
         [],
       );
       if (seriesCrewErr) {
-        return { errors: { _form: seriesCrewErr }, values: raw };
+        const cleanupErrors = await cleanupFailedSeries();
+        return {
+          errors: {
+            _form: cleanupErrors.length
+              ? `${seriesCrewErr} Cleanup also failed: ${cleanupErrors.join("; ")}`
+              : seriesCrewErr,
+          },
+          values: raw,
+        };
       }
     }
 
@@ -1652,6 +1684,103 @@ export async function updateBookingAction(
   // client's channel preference decides email vs text vs both). Absent
   // field = paths without the dialog ⇒ notify, preserving old behavior.
   const notifyClient = String(formData.get("notify_client") ?? "") !== "0";
+  const notifyCurrentRescheduleOnPartialFailure = () => {
+    if (
+      notifyClient &&
+      existing?.scheduled_at &&
+      new Date(existing.scheduled_at).getTime() !==
+        new Date(parsed.data.scheduled_at).getTime()
+    ) {
+      sendBookingRescheduled(id, existing.scheduled_at);
+    }
+  };
+  const syncEditedBookingCalendar = async () => {
+    const labels = await getBookingLabels(
+      supabase,
+      parsed.data.client_id,
+      parsed.data.assigned_to ?? null,
+    );
+
+    if (parsed.data.status === "cancelled") {
+      if (existing?.google_calendar_event_id) {
+        await deleteCalendarEvent(
+          membership.organization_id,
+          existing.google_calendar_event_id,
+        ).catch((err) => console.error("[gcal] cancel cleanup failed:", err));
+        await supabase
+          .from("bookings")
+          .update({ google_calendar_event_id: null })
+          .eq("id", id);
+      }
+      await syncMemberCalendarEvents(id, [], {
+        id,
+        scheduled_at: parsed.data.scheduled_at,
+        duration_minutes: updateEffectiveDuration,
+        service_type: parsed.data.service_type,
+        address: parsed.data.address ?? null,
+        notes: parsed.data.notes ?? null,
+        client_name: labels.clientName,
+      }).catch((err) =>
+        console.error("[gcal/member] cancel cleanup failed:", err),
+      );
+      return;
+    }
+
+    if (existing?.google_calendar_event_id) {
+      await updateCalendarEvent(membership.organization_id, {
+        id,
+        google_calendar_event_id: existing.google_calendar_event_id,
+        scheduled_at: parsed.data.scheduled_at,
+        duration_minutes: updateEffectiveDuration,
+        service_type: parsed.data.service_type,
+        address: parsed.data.address ?? null,
+        notes: parsed.data.notes ?? null,
+        client_name: labels.clientName,
+        employee_name: labels.employeeName,
+        split_count: new Set(
+          (updateSplits as SplitSegmentInput[])
+            .map((split) => split.assigned_to)
+            .filter(Boolean),
+        ).size,
+      }).catch((err) => console.error("[gcal] sync error on update:", err));
+    } else {
+      await createCalendarEvent(membership.organization_id, {
+        id,
+        scheduled_at: parsed.data.scheduled_at,
+        duration_minutes: updateEffectiveDuration,
+        service_type: parsed.data.service_type,
+        address: parsed.data.address ?? null,
+        notes: parsed.data.notes ?? null,
+        client_name: labels.clientName,
+        employee_name: labels.employeeName,
+        split_count: new Set(
+          (updateSplits as SplitSegmentInput[])
+            .map((split) => split.assigned_to)
+            .filter(Boolean),
+        ).size,
+      }).catch((err) => console.error("[gcal] sync error on create:", err));
+    }
+
+    const splitAssignees = (updateSplits as SplitSegmentInput[])
+      .map((split) => split.assigned_to)
+      .filter(Boolean);
+    const allAssignees = Array.from(
+      new Set([
+        ...(parsed.data.assigned_to ? [parsed.data.assigned_to] : []),
+        ...readAdditionalAssignees(formData),
+        ...splitAssignees,
+      ]),
+    );
+    syncMemberCalendarEvents(id, allAssignees, {
+      id,
+      scheduled_at: parsed.data.scheduled_at,
+      duration_minutes: updateEffectiveDuration,
+      service_type: parsed.data.service_type,
+      address: parsed.data.address ?? null,
+      notes: parsed.data.notes ?? null,
+      client_name: labels.clientName,
+    }).catch(() => {});
+  };
 
   // "This and all future" propagation for recurring series.
   // We use the admin client for the bulk update because RLS on bookings can
@@ -1873,67 +2002,61 @@ export async function updateBookingAction(
         const seriesServiceTypeEnum = (existing?.service_type ??
           parsed.data.service_type) as ServiceTypeEnum;
 
-        // Tear down the OLD future occurrences' calendar events BEFORE
-        // deleting the rows. Otherwise the Google Calendar events orphan at
-        // their old times and the reschedule never shows up on the calendar.
-        const { data: staleSiblings } = (await admin
+        // Capture existing event IDs before the transactional replacement;
+        // only remove them after the database accepts the new occurrences.
+        const { data: staleSiblings, error: staleSiblingsErr } = (await admin
           .from("bookings")
-          .select("id, google_calendar_event_id, scheduled_at")
+          .select("id")
           .eq("series_id", seriesId)
           .eq("organization_id", membership.organization_id)
           .neq("id", id)
           .gte("scheduled_at", seriesScheduledAt)
-          // Match the delete below — leave live in_progress/en_route jobs alone.
+          // Match the transactional replacement — leave live jobs alone.
           .in("status", ["pending", "confirmed"])
           .order("scheduled_at", { ascending: true })) as unknown as {
-          data: Array<{
-            id: string;
-            google_calendar_event_id: string | null;
-            scheduled_at: string;
-          }> | null;
+          data: Array<{ id: string }> | null;
+          error: { message: string } | null;
         };
-        for (const sib of staleSiblings ?? []) {
-          if (sib.google_calendar_event_id) {
-            await deleteCalendarEvent(
-              membership.organization_id,
-              sib.google_calendar_event_id,
-            ).catch((err) =>
-              console.error(
-                "[gcal] series-reschedule stale cleanup failed:",
-                err,
-              ),
-            );
-          }
-          // Remove personal-calendar events (no-op when none are connected).
-          await syncMemberCalendarEvents(sib.id, [], {
-            id: sib.id,
-            scheduled_at: seriesScheduledAt,
-            duration_minutes: parsed.data.duration_minutes,
-            service_type: seriesServiceTypeEnum,
-            address: parsed.data.address ?? null,
-            notes: parsed.data.notes ?? null,
-            client_name: regenLabels.clientName,
-          }).catch(() => {});
+        if (staleSiblingsErr) {
+          await syncEditedBookingCalendar();
+          notifyCurrentRescheduleOnPartialFailure();
+          return {
+            errors: {
+              _form: `This visit was saved, but future visits were not changed because their calendar events could not be loaded: ${staleSiblingsErr.message}`,
+            },
+            values: raw,
+          };
         }
-
-        // Delete only future PENDING/CONFIRMED occurrences (excluding the
-        // currently-edited booking — it's already updated). A future-dated
-        // occurrence can legitimately be in_progress/en_route (a cleaner can
-        // start early); hard-deleting those would destroy live job state +
-        // photos and orphan time entries. Scope to the not-yet-worked statuses
-        // (mirrors cancelSeriesAction). The admin client bypasses RLS; org
-        // isolation enforced explicitly.
-        await (admin
-          .from("bookings")
-          .delete()
-          .eq("series_id", seriesId)
-          .eq("organization_id", membership.organization_id)
-          .neq("id", id)
-          .gte("scheduled_at", seriesScheduledAt)
-          .in("status", [
-            "pending",
-            "confirmed",
-          ]) as unknown as Promise<unknown>);
+        const staleSiblingIds = (staleSiblings ?? []).map((sibling) => sibling.id);
+        let staleMemberEvents: Array<{
+          booking_id: string;
+          membership_id: string;
+          google_calendar_event_id: string;
+        }> = [];
+        if (staleSiblingIds.length > 0) {
+          const { data: memberEvents, error: memberEventsErr } = (await admin
+            .from("booking_member_calendar_events")
+            .select("booking_id, membership_id, google_calendar_event_id")
+            .in("booking_id", staleSiblingIds)) as unknown as {
+            data: Array<{
+              booking_id: string;
+              membership_id: string;
+              google_calendar_event_id: string;
+            }> | null;
+            error: { message: string } | null;
+          };
+          if (memberEventsErr) {
+            await syncEditedBookingCalendar();
+            notifyCurrentRescheduleOnPartialFailure();
+            return {
+              errors: {
+                _form: `This visit was saved, but future visits were not changed because their personal calendar events could not be loaded: ${memberEventsErr.message}`,
+              },
+              values: raw,
+            };
+          }
+          staleMemberEvents = memberEvents ?? [];
+        }
 
         // Generate new occurrences strictly after the edited visit — at its NEW
         // time. Stepping from the old time is what kept Lane on Thursdays
@@ -1957,119 +2080,151 @@ export async function updateBookingAction(
           new Date(parsed.data.scheduled_at), // `after` — exclusive
         );
 
-        if (occurrences.length > 0) {
-          const bookingRows = occurrences.map((scheduled_at) => ({
-            organization_id: membership.organization_id,
-            client_id: parsed.data.client_id,
-                  // Segment-0 employee for splits; form primary otherwise.
-            assigned_to: updateEffectiveAssignedTo,
-            scheduled_at,
-            duration_minutes: parsed.data.duration_minutes,
-            service_type: seriesServiceTypeEnum,
-            service_type_id: updateServiceExtras.service_type_id,
-            service_type_label: updateServiceExtras.service_type_label,
-            status: "confirmed" as const,
-            total_cents: parsed.data.total_cents,
-                  address: parsed.data.address ?? null,
-            property_id: propertyId,
-            notes: parsed.data.notes ?? null,
-            splits: updateSplits,
-            series_id: seriesId,
-          }));
+        const bookingRows = occurrences.map((scheduled_at) => ({
+          client_id: parsed.data.client_id,
+          // Segment-0 employee for splits; form primary otherwise.
+          assigned_to: updateEffectiveAssignedTo,
+          scheduled_at,
+          duration_minutes: parsed.data.duration_minutes,
+          service_type: seriesServiceTypeEnum,
+          service_type_id: updateServiceExtras.service_type_id,
+          service_type_label: updateServiceExtras.service_type_label,
+          status: "confirmed" as const,
+          total_cents: parsed.data.total_cents,
+          address: parsed.data.address ?? null,
+          property_id: propertyId,
+          notes: parsed.data.notes ?? null,
+          splits: updateSplits,
+        }));
 
-          // ignoreDuplicates: regeneration racing the nightly extend cron
-          // must not produce the same occurrence twice (each duplicate
-          // would auto-complete and auto-invoice separately).
-          const { data: regenerated } = (await admin
-            .from("bookings")
-            .upsert(bookingRows, {
-              onConflict: "series_id,scheduled_at",
-              ignoreDuplicates: true,
-            })
-            .select("id, scheduled_at")) as unknown as {
-            data: Array<{ id: string; scheduled_at: string }> | null;
+        // This transaction replaces rows and their crew together. Schedule
+        // trigger failures roll it all back, leaving the old occurrences in
+        // place; external calendar events are removed only after it commits.
+        const { data: replacementRows, error: regenerationErr } = await admin.rpc(
+          "replace_future_series_bookings",
+          {
+            p_organization_id: membership.organization_id,
+            p_series_id: seriesId,
+            p_current_booking_id: id,
+            p_from: seriesScheduledAt,
+            p_booking_rows: bookingRows,
+            p_additional_assignee_ids: readAdditionalAssignees(formData),
+          },
+        );
+        if (regenerationErr) {
+          await syncEditedBookingCalendar();
+          notifyCurrentRescheduleOnPartialFailure();
+          return {
+            errors: {
+              _form: `This visit was saved, but its future visits were left unchanged: ${regenerationErr.message}`,
+            },
+            values: raw,
           };
+        }
 
-          // Build booking_assignees for ALL regenerated occurrences in a
-          // single bulk pass. Doing this per-row would do ~3 sequential
-          // round-trips per occurrence and time out on long series.
-          const regenRows = regenerated ?? [];
-          const regenIds = regenRows.map((r) => r.id);
-          if (regenIds.length > 0) {
-            const regenCrewErr = await syncBookingAssigneesBulk(
-              supabase,
-              membership.organization_id,
-              regenIds,
-              updateEffectiveAssignedTo,
-              readAdditionalAssignees(formData),
-              updateSplits as SplitSegmentInput[],
-            );
-            if (regenCrewErr) {
-              return { errors: { _form: regenCrewErr }, values: raw };
-            }
-
-            // Create calendar events for each regenerated booking so the
-            // rescheduled future occurrences actually land on the org
-            // calendar (and any connected personal calendars). Runs in
-            // after() so the serverless runtime keeps the function alive
-            // until the Google writes finish, instead of freezing right
-            // after the redirect and dropping them.
-            after(async () => {
-              for (const rb of regenRows) {
-                await createCalendarEvent(membership.organization_id, {
-                  id: rb.id,
-                  scheduled_at: rb.scheduled_at,
-                  duration_minutes: parsed.data.duration_minutes,
-                  service_type: seriesServiceTypeEnum,
-                  address: parsed.data.address ?? null,
-                  notes: parsed.data.notes ?? null,
-                  client_name: regenLabels.clientName,
-                  employee_name: regenLabels.employeeName,
-                }).catch((err) =>
-                  console.error("[gcal] series-reschedule create:", err),
-                );
-                await syncMemberCalendarEvents(rb.id, regenAssignees, {
-                  id: rb.id,
-                  scheduled_at: rb.scheduled_at,
-                  duration_minutes: parsed.data.duration_minutes,
-                  service_type: seriesServiceTypeEnum,
-                  address: parsed.data.address ?? null,
-                  notes: parsed.data.notes ?? null,
-                  client_name: regenLabels.clientName,
-                }).catch(() => {});
-              }
-            });
-          }
-
-          console.log(
-            `[series-reschedule] regenerated ${occurrences.length} bookings in series ${seriesId}`,
+        const allReplacementRows = replacementRows ?? [];
+        const regenRows = allReplacementRows.filter(
+          (row) => row.operation === "inserted",
+        );
+        const deletedSiblings = allReplacementRows
+          .filter((row) => row.operation === "deleted")
+          .sort(
+            (left, right) =>
+              new Date(left.scheduled_at).getTime() -
+              new Date(right.scheduled_at).getTime(),
           );
+        const deletedSiblingIds = new Set(
+          deletedSiblings.map((sibling) => sibling.id),
+        );
 
-          // Audit B6: if the edited occurrence's own time did NOT change, the
-          // reschedule notice further down never fires — the client's future
-          // visits all silently moved. Announce ONE representative move: the
-          // first regenerated occurrence (new time) vs the first deleted
-          // sibling (old time). sendBookingRescheduled applies the client's
-          // notification preference + org toggles internally.
-          const editedTimeUnchanged =
-            existing?.scheduled_at &&
-            new Date(existing.scheduled_at).getTime() ===
-              new Date(parsed.data.scheduled_at).getTime();
-          const firstNew = regenRows[0];
-          const firstOldAt = (staleSiblings ?? [])[0]?.scheduled_at ?? null;
-          if (
-            editedTimeUnchanged &&
-            firstNew &&
-            firstOldAt &&
-            // A move the email can SHOW: some rule changes (weekly →
-            // biweekly) keep the first occurrence identical, and "old
-            // time crossed out, same time written in" reads as a glitch.
-            new Date(firstNew.scheduled_at).getTime() !==
-              new Date(firstOldAt).getTime() &&
-            notifyClient
-          ) {
-            sendBookingRescheduled(firstNew.id, firstOldAt);
+        for (const sib of deletedSiblings) {
+          if (sib.google_calendar_event_id) {
+            await deleteCalendarEvent(
+              membership.organization_id,
+              sib.google_calendar_event_id,
+            ).catch((err) =>
+              console.error(
+                "[gcal] series-reschedule stale cleanup failed:",
+                err,
+              ),
+            );
           }
+        }
+        for (const event of staleMemberEvents) {
+          if (!deletedSiblingIds.has(event.booking_id)) continue;
+          await deleteMemberCalendarEventById(
+            event.membership_id,
+            event.google_calendar_event_id,
+          )
+            .then((deleted) => {
+              if (!deleted) {
+                console.error(
+                  "[gcal/member] stale series event could not be deleted:",
+                  event.google_calendar_event_id,
+                );
+              }
+            })
+            .catch((err) =>
+              console.error("[gcal/member] stale series cleanup failed:", err),
+            );
+        }
+
+        // Create calendar events for each regenerated booking so the
+        // rescheduled future occurrences actually land on the org calendar
+        // (and any connected personal calendars).
+        if (regenRows.length > 0) {
+          after(async () => {
+            for (const rb of regenRows) {
+              await createCalendarEvent(membership.organization_id, {
+                id: rb.id,
+                scheduled_at: rb.scheduled_at,
+                duration_minutes: parsed.data.duration_minutes,
+                service_type: seriesServiceTypeEnum,
+                address: parsed.data.address ?? null,
+                notes: parsed.data.notes ?? null,
+                client_name: regenLabels.clientName,
+                employee_name: regenLabels.employeeName,
+              }).catch((err) =>
+                console.error("[gcal] series-reschedule create:", err),
+              );
+              await syncMemberCalendarEvents(rb.id, regenAssignees, {
+                id: rb.id,
+                scheduled_at: rb.scheduled_at,
+                duration_minutes: parsed.data.duration_minutes,
+                service_type: seriesServiceTypeEnum,
+                address: parsed.data.address ?? null,
+                notes: parsed.data.notes ?? null,
+                client_name: regenLabels.clientName,
+              }).catch(() => {});
+            }
+          });
+        }
+
+        console.log(
+          `[series-reschedule] regenerated ${occurrences.length} bookings in series ${seriesId}`,
+        );
+
+        // Audit B6: if the edited occurrence's own time did NOT change, the
+        // reschedule notice further down never fires — the client's future
+        // visits all silently moved. Announce ONE representative move: the
+        // first regenerated occurrence (new time) vs the first deleted
+        // sibling (old time). sendBookingRescheduled applies the client's
+        // notification preference + org toggles internally.
+        const editedTimeUnchanged =
+          existing?.scheduled_at &&
+          new Date(existing.scheduled_at).getTime() ===
+            new Date(parsed.data.scheduled_at).getTime();
+        const firstNew = regenRows[0];
+        const firstOldAt = deletedSiblings[0]?.scheduled_at ?? null;
+        if (
+          editedTimeUnchanged &&
+          firstNew &&
+          firstOldAt &&
+          new Date(firstNew.scheduled_at).getTime() !==
+            new Date(firstOldAt).getTime() &&
+          notifyClient
+        ) {
+          sendBookingRescheduled(firstNew.id, firstOldAt);
         }
       }
     } else {
@@ -2274,103 +2429,7 @@ export async function updateBookingAction(
   }
   await syncJob(id, "edit_form");
 
-  // Sync to Google Calendar
-  const labels = await getBookingLabels(
-    supabase,
-    parsed.data.client_id,
-    parsed.data.assigned_to ?? null,
-  );
-
-  // CANCELLATION HYGIENE: if the booking is now cancelled, remove it
-  // from every calendar instead of updating. Cleaners would otherwise
-  // see the event survive on their personal Google Calendar and drive
-  // to a job that no longer exists.
-  if (parsed.data.status === "cancelled") {
-    if (existing?.google_calendar_event_id) {
-      await deleteCalendarEvent(
-        membership.organization_id,
-        existing.google_calendar_event_id,
-      ).catch((err) => console.error("[gcal] cancel cleanup failed:", err));
-      // Clear the stored event ID so a later un-cancel re-creates clean.
-      await supabase
-        .from("bookings")
-        .update({ google_calendar_event_id: null })
-        .eq("id", id);
-    }
-    // Clear member calendar events with awaited cleanup so the mapping
-    // rows still exist when the function runs its initial SELECT.
-    await syncMemberCalendarEvents(id, [], {
-      id,
-      scheduled_at: parsed.data.scheduled_at,
-      duration_minutes: updateEffectiveDuration,
-      service_type: parsed.data.service_type,
-      address: parsed.data.address ?? null,
-      notes: parsed.data.notes ?? null,
-      client_name: labels.clientName,
-    }).catch((err) =>
-      console.error("[gcal/member] cancel cleanup failed:", err),
-    );
-  } else {
-    if (existing?.google_calendar_event_id) {
-      // Update existing event
-      await updateCalendarEvent(membership.organization_id, {
-        id,
-        google_calendar_event_id: existing.google_calendar_event_id,
-        scheduled_at: parsed.data.scheduled_at,
-        duration_minutes: updateEffectiveDuration,
-        service_type: parsed.data.service_type,
-        address: parsed.data.address ?? null,
-        notes: parsed.data.notes ?? null,
-        client_name: labels.clientName,
-        employee_name: labels.employeeName,
-        split_count: new Set(
-          (updateSplits as SplitSegmentInput[])
-            .map((s) => s.assigned_to)
-            .filter(Boolean),
-        ).size,
-      }).catch((err) => console.error("[gcal] sync error on update:", err));
-    } else {
-      // No event yet — create one
-      await createCalendarEvent(membership.organization_id, {
-        id,
-        scheduled_at: parsed.data.scheduled_at,
-        duration_minutes: updateEffectiveDuration,
-        service_type: parsed.data.service_type,
-        address: parsed.data.address ?? null,
-        notes: parsed.data.notes ?? null,
-        client_name: labels.clientName,
-        employee_name: labels.employeeName,
-        split_count: new Set(
-          (updateSplits as SplitSegmentInput[])
-            .map((s) => s.assigned_to)
-            .filter(Boolean),
-        ).size,
-      }).catch((err) => console.error("[gcal] sync error on create:", err));
-    }
-
-    // Sync to each assigned employee's personal calendar (fire-and-forget).
-    {
-      const splitAssignees = (updateSplits as SplitSegmentInput[])
-        .map((s) => s.assigned_to)
-        .filter(Boolean);
-      const allAssignees = Array.from(
-        new Set([
-          ...(parsed.data.assigned_to ? [parsed.data.assigned_to] : []),
-          ...readAdditionalAssignees(formData),
-          ...splitAssignees,
-        ]),
-      );
-      syncMemberCalendarEvents(id, allAssignees, {
-        id,
-        scheduled_at: parsed.data.scheduled_at,
-        duration_minutes: updateEffectiveDuration,
-        service_type: parsed.data.service_type,
-        address: parsed.data.address ?? null,
-        notes: parsed.data.notes ?? null,
-        client_name: labels.clientName,
-      }).catch(() => {});
-    }
-  }
+  await syncEditedBookingCalendar();
 
   revalidatePath("/app/bookings");
   revalidatePath(`/app/bookings/${id}/edit`);
@@ -2521,11 +2580,47 @@ export async function convertBookingToRecurringAction(
     };
   }
 
+  const rollbackFailedConversion = async (reason: string) => {
+    const admin = createSupabaseAdminClient();
+    const cleanupErrors: string[] = [];
+    const { error: bookingsDeleteErr } = await admin
+      .from("bookings")
+      .delete()
+      .eq("organization_id", membership.organization_id)
+      .eq("series_id", series.id)
+      .neq("id", bookingId);
+    if (bookingsDeleteErr) cleanupErrors.push(bookingsDeleteErr.message);
+    const { error: unlinkErr } = await admin
+      .from("bookings")
+      .update({ series_id: null } as never)
+      .eq("id", bookingId)
+      .eq("organization_id", membership.organization_id)
+      .eq("series_id", series.id);
+    if (unlinkErr) cleanupErrors.push(unlinkErr.message);
+
+    const { error: seriesDeleteErr } = await admin
+      .from("booking_series")
+      .delete()
+      .eq("id", series.id)
+      .eq("organization_id", membership.organization_id);
+    if (seriesDeleteErr) cleanupErrors.push(seriesDeleteErr.message);
+
+    return cleanupErrors.length
+      ? `${reason} Cleanup also failed: ${cleanupErrors.join("; ")}`
+      : reason;
+  };
+
   // Link the existing booking as the first occurrence.
-  await (supabase
+  const { error: linkErr } = await supabase
     .from("bookings")
     .update({ series_id: series.id } as never)
-    .eq("id", bookingId) as unknown as Promise<unknown>);
+    .eq("id", bookingId);
+  if (linkErr) {
+    return {
+      ok: false,
+      error: await rollbackFailedConversion(linkErr.message),
+    };
+  }
 
   // Generate future occurrences strictly after this booking's slot.
   const rule: SeriesRule = {
@@ -2568,7 +2663,7 @@ export async function convertBookingToRecurringAction(
     // ignoreDuplicates: converting to recurring races the nightly extend
     // cron the moment the series row exists — same-date double inserts
     // must skip, not double-book (and double-invoice).
-    const { data: inserted } = (await supabase
+    const { data: inserted, error: insertErr } = (await supabase
       .from("bookings")
       .upsert(rows as never, {
         onConflict: "series_id,scheduled_at",
@@ -2576,7 +2671,14 @@ export async function convertBookingToRecurringAction(
       })
       .select("id, scheduled_at")) as unknown as {
       data: Array<{ id: string; scheduled_at: string }> | null;
+      error: { message: string } | null;
     };
+    if (insertErr) {
+      return {
+        ok: false,
+        error: await rollbackFailedConversion(insertErr.message),
+      };
+    }
     const newRows = inserted ?? [];
     const newIds = newRows.map((r) => r.id);
 
@@ -2590,7 +2692,10 @@ export async function convertBookingToRecurringAction(
         [],
       );
       if (newCrewErr) {
-        return { ok: false, error: newCrewErr };
+        return {
+          ok: false,
+          error: await rollbackFailedConversion(newCrewErr),
+        };
       }
 
       const labels = await getBookingLabels(

@@ -4381,6 +4381,22 @@ export type Database = {
         }
         Returns: boolean
       }
+      replace_future_series_bookings: {
+        Args: {
+          p_additional_assignee_ids: string[]
+          p_booking_rows: Json
+          p_current_booking_id: string
+          p_from: string
+          p_organization_id: string
+          p_series_id: string
+        }
+        Returns: {
+          google_calendar_event_id: string | null
+          id: string
+          operation: string
+          scheduled_at: string
+        }[]
+      }
       chat_mark_thread_read: {
         Args: { p_thread_id: string }
         Returns: undefined
