@@ -4373,6 +4373,14 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      booking_schedule_has_conflict: {
+        Args: {
+          p_booking_id: string
+          p_organization_id: string
+          p_proposed_windows: Json
+        }
+        Returns: boolean
+      }
       chat_mark_thread_read: {
         Args: { p_thread_id: string }
         Returns: undefined

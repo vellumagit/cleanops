@@ -5,9 +5,8 @@ import { after } from "next/server";
 import { getActionContext } from "@/lib/actions";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { futureStatusError } from "@/lib/booking-status";
-import { orgLocalDayUtcRange } from "./day-range";
 import { planCrewMove, type CrewMovePlan } from "./drag-crew";
-import { hasSplitScheduleConflict } from "./segment-conflicts";
+import { getScheduleConflictWindows } from "./segment-conflicts";
 import { membersOffOn } from "@/lib/unavailability-notice";
 import { scheduleFromWallClock } from "@/lib/scheduled-local";
 import { resyncBookingCalendars } from "@/lib/booking-calendar-sync";
@@ -189,7 +188,6 @@ export async function rescheduleBookingAction(
   const pad = (n: number) => String(n).padStart(2, "0");
   const wall = scheduleFromWallClock(`${targetDate}T${pad(targetHour)}:${pad(targetMin)}`, orgTz);
   const next = new Date(wall.scheduled_at);
-  const nextEnd = new Date(next.getTime() + current.duration_minutes * 60_000);
 
   // Hard-conflict check: same employee can't be in two places. Different
   // employees overlapping is legit (two-person jobs) and isn't blocked
@@ -197,10 +195,6 @@ export async function rescheduleBookingAction(
   // so the owner sees overlaps at a glance.
   //
   if (hasSplits) {
-    const { start: dayStart, end: dayEnd } = orgLocalDayUtcRange(
-      targetDate,
-      orgTz,
-    );
     const memberIds = Array.from(
       new Set([
         ...(current.assigned_to ? [current.assigned_to] : []),
@@ -219,96 +213,27 @@ export async function rescheduleBookingAction(
     });
 
     if (memberIds.length > 0) {
-      const [
-        { data: asLead, error: leadError },
-        { data: asCrew, error: crewConflictError },
-      ] = await Promise.all([
-        supabase
-          .from("bookings")
-          .select("id, scheduled_at, duration_minutes, status, assigned_to")
-          .in("assigned_to", memberIds)
-          .gte("scheduled_at", dayStart.toISOString())
-          .lt("scheduled_at", dayEnd.toISOString())
-          .neq("id", id)
-          .neq("status", "cancelled")
-          .limit(1000),
-        supabase
-          .from("booking_assignees" as never)
-          .select(
-            `booking_id, membership_id, split_start_offset_minutes,
-             split_duration_minutes,
-             booking:bookings!inner ( id, scheduled_at, duration_minutes, status )`,
-          )
-          .in("membership_id" as never, memberIds as never)
-          .gte("booking.scheduled_at" as never, dayStart.toISOString() as never)
-          .lt("booking.scheduled_at" as never, dayEnd.toISOString() as never)
-          .neq("booking.status" as never, "cancelled" as never)
-          .limit(1000) as unknown as Promise<{
-            data: Array<{
-              booking_id: string;
-              membership_id: string;
-              split_start_offset_minutes: number | null;
-              split_duration_minutes: number | null;
-              booking: {
-                id: string;
-                scheduled_at: string;
-                duration_minutes: number;
-                status: string;
-              } | null;
-            }> | null;
-            error: { message: string } | null;
-          }>,
-      ]);
-      if (leadError) return { ok: false, error: leadError.message };
-      if (crewConflictError)
-        return { ok: false, error: crewConflictError.message };
-
-      const assignments = [
-        ...(asLead ?? [])
-          .filter(
-            (booking): booking is typeof booking & { assigned_to: string } =>
-              booking.assigned_to != null,
-          )
-          .map((booking) => {
-            const crewAssignment = asCrew?.find(
-              (row) =>
-                row.booking_id === booking.id &&
-                row.membership_id === booking.assigned_to,
-            );
-            return {
-              booking_id: booking.id,
-              membership_id: booking.assigned_to,
-              scheduled_at: booking.scheduled_at,
-              booking_duration_minutes: booking.duration_minutes,
-              status: booking.status,
-              split_start_offset_minutes:
-                crewAssignment?.split_start_offset_minutes ?? null,
-              split_duration_minutes:
-                crewAssignment?.split_duration_minutes ?? null,
-            };
-          }),
-        ...(asCrew ?? [])
-          .filter((row) => row.booking != null)
-          .map((row) => ({
-            booking_id: row.booking!.id,
-            membership_id: row.membership_id,
-            scheduled_at: row.booking!.scheduled_at,
-            booking_duration_minutes: row.booking!.duration_minutes,
-            status: row.booking!.status,
-            split_start_offset_minutes: row.split_start_offset_minutes,
-            split_duration_minutes: row.split_duration_minutes,
-          })),
-      ];
-
-      if (
-        hasSplitScheduleConflict({
-          bookingId: id,
-          scheduledAt: next.toISOString(),
-          bookingDuration: current.duration_minutes,
-          segments,
-          otherAssignments: assignments,
-        })
-      ) {
+      const windows = getScheduleConflictWindows({
+        scheduledAt: next.toISOString(),
+        bookingDuration: current.duration_minutes,
+        segments,
+      });
+      const { data: hasConflict, error: conflictError } = await supabase.rpc(
+        "booking_schedule_has_conflict",
+        {
+          p_organization_id: membership.organization_id,
+          p_booking_id: id,
+          p_proposed_windows: windows,
+        },
+      );
+      if (conflictError) return { ok: false, error: conflictError.message };
+      if (hasConflict == null) {
+        return {
+          ok: false,
+          error: "Could not verify the schedule conflict check. Please try again.",
+        };
+      }
+      if (hasConflict) {
         return {
           ok: false,
           error:
@@ -317,60 +242,35 @@ export async function rescheduleBookingAction(
       }
     }
   } else if (assignedTo) {
-    const { start: dayStart, end: dayEnd } = orgLocalDayUtcRange(
-      targetDate,
-      orgTz,
-    );
-    // That person's other jobs that day — as first person OR as crew. This
-    // only looked at assigned_to, so a cleaner who was crew on another job at
-    // the same time read as free and got double-booked.
-    const [{ data: asLead, error: conflictError }, { data: asCrew }] =
-      await Promise.all([
-        supabase
-          .from("bookings")
-          .select("id, scheduled_at, duration_minutes")
-          .eq("assigned_to", assignedTo)
-          .gte("scheduled_at", dayStart.toISOString())
-          .lt("scheduled_at", dayEnd.toISOString())
-          .neq("id", id)
-          .neq("status", "cancelled")
-          .limit(50),
-        supabase
-          .from("booking_assignees" as never)
-          .select(
-            "booking:bookings!inner ( id, scheduled_at, duration_minutes, status )",
-          )
-          .eq("membership_id" as never, assignedTo as never)
-          .gte("booking.scheduled_at" as never, dayStart.toISOString() as never)
-          .lt("booking.scheduled_at" as never, dayEnd.toISOString() as never)
-          .limit(50) as unknown as Promise<{
-          data: Array<{
-            booking: {
-              id: string;
-              scheduled_at: string;
-              duration_minutes: number;
-              status: string;
-            } | null;
-          }> | null;
-        }>,
-      ]);
-    if (conflictError) return { ok: false, error: conflictError.message };
-    const sameDay = [
-      ...(asLead ?? []),
-      ...(asCrew ?? [])
-        .map((r) => r.booking)
-        .filter(
-          (b): b is NonNullable<typeof b> =>
-            b != null && b.id !== id && b.status !== "cancelled",
-        ),
-    ];
-
-    const overlap = sameDay.find((other) => {
-      const oStart = new Date(other.scheduled_at);
-      const oEnd = new Date(oStart.getTime() + other.duration_minutes * 60_000);
-      return oStart < nextEnd && oEnd > next;
+    // Check this cleaner's full assigned interval, including work that starts
+    // on a different local date or is stored as a crew assignment.
+    const windows = getScheduleConflictWindows({
+      scheduledAt: next.toISOString(),
+      bookingDuration: current.duration_minutes,
+      segments: [
+        {
+          membership_id: assignedTo,
+          start_offset_minutes: null,
+          duration_minutes: null,
+        },
+      ],
     });
-    if (overlap) {
+    const { data: hasConflict, error: conflictError } = await supabase.rpc(
+      "booking_schedule_has_conflict",
+      {
+        p_organization_id: membership.organization_id,
+        p_booking_id: id,
+        p_proposed_windows: windows,
+      },
+    );
+    if (conflictError) return { ok: false, error: conflictError.message };
+    if (hasConflict == null) {
+      return {
+        ok: false,
+        error: "Could not verify the schedule conflict check. Please try again.",
+      };
+    }
+    if (hasConflict) {
       return {
         ok: false,
         error:

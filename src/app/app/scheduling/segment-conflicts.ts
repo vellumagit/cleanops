@@ -14,6 +14,12 @@ export type ScheduleAssignment = {
   split_duration_minutes: number | null;
 };
 
+export type ScheduleConflictWindow = {
+  membership_id: string;
+  start_at: string;
+  end_at: string;
+};
+
 function interval(
   scheduledAt: string,
   bookingDuration: number,
@@ -28,6 +34,34 @@ function interval(
   return { start: from, end: from + duration * 60_000 };
 }
 
+export function getScheduleConflictWindows(args: {
+  scheduledAt: string;
+  bookingDuration: number;
+  segments: SegmentWindow[];
+}): ScheduleConflictWindow[] {
+  const bookingStart = new Date(args.scheduledAt).getTime();
+  if (!Number.isFinite(bookingStart)) return [];
+
+  return args.segments.flatMap((segment) => {
+    const offset = Math.max(0, segment.start_offset_minutes ?? 0);
+    const duration = Math.max(
+      0,
+      segment.duration_minutes ?? args.bookingDuration,
+    );
+    if (duration === 0) return [];
+
+    return [
+      {
+        membership_id: segment.membership_id,
+        start_at: new Date(bookingStart + offset * 60_000).toISOString(),
+        end_at: new Date(
+          bookingStart + (offset + duration) * 60_000,
+        ).toISOString(),
+      },
+    ];
+  });
+}
+
 export function hasSplitScheduleConflict(args: {
   bookingId: string;
   scheduledAt: string;
@@ -35,15 +69,11 @@ export function hasSplitScheduleConflict(args: {
   segments: SegmentWindow[];
   otherAssignments: ScheduleAssignment[];
 }): boolean {
-  const proposed = args.segments.flatMap((segment) => {
-    const window = interval(
-      args.scheduledAt,
-      args.bookingDuration,
-      segment.start_offset_minutes,
-      segment.duration_minutes,
-    );
-    return window ? [{ membershipId: segment.membership_id, ...window }] : [];
-  });
+  const proposed = getScheduleConflictWindows(args).map((window) => ({
+    membershipId: window.membership_id,
+    start: new Date(window.start_at).getTime(),
+    end: new Date(window.end_at).getTime(),
+  }));
 
   return args.otherAssignments.some((assignment) => {
     if (
