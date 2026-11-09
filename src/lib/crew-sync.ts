@@ -19,9 +19,9 @@
  */
 
 export type AssigneeLifecycle = {
-  acceptance_status: unknown;
-  responded_at: unknown;
-  completed_at: unknown;
+  acceptance_status: string;
+  responded_at: string | null;
+  completed_at: string | null;
 };
 
 export type AssigneeKeyed = {
@@ -42,9 +42,14 @@ export function lifecycleByAssignee(
   for (const r of priorRows ?? []) {
     if (!r || !r.membership_id) continue;
     out.set(assigneeKey(r), {
-      acceptance_status: r.acceptance_status,
-      responded_at: r.responded_at,
-      completed_at: r.completed_at,
+      acceptance_status:
+        typeof r.acceptance_status === "string"
+          ? r.acceptance_status
+          : "pending",
+      responded_at:
+        typeof r.responded_at === "string" ? r.responded_at : null,
+      completed_at:
+        typeof r.completed_at === "string" ? r.completed_at : null,
     });
   }
   return out;

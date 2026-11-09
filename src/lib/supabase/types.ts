@@ -4397,6 +4397,14 @@ export type Database = {
           scheduled_at: string
         }[]
       }
+      update_bookings_with_assignees: {
+        Args: {
+          p_assignees: Json
+          p_booking_updates: Json
+          p_organization_id: string
+        }
+        Returns: undefined
+      }
       chat_mark_thread_read: {
         Args: { p_thread_id: string }
         Returns: undefined

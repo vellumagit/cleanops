@@ -15,6 +15,8 @@ import {
   notifyBookingAssignment,
   sendBookingRescheduled,
 } from "@/lib/automations";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import type { Json } from "@/lib/supabase/types";
 
 export type RescheduleResult =
   /** notice: saved, but worth a second look (someone's off that day). */
@@ -123,13 +125,17 @@ export async function rescheduleBookingAction(
   const { data: crewRows, error: crewError } = (await supabase
     .from("booking_assignees" as never)
     .select(
-      "membership_id, split_start_offset_minutes, split_duration_minutes",
+      "membership_id, split_index, split_start_offset_minutes, split_duration_minutes, acceptance_status, responded_at, completed_at",
     )
     .eq("booking_id" as never, id as never)) as unknown as {
     data: Array<{
       membership_id: string;
+      split_index: number | null;
       split_start_offset_minutes: number | null;
       split_duration_minutes: number | null;
+      acceptance_status: string;
+      responded_at: string | null;
+      completed_at: string | null;
     }> | null;
     error: { message: string } | null;
   };
@@ -283,7 +289,7 @@ export async function rescheduleBookingAction(
   // assigned_to or booking_assignees. The segments stay with the same
   // crew, just shifted to the new slot (segment offsets are relative).
   // Otherwise assigned_to follows the crew plan, and only when it changed.
-  const bookingUpdate: Record<string, unknown> = {
+  const bookingUpdate: Record<string, Json> = {
     scheduled_at: wall.scheduled_at,
     scheduled_local: wall.scheduled_local,
     scheduled_tz: wall.scheduled_tz,
@@ -320,10 +326,35 @@ export async function rescheduleBookingAction(
     if (refusal) return { ok: false, error: refusal };
   }
 
-  const { error: updateError } = await supabase
-    .from("bookings")
-    .update(bookingUpdate)
-    .eq("id", id);
+  const assignees =
+    plan.kind === "changed"
+      ? plan.crew.map((membershipId) => {
+          const prior = crewRows?.find(
+            (row) => row.membership_id === membershipId,
+          );
+          return {
+            organization_id: membership.organization_id,
+            booking_id: id,
+            membership_id: membershipId,
+            is_primary: membershipId === plan.lead,
+            split_index: prior?.split_index ?? null,
+            split_start_offset_minutes:
+              prior?.split_start_offset_minutes ?? null,
+            split_duration_minutes: prior?.split_duration_minutes ?? null,
+            acceptance_status: prior?.acceptance_status ?? "pending",
+            responded_at: prior?.responded_at ?? null,
+            completed_at: prior?.completed_at ?? null,
+          };
+        })
+      : null;
+  const { error: updateError } = await createSupabaseAdminClient().rpc(
+    "update_bookings_with_assignees",
+    {
+      p_organization_id: membership.organization_id,
+      p_booking_updates: [{ booking_id: id, patch: bookingUpdate }],
+      p_assignees: assignees,
+    },
+  );
   if (updateError) return { ok: false, error: updateError.message };
 
   // Rescheduled notices — drag-drop is the highest-traffic reschedule path
@@ -335,55 +366,6 @@ export async function rescheduleBookingAction(
     sendBookingRescheduled(id, current.scheduled_at).catch((e) =>
       console.error("[scheduler] rescheduled notice failed:", e),
     );
-  }
-
-  // Apply the crew plan: swap ONE person, never rebuild the crew. This used to
-  // delete every crew row and put back only the drop lane's person whenever
-  // that lane didn't match assigned_to — and since a team job's card shows in
-  // every crew member's lane, simply moving the day from a non-lead's lane
-  // took everyone else off the job. See drag-crew.ts.
-  //
-  // Split bookings never get here (their plan is always "unchanged"): their
-  // crew and segment offsets belong with the booking, and a reschedule only
-  // moves scheduled_at.
-  if (plan.kind === "changed") {
-    if (plan.removed) {
-      const { error: removeErr } = (await supabase
-        .from("booking_assignees" as never)
-        .delete()
-        .eq("booking_id" as never, id as never)
-        .eq("membership_id" as never, plan.removed as never)) as unknown as {
-        error: { message: string } | null;
-      };
-      if (removeErr) return { ok: false, error: removeErr.message };
-    }
-    if (plan.added) {
-      const { error: addErr } = (await supabase
-        .from("booking_assignees" as never)
-        .upsert(
-          {
-            organization_id: membership.organization_id,
-            booking_id: id,
-            membership_id: plan.added,
-            is_primary: false,
-          } as never,
-          { onConflict: "booking_id,membership_id", ignoreDuplicates: true },
-        )) as unknown as { error: { message: string } | null };
-      if (addErr) return { ok: false, error: addErr.message };
-    }
-    // Keep exactly one row flagged is_primary, matching assigned_to, for the
-    // code that still reads it. Nobody on the crew outranks anyone else.
-    await (supabase
-      .from("booking_assignees" as never)
-      .update({ is_primary: false } as never)
-      .eq("booking_id" as never, id as never) as unknown as Promise<unknown>);
-    if (plan.lead) {
-      await (supabase
-        .from("booking_assignees" as never)
-        .update({ is_primary: true } as never)
-        .eq("booking_id" as never, id as never)
-        .eq("membership_id" as never, plan.lead as never) as unknown as Promise<unknown>);
-    }
   }
 
   // Tell the person who was just added to the job. Previously drag-drop moved

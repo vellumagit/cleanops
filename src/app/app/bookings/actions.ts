@@ -21,7 +21,7 @@ import { closeJob } from "@/lib/close-job";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
 import { readServiceExtras } from "@/lib/service-extras";
 import { can } from "@/lib/auth";
-import type { Database } from "@/lib/supabase/types";
+import type { Database, Json } from "@/lib/supabase/types";
 
 type ServiceTypeEnum = Database["public"]["Enums"]["service_type"];
 import {
@@ -211,6 +211,7 @@ async function syncBookingAssignees(
   primaryId: string | null,
   additionalIds: string[],
   splits: SplitSegmentInput[] = [],
+  bookingPatch: Record<string, Json> = {},
 ): Promise<string | null> {
   // CROSS-ORG GUARD: every submitted membership_id must belong to the
   // caller's org and be active. Otherwise a malicious owner with multiple
@@ -242,10 +243,8 @@ async function syncBookingAssignees(
   const safeAdditionalIds = additionalIds.filter(isValid);
   const safeSplits = splits.filter((s) => isValid(s.assigned_to));
 
-  // Snapshot the existing crew so we can restore it if the re-insert below
-  // fails. delete + insert isn't transactional here, and a failed insert
-  // previously left the booking with ZERO assignees while the caller still
-  // reported success — the job then showed on nobody's schedule.
+  // Preserve crew lifecycle while the database replaces the booking and crew
+  // together in one transaction.
   const { data: priorRows } = (await supabase
     .from("booking_assignees")
     .select(
@@ -262,18 +261,6 @@ async function syncBookingAssignees(
    * are not the form's to own.
    */
   const priorLifecycle = lifecycleByAssignee(priorRows);
-
-  // Drop the existing set. RLS scopes this to the caller's org; the
-  // booking_id filter is the authoritative narrowing.
-  const { error: deleteErr } = (await supabase
-    .from("booking_assignees")
-    .delete()
-    .eq("booking_id", bookingId)) as unknown as {
-    error: { message: string } | null;
-  };
-  if (deleteErr) {
-    return `Couldn't update the crew: ${deleteErr.message}`;
-  }
 
   const rows: Array<{
     organization_id: string;
@@ -349,30 +336,27 @@ async function syncBookingAssignees(
     }
   }
 
-  if (rows.length === 0) return null;
+  const updatedRows = rows.map((row) => withPriorLifecycle(row, priorLifecycle));
 
-  const { error: insertErr } = (await supabase
-    .from("booking_assignees")
-    .insert(
-      rows.map((r) => withPriorLifecycle(r, priorLifecycle)) as never,
-    )) as unknown as {
-    error: { message: string } | null;
-  };
+  const { error: insertErr } = await createSupabaseAdminClient().rpc(
+    "update_bookings_with_assignees",
+    {
+      p_organization_id: organizationId,
+      p_booking_updates: [{ booking_id: bookingId, patch: bookingPatch }],
+      p_assignees: updatedRows,
+    },
+  );
   if (insertErr) {
-    // Best-effort restore so a transient insert failure doesn't leave the
-    // booking crew-less, then surface the error loudly instead of a false
-    // success.
-    if (priorRows && priorRows.length > 0) {
-      await (supabase
-        .from("booking_assignees")
-        .insert(priorRows as never) as unknown as Promise<unknown>);
-    }
+    // The RPC transaction preserves both the booking and its prior crew.
     // Returned, not thrown. A throw here escaped the action and Next rendered
     // the generic error boundary — so the one message that says WHY the save
     // failed reached nobody, and the owner saw "An unexpected error occurred"
     // with a digest only the server logs can decode. The reason belongs on the
     // form, next to the field the person was editing.
-    return `Couldn't update the crew: ${insertErr.message}`;
+    const operation = Object.keys(bookingPatch).length
+      ? "booking and crew"
+      : "crew";
+    return `Couldn't update the ${operation}: ${insertErr.message}`;
   }
 
   return null;
@@ -380,13 +364,12 @@ async function syncBookingAssignees(
 
 /**
  * Bulk variant of syncBookingAssignees for `this_and_future` series
- * updates. Validates memberships ONCE, deletes all targets in ONE
- * statement, builds N×rows arrays then inserts in ONE statement.
+ * updates. Validates memberships once, then replaces booking fields and
+ * assignees in a single database transaction.
  *
  * The per-booking version did 3 sequential round-trips per sibling
- * (validate, delete, insert). For a year-long weekly series that's
- * 156 round-trips and could time out Vercel's 15s action limit. This
- * version does 3 statements total regardless of how many bookings.
+ * (validate, delete, insert). The transaction RPC keeps the bulk path
+ * constant-time and rolls every row back if any assignment conflicts.
  *
  * Behavior contract matches syncBookingAssignees: when splits is
  * non-empty, the segments array drives the rows (with additionalIds
@@ -403,6 +386,7 @@ async function syncBookingAssigneesBulk(
   primaryId: string | null,
   additionalIds: string[],
   splits: SplitSegmentInput[] = [],
+  bookingPatch: Record<string, Json> = {},
 ): Promise<string | null> {
   if (bookingIds.length === 0) return null;
 
@@ -444,12 +428,6 @@ async function syncBookingAssigneesBulk(
     data: Array<Record<string, unknown>> | null;
   };
   const priorBulkLifecycle = lifecycleByAssignee(priorBulk);
-
-  // One DELETE for every target booking.
-  await (supabase
-    .from("booking_assignees")
-    .delete()
-    .in("booking_id", bookingIds) as unknown as Promise<unknown>);
 
   // Pre-compute the canonical row template once, then stamp each booking_id.
   type Row = {
@@ -523,19 +501,24 @@ async function syncBookingAssigneesBulk(
   };
 
   const allRows: Row[] = bookingIds.flatMap(buildRowsForBooking);
-  if (allRows.length === 0) return null;
-
-  // The result was previously cast to Promise<unknown> and dropped, so a
-  // failed insert across a whole series left every sibling crew-less and still
-  // reported success. One statement covers every booking here, which is what
-  // makes silence expensive: it is all of them or none.
-  const { error: bulkErr } = (await supabase
-    .from("booking_assignees")
-    .insert(
-      allRows.map((r) => withPriorLifecycle(r, priorBulkLifecycle)) as never,
-    )) as unknown as { error: { message: string } | null };
+  const { error: bulkErr } = await createSupabaseAdminClient().rpc(
+    "update_bookings_with_assignees",
+    {
+      p_organization_id: organizationId,
+      p_booking_updates: bookingIds.map((booking_id) => ({
+        booking_id,
+        patch: bookingPatch,
+      })),
+      p_assignees: allRows.map((row) =>
+        withPriorLifecycle(row, priorBulkLifecycle),
+      ),
+    },
+  );
   if (bulkErr) {
-    return `Couldn't update the crew on the future bookings: ${bulkErr.message}`;
+    const operation = Object.keys(bookingPatch).length
+      ? "future bookings and crew"
+      : "crew on the future bookings";
+    return `Couldn't update the ${operation}: ${bulkErr.message}`;
   }
 
   return null;
@@ -1565,36 +1548,41 @@ export async function updateBookingAction(
   // enum value the next time someone edited an unrelated field. The
   // FK + denormalized label still update so renames + display follow
   // the catalog.
-  const { error } = await supabase
-    .from("bookings")
-    .update({
-      client_id: parsed.data.client_id,
-      assigned_to: updateEffectiveAssignedTo,
-      scheduled_at: parsed.data.scheduled_at,
-      ...wallClockColumns(raw.scheduled_at, orgTz),
-      duration_minutes: parsed.data.duration_minutes,
-      service_type_id: updateServiceExtras.service_type_id,
-      service_type_label: updateServiceExtras.service_type_label,
-      status: parsed.data.status,
-      // The human close, kept in step with the status picked on the form:
-      // newly completed closes it now, leaving completed reopens it, and
-      // an already-closed job keeps its original close.
-      ...(parsed.data.status === "completed"
-        ? existing?.status === "completed"
-          ? {}
-          : { closed_at: new Date().toISOString(), closed_by: membership.id }
-        : { closed_at: null, closed_by: null }),
-      total_cents: parsed.data.is_free ? 0 : parsed.data.total_cents,
-      address: parsed.data.address ?? null,
-      property_id: propertyId,
-      notes: parsed.data.notes ?? null,
-      divide_hours_evenly: parsed.data.divide_hours_evenly,
-      is_free: parsed.data.is_free,
-      splits: updateSplits,
-    })
-    .eq("id", id);
-
-  if (error) return { errors: { _form: error.message }, values: raw };
+  const bookingPatch: Record<string, Json> = {
+    client_id: parsed.data.client_id,
+    assigned_to: updateEffectiveAssignedTo,
+    scheduled_at: parsed.data.scheduled_at,
+    ...wallClockColumns(raw.scheduled_at, orgTz),
+    duration_minutes: parsed.data.duration_minutes,
+    service_type_id: updateServiceExtras.service_type_id,
+    service_type_label: updateServiceExtras.service_type_label,
+    status: parsed.data.status,
+    // The human close, kept in step with the status picked on the form:
+    // newly completed closes it now, leaving completed reopens it, and
+    // an already-closed job keeps its original close.
+    ...(parsed.data.status === "completed"
+      ? existing?.status === "completed"
+        ? {}
+        : { closed_at: new Date().toISOString(), closed_by: membership.id }
+      : { closed_at: null, closed_by: null }),
+    total_cents: parsed.data.is_free ? 0 : parsed.data.total_cents,
+    address: parsed.data.address ?? null,
+    property_id: propertyId,
+    notes: parsed.data.notes ?? null,
+    divide_hours_evenly: parsed.data.divide_hours_evenly,
+    is_free: parsed.data.is_free,
+    splits: updateSplits,
+  };
+  const updateCrewErr = await syncBookingAssignees(
+    supabase,
+    membership.organization_id,
+    id,
+    updateEffectiveAssignedTo,
+    readAdditionalAssignees(formData),
+    updateSplits as SplitSegmentInput[],
+    bookingPatch,
+  );
+  if (updateCrewErr) return { errors: { _form: updateCrewErr }, values: raw };
 
   // The other two status writers log this; the edit form never did, so a
   // job closed from the form had no "closed by" on its timeline (Lori
@@ -1630,19 +1618,6 @@ export async function updateBookingAction(
       after: { ...termsChange.after, via: "edit_form" },
     });
   }
-
-  // Replace the booking_assignees rows to match the form's new primary +
-  // additional selection. For split shifts, pass the segments array so
-  // each employee gets a row with offset/duration.
-  const updateCrewErr = await syncBookingAssignees(
-    supabase,
-    membership.organization_id,
-    id,
-    updateEffectiveAssignedTo,
-    readAdditionalAssignees(formData),
-    updateSplits as SplitSegmentInput[],
-  );
-  if (updateCrewErr) return { errors: { _form: updateCrewErr }, values: raw };
 
   // Notify NEW assignees (anyone who wasn't on the booking before).
   // Covers: new primary on a non-split edit, new additional crew added,
@@ -2241,43 +2216,19 @@ export async function updateBookingAction(
         data: Array<{ id: string; status: string }> | null;
       };
 
-      const { error: siblingUpdateErr } = (await admin
-        .from("bookings")
-        .update(propagatableFields)
-        .eq("series_id", seriesId)
-        .eq("organization_id", membership.organization_id)
-        .neq("id", id)
-        .gte("scheduled_at", seriesScheduledAt)
-        .not(
-          "status",
-          "in",
-          '("completed","cancelled")',
-        )) as unknown as { error: { message: string } | null };
-      if (siblingUpdateErr) {
-        console.error(
-          "[series-update] sibling propagation failed:",
-          siblingUpdateErr.message,
-        );
-        return {
-          errors: {
-            _form: `Couldn't update the later visits in this series: ${siblingUpdateErr.message}`,
-          },
-          values: raw,
-        };
-      }
-
       // Rebuild booking_assignees for ALL siblings in a single bulk
       // pass. Per-row sync would do ~3 sequential DB round-trips per
       // sibling and exceed Vercel's action timeout for long series.
       const siblingIdList = (siblingIds ?? []).map((r) => r.id);
       if (siblingIdList.length > 0) {
         const siblingCrewErr = await syncBookingAssigneesBulk(
-          supabase,
+          admin,
           membership.organization_id,
           siblingIdList,
           updateEffectiveAssignedTo,
           readAdditionalAssignees(formData),
           updateSplits as SplitSegmentInput[],
+          propagatableFields,
         );
         if (siblingCrewErr) {
           return { errors: { _form: siblingCrewErr }, values: raw };
@@ -3565,15 +3516,6 @@ export async function assignBookingCrewAction(
     };
   }
 
-  // Flip primary on the booking row first.
-  if (primaryId !== existing.assigned_to) {
-    const { error: updErr } = await supabase
-      .from("bookings")
-      .update({ assigned_to: primaryId })
-      .eq("id", id);
-    if (updErr) return { error: updErr.message };
-  }
-
   const assignCrewErr = await syncBookingAssignees(
     supabase,
     membership.organization_id,
@@ -3581,6 +3523,7 @@ export async function assignBookingCrewAction(
     primaryId,
     additionalIds,
     [], // no splits from the quick-assign crew dialog (guarded above)
+    { assigned_to: primaryId },
   );
   if (assignCrewErr) return { error: assignCrewErr };
 
@@ -3680,49 +3623,17 @@ export async function assignBookingCrewAction(
     const siblingIds = (siblings ?? []).map((s) => s.id);
 
     if (siblingIds.length > 0) {
-      // Bulk-update assigned_to on all future siblings.
-      (await admin
-        .from("bookings")
-        .update({ assigned_to: primaryId })
-        .in("id", siblingIds)) as unknown as Promise<unknown>;
-
-      // Replace booking_assignees for each sibling so additional crew
-      // propagates consistently with the current booking.
-      (await admin
-        .from("booking_assignees")
-        .delete()
-        .in("booking_id", siblingIds)) as unknown as Promise<unknown>;
-
-      const assigneeRows: Array<{
-        organization_id: string;
-        booking_id: string;
-        membership_id: string;
-        is_primary: boolean;
-      }> = siblingIds.flatMap((bId) => {
-        const rows: typeof assigneeRows = [];
-        if (primaryId) {
-          rows.push({
-            organization_id: membership.organization_id,
-            booking_id: bId,
-            membership_id: primaryId,
-            is_primary: true,
-          });
-        }
-        for (const aId of additionalIds) {
-          rows.push({
-            organization_id: membership.organization_id,
-            booking_id: bId,
-            membership_id: aId,
-            is_primary: false,
-          });
-        }
-        return rows;
-      });
-
-      if (assigneeRows.length > 0) {
-        (await admin
-          .from("booking_assignees")
-          .insert(assigneeRows)) as unknown as Promise<unknown>;
+      const siblingCrewErr = await syncBookingAssigneesBulk(
+        admin,
+        membership.organization_id,
+        siblingIds,
+        primaryId,
+        additionalIds,
+        [],
+        { assigned_to: primaryId },
+      );
+      if (siblingCrewErr) {
+        return { error: siblingCrewErr };
       }
       // Same reasoning as the edit form's propagation: only a sibling
       // already under way can compute differently after a crew change.
