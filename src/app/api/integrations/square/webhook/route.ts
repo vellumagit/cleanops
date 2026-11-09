@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { enterFailClosed } from "@/lib/supabase/query-guard";
+import { allowDbErrors, enterFailClosed } from "@/lib/supabase/query-guard";
 import { verifyWebhookSignature } from "@/lib/square";
 
 /**
@@ -123,15 +123,16 @@ export async function POST(request: NextRequest) {
   // Claim the event. The UNIQUE index on (provider, event_id) is
   // the real dedupe — a concurrent duplicate delivery hits 23505 here and
   // acks without double-handling.
-  const { error: claimErr } = (await admin
-    .from("integration_events" as never)
-    .insert({
+  const { error: claimErr } = (await allowDbErrors(
+    ["23505"],
+    admin.from("integration_events" as never).insert({
       organization_id: orgId,
       provider: "square",
       event_id: eventId,
       event_type: eventType,
       payload: event,
-    } as never)) as unknown as {
+    } as never),
+  )) as unknown as {
     error: { message: string; code?: string } | null;
   };
   if (claimErr) {

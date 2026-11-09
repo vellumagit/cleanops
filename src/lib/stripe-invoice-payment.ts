@@ -1,6 +1,7 @@
 import "server-only";
 import type Stripe from "stripe";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { allowDbErrors } from "@/lib/supabase/query-guard";
 
 /**
  * Recording a client's card payment against their invoice — and the tip that
@@ -149,10 +150,10 @@ export async function recordInvoiceTip(
             },
           ];
 
-    const { data: insertedTips, error } = (await admin
-      .from("invoice_tips" as never)
-      .insert(rows as never)
-      .select("id")) as unknown as {
+    const { data: insertedTips, error } = (await allowDbErrors(
+      ["23505"],
+      admin.from("invoice_tips" as never).insert(rows as never).select("id"),
+    )) as unknown as {
       data: Array<{ id: string }> | null;
       error: { message: string; code?: string } | null;
     };

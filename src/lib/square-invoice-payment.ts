@@ -1,5 +1,6 @@
 import "server-only";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { allowDbErrors } from "@/lib/supabase/query-guard";
 import { recordInvoiceTip } from "@/lib/stripe-invoice-payment";
 
 /**
@@ -97,7 +98,9 @@ export async function recordSquareInvoicePayment(args: {
 
   if (invoiceAmountCents <= 0) return; // charge was entirely tip
 
-  const { data: insertedPayment, error: insertErr } = (await admin
+  const { data: insertedPayment, error: insertErr } = (await allowDbErrors(
+    ["23505"],
+    admin
     .from("invoice_payments" as never)
     .insert({
       organization_id: invoice.organization_id,
@@ -111,7 +114,8 @@ export async function recordSquareInvoicePayment(args: {
       provider_payment_id: args.squarePaymentId,
     } as never)
     .select("id")
-    .maybeSingle()) as unknown as {
+    .maybeSingle(),
+  )) as unknown as {
     data: { id: string } | null;
     error: { message: string; code?: string } | null;
   };

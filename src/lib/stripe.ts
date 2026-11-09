@@ -17,6 +17,7 @@
 import "server-only";
 import Stripe from "stripe";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { allowDbErrors } from "@/lib/supabase/query-guard";
 import { remainingTrialDays } from "@/lib/trial";
 
 export function isStripeEnabled(): boolean {
@@ -272,12 +273,17 @@ export async function tryClaimEvent(
   accountId: string | null,
 ): Promise<boolean> {
   const admin = createSupabaseAdminClient();
-  const { error } = await admin.from("stripe_events" as never).insert({
-    id: eventId,
-    type,
-    account_id: accountId,
-    processed_at: null,
-  } as never);
+  // A duplicate delivery is the one error this insert expects. The webhook
+  // runs fail-closed, where it would otherwise reject before the check below.
+  const { error } = await allowDbErrors(
+    ["23505"],
+    admin.from("stripe_events" as never).insert({
+      id: eventId,
+      type,
+      account_id: accountId,
+      processed_at: null,
+    } as never),
+  );
   if (error) {
     // 23505 = unique_violation — another request already claimed this event.
     const pgError = error as { code?: string };
@@ -294,12 +300,16 @@ export async function tryClaimEvent(
  */
 export async function releaseClaim(eventId: string): Promise<void> {
   const admin = createSupabaseAdminClient();
-  const { error } = await admin
-    .from("stripe_events" as never)
-    .delete()
-    .eq("id" as never, eventId as never)
-    .is("processed_at" as never, null as never); // safety: only release UN-stamped rows
-  if (error) {
+  // Runs in the webhook's catch path, fail-closed: a failed delete rejects,
+  // and a throw from here would escape the catch that called us.
+  try {
+    const { error } = await admin
+      .from("stripe_events" as never)
+      .delete()
+      .eq("id" as never, eventId as never)
+      .is("processed_at" as never, null as never); // safety: only release UN-stamped rows
+    if (error) throw error;
+  } catch (error) {
     // If we can't release, log loudly — manual cleanup may be needed.
     console.error(
       "[stripe] releaseClaim failed; event may be permanently stuck:",

@@ -36,6 +36,44 @@ import { AsyncLocalStorage } from "node:async_hooks";
 
 type MaybeResult = { error?: unknown; data?: unknown } | null | undefined;
 
+/**
+ * What a failed query rejects with inside the fail-closed scope. It carries
+ * the PostgREST error, so a caller that EXPECTS one code can still tell it
+ * apart — see allowDbErrors.
+ */
+export class DbQueryError extends Error {
+  readonly code: string | null;
+  readonly raw: unknown;
+  constructor(message: string, raw: unknown) {
+    super(message);
+    this.name = "DbQueryError";
+    this.raw = raw;
+    const code = (raw as { code?: unknown } | null)?.code;
+    this.code = typeof code === "string" ? code : null;
+  }
+}
+
+/**
+ * Await a query some of whose errors are expected. An idempotency insert
+ * meets 23505 on a duplicate delivery and means "already done", not "stop";
+ * inside the fail-closed scope that error would reject before the caller's
+ * `if (error.code === "23505")` ever ran, and a webhook retrying an event it
+ * had already handled would 500 and retry again, forever. The listed codes
+ * come back as the ordinary { data, error } result in any scope, so the
+ * caller's own branch handles them; every other failure keeps the scope's
+ * behaviour.
+ */
+export async function allowDbErrors<T>(codes: readonly string[], query: PromiseLike<T>): Promise<T> {
+  try {
+    return await query;
+  } catch (err) {
+    if (err instanceof DbQueryError && err.code && codes.includes(err.code)) {
+      return { data: null, error: err.raw } as T;
+    }
+    throw err;
+  }
+}
+
 const failClosedScope = new AsyncLocalStorage<boolean>();
 
 /**
@@ -117,9 +155,10 @@ function inspect(result: MaybeResult, table: string, failClosed: boolean): Error
   // Background work: every error stops the caller, in production too. The
   // alternative is a cron acting on "no rows" that were really a failure.
   if (failClosed && !isNoRow(err)) {
-    return new Error(
+    return new DbQueryError(
       `[db-error] ${table}: ${detail}\n` +
         `Background work stops here rather than treating a failed read as "no rows".`,
+      err,
     );
   }
 

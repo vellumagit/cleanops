@@ -15,6 +15,7 @@
 
 import "server-only";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { allowDbErrors } from "@/lib/supabase/query-guard";
 
 /**
  * Returns true if the address is on the suppression list.
@@ -65,14 +66,17 @@ export async function addEmailSuppression(args: {
   if (!normalized) return { ok: false, error: "Empty email" };
 
   const admin = createSupabaseAdminClient();
-  const { error } = await admin.from("email_suppressions" as never).upsert(
-    {
-      email: normalized,
-      reason: args.reason,
-      provider_event_id: args.providerEventId ?? null,
-      event_payload: args.eventPayload ?? null,
-    } as never,
-    { onConflict: "email" } as never,
+  const { error } = await allowDbErrors(
+    ["23505"],
+    admin.from("email_suppressions" as never).upsert(
+      {
+        email: normalized,
+        reason: args.reason,
+        provider_event_id: args.providerEventId ?? null,
+        event_payload: args.eventPayload ?? null,
+      } as never,
+      { onConflict: "email" } as never,
+    ),
   );
 
   if (error) {
