@@ -4405,6 +4405,15 @@ export type Database = {
         }
         Returns: undefined
       }
+      update_booking_assignments_v2: {
+        Args: {
+          p_assignees: Json
+          p_booking_ids: string[]
+          p_booking_patch: Json
+          p_organization_id: string
+        }
+        Returns: undefined
+      }
       reschedule_booking_with_assignees: {
         Args: {
           p_assignee_ids: string[] | null

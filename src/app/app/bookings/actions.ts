@@ -339,10 +339,11 @@ async function syncBookingAssignees(
   const updatedRows = rows.map((row) => withPriorLifecycle(row, priorLifecycle));
 
   const { error: insertErr } = await createSupabaseAdminClient().rpc(
-    "update_bookings_with_assignees",
+    "update_booking_assignments_v2",
     {
       p_organization_id: organizationId,
-      p_booking_updates: [{ booking_id: bookingId, patch: bookingPatch }],
+      p_booking_ids: [bookingId],
+      p_booking_patch: bookingPatch,
       p_assignees: updatedRows,
     },
   );
@@ -502,13 +503,11 @@ async function syncBookingAssigneesBulk(
 
   const allRows: Row[] = bookingIds.flatMap(buildRowsForBooking);
   const { error: bulkErr } = await createSupabaseAdminClient().rpc(
-    "update_bookings_with_assignees",
+    "update_booking_assignments_v2",
     {
       p_organization_id: organizationId,
-      p_booking_updates: bookingIds.map((booking_id) => ({
-        booking_id,
-        patch: bookingPatch,
-      })),
+      p_booking_ids: bookingIds,
+      p_booking_patch: bookingPatch,
       p_assignees: allRows.map((row) =>
         withPriorLifecycle(row, priorBulkLifecycle),
       ),
