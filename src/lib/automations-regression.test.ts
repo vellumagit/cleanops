@@ -73,7 +73,7 @@ vi.mock("@/lib/supabase/admin", () => ({
         query.in[column] = value;
         return builder;
       };
-      for (const method of ["not", "lt", "lte", "gte", "order", "limit"]) {
+      for (const method of ["not", "neq", "lt", "lte", "gte", "order", "limit"]) {
         builder[method] = () => builder;
       }
       builder.upsert = (payload: unknown) => {
@@ -192,6 +192,9 @@ const automationSettings = {
 
 function installInvoiceResponder(options: { lineError?: string } = {}) {
   mocks.respond = (query) => {
+    if (query.table === "bookings" && query.selection?.includes("bookings_billing_invoice_id_fkey")) {
+      return { data: [], error: null };
+    }
     if (query.table === "bookings" && query.operation === "select") {
       return { data: booking, error: null };
     }
@@ -253,6 +256,9 @@ function installAutoCompleteResponder(
       query.selection?.includes("automation_settings")
     ) {
       return automationSettings;
+    }
+    if (query.table === "bookings" && query.selection?.includes("bookings_billing_invoice_id_fkey")) {
+      return { data: [], error: null };
     }
     if (query.table === "bookings" && query.operation === "select") {
       if (query.eq.status === "pending") return { data: [], error: null };
@@ -355,6 +361,9 @@ describe("autoInvoiceOnJobComplete", () => {
     installInvoiceResponder();
     const existing = { id: "existing-invoice", number: "INV-2026-0000" };
     mocks.respond = (query) => {
+      if (query.table === "bookings" && query.selection?.includes("bookings_billing_invoice_id_fkey")) {
+        return { data: [], error: null };
+      }
       if (query.table === "bookings" && query.operation === "select") {
         return { data: booking, error: null };
       }
@@ -365,7 +374,11 @@ describe("autoInvoiceOnJobComplete", () => {
         return automationSettings;
       }
       if (query.table === "invoices" && query.operation === "select") {
-        return { data: existing, error: null };
+        // What the resolver reads: every non-void invoice billing these bookings.
+        return {
+          data: [{ ...existing, status: "sent", amount_cents: 14_000, booking_id: booking.id }],
+          error: null,
+        };
       }
       return { data: null, error: null };
     };

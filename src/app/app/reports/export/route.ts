@@ -1,4 +1,4 @@
-import { requireMembership } from "@/lib/auth";
+import { requireActionMembership } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { localInputToUtcIso } from "@/lib/validators/common";
@@ -33,7 +33,7 @@ function row(...cells: (string | number | null | undefined)[]): string {
 
 export async function GET(request: NextRequest) {
   // Auth guard — redirects on failure
-  const membership = await requireMembership(["owner", "admin"]);
+  const membership = await requireActionMembership(["owner", "admin"]);
 
   const { searchParams } = new URL(request.url);
 

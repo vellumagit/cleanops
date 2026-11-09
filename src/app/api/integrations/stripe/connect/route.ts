@@ -4,7 +4,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { requireMembership } from "@/lib/auth";
+import { requireActionMembership } from "@/lib/auth";
 import { isStripeConnectEnabled } from "@/lib/stripe";
 import { issueOAuthState, buildOAuthUrl } from "@/lib/stripe-connect";
 
@@ -19,7 +19,7 @@ export async function GET() {
     );
   }
 
-  const membership = await requireMembership(["owner", "admin"]);
+  const membership = await requireActionMembership(["owner", "admin"]);
 
   const state = await issueOAuthState({
     organizationId: membership.organization_id,

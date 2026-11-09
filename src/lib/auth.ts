@@ -19,6 +19,7 @@
  */
 
 import "server-only";
+import { enterFailClosed } from "@/lib/supabase/query-guard";
 
 import { cache } from "react";
 import { redirect } from "next/navigation";
@@ -200,6 +201,26 @@ export function can(
  * own auth and no user session.
  */
 export async function requireMembership(
+  allowed?: MembershipRole[],
+): Promise<CurrentMembership> {
+  return requireMembershipInner(allowed);
+}
+
+/**
+ * requireMembership for a server action that doesn't go through
+ * getActionContext(): same checks, and the rest of the action runs
+ * fail-closed (supabase/query-guard.ts), so a dropped read error upstream
+ * of a write throws instead of letting the write proceed on nothing. Pages
+ * keep requireMembership: a read that fails there renders less, not wrong.
+ */
+export async function requireActionMembership(
+  allowed?: MembershipRole[],
+): Promise<CurrentMembership> {
+  enterFailClosed();
+  return requireMembershipInner(allowed);
+}
+
+async function requireMembershipInner(
   allowed?: MembershipRole[],
 ): Promise<CurrentMembership> {
   const membership = await getCurrentMembership();

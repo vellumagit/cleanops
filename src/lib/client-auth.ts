@@ -2,6 +2,7 @@ import "server-only";
 
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { enterFailClosed } from "@/lib/supabase/query-guard";
 import { getOrgName } from "@/lib/org-name";
 
 export type CurrentClient = {
@@ -119,4 +120,15 @@ export async function requireClient(): Promise<CurrentClient> {
     redirect("/client/login");
   }
   return client;
+}
+
+/**
+ * requireClient for a portal server action: same redirect, and the rest of
+ * the action runs fail-closed (supabase/query-guard.ts) — the portal cancels
+ * visits and files requests through the service-role client, where a read
+ * whose error was dropped must not be followed by the write.
+ */
+export async function requireClientAction(): Promise<CurrentClient> {
+  enterFailClosed();
+  return requireClient();
 }

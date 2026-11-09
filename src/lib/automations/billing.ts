@@ -2,6 +2,7 @@ import "server-only";
 import { admin, humanize, isAutomationEnabled } from "./shared";
 import { notify } from "@/lib/notify";
 import { resolveClientNotify } from "@/lib/notification-gate";
+import { billedByLabel, resolveBilledBookings } from "@/lib/billed-bookings";
 
 // ─────────────────────────────────────────────────────────────────
 // 1. Auto-generate a draft invoice when a job is completed
@@ -125,87 +126,21 @@ export async function autoInvoiceOnJobComplete(
       return { ok: false, reason };
     }
 
-    // Dedupe: if an invoice already exists for this booking, return
-    // its id rather than creating a second. Completing a job twice
-    // (or force-clicking the manual button after a successful auto
-    // run) should not produce duplicates.
-    const { data: existing } = (await db
-      .from("invoices")
-      .select("id, number")
-      .eq("booking_id", booking.id)
-      // VOIDED invoices don't count — that work is billable again. The
-      // line-item check below already excluded them; this one didn't, so a
-      // voided per-job invoice permanently blocked re-invoicing the booking.
-      .is("voided_at", null)
-      .limit(1)
-      .maybeSingle()) as unknown as {
-      data: { id: string; number: string | null } | null;
-    };
-
-    if (existing) {
+    // Already billed, by any of the three signals (invoices.booking_id, a
+    // line item's booking_id, the billing_invoice_id stamp), voids excluded.
+    // Asked in one place — billed-bookings.ts. This function carried its own
+    // copy of those three reads, and a copy is how two paths come to disagree
+    // about whether a job is billed. A failed read throws to the catch below:
+    // "couldn't check" never bills.
+    const billed = (await resolveBilledBookings(db, [booking.id])).get(booking.id);
+    if (billed) {
       console.log(
-        `[auto] autoInvoiceOnJobComplete: booking ${bookingId} already invoiced (${existing.id})`,
+        `[auto] autoInvoiceOnJobComplete: booking ${bookingId} already billed by ${billedByLabel(billed)}`,
       );
       return {
         ok: true,
-        invoiceId: existing.id,
-        number: existing.number,
-      };
-    }
-
-    // Consolidated-billing stamp: a booking already swept onto a period
-    // invoice carries billing_invoice_id. Older consolidated invoices didn't
-    // set line-item booking_ids, so without this check the force path
-    // double-billed stamped work (audit M1b). Voided stamps don't count —
-    // the void action clears them, but stale pre-fix stamps may linger.
-    if (booking.billing_invoice_id) {
-      const { data: stampedInv } = (await db
-        .from("invoices")
-        .select("id, number, voided_at")
-        .eq("id", booking.billing_invoice_id)
-        .maybeSingle()) as unknown as {
-        data: {
-          id: string;
-          number: string | null;
-          voided_at: string | null;
-        } | null;
-      };
-      if (stampedInv && !stampedInv.voided_at) {
-        console.log(
-          `[auto] autoInvoiceOnJobComplete: booking ${bookingId} already on consolidated invoice ${stampedInv.id}`,
-        );
-        return {
-          ok: true,
-          invoiceId: stampedInv.id,
-          number: stampedInv.number,
-        };
-      }
-    }
-
-    // Also treat a booking already billed on a consolidated "period" invoice
-    // as invoiced. Those record the booking only via invoice_line_items.
-    // booking_id (invoices.booking_id is null), so the check above misses them
-    // — without this, bulk/force generation double-bills the booking. Void
-    // invoices don't count (their work is billable again).
-    const { data: liRows } = (await db
-      .from("invoice_line_items" as never)
-      .select("invoice:invoices!inner ( id, number, voided_at )")
-      .eq("booking_id" as never, booking.id as never)
-      .is("invoices.voided_at" as never, null as never)
-      .limit(1)) as unknown as {
-      data: Array<{
-        invoice: { id: string; number: string | null } | null;
-      }> | null;
-    };
-    const periodInvoice = liRows?.[0]?.invoice;
-    if (periodInvoice) {
-      console.log(
-        `[auto] autoInvoiceOnJobComplete: booking ${bookingId} already on invoice ${periodInvoice.id} via line items`,
-      );
-      return {
-        ok: true,
-        invoiceId: periodInvoice.id,
-        number: periodInvoice.number,
+        invoiceId: billed.id,
+        number: billed.number == null ? null : String(billed.number),
       };
     }
 

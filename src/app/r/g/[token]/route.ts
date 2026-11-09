@@ -22,6 +22,7 @@
  */
 
 import { redirect } from "next/navigation";
+import { enterFailClosed } from "@/lib/supabase/query-guard";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
 
@@ -31,6 +32,7 @@ export async function GET(
   _request: Request,
   { params }: { params: Promise<{ token: string }> },
 ) {
+  enterFailClosed();
   const { token } = await params;
   if (!token || token.length < 8 || token.length > 64) {
     return new Response(notFoundHtml(), {

@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
-import { requireMembership } from "@/lib/auth";
+import { requireActionMembership } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
   buildGoogleOAuthUrl,
@@ -22,7 +22,7 @@ import {
  * accounts.google.com).
  */
 export async function connectGoogleCalendarAction() {
-  const membership = await requireMembership(["owner", "admin"]);
+  const membership = await requireActionMembership(["owner", "admin"]);
 
   // Persist the membership ID in a short-lived same-site cookie so the
   // callback can verify state even if the Supabase session is unavailable.
@@ -44,7 +44,7 @@ export async function connectGoogleCalendarAction() {
  * Marks the connection as "disconnected" (we keep the row for audit).
  */
 export async function disconnectGoogleCalendarAction() {
-  const membership = await requireMembership(["owner", "admin"]);
+  const membership = await requireActionMembership(["owner", "admin"]);
   const admin = createSupabaseAdminClient();
 
   // Delete upcoming events from the old calendar and reset event IDs on

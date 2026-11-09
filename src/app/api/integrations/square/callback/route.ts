@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { requireMembership } from "@/lib/auth";
+import { requireActionMembership } from "@/lib/auth";
 import {
   consumeOAuthState,
   exchangeCodeForTokens,
@@ -45,10 +45,10 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // requireMembership redirects to /login if not authenticated — that's
+  // requireActionMembership redirects to /login if not authenticated — that's
   // the right behavior. Square's redirect includes the user's session
   // cookie so they should be logged in already.
-  const membership = await requireMembership(["owner", "admin"]);
+  const membership = await requireActionMembership(["owner", "admin"]);
 
   // Validate + consume the state.
   let stateData: { organizationId: string; membershipId: string };

@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { requireMembership } from "@/lib/auth";
+import { requireActionMembership } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 export type ThresholdsState = {
@@ -42,7 +42,7 @@ export async function updateThresholdsAction(
   _prev: ThresholdsState,
   formData: FormData,
 ): Promise<ThresholdsState> {
-  const membership = await requireMembership(["owner", "admin"]);
+  const membership = await requireActionMembership(["owner", "admin"]);
 
   const staleDays = parseNullableInt(formData.get("stale_estimate_expire_days"), 1);
   const voidDays = parseNullableInt(formData.get("invoice_void_days"), 30);

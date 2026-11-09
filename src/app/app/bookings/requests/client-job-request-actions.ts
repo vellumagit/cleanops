@@ -6,6 +6,7 @@ import { after } from "next/server";
 import { getActionContext } from "@/lib/actions";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { syncJob } from "@/lib/job-sync";
+import { resyncBookingCalendars } from "@/lib/booking-calendar-sync";
 
 export type ResolveState = { ok?: boolean; error?: string };
 
@@ -63,6 +64,8 @@ export async function resolveClientSkipAction(
       .eq("organization_id", membership.organization_id);
     if (error) return { error: error.message };
     await syncJob(req.booking_id, "client_skip");
+    const cancelledId = req.booking_id;
+    after(() => resyncBookingCalendars(cancelledId));
   }
 
   const { error: reqErr } = (await admin

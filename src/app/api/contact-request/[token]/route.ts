@@ -1,5 +1,6 @@
 import { NextResponse, after, type NextRequest } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { enterFailClosed } from "@/lib/supabase/query-guard";
 import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
 import { findOrCreateClient } from "@/lib/find-or-create-client";
 import { newLeadPatch, type LeadSource } from "@/lib/lead-pipeline";
@@ -49,6 +50,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ token: string }> },
 ) {
+  enterFailClosed();
   const { token } = await params;
 
   const rl = await checkIpRateLimit("contact-request", 10, 60_000);

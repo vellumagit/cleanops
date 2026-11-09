@@ -19,6 +19,7 @@ import {
 import { applyAccountUpdate } from "@/lib/stripe-connect";
 import { sendPayoutNotification } from "@/lib/automations";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { enterFailClosed } from "@/lib/supabase/query-guard";
 import {
   recordStripeInvoicePayment,
   recordStripeRefund,
@@ -55,6 +56,8 @@ export async function POST(req: NextRequest) {
     console.error("[stripe connect webhook] signature failed", err);
     return NextResponse.json({ error: "Bad signature" }, { status: 400 });
   }
+
+  enterFailClosed();
 
   // Connect events carry the connected account id here.
   const accountId = (event as unknown as { account?: string }).account ?? null;

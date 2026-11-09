@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { requireMembership } from "@/lib/auth";
+import { requireActionMembership } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { isValidIanaTz } from "@/lib/org-timezone";
 
@@ -14,7 +14,7 @@ export async function updateOrgTimezoneAction(
   _prev: TimezoneState,
   formData: FormData,
 ): Promise<TimezoneState> {
-  const membership = await requireMembership(["owner", "admin"]);
+  const membership = await requireActionMembership(["owner", "admin"]);
 
   const tz = String(formData.get("timezone") ?? "").trim();
   if (!tz) {

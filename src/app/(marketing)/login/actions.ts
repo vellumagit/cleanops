@@ -91,7 +91,7 @@ export async function loginAction(
   }
 
   // MFA gate — fast path. The same check also lives inside
-  // requireMembership() (src/lib/auth.ts), which catches stale aal1
+  // requireActionMembership() (src/lib/auth.ts), which catches stale aal1
   // sessions that bypass login entirely (closed tab between sign-in
   // and /mfa-verify, magic-link/reset flows, etc.). This early check
   // here means MFA-enrolled users get redirected straight to

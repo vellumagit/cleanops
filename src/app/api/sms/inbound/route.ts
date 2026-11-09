@@ -24,6 +24,7 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { enterFailClosed } from "@/lib/supabase/query-guard";
 import { rateLimitByIp } from "@/lib/rate-limit-helpers";
 import {
   classifyInboundSms,
@@ -90,6 +91,7 @@ export async function POST(req: NextRequest) {
     console.warn("[sms/inbound] signature verification failed");
     return NextResponse.json({ error: "Bad signature" }, { status: 403 });
   }
+  enterFailClosed();
 
   const from = params.get("From");
   const to = params.get("To");

@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { requireMembership } from "@/lib/auth";
+import { requireActionMembership } from "@/lib/auth";
 import {
   cancelOrgDeletion,
   scheduleOrgDeletion,
@@ -16,7 +16,7 @@ export async function scheduleOrgDeletionAction(
   _prev: ScheduleDeletionState,
   formData: FormData,
 ): Promise<ScheduleDeletionState> {
-  const membership = await requireMembership(["owner"]);
+  const membership = await requireActionMembership(["owner"]);
 
   // Require the user to type the exact org name as a sanity check — same
   // pattern as GitHub / Stripe destructive actions.
@@ -35,7 +35,7 @@ export async function scheduleOrgDeletionAction(
 }
 
 export async function cancelOrgDeletionAction(): Promise<void> {
-  const membership = await requireMembership(["owner"]);
+  const membership = await requireActionMembership(["owner"]);
   await cancelOrgDeletion(membership.organization_id);
   revalidatePath("/app/settings/data");
 }

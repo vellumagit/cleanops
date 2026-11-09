@@ -2,6 +2,7 @@ import "server-only";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { logSystemAuditEvent } from "@/lib/audit";
 import { syncJob } from "@/lib/job-sync";
+import { resyncBookingCalendarsPaced } from "@/lib/booking-calendar-sync";
 import { planRederive, type RederiveRow } from "@/lib/scheduled-local";
 
 /**
@@ -55,6 +56,7 @@ export async function rederiveScheduledInstants(opts: { dryRun?: boolean; now?: 
   const orgOf = new Map(rows.map((r) => [r.id, r.organization_id]));
   let changed = 0;
   let dbDisagreed = 0;
+  const moved: string[] = [];
   for (const c of changes) {
     // Guard on the instant we read: a visit someone moved in the meantime
     // carries a new wall clock too, and the next night re-plans from that.
@@ -80,6 +82,7 @@ export async function rederiveScheduledInstants(opts: { dryRun?: boolean; now?: 
     }
     if (!upd || upd.length === 0) continue;
     changed++;
+    moved.push(c.id);
     if ((upd[0].scheduled_local ?? "").slice(0, 16) !== c.local) {
       dbDisagreed++;
       console.error(
@@ -98,6 +101,8 @@ export async function rederiveScheduledInstants(opts: { dryRun?: boolean; now?: 
     // live this far ahead, but the rule is every writer, not most.
     await syncJob(c.id, "rescheduled");
   }
+  // Each moved visit's calendar events move with it, at the reconcile's pace.
+  if (moved.length > 0) await resyncBookingCalendarsPaced(moved);
   if (changed > 0) console.log(`[rederive] moved ${changed} visit(s) to match their wall clock`);
   return { considered: rows.length, changed, refusedZones, dbDisagreed, dryRun };
 }

@@ -9,7 +9,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
-import { requireMembership } from "@/lib/auth";
+import { requireActionMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createInvoiceCheckoutSession } from "@/lib/stripe-connect";
 import { isStripeConnectEnabled } from "@/lib/stripe";
@@ -29,7 +29,7 @@ export async function POST(
   }
 
   const { id } = await params;
-  await requireMembership(["owner", "admin"]);
+  await requireActionMembership(["owner", "admin"]);
 
   // RLS check — the authenticated user must be able to see this invoice.
   const supabase = await createSupabaseServerClient();

@@ -1,6 +1,7 @@
 import { getCurrentClient } from "@/lib/client-auth";
 import { getOrgName } from "@/lib/org-name";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { enterFailClosed } from "@/lib/supabase/query-guard";
 
 /**
  * "I forgot the cleaner is coming."
@@ -22,6 +23,7 @@ export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  enterFailClosed();
   const client = await getCurrentClient();
   if (!client) {
     return new Response("Sign in to your portal to download this.", {

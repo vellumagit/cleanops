@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { enterFailClosed } from "@/lib/supabase/query-guard";
 import { verifyWebhookSignature } from "@/lib/square";
 
 /**
@@ -68,6 +69,7 @@ export async function POST(request: NextRequest) {
       { status: 401 },
     );
   }
+  enterFailClosed();
 
   let event: {
     event_id?: string;

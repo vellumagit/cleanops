@@ -2,6 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { enterFailClosed } from "@/lib/supabase/query-guard";
 import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
 import { createInvoiceCheckoutLink } from "@/lib/square";
 import { createInvoiceCheckoutSession } from "@/lib/stripe-connect";
@@ -24,6 +25,7 @@ import { normalizeTipCents, parseTippingSettings } from "@/lib/tip-split";
  * flag — never surface raw error strings to the public.
  */
 export async function startSquareCheckoutAction(formData: FormData) {
+  enterFailClosed();
   const token = String(formData.get("token") ?? "").trim();
   if (!token || token.length < 8) {
     redirect("/?pay_error=bad_token");
@@ -131,6 +133,7 @@ export async function startSquareCheckoutAction(formData: FormData) {
  * checks here would just be noise.
  */
 export async function startStripeCheckoutAction(formData: FormData) {
+  enterFailClosed();
   const token = String(formData.get("token") ?? "").trim();
   if (!token || token.length < 8) {
     redirect("/?pay_error=bad_token");

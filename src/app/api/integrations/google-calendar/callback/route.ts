@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { enterFailClosed } from "@/lib/supabase/query-guard";
 import { cookies } from "next/headers";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -31,6 +32,7 @@ import { getEnv } from "@/lib/env";
  * a first-party cookie that ITP will not strip.
  */
 export async function GET(request: NextRequest) {
+  enterFailClosed();
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");

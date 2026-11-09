@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { requireMembership } from "@/lib/auth";
+import { requireActionMembership } from "@/lib/auth";
 import { disconnect as disconnectSquare } from "@/lib/square";
 import { logAuditEvent } from "@/lib/audit";
 
@@ -13,7 +13,7 @@ import { logAuditEvent } from "@/lib/audit";
  * disconnect the org.
  */
 export async function POST(request: NextRequest) {
-  const membership = await requireMembership(["owner", "admin"]);
+  const membership = await requireActionMembership(["owner", "admin"]);
 
   await disconnectSquare(membership.organization_id);
 

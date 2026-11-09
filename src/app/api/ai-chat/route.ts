@@ -8,6 +8,7 @@
  */
 
 import { NextRequest } from "next/server";
+import { enterFailClosed } from "@/lib/supabase/query-guard";
 import Anthropic from "@anthropic-ai/sdk";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -66,6 +67,7 @@ current because it ships with each deploy):
 // ─── Handler ─────────────────────────────────────────────────────────────────
 
 export async function POST(request: NextRequest) {
+  enterFailClosed();
   // Auth
   const supabase = await createSupabaseServerClient();
   const {

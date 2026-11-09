@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { requireMembership } from "@/lib/auth";
+import { requireActionMembership } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 type RedeemResult =
@@ -20,7 +20,7 @@ type RedeemResult =
 export async function redeemPromoCodeAction(
   formData: FormData,
 ): Promise<RedeemResult> {
-  const membership = await requireMembership(["owner", "admin"]);
+  const membership = await requireActionMembership(["owner", "admin"]);
 
   const rawCode = String(formData.get("code") ?? "").trim().toUpperCase();
   if (!rawCode) return { ok: false, reason: "empty" };

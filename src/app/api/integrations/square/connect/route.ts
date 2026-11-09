@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { requireMembership } from "@/lib/auth";
+import { requireActionMembership } from "@/lib/auth";
 import { issueOAuthState, buildOAuthUrl } from "@/lib/square";
 import { isSquareConfigured } from "@/lib/env";
 
@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
 
   // Only owners/admins can connect a payment processor — this is a
   // financial relationship that affects every invoice sent afterwards.
-  const membership = await requireMembership(["owner", "admin"]);
+  const membership = await requireActionMembership(["owner", "admin"]);
 
   const state = await issueOAuthState({
     organizationId: membership.organization_id,

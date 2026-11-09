@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { requireMembership } from "@/lib/auth";
+import { requireActionMembership } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
   buildSageOAuthUrl,
@@ -17,7 +17,7 @@ import {
  * Redirect the admin to Sage's OAuth consent screen.
  */
 export async function connectSageAction() {
-  const membership = await requireMembership(["owner", "admin"]);
+  const membership = await requireActionMembership(["owner", "admin"]);
 
   // Single-use random CSRF state (not the membership id) — claimed at callback.
   // If it can't be stored there's no point bouncing the user to Sage: the
@@ -48,7 +48,7 @@ export async function connectSageAction() {
 export async function saveSageTaxRegionAction(
   regionId: string,
 ): Promise<{ ok: boolean; error?: string }> {
-  const membership = await requireMembership(["owner", "admin"]);
+  const membership = await requireActionMembership(["owner", "admin"]);
 
   const region = regionId.trim();
   if (!region) return { ok: false, error: "Pick a tax region first." };
@@ -74,7 +74,7 @@ export async function saveSageTaxRegionAction(
 export async function saveSageAccountMapAction(
   values: Partial<Record<SageAccountMapKey, string>>,
 ): Promise<{ ok: boolean; error?: string }> {
-  const membership = await requireMembership(["owner", "admin"]);
+  const membership = await requireActionMembership(["owner", "admin"]);
   const patch: Partial<Record<SageAccountMapKey, string>> = {};
   for (const k of SAGE_ACCOUNT_MAP_KEYS) {
     const v = (values[k] ?? "").trim();
@@ -95,7 +95,7 @@ export async function saveSageAccountMapAction(
  * Disconnect Sage for the current org.
  */
 export async function disconnectSageAction() {
-  const membership = await requireMembership(["owner", "admin"]);
+  const membership = await requireActionMembership(["owner", "admin"]);
   const admin = createSupabaseAdminClient();
 
   await admin

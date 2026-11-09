@@ -192,3 +192,99 @@ describe("the field app's clock-in inserts go through the admin client", () => {
     expect(offenders, "clock-in inserts on the user client (the guard will overwrite clock_in_at)").toEqual([]);
   });
 });
+
+/**
+ * A booking writer that moves a job without pushing the calendars is a bug on
+ * sight, the same way.
+ *
+ * Google Calendar mirrors each booking's time, length, crew and existence,
+ * for the company and for every cleaner working off her phone. The mirror is
+ * pushed by resyncBookingCalendars (lib/booking-calendar-sync.ts), or by the
+ * edit form's own calls into lib/google-calendar.ts. A writer that changes
+ * one of those facts and calls neither leaves the calendars wrong until the
+ * 22:30 reconcile — Nov 8: a client skipping tomorrow's visit from the
+ * portal left it on the cleaner's phone all afternoon, because that path
+ * called syncJob and nothing else.
+ *
+ * Same scan as above, narrower facts: bookings.scheduled_at /
+ * duration_minutes / assigned_to / splits / archived_at, bookings.status
+ * when it is (or may be) "cancelled", and booking_assignees rows.
+ */
+const CALENDAR_KEYS = new Set(["scheduled_at", "duration_minutes", "assigned_to", "splits", "archived_at"]);
+
+/** Modules that change a calendar fact and must not push, with the reason. */
+const CALENDAR_ALLOWLIST: Record<string, string> = {
+  "src/lib/job-sync.ts":
+    "writes the status the rules compute (confirmed, in_progress, completed) from facts already written by a caller that pushed; it never cancels, and the calendar shows a visit, not its progress",
+};
+
+function touchesCalendar(table: string, verb: string, payload: string): boolean {
+  if (table === "time_entries") return false;
+  if (verb === "insert" || verb === "upsert" || verb === "delete") return true;
+  const body = payload.trim();
+  if (!body.startsWith("{") || body.includes("...")) return true;
+  const keys = new Set<string>();
+  for (const m of body.matchAll(/(?:^|[{,\s])([a-z_]+)\s*(?::|,|\})/g)) keys.add(m[1]);
+  if (table === "booking_assignees") {
+    // Who is on the job and when. A completed_at or acceptance mark isn't a move.
+    for (const k of keys) if (FACT_KEYS.booking_assignees.has(k)) return true;
+    return false;
+  }
+  for (const k of keys) if (CALENDAR_KEYS.has(k)) return true;
+  if (keys.has("status")) {
+    // A literal status other than "cancelled" (in_progress, completed) is a
+    // progress note the calendar doesn't show; anything else may cancel.
+    const literal = body.match(/\bstatus\s*:\s*"([a-z_]+)"/);
+    return !literal || literal[1] === "cancelled";
+  }
+  return false;
+}
+
+function pushesCalendars(src: string): boolean {
+  if (/export async function resyncBookingCalendars\b/.test(src)) return true;
+  return /lib\/booking-calendar-sync"|lib\/google-calendar"/.test(src);
+}
+
+describe("every writer of a calendar fact pushes the calendars", () => {
+  const files = walk(SRC);
+  const violations: string[] = [];
+  let calendarWriters = 0;
+
+  for (const file of files) {
+    const src = readFileSync(file, "utf-8");
+    const writes = findWrites(file, src).filter((w) => w.table !== "time_entries");
+    const touching = writes.filter((w) => {
+      const start = src.split("\n").slice(0, w.line - 1).join("\n").length;
+      const verbMatch = src.slice(start).match(/\.(insert|update|upsert|delete)\s*\(/);
+      const open = start + (verbMatch?.index ?? 0) + (verbMatch?.[0].length ?? 1) - 1;
+      const payload = w.verb === "delete" ? "" : argumentText(src, open);
+      return touchesCalendar(w.table, w.verb, payload);
+    });
+    if (touching.length === 0) continue;
+    const rel = touching[0].file;
+    calendarWriters++;
+    if (pushesCalendars(src) || CALENDAR_ALLOWLIST[rel]) continue;
+    for (const w of touching) violations.push(`${w.file}:${w.line}  ${w.table}.${w.verb}()`);
+  }
+
+  it("finds the writers at all", () => {
+    expect(calendarWriters).toBeGreaterThan(5);
+  });
+
+  it("has no writer that moves a job without pushing the calendars", () => {
+    expect(
+      violations,
+      "\nThese modules change a booking's time, crew or existence and never push\n" +
+        "the calendars. Fix: import { resyncBookingCalendars } from\n" +
+        "\"@/lib/booking-calendar-sync\" and call it (inside after() from a request)\n" +
+        "with each booking id touched. If the module truly must not, add it to\n" +
+        "CALENDAR_ALLOWLIST in test/job-writers.test.ts with why.\n",
+    ).toEqual([]);
+  });
+
+  it("keeps the calendar allowlist honest", () => {
+    for (const rel of Object.keys(CALENDAR_ALLOWLIST)) {
+      expect(readFileSync(join(ROOT, rel), "utf-8").length, rel).toBeGreaterThan(0);
+    }
+  });
+});

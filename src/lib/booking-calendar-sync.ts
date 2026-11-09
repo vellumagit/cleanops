@@ -2,9 +2,15 @@ import "server-only";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
   createCalendarEvent,
+  deleteCalendarEvent,
   syncMemberCalendarEvents,
   updateCalendarEvent,
 } from "@/lib/google-calendar";
+
+export type CalendarResync = {
+  org: "patched" | "created" | "removed" | "none" | "failed";
+  members: boolean;
+};
 
 /**
  * Push one booking's current row to every Google Calendar that mirrors it:
@@ -19,12 +25,16 @@ import {
  * to the old slot while the app said otherwise. Call this after any write
  * that changes a booking's time, length or crew.
  *
+ * A cancelled or archived job comes OFF every calendar instead. The edit
+ * form always did that inline; the client portal's skip and the office
+ * approving a client's cancel request did not, so a visit a client cancelled
+ * at lunch sat on the cleaner's phone until the 22:30 reconcile that night.
+ * One rule, here, for every writer: call this after any status write too.
+ *
  * Best-effort: a calendar that is unreachable must never fail the save. Run
  * it inside after() from a request so the response isn't held up.
  */
-export async function resyncBookingCalendars(
-  bookingId: string,
-): Promise<{ org: "patched" | "created" | "none" | "failed"; members: boolean }> {
+export async function resyncBookingCalendars(bookingId: string): Promise<CalendarResync> {
   const admin = createSupabaseAdminClient();
   const { data: b, error: bookingError } = (await admin
     .from("bookings")
@@ -58,9 +68,8 @@ export async function resyncBookingCalendars(
     console.error("[gcal] resync booking lookup failed:", bookingId, bookingError);
     return { org: "failed", members: false };
   }
-  // Cancelled and archived jobs are removed from calendars by their own
-  // paths; re-pushing one here would resurrect the event.
-  if (!b || b.status === "cancelled" || b.archived_at) return { org: "none", members: false };
+  if (!b) return { org: "none", members: false };
+  if (b.status === "cancelled" || b.archived_at) return removeBookingCalendars(admin, b);
 
   // Resolve the complete crew before touching either calendar. Treating a
   // failed crew read as an empty list could remove additional cleaners'
@@ -89,7 +98,7 @@ export async function resyncBookingCalendars(
   const employeeName =
     b.assignee?.display_name?.trim() || b.assignee?.profile?.full_name?.trim() || undefined;
 
-  let org: "patched" | "created" | "none" | "failed" = "none";
+  let org: CalendarResync["org"] = "none";
   try {
     if (b.google_calendar_event_id) {
       const ok = await updateCalendarEvent(b.organization_id, {
@@ -144,6 +153,57 @@ export async function resyncBookingCalendars(
     members = true;
   } catch (err) {
     console.error("[gcal/member] resync failed:", b.id, err);
+  }
+  return { org, members };
+}
+
+/** The org event is deleted and its id cleared; an empty crew removes every member's event. */
+async function removeBookingCalendars(
+  admin: ReturnType<typeof createSupabaseAdminClient>,
+  b: {
+    id: string;
+    organization_id: string;
+    scheduled_at: string;
+    duration_minutes: number;
+    service_type: string;
+    address: string | null;
+    notes: string | null;
+    google_calendar_event_id: string | null;
+    client: { name: string | null } | null;
+  },
+): Promise<CalendarResync> {
+  let org: CalendarResync["org"] = "none";
+  if (b.google_calendar_event_id) {
+    try {
+      const ok = await deleteCalendarEvent(b.organization_id, b.google_calendar_event_id);
+      if (ok) {
+        org = "removed";
+        // Cleared so a later resync can't patch a deleted event and the
+        // nightly prune doesn't count it as still referenced.
+        await admin
+          .from("bookings")
+          .update({ google_calendar_event_id: null })
+          .eq("id", b.id);
+      }
+    } catch (err) {
+      org = "failed";
+      console.error("[gcal] resync: removing a cancelled job's event failed:", b.id, err);
+    }
+  }
+  let members = false;
+  try {
+    await syncMemberCalendarEvents(b.id, [], {
+      id: b.id,
+      scheduled_at: b.scheduled_at,
+      duration_minutes: b.duration_minutes,
+      service_type: b.service_type,
+      address: b.address,
+      notes: b.notes,
+      client_name: b.client?.name ?? undefined,
+    });
+    members = true;
+  } catch (err) {
+    console.error("[gcal/member] resync: removing a cancelled job's events failed:", b.id, err);
   }
   return { org, members };
 }

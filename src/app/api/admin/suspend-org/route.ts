@@ -6,6 +6,7 @@ import {
   type SuspendAction,
 } from "@/lib/abuse-guard";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { enterFailClosed } from "@/lib/supabase/query-guard";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -41,6 +42,8 @@ async function resolve(request: NextRequest) {
   if (actionParam !== "suspend" && actionParam !== "undo") return null;
   const action: SuspendAction = actionParam;
   if (!/^[0-9a-f-]{36}$/i.test(orgId) || !verifySuspendSignature(orgId, action, exp, sig)) return null;
+  // Before the first await, so the GET/POST that called this runs fail-closed.
+  enterFailClosed();
   const admin = createSupabaseAdminClient();
   const { data: org } = (await admin
     .from("organizations")

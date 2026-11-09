@@ -31,6 +31,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { addEmailSuppression } from "@/lib/email-suppression";
+import { enterFailClosed } from "@/lib/supabase/query-guard";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -118,6 +119,7 @@ export async function POST(request: NextRequest) {
     console.warn("[resend-webhook] signature verification failed");
     return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
   }
+  enterFailClosed();
 
   let event: ResendWebhookEvent;
   try {

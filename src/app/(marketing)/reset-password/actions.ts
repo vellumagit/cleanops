@@ -2,6 +2,7 @@
 
 import { z } from "zod";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { enterFailClosed } from "@/lib/supabase/query-guard";
 import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
 
 const ResetSchema = z
@@ -25,6 +26,7 @@ export async function resetPasswordAction(
   _prev: ResetPasswordState,
   formData: FormData,
 ): Promise<ResetPasswordState> {
+  enterFailClosed();
   const raw = {
     password: String(formData.get("password") ?? ""),
     confirm_password: String(formData.get("confirm_password") ?? ""),

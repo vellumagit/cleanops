@@ -36,6 +36,7 @@ import {
   invoiceFromMetadata,
 } from "@/lib/stripe-invoice-payment";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { enterFailClosed } from "@/lib/supabase/query-guard";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -105,6 +106,10 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
+
+  // Verified, so from here every read must succeed or the handler stops: a
+  // dropped read error ahead of a paid stamp or a refund is a money bug.
+  enterFailClosed();
 
   // Idempotency — atomically claim this event before doing any work.
   // INSERT (not upsert) wins the race; the primary-key constraint means

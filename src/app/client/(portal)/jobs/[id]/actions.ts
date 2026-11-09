@@ -3,9 +3,10 @@
 import "server-only";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
-import { requireClient } from "@/lib/client-auth";
+import { requireClientAction } from "@/lib/client-auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { syncJob } from "@/lib/job-sync";
+import { resyncBookingCalendars } from "@/lib/booking-calendar-sync";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { detectCardNumber, CARD_DETECTED_MESSAGE } from "@/lib/card-detection";
 import { notify } from "@/lib/notify";
@@ -20,7 +21,7 @@ export type ClientJobActionState = { ok?: boolean; error?: string };
 /**
  * Everything a portal client can do to a booking they already have.
  *
- * Both actions use the admin client after requireClient(), matching the rule
+ * Both actions use the admin client after requireClientAction(), matching the rule
  * the booking-request flow already documents: the portal writes through server
  * actions only, never through client-side RLS. There is deliberately no client
  * INSERT policy on client_job_requests — Postgres RLS has no OLD/NEW pair, so
@@ -28,7 +29,7 @@ export type ClientJobActionState = { ok?: boolean; error?: string };
  * eligibility here is time-dependent anyway, which is imperative logic rather
  * than a predicate.
  *
- * Ownership is therefore proven in code, twice: requireClient() resolves the
+ * Ownership is therefore proven in code, twice: requireClientAction() resolves the
  * session to one clients row, and every query is scoped by that client_id.
  */
 
@@ -90,7 +91,7 @@ export async function leaveJobNoteAction(
   _prev: ClientJobActionState,
   formData: FormData,
 ): Promise<ClientJobActionState> {
-  const client = await requireClient();
+  const client = await requireClientAction();
   const bookingId = String(formData.get("booking_id") ?? "").trim();
   const body = String(formData.get("body") ?? "").trim();
 
@@ -186,7 +187,7 @@ export async function requestSkipAction(
   _prev: ClientJobActionState,
   formData: FormData,
 ): Promise<ClientJobActionState> {
-  const client = await requireClient();
+  const client = await requireClientAction();
   const bookingId = String(formData.get("booking_id") ?? "").trim();
   const reason = String(formData.get("reason") ?? "").trim();
   if (!bookingId) return { error: "Missing job." };
@@ -241,6 +242,9 @@ export async function requestSkipAction(
       .eq("client_id", client.id);
     if (cancelErr) return { error: cancelErr.message };
     await syncJob(booking.id, "client_skip");
+    // Off the cleaners' and the company's Google Calendars too, or the
+    // visit stays on their phones until the nightly reconcile.
+    after(() => resyncBookingCalendars(booking.id));
     // An auto-applied skip has happened, so it is not a decision anyone has
     // to make — the office queue only holds open questions.
     const { error: resolveErr } = await admin

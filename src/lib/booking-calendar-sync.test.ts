@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   from: vi.fn(),
   createCalendarEvent: vi.fn(),
   updateCalendarEvent: vi.fn(),
+  deleteCalendarEvent: vi.fn(),
   syncMemberCalendarEvents: vi.fn(),
 }));
 
@@ -14,6 +15,7 @@ vi.mock("@/lib/supabase/admin", () => ({
 vi.mock("@/lib/google-calendar", () => ({
   createCalendarEvent: mocks.createCalendarEvent,
   updateCalendarEvent: mocks.updateCalendarEvent,
+  deleteCalendarEvent: mocks.deleteCalendarEvent,
   syncMemberCalendarEvents: mocks.syncMemberCalendarEvents,
 }));
 
@@ -22,6 +24,7 @@ const { resyncBookingCalendars } = await import("@/lib/booking-calendar-sync");
 function query(result: { data: unknown; error: { message: string } | null }) {
   const builder: Record<string, (...args: unknown[]) => unknown> = {};
   builder.select = vi.fn(() => builder);
+  builder.update = vi.fn(() => builder);
   builder.eq = vi.fn(() => builder);
   builder.maybeSingle = vi.fn(async () => result);
   Object.assign(builder, {
@@ -96,5 +99,46 @@ describe("resyncBookingCalendars", () => {
     expect(mocks.updateCalendarEvent).not.toHaveBeenCalled();
     expect(mocks.syncMemberCalendarEvents).not.toHaveBeenCalled();
     error.mockRestore();
+  });
+
+  it("takes a cancelled booking off every calendar instead of leaving it alone", async () => {
+    const bookings = query({
+      data: { ...booking, status: "cancelled", google_calendar_event_id: "evt-1" },
+      error: null,
+    });
+    mocks.from.mockImplementation((table: string) =>
+      table === "bookings" ? bookings : query({ data: [], error: null }),
+    );
+    mocks.deleteCalendarEvent.mockResolvedValue(true);
+
+    await expect(resyncBookingCalendars("booking-1")).resolves.toEqual({
+      org: "removed",
+      members: true,
+    });
+
+    expect(mocks.deleteCalendarEvent).toHaveBeenCalledWith("org-1", "evt-1");
+    expect(bookings.update).toHaveBeenCalledWith({ google_calendar_event_id: null });
+    expect(mocks.syncMemberCalendarEvents).toHaveBeenCalledWith(
+      "booking-1",
+      [],
+      expect.objectContaining({ id: "booking-1" }),
+    );
+    expect(mocks.createCalendarEvent).not.toHaveBeenCalled();
+    expect(mocks.updateCalendarEvent).not.toHaveBeenCalled();
+  });
+
+  it("removes the crew's events even when the org calendar has no event to delete", async () => {
+    mocks.from.mockImplementation((table: string) =>
+      table === "bookings"
+        ? query({ data: { ...booking, status: "cancelled" }, error: null })
+        : query({ data: [], error: null }),
+    );
+
+    await expect(resyncBookingCalendars("booking-1")).resolves.toEqual({
+      org: "none",
+      members: true,
+    });
+    expect(mocks.deleteCalendarEvent).not.toHaveBeenCalled();
+    expect(mocks.syncMemberCalendarEvents).toHaveBeenCalledWith("booking-1", [], expect.anything());
   });
 });

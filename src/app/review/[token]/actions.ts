@@ -1,6 +1,7 @@
 "use server";
 
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { enterFailClosed } from "@/lib/supabase/query-guard";
 import { notifyReviewSubmitted } from "@/lib/automations";
 
 type ReviewState = {
@@ -23,6 +24,7 @@ export async function submitReviewAction(
   _prev: ReviewState,
   formData: FormData,
 ): Promise<ReviewState> {
+  enterFailClosed();
   const token = String(formData.get("token") ?? "").trim();
   const source = String(formData.get("source") ?? "") as "booking" | "invoice";
   const sourceId = String(formData.get("sourceId") ?? "").trim();

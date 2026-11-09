@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { enterFailClosed } from "@/lib/supabase/query-guard";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { encryptSecret } from "@/lib/crypto";
@@ -18,6 +19,7 @@ import { getEnv } from "@/lib/env";
  * tokens, and store the connection (realmId → external_account_id).
  */
 export async function GET(request: NextRequest) {
+  enterFailClosed();
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");

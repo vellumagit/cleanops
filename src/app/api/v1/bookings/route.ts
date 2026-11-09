@@ -1,10 +1,11 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { authenticateApiKey } from "@/lib/api-key-auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { dispatchWebhookEvent } from "@/lib/webhooks";
 import { findOrCreateClient } from "@/lib/find-or-create-client";
 import { findCrossOrgRef } from "@/lib/api/org-scope";
 import { syncJob } from "@/lib/job-sync";
+import { resyncBookingCalendars } from "@/lib/booking-calendar-sync";
 import {
   futureStatusError,
   WRITABLE_BOOKING_STATUSES,
@@ -291,6 +292,9 @@ export async function POST(request: NextRequest) {
     }
   }
   await syncJob(created.id, "api_create");
+  // The company's calendar and each cleaner's get the visit now, not at the
+  // nightly reconcile — the API is how integrations book.
+  after(() => resyncBookingCalendars(created.id));
 
   dispatchWebhookEvent(auth.organizationId, "booking.created", data).catch(
     () => {},

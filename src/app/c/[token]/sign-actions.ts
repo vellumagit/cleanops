@@ -1,6 +1,7 @@
 "use server";
 
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { enterFailClosed } from "@/lib/supabase/query-guard";
 import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
 import { headers } from "next/headers";
 
@@ -28,6 +29,7 @@ export async function signContractAction(
   _prev: SignContractState,
   formData: FormData,
 ): Promise<SignContractState> {
+  enterFailClosed();
   const token = String(formData.get("token") ?? "").trim();
   const typedName = String(formData.get("signer_name") ?? "").trim();
   const agreed = String(formData.get("agree") ?? "") === "on";

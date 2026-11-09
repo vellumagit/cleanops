@@ -11,9 +11,11 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { enterFailClosed } from "@/lib/supabase/query-guard";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export async function GET(request: NextRequest) {
+  enterFailClosed();
   const url = request.nextUrl;
   const code = url.searchParams.get("code");
   const tokenHash = url.searchParams.get("token_hash");

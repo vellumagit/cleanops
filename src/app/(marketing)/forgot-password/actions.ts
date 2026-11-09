@@ -2,6 +2,7 @@
 
 import { z } from "zod";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { enterFailClosed } from "@/lib/supabase/query-guard";
 import {
   checkIpRateLimit,
   checkEmailRateLimit,
@@ -37,6 +38,7 @@ export async function forgotPasswordAction(
   _prev: ForgotPasswordState,
   formData: FormData,
 ): Promise<ForgotPasswordState> {
+  enterFailClosed();
   const raw = String(formData.get("email") ?? "").trim();
   const parsed = EmailSchema.safeParse({ email: raw });
 

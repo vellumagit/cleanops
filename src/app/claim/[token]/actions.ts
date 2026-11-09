@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { enterFailClosed } from "@/lib/supabase/query-guard";
 import { formatDateTime, humanizeEnum } from "@/lib/format";
 import { planOfferSwap, type CrewRow } from "@/lib/offer-swap";
 import { syncJob } from "@/lib/job-sync";
@@ -43,6 +44,7 @@ export type ClaimResult =
     };
 
 export async function claimOfferAction(token: string): Promise<ClaimResult> {
+  enterFailClosed();
   if (!token) return { ok: false, reason: "invalid" };
 
   const admin = createSupabaseAdminClient();

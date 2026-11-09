@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { enterFailClosed } from "@/lib/supabase/query-guard";
 import { rateLimitByIp } from "@/lib/rate-limit-helpers";
 
 export const runtime = "nodejs";
@@ -12,6 +13,7 @@ export const dynamic = "force-dynamic";
  * Marks the org's sender_email as verified if the token matches.
  */
 export async function GET(req: NextRequest) {
+  enterFailClosed();
   // 10 requests/min/IP. Legit flow hits this once; anything more is brute force.
   const limited = await rateLimitByIp(req, "verify-sender", 10, 60_000);
   if (limited) return limited;

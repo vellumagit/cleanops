@@ -15,6 +15,7 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { enterFailClosed } from "@/lib/supabase/query-guard";
 import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
 import { renderEstimatePdf } from "@/lib/estimate-pdf";
 
@@ -30,6 +31,7 @@ export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ token: string }> },
 ) {
+  enterFailClosed();
   const { token } = await params;
   if (!token || token.length < 8) {
     return NextResponse.json({ error: "Invalid token" }, { status: 404 });

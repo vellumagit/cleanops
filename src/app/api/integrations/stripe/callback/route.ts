@@ -13,7 +13,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
-import { requireMembership } from "@/lib/auth";
+import { requireActionMembership } from "@/lib/auth";
 import {
   consumeOAuthState,
   completeOAuth,
@@ -53,7 +53,7 @@ export async function GET(req: NextRequest) {
 
   // Must be authenticated — we re-verify that the current user has the
   // same membership the state was issued to.
-  const membership = await requireMembership(["owner", "admin"]);
+  const membership = await requireActionMembership(["owner", "admin"]);
 
   let consumed: { organizationId: string; membershipId: string };
   try {

@@ -1,4 +1,4 @@
-import { requireMembership } from "@/lib/auth";
+import { requireActionMembership } from "@/lib/auth";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { formatCurrencyCents, formatDate, formatDateTime, humanizeEnum } from "@/lib/format";
 import { getOrgCurrency } from "@/lib/org-currency";
@@ -26,7 +26,7 @@ export async function GET(
   { params }: { params: Promise<{ contactId: string }> },
 ) {
   // Auth guard — redirects on failure.
-  const membership = await requireMembership(["owner", "admin", "manager"]);
+  const membership = await requireActionMembership(["owner", "admin", "manager"]);
   const { contactId: payeeParam } = await params;
 
   const [ledger, currency, tz] = await Promise.all([

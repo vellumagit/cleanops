@@ -14,6 +14,7 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { enterFailClosed } from "@/lib/supabase/query-guard";
 import { rateLimitByIp } from "@/lib/rate-limit-helpers";
 
 export const runtime = "nodejs";
@@ -87,6 +88,7 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ token: string }> },
 ) {
+  enterFailClosed();
   const limited = await rateLimitByIp(req, "intake-webhook", 60, 60_000);
   if (limited) {
     for (const [k, v] of Object.entries(CORS_HEADERS)) limited.headers.set(k, v);

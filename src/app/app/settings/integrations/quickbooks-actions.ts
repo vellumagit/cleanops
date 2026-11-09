@@ -2,13 +2,13 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { requireMembership } from "@/lib/auth";
+import { requireActionMembership } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { buildQuickBooksOAuthUrl, issueQBOAuthState } from "@/lib/quickbooks";
 
 /** Redirect an owner/admin to QuickBooks' OAuth consent screen. */
 export async function connectQuickBooksAction() {
-  const membership = await requireMembership(["owner", "admin"]);
+  const membership = await requireActionMembership(["owner", "admin"]);
 
   // An unstorable state guarantees the callback fails — surface it here rather
   // than after a round trip to Intuit.
@@ -32,7 +32,7 @@ export async function connectQuickBooksAction() {
 
 /** Disconnect QuickBooks for the current org. */
 export async function disconnectQuickBooksAction() {
-  const membership = await requireMembership(["owner", "admin"]);
+  const membership = await requireActionMembership(["owner", "admin"]);
   const admin = createSupabaseAdminClient();
   await admin
     .from("integration_connections" as never)

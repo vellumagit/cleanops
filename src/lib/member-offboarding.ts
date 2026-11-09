@@ -146,6 +146,13 @@ export async function sweepDeactivatedMember(
       const { syncJob } = await import("@/lib/job-sync");
       for (const id of crewBookingIds) await syncJob(id, "crew_offboarded");
     }
+    // Off the calendars too: the company's event names the lead, and the
+    // member's own calendar still shows every shift they were just taken off.
+    const calendarIds = [...new Set([...primaryIds, ...crewBookingIds])];
+    if (calendarIds.length > 0) {
+      const { resyncBookingCalendarsPaced } = await import("@/lib/booking-calendar-sync");
+      await resyncBookingCalendarsPaced(calendarIds);
+    }
     result.unassignedBookings = [...byId.values()].sort((a, b) =>
       a.scheduled_at < b.scheduled_at ? -1 : 1,
     );

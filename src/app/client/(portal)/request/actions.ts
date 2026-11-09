@@ -2,7 +2,7 @@
 
 import "server-only";
 import { revalidatePath } from "next/cache";
-import { requireClient } from "@/lib/client-auth";
+import { requireClientAction } from "@/lib/client-auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { sendOrgEmail, isClientEmailPaused, isEmailConfigured } from "@/lib/email";
 import { detectCardNumber, CARD_DETECTED_MESSAGE } from "@/lib/card-detection";
@@ -21,14 +21,14 @@ export type RequestBookingState = {
  * discussing scope / pricing with the client.
  *
  * Uses the admin client for the insert — we validate the client in
- * requireClient() first, and the schema has no client-side RLS INSERT
+ * requireClientAction() first, and the schema has no client-side RLS INSERT
  * policy by design (the portal writes through server actions only).
  */
 export async function submitBookingRequestAction(
   _prev: RequestBookingState,
   formData: FormData,
 ): Promise<RequestBookingState> {
-  const client = await requireClient();
+  const client = await requireClientAction();
 
   // Each request pushes to every manager and sends the org an email that
   // counts against its daily cap. Five an hour is a person; more is a

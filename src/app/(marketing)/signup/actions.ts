@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { DISPOSABLE_EMAIL_MESSAGE, isDisposableEmail } from "@/lib/disposable-domains";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { enterFailClosed } from "@/lib/supabase/query-guard";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { SignupSchema, slugify } from "@/lib/validators/auth";
 import { checkIpRateLimit, getIp } from "@/lib/rate-limit-helpers";
@@ -18,6 +19,7 @@ export async function signupAction(
   _prevState: SignupActionState,
   formData: FormData,
 ): Promise<SignupActionState> {
+  enterFailClosed();
   const inviteToken = String(formData.get("inviteToken") ?? "").trim() || null;
   const isInvite = Boolean(inviteToken);
 

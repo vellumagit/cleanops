@@ -4,7 +4,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { requireMembership } from "@/lib/auth";
+import { requireActionMembership } from "@/lib/auth";
 import {
   createBillingPortalSession,
   isStripeEnabled,
@@ -20,7 +20,7 @@ export async function POST() {
       { status: 503 },
     );
   }
-  const membership = await requireMembership(["owner", "admin"]);
+  const membership = await requireActionMembership(["owner", "admin"]);
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
   const url = await createBillingPortalSession({
     organizationId: membership.organization_id,

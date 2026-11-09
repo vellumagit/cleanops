@@ -3,7 +3,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { requireMembership } from "@/lib/auth";
+import { requireActionMembership } from "@/lib/auth";
 import { disconnectAccount } from "@/lib/stripe-connect";
 import { isStripeConnectEnabled } from "@/lib/stripe";
 
@@ -17,7 +17,7 @@ export async function POST() {
       { status: 503 },
     );
   }
-  const membership = await requireMembership(["owner", "admin"]);
+  const membership = await requireActionMembership(["owner", "admin"]);
   await disconnectAccount({ organizationId: membership.organization_id });
   return NextResponse.json({ disconnected: true });
 }

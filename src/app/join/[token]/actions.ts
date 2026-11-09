@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { enterFailClosed } from "@/lib/supabase/query-guard";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 const JoinSchema = z.object({
@@ -31,6 +32,7 @@ export async function acceptInvitationAction(
   _prev: JoinFormState,
   formData: FormData,
 ): Promise<JoinFormState> {
+  enterFailClosed();
   const raw = {
     full_name: String(formData.get("full_name") ?? "").trim(),
     password: String(formData.get("password") ?? ""),

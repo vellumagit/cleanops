@@ -10,7 +10,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
-import { requireMembership, getCurrentUser } from "@/lib/auth";
+import { requireActionMembership, getCurrentUser } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
   createCheckoutSession,
@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const membership = await requireMembership(["owner", "admin"]);
+  const membership = await requireActionMembership(["owner", "admin"]);
 
   let body: { plan?: string };
   try {

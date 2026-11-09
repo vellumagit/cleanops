@@ -6,10 +6,12 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { enterFailClosed } from "@/lib/supabase/query-guard";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 export async function POST(request: NextRequest) {
+  enterFailClosed();
   try {
     // organizationId in the body is intentionally ignored — we derive the org
     // from the verified membership row instead (see below). Trusting the body

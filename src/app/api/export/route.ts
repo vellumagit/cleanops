@@ -9,16 +9,16 @@
  */
 
 import { type NextRequest, NextResponse } from "next/server";
-import { requireMembership } from "@/lib/auth";
+import { requireActionMembership } from "@/lib/auth";
 import { exportOrgData } from "@/lib/tenant-data";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 export async function GET(_req: NextRequest) {
-  // requireMembership redirects to /login when unauthenticated — safe in a
+  // requireActionMembership redirects to /login when unauthenticated — safe in a
   // GET route because the browser follows the redirect naturally.
-  const membership = await requireMembership(["owner", "admin"]);
+  const membership = await requireActionMembership(["owner", "admin"]);
 
   const bundle = await exportOrgData(membership.organization_id);
 
