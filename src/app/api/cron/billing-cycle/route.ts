@@ -38,6 +38,7 @@
  */
 
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { allowDbErrors } from "@/lib/supabase/query-guard";
 import { requireCronAuth } from "@/lib/cron-auth";
 import { humanizeEnum, FALLBACK_TZ } from "@/lib/format";
 import { zonedYmd, zonedMidnightUtc } from "@/lib/wall-clock";
@@ -297,7 +298,12 @@ async function generateClientInvoice(
       : `biweekly:${cutoff}`; //           e.g. "biweekly:2026-07-15"
 
   // ── Create invoice ───────────────────────────────────────────────────────
-  const { data: invoice, error: invErr } = (await db
+  // 23505 on (org, client, period) is the one error this insert expects — an
+  // earlier run already billed the period. The cron runs fail-closed, where
+  // that would otherwise reject before the check below ever ran.
+  const { data: invoice, error: invErr } = (await allowDbErrors(
+    ["23505"],
+    db
     .from("invoices")
     .insert({
       organization_id: org.id,
@@ -320,7 +326,8 @@ async function generateClientInvoice(
       // below so a missing column can never take down invoice creation again.
     } as never)
     .select("id, number")
-    .single()) as unknown as {
+    .single(),
+  )) as unknown as {
     data: InvoiceRow | null;
     error: { message: string; code?: string } | null;
   };

@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { getActionContext } from "@/lib/actions";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { allowDbErrors } from "@/lib/supabase/query-guard";
 import { syncJob } from "@/lib/job-sync";
 import { encryptField } from "@/lib/field-encryption";
 import { punchTime, TAPPED_AT_FIELD } from "@/lib/punch-time";
@@ -93,7 +94,9 @@ export async function clockInAction(
   // guard replaces clock_in_at with the server clock for non-managers, so
   // a tap sent late from a dead zone was recorded at the time it arrived.
   // The tap is already bounded by punchTime (12 h back, 5 min ahead).
-  const { error } = await admin.from("time_entries").insert({
+  const { error } = await allowDbErrors(
+    ["23505"],
+    admin.from("time_entries").insert({
     organization_id: membership.organization_id,
     employee_id: membership.id,
     booking_id: null,
@@ -107,7 +110,8 @@ export async function clockInAction(
     engagement_snapshot: toEngagement(rateRow?.engagement),
     work_category: workCategory,
     notes: rawNote ? encryptField(rawNote) : null,
-  } as never);
+  } as never),
+  );
   if (error) {
     // Postgres unique_violation — partial index rejected a concurrent
     // double clock-in. Treat as "you're already clocked in" instead of

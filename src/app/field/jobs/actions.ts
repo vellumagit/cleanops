@@ -5,6 +5,7 @@ import { after } from "next/server";
 import { getActionContext } from "@/lib/actions";
 import { autoInvoiceOnJobComplete } from "@/lib/automations";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { allowDbErrors } from "@/lib/supabase/query-guard";
 import { deleteMemberCalendarEvent } from "@/lib/google-calendar";
 import { notify } from "@/lib/notify";
 import { logAuditEvent } from "@/lib/audit";
@@ -295,7 +296,13 @@ export async function startJobAction(
       // guard is for rows written around this action with the anon key;
       // this action has checked she is on the job and bounded the tap
       // (punchTime: 12 h back, 5 min ahead), which is the trust it wants.
-      const { error: insertError } = await createSupabaseAdminClient()
+      // 23505 (a concurrent double tap) is the one error this insert expects;
+      // the action runs fail-closed, so it is let through to the refusal
+      // below — thrown, the phone showed a generic error instead of
+      // "You're already clocked in".
+      const { error: insertError } = await allowDbErrors(
+        ["23505"],
+        createSupabaseAdminClient()
         .from("time_entries")
         .insert({
           organization_id: membership.organization_id,
@@ -306,7 +313,8 @@ export async function startJobAction(
           clock_in_lng: lng,
           pay_rate_cents_snapshot: payRateSnapshot,
           engagement_snapshot: engagementSnapshot,
-        } as never);
+        } as never),
+      );
       if (insertError) {
         const code = (insertError as { code?: string }).code;
         if (code === "23505") {
@@ -318,7 +326,9 @@ export async function startJobAction(
   } else {
     // No open entry anywhere — create one for this job. Admin client for
     // the same reason as above: her tap time, not the server's.
-    const { error: insertError } = await createSupabaseAdminClient().from("time_entries").insert({
+    const { error: insertError } = await allowDbErrors(
+      ["23505"],
+      createSupabaseAdminClient().from("time_entries").insert({
       organization_id: membership.organization_id,
       employee_id: membership.id,
       booking_id: bookingId,
@@ -327,7 +337,8 @@ export async function startJobAction(
       clock_in_lng: lng,
       pay_rate_cents_snapshot: payRateSnapshot,
       engagement_snapshot: engagementSnapshot,
-    } as never);
+    } as never),
+    );
     if (insertError) {
       const code = (insertError as { code?: string }).code;
       if (code === "23505") {

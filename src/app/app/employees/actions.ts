@@ -8,6 +8,7 @@ import { logAuditEvent } from "@/lib/audit";
 import { toEngagement } from "@/lib/engagement";
 import { capabilitiesFromForm } from "@/lib/capabilities";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { allowDbErrors } from "@/lib/supabase/query-guard";
 import { InvitationSchema } from "@/lib/validators/invitations";
 
 type Field = "name" | "email" | "role" | "pay_rate";
@@ -699,11 +700,17 @@ export async function deleteEmployeeAction(
     };
   }
 
-  const { error } = await admin
-    .from("memberships")
-    .delete()
-    .eq("id", targetId)
-    .eq("organization_id", membership.organization_id);
+  // 23503 (payroll rows reference her) is the one error this delete
+  // expects; the action runs fail-closed, so it is let through to the
+  // message below instead of rejecting.
+  const { error } = await allowDbErrors(
+    ["23503"],
+    admin
+      .from("memberships")
+      .delete()
+      .eq("id", targetId)
+      .eq("organization_id", membership.organization_id),
+  );
 
   if (error) {
     // payroll_run_entries has ON DELETE RESTRICT — surface a helpful message
@@ -970,11 +977,17 @@ export async function forceDeleteEmployeeAction(
     }
   }
 
-  const { error } = await admin
-    .from("memberships")
-    .delete()
-    .eq("id", targetId)
-    .eq("organization_id", membership.organization_id);
+  // 23503 (payroll rows reference her) is the one error this delete
+  // expects; the action runs fail-closed, so it is let through to the
+  // message below instead of rejecting.
+  const { error } = await allowDbErrors(
+    ["23503"],
+    admin
+      .from("memberships")
+      .delete()
+      .eq("id", targetId)
+      .eq("organization_id", membership.organization_id),
+  );
 
   if (error) {
     // Same payroll guard as the normal delete — protect historical

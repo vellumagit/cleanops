@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { getActionContext } from "@/lib/actions";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { allowDbErrors } from "@/lib/supabase/query-guard";
 import { logAuditEvent } from "@/lib/audit";
 
 export type SchedulerViewRow = {
@@ -80,7 +81,9 @@ export async function saveSchedulerViewAction(args: {
   };
   const sort_order = (maxRow?.sort_order ?? -1) + 1;
 
-  const { data, error } = (await admin
+  const { data, error } = (await allowDbErrors(
+    ["23505"],
+    admin
     .from("scheduler_views" as never)
     .insert({
       organization_id: membership.organization_id,
@@ -90,7 +93,8 @@ export async function saveSchedulerViewAction(args: {
       created_by: membership.id,
     } as never)
     .select("id, name, filters, sort_order")
-    .single()) as unknown as {
+    .single(),
+  )) as unknown as {
     data: SchedulerViewRow | null;
     error: { message: string; code?: string } | null;
   };

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { requireMembership } from "@/lib/auth";
 import { logAuditEvent } from "@/lib/audit";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
+import { allowDbErrors } from "@/lib/supabase/query-guard";
 import { ServiceTypeRowSchema } from "@/lib/validators/service-types";
 
 type Field = keyof typeof ServiceTypeRowSchema.shape;
@@ -52,7 +53,9 @@ export async function createServiceTypeAction(
   const membership = await requireMembership(["owner", "admin"]);
   const { supabase } = await getActionContext();
 
-  const { data: row, error } = (await supabase
+  const { data: row, error } = (await allowDbErrors(
+    ["23505"],
+    supabase
     .from("service_types" as never)
     .insert({
       organization_id: membership.organization_id,
@@ -67,7 +70,8 @@ export async function createServiceTypeAction(
       created_by: membership.id,
     } as never)
     .select("id")
-    .maybeSingle()) as unknown as {
+    .maybeSingle(),
+  )) as unknown as {
     data: { id: string } | null;
     error: { code?: string; message: string } | null;
   };
@@ -126,7 +130,9 @@ export async function updateServiceTypeAction(
     data: Record<string, unknown> | null;
   };
 
-  const { error } = (await supabase
+  const { error } = (await allowDbErrors(
+    ["23505"],
+    supabase
     .from("service_types" as never)
     .update({
       category: parsed.data.category,
@@ -139,7 +145,8 @@ export async function updateServiceTypeAction(
       is_active: parsed.data.is_active,
     } as never)
     .eq("id" as never, id as never)
-    .eq("organization_id" as never, membership.organization_id as never)) as unknown as {
+    .eq("organization_id" as never, membership.organization_id as never),
+  )) as unknown as {
     error: { code?: string; message: string } | null;
   };
 

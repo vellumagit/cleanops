@@ -40,6 +40,13 @@ export function JobCard({ job, tz }: { job: FieldJob; tz: string }) {
     job.status !== "completed" &&
     !job.clocked_in_since &&
     (!inProgress || crewStartedWithoutYou);
+  // Her shift here is closed but the job is still running: a mis-tapped
+  // "I'm done", or a break. The card used to say only "you're not on the
+  // clock" and offer nothing, so the way back — the job page's "Not done?
+  // I'm back" — went unfound (Iryna, 2026-11-07: three minutes on the clock,
+  // then nothing). Same label-not-button rule as "Open to start".
+  const canReturn =
+    when.isToday && inProgress && job.worked_here && !job.clocked_in_since;
 
   return (
     /*
@@ -121,7 +128,7 @@ export function JobCard({ job, tz }: { job: FieldJob; tz: string }) {
           <div className="mt-1.5">
             <span className="inline-flex items-center gap-1.5 rounded-md bg-amber-500/15 px-2 py-0.5 text-xs font-semibold text-amber-800 dark:text-amber-300">
               <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" />
-              Job still open · you&rsquo;re not on the clock
+              Job still open · you&rsquo;re not on the clock · open to clock back in
             </span>
           </div>
         ) : null}
@@ -177,13 +184,13 @@ export function JobCard({ job, tz }: { job: FieldJob; tz: string }) {
 
       {job.clocked_in_since ? (
         <JobCardTap bookingId={job.id} kind="done" />
-      ) : canArrive ? (
+      ) : canArrive || canReturn ? (
         /* A label, not a button: the card opens the job, and the clock
            starts there. A one-tap "I'm here" sat on the card that cleaners
            tap to open the job, so a tap meant for the job clocked them in
            (Olha, 2026-11-03: twice). */
         <span className="pointer-events-none inline-flex shrink-0 items-center gap-1 rounded-lg border border-border px-3 py-2 text-sm font-semibold text-foreground">
-          Open to start
+          {canReturn ? "Open to clock back in" : "Open to start"}
           <ChevronRight className="h-4 w-4" />
         </span>
       ) : (

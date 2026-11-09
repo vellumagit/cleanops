@@ -92,3 +92,50 @@ describe("the suppression upsert under a fail-closed webhook", () => {
     ).rejects.toBeInstanceOf(DbQueryError);
   });
 });
+
+/**
+ * The twin of the fix above, for the source: a `code === "23505"` (or 23503,
+ * 23P01) branch after a `.from()` query is dead inside the fail-closed scope
+ * unless the query went through allowDbErrors — the rejection fires first.
+ * `.rpc()` calls are not wrapped by the guard, so their branches still run.
+ */
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join, relative } from "node:path";
+
+const ROOT = join(__dirname, "..");
+function walk(dir: string, out: string[] = []): string[] {
+  for (const name of readdirSync(dir)) {
+    const p = join(dir, name);
+    if (name === "node_modules" || name.startsWith(".")) continue;
+    if (statSync(p).isDirectory()) walk(p, out);
+    else if (/\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name)) out.push(p);
+  }
+  return out;
+}
+
+describe("every expected-error branch survives the fail-closed scope", () => {
+  it("wraps the query in allowDbErrors (or reads an rpc, which the guard leaves alone)", () => {
+    const offenders: string[] = [];
+    for (const file of walk(join(ROOT, "src"))) {
+      if (file.endsWith("query-guard.ts")) continue;
+      const lines = readFileSync(file, "utf8").split("\n");
+      lines.forEach((line, i) => {
+        if (!/code\s*[!=]==\s*"(23505|23503|23P01)"|includes\("23505"\)/.test(line)) return;
+        // The statement this branch inspects: back to the nearest await.
+        let start = i;
+        while (start > 0 && !/\bawait\b/.test(lines[start])) start--;
+        const span = lines.slice(start, i + 1).join("\n");
+        if (/\.rpc\(/.test(span) || /allowDbErrors\(/.test(span)) return;
+        // A thrown error already handled by a catch that reads the code.
+        if (/catch\s*\(/.test(span) && /dbErrorCode|DbQueryError|\.code/.test(span)) return;
+        offenders.push(`${relative(ROOT, file).replace(/\\/g, "/")}:${i + 1}`);
+      });
+    }
+    expect(
+      offenders,
+      "\nThese branches expect a Postgres error code after a query that rejects on\n" +
+        "any error inside the fail-closed scope, so they can never run there.\n" +
+        "Fix: await allowDbErrors([\"<code>\"], <the query>) from @/lib/supabase/query-guard.\n",
+    ).toEqual([]);
+  }, 30_000); // walks all of src; slow under the full suite's load
+});
