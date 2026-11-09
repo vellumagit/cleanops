@@ -12,6 +12,7 @@ import { collectSeriesDrift } from "@/lib/needs-you";
 import { resyncBookingCalendarsPaced } from "@/lib/booking-calendar-sync";
 import { wallClockForInstant } from "@/lib/scheduled-local";
 import { getOrgTimezone } from "@/lib/org-timezone";
+import { formatDateTime } from "@/lib/format";
 
 type Result = { ok: true } | { ok: false; error: string };
 
@@ -54,11 +55,16 @@ function restoreFailure(error: unknown, movedIds: string[]): Result {
     movedIds.length === 0
       ? "No visits were restored."
       : `${movedIds.length} visit${movedIds.length === 1 ? "" : "s"} were restored before it stopped. Refresh and review the series.`;
-  const reason = message.includes("[23P01]")
-    ? "A cleaner already has an overlapping booking."
-    : "The visit times could not be restored.";
+  return { ok: false, error: `The visit times could not be restored (${message || "unknown error"}). ${progress}` };
+}
 
-  return { ok: false, error: `${reason} ${progress}` };
+/** The overlap guard's refusal, thrown by the query guard or returned. */
+function isOverlap(error: unknown): boolean {
+  const message =
+    error instanceof Error
+      ? error.message
+      : String((error as { message?: unknown } | null)?.message ?? "");
+  return message.includes("23P01") || message.includes("overlapping booking");
 }
 
 /** "Close it": the job is over, whoever is still rostered. */
@@ -226,6 +232,10 @@ export async function restoreSeriesTimesAction(seriesId: string): Promise<Result
 
   const admin = createSupabaseAdminClient();
   const movedIds: string[] = [];
+  // A visit the overlap guard refuses is left where it is and named; the rest
+  // of the series is still restored. Stopping at the first one left a series
+  // half moved, with the drift item still showing.
+  const overlapped: string[] = [];
   for (const v of drift.visits) {
     let upd: Array<{ id: string }> | null;
     let error: { message: string } | null;
@@ -241,9 +251,19 @@ export async function restoreSeriesTimesAction(seriesId: string): Promise<Result
         error: { message: string } | null;
       });
     } catch (cause) {
+      if (isOverlap(cause)) {
+        overlapped.push(v.expected_at);
+        continue;
+      }
       return restoreFailure(cause, movedIds);
     }
-    if (error) return restoreFailure(error, movedIds);
+    if (error) {
+      if (isOverlap(error)) {
+        overlapped.push(v.expected_at);
+        continue;
+      }
+      return restoreFailure(error, movedIds);
+    }
     if (!upd || upd.length === 0) continue;
     movedIds.push(v.id);
     await logAuditEvent({
@@ -256,12 +276,23 @@ export async function restoreSeriesTimesAction(seriesId: string): Promise<Result
     });
     await syncJob(v.id, "rescheduled");
   }
-  if (movedIds.length === 0) return { ok: false, error: "Those visits changed under you — look again." };
+  if (movedIds.length === 0 && overlapped.length === 0) {
+    return { ok: false, error: "Those visits changed under you — look again." };
+  }
   // Org and member calendars, paced, after the response: the visits beyond
   // the reconcile's 45-day window would otherwise show the old hour until
   // they came within it.
-  after(() => resyncBookingCalendarsPaced(movedIds));
+  if (movedIds.length > 0) after(() => resyncBookingCalendarsPaced(movedIds));
   revalidatePath("/app/scheduling");
+  if (overlapped.length > 0) {
+    const tz = await getOrgTimezone(membership.organization_id);
+    const days = overlapped.map((iso) => formatDateTime(iso, tz)).join(", ");
+    revalidatePath("/app");
+    return {
+      ok: false,
+      error: `${movedIds.length} visit${movedIds.length === 1 ? "" : "s"} restored. ${overlapped.length} left as they were because the cleaner already has another booking then: ${days}. Move that booking or pick Keep.`,
+    };
+  }
   return done();
 }
 

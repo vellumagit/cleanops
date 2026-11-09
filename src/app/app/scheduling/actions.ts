@@ -6,7 +6,6 @@ import { getActionContext } from "@/lib/actions";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { futureStatusError } from "@/lib/booking-status";
 import { planCrewMove, type CrewMovePlan } from "./drag-crew";
-import { getScheduleConflictWindows } from "./segment-conflicts";
 import { membersOffOn } from "@/lib/unavailability-notice";
 import { scheduleFromWallClock } from "@/lib/scheduled-local";
 import { resyncBookingCalendars } from "@/lib/booking-calendar-sync";
@@ -190,95 +189,12 @@ export async function rescheduleBookingAction(
   const wall = scheduleFromWallClock(`${targetDate}T${pad(targetHour)}:${pad(targetMin)}`, orgTz);
   const next = new Date(wall.scheduled_at);
 
-  // Hard-conflict check: same employee can't be in two places. Different
-  // employees overlapping is legit (two-person jobs) and isn't blocked
-  // here. The Dispatch view separately paints informational red borders
-  // so the owner sees overlaps at a glance.
-  //
-  if (hasSplits) {
-    const memberIds = Array.from(
-      new Set([
-        ...(current.assigned_to ? [current.assigned_to] : []),
-        ...(crewRows ?? []).map((row) => row.membership_id),
-      ]),
-    );
-    const segments = memberIds.map((membershipId) => {
-      const row = crewRows?.find(
-        (candidate) => candidate.membership_id === membershipId,
-      );
-      return {
-        membership_id: membershipId,
-        start_offset_minutes: row?.split_start_offset_minutes ?? null,
-        duration_minutes: row?.split_duration_minutes ?? null,
-      };
-    });
-
-    if (memberIds.length > 0) {
-      const windows = getScheduleConflictWindows({
-        scheduledAt: next.toISOString(),
-        bookingDuration: current.duration_minutes,
-        segments,
-      });
-      const { data: hasConflict, error: conflictError } = await supabase.rpc(
-        "booking_schedule_has_conflict",
-        {
-          p_organization_id: membership.organization_id,
-          p_booking_id: id,
-          p_proposed_windows: windows,
-        },
-      );
-      if (conflictError) return { ok: false, error: conflictError.message };
-      if (hasConflict == null) {
-        return {
-          ok: false,
-          error: "Could not verify the schedule conflict check. Please try again.",
-        };
-      }
-      if (hasConflict) {
-        return {
-          ok: false,
-          error:
-            "A cleaner on this job is already booked at that time. Move the other job first or pick a different slot.",
-        };
-      }
-    }
-  } else if (assignedTo) {
-    // Check this cleaner's full assigned interval, including work that starts
-    // on a different local date or is stored as a crew assignment.
-    const windows = getScheduleConflictWindows({
-      scheduledAt: next.toISOString(),
-      bookingDuration: current.duration_minutes,
-      segments: [
-        {
-          membership_id: assignedTo,
-          start_offset_minutes: null,
-          duration_minutes: null,
-        },
-      ],
-    });
-    const { data: hasConflict, error: conflictError } = await supabase.rpc(
-      "booking_schedule_has_conflict",
-      {
-        p_organization_id: membership.organization_id,
-        p_booking_id: id,
-        p_proposed_windows: windows,
-      },
-    );
-    if (conflictError) return { ok: false, error: conflictError.message };
-    if (hasConflict == null) {
-      return {
-        ok: false,
-        error: "Could not verify the schedule conflict check. Please try again.",
-      };
-    }
-    if (hasConflict) {
-      return {
-        ok: false,
-        error:
-          "That cleaner is already booked at this time. Move the other job first or pick a different slot.",
-      };
-    }
-  }
+  // Overlaps are refused by the database (the overlap guard, migration
+  // 20261108060000), which reads crew windows the way the app does — shared
+  // hours divided, a split segment on its own times — and refuses only an
+  // overlap this move creates. A pre-check here used to apply its own,
+  // stricter rule, so the two disagreed; the refusal now comes back from the
+  // update below with one message.
 
   // For split-shift bookings, only move the start time — never touch
   // assigned_to or booking_assignees. The segments stay with the same
@@ -322,7 +238,15 @@ export async function rescheduleBookingAction(
       p_assignee_ids: assigneeIds,
     },
   );
-  if (updateError) return { ok: false, error: updateError.message };
+  if (updateError) {
+    const overlap = updateError.code === "23P01" || updateError.message.includes("overlapping booking");
+    return {
+      ok: false,
+      error: overlap
+        ? "A cleaner on this job is already booked at that time. Move the other job first or pick a different slot."
+        : updateError.message,
+    };
+  }
 
   // Rescheduled notices — drag-drop is the highest-traffic reschedule path
   // and previously notified NO ONE (audit B1): the client showed up on the

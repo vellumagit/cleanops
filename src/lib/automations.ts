@@ -1,78 +1,30 @@
 /**
- * Internal automations — fire-and-forget side effects that make the
- * platform feel alive. Every function here swallows errors so it
- * can never break the primary action.
+ * Internal automations — side effects that make the platform feel alive.
+ * Most swallow errors; a few cron workflows reject so the run ledger records
+ * failures rather than treating incomplete work as a clean run.
  */
 
 import "server-only";
-import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { admin, humanize, isAutomationEnabled } from "./automations/shared";
 import { maskEmail, maskPhone } from "@/lib/log-redact";
 import { resolveClientNotify } from "@/lib/notification-gate";
 import { sendPushToMembership, sendPushToOrgAdmins } from "@/lib/push";
 import { notify } from "@/lib/notify";
 import type { CurrencyCode } from "@/lib/format";
-import { resolveAutomationEnabled } from "@/lib/automation-defaults";
 import { localInputToUtcIso } from "@/lib/validators/common";
 import type { Database } from "@/lib/supabase/types";
 import { crewForGeneration, splitsFromCrew } from "@/lib/series-crew";
 
+export {
+  autoInvoiceOnJobComplete,
+  autoOnInvoicePaid,
+  autoGenerateRecurringInvoices,
+} from "./automations/billing";
+export type { AutoInvoiceResult } from "./automations/billing";
+export { runJobWatch, autoCompletePastBookings } from "./automations/job-lifecycle";
+
 type ServiceTypeEnum = Database["public"]["Enums"]["service_type"];
 type BonusInsert = Database["public"]["Tables"]["bonuses"]["Insert"];
-
-const admin = () => createSupabaseAdminClient();
-
-/**
- * Check whether a named automation is enabled for an org.
- *
- * Precedence:
- *   1. MASTER SWITCH — organizations.automations_enabled. When false, NOTHING
- *      fires, whatever the per-key settings say. New orgs start false, so a
- *      fresh account is completely silent until the owner opts in.
- *   2. Per-key setting in organizations.automation_settings. Automations are
- *      opt-in: a key with no explicit setting is OFF.
- *
- * On DB read failure we fail CLOSED (return false) rather than falling back to
- * a default — under an opt-in policy, a transient DB hiccup must never
- * surprise-send on behalf of an org that never enabled anything.
- */
-async function isAutomationEnabled(
-  organizationId: string,
-  key: string,
-): Promise<boolean> {
-  try {
-    const { data } = (await admin()
-      .from("organizations")
-      .select("automation_settings, automations_enabled")
-      .eq("id", organizationId)
-      .maybeSingle()) as unknown as {
-      data: {
-        automation_settings: Record<
-          string,
-          { enabled?: boolean } | null
-        > | null;
-        automations_enabled: boolean | null;
-      } | null;
-    };
-    if (!data) return false;
-    // Master switch off → hard stop.
-    if (data.automations_enabled !== true) return false;
-    // Unified two-flow model: the org toggle always gates the message type
-    // (client flow AND internal flow alike); each client's own preferences
-    // then gate delivery downstream via resolveClientNotify. The old
-    // per-client routing mode that bypassed org toggles is retired — orgs
-    // that used it were grandfathered by migration (client-facing keys
-    // enabled + house default "none"), so behavior is unchanged.
-    return resolveAutomationEnabled(
-      (data.automation_settings as Record<
-        string,
-        { enabled?: boolean } | undefined
-      > | null) ?? null,
-      key,
-    );
-  } catch {
-    return false;
-  }
-}
 
 /**
  * Public alias for route handlers (e.g. the unfilled-shifts cron) that need
@@ -198,419 +150,6 @@ async function notifyOrgAdmins(
   payload: { title: string; body: string; href: string },
 ): Promise<void> {
   await notify({ audience: "org-admins", organizationId: orgId, ...payload });
-}
-
-// ─────────────────────────────────────────────────────────────────
-// 1. Auto-generate a draft invoice when a job is completed
-// ─────────────────────────────────────────────────────────────────
-
-/**
- * Result shape so callers that want to surface errors to the user
- * (e.g. the "Generate invoice now" button) can see what happened.
- * The legacy fire-and-forget pattern still works — callers can
- * ignore the return.
- */
-export type AutoInvoiceResult =
-  | { ok: true; invoiceId: string; number: string | null }
-  | { ok: false; reason: string };
-
-export async function autoInvoiceOnJobComplete(
-  bookingId: string,
-  /** When true, skip the isAutomationEnabled gate. Used by the
-   *  "Generate invoice now" button so the owner can force an invoice
-   *  even if the automation toggle is off. */
-  options?: { force?: boolean },
-): Promise<AutoInvoiceResult> {
-  try {
-    const db = admin();
-
-    // Fetch the completed booking with client info
-    const { data: booking } = (await db
-      .from("bookings")
-      .select(
-        "id, organization_id, client_id, status, total_cents, service_type, service_type_label, address, duration_minutes, scheduled_at, billing_invoice_id, billing_released_at, property:client_properties ( label ), client:clients ( address )",
-      )
-      .eq("id", bookingId)
-      .maybeSingle()) as unknown as {
-      data: {
-        id: string;
-        organization_id: string;
-        client_id: string | null;
-        status: string;
-        total_cents: number;
-        service_type: string;
-        service_type_label: string | null;
-        address: string | null;
-        duration_minutes: number;
-        scheduled_at: string;
-        billing_invoice_id: string | null;
-        billing_released_at: string | null;
-        client: { address: string | null } | null;
-      } | null;
-    };
-
-    if (!booking) {
-      const reason = `Booking ${bookingId} not found.`;
-      console.log(`[auto] autoInvoiceOnJobComplete: ${reason}`);
-      return { ok: false, reason };
-    }
-    // Only a completed job bills. Every caller sets completed first; this is
-    // the line that makes a caller that didn't (a filtered update, a bug)
-    // harmless instead of an invoice for work nobody did.
-    if (booking.status !== "completed") {
-      const reason = `booking ${bookingId} is ${booking.status}, not completed — not invoicing`;
-      console.log(`[auto] autoInvoiceOnJobComplete: ${reason}`);
-      return { ok: false, reason };
-    }
-    if (!booking.client_id) {
-      const reason =
-        "This booking has no client assigned, so we can't draft an invoice.";
-      console.log(
-        `[auto] autoInvoiceOnJobComplete: booking ${bookingId} has no client_id`,
-      );
-      return { ok: false, reason };
-    }
-    // A person voided this job's invoice. Nothing automatic bills it again:
-    // not a re-save, not a recompute. The "Generate invoice now" button can,
-    // because that is a person deciding (see billed-bookings.ts).
-    if (booking.billing_released_at && !options?.force) {
-      const reason = `An invoice for booking ${bookingId} was voided, so it isn't billed again automatically.`;
-      console.log(`[auto] autoInvoiceOnJobComplete: ${reason}`);
-      return { ok: false, reason };
-    }
-
-    // Billing cadence gate: if the client is on biweekly or monthly billing,
-    // the per-job auto-invoice should NOT fire — a consolidated invoice will
-    // be generated by the /api/cron/billing-cycle cron on the 1st or 15th.
-    // The `force: true` option (used by the "Generate invoice now" button)
-    // bypasses this so owners can still create a one-off invoice manually.
-    if (!options?.force) {
-      const { data: clientMeta } = (await db
-        .from("clients")
-        .select("billing_cadence")
-        .eq("id", booking.client_id)
-        .maybeSingle()) as unknown as {
-        data: { billing_cadence: string } | null;
-      };
-
-      const cadence = clientMeta?.billing_cadence ?? "on_demand";
-      if (cadence !== "on_demand") {
-        const label =
-          cadence === "biweekly"
-            ? "biweekly (1st & 15th)"
-            : "monthly (1st of month)";
-        const reason = `This client is on ${label} billing. A consolidated invoice will be generated automatically on the next billing date.`;
-        console.log(
-          `[auto] autoInvoiceOnJobComplete: skipping for client ${booking.client_id} — billing_cadence=${cadence}`,
-        );
-        return { ok: false, reason };
-      }
-    }
-
-    if (
-      !options?.force &&
-      !(await isAutomationEnabled(
-        booking.organization_id,
-        "auto_invoice_on_job_complete",
-      ))
-    ) {
-      const reason =
-        "Auto-invoice is disabled for this org in Settings → Automations.";
-      console.log(
-        `[auto] Auto-invoice paused for org ${booking.organization_id}`,
-      );
-      return { ok: false, reason };
-    }
-
-    // Dedupe: if an invoice already exists for this booking, return
-    // its id rather than creating a second. Completing a job twice
-    // (or force-clicking the manual button after a successful auto
-    // run) should not produce duplicates.
-    const { data: existing } = (await db
-      .from("invoices")
-      .select("id, number")
-      .eq("booking_id", booking.id)
-      // VOIDED invoices don't count — that work is billable again. The
-      // line-item check below already excluded them; this one didn't, so a
-      // voided per-job invoice permanently blocked re-invoicing the booking.
-      .is("voided_at", null)
-      .limit(1)
-      .maybeSingle()) as unknown as {
-      data: { id: string; number: string | null } | null;
-    };
-
-    if (existing) {
-      console.log(
-        `[auto] autoInvoiceOnJobComplete: booking ${bookingId} already invoiced (${existing.id})`,
-      );
-      return {
-        ok: true,
-        invoiceId: existing.id,
-        number: existing.number,
-      };
-    }
-
-    // Consolidated-billing stamp: a booking already swept onto a period
-    // invoice carries billing_invoice_id. Older consolidated invoices didn't
-    // set line-item booking_ids, so without this check the force path
-    // double-billed stamped work (audit M1b). Voided stamps don't count —
-    // the void action clears them, but stale pre-fix stamps may linger.
-    if (booking.billing_invoice_id) {
-      const { data: stampedInv } = (await db
-        .from("invoices")
-        .select("id, number, voided_at")
-        .eq("id", booking.billing_invoice_id)
-        .maybeSingle()) as unknown as {
-        data: {
-          id: string;
-          number: string | null;
-          voided_at: string | null;
-        } | null;
-      };
-      if (stampedInv && !stampedInv.voided_at) {
-        console.log(
-          `[auto] autoInvoiceOnJobComplete: booking ${bookingId} already on consolidated invoice ${stampedInv.id}`,
-        );
-        return {
-          ok: true,
-          invoiceId: stampedInv.id,
-          number: stampedInv.number,
-        };
-      }
-    }
-
-    // Also treat a booking already billed on a consolidated "period" invoice
-    // as invoiced. Those record the booking only via invoice_line_items.
-    // booking_id (invoices.booking_id is null), so the check above misses them
-    // — without this, bulk/force generation double-bills the booking. Void
-    // invoices don't count (their work is billable again).
-    const { data: liRows } = (await db
-      .from("invoice_line_items" as never)
-      .select("invoice:invoices!inner ( id, number, voided_at )")
-      .eq("booking_id" as never, booking.id as never)
-      .is("invoices.voided_at" as never, null as never)
-      .limit(1)) as unknown as {
-      data: Array<{
-        invoice: { id: string; number: string | null } | null;
-      }> | null;
-    };
-    const periodInvoice = liRows?.[0]?.invoice;
-    if (periodInvoice) {
-      console.log(
-        `[auto] autoInvoiceOnJobComplete: booking ${bookingId} already on invoice ${periodInvoice.id} via line items`,
-      );
-      return {
-        ok: true,
-        invoiceId: periodInvoice.id,
-        number: periodInvoice.number,
-      };
-    }
-
-    const subtotalCents = booking.total_cents ?? 0;
-
-    // Nothing to bill. A booking with no price (price never filled in, or a
-    // non-billable visit like a walkthrough/consultation) must NOT silently
-    // auto-generate a $0 invoice — with auto-send enabled that emails the
-    // client a $0 bill. `force` still allows a deliberate manual $0 invoice.
-    if (!options?.force && subtotalCents <= 0) {
-      const reason =
-        "This booking has no price set, so there's nothing to invoice. Add a price, then generate the invoice.";
-      console.log(
-        `[auto] autoInvoiceOnJobComplete: booking ${bookingId} has no price — skipping auto-invoice`,
-      );
-      return { ok: false, reason };
-    }
-
-    // Net 14 from the INVOICE date, not the booking date. Basing the due date
-    // on scheduled_at meant a back-dated completion (e.g. the nightly
-    // auto-complete cron clearing a backlog of old jobs) produced an invoice
-    // whose due date was already in the past — instantly overdue, and the
-    // overdue-reminder cron would chase the client the same day.
-    const scheduledDate = new Date(booking.scheduled_at);
-    const issuedDate = new Date();
-    const dueBase = scheduledDate > issuedDate ? scheduledDate : issuedDate;
-    const dueDate = new Date(dueBase);
-    dueDate.setDate(dueDate.getDate() + 14); // Net 14
-
-    // due_date is a calendar date in the ORG's timezone. A UTC slice put an
-    // evening completion on the next day's date, shifting every due date.
-    const { getOrgTimezone } = await import("@/lib/org-timezone");
-    const { zonedYmd } = await import("@/lib/wall-clock");
-    const orgTz = await getOrgTimezone(booking.organization_id);
-
-    // Core insert uses ONLY the long-standing invoice columns. Tax +
-    // line items are applied as separate steps below so a missing
-    // migration or a new column can't take down the whole path.
-    // `number` and `public_token` are auto-assigned by triggers.
-    const { data: invoice, error: invErr } = (await db
-      .from("invoices")
-      .insert({
-        organization_id: booking.organization_id,
-        client_id: booking.client_id,
-        booking_id: booking.id,
-        status: "draft",
-        amount_cents: subtotalCents,
-        due_date: zonedYmd(dueDate, orgTz),
-      })
-      .select("id, number")
-      .single()) as unknown as {
-      data: { id: string; number: string | null } | null;
-      error: { message: string } | null;
-    };
-
-    if (invErr || !invoice) {
-      const reason =
-        invErr?.message ??
-        "The invoice insert returned no row — check Vercel logs.";
-      console.error(
-        "[auto] autoInvoiceOnJobComplete invoice insert failed:",
-        reason,
-      );
-      return { ok: false, reason };
-    }
-
-    // Optional: apply the org's default tax if the columns exist on
-    // this deployment AND the org has configured a default. Done as
-    // a separate UPDATE so a missing migration leaves us with an
-    // untaxed invoice instead of no invoice at all.
-    try {
-      const { data: orgData } = (await db
-        .from("organizations")
-        .select("default_tax_rate_bps, default_tax_label")
-        .eq("id", booking.organization_id)
-        .maybeSingle()) as unknown as {
-        data: {
-          default_tax_rate_bps: number | null;
-          default_tax_label: string | null;
-        } | null;
-      };
-      const rateBps = orgData?.default_tax_rate_bps ?? null;
-      if (rateBps && rateBps > 0) {
-        const taxAmountCents = Math.round((subtotalCents * rateBps) / 10000);
-        const totalCents = subtotalCents + taxAmountCents;
-        const { error: taxErr } = await db
-          .from("invoices")
-          .update({
-            amount_cents: totalCents,
-            tax_rate_bps: rateBps,
-            tax_amount_cents: taxAmountCents,
-            tax_label: orgData?.default_tax_label ?? null,
-          })
-          .eq("id", invoice.id);
-        if (taxErr) {
-          console.error(
-            "[auto] autoInvoiceOnJobComplete tax update failed (invoice still created):",
-            taxErr.message,
-          );
-        }
-      }
-    } catch (err) {
-      console.error(
-        "[auto] autoInvoiceOnJobComplete tax step threw (invoice still created):",
-        err,
-      );
-    }
-
-    // Line items live on a separate table, not as a column on
-    // invoices. Insert one starter row describing what was done so
-    // the owner sees something when they open the invoice.
-    const { bookingLineLabel } = await import("@/lib/invoice-line-label");
-
-    // An invoice whose line didn't land is a total with no breakdown, and
-    // the stamp below would mark the job billed by a line that doesn't
-    // exist. If the line fails, the draft comes back out and the job stays
-    // unbilled for the next attempt.
-    let lineFailure: string | null = null;
-    try {
-      const { error: liErr } = await db.from("invoice_line_items").insert({
-        organization_id: booking.organization_id,
-        invoice_id: invoice.id,
-        // Carries the job's date, time window and address — this label is
-        // the only description the client ever sees, on both the web
-        // invoice and the PDF.
-        label: bookingLineLabel({
-          serviceLabel:
-            booking.service_type_label ?? humanize(booking.service_type),
-          scheduledAt: booking.scheduled_at,
-          durationMinutes: booking.duration_minutes,
-          address: booking.address,
-          propertyLabel: (booking as { property?: { label?: string } | null }).property?.label ?? null,
-          fallbackAddress: booking.client?.address ?? null,
-          tz: orgTz,
-        }),
-        // Mirrors the billing-cycle path: the line records which job it
-        // bills, so the line-item dedup can see this work is already invoiced.
-        booking_id: booking.id,
-        quantity: 1,
-        unit_price_cents: subtotalCents,
-        sort_order: 0,
-      });
-      if (liErr) lineFailure = liErr.message;
-    } catch (err) {
-      lineFailure = err instanceof Error ? err.message : String(err);
-    }
-    if (lineFailure) {
-      console.error(
-        `[auto] autoInvoiceOnJobComplete: line item failed for invoice ${invoice.id}; removing the draft:`,
-        lineFailure,
-      );
-      await db.from("invoices").delete().eq("id", invoice.id).eq("status", "draft");
-      return { ok: false, reason: `Line item failed: ${lineFailure}` };
-    }
-
-    // Stamp the booking as billed so the consolidated billing-cycle cron never
-    // re-bills this work. Matters when an owner force-generates a per-job
-    // invoice for a biweekly/monthly client — without this the 1st/15th cron
-    // would invoice the same booking again (a double bill, and with auto-send
-    // on, a second email to the client).
-    const { error: stampErr } = await db
-      .from("bookings")
-      .update({ billing_invoice_id: invoice.id } as never)
-      .eq("id", booking.id);
-    if (stampErr) {
-      console.error(
-        "[auto] autoInvoiceOnJobComplete billing_invoice_id stamp failed (invoice still created):",
-        stampErr.message,
-      );
-    }
-
-    // Schedule auto-send if the org opted in — but NOT for a force-generated
-    // invoice. Clicking "Generate invoice now" is a deliberate act to send it
-    // yourself, not to queue it for automatic delivery in 24h.
-    if (!options?.force) {
-      try {
-        const { scheduleAutoSendIfEnabled } =
-          await import("@/lib/invoice-send");
-        await scheduleAutoSendIfEnabled(invoice.id, booking.organization_id);
-      } catch (scheduleErr) {
-        console.error(
-          "[auto] autoInvoiceOnJobComplete auto-send schedule failed (invoice still drafted):",
-          scheduleErr,
-        );
-      }
-    }
-
-    // Anything the client paid before the job was invoiced moves onto this
-    // invoice now — last, after tax and lines, so paid/partly-paid is judged
-    // on the final amount. See lib/booking-prepayments.ts.
-    {
-      const { applyPrepaymentsToInvoice } = await import("@/lib/booking-prepayments");
-      await applyPrepaymentsToInvoice(invoice.id);
-    }
-
-    console.log(
-      `[auto] Draft invoice ${invoice.number ?? invoice.id} created for booking ${bookingId}`,
-    );
-    return {
-      ok: true,
-      invoiceId: invoice.id,
-      number: invoice.number,
-    };
-  } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
-    console.error("[auto] autoInvoiceOnJobComplete failed:", err);
-    return { ok: false, reason };
-  }
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -3808,218 +3347,6 @@ export async function notifyBookingAssignment(
 }
 
 // ─────────────────────────────────────────────────────────────────
-// 8. Auto-send review request + receipt when invoice is fully paid
-// ─────────────────────────────────────────────────────────────────
-
-export async function autoOnInvoicePaid(invoiceId: string) {
-  try {
-    const db = admin();
-    const { sendOrgEmail, isInvoiceEmailUnpaused } =
-      await import("@/lib/email");
-    const { reviewRequestEmail, paymentReceiptEmail } =
-      await import("@/lib/email-templates");
-    const { formatCurrencyCents } = await import("@/lib/format");
-    const { getOrgCurrency } = await import("@/lib/org-currency");
-    const { generateClaimToken } = await import("@/lib/claim-token");
-
-    const { data: invoice } = await db
-      .from("invoices")
-      .select(
-        `
-        id, number, organization_id, amount_cents, public_token, paid_at, booking_id,
-        client:clients ( id, name, email )
-      `,
-      )
-      .eq("id", invoiceId)
-      .maybeSingle();
-
-    if (!invoice || !invoice.client) return;
-
-    if (
-      !(await isAutomationEnabled(
-        invoice.organization_id,
-        "invoice_paid_receipt",
-      ))
-    ) {
-      console.log(
-        `[auto] Receipt + review request paused for org ${invoice.organization_id}`,
-      );
-      return;
-    }
-
-    // This function sends TWO different things, so each is gated on its own
-    // category: the receipt is billing (email and/or text), the review
-    // request is growth (email-only). A client can want invoices but no
-    // review asks (or vice versa).
-    const billingDecision = await resolveClientNotify(db, {
-      organizationId: invoice.organization_id,
-      clientId: invoice.client.id,
-      category: "billing",
-      event: "payment_receipt",
-    });
-    const growthDecision = await resolveClientNotify(db, {
-      organizationId: invoice.organization_id,
-      clientId: invoice.client.id,
-      category: "growth",
-      event: "review_request",
-    });
-    const receiptEmail = billingDecision.email && Boolean(invoice.client.email);
-    const receiptSms =
-      billingDecision.sms && Boolean(billingDecision.clientPhone);
-    const reviewEmail = growthDecision.email && Boolean(invoice.client.email);
-    if (!receiptEmail && !receiptSms && !reviewEmail) return;
-
-    // CAS-claim the send. This now fires from payment webhooks as well as the
-    // manual mark-paid action, and a later correcting payment row also re-ran
-    // it (audit P2/P7) — the claim makes the receipt+review bundle at-most-once
-    // per invoice regardless of how many callers race. Zero rows = someone
-    // else already claimed it. Tolerant of the column not existing yet
-    // (pre-migration deploys proceed unclaimed rather than going silent).
-    try {
-      const { data: claimed, error: claimErr } = (await db
-        .from("invoices")
-        .update({ receipt_sent_at: new Date().toISOString() } as never)
-        .eq("id", invoiceId)
-        .is("receipt_sent_at" as never, null as never)
-        .select("id")) as unknown as {
-        data: Array<{ id: string }> | null;
-        error: { message: string } | null;
-      };
-      if (!claimErr && (!claimed || claimed.length === 0)) {
-        console.log(
-          `[auto] autoOnInvoicePaid: invoice ${invoiceId} already handled — skipping`,
-        );
-        return;
-      }
-    } catch (claimEx) {
-      console.error(
-        "[auto] autoOnInvoicePaid claim step threw (proceeding unclaimed):",
-        claimEx,
-      );
-    }
-
-    const { data: orgData } = (await db
-      .from("organizations")
-      .select("name, brand_color, logo_url, timezone")
-      .eq("id", invoice.organization_id)
-      .maybeSingle()) as unknown as {
-      data: {
-        name: string;
-        brand_color: string | null;
-        logo_url: string | null;
-        timezone: string | null;
-      } | null;
-    };
-
-    const orgName = orgData?.name ?? "Your service provider";
-    const brandColor = orgData?.brand_color ?? undefined;
-    const logoUrl = orgData?.logo_url ?? undefined;
-    const orgTz = orgData?.timezone ?? "America/Edmonton";
-    const currency = await getOrgCurrency(invoice.organization_id);
-    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://sollos3.com";
-
-    // A) Send payment receipt
-    const receiptTemplate = paymentReceiptEmail({
-      clientName: invoice.client.name ?? "there",
-      orgName,
-      invoiceNumber: invoice.number ?? invoiceId.slice(0, 8).toUpperCase(),
-      amountFormatted: formatCurrencyCents(invoice.amount_cents, currency),
-      paidDate: new Date(invoice.paid_at ?? new Date()).toLocaleDateString(
-        "en-US",
-        {
-          month: "short",
-          day: "numeric",
-          year: "numeric",
-          timeZone: orgTz,
-        },
-      ),
-      publicUrl: invoice.public_token
-        ? `${siteUrl}/i/${invoice.public_token}`
-        : siteUrl,
-      brandColor,
-      logoUrl,
-    });
-
-    if (receiptEmail)
-      await sendOrgEmail(invoice.organization_id, {
-        to: invoice.client.email!,
-        toName: invoice.client.name ?? undefined,
-        ...receiptTemplate,
-        pauseExempt: isInvoiceEmailUnpaused(),
-      });
-
-    // Receipt by text — independent channel; sendOrgSms applies its own
-    // gates (per-key toggle, opt-in, cap, TWILIO_ENABLED).
-    if (receiptSms) {
-      try {
-        const { sendOrgSms } = await import("@/lib/sms");
-        const { composePaymentReceiptSms } = await import("@/lib/twilio");
-        await sendOrgSms(invoice.organization_id, {
-          to: billingDecision.clientPhone!,
-          body: composePaymentReceiptSms({
-            orgName,
-            invoiceNumber:
-              invoice.number ?? invoiceId.slice(0, 8).toUpperCase(),
-            amountFormatted: formatCurrencyCents(
-              invoice.amount_cents,
-              currency,
-            ),
-          }),
-          automationKey: "invoice_paid_receipt",
-        });
-      } catch (smsErr) {
-        console.error("[auto] receipt SMS path errored:", invoiceId, smsErr);
-      }
-    }
-
-    // B) Auto-generate review token and send review request
-    // Check if review_token already exists
-    const { data: existing } = (await db
-      .from("invoices")
-      .select("review_token")
-      .eq("id", invoiceId)
-      .maybeSingle()) as unknown as {
-      data: { review_token: string | null } | null;
-    };
-
-    let reviewToken = existing?.review_token ?? null;
-    if (!reviewToken) {
-      reviewToken = generateClaimToken();
-      await db
-        .from("invoices")
-        .update({ review_token: reviewToken })
-        .eq("id", invoiceId);
-    }
-
-    const reviewTemplate = reviewRequestEmail({
-      clientName: invoice.client.name ?? "there",
-      orgName,
-      reviewUrl: `${siteUrl}/review/${reviewToken}`,
-      brandColor,
-      logoUrl,
-    });
-
-    // Send review request immediately after the receipt. The "2-second
-    // delay" was a setTimeout — which never fires in Vercel serverless
-    // because the process terminates when the function returns. Back-to-back
-    // Resend calls land in separate email threads in Gmail/Outlook anyway
-    // (different Message-IDs), so there's no deliverability reason to delay.
-    if (reviewEmail)
-      await sendOrgEmail(invoice.organization_id, {
-        to: invoice.client.email!,
-        toName: invoice.client.name ?? undefined,
-        ...reviewTemplate,
-      });
-
-    console.log(
-      `[auto] Receipt + review request sent for invoice ${invoiceId}`,
-    );
-  } catch (err) {
-    console.error("[auto] autoOnInvoicePaid failed:", err);
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────
 // 9. Notify admin(s) when a review is submitted
 // ─────────────────────────────────────────────────────────────────
 
@@ -4158,8 +3485,11 @@ export async function autoExtendRecurringSeries(): Promise<number> {
     if (!series || series.length === 0) return 0;
 
     let totalGenerated = 0;
+    const overlapSkipped: string[] = [];
+    const seriesFailed: string[] = [];
 
     for (const s of series) {
+      try {
       // Find the latest LIVE booking in this series. Excluding archived
       // rows is critical: if the last sibling was just auto-archived (by
       // the housekeeping cron), this query would otherwise return that
@@ -4269,15 +3599,40 @@ export async function autoExtendRecurringSeries(): Promise<number> {
       // visits, each auto-completing and auto-invoicing separately. Skipped
       // duplicates are excluded from `inserted`, so crew/calendar follow-ups
       // only run for rows this invocation actually created.
-      const { data: inserted } = await (db
-        .from("bookings")
-        .upsert(rows, {
-          onConflict: "series_id,scheduled_at",
-          ignoreDuplicates: true,
-        })
-        .select("id, scheduled_at") as unknown as Promise<{
-        data: Array<{ id: string; scheduled_at: string }> | null;
-      }>);
+      //
+      // The overlap guard (migration 20261108060000) refuses a visit that
+      // puts a cleaner in two places. One such visit used to fail the whole
+      // batch, and in a fail-closed cron the throw ended the run for every
+      // series after it. The batch is tried whole; on an overlap each visit
+      // is tried alone and the refused ones are skipped and reported.
+      const upsertVisits = async (batch: typeof rows) => {
+        const { data, error } = (await db
+          .from("bookings")
+          .upsert(batch, {
+            onConflict: "series_id,scheduled_at",
+            ignoreDuplicates: true,
+          })
+          .select("id, scheduled_at")) as unknown as {
+          data: Array<{ id: string; scheduled_at: string }> | null;
+          error: { message: string } | null;
+        };
+        if (error) throw new Error(error.message);
+        return data ?? [];
+      };
+      let inserted: Array<{ id: string; scheduled_at: string }> = [];
+      try {
+        inserted = await upsertVisits(rows);
+      } catch (err) {
+        if (!isOverlapError(err)) throw err;
+        for (const row of rows) {
+          try {
+            inserted.push(...(await upsertVisits([row])));
+          } catch (rowErr) {
+            if (!isOverlapError(rowErr)) throw rowErr;
+            overlapSkipped.push(`series ${s.id} ${row.scheduled_at}`);
+          }
+        }
+      }
 
       // Create the crew junction rows so generated occurrences actually show
       // up in the cleaner's field app (the field views read booking_assignees,
@@ -4330,19 +3685,31 @@ export async function autoExtendRecurringSeries(): Promise<number> {
             responded_at: accepted.has(m.membership_id) ? now : null,
           })),
         );
-        const { error: crewErr } = (await db
-          .from("booking_assignees")
-          .upsert(junctionRows, {
-            onConflict: "booking_id,membership_id",
-            ignoreDuplicates: true,
-          })) as unknown as { error: { message: string } | null };
         // Read it. A visit generated with no crew rows is invisible to every
-        // cleaner's field app, so a failure here has to be loud.
-        if (crewErr) {
-          console.error(
-            `[extend-series] crew rows failed for series ${s.id}:`,
-            crewErr.message,
-          );
+        // cleaner's field app, so a failure here has to be loud. A crew
+        // member the overlap guard refuses is left off that one visit and
+        // reported, rather than failing every visit's crew.
+        const upsertCrew = async (batch: typeof junctionRows) => {
+          const { error } = (await db
+            .from("booking_assignees")
+            .upsert(batch, {
+              onConflict: "booking_id,membership_id",
+              ignoreDuplicates: true,
+            })) as unknown as { error: { message: string } | null };
+          if (error) throw new Error(error.message);
+        };
+        try {
+          await upsertCrew(junctionRows);
+        } catch (err) {
+          if (!isOverlapError(err)) throw err;
+          for (const row of junctionRows) {
+            try {
+              await upsertCrew([row]);
+            } catch (rowErr) {
+              if (!isOverlapError(rowErr)) throw rowErr;
+              overlapSkipped.push(`crew ${row.membership_id} on booking ${row.booking_id}`);
+            }
+          }
         }
       }
 
@@ -4365,17 +3732,40 @@ export async function autoExtendRecurringSeries(): Promise<number> {
         }
       }
 
-      totalGenerated += occurrences.length;
+      totalGenerated += inserted.length;
       console.log(
-        `[auto] Extended series ${s.id}: +${occurrences.length} bookings`,
+        `[auto] Extended series ${s.id}: +${inserted.length} bookings`,
       );
+      } catch (err) {
+        // One series failing must not stop the rest.
+        seriesFailed.push(`series ${s.id}: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
 
+    // Reported as a failed run (the cron ledger and the morning check read
+    // it), naming what was skipped: a visit nobody generated is a client
+    // nobody cleans.
+    if (seriesFailed.length > 0 || overlapSkipped.length > 0) {
+      const parts = [
+        `${totalGenerated} visit(s) generated`,
+        overlapSkipped.length > 0
+          ? `${overlapSkipped.length} skipped because the cleaner already has an overlapping booking: ${overlapSkipped.slice(0, 8).join("; ")}${overlapSkipped.length > 8 ? " …" : ""}`
+          : null,
+        seriesFailed.length > 0 ? `${seriesFailed.length} series failed: ${seriesFailed.slice(0, 5).join("; ")}` : null,
+      ].filter(Boolean);
+      throw new Error(parts.join(". "));
+    }
     return totalGenerated;
   } catch (err) {
     console.error("[auto] autoExtendRecurringSeries failed:", err);
-    return 0;
+    throw err;
   }
+}
+
+/** The overlap guard's refusal, however it arrives (a thrown guard error or a returned one). */
+function isOverlapError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String((err as { message?: unknown })?.message ?? err);
+  return message.includes("23P01") || message.includes("overlapping booking");
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -6051,365 +5441,6 @@ export async function sendOvertimeWarnings(): Promise<{ emailsSent: number }> {
   return { emailsSent };
 }
 
-// ─────────────────────────────────────────────────────────────────
-// 17b. Forgotten clock-out: remind, escalate, then cap (cron, every 30 min)
-//
-// The problem this exists for: an employee clocks in, goes home, and the
-// clock keeps running. Observed live — a 68.45h entry against a 6h job, with
-// three such entries accounting for 25.7% of one org's entire recorded hours.
-//
-// Escalation, all measured from the shift's EXPECTED end:
-//     0 min  → push the employee: "still working? remember to clock out"
-//   +30 min  → repeat, every 30 minutes
-//  +120 min  → cap it. Close at expected-end + 2h, flag needs_review,
-//              notify the manager (or whoever stands in for one), and SMS
-//              the owner.
-//
-// What it deliberately does NOT do: silently rewrite the hours down to the
-// scheduled length. A cleaner who genuinely stayed two extra hours looks
-// identical in the data to one who forgot to tap the button, and shaving
-// real worked time is both wrong and legally dangerous. We cap the runaway,
-// mark it, and let a human say what actually happened.
-// ─────────────────────────────────────────────────────────────────
-
-// Grace period and nag interval are per-org now (Settings -> Automations),
-// resolved from automation_settings via resolveClockOutThresholds. The old
-// hardcoded 120/30 survive as the defaults, so an org that never touches the
-// setting behaves exactly as before.
-
-// ─────────────────────────────────────────────────────────────────
-// 33b. Job watch — the job that passed in silence
-//
-// Sibling of the clock-OUT guardrail above, watching the other end of the
-// shift. Sollos already notices a job nobody was assigned to, and a shift
-// nobody clocked out of. Nothing noticed the job that was assigned, came and
-// went, and produced no evidence anyone did it: no clock-in, no status change,
-// no human touch. Auto-complete then flips it and drafts an invoice, so the
-// first person to discover nothing happened is the client reading the bill.
-//
-// Two words, each said once (src/lib/job-watch.ts holds the decision):
-//   late start   → nudge the crew while showing up is still possible
-//   no clock-in  → ask the office, before the money moves
-//
-// Silent for orgs that don't clock in at all — otherwise every job they book
-// would raise a flag, and an alert that is always on is invisible.
-// ─────────────────────────────────────────────────────────────────
-
-export async function runJobWatch(): Promise<{
-  considered: number;
-  nudged: number;
-  flagged: number;
-  /** Orgs skipped because they have no recent clock-in activity at all. */
-  orgsWithoutClockIn: string[];
-}> {
-  const db = admin();
-  const { notify } = await import("@/lib/notify");
-  const { classifyJob, lateStarters, orgUsesClockIn, saidForThisSchedule } = await import("@/lib/job-watch");
-  const { jobWindowEndMs } = await import("@/lib/job-state");
-  const { resolveBookingCoverage } = await import("@/lib/booking-coverage");
-  const { getOrgTimezone } = await import("@/lib/org-timezone");
-  const { formatDateTime } = await import("@/lib/format");
-
-  const nowMs = Date.now();
-  const nowIso = new Date(nowMs).toISOString();
-  // Three days back: far enough to catch a weekend of silence, short enough
-  // that switching this on doesn't dredge up months of history in one alert.
-  const sinceIso = new Date(nowMs - 3 * 24 * 60 * 60 * 1000).toISOString();
-
-  const { data: candidates } = (await db
-    .from("bookings")
-    .select(
-      `id, organization_id, scheduled_at, duration_minutes, status, assigned_to,
-       no_show_nudge_sent_at, no_clock_in_flagged_at, divide_hours_evenly, created_at,
-       client:clients ( name )`,
-    )
-    .in("status", ["confirmed", "en_route", "in_progress"])
-    .gte("scheduled_at", sinceIso)
-    .lte("scheduled_at", nowIso)
-    // Newest first: if the cap ever bites, the jobs that fall off are the
-    // oldest, whose window has long passed and whose flag already went.
-    .order("scheduled_at", { ascending: false })
-    .limit(500)) as unknown as {
-    data: Array<{
-      id: string;
-      organization_id: string;
-      scheduled_at: string;
-      duration_minutes: number | null;
-      divide_hours_evenly: boolean | null;
-      status: string;
-      assigned_to: string | null;
-      no_show_nudge_sent_at: string | null;
-      no_clock_in_flagged_at: string | null;
-      created_at: string;
-      client: { name: string | null } | null;
-    }> | null;
-  };
-
-  const considered = candidates?.length ?? 0;
-  let nudged = 0;
-  let flagged = 0;
-  const orgsWithoutClockIn: string[] = [];
-  if (!candidates || candidates.length === 0) {
-    return { considered, nudged, flagged, orgsWithoutClockIn };
-  }
-
-  // Staffing (assignee OR crew OR claimed offer) and clock-in evidence, both
-  // in one pass for every candidate rather than per-booking round trips.
-  const ids = candidates.map((b) => b.id);
-  const { selectInChunks } = await import("@/lib/supabase/chunked-in");
-  const [coverage, { data: entryRows, error: entryErr }] = await Promise.all([
-    resolveBookingCoverage(ids),
-    // Chunked, and the error is fatal for this run: up to 500 ids in one
-    // `.in()` overflowed the request before, and a failed read here looks
-    // exactly like "nobody clocked in anywhere" — which would nudge every
-    // crew and flag every job to the office, permanently.
-    selectInChunks<{ booking_id: string | null }>(ids, (chunk) =>
-      db
-        .from("time_entries")
-        .select("booking_id")
-        .in("booking_id", chunk) as unknown as PromiseLike<{
-        data: Array<{ booking_id: string | null }> | null;
-        error: { message: string } | null;
-      }>,
-    ),
-  ]);
-  if (entryErr) {
-    throw new Error(`job watch: clock-in evidence query failed: ${entryErr.message}`);
-  }
-  const clockedBookings = new Set(
-    entryRows.map((r) => r.booking_id).filter(Boolean) as string[],
-  );
-
-  const byOrg = new Map<string, typeof candidates>();
-  for (const b of candidates) {
-    const list = byOrg.get(b.organization_id) ?? [];
-    list.push(b);
-    byOrg.set(b.organization_id, list);
-  }
-
-  for (const [orgId, jobs] of byOrg) {
-    try {
-      const [nudgeOn, alertOn, orgDivides] = await Promise.all([
-        isAutomationEnabled(orgId, "job_not_started_nudge"),
-        isAutomationEnabled(orgId, "no_clock_in_alert"),
-        isAutomationEnabled(orgId, "divide_crew_hours"),
-      ]);
-      if (!nudgeOn && !alertOn) continue;
-
-      // Does this org clock in at all? An org running on paper would flag
-      // every job it books.
-      const { count: recentEntries } = (await db
-        .from("time_entries")
-        .select("id", { count: "exact", head: true })
-        .eq("organization_id", orgId)
-        .gte(
-          "clock_in_at",
-          new Date(nowMs - 30 * 24 * 60 * 60 * 1000).toISOString(),
-        )) as unknown as { count: number | null };
-      if (!orgUsesClockIn(recentEntries ?? 0)) {
-        orgsWithoutClockIn.push(orgId);
-        continue;
-      }
-
-      const toFlag: typeof jobs = [];
-      // Late starts, each person measured from her own segment. Decided for
-      // the whole org first so the "already told her" lookup is one query.
-      type LateNudge = {
-        booking: (typeof jobs)[number];
-        membershipId: string;
-        dueAtMs: number;
-        key: string;
-        /** True when this nudge covers the last person on the job. */
-        last: boolean;
-      };
-      const lateNudges: LateNudge[] = [];
-
-      for (const b of jobs) {
-        // The window is the one the rules use (jobWindowEndMs): the crew's
-        // shared length — an 18-hour house with four rostered is a 4.5-hour
-        // window — or the end of the latest segment when people work their
-        // own. A split 4h + 4h shift is an 8-hour window, and measuring it
-        // as 4 asked the office about silence while the second cleaner's
-        // part had barely begun.
-        const cov = coverage.get(b.id);
-        const crewIds = cov?.employeeIds ?? [];
-        const segmentBy = new Map(
-          (cov?.segments ?? []).map((seg) => [seg.membership_id, seg] as const),
-        );
-        const crewRows = crewIds.map((membershipId) => ({
-          membership_id: membershipId,
-          split_start_offset_minutes: segmentBy.get(membershipId)?.split_start_offset_minutes ?? null,
-          split_duration_minutes: segmentBy.get(membershipId)?.split_duration_minutes ?? null,
-        }));
-        const scheduledAtMs = new Date(b.scheduled_at).getTime();
-        const verdict = classifyJob({
-          scheduledAtMs,
-          windowEndMs: jobWindowEndMs(
-            {
-              scheduled_at: b.scheduled_at,
-              duration_minutes: b.duration_minutes ?? 0,
-              divides_hours: b.divide_hours_evenly === true || orgDivides,
-            },
-            crewRows,
-          ),
-          status: b.status,
-          staffed: Boolean(cov?.staffed),
-          hasClockIn: clockedBookings.has(b.id),
-          nowMs,
-          nudgedAtMs: b.no_show_nudge_sent_at
-            ? new Date(b.no_show_nudge_sent_at).getTime()
-            : null,
-          flaggedAtMs: b.no_clock_in_flagged_at
-            ? new Date(b.no_clock_in_flagged_at).getTime()
-            : null,
-          createdAtMs: new Date(b.created_at).getTime(),
-        });
-
-        if (verdict.kind === "late_start" && nudgeOn) {
-          // Straight to the people who can still fix it. The office is not
-          // told yet — someone running fifteen minutes late is not news.
-          // Each person from her OWN start: on a split shift the afternoon
-          // cleaner is not late at 9:15, and hears nothing until 1:15.
-          const targets = crewRows.map((c) => ({
-            membershipId: c.membership_id,
-            startOffsetMinutes: c.split_start_offset_minutes,
-          }));
-          if (b.assigned_to && !crewIds.includes(b.assigned_to)) {
-            targets.push({ membershipId: b.assigned_to, startOffsetMinutes: null });
-          }
-          if (targets.length === 0) continue;
-          const late = lateStarters({ scheduledAtMs, crew: targets, nowMs });
-          const last = late.length === targets.length;
-          for (const p of late) {
-            lateNudges.push({
-              booking: b,
-              membershipId: p.membershipId,
-              dueAtMs: p.dueAtMs,
-              key: `late_start:${b.id}:${p.membershipId}`,
-              last,
-            });
-          }
-        } else if (verdict.kind === "no_clock_in" && alertOn) {
-          toFlag.push(b);
-        }
-      }
-
-      if (lateNudges.length > 0) {
-        // Said once per person. The booking's own stamp can't carry that for
-        // a crew whose starts differ, so each nudge is remembered under its
-        // own key, and the stamp is written only once the last person on
-        // the job has had hers — after which classifyJob stops asking.
-        const { data: toldRows, error: toldErr } = (await db
-          .from("needs_you_state" as never)
-          .select("key, notified_at")
-          .eq("organization_id" as never, orgId as never)
-          .in(
-            "key" as never,
-            lateNudges.map((n) => n.key) as never,
-          )) as unknown as {
-          data: Array<{ key: string; notified_at: string | null }> | null;
-          error: { message: string } | null;
-        };
-        if (toldErr) {
-          throw new Error(`job watch: late-start memory query failed: ${toldErr.message}`);
-        }
-        const toldAt = new Map(
-          (toldRows ?? []).map((r) => [r.key, r.notified_at ? new Date(r.notified_at).getTime() : null] as const),
-        );
-        const orgTz = await getOrgTimezone(orgId);
-        const stampBookings = new Set<string>();
-        for (const n of lateNudges) {
-          if (n.last) stampBookings.add(n.booking.id);
-          // Told about THIS schedule — a mark from before the job's start
-          // is about the slot it was moved from.
-          if (saidForThisSchedule(toldAt.get(n.key), new Date(n.booking.scheduled_at).getTime())) continue;
-          // Mark first, then send: a failed mark means try next heartbeat,
-          // never the same push every 30 minutes.
-          const { error: markErr } = (await (db
-            .from("needs_you_state" as never)
-            .upsert(
-              { organization_id: orgId, key: n.key, notified_at: nowIso } as never,
-              { onConflict: "organization_id,key" } as never,
-            ) as unknown as Promise<{ error: { message: string } | null }>));
-          if (markErr) {
-            console.error("[auto] job watch: could not remember late-start nudge", {
-              key: n.key,
-              error: markErr.message,
-            });
-            stampBookings.delete(n.booking.id);
-            continue;
-          }
-          const when = formatDateTime(new Date(n.dueAtMs).toISOString(), orgTz);
-          const ownStart = n.dueAtMs !== new Date(n.booking.scheduled_at).getTime();
-          await notify({
-            organizationId: orgId,
-            audience: "membership",
-            membershipId: n.membershipId,
-            type: "job_not_started",
-            title: "You're not clocked in",
-            body: `${ownStart ? "Your part of " : ""}${n.booking.client?.name ?? "a job"} started at ${when} and you haven't clocked in. Open the job to clock in, or tell the office if you can't make it.`,
-            href: `/field/jobs/${n.booking.id}`,
-            fact: `${n.key}@${new Date(n.booking.scheduled_at).getTime()}`,
-          });
-          nudged++;
-        }
-        if (stampBookings.size > 0) {
-          await db
-            .from("bookings")
-            .update({ no_show_nudge_sent_at: nowIso } as never)
-            .in("id", [...stampBookings]);
-        }
-      }
-
-      // ONE alert for the office listing every silent job, not one per job —
-      // the same shape unstaffed_past_booking uses, for the same reason.
-      if (toFlag.length > 0) {
-        const names = toFlag
-          .slice(0, 3)
-          .map((b) => b.client?.name ?? "a client")
-          .join(", ");
-        await notify({
-          organizationId: orgId,
-          audience: "org-management",
-          type: "job_no_clock_in",
-          title:
-            toFlag.length === 1
-              ? "A job finished with no clock-in"
-              : `${toFlag.length} jobs finished with no clock-in`,
-          body: `${names}${toFlag.length > 3 ? ` and ${toFlag.length - 3} more` : ""} — somebody was assigned and the time has passed, but nobody ever clocked in. Confirm the work happened before it's completed and billed, or cancel it.`,
-          // One job → open THAT job. The alert asks for a decision about a
-          // specific booking, and landing on a list of hundreds makes the
-          // reader do the search the notification already did.
-          href:
-            toFlag.length === 1
-              ? `/app/bookings/${toFlag[0].id}`
-              : "/app/bookings",
-          // Money is about to move on the strength of no evidence. Email it.
-          channels: { email: true },
-          fact: `no_clock_in:${toFlag.map((b) => `${b.id}@${b.scheduled_at}`).sort().join(",")}`,
-        });
-        await db
-          .from("bookings")
-          .update({ no_clock_in_flagged_at: nowIso } as never)
-          .in(
-            "id",
-            toFlag.map((b) => b.id),
-          );
-        flagged += toFlag.length;
-      }
-    } catch (err) {
-      console.error(`[auto] job watch failed for org ${orgId}:`, err);
-    }
-  }
-
-  if (nudged > 0 || flagged > 0) {
-    console.log(
-      `[auto] job watch: ${nudged} late-start nudge(s), ${flagged} no-clock-in flag(s) across ${byOrg.size} org(s)`,
-    );
-  }
-  return { considered, nudged, flagged, orgsWithoutClockIn };
-}
-
 export async function sendShiftClockOutReminders(): Promise<{
   considered: number;
   reminded: number;
@@ -7289,295 +6320,6 @@ export async function autoVoidOldInvoices(): Promise<{ voided: number }> {
   return { voided };
 }
 
-// 24. Auto-complete past bookings (daily)
-export async function autoCompletePastBookings(): Promise<{
-  completed: number;
-}> {
-  const db = admin();
-  let completed = 0;
-
-  const { data: orgs } = (await db
-    .from("organizations")
-    .select("id, booking_auto_complete_hours")
-    .is("deleted_at", null)) as unknown as {
-    data: Array<{
-      id: string;
-      booking_auto_complete_hours: number | null;
-    }> | null;
-  };
-
-  for (const org of orgs ?? []) {
-    // Two different questions, and they used to share one gate:
-    //
-    //   "should I flip statuses and draft invoices?"  — the toggle below
-    //   "should I tell someone this job looks wrong?" — never optional
-    //
-    // The watchdog notifications (stale pending, unstaffed past) sat INSIDE
-    // the auto-complete gate, so an owner who turned auto-complete off — or
-    // just blanked the threshold — silently lost the warnings too, which is
-    // precisely backwards: an org that doesn't auto-complete has MORE past
-    // jobs drifting, not fewer. The alerts now run regardless; only the
-    // status flip honours the toggle.
-    const completionEnabled =
-      (await isAutomationEnabled(org.id, "auto_complete_past_bookings")) &&
-      org.booking_auto_complete_hours != null &&
-      org.booking_auto_complete_hours >= 1;
-
-    // Threshold for "past enough to be worth mentioning". When completion is
-    // off there is no configured threshold, so fall back to a day — long
-    // enough that this evening's jobs aren't nagged about tonight.
-    const hours = completionEnabled
-      ? (org.booking_auto_complete_hours as number)
-      : 24;
-
-    const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
-
-    // Pending past its date is a human problem too, and a different one: the
-    // office penciled a job in and never came back to it. Deliberately NOT in
-    // the auto-complete set below — a duplicated job carries the source's
-    // assignee and date, so a duplicate of a past job is pending + staffed +
-    // past-due, exactly the shape that would auto-complete and draft an
-    // invoice for something nobody ever confirmed.
-    const { data: stalePending } = (await db
-      .from("bookings")
-      .select("id, scheduled_at, client:clients ( name )")
-      .eq("organization_id", org.id)
-      .eq("status", "pending")
-      .lt("scheduled_at", cutoff)
-      .limit(50)) as unknown as {
-      data: Array<{
-        id: string;
-        scheduled_at: string;
-        client: { name: string | null } | null;
-      }> | null;
-    };
-    if (stalePending && stalePending.length > 0) {
-      const names = stalePending
-        .slice(0, 3)
-        .map((b) => b.client?.name ?? "a client")
-        .join(", ");
-      await notify({
-        audience: "org-management",
-        organizationId: org.id,
-        type: "general",
-        title:
-          stalePending.length === 1
-            ? "A pending job's date has passed"
-            : `${stalePending.length} pending jobs have passed their date`,
-        body: `${names}${stalePending.length > 3 ? ` and ${stalePending.length - 3} more` : ""} — still marked Pending, so nobody confirmed them and the time has gone by. Confirm them if they happened, or cancel them.`,
-        href:
-          stalePending.length === 1
-            ? `/app/bookings/${stalePending[0].id}`
-            : "/app/bookings?status=pending",
-        channels: { email: true },
-        // Dated: this is meant to come back every night the jobs stay
-        // pending; the fact only stops the same night saying it twice.
-        fact: `stale_pending:${cutoff.slice(0, 10)}:${stalePending.map((b) => b.id).sort().join(",")}`,
-      });
-    }
-
-    // Find candidates FIRST — we no longer blanket-complete, because a
-    // booking nobody was assigned to is not evidence that work happened.
-    // Auto-completing one drafts an invoice (and, with auto-send on, emails
-    // a client a bill) for a job the system has no record of anyone doing.
-    const { data: candidates, error: findErr } = (await db
-      .from("bookings")
-      .select("id, scheduled_at, duration_minutes, divide_hours_evenly, client:clients ( name )")
-      .eq("organization_id", org.id)
-      // Confirmed OR in progress; completed/cancelled are terminal, and
-      // pending is handled above — it must never auto-complete.
-      .in("status", ["confirmed", "in_progress"])
-      // Started long enough ago to be worth a look. Whether it may CLOSE
-      // is decided below from the job's end, not its start.
-      .lt("scheduled_at", cutoff)
-      .limit(200)) as unknown as {
-      data: Array<{
-        id: string;
-        scheduled_at: string;
-        duration_minutes: number | null;
-        divide_hours_evenly: boolean | null;
-        client: { name: string | null } | null;
-      }> | null;
-      error: { message: string } | null;
-    };
-    if (findErr) {
-      console.error(
-        `[auto] complete bookings failed for org ${org.id}:`,
-        findErr.message,
-      );
-      continue;
-    }
-    if (!candidates || candidates.length === 0) continue;
-
-    // Staffed = an assigned employee, a crew member, OR a claimed bench
-    // offer. That last one is why this uses the shared helper: a freelancer
-    // claim can't write bookings.assigned_to, so checking that column alone
-    // reads a covered job as empty.
-    const { resolveBookingCoverage } = await import("@/lib/booking-coverage");
-    const coverage = await resolveBookingCoverage(candidates.map((b) => b.id));
-
-    const staffedIds: string[] = [];
-    const unstaffed: typeof candidates = [];
-    for (const b of candidates) {
-      if (coverage.get(b.id)?.staffed) staffedIds.push(b.id);
-      else unstaffed.push(b);
-    }
-
-    // Unstaffed past jobs are a human problem, not a cron problem. Leave the
-    // status alone and tell whoever can sort it out.
-    if (unstaffed.length > 0) {
-      const names = unstaffed
-        .slice(0, 3)
-        .map((b) => b.client?.name ?? "a client")
-        .join(", ");
-      await notify({
-        audience: "org-management",
-        organizationId: org.id,
-        type: "unstaffed_past_booking",
-        title:
-          unstaffed.length === 1
-            ? "A past job was never staffed"
-            : `${unstaffed.length} past jobs were never staffed`,
-        body: `${unstaffed.length > 3 ? `${names} and ${unstaffed.length - 3} more` : names} — nobody was assigned and the time has passed. These were NOT completed or invoiced. Check what happened, then close them out by hand.`,
-        // Straight to the job when there's only one to look at.
-        href:
-          unstaffed.length === 1
-            ? `/app/bookings/${unstaffed[0].id}`
-            : "/app/bookings",
-        // Work that never happened and was never billed. Email it.
-        channels: { email: true },
-        fact: `unstaffed_past:${cutoff.slice(0, 10)}:${unstaffed.map((b) => b.id).sort().join(",")}`,
-      });
-      console.log(
-        `[auto] ${unstaffed.length} unstaffed past booking(s) left alone for org ${org.id}`,
-      );
-    }
-
-    // Everything above is watchdog reporting and runs for every org. Only the
-    // status flip + invoicing below is the auto-complete FEATURE.
-    if (!completionEnabled) continue;
-    if (staffedIds.length === 0) continue;
-
-    // The grace runs from the job's END — the same window the job watch and
-    // the computed state use — not from its start. Counted from the start,
-    // a 10-hour job booked for 9:30 was closed by this sweep at 8:00 PM,
-    // the very minute the job watch was due to ask the office whether it
-    // happened; completed is terminal, so the question was never asked
-    // (Ranj Asi, 2026-11-05). From the end, that job closes at 11:30 PM,
-    // after the office has been asked.
-    const { autoCompleteDue } = await import("@/lib/job-watch");
-    const orgDivides = await isAutomationEnabled(org.id, "divide_crew_hours");
-    const byId = new Map(candidates.map((b) => [b.id, b]));
-    const nowMs = Date.now();
-    const dueIds = staffedIds.filter((id) => {
-      const b = byId.get(id)!;
-      const cov = coverage.get(id);
-      const segmentBy = new Map((cov?.segments ?? []).map((s) => [s.membership_id, s] as const));
-      return autoCompleteDue({
-        scheduledAt: b.scheduled_at,
-        durationMinutes: b.duration_minutes,
-        dividesHours: b.divide_hours_evenly === true || orgDivides,
-        crew: (cov?.employeeIds ?? []).map((membershipId) => ({
-          membership_id: membershipId,
-          split_start_offset_minutes: segmentBy.get(membershipId)?.split_start_offset_minutes ?? null,
-          split_duration_minutes: segmentBy.get(membershipId)?.split_duration_minutes ?? null,
-        })),
-        graceHours: hours,
-        nowMs,
-      });
-    });
-    if (dueIds.length === 0) continue;
-
-    // Not while someone is still on the clock. Completing drafts the
-    // invoice, and a shift still running means the job is not over — the
-    // clock-out guardrail will cap that shift and the next clock-out will
-    // recompute the job. Say so to the office instead of closing around her.
-    const { selectInChunks } = await import("@/lib/supabase/chunked-in");
-    const { data: openShifts } = await selectInChunks<{ booking_id: string | null }>(
-      dueIds,
-      (chunk) =>
-        db
-          .from("time_entries")
-          .select("booking_id")
-          .in("booking_id", chunk)
-          .is("clock_out_at", null) as unknown as PromiseLike<{
-          data: Array<{ booking_id: string | null }> | null;
-          error: { message: string } | null;
-        }>,
-    );
-    const stillWorking = new Set(
-      openShifts.map((r) => r.booking_id).filter(Boolean) as string[],
-    );
-    const toComplete = dueIds.filter((id) => !stillWorking.has(id));
-    if (stillWorking.size > 0) {
-      const names = candidates
-        .filter((b) => stillWorking.has(b.id))
-        .slice(0, 3)
-        .map((b) => b.client?.name ?? "a client")
-        .join(", ");
-      await notify({
-        audience: "org-management",
-        organizationId: org.id,
-        type: "general",
-        title:
-          stillWorking.size === 1
-            ? "A past job still has someone on the clock"
-            : `${stillWorking.size} past jobs still have someone on the clock`,
-        body: `${names}${stillWorking.size > 3 ? ` and ${stillWorking.size - 3} more` : ""} — a shift is still running, so these were NOT completed or invoiced. Check Timesheets.`,
-        href: "/app/timesheets",
-        fact: `past_job_on_clock:${cutoff.slice(0, 10)}:${[...stillWorking].sort().join(",")}`,
-      });
-    }
-    if (toComplete.length === 0) continue;
-
-    const { data, error } = (await db
-      .from("bookings")
-      .update({ status: "completed" })
-      .eq("organization_id", org.id)
-      .in("id", toComplete)
-      .select("id")) as unknown as {
-      data: Array<{ id: string }> | null;
-      error: { message: string } | null;
-    };
-
-    if (error) {
-      console.error(
-        `[auto] complete bookings failed for org ${org.id}:`,
-        error.message,
-      );
-      continue;
-    }
-    if (data && data.length > 0) {
-      completed += data.length;
-      console.log(
-        `[auto] Auto-completed ${data.length} past booking(s) for org ${org.id}`,
-      );
-
-      // Parity with the manual "mark complete" path: draft the per-job invoice
-      // for each booking we just auto-completed. Without this, jobs the cron
-      // completes were silently never billed. Non-forced, so it still respects
-      // the org's auto_invoice_on_job_complete toggle AND the client's billing
-      // cadence (monthly/biweekly clients are billed by the billing-cycle cron
-      // instead, so autoInvoiceOnJobComplete no-ops for them).
-      for (const b of data) {
-        try {
-          await autoInvoiceOnJobComplete(b.id);
-        } catch (err) {
-          console.error(
-            `[auto] auto-invoice after auto-complete failed for booking ${b.id}:`,
-            err,
-          );
-        }
-        // The computed state measures from the END of the window, this
-        // sweep from the start; the shadow rows show where they differ.
-        const { syncJob } = await import("@/lib/job-sync");
-        await syncJob(b.id, "nightly_sweep");
-      }
-    }
-  }
-  return { completed };
-}
-
 // 25. Auto-archive old records (daily)
 export async function autoArchiveOldRecords(): Promise<{
   bookings: number;
@@ -7656,328 +6398,6 @@ export async function autoArchiveOldRecords(): Promise<{
   return totals;
 }
 
-// 26. Auto-generate recurring invoices (daily)
-export async function autoGenerateRecurringInvoices(): Promise<{
-  generated: number;
-}> {
-  const db = admin();
-  let generated = 0;
-
-  const now = new Date();
-  const nowIso = now.toISOString();
-
-  const { data: due } = (await db
-    .from("invoice_series")
-    .select(
-      `
-      id, organization_id, client_id, name, cadence,
-      amount_cents, line_items, notes, next_run_at, due_days
-    `,
-    )
-    .eq("active", true)
-    .lte("next_run_at", nowIso)) as unknown as {
-    data: Array<{
-      id: string;
-      organization_id: string;
-      client_id: string;
-      name: string;
-      cadence: "weekly" | "biweekly" | "monthly" | "quarterly";
-      amount_cents: number;
-      line_items: unknown;
-      notes: string | null;
-      next_run_at: string;
-      due_days: number;
-    }> | null;
-  };
-
-  if (!due || due.length === 0) return { generated };
-
-  for (const series of due) {
-    if (
-      !(await isAutomationEnabled(
-        series.organization_id,
-        "auto_recurring_invoices",
-      ))
-    ) {
-      continue;
-    }
-
-    const issuedAt = new Date();
-    const dueDate = new Date(
-      issuedAt.getTime() + series.due_days * 24 * 60 * 60 * 1000,
-    );
-
-    // Compute the next run date based on cadence. Month adds are CLAMPED to
-    // the target month's last day — naive setUTCMonth on Jan 31 lands on
-    // "Feb 31" = Mar 3, permanently drifting the series off its anchor day
-    // and skipping a whole billing month (audit P6).
-    const addMonthsClamped = (from: Date, months: number): Date => {
-      const y = from.getUTCFullYear();
-      const m = from.getUTCMonth() + months;
-      const lastDayOfTarget = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
-      return new Date(
-        Date.UTC(
-          y,
-          m,
-          Math.min(from.getUTCDate(), lastDayOfTarget),
-          from.getUTCHours(),
-          from.getUTCMinutes(),
-          from.getUTCSeconds(),
-        ),
-      );
-    };
-    const current = new Date(series.next_run_at);
-    let next = new Date(current);
-    switch (series.cadence) {
-      case "weekly":
-        next.setUTCDate(current.getUTCDate() + 7);
-        break;
-      case "biweekly":
-        next.setUTCDate(current.getUTCDate() + 14);
-        break;
-      case "monthly":
-        next = addMonthsClamped(current, 1);
-        break;
-      case "quarterly":
-        next = addMonthsClamped(current, 3);
-        break;
-    }
-
-    // CLAIM the run BEFORE creating the invoice. Advancing next_run_at is a
-    // conditional update guarded on its current value, so two concurrent runs
-    // (or a retry of a run that crashed after inserting the invoice) can't both
-    // generate an invoice for the same period — exactly one wins the claim and
-    // the loser gets 0 rows back. The previous order (insert, THEN advance)
-    // meant a crash in between re-generated the invoice on the next tick.
-    const { data: claimed } = (await db
-      .from("invoice_series")
-      .update({ next_run_at: next.toISOString() })
-      .eq("id", series.id)
-      .eq("next_run_at", series.next_run_at)
-      .select("id")) as unknown as { data: Array<{ id: string }> | null };
-
-    if (!claimed || claimed.length === 0) {
-      // Another concurrent run already claimed this period.
-      continue;
-    }
-
-    // ── Double-billing guard ─────────────────────────────────────────
-    // booking_series and invoice_series are separate recurrence engines.
-    // A client on a billing CYCLE already gets their bookings swept into
-    // consolidated invoices — a standing invoice on top is double-billing
-    // by construction. HOLD the standing one (the cycle knows the actual
-    // work; this row only knows a number) and tell management to pick an
-    // engine. The claim above already advanced the clock, so this warns
-    // once per period, never daily.
-    const { data: seriesClient } = (await db
-      .from("clients")
-      .select("name, billing_cadence")
-      .eq("id", series.client_id)
-      .maybeSingle()) as unknown as {
-      data: { name: string | null; billing_cadence: string | null } | null;
-    };
-    if (
-      seriesClient?.billing_cadence &&
-      seriesClient.billing_cadence !== "on_demand"
-    ) {
-      await notify({
-        organizationId: series.organization_id,
-        audience: "org-management",
-        title: "Standing invoice held — client is on a billing cycle",
-        body: `${seriesClient.name ?? "A client"} has BOTH a ${seriesClient.billing_cadence} billing cycle and the standing invoice "${series.name}". The cycle already bills their jobs, so the standing invoice was NOT sent this period — keep one or the other.`,
-        href: "/app/settings/recurring-invoices",
-      }).catch((err) =>
-        console.error("[auto] recurring-invoice hold notify failed:", err),
-      );
-      continue;
-    }
-
-    // Let the DB trigger assign the invoice number — it uses the
-    // INV-YYYY-XXXX format consistently across all invoice creation
-    // paths. The previous code computed a count-based "INV-0001"
-    // (no year, racy) which then collided with the trigger's format
-    // for every other invoice in the org, producing inconsistent UX
-    // in exports + the bookings list.
-    // Core insert uses ONLY long-standing invoice columns. The previous
-    // version passed `line_items` and `notes` directly — neither column
-    // existed on `invoices`, so PostgREST rejected EVERY insert (PGRST204)
-    // and this automation never generated a single invoice (audit C1).
-    // Line items live in invoice_line_items; notes are applied as a
-    // separate best-effort update below.
-    const { data: inserted, error } = (await db
-      .from("invoices")
-      .insert({
-        organization_id: series.organization_id,
-        client_id: series.client_id,
-        // number: omitted → trigger fills it
-        status: "draft",
-        amount_cents: series.amount_cents,
-        due_date: dueDate.toISOString().slice(0, 10),
-      })
-      .select("id")
-      .single()) as unknown as {
-      data: { id: string } | null;
-      error: { message: string } | null;
-    };
-
-    if (error || !inserted) {
-      console.error(
-        `[auto] recurring invoice failed for series ${series.id}:`,
-        error?.message,
-      );
-      // Roll the claim back so this period retries next tick rather than being
-      // silently skipped. Guarded on our advanced value so we don't clobber a
-      // newer claim.
-      await db
-        .from("invoice_series")
-        .update({ next_run_at: series.next_run_at })
-        .eq("id", series.id)
-        .eq("next_run_at", next.toISOString());
-      continue;
-    }
-
-    // Notes — separate best-effort step so a not-yet-migrated `notes`
-    // column can't take down the whole path (same pattern as the tax step
-    // in autoInvoiceOnJobComplete).
-    if (series.notes) {
-      try {
-        await db
-          .from("invoices")
-          .update({ notes: series.notes } as never)
-          .eq("id", inserted.id);
-      } catch (notesErr) {
-        console.error(
-          `[auto] recurring invoice ${inserted.id}: notes update failed (invoice still created):`,
-          notesErr,
-        );
-      }
-    }
-
-    // Line items — write the series' configured items into the real
-    // invoice_line_items table. Tolerant of loose shapes (the series form
-    // accepts raw JSON): anything unusable degrades to a single line for
-    // the full amount so the invoice is never blank.
-    try {
-      const rawItems = Array.isArray(series.line_items)
-        ? (series.line_items as Array<Record<string, unknown>>)
-        : [];
-      const items = rawItems
-        .filter((it) => it && typeof it === "object")
-        .map((it, i) => ({
-          organization_id: series.organization_id,
-          invoice_id: inserted.id,
-          label:
-            typeof it.label === "string" && it.label.trim()
-              ? it.label.trim().slice(0, 300)
-              : series.name,
-          quantity:
-            typeof it.quantity === "number" && it.quantity > 0
-              ? it.quantity
-              : 1,
-          unit_price_cents:
-            typeof it.unit_price_cents === "number" && it.unit_price_cents >= 0
-              ? Math.round(it.unit_price_cents)
-              : 0,
-          sort_order: i,
-        }));
-
-      const rows =
-        items.length > 0
-          ? items
-          : [
-              {
-                organization_id: series.organization_id,
-                invoice_id: inserted.id,
-                label: series.name,
-                quantity: 1,
-                unit_price_cents: series.amount_cents,
-                sort_order: 0,
-              },
-            ];
-
-      const { error: liErr } = await db
-        .from("invoice_line_items")
-        .insert(rows as never);
-      if (liErr) throw new Error(liErr.message);
-    } catch (liErr) {
-      // A standing invoice with no lines is a total with no breakdown, and
-      // it would go out that way on auto-send. Take the draft back out and
-      // give the series its turn back, exactly as a failed insert does.
-      console.error(
-        `[auto] recurring invoice ${inserted.id}: line items failed; removing the draft:`,
-        liErr,
-      );
-      await db.from("invoices").delete().eq("id", inserted.id).eq("status", "draft");
-      await db
-        .from("invoice_series")
-        .update({ next_run_at: series.next_run_at })
-        .eq("id", series.id)
-        .eq("next_run_at", next.toISOString());
-      continue;
-    }
-
-    // Link the generated invoice back to the series (claim already advanced
-    // next_run_at above).
-    await db
-      .from("invoice_series")
-      .update({
-        last_generated_at: nowIso,
-        last_invoice_id: inserted.id,
-      })
-      .eq("id", series.id);
-
-    // The other half of the double-billing guard: an on-demand client's
-    // standing invoice went out while completed jobs sit unbilled. Whether
-    // the standing amount COVERS those jobs is a judgment call the system
-    // must not make (auto-stamping them "billed" would silently under-bill
-    // a client whose standing fee is for something else) — so a human gets
-    // the question, with the numbers.
-    try {
-      const { count: unbilledCount } = (await db
-        .from("bookings")
-        .select("id", { count: "exact", head: true })
-        .eq("client_id", series.client_id)
-        .eq("organization_id", series.organization_id)
-        .eq("status", "completed")
-        .is("billing_invoice_id", null)
-        .lt("scheduled_at", nowIso)) as unknown as { count: number | null };
-      if ((unbilledCount ?? 0) > 0) {
-        await notify({
-          organizationId: series.organization_id,
-          audience: "org-management",
-          title: "Standing invoice sent — unbilled jobs alongside it",
-          body: `The standing invoice "${series.name}" went out while ${unbilledCount} completed job${unbilledCount === 1 ? "" : "s"} for the same client ${unbilledCount === 1 ? "sits" : "sit"} unbilled. If the standing amount covers them, link them on an invoice; if not, bill them separately — don't let them ride unnoticed.`,
-          href: `/app/invoices/new?client_id=${series.client_id}`,
-        });
-      }
-    } catch (err) {
-      console.error("[auto] recurring-invoice unbilled check failed:", err);
-    }
-
-    // Schedule auto-send if the org opted in — recurring drafts previously
-    // sat unsent forever while per-job and consolidated invoices auto-sent
-    // (audit M7).
-    try {
-      const { scheduleAutoSendIfEnabled } = await import("@/lib/invoice-send");
-      await scheduleAutoSendIfEnabled(inserted.id, series.organization_id, {
-        consolidated: true,
-      });
-    } catch (scheduleErr) {
-      console.error(
-        `[auto] recurring invoice ${inserted.id}: auto-send schedule failed (still drafted):`,
-        scheduleErr,
-      );
-    }
-
-    generated += 1;
-    console.log(
-      `[auto] Generated recurring invoice ${inserted.id} for series ${series.id} (org ${series.organization_id})`,
-    );
-  }
-
-  return { generated };
-}
-
 // ─────────────────────────────────────────────────────────────────
 // Task reminder push notification
 //
@@ -8048,15 +6468,6 @@ export async function sendTaskReminder(taskId: string): Promise<void> {
   } catch (err) {
     console.error("[auto] sendTaskReminder failed:", err);
   }
-}
-
-// ─────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────
-
-function humanize(s: string | null | undefined): string {
-  if (!s) return "Cleaning";
-  return s.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 /** Infer service_type enum from free-text estimate description. */

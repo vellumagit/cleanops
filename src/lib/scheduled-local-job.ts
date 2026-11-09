@@ -58,17 +58,24 @@ export async function rederiveScheduledInstants(opts: { dryRun?: boolean; now?: 
   for (const c of changes) {
     // Guard on the instant we read: a visit someone moved in the meantime
     // carries a new wall clock too, and the next night re-plans from that.
-    const { data: upd, error: updErr } = (await db
-      .from("bookings")
-      .update({ scheduled_at: c.to, scheduled_local: c.local, scheduled_tz: c.tz } as never)
-      .eq("id", c.id)
-      .eq("scheduled_at", c.from)
-      .select("scheduled_local" as never)) as unknown as {
-      data: Array<{ scheduled_local: string | null }> | null;
-      error: { message: string } | null;
-    };
-    if (updErr) {
-      console.error("[rederive] update failed", c.id, updErr.message);
+    // One visit the database refuses (the overlap guard, say) is logged and
+    // skipped; in a fail-closed cron the guard throws, and an uncaught throw
+    // here left every later visit an hour off.
+    let upd: Array<{ scheduled_local: string | null }> | null = null;
+    try {
+      const { data, error: updErr } = (await db
+        .from("bookings")
+        .update({ scheduled_at: c.to, scheduled_local: c.local, scheduled_tz: c.tz } as never)
+        .eq("id", c.id)
+        .eq("scheduled_at", c.from)
+        .select("scheduled_local" as never)) as unknown as {
+        data: Array<{ scheduled_local: string | null }> | null;
+        error: { message: string } | null;
+      };
+      if (updErr) throw new Error(updErr.message);
+      upd = data;
+    } catch (err) {
+      console.error("[rederive] update failed", c.id, err instanceof Error ? err.message : err);
       continue;
     }
     if (!upd || upd.length === 0) continue;

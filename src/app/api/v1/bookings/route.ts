@@ -242,37 +242,51 @@ export async function POST(request: NextRequest) {
   // divide, and the cleaner's phone showed no shift to accept.
   const assignedTo = (body.assigned_to as string | undefined) ?? null;
   if (assignedTo) {
-    const { error: crewErr } = await admin
-      .from("booking_assignees")
-      .insert({
-        organization_id: auth.organizationId,
-        booking_id: created.id,
-        membership_id: assignedTo,
-        is_primary: true,
-      } as never);
-    if (crewErr) {
-      const { error: cleanupErr } = await admin
-        .from("bookings")
-        .delete()
-        .eq("id", created.id)
-        .eq("organization_id", auth.organizationId);
-      if (cleanupErr) {
-        console.error(
-          "[api/bookings] crew insert and booking cleanup failed:",
-          crewErr.message,
-          cleanupErr.message,
-        );
+    // The route runs fail-closed (authenticateApiKey), so a failed insert
+    // throws rather than returning its error; caught here so the booking it
+    // belonged to is removed instead of left without its crew row.
+    const messageOf = (e: unknown) =>
+      e instanceof Error ? e.message : String((e as { message?: unknown } | null)?.message ?? e);
+    let crewFailure: string | null = null;
+    try {
+      const { error: crewErr } = await admin
+        .from("booking_assignees")
+        .insert({
+          organization_id: auth.organizationId,
+          booking_id: created.id,
+          membership_id: assignedTo,
+          is_primary: true,
+        } as never);
+      if (crewErr) crewFailure = crewErr.message;
+    } catch (err) {
+      crewFailure = messageOf(err);
+    }
+    if (crewFailure) {
+      let cleanupFailure: string | null = null;
+      try {
+        const { error: cleanupErr } = await admin
+          .from("bookings")
+          .delete()
+          .eq("id", created.id)
+          .eq("organization_id", auth.organizationId);
+        if (cleanupErr) cleanupFailure = cleanupErr.message;
+      } catch (err) {
+        cleanupFailure = messageOf(err);
+      }
+      if (cleanupFailure) {
+        console.error("[api/bookings] crew insert and booking cleanup failed:", crewFailure, cleanupFailure);
         return NextResponse.json(
           {
-            error: `Crew assignment failed: ${crewErr.message}. Booking cleanup also failed: ${cleanupErr.message}`,
+            error: `Crew assignment failed: ${crewFailure}. Booking cleanup also failed: ${cleanupFailure}`,
             booking_id: created.id,
           },
           { status: 500 },
         );
       }
+      const overlap = crewFailure.includes("23P01") || crewFailure.includes("overlapping booking");
       return NextResponse.json(
-        { error: `Crew assignment failed: ${crewErr.message}` },
-        { status: 500 },
+        { error: `Crew assignment failed: ${crewFailure}` },
+        { status: overlap ? 409 : 500 },
       );
     }
   }
