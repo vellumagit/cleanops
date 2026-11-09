@@ -250,7 +250,31 @@ export async function POST(request: NextRequest) {
         membership_id: assignedTo,
         is_primary: true,
       } as never);
-    if (crewErr) console.error("[api/bookings] crew row failed:", crewErr.message);
+    if (crewErr) {
+      const { error: cleanupErr } = await admin
+        .from("bookings")
+        .delete()
+        .eq("id", created.id)
+        .eq("organization_id", auth.organizationId);
+      if (cleanupErr) {
+        console.error(
+          "[api/bookings] crew insert and booking cleanup failed:",
+          crewErr.message,
+          cleanupErr.message,
+        );
+        return NextResponse.json(
+          {
+            error: `Crew assignment failed: ${crewErr.message}. Booking cleanup also failed: ${cleanupErr.message}`,
+            booking_id: created.id,
+          },
+          { status: 500 },
+        );
+      }
+      return NextResponse.json(
+        { error: `Crew assignment failed: ${crewErr.message}` },
+        { status: 500 },
+      );
+    }
   }
   await syncJob(created.id, "api_create");
 

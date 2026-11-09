@@ -4397,6 +4397,28 @@ export type Database = {
           scheduled_at: string
         }[]
       }
+      update_booking_series_with_assignees: {
+        Args: {
+          p_additional_assignee_ids?: string[]
+          p_booking_rows?: Json
+          p_current_assignees: Json
+          p_current_booking_id: string
+          p_current_booking_patch: Json
+          p_from: string
+          p_organization_id: string
+          p_replace_schedule?: boolean
+          p_series_id: string
+          p_series_patch: Json
+          p_sibling_booking_patch: Json
+        }
+        Returns: {
+          google_calendar_event_id: string | null
+          id: string
+          operation: string
+          scheduled_at: string
+          status: Database["public"]["Enums"]["booking_status"] | null
+        }[]
+      }
       update_bookings_with_assignees: {
         Args: {
           p_assignees: Json

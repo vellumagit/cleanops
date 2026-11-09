@@ -12,7 +12,11 @@ import {
   invoiceDraftDueOnEdit,
   bookingTermsChange,
 } from "@/lib/booking-status";
-import { lifecycleByAssignee, withPriorLifecycle } from "@/lib/crew-sync";
+import {
+  lifecycleByAssignee,
+  withPriorLifecycle,
+  type AssigneeLifecycle,
+} from "@/lib/crew-sync";
 import { resolveSegmentWindows } from "@/lib/booking-segments";
 import { crewFromForm } from "@/lib/series-crew";
 import { after } from "next/server";
@@ -200,6 +204,45 @@ type SplitSegmentInput = {
  * start offset and duration. This makes booking_assignees the single
  * source of truth for split shifts.
  */
+type BookingAssigneeSyncRow = {
+  organization_id: string;
+  booking_id: string;
+  membership_id: string;
+  is_primary: boolean;
+  split_index: number | null;
+  split_start_offset_minutes: number | null;
+  split_duration_minutes: number | null;
+};
+type BookingAssigneeSyncRowWithLifecycle = BookingAssigneeSyncRow &
+  AssigneeLifecycle;
+
+async function syncBookingAssignees(
+  supabase: Awaited<
+    ReturnType<
+      typeof import("@/lib/supabase/server").createSupabaseServerClient
+    >
+  >,
+  organizationId: string,
+  bookingId: string,
+  primaryId: string | null,
+  additionalIds: string[],
+  splits?: SplitSegmentInput[],
+  bookingPatch?: Record<string, Json>,
+): Promise<string | null>;
+async function syncBookingAssignees(
+  supabase: Awaited<
+    ReturnType<
+      typeof import("@/lib/supabase/server").createSupabaseServerClient
+    >
+  >,
+  organizationId: string,
+  bookingId: string,
+  primaryId: string | null,
+  additionalIds: string[],
+  splits: SplitSegmentInput[],
+  bookingPatch: Record<string, Json>,
+  buildOnly: true,
+): Promise<BookingAssigneeSyncRowWithLifecycle[] | string>;
 async function syncBookingAssignees(
   supabase: Awaited<
     ReturnType<
@@ -212,7 +255,12 @@ async function syncBookingAssignees(
   additionalIds: string[],
   splits: SplitSegmentInput[] = [],
   bookingPatch: Record<string, Json> = {},
-): Promise<string | null> {
+  buildOnly = false,
+): Promise<
+  | string
+  | null
+  | BookingAssigneeSyncRowWithLifecycle[]
+> {
   // CROSS-ORG GUARD: every submitted membership_id must belong to the
   // caller's org and be active. Otherwise a malicious owner with multiple
   // org memberships could plant a foreign membership in booking_assignees
@@ -262,15 +310,7 @@ async function syncBookingAssignees(
    */
   const priorLifecycle = lifecycleByAssignee(priorRows);
 
-  const rows: Array<{
-    organization_id: string;
-    booking_id: string;
-    membership_id: string;
-    is_primary: boolean;
-    split_index: number | null;
-    split_start_offset_minutes: number | null;
-    split_duration_minutes: number | null;
-  }> = [];
+  const rows: BookingAssigneeSyncRow[] = [];
 
   if (safeSplits.length > 0) {
     // Per-cleaner windows: derive booking_assignees from the segments array.
@@ -337,6 +377,7 @@ async function syncBookingAssignees(
   }
 
   const updatedRows = rows.map((row) => withPriorLifecycle(row, priorLifecycle));
+  if (buildOnly) return updatedRows;
 
   const { error: insertErr } = await createSupabaseAdminClient().rpc(
     "update_booking_assignments_v2",
@@ -758,7 +799,21 @@ export async function createBookingAction(
     readAdditionalAssignees(formData),
     splits as SplitSegmentInput[],
   );
-  if (crewErr) return { errors: { _form: crewErr }, values: raw };
+  if (crewErr) {
+    const { error: cleanupErr } = await createSupabaseAdminClient()
+      .from("bookings")
+      .delete()
+      .eq("id", booking.id)
+      .eq("organization_id", membership.organization_id);
+    return {
+      errors: {
+        _form: cleanupErr
+          ? `${crewErr} The booking could not be removed after the crew save failed: ${cleanupErr.message}`
+          : crewErr,
+      },
+      values: raw,
+    };
+  }
 
   // Email booking confirmation to client (fire-and-forget) — unless the
   // booking is Pending. sendBookingConfirmation never reads status, so an
@@ -1572,85 +1627,25 @@ export async function updateBookingAction(
     is_free: parsed.data.is_free,
     splits: updateSplits,
   };
-  const updateCrewErr = await syncBookingAssignees(
-    supabase,
-    membership.organization_id,
-    id,
-    updateEffectiveAssignedTo,
-    readAdditionalAssignees(formData),
-    updateSplits as SplitSegmentInput[],
-    bookingPatch,
-  );
-  if (updateCrewErr) return { errors: { _form: updateCrewErr }, values: raw };
+  const updateScope = String(formData.get("update_scope") ?? "this_only");
+  const seriesId = String(formData.get("series_id") ?? "").trim();
+  const seriesScheduledAt = String(
+    formData.get("series_scheduled_at") ?? "",
+  ).trim();
+  const isSeriesPropagation =
+    updateScope === "this_and_future" && !!seriesId && !!seriesScheduledAt;
 
-  // The other two status writers log this; the edit form never did, so a
-  // job closed from the form had no "closed by" on its timeline (Lori
-  // Moeller, 2026-10-27 5:25 PM: completed, by nobody the record could name).
-  if (existing?.status && parsed.data.status !== existing.status) {
-    await logAuditEvent({
-      membership,
-      action: "status_change",
-      entity: "booking",
-      entity_id: id,
-      before: { status: existing.status },
-      after: { status: parsed.data.status, via: "edit_form" },
-    });
-  }
-
-  // Hours and price changes go on the job's history too — the hours are
-  // what every share, "past her hours" alert and attendance mark is
-  // measured against. See bookingTermsChange.
-  const termsChange = existing
-    ? bookingTermsChange(existing, {
-        duration_minutes: parsed.data.duration_minutes,
-        total_cents: parsed.data.is_free ? 0 : parsed.data.total_cents,
-        is_free: parsed.data.is_free,
-      })
-    : null;
-  if (termsChange) {
-    await logAuditEvent({
-      membership,
-      action: "terms_change",
-      entity: "booking",
-      entity_id: id,
-      before: termsChange.before,
-      after: { ...termsChange.after, via: "edit_form" },
-    });
-  }
-
-  // Notify NEW assignees (anyone who wasn't on the booking before).
-  // Covers: new primary on a non-split edit, new additional crew added,
-  // and any new segment employee on a split edit. Existing crew already
-  // know about the job so we don't re-spam them.
-  {
-    const splitAssigneesForNotify = (updateSplits as SplitSegmentInput[])
-      .map((s) => s.assigned_to)
-      .filter(Boolean);
-    const everyAssignee = Array.from(
-      new Set(
-        [
-          updateEffectiveAssignedTo,
-          ...readAdditionalAssignees(formData),
-          ...splitAssigneesForNotify,
-        ].filter(Boolean) as string[],
-      ),
+  if (!isSeriesPropagation) {
+    const updateCrewErr = await syncBookingAssignees(
+      supabase,
+      membership.organization_id,
+      id,
+      updateEffectiveAssignedTo,
+      readAdditionalAssignees(formData),
+      updateSplits as SplitSegmentInput[],
+      bookingPatch,
     );
-    const newAssignees = everyAssignee.filter(
-      (id) => !previousAssigneeIds.has(id),
-    );
-    for (const mid of newAssignees) {
-      const labels = await getBookingLabels(
-        supabase,
-        parsed.data.client_id,
-        mid,
-      );
-      notifyBookingAssignment(membership.organization_id, id, mid, {
-        clientName: labels.clientName ?? "A client",
-        scheduledAt: parsed.data.scheduled_at,
-        serviceType: parsed.data.service_type,
-        address: parsed.data.address ?? null,
-      });
-    }
+    if (updateCrewErr) return { errors: { _form: updateCrewErr }, values: raw };
   }
 
   // The edit form asks the owner whether the client should hear about a
@@ -1658,16 +1653,6 @@ export async function updateBookingAction(
   // client's channel preference decides email vs text vs both). Absent
   // field = paths without the dialog ⇒ notify, preserving old behavior.
   const notifyClient = String(formData.get("notify_client") ?? "") !== "0";
-  const notifyCurrentRescheduleOnPartialFailure = () => {
-    if (
-      notifyClient &&
-      existing?.scheduled_at &&
-      new Date(existing.scheduled_at).getTime() !==
-        new Date(parsed.data.scheduled_at).getTime()
-    ) {
-      sendBookingRescheduled(id, existing.scheduled_at);
-    }
-  };
   const syncEditedBookingCalendar = async () => {
     const labels = await getBookingLabels(
       supabase,
@@ -1760,13 +1745,7 @@ export async function updateBookingAction(
   // We use the admin client for the bulk update because RLS on bookings can
   // silently drop bulk-UPDATE rows when the series_id column isn't in the
   // policy predicate — org isolation is still enforced via an explicit filter.
-  const updateScope = String(formData.get("update_scope") ?? "this_only");
-  const seriesId = String(formData.get("series_id") ?? "").trim();
-  const seriesScheduledAt = String(
-    formData.get("series_scheduled_at") ?? "",
-  ).trim();
-
-  if (updateScope === "this_and_future" && seriesId && seriesScheduledAt) {
+  if (isSeriesPropagation) {
     const admin = createSupabaseAdminClient();
 
     // Fields that propagate to future bookings regardless of schedule change.
@@ -1892,6 +1871,19 @@ export async function updateBookingAction(
       }
     }
     let scheduleFields: Record<string, unknown> = {};
+    const seriesTemplateFields = (): Record<string, unknown> => {
+      const fields: Record<string, unknown> = {
+        ...propagatableFields,
+        ...scheduleFields,
+        crew: crewFromForm({
+          primaryId: updateEffectiveAssignedTo,
+          additionalIds: readAdditionalAssignees(formData),
+          splits: updateSplits as SplitSegmentInput[],
+        }),
+      };
+      delete fields.splits;
+      return fields;
+    };
 
     if (updateSchedule) {
       const newPattern = String(formData.get("series_pattern") ?? "").trim();
@@ -1925,7 +1917,16 @@ export async function updateBookingAction(
         "every_6_months",
       ];
 
-      if (validPatterns.includes(newPattern) && newStartTime && newStartsAt) {
+      if (!validPatterns.includes(newPattern) || !newStartTime || !newStartsAt) {
+        return {
+          errors: {
+            _form: "The recurring schedule is incomplete or invalid. Review the frequency, start date, and time.",
+          },
+          values: raw,
+        };
+      }
+
+      {
         const parsedCustomDays =
           newPattern === "custom_weekly" && newCustomDaysRaw
             ? newCustomDaysRaw
@@ -1992,11 +1993,9 @@ export async function updateBookingAction(
           error: { message: string } | null;
         };
         if (staleSiblingsErr) {
-          await syncEditedBookingCalendar();
-          notifyCurrentRescheduleOnPartialFailure();
           return {
             errors: {
-              _form: `This visit was saved, but future visits were not changed because their calendar events could not be loaded: ${staleSiblingsErr.message}`,
+              _form: `Nothing was saved because future calendar events could not be loaded: ${staleSiblingsErr.message}`,
             },
             values: raw,
           };
@@ -2020,11 +2019,9 @@ export async function updateBookingAction(
             error: { message: string } | null;
           };
           if (memberEventsErr) {
-            await syncEditedBookingCalendar();
-            notifyCurrentRescheduleOnPartialFailure();
             return {
               errors: {
-                _form: `This visit was saved, but future visits were not changed because their personal calendar events could not be loaded: ${memberEventsErr.message}`,
+                _form: `Nothing was saved because future personal calendar events could not be loaded: ${memberEventsErr.message}`,
               },
               values: raw,
             };
@@ -2074,23 +2071,43 @@ export async function updateBookingAction(
         // This transaction replaces rows and their crew together. Schedule
         // trigger failures roll it all back, leaving the old occurrences in
         // place; external calendar events are removed only after it commits.
+        const currentAssignees = await syncBookingAssignees(
+          supabase,
+          membership.organization_id,
+          id,
+          updateEffectiveAssignedTo,
+          readAdditionalAssignees(formData),
+          updateSplits as SplitSegmentInput[],
+          {},
+          true,
+        );
+        if (typeof currentAssignees === "string") {
+          return {
+            errors: { _form: currentAssignees },
+            values: raw,
+          };
+        }
+
         const { data: replacementRows, error: regenerationErr } = await admin.rpc(
-          "replace_future_series_bookings",
+          "update_booking_series_with_assignees",
           {
             p_organization_id: membership.organization_id,
             p_series_id: seriesId,
             p_current_booking_id: id,
             p_from: seriesScheduledAt,
+            p_current_booking_patch: bookingPatch,
+            p_current_assignees: currentAssignees as unknown as Json,
+            p_sibling_booking_patch: propagatableFields as Json,
+            p_series_patch: seriesTemplateFields() as Json,
+            p_replace_schedule: true,
             p_booking_rows: bookingRows,
             p_additional_assignee_ids: readAdditionalAssignees(formData),
           },
         );
         if (regenerationErr) {
-          await syncEditedBookingCalendar();
-          notifyCurrentRescheduleOnPartialFailure();
           return {
             errors: {
-              _form: `This visit was saved, but its future visits were left unchanged: ${regenerationErr.message}`,
+              _form: `Nothing was saved because the recurring update failed: ${regenerationErr.message}`,
             },
             values: raw,
           };
@@ -2202,103 +2219,113 @@ export async function updateBookingAction(
         }
       }
     } else {
-      // No schedule change — propagate the field updates to existing future
-      // siblings so they stay consistent with the edited booking.
-      const { data: siblingIds } = (await admin
-        .from("bookings")
-        .select("id, status")
-        .eq("series_id", seriesId)
-        .eq("organization_id", membership.organization_id)
-        .neq("id", id)
-        .gte("scheduled_at", seriesScheduledAt)
-        .not("status", "in", '("completed","cancelled")')) as unknown as {
-        data: Array<{ id: string; status: string }> | null;
-      };
+      const currentAssignees = await syncBookingAssignees(
+        supabase,
+        membership.organization_id,
+        id,
+        updateEffectiveAssignedTo,
+        readAdditionalAssignees(formData),
+        updateSplits as SplitSegmentInput[],
+        {},
+        true,
+      );
+      if (typeof currentAssignees === "string") {
+        return { errors: { _form: currentAssignees }, values: raw };
+      }
 
-      // Rebuild booking_assignees for ALL siblings in a single bulk
-      // pass. Per-row sync would do ~3 sequential DB round-trips per
-      // sibling and exceed Vercel's action timeout for long series.
-      const siblingIdList = (siblingIds ?? []).map((r) => r.id);
-      if (siblingIdList.length > 0) {
-        const siblingCrewErr = await syncBookingAssigneesBulk(
-          admin,
-          membership.organization_id,
-          siblingIdList,
-          updateEffectiveAssignedTo,
-          readAdditionalAssignees(formData),
-          updateSplits as SplitSegmentInput[],
-          propagatableFields,
-        );
-        if (siblingCrewErr) {
-          return { errors: { _form: siblingCrewErr }, values: raw };
-        }
-        // Their hours and crew just changed, so their windows did. A visit
-        // that hasn't started computes to its own stored status whatever
-        // the window, so only the live ones (started early) can move;
-        // syncing every future row of a long series would be ~4 queries
-        // each for a guaranteed no-op.
-        for (const s of siblingIds ?? []) {
-          if (s.status === "in_progress" || s.status === "en_route") {
-            await syncJob(s.id, "edit_form");
-          }
+      const { data: updatedRows, error: seriesUpdateErr } = await admin.rpc(
+        "update_booking_series_with_assignees",
+        {
+          p_organization_id: membership.organization_id,
+          p_series_id: seriesId,
+          p_current_booking_id: id,
+          p_from: seriesScheduledAt,
+          p_current_booking_patch: bookingPatch,
+          p_current_assignees: currentAssignees as unknown as Json,
+          p_sibling_booking_patch: propagatableFields as Json,
+          p_series_patch: seriesTemplateFields() as Json,
+          p_replace_schedule: false,
+          p_booking_rows: [],
+          p_additional_assignee_ids: readAdditionalAssignees(formData),
+        },
+      );
+      if (seriesUpdateErr) {
+        return {
+          errors: {
+            _form: `Nothing was saved because the recurring update failed: ${seriesUpdateErr.message}`,
+          },
+          values: raw,
+        };
+      }
+      for (const sibling of updatedRows ?? []) {
+        if (
+          sibling.status === "in_progress" ||
+          sibling.status === "en_route"
+        ) {
+          await syncJob(sibling.id, "edit_form");
         }
       }
     }
 
-    // Always keep the series template in sync — both field values and
-    // (when changed) the new schedule so the nightly extend cron picks up
-    // the right rule for future generations.
-    //
-    // WITHOUT `splits`. propagatableFields is shared with the sibling-bookings
-    // update above, and bookings has a splits column; booking_series does not.
-    // Spreading it in made PostgREST reject the WHOLE update (PGRST204: "Could
-    // not find the 'splits' column of 'booking_series'"), and the result was
-    // never read — this logged "saved changes" regardless. So since at least
-    // June every series edit silently failed to reach the template: pattern,
-    // duration, price, assignee, address, notes. The occurrences that already
-    // existed were updated, so the save LOOKED complete, and the form then
-    // reopened from the untouched template. Svitlana changing Philip and Helena
-    // Lane from 4 weeks to 3 regenerated the visits at 21 days and left the
-    // series reading quad_weekly, last touched 2026-06-01.
-    const seriesTemplateFields: Record<string, unknown> = {
-      ...propagatableFields,
-      ...scheduleFields,
-      // The whole crew, built from exactly the inputs the visits above were
-      // just written from, so the template and the calendar describe the same
-      // people and the next extension reproduces them. See lib/series-crew.ts.
-      crew: crewFromForm({
-        primaryId: updateEffectiveAssignedTo,
-        additionalIds: readAdditionalAssignees(formData),
-        splits: updateSplits as SplitSegmentInput[],
-      }),
-    };
-    delete seriesTemplateFields.splits;
-
-    const { error: seriesUpdateErr } = (await admin
-      .from("booking_series")
-      .update(seriesTemplateFields)
-      .eq("id", seriesId)
-      .eq(
-        "organization_id",
-        membership.organization_id,
-      )) as unknown as { error: { message: string } | null };
-    // Read the result. Reporting success without checking it is how this went
-    // unnoticed for months; the next column mismatch should stop the save and
-    // say so, not leave the template quietly stale.
-    if (seriesUpdateErr) {
-      console.error(
-        `[series-update] series ${seriesId} template update failed:`,
-        seriesUpdateErr.message,
-      );
-      return {
-        errors: {
-          _form: `The visits were updated, but the recurring schedule itself didn't save: ${seriesUpdateErr.message}`,
-        },
-        values: raw,
-      };
-    }
-
     console.log(`[series-update] saved changes to series ${seriesId}`);
+  }
+
+  if (existing?.status && parsed.data.status !== existing.status) {
+    await logAuditEvent({
+      membership,
+      action: "status_change",
+      entity: "booking",
+      entity_id: id,
+      before: { status: existing.status },
+      after: { status: parsed.data.status, via: "edit_form" },
+    });
+  }
+
+  const termsChange = existing
+    ? bookingTermsChange(existing, {
+        duration_minutes: parsed.data.duration_minutes,
+        total_cents: parsed.data.is_free ? 0 : parsed.data.total_cents,
+        is_free: parsed.data.is_free,
+      })
+    : null;
+  if (termsChange) {
+    await logAuditEvent({
+      membership,
+      action: "terms_change",
+      entity: "booking",
+      entity_id: id,
+      before: termsChange.before,
+      after: { ...termsChange.after, via: "edit_form" },
+    });
+  }
+
+  const splitAssigneesForNotify = (updateSplits as SplitSegmentInput[])
+    .map((s) => s.assigned_to)
+    .filter(Boolean);
+  const everyAssignee = Array.from(
+    new Set(
+      [
+        updateEffectiveAssignedTo,
+        ...readAdditionalAssignees(formData),
+        ...splitAssigneesForNotify,
+      ].filter(Boolean) as string[],
+    ),
+  );
+  const newAssignees = everyAssignee.filter(
+    (assigneeId) => !previousAssigneeIds.has(assigneeId),
+  );
+  for (const assigneeId of newAssignees) {
+    const labels = await getBookingLabels(
+      supabase,
+      parsed.data.client_id,
+      assigneeId,
+    );
+    notifyBookingAssignment(membership.organization_id, id, assigneeId, {
+      clientName: labels.clientName ?? "A client",
+      scheduledAt: parsed.data.scheduled_at,
+      serviceType: parsed.data.service_type,
+      address: parsed.data.address ?? null,
+    });
   }
 
   // If the scheduled time changed, email the client + push employee
@@ -3515,16 +3542,75 @@ export async function assignBookingCrewAction(
     };
   }
 
-  const assignCrewErr = await syncBookingAssignees(
-    supabase,
-    membership.organization_id,
-    id,
-    primaryId,
-    additionalIds,
-    [], // no splits from the quick-assign crew dialog (guarded above)
-    { assigned_to: primaryId },
-  );
-  if (assignCrewErr) return { error: assignCrewErr };
+  const updateScope = String(formData.get("update_scope") ?? "this_only");
+  const seriesId = String(formData.get("series_id") ?? "").trim();
+  const seriesScheduledAt = String(
+    formData.get("series_scheduled_at") ?? "",
+  ).trim();
+  const updateSeries =
+    updateScope === "this_and_future" && !!seriesId && !!seriesScheduledAt;
+
+  if (updateSeries) {
+    const currentAssignees = await syncBookingAssignees(
+      supabase,
+      membership.organization_id,
+      id,
+      primaryId,
+      additionalIds,
+      [],
+      {},
+      true,
+    );
+    if (typeof currentAssignees === "string") {
+      return { error: currentAssignees };
+    }
+
+    const { data: updatedRows, error: seriesUpdateErr } =
+      await createSupabaseAdminClient().rpc(
+        "update_booking_series_with_assignees",
+        {
+          p_organization_id: membership.organization_id,
+          p_series_id: seriesId,
+          p_current_booking_id: id,
+          p_from: seriesScheduledAt,
+          p_current_booking_patch: { assigned_to: primaryId },
+          p_current_assignees: currentAssignees as unknown as Json,
+          p_sibling_booking_patch: { assigned_to: primaryId },
+          p_series_patch: {
+            assigned_to: primaryId,
+            crew: crewFromForm({
+              primaryId,
+              additionalIds,
+              splits: [],
+            }),
+          },
+          p_replace_schedule: false,
+          p_booking_rows: [],
+          p_additional_assignee_ids: additionalIds,
+        },
+      );
+    if (seriesUpdateErr) {
+      return {
+        error: `Nothing was saved because the recurring crew update failed: ${seriesUpdateErr.message}`,
+      };
+    }
+    for (const sibling of updatedRows ?? []) {
+      if (sibling.status === "in_progress" || sibling.status === "en_route") {
+        await syncJob(sibling.id, "crew_changed");
+      }
+    }
+  } else {
+    const assignCrewErr = await syncBookingAssignees(
+      supabase,
+      membership.organization_id,
+      id,
+      primaryId,
+      additionalIds,
+      [], // no splits from the quick-assign crew dialog (guarded above)
+      { assigned_to: primaryId },
+    );
+    if (assignCrewErr) return { error: assignCrewErr };
+  }
 
   // Update personal calendars for all newly assigned members (and remove
   // events for unassigned ones). Fire-and-forget.
@@ -3591,69 +3677,6 @@ export async function assignBookingCrewAction(
       serviceType: existing.service_type,
       address: existing.address ?? null,
     });
-  }
-
-  // "This and all future" propagation for recurring series.
-  // Uses the admin client so the bulk update isn't silently dropped by
-  // RLS. Org isolation is enforced via explicit .eq("series_id") +
-  // the bookings table's own organization_id FK chain.
-  const updateScope = String(formData.get("update_scope") ?? "this_only");
-  const seriesId = String(formData.get("series_id") ?? "").trim();
-  const seriesScheduledAt = String(
-    formData.get("series_scheduled_at") ?? "",
-  ).trim();
-
-  if (updateScope === "this_and_future" && seriesId && seriesScheduledAt) {
-    const admin = createSupabaseAdminClient();
-
-    // Collect all future sibling IDs so we can sync their assignees.
-    // organization_id filter is explicit because the admin client bypasses RLS.
-    const { data: siblings } = (await admin
-      .from("bookings")
-      .select("id, status")
-      .eq("series_id", seriesId)
-      .eq("organization_id", membership.organization_id)
-      .gte("scheduled_at", seriesScheduledAt)
-      .neq("id", id)
-      .not("status", "in", '("completed","cancelled")')) as unknown as {
-      data: Array<{ id: string; status: string }> | null;
-    };
-
-    const siblingIds = (siblings ?? []).map((s) => s.id);
-
-    if (siblingIds.length > 0) {
-      const siblingCrewErr = await syncBookingAssigneesBulk(
-        admin,
-        membership.organization_id,
-        siblingIds,
-        primaryId,
-        additionalIds,
-        [],
-        { assigned_to: primaryId },
-      );
-      if (siblingCrewErr) {
-        return { error: siblingCrewErr };
-      }
-      // Same reasoning as the edit form's propagation: only a sibling
-      // already under way can compute differently after a crew change.
-      for (const s of siblings ?? []) {
-        if (s.status === "in_progress" || s.status === "en_route") {
-          await syncJob(s.id, "crew_changed");
-        }
-      }
-    }
-
-    // Update the series template row so newly-generated occurrences
-    // inherit the new primary assignee. Admin client bypasses RLS so we
-    // must filter by organization_id explicitly.
-    (await admin
-      .from("booking_series")
-      .update({ assigned_to: primaryId })
-      .eq("id", seriesId)
-      .eq(
-        "organization_id",
-        membership.organization_id,
-      )) as unknown as Promise<unknown>;
   }
 
   // The crew IS the job's shape: a fourth person shortens a divided window,
