@@ -42,6 +42,14 @@ export type BookingCoverage = {
    * at the booking's start and works its length.
    */
   segments: CoverageSegment[];
+  /**
+   * Crew rows still waiting on an answer. They count as coverage — the
+   * night-before digest is where "hasn't accepted" gets said — but nobody is
+   * late to a job she never said yes to, so the not-clocked-in nudge skips
+   * them: the same line the office's "hasn't clocked in" item draws
+   * (needs-you-items.ts).
+   */
+  pendingIds: string[];
 };
 
 const EMPTY: BookingCoverage = {
@@ -49,6 +57,7 @@ const EMPTY: BookingCoverage = {
   employeeIds: [],
   freelancerContactIds: [],
   segments: [],
+  pendingIds: [],
 };
 
 /** Coverage for many bookings at once — one query per source, not per row. */
@@ -59,7 +68,7 @@ export async function resolveBookingCoverage(
   const ids = Array.from(new Set(bookingIds.filter(Boolean)));
   if (ids.length === 0) return out;
   for (const id of ids) {
-    out.set(id, { staffed: false, employeeIds: [], freelancerContactIds: [], segments: [] });
+    out.set(id, { staffed: false, employeeIds: [], freelancerContactIds: [], segments: [], pendingIds: [] });
   }
 
   const db = createSupabaseAdminClient();
@@ -81,7 +90,7 @@ export async function resolveBookingCoverage(
       db
         .from("booking_assignees")
         .select(
-          "booking_id, membership_id, split_start_offset_minutes, split_duration_minutes",
+          "booking_id, membership_id, split_start_offset_minutes, split_duration_minutes, acceptance_status",
         )
         .in("booking_id", chunk) as unknown as Promise<{
         data: Array<{
@@ -89,6 +98,7 @@ export async function resolveBookingCoverage(
           membership_id: string;
           split_start_offset_minutes: number | null;
           split_duration_minutes: number | null;
+          acceptance_status: string | null;
         }> | null;
         error: { message: string } | null;
       }>,
@@ -134,6 +144,7 @@ export async function resolveBookingCoverage(
     if (!c.employeeIds.includes(a.membership_id)) {
       c.employeeIds.push(a.membership_id);
     }
+    if (a.acceptance_status === "pending") c.pendingIds.push(a.membership_id);
     if (a.split_start_offset_minutes != null || a.split_duration_minutes != null) {
       c.segments.push({
         membership_id: a.membership_id,

@@ -712,4 +712,72 @@ describe("runJobWatch", () => {
       (query) => query.table === "needs_you_state" && query.operation === "insert",
     )).toHaveLength(1);
   });
+
+  it("does not nag a crew member who never accepted the job", async () => {
+    const now = new Date("2026-11-07T09:20:00.000Z");
+    const scheduledAt = "2026-11-07T09:00:00.000Z";
+    const candidate = {
+      id: booking.id,
+      organization_id: "org-1",
+      scheduled_at: scheduledAt,
+      duration_minutes: 240,
+      status: "confirmed",
+      assigned_to: null,
+      no_show_nudge_sent_at: null,
+      no_clock_in_flagged_at: null,
+      divide_hours_evenly: false,
+      created_at: "2026-11-07T08:00:00.000Z",
+      client: { name: "Client One" },
+    };
+    mocks.coverage.mockResolvedValue(
+      new Map([
+        [
+          booking.id,
+          {
+            staffed: true,
+            employeeIds: ["member-a", "member-pending"],
+            segments: [],
+            pendingIds: ["member-pending"],
+          },
+        ],
+      ]),
+    );
+    mocks.classifyJob.mockReturnValue({ kind: "late_start" });
+    mocks.orgUsesClockIn.mockReturnValue(true);
+    mocks.lateStarters.mockImplementation(({ scheduledAtMs, crew }) =>
+      crew.map((person: { membershipId: string }) => ({
+        membershipId: person.membershipId,
+        dueAtMs: scheduledAtMs + 15 * 60_000,
+      })),
+    );
+    mocks.saidForThisSchedule.mockReturnValue(false);
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    mocks.respond = (query) => {
+      if (query.table === "bookings" && query.operation === "select") {
+        return { data: [candidate], error: null };
+      }
+      if (query.table === "time_entries" && query.selectOptions?.count === "exact") {
+        return { data: null, count: 1, error: null };
+      }
+      if (query.table === "time_entries") return { data: [], error: null };
+      if (query.table === "organizations" && query.selection?.includes("automation_settings")) {
+        return automationSettings;
+      }
+      if (query.table === "needs_you_state" && query.operation === "select") {
+        return { data: [], error: null };
+      }
+      return { data: null, error: null };
+    };
+
+    await expect(runJobWatch()).resolves.toMatchObject({ nudged: 1, flagged: 0 });
+
+    expect(mocks.notify).toHaveBeenCalledTimes(1);
+    expect(mocks.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ membershipId: "member-a", type: "job_not_started" }),
+    );
+    expect(mocks.notify).not.toHaveBeenCalledWith(
+      expect.objectContaining({ membershipId: "member-pending" }),
+    );
+  });
 });

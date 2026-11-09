@@ -196,11 +196,20 @@ export async function runJobWatch(): Promise<{
           // told yet — someone running fifteen minutes late is not news.
           // Each person from her OWN start: on a split shift the afternoon
           // cleaner is not late at 9:15, and hears nothing until 1:15.
-          const targets = crewRows.map((c) => ({
-            membershipId: c.membership_id,
-            startOffsetMinutes: c.split_start_offset_minutes,
-          }));
-          if (b.assigned_to && !crewIds.includes(b.assigned_to)) {
+          // Nobody is late to a job she never said yes to. A crew member still
+          // "pending" is the night-before digest's business ("hasn't
+          // accepted"), not this nudge's — the line the office's "hasn't
+          // clocked in" item already draws. Nov 8: Iryna was told she wasn't
+          // clocked in to Ranj Asi while the office heard nothing about her,
+          // because only one of the two rules skipped pending.
+          const pending = new Set(cov?.pendingIds ?? []);
+          const targets = crewRows
+            .filter((c) => !pending.has(c.membership_id))
+            .map((c) => ({
+              membershipId: c.membership_id,
+              startOffsetMinutes: c.split_start_offset_minutes,
+            }));
+          if (b.assigned_to && !crewIds.includes(b.assigned_to) && !pending.has(b.assigned_to)) {
             targets.push({ membershipId: b.assigned_to, startOffsetMinutes: null });
           }
           if (targets.length === 0) continue;
