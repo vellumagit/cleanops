@@ -4,6 +4,7 @@ import { useState, useActionState, useEffect, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Repeat, CalendarPlus } from "lucide-react";
+import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { DateInput } from "@/components/when-preview";
 import { Textarea } from "@/components/ui/textarea";
@@ -547,6 +548,7 @@ export function BookingForm({
   // preference) pauses for one explicit choice.
   const formRef = useRef<HTMLFormElement>(null);
   const notifyInputRef = useRef<HTMLInputElement>(null);
+  const formErrorRef = useRef<HTMLDivElement>(null);
   const notifyDecidedRef = useRef(false);
   const [notifyDialogOpen, setNotifyDialogOpen] = useState(false);
 
@@ -590,6 +592,16 @@ export function BookingForm({
   useEffect(() => {
     if (state.errors) notifyDecidedRef.current = false;
   }, [state.errors]);
+
+  useEffect(() => {
+    const message = state.errors?._form;
+    if (!message) return;
+    toast.error(message);
+    formErrorRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+    });
+  }, [state]);
 
   function toggleDay(day: number) {
     setSelectedDays((prev) =>
@@ -660,7 +672,9 @@ export function BookingForm({
       {mode === "create" && defaults?.estimate_id && (
         <input type="hidden" name="estimate_id" value={defaults.estimate_id} />
       )}
-      <FormError message={state.errors?._form} />
+      <div ref={formErrorRef}>
+        <FormError message={state.errors?._form} />
+      </div>
 
       {/* Hidden scope + series fields for recurring edits */}
       {isEditingSeries && (
