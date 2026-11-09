@@ -19,6 +19,7 @@ import {
 } from "@/lib/crew-sync";
 import { resolveSegmentWindows } from "@/lib/booking-segments";
 import { crewFromForm } from "@/lib/series-crew";
+import { resyncBookingCalendarsPaced } from "@/lib/booking-calendar-sync";
 import { after } from "next/server";
 import { syncJob } from "@/lib/job-sync";
 import { closeJob } from "@/lib/close-job";
@@ -265,7 +266,7 @@ async function syncBookingAssignees(
   // caller's org and be active. Otherwise a malicious owner with multiple
   // org memberships could plant a foreign membership in booking_assignees
   // by spoofing the form payload — RLS won't catch it because the row
-  // itself is in the caller's org. Filter unknown IDs out silently.
+  // itself is in the caller's org. Reject unknown IDs before writing.
   const submitted = new Set<string>();
   if (primaryId) submitted.add(primaryId);
   for (const id of additionalIds) if (id) submitted.add(id);
@@ -273,15 +274,20 @@ async function syncBookingAssignees(
 
   let validIds: Set<string> = new Set();
   if (submitted.size > 0) {
-    const { data: validMembers } = (await supabase
+    const { data: validMembers, error: membersErr } = (await supabase
       .from("memberships")
       .select("id")
       .eq("organization_id", organizationId)
       .eq("status", "active")
       .in("id", Array.from(submitted))) as unknown as {
       data: Array<{ id: string }> | null;
+      error: { message: string } | null;
     };
+    if (membersErr) return `Couldn't verify the selected cleaners: ${membersErr.message}`;
     validIds = new Set((validMembers ?? []).map((m) => m.id));
+  }
+  if (validIds.size !== submitted.size) {
+    return "One or more selected cleaners are no longer active in this workspace. Refresh and try again.";
   }
   const isValid = (id: string | null | undefined): id is string =>
     !!id && validIds.has(id);
@@ -293,14 +299,18 @@ async function syncBookingAssignees(
 
   // Preserve crew lifecycle while the database replaces the booking and crew
   // together in one transaction.
-  const { data: priorRows } = (await supabase
+  const { data: priorRows, error: priorRowsErr } = (await supabase
     .from("booking_assignees")
     .select(
       "organization_id, booking_id, membership_id, is_primary, split_index, split_start_offset_minutes, split_duration_minutes, acceptance_status, responded_at, completed_at",
     )
     .eq("booking_id", bookingId)) as unknown as {
     data: Array<Record<string, unknown>> | null;
+    error: { message: string } | null;
   };
+  if (priorRowsErr) {
+    return `Couldn't preserve the current crew responses: ${priorRowsErr.message}`;
+  }
 
   /*
    * Crew rows are rebuilt from the form on every save, so a member already on
@@ -440,15 +450,20 @@ async function syncBookingAssigneesBulk(
 
   let validIds: Set<string> = new Set();
   if (submitted.size > 0) {
-    const { data: validMembers } = (await supabase
+    const { data: validMembers, error: membersErr } = (await supabase
       .from("memberships")
       .select("id")
       .eq("organization_id", organizationId)
       .eq("status", "active")
       .in("id", Array.from(submitted))) as unknown as {
       data: Array<{ id: string }> | null;
+      error: { message: string } | null;
     };
+    if (membersErr) return `Couldn't verify the selected cleaners: ${membersErr.message}`;
     validIds = new Set((validMembers ?? []).map((m) => m.id));
+  }
+  if (validIds.size !== submitted.size) {
+    return "One or more selected cleaners are no longer active in this workspace. Refresh and try again.";
   }
   const isValid = (id: string | null | undefined): id is string =>
     !!id && validIds.has(id);
@@ -461,14 +476,18 @@ async function syncBookingAssigneesBulk(
   // the single-booking path: acceptance and completion belong to the person on
   // the job, not to the form being re-saved. A "this and future" series edit
   // otherwise re-asked every cleaner to confirm every remaining occurrence.
-  const { data: priorBulk } = (await supabase
+  const { data: priorBulk, error: priorBulkErr } = (await supabase
     .from("booking_assignees")
     .select(
       "booking_id, membership_id, acceptance_status, responded_at, completed_at",
     )
     .in("booking_id", bookingIds)) as unknown as {
     data: Array<Record<string, unknown>> | null;
+    error: { message: string } | null;
   };
+  if (priorBulkErr) {
+    return `Couldn't preserve current crew responses: ${priorBulkErr.message}`;
+  }
   const priorBulkLifecycle = lifecycleByAssignee(priorBulk);
 
   // Pre-compute the canonical row template once, then stamp each booking_id.
@@ -1510,12 +1529,21 @@ export async function updateBookingAction(
   // the new set and notify only NEW additions (not existing ones).
   // Includes split-segment employees because booking_assignees is now
   // the source of truth for them too.
-  const { data: previousAssigneesRows } = (await supabase
+  const { data: previousAssigneesRows, error: previousAssigneesErr } = (await supabase
     .from("booking_assignees")
     .select("membership_id")
     .eq("booking_id", id)) as unknown as {
     data: Array<{ membership_id: string }> | null;
+    error: { message: string } | null;
   };
+  if (previousAssigneesErr) {
+    return {
+      errors: {
+        _form: `Couldn't verify the current crew before saving: ${previousAssigneesErr.message}`,
+      },
+      values: raw,
+    };
+  }
   const previousAssigneeIds = new Set(
     (previousAssigneesRows ?? []).map((r) => r.membership_id),
   );
@@ -1816,7 +1844,7 @@ export async function updateBookingAction(
         monthlyNth: String(formData.get("series_monthly_nth") ?? "").trim(),
         monthlyDow: String(formData.get("series_monthly_dow") ?? "").trim(),
       };
-      const { data: currentRule } = (await admin
+      const { data: currentRule, error: currentRuleErr } = (await admin
         .from("booking_series" as never)
         .select(
           "pattern, start_time, starts_at, ends_at, custom_days, monthly_nth, monthly_dow",
@@ -1833,7 +1861,18 @@ export async function updateBookingAction(
           monthly_nth: number | null;
           monthly_dow: number | null;
         } | null;
+        error: { message: string } | null;
       };
+      if (currentRuleErr || !currentRule) {
+        return {
+          errors: {
+            _form: currentRuleErr
+              ? `Nothing was saved because the recurring schedule couldn't be read: ${currentRuleErr.message}`
+              : "Nothing was saved because the recurring schedule no longer exists.",
+          },
+          values: raw,
+        };
+      }
       if (currentRule) {
         const normTime = (t: string | null) => (t ?? "").slice(0, 5);
         const normDays = (d: number[] | string | null) => {
@@ -2257,7 +2296,32 @@ export async function updateBookingAction(
           values: raw,
         };
       }
+      const updatedSiblings = updatedRows ?? [];
+      const siblingIds = updatedSiblings.map((sibling) => sibling.id);
+      if (siblingIds.length > 0) {
+        after(async () => {
+          await resyncBookingCalendarsPaced(siblingIds);
+        });
+      }
       for (const sibling of updatedRows ?? []) {
+        for (const assigneeId of sibling.added_assignee_ids) {
+          const labels = await getBookingLabels(
+            supabase,
+            parsed.data.client_id,
+            assigneeId,
+          );
+          notifyBookingAssignment(
+            membership.organization_id,
+            sibling.id,
+            assigneeId,
+            {
+              clientName: labels.clientName ?? "A client",
+              scheduledAt: sibling.scheduled_at,
+              serviceType: parsed.data.service_type,
+              address: parsed.data.address ?? null,
+            },
+          );
+        }
         if (
           sibling.status === "in_progress" ||
           sibling.status === "en_route"
@@ -3511,7 +3575,7 @@ export async function assignBookingCrewAction(
   // Read the existing assignee so we can detect a primary change
   // and fire notifyBookingAssignment if needed. Also fetch `splits` so we
   // can detect split-shift bookings and refuse to wipe their segment data.
-  const { data: existing } = (await supabase
+  const { data: existing, error: existingError } = (await supabase
     .from("bookings")
     .select(
       "assigned_to, scheduled_at, duration_minutes, service_type, address, notes, splits, client:clients ( name )",
@@ -3528,7 +3592,13 @@ export async function assignBookingCrewAction(
       splits: Array<{ assigned_to?: string; duration_minutes?: number }> | null;
       client: { name: string | null } | null;
     } | null;
+    error: { message: string } | null;
   };
+  if (existingError) {
+    return {
+      error: `Couldn't load the booking before assigning crew: ${existingError.message}`,
+    };
+  }
   if (!existing) return { error: "Booking not found." };
 
   // SPLIT-SHIFT GUARD: the quick-assign popup has no way to express
@@ -3541,6 +3611,23 @@ export async function assignBookingCrewAction(
         "This is a split-shift booking. Open it in the full editor to change crew assignments.",
     };
   }
+
+  const { data: previousAssignees, error: previousAssigneesError } =
+    (await supabase
+      .from("booking_assignees")
+      .select("membership_id")
+      .eq("booking_id", id)) as unknown as {
+      data: Array<{ membership_id: string }> | null;
+      error: { message: string } | null;
+    };
+  if (previousAssigneesError) {
+    return {
+      error: `Couldn't verify the current crew before saving: ${previousAssigneesError.message}`,
+    };
+  }
+  const previousAssigneeIds = new Set(
+    (previousAssignees ?? []).map((assignee) => assignee.membership_id),
+  );
 
   const updateScope = String(formData.get("update_scope") ?? "this_only");
   const seriesId = String(formData.get("series_id") ?? "").trim();
@@ -3594,7 +3681,27 @@ export async function assignBookingCrewAction(
         error: `Nothing was saved because the recurring crew update failed: ${seriesUpdateErr.message}`,
       };
     }
+    const updatedSiblings = updatedRows ?? [];
+    const siblingIds = updatedSiblings.map((sibling) => sibling.id);
+    if (siblingIds.length > 0) {
+      after(async () => {
+        await resyncBookingCalendarsPaced(siblingIds);
+      });
+    }
     for (const sibling of updatedRows ?? []) {
+      for (const assigneeId of sibling.added_assignee_ids) {
+        notifyBookingAssignment(
+          membership.organization_id,
+          sibling.id,
+          assigneeId,
+          {
+            clientName: existing.client?.name ?? "A client",
+            scheduledAt: sibling.scheduled_at,
+            serviceType: existing.service_type,
+            address: existing.address,
+          },
+        );
+      }
       if (sibling.status === "in_progress" || sibling.status === "en_route") {
         await syncJob(sibling.id, "crew_changed");
       }
@@ -3626,7 +3733,9 @@ export async function assignBookingCrewAction(
       address: existing.address,
       notes: existing.notes,
       client_name: existing.client?.name ?? undefined,
-    }).catch(() => {});
+    }).catch((err) =>
+      console.error("[gcal/member] quick-assign sync failed:", err),
+    );
   }
 
   // Refresh the ORG-level Google Calendar event after ANY crew change — not
@@ -3676,6 +3785,15 @@ export async function assignBookingCrewAction(
       scheduledAt: existing.scheduled_at,
       serviceType: existing.service_type,
       address: existing.address ?? null,
+    });
+  }
+  for (const assigneeId of additionalIds) {
+    if (previousAssigneeIds.has(assigneeId)) continue;
+    notifyBookingAssignment(membership.organization_id, id, assigneeId, {
+      clientName: existing.client?.name ?? "A client",
+      scheduledAt: existing.scheduled_at,
+      serviceType: existing.service_type,
+      address: existing.address,
     });
   }
 

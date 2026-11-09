@@ -4412,6 +4412,7 @@ export type Database = {
           p_sibling_booking_patch: Json
         }
         Returns: {
+          added_assignee_ids: string[]
           google_calendar_event_id: string | null
           id: string
           operation: string

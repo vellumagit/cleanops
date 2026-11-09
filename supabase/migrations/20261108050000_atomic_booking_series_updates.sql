@@ -1,4 +1,8 @@
-create or replace function public.update_booking_series_with_assignees(
+drop function if exists public.update_booking_series_with_assignees(
+  uuid, uuid, uuid, timestamptz, jsonb, jsonb, jsonb, jsonb, boolean, jsonb, uuid[]
+);
+
+create function public.update_booking_series_with_assignees(
   p_organization_id uuid,
   p_series_id uuid,
   p_current_booking_id uuid,
@@ -16,7 +20,8 @@ returns table (
   id uuid,
   scheduled_at timestamptz,
   google_calendar_event_id text,
-  status public.booking_status
+  status public.booking_status,
+  added_assignee_ids uuid[]
 )
 language plpgsql
 volatile
@@ -26,6 +31,7 @@ as $$
 declare
   sibling_ids uuid[];
   sibling_assignees jsonb;
+  sibling_new_assignees jsonb;
 begin
   if p_organization_id is null
     or p_series_id is null
@@ -102,7 +108,8 @@ begin
       replaced.id,
       replaced.scheduled_at,
       replaced.google_calendar_event_id,
-      null::public.booking_status
+      null::public.booking_status,
+      '{}'::uuid[]
     from public.replace_future_series_bookings(
       p_organization_id,
       p_series_id,
@@ -122,6 +129,38 @@ begin
       and b.status not in ('completed', 'cancelled');
 
     if cardinality(sibling_ids) > 0 then
+      select coalesce(jsonb_object_agg(
+        snapshot.booking_id::text,
+        to_jsonb(snapshot.added_ids)
+      ), '{}'::jsonb)
+        into sibling_new_assignees
+      from (
+        select
+          sibling.id as booking_id,
+          coalesce(
+            array_agg(template.membership_id)
+              filter (
+                where prior.membership_id is null
+                  and primary_assignee.id is null
+              ),
+            '{}'::uuid[]
+          ) as added_ids
+        from unnest(sibling_ids) as sibling(id)
+        cross join jsonb_to_recordset(p_current_assignees) as template(
+          booking_id uuid,
+          membership_id uuid,
+          is_primary boolean
+        )
+        left join public.booking_assignees prior
+          on prior.booking_id = sibling.id
+         and prior.membership_id = template.membership_id
+        left join public.bookings primary_assignee
+          on primary_assignee.id = sibling.id
+         and template.is_primary
+         and primary_assignee.assigned_to = template.membership_id
+        group by sibling.id
+      ) snapshot;
+
       select coalesce(jsonb_agg(jsonb_build_object(
         'booking_id', sibling.id,
         'membership_id', template.membership_id,
@@ -156,7 +195,12 @@ begin
 
       return query
       select 'updated'::text, b.id, b.scheduled_at,
-        null::text, b.status
+        null::text, b.status,
+        coalesce(array(
+          select jsonb_array_elements_text(
+            sibling_new_assignees -> b.id::text
+          )::uuid
+        ), '{}'::uuid[])
       from public.bookings b
       where b.id = any(sibling_ids)
         and b.organization_id = p_organization_id;
