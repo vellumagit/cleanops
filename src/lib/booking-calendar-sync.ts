@@ -26,7 +26,7 @@ export async function resyncBookingCalendars(
   bookingId: string,
 ): Promise<{ org: "patched" | "created" | "none" | "failed"; members: boolean }> {
   const admin = createSupabaseAdminClient();
-  const { data: b } = (await admin
+  const { data: b, error: bookingError } = (await admin
     .from("bookings")
     .select(
       `id, organization_id, status, archived_at, scheduled_at, duration_minutes,
@@ -52,10 +52,30 @@ export async function resyncBookingCalendars(
       client: { name: string | null } | null;
       assignee: { display_name: string | null; profile: { full_name: string | null } | null } | null;
     } | null;
+    error: { message: string } | null;
   };
+  if (bookingError) {
+    console.error("[gcal] resync booking lookup failed:", bookingId, bookingError);
+    return { org: "failed", members: false };
+  }
   // Cancelled and archived jobs are removed from calendars by their own
   // paths; re-pushing one here would resurrect the event.
   if (!b || b.status === "cancelled" || b.archived_at) return { org: "none", members: false };
+
+  // Resolve the complete crew before touching either calendar. Treating a
+  // failed crew read as an empty list could remove additional cleaners'
+  // existing events during syncMemberCalendarEvents.
+  const { data: crewRows, error: crewError } = (await admin
+    .from("booking_assignees")
+    .select("membership_id")
+    .eq("booking_id", b.id)) as unknown as {
+    data: Array<{ membership_id: string }> | null;
+    error: { message: string } | null;
+  };
+  if (crewError) {
+    console.error("[gcal] resync crew lookup failed; skipping calendars:", b.id, crewError);
+    return { org: "failed", members: false };
+  }
 
   const splits = Array.isArray(b.splits) ? b.splits : [];
   // Same duration the edit form and the nightly reconcile give the org
@@ -105,10 +125,6 @@ export async function resyncBookingCalendars(
   }
 
   // Everyone on the job: the lead, the crew rows, and split-shift assignees.
-  const { data: crewRows } = (await admin
-    .from("booking_assignees")
-    .select("membership_id")
-    .eq("booking_id", b.id)) as unknown as { data: Array<{ membership_id: string }> | null };
   const assignees = new Set<string>();
   if (b.assigned_to) assignees.add(b.assigned_to);
   for (const r of crewRows ?? []) assignees.add(r.membership_id);

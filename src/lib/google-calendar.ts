@@ -1749,14 +1749,19 @@ export async function createMemberCalendarEvent(
   // delete it on Google BEFORE creating a replacement. Without this, the
   // upsert below overwrites the stored id and strands the old event on the
   // cleaner's calendar forever — a prime source of "ghost" duplicates.
-  const { data: prior } = (await admin
+  const { data: prior, error: priorError } = (await admin
     .from("booking_member_calendar_events")
     .select("google_calendar_event_id")
     .eq("booking_id", booking.id)
     .eq("membership_id", membershipId)
     .maybeSingle()) as unknown as {
     data: { google_calendar_event_id: string } | null;
+    error: { message: string } | null;
   };
+  if (priorError) {
+    console.error("[gcal/member] Failed to read prior event mapping:", booking.id, membershipId, priorError);
+    return null;
+  }
   if (prior?.google_calendar_event_id) {
     await gcalFetch(
       conn.access_token,
@@ -1810,14 +1815,20 @@ export async function updateMemberCalendarEvent(
 
   // Look up the existing event ID for this (booking, member) pair.
   const admin = createSupabaseAdminClient();
-  const { data: mapping } = (await admin
+  const { data: mapping, error: mappingError } = (await admin
     .from("booking_member_calendar_events")
     .select("google_calendar_event_id")
     .eq("booking_id", booking.id)
     .eq("membership_id", membershipId)
     .maybeSingle()) as unknown as {
     data: { google_calendar_event_id: string } | null;
+    error: { message: string } | null;
   };
+
+  if (mappingError) {
+    console.error("[gcal/member] Failed to read event mapping before update:", booking.id, membershipId, mappingError);
+    return false;
+  }
 
   if (!mapping) {
     // No existing event — create one instead.
