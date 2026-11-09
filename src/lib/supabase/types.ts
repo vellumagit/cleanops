@@ -4405,6 +4405,21 @@ export type Database = {
         }
         Returns: undefined
       }
+      reschedule_booking_with_assignees: {
+        Args: {
+          p_assignee_ids: string[] | null
+          p_assigned_to: string | null
+          p_booking_id: string
+          p_organization_id: string
+          p_reset_client_reminder: boolean
+          p_scheduled_at: string
+          p_scheduled_local: string
+          p_scheduled_tz: string
+          p_set_assigned_to: boolean
+          p_time_set_by_hand_at: string | null
+        }
+        Returns: undefined
+      }
       chat_mark_thread_read: {
         Args: { p_thread_id: string }
         Returns: undefined

@@ -16,7 +16,6 @@ import {
   sendBookingRescheduled,
 } from "@/lib/automations";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import type { Json } from "@/lib/supabase/types";
 
 export type RescheduleResult =
   /** notice: saved, but worth a second look (someone's off that day). */
@@ -125,17 +124,13 @@ export async function rescheduleBookingAction(
   const { data: crewRows, error: crewError } = (await supabase
     .from("booking_assignees" as never)
     .select(
-      "membership_id, split_index, split_start_offset_minutes, split_duration_minutes, acceptance_status, responded_at, completed_at",
+      "membership_id, split_start_offset_minutes, split_duration_minutes",
     )
     .eq("booking_id" as never, id as never)) as unknown as {
     data: Array<{
       membership_id: string;
-      split_index: number | null;
       split_start_offset_minutes: number | null;
       split_duration_minutes: number | null;
-      acceptance_status: string;
-      responded_at: string | null;
-      completed_at: string | null;
     }> | null;
     error: { message: string } | null;
   };
@@ -289,25 +284,10 @@ export async function rescheduleBookingAction(
   // assigned_to or booking_assignees. The segments stay with the same
   // crew, just shifted to the new slot (segment offsets are relative).
   // Otherwise assigned_to follows the crew plan, and only when it changed.
-  const bookingUpdate: Record<string, Json> = {
-    scheduled_at: wall.scheduled_at,
-    scheduled_local: wall.scheduled_local,
-    scheduled_tz: wall.scheduled_tz,
-  };
-  if (plan.kind === "changed") {
-    bookingUpdate.assigned_to = plan.lead;
-  }
-
   // Did the actual INSTANT move? (A drag within the same slot can be a pure
   // reassignment.) Drives the reminder re-arm + rescheduled notices below.
   const instantChanged =
     new Date(current.scheduled_at).getTime() !== next.getTime();
-  if (instantChanged) {
-    // Re-arm the day-before reminder for the new date (audit B5).
-    bookingUpdate.client_reminder_sent_at = null;
-    // A person set this time; the series-drift check leaves it alone.
-    bookingUpdate.time_set_by_hand_at = new Date().toISOString();
-  }
 
   // The status/date rule has a second direction nobody guards: instead of
   // marking a future job completed, drag a completed job into the future.
@@ -326,33 +306,20 @@ export async function rescheduleBookingAction(
     if (refusal) return { ok: false, error: refusal };
   }
 
-  const assignees =
-    plan.kind === "changed"
-      ? plan.crew.map((membershipId) => {
-          const prior = crewRows?.find(
-            (row) => row.membership_id === membershipId,
-          );
-          return {
-            organization_id: membership.organization_id,
-            booking_id: id,
-            membership_id: membershipId,
-            is_primary: membershipId === plan.lead,
-            split_index: prior?.split_index ?? null,
-            split_start_offset_minutes:
-              prior?.split_start_offset_minutes ?? null,
-            split_duration_minutes: prior?.split_duration_minutes ?? null,
-            acceptance_status: prior?.acceptance_status ?? "pending",
-            responded_at: prior?.responded_at ?? null,
-            completed_at: prior?.completed_at ?? null,
-          };
-        })
-      : null;
+  const assigneeIds = plan.kind === "changed" ? plan.crew : null;
   const { error: updateError } = await createSupabaseAdminClient().rpc(
-    "update_bookings_with_assignees",
+    "reschedule_booking_with_assignees",
     {
       p_organization_id: membership.organization_id,
-      p_booking_updates: [{ booking_id: id, patch: bookingUpdate }],
-      p_assignees: assignees,
+      p_booking_id: id,
+      p_scheduled_at: wall.scheduled_at,
+      p_scheduled_local: wall.scheduled_local,
+      p_scheduled_tz: wall.scheduled_tz,
+      p_set_assigned_to: plan.kind === "changed",
+      p_assigned_to: plan.kind === "changed" ? plan.lead : null,
+      p_reset_client_reminder: instantChanged,
+      p_time_set_by_hand_at: instantChanged ? new Date().toISOString() : null,
+      p_assignee_ids: assigneeIds,
     },
   );
   if (updateError) return { ok: false, error: updateError.message };
