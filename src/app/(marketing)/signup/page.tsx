@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { authUserExistsForEmail } from "@/lib/portal-claim";
 import { SignupForm } from "./signup-form";
 
 export const metadata: Metadata = {
@@ -34,6 +36,13 @@ export default async function SignupPage({
     };
     if (data && !data.accepted_at && new Date(data.expires_at) >= new Date()) {
       inviteEmail = data.email;
+      // Mirror of the login page: the address grew a login since the invite
+      // email chose this form (signed up on their own first, say). Signing
+      // into it is how they prove it's theirs; sign-up would only tell them
+      // the address is taken.
+      if (await authUserExistsForEmail(admin, inviteEmail)) {
+        redirect(`/login?invite=${invite}`);
+      }
     }
   }
 

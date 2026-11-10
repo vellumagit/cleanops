@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { LoginForm } from "./login-form";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { authUserExistsForEmail } from "@/lib/portal-claim";
 
 export const metadata: Metadata = {
   title: "Sign in",
@@ -40,7 +42,8 @@ export default async function LoginPage({
   // the capability, same as /join/[token]; the lookup is best-effort.
   let invited: { email: string; orgName: string | null } | null = null;
   if (inviteToken) {
-    const { data } = (await createSupabaseAdminClient()
+    const admin = createSupabaseAdminClient();
+    const { data } = (await admin
       .from("invitations")
       .select("email, organization:organizations ( name )")
       .eq("token", inviteToken)
@@ -48,6 +51,13 @@ export default async function LoginPage({
       data: { email: string; organization: { name: string } | null } | null;
     };
     if (data) invited = { email: data.email, orgName: data.organization?.name ?? null };
+    // The email picked sign-in or sign-up when it was SENT. Accounts come and
+    // go in between (a stale test login deleted, a fresh one made); decide
+    // again from what exists now, so a link never strands anyone on the
+    // wrong form. The signup page does the mirror image.
+    if (invited && !(await authUserExistsForEmail(admin, invited.email))) {
+      redirect(`/signup?invite=${inviteToken}`);
+    }
   }
   const confirmEmail = params.confirm ? params.email : undefined;
   const joinedEmail = params.joined ? params.email : undefined;
