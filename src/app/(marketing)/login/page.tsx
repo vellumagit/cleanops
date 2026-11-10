@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { LoginForm } from "./login-form";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 export const metadata: Metadata = {
   title: "Sign in",
@@ -30,6 +31,24 @@ export default async function LoginPage({
   const next = inviteToken
     ? `/join?token=${inviteToken}`
     : (params.next ?? "");
+
+  // Say WHY this is a sign-in and not a sign-up: the invite email chose this
+  // page because the address already has a Sollos login — often one the
+  // person has forgotten (a client-portal test, an old trial). Without the
+  // address and the way out, "sign in with your existing account" read as a
+  // dead end to someone sure they had none (Brian, 2026-11-09). The token is
+  // the capability, same as /join/[token]; the lookup is best-effort.
+  let invited: { email: string; orgName: string | null } | null = null;
+  if (inviteToken) {
+    const { data } = (await createSupabaseAdminClient()
+      .from("invitations")
+      .select("email, organization:organizations ( name )")
+      .eq("token", inviteToken)
+      .maybeSingle()) as unknown as {
+      data: { email: string; organization: { name: string } | null } | null;
+    };
+    if (data) invited = { email: data.email, orgName: data.organization?.name ?? null };
+  }
   const confirmEmail = params.confirm ? params.email : undefined;
   const joinedEmail = params.joined ? params.email : undefined;
   const authError = params.auth_error;
@@ -69,8 +88,22 @@ export default async function LoginPage({
               role="status"
               className="mb-4 rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-700"
             >
-              You&apos;ve been invited to join a team on Sollos. Sign in with
-              your existing account to accept.
+              {invited ? (
+                <>
+                  You&apos;ve been invited to join{" "}
+                  <span className="font-semibold">{invited.orgName ?? "a team"}</span> on
+                  Sollos. There&apos;s already a Sollos account for{" "}
+                  <span className="font-semibold">{invited.email}</span>, so sign in with it
+                  to accept. Don&apos;t know its password? Use &ldquo;Forgot password?&rdquo;
+                  below, then open the invite link again.
+                </>
+              ) : (
+                <>
+                  You&apos;ve been invited to join a team on Sollos. Sign in with your
+                  existing account to accept. Don&apos;t know the password? Use &ldquo;Forgot
+                  password?&rdquo; below, then open the invite link again.
+                </>
+              )}
             </div>
           )}
 
