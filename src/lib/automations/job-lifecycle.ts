@@ -585,6 +585,32 @@ export async function autoCompletePastBookings(): Promise<{
     }
     if (toComplete.length === 0) continue;
 
+    // Write mode (JOB_STATE_WRITE=1, cutover 2026-11-14): the rules own the
+    // status. Ask them about each due job; syncJob stores completed when the
+    // window end plus the org's grace has passed — the same clock as
+    // autoCompleteDue above — logs it, and drafts the invoice. Nothing in
+    // this function writes bookings.status in write mode. Done this way
+    // because the two used to race: this sweep set completed and drafted
+    // the invoice, then its own recompute reverted the job to confirmed
+    // (docs/job-lifecycle-map.md §4).
+    //
+    // Shadow mode below is the pre-cutover system, kept whole so unsetting
+    // the flag is a true rollback. It goes, with the flag, once the Monday
+    // morning check after the cutover is clean.
+    const { syncJob, jobSyncMode } = await import("@/lib/job-sync");
+    if (jobSyncMode() === "write") {
+      let closed = 0;
+      for (const id of toComplete) {
+        const res = await syncJob(id, "nightly_sweep");
+        if (res && res.before !== "completed" && res.after === "completed") closed++;
+      }
+      completed += closed;
+      console.log(
+        `[auto] nightly sweep asked the rules about ${toComplete.length} due job(s) for org ${org.id}; ${closed} closed`,
+      );
+      continue;
+    }
+
     const { data, error } = (await db
       .from("bookings")
       .update({ status: "completed" })
@@ -623,9 +649,7 @@ export async function autoCompletePastBookings(): Promise<{
             err,
           );
         }
-        // The computed state measures from the END of the window, this
-        // sweep from the start; the shadow rows show where they differ.
-        const { syncJob } = await import("@/lib/job-sync");
+        // Shadow: record where the rules would have disagreed.
         await syncJob(b.id, "nightly_sweep");
       }
     }

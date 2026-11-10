@@ -21,7 +21,7 @@ const mocks = vi.hoisted(() => ({
   orgUsesClockIn: vi.fn(),
   saidForThisSchedule: vi.fn(),
   autoCompleteDue: vi.fn(),
-  syncJob: vi.fn(async () => {}),
+  syncJob: vi.fn(async (): Promise<{ before: string; after: string } | null> => null),
   clientNotify: vi.fn(async () => ({ email: false, sms: false, clientPhone: null })),
   sendOrgEmail: vi.fn(async () => ({ ok: true })),
 }));
@@ -157,7 +157,10 @@ vi.mock("@/lib/format", () => ({
   formatDateTime: vi.fn((value: string) => value),
   formatCurrencyCents: vi.fn((amount: number) => String(amount)),
 }));
-vi.mock("@/lib/job-sync", () => ({ syncJob: mocks.syncJob }));
+vi.mock("@/lib/job-sync", () => ({
+  syncJob: mocks.syncJob,
+  jobSyncMode: () => (process.env.JOB_STATE_WRITE === "1" ? "write" : "shadow"),
+}));
 
 const {
   autoCompletePastBookings,
@@ -592,6 +595,56 @@ describe("autoCompletePastBookings", () => {
     expect(statusUpdate).toBeGreaterThanOrEqual(0);
     expect(invoiceInsert).toBeGreaterThan(statusUpdate);
     expect(mocks.syncJob).toHaveBeenCalledWith(booking.id, "nightly_sweep");
+  });
+
+  describe("in write mode", () => {
+    const wroteStatus = () =>
+      mocks.calls.some(
+        (query) =>
+          query.table === "bookings" &&
+          query.operation === "update" &&
+          (query.payload as { status?: string })?.status === "completed",
+      );
+    beforeEach(() => {
+      process.env.JOB_STATE_WRITE = "1";
+    });
+    afterEach(() => {
+      delete process.env.JOB_STATE_WRITE;
+    });
+
+    it("writes no status and drafts no invoice itself; the rules do both", async () => {
+      installAutoCompleteResponder();
+      mocks.syncJob.mockResolvedValueOnce({ before: "confirmed", after: "completed" });
+
+      await expect(autoCompletePastBookings()).resolves.toEqual({ completed: 1 });
+      expect(mocks.syncJob).toHaveBeenCalledWith(booking.id, "nightly_sweep");
+      expect(wroteStatus()).toBe(false);
+      expect(mocks.calls.some((query) => query.table === "invoices" && query.operation === "insert")).toBe(false);
+    });
+
+    it("does not count a job the rules left open", async () => {
+      installAutoCompleteResponder();
+      mocks.syncJob.mockResolvedValueOnce({ before: "confirmed", after: "confirmed" });
+
+      await expect(autoCompletePastBookings()).resolves.toEqual({ completed: 0 });
+      expect(wroteStatus()).toBe(false);
+    });
+
+    it("still leaves a job alone while someone is on the clock", async () => {
+      installAutoCompleteResponder({ openShift: true });
+
+      await expect(autoCompletePastBookings()).resolves.toEqual({ completed: 0 });
+      expect(mocks.syncJob).not.toHaveBeenCalled();
+      expect(wroteStatus()).toBe(false);
+    });
+
+    it("still leaves an unstaffed past job alone", async () => {
+      installAutoCompleteResponder({ staffed: false });
+
+      await expect(autoCompletePastBookings()).resolves.toEqual({ completed: 0 });
+      expect(mocks.syncJob).not.toHaveBeenCalled();
+      expect(wroteStatus()).toBe(false);
+    });
   });
 });
 
