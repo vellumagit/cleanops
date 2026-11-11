@@ -44,7 +44,7 @@ export function DeleteEmployeeForm({
         onClick={(e) => {
           if (
             !confirm(
-              `Permanently delete ${name}? This cannot be undone.\n\nBookings and timesheets they appear in will be preserved; their name will show as "Unknown".`,
+              `Permanently delete ${name}? This cannot be undone.\n\nOnly possible for someone with no recorded shifts. Jobs they were assigned to stay on the schedule without them.`,
             )
           ) {
             e.preventDefault();

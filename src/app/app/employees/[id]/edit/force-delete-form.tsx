@@ -50,8 +50,8 @@ export function ForceDeleteForm({
                 `This deletes their membership AND their login account. ` +
                 `Use this when their account is broken/stuck and you want to ` +
                 `re-invite them clean.\n\n` +
-                `Bookings and timesheets they appear in are preserved; their ` +
-                `name will show as "Unknown".\n\n` +
+                `Someone with recorded shifts can't be removed this way, because ` +
+                `their hours would go with them. For a stuck login use Generate recovery link.\n\n` +
                 `This cannot be undone.`,
             )
           ) {

@@ -201,10 +201,10 @@ export default async function EditEmployeePage({
                 <p className="text-xs text-muted-foreground">
                   <strong className="text-foreground">Delete employee.</strong>{" "}
                   Permanently removes this employee from your organization but
-                  leaves their login account intact. Historical bookings and
-                  timesheets that reference them are preserved — their name
-                  will show as &ldquo;Unknown&rdquo; on those records.
-                  Employees with payroll run history cannot be deleted.
+                  leaves their login account intact. Only for someone with no
+                  recorded shifts, bonuses or payroll history: those records
+                  would be deleted with them, so anyone who has worked stays
+                  deactivated. Jobs they were assigned to remain, unassigned.
                 </p>
                 <div className="mt-3">
                   <DeleteEmployeeForm

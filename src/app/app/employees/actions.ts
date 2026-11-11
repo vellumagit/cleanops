@@ -9,6 +9,7 @@ import { toEngagement } from "@/lib/engagement";
 import { capabilitiesFromForm } from "@/lib/capabilities";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { allowDbErrors } from "@/lib/supabase/query-guard";
+import { readWorkHistory, workHistoryRefusal } from "@/lib/member-history";
 import { InvitationSchema } from "@/lib/validators/invitations";
 
 type Field = "name" | "email" | "role" | "pay_rate";
@@ -700,6 +701,18 @@ export async function deleteEmployeeAction(
     };
   }
 
+  // Her shifts and bonuses would be deleted with her (member-history.ts).
+  try {
+    const kept = workHistoryRefusal(
+      target.display_name ?? "This employee",
+      await readWorkHistory(admin, membership.organization_id, targetId),
+    );
+    if (kept) return { error: kept };
+  } catch (err) {
+    console.error("[employees] delete: work-history check failed:", err);
+    return { error: "Couldn't check this employee's work history, so nothing was deleted. Try again." };
+  }
+
   // 23503 (payroll rows reference her) is the one error this delete
   // expects; the action runs fail-closed, so it is let through to the
   // message below instead of rejecting.
@@ -720,8 +733,8 @@ export async function deleteEmployeeAction(
     ) {
       return {
         error:
-          "This employee has payroll records and cannot be permanently deleted. " +
-          "Keep them deactivated to preserve historical payroll data.",
+          "This employee has shifts or payroll records and cannot be permanently deleted. " +
+          "Keep them deactivated to preserve that history.",
       };
     }
     return { error: error.message };
@@ -959,6 +972,21 @@ export async function forceDeleteEmployeeAction(
 
   if (!target) return { error: "Employee not found." };
 
+  // Before anything is removed. The login is deleted first below, and that
+  // delete cascades to the membership and on to her shifts, so a refusal
+  // any later than this arrives after the login is already gone.
+  try {
+    const kept = workHistoryRefusal(
+      target.display_name ?? "This employee",
+      await readWorkHistory(admin, membership.organization_id, targetId),
+      { stuckLogin: true },
+    );
+    if (kept) return { error: kept };
+  } catch (err) {
+    console.error("[force-delete] work-history check failed:", err);
+    return { error: "Couldn't check this employee's work history, so nothing was removed. Try again." };
+  }
+
   // Best-effort: wipe the auth.users row tied to this membership. The
   // dashboard-delete path that prompted this feature already removed
   // it, so a "user not found" response is the expected normal case.
@@ -998,8 +1026,8 @@ export async function forceDeleteEmployeeAction(
     ) {
       return {
         error:
-          "This employee has payroll records and cannot be force-removed. " +
-          "Keep them deactivated to preserve historical payroll data.",
+          "This employee has shifts or payroll records and cannot be force-removed. " +
+          "Keep them deactivated to preserve that history.",
       };
     }
     return { error: error.message };

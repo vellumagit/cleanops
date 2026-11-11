@@ -60,6 +60,15 @@ create schema if not exists extensions;
 create schema if not exists auth;
 create schema if not exists storage;
 
+-- Supabase ships pgcrypto in the extensions schema and puts that schema on
+-- every role's search path. Functions here call extensions.gen_random_bytes
+-- by that name, so the extension has to live where production keeps it.
+create extension if not exists pgcrypto with schema extensions;
+do $$ begin
+  execute format('alter database %I set search_path to "$user", public, extensions', current_database());
+end $$;
+set search_path to "$user", public, extensions;
+
 create table auth.users (
   id uuid primary key default gen_random_uuid(),
   email text,

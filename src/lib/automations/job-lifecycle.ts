@@ -2,6 +2,7 @@ import "server-only";
 import { admin, isAutomationEnabled } from "./shared";
 import { autoInvoiceOnJobComplete } from "./billing";
 import { notify } from "@/lib/notify";
+import { orgDividesCrewHours } from "@/lib/crew-hours";
 
 // ─────────────────────────────────────────────────────────────────
 // 33b. Job watch — the job that passed in silence
@@ -118,7 +119,9 @@ export async function runJobWatch(): Promise<{
       const [nudgeOn, alertOn, orgDivides] = await Promise.all([
         isAutomationEnabled(orgId, "job_not_started_nudge"),
         isAutomationEnabled(orgId, "no_clock_in_alert"),
-        isAutomationEnabled(orgId, "divide_crew_hours"),
+        // A scheduling preference, read without the master switch like every
+        // other reader (crew-hours.ts). Not an automation to be paused.
+        orgDividesCrewHours(orgId),
       ]);
       if (!nudgeOn && !alertOn) continue;
 
@@ -521,7 +524,7 @@ export async function autoCompletePastBookings(): Promise<{
     // (Ranj Asi, 2026-11-05). From the end, that job closes at 11:30 PM,
     // after the office has been asked.
     const { autoCompleteDue } = await import("@/lib/job-watch");
-    const orgDivides = await isAutomationEnabled(org.id, "divide_crew_hours");
+    const orgDivides = await orgDividesCrewHours(org.id);
     const byId = new Map(candidates.map((b) => [b.id, b]));
     const nowMs = Date.now();
     const dueIds = staffedIds.filter((id) => {

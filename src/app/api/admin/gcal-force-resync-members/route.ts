@@ -96,7 +96,10 @@ export async function GET(request: NextRequest) {
   const { data: memberRows } = (await admin
     .from("memberships")
     .select(
-      "id, display_name, profile:profiles ( full_name, email )",
+      // profiles has no email column (it lives on auth.users). Naming it
+      // failed this read, and with it the whole repair tool. The Google
+      // account address on the connection row is the email worth showing.
+      "id, display_name, profile:profiles ( full_name )",
     )
     .in("id", memberIds)) as unknown as {
     data: Array<{
@@ -104,7 +107,6 @@ export async function GET(request: NextRequest) {
       display_name: string | null;
       profile: {
         full_name: string | null;
-        email: string | null;
       } | null;
     }> | null;
   };
@@ -119,10 +121,7 @@ export async function GET(request: NextRequest) {
       memberMap.get(r.membership_id)?.profile?.full_name ??
       memberMap.get(r.membership_id)?.display_name ??
       "Unknown",
-    email:
-      memberMap.get(r.membership_id)?.profile?.email ??
-      r.external_account_id ??
-      null,
+    email: r.external_account_id ?? null,
   }));
 
   // Cap at 40 to stay inside Vercel's function timeout for organizations

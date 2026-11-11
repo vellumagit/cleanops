@@ -84,7 +84,10 @@ export async function signContractAction(
 
   const { data: contract, error: fetchErr } = (await admin
     .from("contracts")
-    .select("id, sign_status, signed_at, organization_id, title")
+    // No "title": contracts has never had that column, and naming it made
+    // this read fail, so nobody could sign (found by test/db/query-shapes,
+    // 2026-11-10; production had no contracts yet).
+    .select("id, sign_status, signed_at, organization_id")
     .eq("public_token" as never, token as never)
     .maybeSingle()) as unknown as {
     data: {
@@ -92,7 +95,6 @@ export async function signContractAction(
       sign_status: string;
       signed_at: string | null;
       organization_id: string;
-      title: string | null;
     } | null;
     error: { message: string } | null;
   };
@@ -155,7 +157,7 @@ export async function signContractAction(
       organizationId: contract.organization_id,
       audience: "org-management",
       title: "Contract signed",
-      body: `${typedName} signed ${contract.title ?? "the contract"}.`,
+      body: `${typedName} signed the contract.`,
       href: "/app/contracts",
     });
   } catch (err) {
