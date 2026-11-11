@@ -714,7 +714,10 @@ export default async function FieldJobDetailPage({
             }
             scheduledLabel={formatDateTime(effectiveScheduledAt, tz)}
           />
-          {booking.status !== "completed" && (
+          {/* Once she has worked here, cancelling is not hers to do: the
+              server refuses it (dropShift), and the button would only
+              promise something that can't happen. */}
+          {booking.status !== "completed" && (myEntriesHere ?? 0) === 0 && (
             <ManageShift
               bookingId={booking.id}
               isRecurring={Boolean(booking.series_id)}

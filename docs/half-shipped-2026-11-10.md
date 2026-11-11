@@ -64,7 +64,7 @@ Recommendation first in each.
 
 | Row | Facts | Recommendation |
 | --- | --- | --- |
-| Tokens readable by every member: invoice and estimate links, contract signing links | Any member can read these columns through the API. With one, a member could open a client's invoice or estimate page, or sign a contract as the client. No money moves to the member by doing so | **Build**, the same way the review link was done (below): sign the link, keep only a hash |
+| Invoice, estimate and contract links readable by managers | **Closed for cleaners** by migration `20261110060000`: only owners, admins and managers read those tables now, which is all the app ever needed. Managers can still read the links; they can already send and act on these documents | **Leave.** Signing these links like the review link means touching 21 files on the payment path for a manager-only risk |
 | Inbound SMS: a client's real reply is acknowledged and thrown away | STOP/START/HELP work. Anything else is stored nowhere and shown to nobody | **Build the small version:** put the reply in the office's notifications. Otherwise say on the texts that replies are not read |
 | Part-paid invoices past due are never chased (money list #8) | No such invoice today; the reminder is off for Svit | **Build** the remind-on-balance version when reminders are switched on |
 | Property-level default checklist | The field saves and nothing applies it. No property has one set | **Drop** the field until someone asks |

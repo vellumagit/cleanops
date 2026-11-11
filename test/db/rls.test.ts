@@ -346,3 +346,47 @@ describe("what only an owner or admin may read (migration 20261110040000)", () =
       expect(await w.service(read)).toHaveLength(2);
     }));
 });
+
+describe("invoices, estimates and contracts are for the office (migration 20261110060000)", () => {
+  /**
+   * Each row carries public_token, the link the client is sent. With it a
+   * cleaner could open the client's invoice, accept an estimate for them, or
+   * sign a contract as them. Until 2026-11-10 every member could read them.
+   */
+  it("a cleaner reads none of them; the office reads them all; the client reads her own invoice", () =>
+    scenario(db, async (w) => {
+      const c = await cast(w);
+      const [client] = await w.seed<{ id: string }>("select id from public.clients where organization_id = $1", [c.orgA]);
+      await w.seed(
+        "insert into public.invoices (organization_id, client_id, status, amount_cents, public_token) values ($1, $2, 'sent', 14000, 'inv-link-secret')",
+        [c.orgA, client.id],
+      );
+      await w.seed(
+        "insert into public.estimates (organization_id, client_id, public_token) values ($1, $2, 'est-link-secret')",
+        [c.orgA, client.id],
+      );
+      await w.seed(
+        `insert into public.contracts (organization_id, client_id, service_type, start_date, agreed_price_cents, public_token)
+         values ($1, $2, 'standard', current_date, 14000, 'contract-link-secret')`,
+        [c.orgA, client.id],
+      );
+
+      for (const table of ["invoices", "estimates", "contracts"]) {
+        const read = `select public_token from public.${table}`;
+        expect(await w.as(c.anna.userId)(read), `cleaner reading ${table}`).toEqual([]);
+        expect(await w.as(c.outsider.userId)(read), `outsider reading ${table}`).toEqual([]);
+        expect(await w.anon(read), `no session reading ${table}`).toEqual([]);
+        expect(await w.as(c.manager.userId)(read), `manager reading ${table}`).toHaveLength(1);
+        expect(await w.as(c.owner.userId)(read), `owner reading ${table}`).toHaveLength(1);
+      }
+
+      // The client portal is unaffected: a client still sees her own invoice.
+      const [portalUser] = await w.seed<{ id: string }>(
+        "insert into auth.users (email) values ('client.portal@example.test') returning id",
+      );
+      await w.seed("update public.clients set profile_id = $2 where id = $1", [client.id, portalUser.id]);
+      expect(await w.as(portalUser.id)("select public_token from public.invoices")).toEqual([
+        { public_token: "inv-link-secret" },
+      ]);
+    }));
+});

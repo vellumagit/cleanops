@@ -971,6 +971,27 @@ async function dropShift(
   if (!myRow && !wasPrimary) {
     return { ok: false, error: "This shift isn't assigned to you." };
   }
+  // Not once she has worked on it. Taking her off the crew then left her
+  // clock running on a job that no longer listed her, where I'm done
+  // answered "This job isn't assigned to you" (2026-11-10, found by
+  // test/db/field-edges). Hours she has worked here belong to this job:
+  // finishing is I'm done, and anything else is a word with the office.
+  const { count: workedHere, error: workedErr } = (await admin
+    .from("time_entries")
+    .select("id", { count: "exact", head: true })
+    .eq("booking_id", bookingId)
+    .eq("employee_id", membershipId)) as unknown as {
+    count: number | null;
+    error: { message: string } | null;
+  };
+  if (workedErr) return { ok: false, error: "Couldn't check your hours on this job. Try again." };
+  if ((workedHere ?? 0) > 0) {
+    return {
+      ok: false,
+      error:
+        "You've already clocked in on this job, so it can't be cancelled from here. Tap I'm done when you leave, and tell your manager if something's wrong.",
+    };
+  }
 
   // Remove this cleaner from THIS occurrence only.
   await (admin
