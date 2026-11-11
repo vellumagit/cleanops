@@ -6,8 +6,7 @@
  *   - declining or cancelling a shift
  *   - completing a job through the public API
  *
- * Same stack as field-taps and office-actions (test/db/api.ts), same rule:
- * every scenario runs with the rules shadowing and with the rules writing.
+ * Same stack as field-taps and office-actions (test/db/api.ts).
  */
 import { NextRequest } from "next/server";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -38,7 +37,6 @@ beforeAll(async () => {
 }, 240_000);
 
 afterAll(async () => {
-  delete process.env.JOB_STATE_WRITE;
   restoreEnv?.();
   await api?.stop();
 });
@@ -139,14 +137,7 @@ const near = (iso: string | null, expected: string, toleranceMs = 2_000) =>
 
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!hasPostgrest).each([
-  ["with the rules shadowing", undefined],
-  ["with the rules writing", "1"],
-] as const)("the last seams, %s", { timeout: 90_000 }, (_label, flag) => {
-  beforeEach(() => {
-    if (flag) process.env.JOB_STATE_WRITE = flag;
-    else delete process.env.JOB_STATE_WRITE;
-  });
+describe.skipIf(!hasPostgrest)("the last seams", { timeout: 90_000 }, () => {
 
   describe("a tap replayed from the phone's offline queue", () => {
     /** A basement with no signal: both taps sit on the phone and go up together. */

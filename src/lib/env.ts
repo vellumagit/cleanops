@@ -59,11 +59,6 @@ const BaseSchema = z.object({
   // survive that key being rotated.
   REVIEW_LINK_SECRET: z.string().optional(),
 
-  // Job status: unset = the rules shadow (compute, compare, log); "1" = the
-  // rules write. One-way door on 2026-11-14 (docs/cutover-2026-11-14.md);
-  // the flag and the shadow branch are deleted once that has held.
-  JOB_STATE_WRITE: z.enum(["1"]).optional(),
-
   // Incident sub-switches for the pause above, and their SMS counterpart.
   INVOICE_EMAILS_UNPAUSED: z.enum(["true", "false"]).optional(),
   CLIENT_SMS_PAUSED: z.enum(["true", "false"]).optional(),

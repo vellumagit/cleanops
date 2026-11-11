@@ -3,7 +3,6 @@
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { getActionContext } from "@/lib/actions";
-import { autoInvoiceOnJobComplete } from "@/lib/automations";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { allowDbErrors } from "@/lib/supabase/query-guard";
 import { deleteMemberCalendarEvent } from "@/lib/google-calendar";
@@ -12,7 +11,7 @@ import { logAuditEvent } from "@/lib/audit";
 import { futureStatusError } from "@/lib/booking-status";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { formatDateTime } from "@/lib/format";
-import { loadJobState, syncJob } from "@/lib/job-sync";
+import { syncJob } from "@/lib/job-sync";
 import { punchTime, TAPPED_AT_FIELD } from "@/lib/punch-time";
 
 /**
@@ -170,43 +169,11 @@ export async function startJobAction(
     );
   }
 
-  // Update status if it's not already started or finished.
-  if (booking.status !== "in_progress" && booking.status !== "completed") {
-    // .select() so a write that matched NOTHING is visible. Postgres reports
-    // a zero-row update as success: until migration 20261007020000 the update
-    // policy only admitted the lead, so when anyone else on the crew clocked
-    // in first this "succeeded", changed nothing, and the job sat at
-    // "confirmed" while she was on the clock. If permissions ever drift like
-    // that again, say so instead of carrying on as if it had worked.
-    const { data: started, error: updateError } = (await supabase
-      .from("bookings")
-      .update({ status: "in_progress" })
-      .eq("id", bookingId)
-      .select("id")) as unknown as {
-      data: Array<{ id: string }> | null;
-      error: { message: string } | null;
-    };
-    if (updateError)
-      return refuse("status_update_failed", updateError.message);
-    if (!started || started.length === 0)
-      return refuse(
-        "status_update_matched_nothing",
-        "Couldn't start this job — your account isn't allowed to update it. Ask your manager to check you're on the crew.",
-        { is_primary: isPrimary },
-      );
-    await logAuditEvent({
-      membership,
-      action: "status_change",
-      entity: "booking",
-      entity_id: bookingId,
-      before: { status: booking.status },
-      after: { status: "in_progress" },
-    });
-  }
+  // The job's status follows from her shift: syncJob at the end of this
+  // action sets in_progress once the shift exists. Until 2026-11-14 this
+  // wrote in_progress first, so a clock-in that then failed left a job
+  // "in progress" with nobody on it.
 
-  // Check for ANY open time entry for this employee, not just for this booking.
-  // Without this, starting a new job while already clocked in elsewhere creates
-  // two simultaneous open entries, which breaks payroll calculations.
   const { data: anyOpenEntry } = await supabase
     .from("time_entries")
     .select("id, booking_id, clock_in_at")
@@ -376,7 +343,7 @@ export async function startJobAction(
     .eq("organization_id", membership.organization_id)
     .not("completed_at", "is", null) as unknown as Promise<unknown>);
 
-  await syncJob(bookingId, "clock_in");
+  await syncJob(bookingId, "clock_in", { actorId: membership.id });
 
   revalidatePath("/field/jobs");
   revalidatePath(`/field/jobs/${bookingId}`);
@@ -561,9 +528,9 @@ export async function completeJobAction(
   // booking_assignees has no member-level UPDATE policy, so through the
   // cleaner's own client this matched zero rows for every employee and
   // reported success: until 2026-10-26 Svit had 68 rows with completed_at,
-  // every one a manager's. With the mark dropped, crewStillWorking saw each
-  // employee who had finished as still working, so the LAST one to finish
-  // never closed the job — it sat in progress until the nightly sweep.
+  // every one a manager's. With the mark dropped, each employee who had
+  // finished looked still at work, so the LAST one to finish never closed
+  // the job. The rules read this mark (job-state.ts: pausedIds).
   await (createSupabaseAdminClient()
     .from("booking_assignees")
     .update({ completed_at: now } as never)
@@ -613,112 +580,12 @@ export async function completeJobAction(
   //
   // Crew size is the right test, not split data. A job with more than one
   // person on it is not over because one of them is done.
-  const { data: allAssignees } = (await supabase
-    .from("booking_assignees" as never)
-    .select("membership_id, completed_at")
-    .eq("booking_id" as never, bookingId as never)) as unknown as {
-    data: Array<{
-      membership_id: string;
-      completed_at: string | null;
-    }> | null;
-  };
-  const rows = allAssignees ?? [];
-  if (rows.length >= 2) {
-    // Who showed up, and who is still on the clock — everyone's shifts, read
-    // the way the rules read them. The crew's entries used to be read with
-    // the caller's own client, and an employee can only see her OWN entries
-    // (time_entries RLS), so to the last finisher every crewmate looked like
-    // she had never clocked in: "still coming" before the window ended,
-    // a no-show after it — which closed the job on someone still working.
-    const { crewStillWorking } = await import("./crew-completion");
-    // The window is the rules' window (start + the crew's shared hours, or
-    // a later own segment), not start + the one-person hours entered: on a
-    // divided 18-hour job with four rostered, that's 1:30 PM, not 3 AM.
-    // Measured the old way, the last finisher at 1:35 kept the job open on
-    // a no-show for another thirteen hours.
-    const view = await loadJobState(bookingId);
-    const shifts = view?.shifts ?? [];
-    const windowEndMs =
-      view?.windowEndMs ??
-      new Date(booking.scheduled_at).getTime() +
-        (booking.duration_minutes ?? 0) * 60_000;
-    if (
-      crewStillWorking({
-        assignees: rows,
-        workedIds: shifts.map((s) => s.employee_id),
-        onClockIds: shifts
-          .filter((s) => s.clock_out_at == null)
-          .map((s) => s.employee_id),
-        callerId: membership.id,
-        jobWindowOver: Date.now() >= windowEndMs,
-      })
-    ) {
-      // The caller's part is done; the booking stays open for the rest.
-      await syncJob(bookingId, "finish");
-      revalidatePath("/field/jobs");
-      revalidatePath(`/field/jobs/${bookingId}`);
-      revalidatePath("/field/clock");
-      return { ok: true };
-    }
-  }
-
-  // Completing also drafts an invoice. On a job that has not happened that
-  // bills the client for work nobody has done, and drops the shift out of
-  // every other crew member's list (needs_acceptance goes false when the
-  // booking reads completed).
-  const notYetErr = futureStatusError(booking.scheduled_at, "completed");
-  if (notYetErr) {
-    // Her clock has already stopped above, and that part stands: the tap
-    // is about her shift. What can't happen is the JOB being marked done
-    // for a date that hasn't come (the office moved it while she was on
-    // the clock). This used to refuse AFTER closing her entry, so the
-    // phone showed an error while her clock had in fact stopped, and the
-    // state was never recomputed.
-    await syncJob(bookingId, "finish");
-    revalidatePath("/field/jobs");
-    revalidatePath(`/field/jobs/${bookingId}`);
-    revalidatePath("/field/clock");
-    return { ok: true };
-  }
-
-  // Through the admin client. This started as a workaround: the update policy
-  // only admitted the PRIMARY assignee, so for a second crew member the update
-  // matched zero rows, returned no error, and the code below drafted (and
-  // could auto-send) an invoice for a job still marked confirmed. Migration
-  // 20261007020000 now admits the whole crew, so the cleaner's own client
-  // would work here too; the admin client stays because the crew check at the
-  // top of this action is the authorization, and the .select() below already
-  // catches a write that matched nothing.
-  const { data: completedRows, error: updateBookingError } = (await createSupabaseAdminClient()
-    .from("bookings")
-    .update({ status: "completed" })
-    .eq("id", bookingId)
-    .eq("organization_id", membership.organization_id)
-    .select("id")) as unknown as {
-    data: Array<{ id: string }> | null;
-    error: { message: string } | null;
-  };
-  if (updateBookingError) {
-    return { ok: false, error: updateBookingError.message };
-  }
-  if (!completedRows || completedRows.length === 0) {
-    return { ok: false, error: "This job couldn't be marked complete. Reload and try again." };
-  }
-  await logAuditEvent({
-    membership,
-    action: "status_change",
-    entity: "booking",
-    entity_id: bookingId,
-    before: { status: booking.status },
-    after: { status: "completed" },
-  });
-
-  // Auto-generate a draft invoice for the completed job. Awaited (not
-  // fire-and-forget) so the draft is present by the time /app/invoices
-  // revalidates and the owner reloads. The automation catches its own errors
-  // internally, so awaiting it won't throw here.
-  await autoInvoiceOnJobComplete(bookingId);
-  await syncJob(bookingId, "finish");
+  // Whether the job is now finished is the rules' call: everyone who came
+  // has said I'm done, or the window is over and nobody else is coming. They
+  // store completed, log who closed it, and draft the invoice. Until
+  // 2026-11-14 this action decided for itself with a second copy of that
+  // of that logic and wrote completed directly.
+  await syncJob(bookingId, "finish", { actorId: membership.id });
 
   revalidatePath("/field/jobs");
   revalidatePath(`/field/jobs/${bookingId}`);

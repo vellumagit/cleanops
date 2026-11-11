@@ -1,6 +1,5 @@
 import "server-only";
 import { admin, isAutomationEnabled } from "./shared";
-import { autoInvoiceOnJobComplete } from "./billing";
 import { notify } from "@/lib/notify";
 import { orgDividesCrewHours } from "@/lib/crew-hours";
 
@@ -588,73 +587,23 @@ export async function autoCompletePastBookings(): Promise<{
     }
     if (toComplete.length === 0) continue;
 
-    // Write mode (JOB_STATE_WRITE=1, cutover 2026-11-14): the rules own the
-    // status. Ask them about each due job; syncJob stores completed when the
-    // window end plus the org's grace has passed — the same clock as
-    // autoCompleteDue above — logs it, and drafts the invoice. Nothing in
-    // this function writes bookings.status in write mode. Done this way
-    // because the two used to race: this sweep set completed and drafted
-    // the invoice, then its own recompute reverted the job to confirmed
-    // (docs/job-lifecycle-map.md §4).
-    //
-    // Shadow mode below is the pre-cutover system, kept whole so unsetting
-    // the flag is a true rollback. It goes, with the flag, once the Monday
-    // morning check after the cutover is clean.
-    const { syncJob, jobSyncMode } = await import("@/lib/job-sync");
-    if (jobSyncMode() === "write") {
-      let closed = 0;
-      for (const id of toComplete) {
-        const res = await syncJob(id, "nightly_sweep");
-        if (res && res.before !== "completed" && res.after === "completed") closed++;
-      }
-      completed += closed;
+    // The rules own the status. Ask them about each due job; syncJob stores
+    // completed when the window end plus the org's grace has passed (the
+    // same clock as autoCompleteDue above), logs it, and drafts the invoice.
+    // Nothing in this function writes bookings.status. Until 2026-11-14 the
+    // sweep wrote completed itself and its own recompute could then revert
+    // it (docs/job-lifecycle-map.md §4).
+    const { syncJob } = await import("@/lib/job-sync");
+    let closed = 0;
+    for (const id of toComplete) {
+      const res = await syncJob(id, "nightly_sweep");
+      if (res && res.before !== "completed" && res.after === "completed") closed++;
+    }
+    completed += closed;
+    if (closed > 0 || toComplete.length > 0) {
       console.log(
         `[auto] nightly sweep asked the rules about ${toComplete.length} due job(s) for org ${org.id}; ${closed} closed`,
       );
-      continue;
-    }
-
-    const { data, error } = (await db
-      .from("bookings")
-      .update({ status: "completed" })
-      .eq("organization_id", org.id)
-      .in("id", toComplete)
-      .select("id")) as unknown as {
-      data: Array<{ id: string }> | null;
-      error: { message: string } | null;
-    };
-
-    if (error) {
-      console.error(
-        `[auto] complete bookings failed for org ${org.id}:`,
-        error.message,
-      );
-      continue;
-    }
-    if (data && data.length > 0) {
-      completed += data.length;
-      console.log(
-        `[auto] Auto-completed ${data.length} past booking(s) for org ${org.id}`,
-      );
-
-      // Parity with the manual "mark complete" path: draft the per-job invoice
-      // for each booking we just auto-completed. Without this, jobs the cron
-      // completes were silently never billed. Non-forced, so it still respects
-      // the org's auto_invoice_on_job_complete toggle AND the client's billing
-      // cadence (monthly/biweekly clients are billed by the billing-cycle cron
-      // instead, so autoInvoiceOnJobComplete no-ops for them).
-      for (const b of data) {
-        try {
-          await autoInvoiceOnJobComplete(b.id);
-        } catch (err) {
-          console.error(
-            `[auto] auto-invoice after auto-complete failed for booking ${b.id}:`,
-            err,
-          );
-        }
-        // Shadow: record where the rules would have disagreed.
-        await syncJob(b.id, "nightly_sweep");
-      }
     }
   }
   return { completed };

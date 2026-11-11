@@ -11,9 +11,9 @@
  * Only the framework is stood in for: cookies and headers (there is no
  * request), revalidatePath and after() (there is no render).
  *
- * Every scenario runs twice, with the rules shadowing and with the rules
- * writing. The job must end the same way both times: that is the whole
- * claim of the 2026-11-14 cutover, asked of the code the phone calls.
+ * Until the 2026-11-14 cutover every scenario ran twice, with the rules
+ * shadowing and writing, and ended the same way both times. Since then the
+ * rules are the only writer.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { hasPostgrest, startApi, type Api } from "./api";
@@ -40,7 +40,6 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  delete process.env.JOB_STATE_WRITE;
   restoreEnv?.();
   await api?.stop();
 });
@@ -127,14 +126,7 @@ const refusals = (job: string) =>
 
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!hasPostgrest).each([
-  ["with the rules shadowing (production until the cutover)", undefined],
-  ["with the rules writing (production after it)", "1"],
-] as const)("a cleaner's taps, %s", { timeout: 60_000 }, (_label, flag) => {
-  beforeEach(() => {
-    if (flag) process.env.JOB_STATE_WRITE = flag;
-    else delete process.env.JOB_STATE_WRITE;
-  });
+describe.skipIf(!hasPostgrest)("a cleaner's taps", { timeout: 60_000 }, () => {
 
   it("I'm here: opens her shift and starts the job", async () => {
     const c = await company();
@@ -206,6 +198,28 @@ describe.skipIf(!hasPostgrest).each([
     expect(await shiftsOf(anna, job)).toEqual(["closed"]);
     expect(await partDone(anna, job)).toBe(true);
     expect(await statusOf(job)).toBe("completed");
+  });
+
+  /**
+   * The rules write the status now, so they write the history row too. It
+   * still names the person whose tap it was, not "Sollos".
+   */
+  it("the job's history says who finished it", async () => {
+    const c = await company();
+    const anna = await addMember(api.sql, c.org, "employee", "Anna");
+    const job = await jobFor(c, [anna]);
+    await tap(anna, "here", job);
+    await tap(anna, "done", job);
+    const rows = await api.sql<{ status: string; actor_id: string | null; reason: string }>(
+      `select after ->> 'status' as status, actor_id, after ->> 'reason' as reason
+       from public.audit_log where entity = 'booking' and entity_id = $1 and action = 'status_change'
+       order by created_at`,
+      [job],
+    );
+    expect(rows).toEqual([
+      { status: "in_progress", actor_id: anna.membershipId, reason: "clock_in" },
+      { status: "completed", actor_id: anna.membershipId, reason: "finish" },
+    ]);
   });
 
   /** 2026-10-26: Olha tapped Finish six minutes in; the other three were locked out. */

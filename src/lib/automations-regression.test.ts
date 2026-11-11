@@ -157,10 +157,7 @@ vi.mock("@/lib/format", () => ({
   formatDateTime: vi.fn((value: string) => value),
   formatCurrencyCents: vi.fn((amount: number) => String(amount)),
 }));
-vi.mock("@/lib/job-sync", () => ({
-  syncJob: mocks.syncJob,
-  jobSyncMode: () => (process.env.JOB_STATE_WRITE === "1" ? "write" : "shadow"),
-}));
+vi.mock("@/lib/job-sync", () => ({ syncJob: mocks.syncJob }));
 
 const {
   autoCompletePastBookings,
@@ -541,110 +538,47 @@ describe("autoGenerateRecurringInvoices", () => {
 });
 
 describe("autoCompletePastBookings", () => {
-  it("does not invoice when the booking status update fails", async () => {
-    installAutoCompleteResponder({ statusError: "booking update rejected" });
-
-    await expect(autoCompletePastBookings()).resolves.toEqual({ completed: 0 });
-    expect(mocks.calls.some((query) => query.table === "invoices" && query.operation === "insert")).toBe(false);
-    expect(mocks.syncJob).not.toHaveBeenCalled();
-  });
-
-  it("leaves unstaffed past bookings untouched", async () => {
-    installAutoCompleteResponder({ staffed: false });
-
-    await expect(autoCompletePastBookings()).resolves.toEqual({ completed: 0 });
-    expect(
-      mocks.calls.some(
-        (query) =>
-          query.table === "bookings" &&
-          query.operation === "update" &&
-          (query.payload as { status?: string })?.status === "completed",
-      ),
-    ).toBe(false);
-    expect(mocks.calls.some((query) => query.table === "invoices" && query.operation === "insert")).toBe(false);
-  });
-
-  it("does not close a booking while someone is still clocked in", async () => {
-    installAutoCompleteResponder({ openShift: true });
-
-    await expect(autoCompletePastBookings()).resolves.toEqual({ completed: 0 });
-    expect(
-      mocks.calls.some(
-        (query) =>
-          query.table === "bookings" &&
-          query.operation === "update" &&
-          (query.payload as { status?: string })?.status === "completed",
-      ),
-    ).toBe(false);
-    expect(mocks.calls.some((query) => query.table === "invoices" && query.operation === "insert")).toBe(false);
-  });
-
-  it("completes successfully before attempting invoice creation", async () => {
-    installAutoCompleteResponder();
-
-    await expect(autoCompletePastBookings()).resolves.toEqual({ completed: 1 });
-    const statusUpdate = mocks.calls.findIndex(
+  /** The sweep writes no status of its own: the rules decide every job. */
+  const wroteStatus = () =>
+    mocks.calls.some(
       (query) =>
         query.table === "bookings" &&
         query.operation === "update" &&
         (query.payload as { status?: string })?.status === "completed",
     );
-    const invoiceInsert = mocks.calls.findIndex(
-      (query) => query.table === "invoices" && query.operation === "insert",
-    );
-    expect(statusUpdate).toBeGreaterThanOrEqual(0);
-    expect(invoiceInsert).toBeGreaterThan(statusUpdate);
+
+  it("asks the rules about a due job, and writes no status or invoice itself", async () => {
+    installAutoCompleteResponder();
+    mocks.syncJob.mockResolvedValueOnce({ before: "confirmed", after: "completed" });
+
+    await expect(autoCompletePastBookings()).resolves.toEqual({ completed: 1 });
     expect(mocks.syncJob).toHaveBeenCalledWith(booking.id, "nightly_sweep");
+    expect(wroteStatus()).toBe(false);
+    expect(mocks.calls.some((query) => query.table === "invoices" && query.operation === "insert")).toBe(false);
   });
 
-  describe("in write mode", () => {
-    const wroteStatus = () =>
-      mocks.calls.some(
-        (query) =>
-          query.table === "bookings" &&
-          query.operation === "update" &&
-          (query.payload as { status?: string })?.status === "completed",
-      );
-    beforeEach(() => {
-      process.env.JOB_STATE_WRITE = "1";
-    });
-    afterEach(() => {
-      delete process.env.JOB_STATE_WRITE;
-    });
+  it("does not count a job the rules left open", async () => {
+    installAutoCompleteResponder();
+    mocks.syncJob.mockResolvedValueOnce({ before: "confirmed", after: "confirmed" });
 
-    it("writes no status and drafts no invoice itself; the rules do both", async () => {
-      installAutoCompleteResponder();
-      mocks.syncJob.mockResolvedValueOnce({ before: "confirmed", after: "completed" });
+    await expect(autoCompletePastBookings()).resolves.toEqual({ completed: 0 });
+    expect(wroteStatus()).toBe(false);
+  });
 
-      await expect(autoCompletePastBookings()).resolves.toEqual({ completed: 1 });
-      expect(mocks.syncJob).toHaveBeenCalledWith(booking.id, "nightly_sweep");
-      expect(wroteStatus()).toBe(false);
-      expect(mocks.calls.some((query) => query.table === "invoices" && query.operation === "insert")).toBe(false);
-    });
+  it("leaves a job alone while someone is on the clock", async () => {
+    installAutoCompleteResponder({ openShift: true });
 
-    it("does not count a job the rules left open", async () => {
-      installAutoCompleteResponder();
-      mocks.syncJob.mockResolvedValueOnce({ before: "confirmed", after: "confirmed" });
+    await expect(autoCompletePastBookings()).resolves.toEqual({ completed: 0 });
+    expect(mocks.syncJob).not.toHaveBeenCalled();
+    expect(wroteStatus()).toBe(false);
+  });
 
-      await expect(autoCompletePastBookings()).resolves.toEqual({ completed: 0 });
-      expect(wroteStatus()).toBe(false);
-    });
+  it("leaves an unstaffed past job alone", async () => {
+    installAutoCompleteResponder({ staffed: false });
 
-    it("still leaves a job alone while someone is on the clock", async () => {
-      installAutoCompleteResponder({ openShift: true });
-
-      await expect(autoCompletePastBookings()).resolves.toEqual({ completed: 0 });
-      expect(mocks.syncJob).not.toHaveBeenCalled();
-      expect(wroteStatus()).toBe(false);
-    });
-
-    it("still leaves an unstaffed past job alone", async () => {
-      installAutoCompleteResponder({ staffed: false });
-
-      await expect(autoCompletePastBookings()).resolves.toEqual({ completed: 0 });
-      expect(mocks.syncJob).not.toHaveBeenCalled();
-      expect(wroteStatus()).toBe(false);
-    });
+    await expect(autoCompletePastBookings()).resolves.toEqual({ completed: 0 });
+    expect(mocks.syncJob).not.toHaveBeenCalled();
+    expect(wroteStatus()).toBe(false);
   });
 });
 

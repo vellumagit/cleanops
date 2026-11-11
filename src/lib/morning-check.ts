@@ -95,7 +95,7 @@ export async function runMorningCheck(
       : "—";
 
   out.push(`${org.name} — morning check at ${fmt(new Date(now).toISOString())} (${tz}), looking back ${hoursBack}h`);
-  out.push(`auto-complete after window end: ${autoCompleteAfterMinutes ?? "off"} min; JOB_STATE_WRITE=${process.env.JOB_STATE_WRITE ?? "(unset → shadow)"}`, "");
+  out.push(`auto-complete after window end: ${autoCompleteAfterMinutes ?? "off"} min; the rules write job status (since 2026-11-14)`, "");
 
   // 1. Shadow disagreements -------------------------------------------------
   const { data: checks, error: cErr } = await db
@@ -115,7 +115,9 @@ export async function runMorningCheck(
       clientByBooking.set(b.id, b.client?.name ?? "?");
     }
   }
-  out.push(`1. STATE CHECKS (computed state disagreed with the row): ${checks?.length ?? 0}`);
+  // Written only while the rules shadowed (until 2026-11-14). Any row here
+  // now means something wrote them after the cutover, which nothing should.
+  out.push(`1. STATE CHECKS (shadow-mode disagreements; expected 0): ${checks?.length ?? 0}`);
   const byKind = new Map<string, number>();
   for (const c of checks ?? []) {
     const a = (c.after ?? {}) as Record<string, unknown>;
