@@ -171,8 +171,8 @@ export default async function BillingPage() {
 
       {!enabled && !hasOverride && (
         <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-xs text-amber-700 dark:text-amber-200">
-          Billing is scaffolded but not yet enabled in this environment. Set{" "}
-          <code>STRIPE_ENABLED=true</code> in Vercel to start charging.
+          Billing isn&apos;t switched on for this workspace yet, so nothing
+          here will charge you. We&apos;ll let you know before that changes.
         </div>
       )}
 

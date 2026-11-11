@@ -177,12 +177,58 @@ function inspect(result: MaybeResult, table: string, failClosed: boolean): Error
 }
 
 /**
+ * What one query chain did, noticed as it was built.
+ *
+ * PostgREST returns at most 1000 rows and says nothing when there were more:
+ * a read with no limit that comes back with exactly 1000 has almost
+ * certainly lost rows, and the caller carries on with a partial answer. And a
+ * long .in() list fails outright at around 390 ids, when the response headers
+ * overflow (September sweep, Tier 1 #5: crew read as empty, then saved as
+ * empty). Both were on the half-shipped list as "reads still truncate
+ * silently". Neither is silent now: each logs once, where the error tracker
+ * sees it. Logging only, for now; whether a truncated read should also stop
+ * a cron is a decision to take with the log in hand.
+ */
+type Watch = { bounded: boolean; write: boolean; countOnly: boolean };
+const POSTGREST_MAX_ROWS = 1000;
+const LONG_IN_LIST = 300;
+
+function observe(watch: Watch, method: string, args: unknown[], table: string): void {
+  if (method === "limit" || method === "range" || method === "single" || method === "maybeSingle") {
+    watch.bounded = true;
+  } else if (method === "insert" || method === "update" || method === "upsert" || method === "delete") {
+    watch.write = true;
+  } else if (method === "select") {
+    if ((args[1] as { head?: boolean } | undefined)?.head) watch.countOnly = true;
+  } else if (method === "in" && Array.isArray(args[1]) && args[1].length > LONG_IN_LIST) {
+    console.error(
+      `[db-long-in] ${table}: .in("${String(args[0])}") with ${args[1].length} values. Around 390 ids the request fails outright; chunk it with selectInChunks (lib/supabase/chunked-in.ts).`,
+    );
+  }
+}
+
+function warnIfTruncated(result: MaybeResult, table: string, watch: Watch): void {
+  if (watch.bounded || watch.write || watch.countOnly) return;
+  const data = (result as { data?: unknown } | null)?.data;
+  if (Array.isArray(data) && data.length === POSTGREST_MAX_ROWS) {
+    console.error(
+      `[db-truncated] ${table}: exactly ${POSTGREST_MAX_ROWS} rows came back from a read with no limit. PostgREST stops there without saying so, so rows are almost certainly missing. Page the read, or narrow it.`,
+    );
+  }
+}
+
+/**
  * Wrap one PostgREST builder so awaiting it inspects the result. Whether a
  * failure rejects was decided when the query was issued (`.from()`), where
  * the scope is unambiguous; by the time the promise settles the async
  * context may be a different one.
  */
-function wrapBuilder<T extends object>(builder: T, table: string, failClosed: boolean): T {
+function wrapBuilder<T extends object>(
+  builder: T,
+  table: string,
+  failClosed: boolean,
+  watch: Watch = { bounded: false, write: false, countOnly: false },
+): T {
   return new Proxy(builder, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver);
@@ -204,6 +250,7 @@ function wrapBuilder<T extends object>(builder: T, table: string, failClosed: bo
                 if (onRejected) return onRejected(failure);
                 return Promise.reject(failure);
               }
+              warnIfTruncated(res, table, watch);
               return onFulfilled ? onFulfilled(res) : res;
             },
             onRejected,
@@ -214,12 +261,13 @@ function wrapBuilder<T extends object>(builder: T, table: string, failClosed: bo
       // keep the wrapper on it so the chain stays observed.
       if (typeof value === "function") {
         return (...args: unknown[]) => {
+          observe(watch, String(prop), args, table);
           const out = (value as (...a: unknown[]) => unknown).apply(
             target,
             args,
           );
           return out && typeof out === "object" && "then" in (out as object)
-            ? wrapBuilder(out as object, table, failClosed)
+            ? wrapBuilder(out as object, table, failClosed, watch)
             : out;
         };
       }

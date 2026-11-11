@@ -54,6 +54,23 @@ const BaseSchema = z.object({
   // that use sendEmail() directly are unaffected.
   CLIENT_EMAILS_PAUSED: z.enum(["true", "false"]).optional(),
 
+  // Job status: unset = the rules shadow (compute, compare, log); "1" = the
+  // rules write. One-way door on 2026-11-14 (docs/cutover-2026-11-14.md);
+  // the flag and the shadow branch are deleted once that has held.
+  JOB_STATE_WRITE: z.enum(["1"]).optional(),
+
+  // Incident sub-switches for the pause above, and their SMS counterpart.
+  INVOICE_EMAILS_UNPAUSED: z.enum(["true", "false"]).optional(),
+  CLIENT_SMS_PAUSED: z.enum(["true", "false"]).optional(),
+
+  // Comma-separated sender domains verified in Resend, beyond the platform's.
+  RESEND_VERIFIED_DOMAINS: z.string().optional(),
+
+  // Optional services. Without the key the feature is simply off: the
+  // assistant says it is unavailable, address lookup returns an error.
+  ANTHROPIC_API_KEY: z.string().optional(),
+  GOOGLE_PLACES_API_KEY: z.string().optional(),
+
   // Morning check (/api/cron/morning-check, 8 AM Edmonton): who gets the
   // email, and which org it watches (defaults to Svit). Unset recipient =
   // the cron returns 500 and sends nothing.

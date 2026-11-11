@@ -40,9 +40,13 @@ function blankedSecrets(): Record<string, string> {
     if (!existsSync(path)) continue;
     for (const line of readFileSync(path, "utf8").split(/\r?\n/)) {
       const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(line);
-      // Defined-but-empty wins over the file: Next never overrides a variable
-      // the process already has.
-      if (m && !KEEP.has(m[1])) out[m[1]] = "";
+      // Defined wins over the file: Next never overrides a variable the
+      // process already has. Empty for secrets; but an on/off flag has to be
+      // a valid "off", because src/lib/env.ts rejects an empty string for
+      // those and every page that asks for the environment would fail.
+      if (!m || KEEP.has(m[1])) continue;
+      const key = m[1];
+      out[key] = /_(ENABLED|PAUSED|UNPAUSED)$/.test(key) ? "false" : /_ENVIRONMENT$/.test(key) ? "sandbox" : "";
     }
   }
   return out;
@@ -154,6 +158,14 @@ async function main() {
     bea.membershipId,
     draftRun.id,
   ]);
+
+  // An integration that stopped working, so Settings -> Integrations has
+  // something to say about it.
+  await sql(
+    `insert into public.integration_connections (organization_id, provider, status, last_error, external_account_id)
+     values ($1, 'quickbooks', 'error', 'QBO token refresh failed: 400 invalid_grant', '9341453')`,
+    [org],
+  );
 
   // ── Who you can be ───────────────────────────────────────────────────────
   const people = { owner, manager, anna, bea };

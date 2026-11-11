@@ -1,0 +1,80 @@
+# Half-shipped inventory — every row has a verdict (2026-11-10)
+
+Slice 10 of `finish-plan-2026-10-28.md`. The inventory was written on
+2026-10-28 (the plan's list, plus the longer `docs/maps/map-half-shipped.md`).
+Each row was re-checked against the code and against production (read-only,
+counts only) on 2026-11-10. Nothing here is from memory.
+
+## Closed
+
+| Row | How |
+| --- | --- |
+| Cleaner clock-ins never carry the phone's tap time | The app's clock-in actions bound the tap time and write through the service role, which the insert guard lets through. A row a cleaner inserts directly still takes the server's clock, on purpose. Pinned in `test/db/rls.test.ts` |
+| Morning check never scheduled | `/api/cron/morning-check` emails at 8 AM. `scripts/shadow-morning-check.ts` is the script it replaced |
+| Help describes buttons that no longer exist | Most was rewritten in October. Today: the last "Start job" became "I'm here", and the sentence promising flat and percentage pay types is gone |
+| CI "validate cron schedules" red on every push | Green. CI now also runs lint and the database tests |
+| No tests on any server action | 61 scenarios run the real actions against a real database (`test/db/*.api.test.ts`) |
+| Stale worktree and branch | Not on this machine |
+| `verifyStripeSignaturePlaceholder` | Deleted today; nothing called it |
+
+## Fixed today
+
+| Row | What changed |
+| --- | --- |
+| Security Batch B: webhook secrets readable by every member | Migration `20261110040000`. Only owners and admins read webhooks. No webhook exists in production, so nothing was exposed |
+| Security Batch B: integration events with no company readable by any signed-in user of any company | Same migration. No such row exists in production |
+| A broken integration just disappears | Settings → Integrations now says which connection stopped syncing, when, and why. Production has five company-level connections in an error state (QuickBooks and Sage on the test company, one Google Calendar) |
+| Reads truncate silently at 1000 rows; long id lists fail at about 390 | The query guard logs both (`[db-truncated]`, `[db-long-in]`). Logging only for now. Svit has 879 bookings, 1552 audit rows and 1347 notifications, so this will start speaking soon |
+| Webhooks offers events that can never fire | "Invoice sent" and "Client submitted review" removed; the page now says webhooks fire for API and website-form changes, not for changes made in the app |
+| Billing page shows a developer's note to owners | Reworded: billing is not switched on and nothing will charge |
+| Flags missing from `src/lib/env.ts` | `JOB_STATE_WRITE`, `INVOICE_EMAILS_UNPAUSED`, `CLIENT_SMS_PAUSED`, `RESEND_VERIFIED_DOMAINS`, `ANTHROPIC_API_KEY`, `GOOGLE_PLACES_API_KEY` added |
+
+Earlier the same day, from the same audit: seven internal database functions
+closed to the public key (`20261110010000`), and shift history no longer
+deleted with a member (`20261110030000`).
+
+## Dated
+
+| Row | When |
+| --- | --- |
+| Job-state rules in shadow, two systems writing status | Saturday 2026-11-14, `docs/cutover-2026-11-14.md` |
+| Feedback board has two items since September | Saturday, with Svitlana |
+
+## Yours to do (nothing to build)
+
+| Row | What it needs |
+| --- | --- |
+| **The Friday changelog has not gone out since 2026-10-09** | The entries were written by a scheduled task on the old computer. It does not exist on this one. Say the word and it is recreated here; it writes to production and the result is emailed to owners, so it is not something to switch on unasked |
+| Sentry unreadable from a session | A Sentry token or connector. Until then, errors arrive by you pasting them |
+| QuickBooks production keys | Your step in the Intuit dashboard. Sandbox-verified 2026-09-05 |
+| Square dashboard checklist | Your step. One disconnected connection, no live use |
+
+## Decide: build it or drop it
+
+Recommendation first in each.
+
+| Row | Facts | Recommendation |
+| --- | --- | --- |
+| Tokens readable by every member: invoice and estimate links, contract signing links, **job review links** | Any member can read these columns through the API. The review link matters most: a cleaner could read the link for her own job and post her own five-star review, and review bonuses pay money. 18 reviews exist | **Build.** Needs the tokens moved out of tables members can read; it is a design change, not a one-line policy |
+| Inbound SMS: a client's real reply is acknowledged and thrown away | STOP/START/HELP work. Anything else is stored nowhere and shown to nobody | **Build the small version:** put the reply in the office's notifications. Otherwise say on the texts that replies are not read |
+| Part-paid invoices past due are never chased (money list #8) | No such invoice today; the reminder is off for Svit | **Build** the remind-on-balance version when reminders are switched on |
+| Property-level default checklist | The field saves and nothing applies it. No property has one set | **Drop** the field until someone asks |
+| `pay_type` (flat, percent) | Column and constraint exist; nothing writes it; everyone is hourly | **Drop** the column later. Help no longer promises it |
+| Assistant conversations saved and never read | 18 rows. The flag button already emails support | **Drop** the saving |
+| Webhooks for changes made in the app | Nobody has configured a webhook | **Leave** as API-only. After the cutover, status changes have one place to fire from if it is ever wanted |
+| Simulated SMS numbers never upgraded | No company has one | **Leave** |
+| Seven "columns not in the generated types" second queries | Correctness is now checked by `test/db/query-shapes.test.ts` | **Leave**; regenerate types when convenient |
+| One-off scripts from the Supabase project move, and the replaced morning-check script | `export-all-data.ts`, `export-supplement.ts`, `import-all-data.ts`, `verify-export.ts`, `detect-missing-columns.ts`, `shadow-morning-check.ts`. The on-disk export with auth users is not on this machine | **Delete.** Not done unasked |
+
+## Still open from the security audit, not re-tested today
+
+Listed so they are not mistaken for closed: login and signup echo the auth
+server's messages (lets someone test whether an email has an account, low);
+estimate PDFs are public to anyone holding the file's id; the public API
+echoes database error text; an API key keeps working for a suspended company.
+
+## Still open from August, each a business rule
+
+Not re-verified today: the Timesheets CSV mixes employees and subcontractors
+with no column to tell them apart; a bonus given to a subcontractor has no pay
+run that will ever pay it.

@@ -163,11 +163,14 @@ describe("inside a company", () => {
     }));
 
   /**
-   * time_entries_employee_insert_guard. The phone's tap time is not kept
-   * for a cleaner: the server's clock is. That is deliberate against a
-   * back-dated clock-in, and it is also the open item "clock-ins never carry
-   * the phone's tap time" on the half-shipped list. Whichever way that is
-   * decided, it is decided here.
+   * time_entries_employee_insert_guard. A row a cleaner inserts through her
+   * OWN client takes the server's clock, whatever she sends: that is the
+   * guard against a back-dated clock-in typed into the browser console. The
+   * app no longer inserts that way. Its clock-in actions check who she is,
+   * bound the tap time (lib/punch-time.ts), and write through the service
+   * role, which the guard lets through, so a tap sent late from a dead zone
+   * keeps the time she tapped. ("Clock-ins never carry the phone's tap
+   * time" on the half-shipped list: closed, by that route.)
    */
   it("a cleaner's clock-in takes the server's time and cannot arrive already finished", () =>
     scenario(db, async (w) => {
@@ -301,5 +304,45 @@ describe("functions closed to the public key (migration 20261110010000)", () => 
         [c.orgA, user.id],
       );
       expect(hired).toHaveLength(1);
+    }));
+});
+
+describe("what only an owner or admin may read (migration 20261110040000)", () => {
+  /**
+   * A webhook row carries the secret the company's endpoint trusts. Until
+   * 2026-11-10 any member could read it.
+   */
+  it("a webhook's signing secret is not for cleaners or managers", () =>
+    scenario(db, async (w) => {
+      const c = await cast(w);
+      await w.seed(
+        "insert into public.webhooks (organization_id, name, url, secret) values ($1, 'Zapier', 'https://example.test/hook', 'whsec_not_for_everyone')",
+        [c.orgA],
+      );
+      const read = "select secret from public.webhooks";
+      expect(await w.as(c.anna.userId)(read)).toEqual([]);
+      expect(await w.as(c.manager.userId)(read)).toEqual([]);
+      expect(await w.as(c.outsider.userId)(read)).toEqual([]);
+      expect(await w.anon(read)).toEqual([]);
+      expect(await w.as(c.owner.userId)(read)).toEqual([{ secret: "whsec_not_for_everyone" }]);
+    }));
+
+  /**
+   * An event that arrives with no company attached is an unmatched provider
+   * webhook, stored with its whole payload. It used to be readable by every
+   * signed-in user of every company.
+   */
+  it("an integration event with no company is for nobody; one with a company is for that company's owner", () =>
+    scenario(db, async (w) => {
+      const c = await cast(w);
+      const event = `insert into public.integration_events (organization_id, provider, event_id, event_type, payload)
+                     values ($1, 'square', $2, 'payment.updated', '{"amount": 14000}'::jsonb)`;
+      await w.seed(event, [null, "evt_unmatched"]);
+      await w.seed(event, [c.orgA, "evt_company_a"]);
+      const read = "select event_id from public.integration_events order by event_id";
+      expect(await w.as(c.owner.userId)(read)).toEqual([{ event_id: "evt_company_a" }]);
+      expect(await w.as(c.anna.userId)(read)).toEqual([]);
+      expect(await w.as(c.outsider.userId)(read)).toEqual([]);
+      expect(await w.service(read)).toHaveLength(2);
     }));
 });

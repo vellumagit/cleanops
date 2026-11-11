@@ -33,9 +33,7 @@ const EVENT_OPTIONS: { value: string; label: string }[] = [
   { value: "booking.completed", label: "Booking marked complete" },
   { value: "booking.cancelled", label: "Booking cancelled" },
   { value: "invoice.created", label: "Invoice drafted" },
-  { value: "invoice.sent", label: "Invoice sent to client" },
   { value: "invoice.paid", label: "Invoice paid" },
-  { value: "review.submitted", label: "Client submitted review" },
   { value: "client.created", label: "New client added" },
 ];
 
@@ -56,7 +54,7 @@ export default async function WebhooksPage() {
   return (
     <PageShell
       title="Webhooks"
-      description="Send real-time POST requests to external systems when events occur."
+      description="Send real-time POST requests to external systems when something changes through the API or a website form. Changes made inside the app don't send webhooks yet."
       actions={
         <Link
           href="/app/settings"

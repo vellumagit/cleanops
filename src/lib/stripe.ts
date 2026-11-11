@@ -460,16 +460,3 @@ export async function reportSmsOverageUsage(
   await usage(subscriptionItemId, { quantity, action: "increment", timestamp: "now" });
 }
 
-// Legacy export kept for the old placeholder import — no-op wrapper around
-// the real verifier so nothing breaks.
-export type StripeWebhookEvent = Stripe.Event;
-export function verifyStripeSignaturePlaceholder(
-  rawBody: string,
-  signatureHeader: string | null,
-): Stripe.Event | null {
-  try {
-    return verifyWebhookSignature(rawBody, signatureHeader);
-  } catch {
-    return null;
-  }
-}

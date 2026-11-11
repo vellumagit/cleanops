@@ -71,6 +71,14 @@ type ProviderCard = {
  *   2. "Not connected" — env vars exist but no active connection
  *   3. "Connected" — active row in integration_connections
  */
+const PROVIDER_LABELS: Record<string, string> = {
+  quickbooks: "QuickBooks",
+  sage: "Sage",
+  google_calendar: "Google Calendar",
+  square: "Square",
+  stripe: "Stripe",
+};
+
 export default async function IntegrationsPage({
   searchParams,
 }: {
@@ -108,6 +116,32 @@ export default async function IntegrationsPage({
     )
     .eq("organization_id", membership.organization_id)
     .eq("status", "active");
+
+  // A connection that stopped working (a revoked grant, an expired token) is
+  // flipped to "error" by the sync that hit it. The read above only sees
+  // active rows, so that card went back to a plain "Not connected" with no
+  // word on why, and nothing prompted anyone to reconnect: the books or the
+  // calendar just quietly stopped syncing. Read the broken ones too and say
+  // so at the top of the page. Company-level connections only; a cleaner's
+  // own calendar is hers to see on her profile.
+  const { data: brokenRows } = (await supabase
+    .from("integration_connections")
+    .select("provider, last_error, updated_at")
+    .eq("organization_id", membership.organization_id)
+    .eq("status", "error")
+    .is("membership_id" as never, null as never)
+    .order("updated_at", { ascending: false })) as unknown as {
+    data: Array<{ provider: string; last_error: string | null; updated_at: string }> | null;
+  };
+  const activeProviders = new Set((rows ?? []).map((r) => r.provider as string));
+  const brokenConnections = [
+    ...new Map(
+      (brokenRows ?? [])
+        .filter((r) => !activeProviders.has(r.provider))
+        .reverse()
+        .map((r) => [r.provider, r] as const),
+    ).values(),
+  ];
 
   // Stripe Connect status lives on the organizations row (not
   // integration_connections) because we only store the account id + cached
@@ -593,6 +627,19 @@ export default async function IntegrationsPage({
             again — if it keeps failing, this code tells us why.
           </div>
         )}
+        {brokenConnections.map((b) => (
+          <div
+            key={b.provider}
+            className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-200"
+          >
+            <span className="font-medium">
+              {PROVIDER_LABELS[b.provider] ?? b.provider} stopped syncing
+            </span>{" "}
+            on {formatDateTime(b.updated_at, tz)}
+            {b.last_error ? <>: <span className="font-mono text-xs">{b.last_error}</span></> : "."}{" "}
+            Connect it again below to pick up where it left off.
+          </div>
+        ))}
         {/* Payment processors */}
         <div>
           <div className="mb-3 flex items-center gap-2">
