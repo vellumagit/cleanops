@@ -88,5 +88,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # test/db/*.api.test.ts run the app's code against a real PostgREST in
+      # front of an in-process Postgres. The binary is pinned and checksummed
+      # in the script; without it those tests fail here rather than skip.
+      - name: Fetch PostgREST for the database tests
+        run: node scripts/fetch-postgrest.mjs
+
       - name: Run unit tests
         run: pnpm test
