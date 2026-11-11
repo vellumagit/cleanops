@@ -2,7 +2,6 @@ import Link from "next/link";
 import { Calendar, MapPin, Star } from "lucide-react";
 import { requireClient } from "@/lib/client-auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
   formatDateTime,
   formatDurationMinutes,
@@ -19,7 +18,6 @@ export default async function ClientJobsPage() {
   // same bookings. This list did not, so a client's two screens disagreed.
   const tz = await getOrgTimezone(client.organization_id);
   const supabase = await createSupabaseServerClient();
-  const admin = createSupabaseAdminClient();
 
   const { data: jobs } = await supabase
     .from("bookings")
@@ -41,38 +39,14 @@ export default async function ClientJobsPage() {
     .filter((j) => j.status === "completed")
     .map((j) => j.id);
 
-  const tokenMap = new Map<string, string | null>(); // bookingId → review_token
+  // bookingId → the token in its "Leave a review" link. Signed and
+  // recomputed, never read from or written to the database
+  // (lib/review-token.ts), so volunteering a review doesn't depend on having
+  // been asked for one, and loading this page changes nothing.
+  const tokenMap = new Map<string, string | null>();
   if (completedIds.length > 0) {
-    const { data: tokenRows } = (await admin
-      .from("bookings")
-      .select("id, review_token")
-      .in("id", completedIds)) as unknown as {
-      data: Array<{ id: string; review_token: string | null }> | null;
-    };
-    for (const row of tokenRows ?? []) {
-      tokenMap.set(row.id, row.review_token ?? null);
-    }
-
-    // Mint tokens for completed visits that don't have one yet. Review
-    // links used to exist only after the ask-email cron generated them —
-    // throttle the asking (review cadence setting) and the portal's
-    // "Leave a review" links would starve. Volunteering must never depend
-    // on having been asked.
-    const missing = completedIds.filter((id) => !tokenMap.get(id));
-    if (missing.length > 0) {
-      const { generateClaimToken } = await import("@/lib/claim-token");
-      for (const id of missing.slice(0, 20)) {
-        const token = await generateClaimToken();
-        const { error: mintErr } = (await admin
-          .from("bookings")
-          .update({ review_token: token } as never)
-          .eq("id", id)
-          .is("review_token" as never, null as never)) as unknown as {
-          error: { message: string } | null;
-        };
-        if (!mintErr) tokenMap.set(id, token);
-      }
-    }
+    const { reviewLinkToken } = await import("@/lib/review-token");
+    for (const id of completedIds) tokenMap.set(id, reviewLinkToken("booking", id));
   }
 
   // Fetch reviews already submitted by this client so we can show their

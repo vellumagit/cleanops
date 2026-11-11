@@ -363,7 +363,6 @@ export async function autoOnInvoicePaid(invoiceId: string) {
       await import("@/lib/email-templates");
     const { formatCurrencyCents } = await import("@/lib/format");
     const { getOrgCurrency } = await import("@/lib/org-currency");
-    const { generateClaimToken } = await import("@/lib/claim-token");
 
     const { data: invoice } = await db
       .from("invoices")
@@ -525,12 +524,16 @@ export async function autoOnInvoicePaid(invoiceId: string) {
       data: { review_token: string | null } | null;
     };
 
-    let reviewToken = existing?.review_token ?? null;
-    if (!reviewToken) {
-      reviewToken = generateClaimToken();
+    // The link is signed, not stored, so it is the same link however many
+    // times it is sent (lib/review-token.ts). The column gets its hash the
+    // first time, as the "a link was issued" marker; a row that already has
+    // one (an older emailed link) keeps it, so that link still works too.
+    const { reviewLinkToken, storedReviewToken } = await import("@/lib/review-token");
+    const reviewToken = reviewLinkToken("invoice", invoiceId);
+    if (!existing?.review_token) {
       await db
         .from("invoices")
-        .update({ review_token: reviewToken })
+        .update({ review_token: storedReviewToken(reviewToken) })
         .eq("id", invoiceId);
     }
 

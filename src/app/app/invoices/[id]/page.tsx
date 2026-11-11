@@ -55,6 +55,7 @@ import { PaymentRowActions } from "./payment-row-actions";
 import { RefundPaymentButton } from "./refund-payment-button";
 import { KeepTipsButton } from "@/app/app/payroll/keep-tips-button";
 import { humanizePaymentMethod } from "@/lib/validators/invoice-payment";
+import { reviewLinkToken } from "@/lib/review-token";
 
 export const metadata = { title: "Invoice" };
 
@@ -210,7 +211,8 @@ export default async function InvoiceDetailPage({
     .maybeSingle()) as unknown as {
     data: { review_token: string | null } | null;
   };
-  const reviewToken = reviewData?.review_token ?? null;
+  // The column only says whether a link was issued; the link is recomputed.
+  const reviewToken = reviewData?.review_token ? reviewLinkToken("invoice", id) : null;
 
   // Auto-send schedule (columns not yet in generated types).
   const { data: autoSendData } = (await supabase

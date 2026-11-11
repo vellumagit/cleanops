@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
 import { RateLimitedPage } from "@/components/rate-limited-page";
+import { legacyStoredForms, parseReviewLinkToken } from "@/lib/review-token";
 import { ReviewForm } from "./review-form";
 
 export const metadata: Metadata = {
@@ -49,15 +50,32 @@ export default async function PublicReviewPage({
     client: { name: string } | null;
   };
 
-  const { data: bookingMatch } = (await admin
-    .from("bookings")
-    .select(`
+  // A signed link names its job and proves it with a signature only the
+  // server can make. A link emailed before signed links existed is looked up
+  // by its hash. What the column holds is never accepted as the token: any
+  // member can read that column (lib/review-token.ts).
+  const signed = parseReviewLinkToken(token);
+  const legacy = signed ? [] : legacyStoredForms(token);
+  if (!signed && legacy.length === 0) notFound();
+  const lookup = (source: "booking" | "invoice") =>
+    signed
+      ? signed.source === source
+        ? { column: "id", values: [signed.id] }
+        : null
+      : { column: "review_token", values: legacy };
+
+  const bookingBy = lookup("booking");
+  const { data: bookingMatch } = bookingBy
+    ? ((await admin
+        .from("bookings")
+        .select(`
       id, organization_id, client_id, assigned_to,
       organization:organizations ( id, name ),
       client:clients ( name )
     `)
-    .eq("review_token" as never, token as never)
-    .maybeSingle()) as unknown as { data: BookingRow | null };
+        .in(bookingBy.column as never, bookingBy.values as never)
+        .maybeSingle()) as unknown as { data: BookingRow | null })
+    : { data: null as BookingRow | null };
 
   // ── Resolution: invoice token (legacy / parallel path) ───────────────────
   type InvoiceRow = {
@@ -70,7 +88,8 @@ export default async function PublicReviewPage({
   };
 
   let invoiceMatch: InvoiceRow | null = null;
-  if (!bookingMatch) {
+  const invoiceBy = lookup("invoice");
+  if (!bookingMatch && invoiceBy) {
     const { data: invRow } = (await admin
       .from("invoices")
       .select(`
@@ -78,7 +97,7 @@ export default async function PublicReviewPage({
         organization:organizations ( id, name ),
         client:clients ( name )
       `)
-      .eq("review_token" as never, token as never)
+      .in(invoiceBy.column as never, invoiceBy.values as never)
       .maybeSingle()) as unknown as { data: InvoiceRow | null };
     invoiceMatch = invRow;
   }

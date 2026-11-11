@@ -143,6 +143,12 @@ async function main() {
     [org, invoice.id, done],
   );
   await sql("update public.bookings set billing_invoice_id = $2 where id = $1", [done, invoice.id]);
+  // Paid, with a review link issued: the invoice page shows the link, and
+  // the column holds only a marker (src/lib/review-token.ts).
+  await sql(
+    "update public.invoices set status = 'paid', paid_at = now(), review_token = 'sha256:issued-in-the-seed' where id = $1",
+    [invoice.id],
+  );
 
   // Pay: both cleaners have a rate, and Bea's finished shift sits in a pay run
   // the office has prepared but not finalized. Her pay page must still show it.

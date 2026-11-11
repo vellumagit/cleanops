@@ -3,6 +3,7 @@
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { enterFailClosed } from "@/lib/supabase/query-guard";
 import { notifyReviewSubmitted } from "@/lib/automations";
+import { reviewTokenIsFor } from "@/lib/review-token";
 
 type ReviewState = {
   success: boolean;
@@ -87,7 +88,7 @@ export async function submitReviewAction(
       } | null;
     };
 
-    if (!booking || booking.review_token !== token) {
+    if (!booking || !reviewTokenIsFor(token, "booking", booking.id, booking.review_token)) {
       return { success: false, error: "Invalid or expired review link." };
     }
     // Reviews can only be submitted AFTER the job is completed. Without
@@ -128,7 +129,7 @@ export async function submitReviewAction(
       data: { review_token: string | null } | null;
     };
 
-    if (!tokenRow || tokenRow.review_token !== token) {
+    if (!tokenRow || !reviewTokenIsFor(token, "invoice", sourceId, tokenRow.review_token)) {
       return { success: false, error: "Invalid or expired review link." };
     }
     // Prefer paid_at as the anchor (invoice review tokens are minted

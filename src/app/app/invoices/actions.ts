@@ -14,7 +14,7 @@ import {
 } from "@/lib/validators/invoice-payment";
 import { localInputToUtcIso, parseDollarsToCents } from "@/lib/validators/common";
 import { normalizeTipCents } from "@/lib/tip-split";
-import { generateClaimToken } from "@/lib/claim-token";
+import { reviewLinkToken, storedReviewToken } from "@/lib/review-token";
 import { autoOnInvoicePaid } from "@/lib/automations";
 import { applyPrepaymentsToInvoice } from "@/lib/booking-prepayments";
 import { canCreateData } from "@/lib/subscription";
@@ -1378,7 +1378,9 @@ export async function generateReviewTokenAction(formData: FormData) {
   if (invoice.status !== "paid") return;
 
   if (!invoice.review_token) {
-    const token = generateClaimToken(16);
+    // Marks that a link was issued. The link itself is signed and never
+    // stored (lib/review-token.ts); the page recomputes it.
+    const token = storedReviewToken(reviewLinkToken("invoice", id));
     const { error: tokenErr } = await supabase
       .from("invoices")
       .update({ review_token: token } as never)

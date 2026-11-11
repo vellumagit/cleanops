@@ -29,6 +29,15 @@ counts only) on 2026-11-10. Nothing here is from memory.
 | Billing page shows a developer's note to owners | Reworded: billing is not switched on and nothing will charge |
 | Flags missing from `src/lib/env.ts` | `JOB_STATE_WRITE`, `INVOICE_EMAILS_UNPAUSED`, `CLIENT_SMS_PAUSED`, `RESEND_VERIFIED_DOMAINS`, `ANTHROPIC_API_KEY`, `GOOGLE_PLACES_API_KEY` added |
 
+Also fixed the same day, after this list was first written: **job review
+links.** A cleaner could read the link for her own job from the bookings table
+and leave her own five-star review, and review bonuses pay money. Review links
+are now signed by the server and not stored (`src/lib/review-token.ts`); links
+already emailed keep working through a hash, and migration `20261110050000`
+replaces the stored tokens with those hashes. **Run that one after the push.**
+`test/db/reviews.api.test.ts` has a cleaner read what she can read and fail to
+use it.
+
 Earlier the same day, from the same audit: seven internal database functions
 closed to the public key (`20261110010000`), and shift history no longer
 deleted with a member (`20261110030000`).
@@ -55,7 +64,7 @@ Recommendation first in each.
 
 | Row | Facts | Recommendation |
 | --- | --- | --- |
-| Tokens readable by every member: invoice and estimate links, contract signing links, **job review links** | Any member can read these columns through the API. The review link matters most: a cleaner could read the link for her own job and post her own five-star review, and review bonuses pay money. 18 reviews exist | **Build.** Needs the tokens moved out of tables members can read; it is a design change, not a one-line policy |
+| Tokens readable by every member: invoice and estimate links, contract signing links | Any member can read these columns through the API. With one, a member could open a client's invoice or estimate page, or sign a contract as the client. No money moves to the member by doing so | **Build**, the same way the review link was done (below): sign the link, keep only a hash |
 | Inbound SMS: a client's real reply is acknowledged and thrown away | STOP/START/HELP work. Anything else is stored nowhere and shown to nobody | **Build the small version:** put the reply in the office's notifications. Otherwise say on the texts that replies are not read |
 | Part-paid invoices past due are never chased (money list #8) | No such invoice today; the reminder is off for Svit | **Build** the remind-on-balance version when reminders are switched on |
 | Property-level default checklist | The field saves and nothing applies it. No property has one set | **Drop** the field until someone asks |

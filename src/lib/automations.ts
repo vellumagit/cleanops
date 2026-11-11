@@ -1854,7 +1854,6 @@ export async function sendBookingReviewRequests(): Promise<{
   const db = admin();
   const { sendOrgEmail, isClientEmailPaused } = await import("@/lib/email");
   const { reviewRequestEmail } = await import("@/lib/email-templates");
-  const { generateClaimToken } = await import("@/lib/claim-token");
 
   if (isClientEmailPaused()) {
     console.log(
@@ -2123,8 +2122,10 @@ export async function sendBookingReviewRequests(): Promise<{
     }
 
     try {
-      // Mint the review token and stamp sent timestamp atomically.
-      const reviewToken = await generateClaimToken();
+      // The link is signed, not stored (lib/review-token.ts). The column
+      // gets its hash, which only marks that a link was issued.
+      const { reviewLinkToken, storedReviewToken } = await import("@/lib/review-token");
+      const reviewToken = reviewLinkToken("booking", booking.id);
       // Atomic claim: WHERE review_request_sent_at IS NULL + .select()
       // back so we can tell whether we actually won. If a parallel
       // cron beat us to it (Vercel deduplicates same-cron invocations
@@ -2134,7 +2135,7 @@ export async function sendBookingReviewRequests(): Promise<{
       const { data: stamped, error: updateErr } = (await db
         .from("bookings")
         .update({
-          review_token: reviewToken,
+          review_token: storedReviewToken(reviewToken),
           review_request_sent_at: new Date().toISOString(),
         })
         .eq("id", booking.id)

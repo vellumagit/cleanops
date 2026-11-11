@@ -54,6 +54,11 @@ const BaseSchema = z.object({
   // that use sendEmail() directly are unaffected.
   CLIENT_EMAILS_PAUSED: z.enum(["true", "false"]).optional(),
 
+  // Signs review links (lib/review-token.ts). Optional: without it the key
+  // is derived from the service-role key. Set it if review links should
+  // survive that key being rotated.
+  REVIEW_LINK_SECRET: z.string().optional(),
+
   // Job status: unset = the rules shadow (compute, compare, log); "1" = the
   // rules write. One-way door on 2026-11-14 (docs/cutover-2026-11-14.md);
   // the flag and the shadow branch are deleted once that has held.
