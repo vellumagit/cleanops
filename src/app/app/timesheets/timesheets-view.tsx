@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useMemo, useState, useSyncExternalStore, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -38,6 +38,18 @@ import type {
 import { confirmTimeEntryAction } from "./actions";
 import { PtoApprovalPanel } from "./pto-approval-panel";
 import { ManualEntryDialog, type EditingEntry } from "./manual-entry-dialog";
+
+// The wall clock, for the "on the clock" elapsed labels. It is an outside
+// source that changes by itself, so the component subscribes to it: no
+// reading on the server (server time in the markup would not match the
+// browser's at hydration), then one tick a minute.
+function subscribeToMinutes(onTick: () => void) {
+  const timer = setInterval(onTick, 60_000);
+  return () => clearInterval(timer);
+}
+// Rounded down to the minute so two reads in one render agree.
+const currentMinute = () => Math.floor(Date.now() / 60_000) * 60_000;
+const noClockOnServer = () => null;
 
 type EmpSummary = {
   id: string;
@@ -352,12 +364,7 @@ export function TimesheetsView({
   // Browser clock for the "on the clock" elapsed labels: null during SSR
   // (server time in the markup ≠ client time at hydration = React text
   // mismatch), then ticking every minute so the label doesn't freeze.
-  const [nowTick, setNowTick] = useState<number | null>(null);
-  useEffect(() => {
-    setNowTick(Date.now());
-    const t = setInterval(() => setNowTick(Date.now()), 60_000);
-    return () => clearInterval(t);
-  }, []);
+  const nowTick = useSyncExternalStore<number | null>(subscribeToMinutes, currentMinute, noClockOnServer);
 
   // Manual-entry dialog state. "create" = fresh entry, "edit" = prefilled
   // for correcting an existing row.

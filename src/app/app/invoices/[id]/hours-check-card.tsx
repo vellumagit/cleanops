@@ -20,10 +20,18 @@ export async function HoursCheckCard({
   invoiceId: string;
   tz: string;
 }) {
+  // Only the read can fail, so only the read is guarded. A try around the
+  // markup too does not catch what it looks like it catches: a component
+  // that throws while rendering throws later, outside this function.
+  let check: Awaited<ReturnType<typeof invoiceHoursCheck>>;
   try {
     const supabase = await createSupabaseServerClient();
-    const check = await invoiceHoursCheck(supabase, invoiceId);
-    if (!check) return null;
+    check = await invoiceHoursCheck(supabase, invoiceId);
+  } catch (err) {
+    console.error("[hours-check] failed to load:", err);
+    return null;
+  }
+  if (!check) return null;
 
     return (
       <div className="rounded-lg border border-border bg-card p-5">
@@ -113,8 +121,4 @@ export async function HoursCheckCard({
         </div>
       </div>
     );
-  } catch (err) {
-    console.error("[hours-check] failed to render:", err);
-    return null;
-  }
 }

@@ -326,6 +326,13 @@ export function BookingForm({
   const [serviceTypeId, setServiceTypeId] = useState<string>(
     pickInitialServiceId(),
   );
+  // A new booking opens with a service already picked, and that service's
+  // price and length belong in Total and Duration from the first paint. They
+  // used to arrive from an effect after mount; same only-if-blank rule as
+  // handleServiceChange, and edit mode is left alone as before.
+  const [initialService] = useState(() =>
+    mode === "create" ? services.find((s) => s.id === pickInitialServiceId()) : undefined,
+  );
   const selectedService = services.find((s) => s.id === serviceTypeId);
 
   const [divideHours, setDivideHours] = useState<boolean>(
@@ -383,9 +390,13 @@ export function BookingForm({
    * guard's business, and it explains itself.
    */
   const scheduledMs = new Date(scheduledAtLocal).getTime();
+  // "Now" as of when the form opened. Reading the clock on every render made
+  // the option list depend on when React happened to re-render; the server's
+  // own check is what decides, and it reads the clock when the form is saved.
+  const [openedAtMs] = useState(() => Date.now());
   const beyondGrace =
     Number.isFinite(scheduledMs) &&
-    scheduledMs > Date.now() + EARLY_START_GRACE_MINUTES * 60_000;
+    scheduledMs > openedAtMs + EARLY_START_GRACE_MINUTES * 60_000;
   const statusOptions = [
     { value: "pending", label: "Pending" },
     { value: "confirmed", label: "Confirmed" },
@@ -436,7 +447,11 @@ export function BookingForm({
   const selectedClientProperties =
     clients.find((c) => c.id === selectedClientId)?.properties ?? [];
   const [totalValue, setTotalValue] = useState<string>(
-    defaults?.total_dollars ?? "",
+    () =>
+      (defaults?.total_dollars ?? "") ||
+      (initialService?.default_price_cents != null && initialService.default_price_cents > 0
+        ? (initialService.default_price_cents / 100).toFixed(2)
+        : ""),
   );
   // A comp clean. Kept beside Total rather than buried in a menu, because the
   // moment you need it is the moment you are typing a price you don't want.
@@ -444,7 +459,13 @@ export function BookingForm({
   // DurationInput is uncontrolled internally — to pre-fill after mount
   // we swap its `key` so it remounts with a new defaultMinutes. Only
   // kicked when a service prefill lands AND duration is still empty.
-  const [durationSeed, setDurationSeed] = useState<number>(defaultMinutes);
+  const [durationSeed, setDurationSeed] = useState<number>(
+    () =>
+      defaultMinutes ||
+      (initialService?.default_duration_minutes != null && initialService.default_duration_minutes > 0
+        ? initialService.default_duration_minutes
+        : 0),
+  );
   const [durationKey, setDurationKey] = useState<number>(0);
   // Tracks whether the user has typed in the duration input themselves.
   // DurationInput is uncontrolled so the parent doesn't see its value;
@@ -520,22 +541,6 @@ export function BookingForm({
       setDurationKey((k) => k + 1);
     }
   }
-
-  // Fire the service prefill once on mount in CREATE mode. The form
-  // already pre-selects a service via pickInitialServiceId() but its
-  // defaults (duration + price) don't propagate to Total / Duration
-  // until the user re-picks the same option. This effect closes that
-  // gap. Edit mode is intentionally skipped — defaults already populate
-  // the fields and a programmatic prefill would clobber them.
-  useEffect(() => {
-    if (mode === "create" && serviceTypeId) {
-      handleServiceChange(serviceTypeId);
-    }
-    // Intentionally fire once on mount only. handleServiceChange has
-    // its own only-if-blank gates so re-running it isn't dangerous,
-    // but we want one-shot semantics here.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const isEditingSeries = mode === "edit" && !!defaults?.series_id;
 

@@ -20,7 +20,9 @@ export default async function FieldClockPage() {
   const tz = await getOrgTimezone(membership.organization_id);
   const supabase = await createSupabaseServerClient();
 
-  const since = new Date();
+  // One reading of the clock for the whole page.
+  const now = new Date();
+  const since = new Date(now);
   since.setDate(since.getDate() - 7);
 
   // Today's assigned jobs, so clocking in is a one-tap intentional choice
@@ -140,7 +142,7 @@ export default async function FieldClockPage() {
   const openBookingLabel = open?.booking?.client?.name ?? null;
   const openBookingId = open?.booking?.id ?? null;
 
-  const soonMs = Date.now() + 10 * 60_000;
+  const soonMs = now.getTime() + 10 * 60_000;
   const nextJobRow = openBookingId
     ? rawJobs
         .filter(

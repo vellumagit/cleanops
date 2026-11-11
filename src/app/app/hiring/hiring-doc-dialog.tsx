@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useState } from "react";
 import { Pencil, Plus } from "lucide-react";
 import {
   Dialog,
@@ -48,12 +48,14 @@ export function HiringDocDialog({
   };
 }) {
   const [open, setOpen] = useState(false);
-  const [state, action] = useActionState(saveHiringDocAction, empty);
+  // Close on a successful save, from where the save finishes rather than
+  // from an effect watching for the result afterwards.
+  const [state, action] = useActionState(async (prev: HiringDocFormState, formData: FormData) => {
+    const next = await saveHiringDocAction(prev, formData);
+    if (next.savedAt) setOpen(false);
+    return next;
+  }, empty);
   const c = COPY[kind];
-
-  useEffect(() => {
-    if (state.savedAt) setOpen(false);
-  }, [state.savedAt]);
 
   return (
     <>

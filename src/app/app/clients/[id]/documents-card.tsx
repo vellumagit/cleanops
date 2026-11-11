@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Plus, FileText, Download, Trash2, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { formatDate } from "@/lib/format";
 import { CLIENT_DOCUMENT_CATEGORIES } from "./document-categories";
 import {
   uploadClientDocumentAction,
@@ -29,22 +30,17 @@ function formatSize(bytes: number | null): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
-
 export function ClientDocumentsCard({
   clientId,
   documents,
   canEdit,
+  tz,
 }: {
   clientId: string;
   documents: ClientDocument[];
   canEdit: boolean;
+  /** The company's zone: an upload's date is the office's date, not the viewer's. */
+  tz: string;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -168,7 +164,7 @@ export function ClientDocumentsCard({
                             {d.label}
                           </p>
                           <p className="text-[11px] text-muted-foreground">
-                            {formatDate(d.created_at)}
+                            {formatDate(d.created_at, tz)}
                             {d.size_bytes ? ` · ${formatSize(d.size_bytes)}` : ""}
                           </p>
                         </div>

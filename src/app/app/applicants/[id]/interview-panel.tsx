@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { MessageSquareText, Play, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { formatDate } from "@/lib/format";
 import {
   startInterviewAction,
   saveInterviewAction,
@@ -23,20 +24,12 @@ export type InterviewRow = {
 
 export type QuestionnaireOption = { id: string; title: string };
 
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
-
 /**
  * One recorded interview: the questions as they were asked (snapshot),
  * an answer box per question, one save. Uncontrolled inputs + FormData
  * keep typing cheap; the snapshot's length is the authority server-side.
  */
-function InterviewCard({ interview }: { interview: InterviewRow }) {
+function InterviewCard({ interview, tz }: { interview: InterviewRow; tz: string }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [dirty, setDirty] = useState(false);
@@ -84,7 +77,7 @@ function InterviewCard({ interview }: { interview: InterviewRow }) {
         </span>
         <span className="shrink-0 text-xs text-muted-foreground">
           {answered}/{interview.questions.length} answered ·{" "}
-          {formatDate(interview.created_at)}
+          {formatDate(interview.created_at, tz)}
           {interview.conducted_by_name
             ? ` · ${interview.conducted_by_name}`
             : ""}
@@ -149,10 +142,13 @@ export function InterviewPanel({
   applicantId,
   interviews,
   questionnaires,
+  tz,
 }: {
   applicantId: string;
   interviews: InterviewRow[];
   questionnaires: QuestionnaireOption[];
+  /** The company's zone: an interview's date is the office's date, not the viewer's. */
+  tz: string;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -174,7 +170,7 @@ export function InterviewPanel({
   return (
     <div className="space-y-4">
       {interviews.map((iv) => (
-        <InterviewCard key={iv.id} interview={iv} />
+        <InterviewCard key={iv.id} interview={iv} tz={tz} />
       ))}
 
       <div className="rounded-xl border border-dashed border-border bg-card/50 px-5 py-4">

@@ -844,6 +844,7 @@ export default async function ClientDetailPage({
             clientId={id}
             documents={clientDocuments}
             canEdit={canEdit}
+            tz={tz}
           />
 
           {/* ── Sent emails ── */}

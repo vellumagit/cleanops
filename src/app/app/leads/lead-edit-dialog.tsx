@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useState } from "react";
 import { Pencil } from "lucide-react";
 import {
   Dialog,
@@ -36,12 +36,13 @@ export function LeadEditDialog({
   note: string | null;
 }) {
   const [open, setOpen] = useState(false);
-  const [state, action] = useActionState(updateLeadAction, empty);
-
-  // Close on successful save — keyed on the success marker changing.
-  useEffect(() => {
-    if (state.savedAt) setOpen(false);
-  }, [state.savedAt]);
+  // Close on a successful save, from where the save finishes rather than
+  // from an effect watching for the result afterwards.
+  const [state, action] = useActionState(async (prev: LeadFormState, formData: FormData) => {
+    const next = await updateLeadAction(prev, formData);
+    if (next.savedAt) setOpen(false);
+    return next;
+  }, empty);
 
   return (
     <>

@@ -387,20 +387,18 @@ export function ManualEntryDialog({
   const [reassignOpen, setReassignOpen] = useState(false);
 
   // Reset fields when the dialog opens in a new mode or for a new entry.
-  // Keyed by target, not by dep identity: the parent re-renders once a
+  // Keyed by target, not by prop identity: the parent re-renders once a
   // minute (nowTick) and after router.refresh(), handing down fresh prop
-  // objects — without the key guard each of those refired this effect and
-  // silently reverted whatever times were mid-typing in the open dialog.
-  const lastResetKey = useRef<string | null>(null);
-  useEffect(() => {
-    if (!open) {
-      lastResetKey.current = null;
-      return;
-    }
-    const resetKey = mode === "edit" ? `edit:${editing?.id ?? ""}` : "create";
-    if (lastResetKey.current === resetKey) return;
-    lastResetKey.current = resetKey;
-    if (mode === "edit" && editing) {
+  // objects, and resetting on those silently reverted whatever times were
+  // mid-typing in the open dialog. Done while rendering rather than in an
+  // effect, so the dialog never paints one frame of the previous entry.
+  const resetKey = !open ? null : mode === "edit" ? `edit:${editing?.id ?? ""}` : "create";
+  const [appliedResetKey, setAppliedResetKey] = useState<string | null>(null);
+  if (appliedResetKey !== resetKey) {
+    setAppliedResetKey(resetKey);
+    if (resetKey === null) {
+      // Closed: nothing to reset until it opens again.
+    } else if (mode === "edit" && editing) {
       setEmployeeId(editing.employee_id);
       setBookingId(editing.booking_id ?? "");
       setStartAt(utcIsoToLocalInput(editing.clock_in_at, orgTz));
@@ -417,13 +415,15 @@ export function ManualEntryDialog({
       setEndAt("");
       setNotes("");
     }
-    setFormError(null);
-    setFormErrorFix(null);
-    // Reset history + reassign state when dialog opens for a new entry
-    setHistoryOpen(false);
-    setHistory([]);
-    setReassignOpen(false);
-  }, [open, mode, editing, employees, orgTz]);
+    if (resetKey !== null) {
+      setFormError(null);
+      setFormErrorFix(null);
+      // Reset history + reassign state when dialog opens for a new entry
+      setHistoryOpen(false);
+      setHistory([]);
+      setReassignOpen(false);
+    }
+  }
 
   async function loadHistory() {
     if (!editing || mode !== "edit") return;

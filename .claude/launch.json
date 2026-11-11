@@ -7,6 +7,13 @@
       "runtimeArgs": ["run", "dev"],
       "port": 3000,
       "autoPort": true
+    },
+    {
+      "name": "cleanops-teststack",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["--no-install", "tsx", "scripts/dev-test-stack.ts"],
+      "port": 3100,
+      "autoPort": false
     }
   ]
 }

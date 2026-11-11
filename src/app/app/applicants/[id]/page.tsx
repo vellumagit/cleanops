@@ -229,6 +229,7 @@ export default async function ApplicantDetailPage({
             applicantId={a.id}
             interviews={interviews}
             questionnaires={questionnaires}
+            tz={tz}
           />
 
           {extras.length > 0 && (

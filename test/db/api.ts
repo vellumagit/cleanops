@@ -179,6 +179,18 @@ export async function startApi(): Promise<Api> {
     req.on("end", () => {
       void (async () => {
         const path = req.url ?? "/";
+        // A browser may call this stack too (scripts/dev-test-stack.ts runs
+        // the app against it), from another origin. Tests don't care.
+        res.setHeader("access-control-allow-origin", req.headers.origin ?? "*");
+        res.setHeader("access-control-allow-credentials", "true");
+        res.setHeader("access-control-allow-headers", req.headers["access-control-request-headers"] ?? "*");
+        res.setHeader("access-control-allow-methods", "GET,POST,PATCH,PUT,DELETE,HEAD,OPTIONS");
+        res.setHeader("access-control-expose-headers", "content-range,preference-applied,location");
+        if (req.method === "OPTIONS") {
+          res.writeHead(204);
+          res.end();
+          return;
+        }
         if (path.startsWith("/auth/v1/user")) {
           const token = String(req.headers.authorization ?? "").replace(/^Bearer\s+/i, "");
           const [head, payload, signature] = token.split(".");

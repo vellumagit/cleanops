@@ -68,6 +68,33 @@ jobs:
       - name: Type check
         run: pnpm exec tsc --noEmit
 
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Errors fail the build; warnings do not. The errors that matter most
+      # here are this repo's own rules: a date formatted with no timeZone, and
+      # a notification inserted without going through notify(). Lint sat at 20
+      # errors, ungated, until 2026-11-10, which is how new ones kept landing.
+      - name: Lint
+        run: pnpm exec eslint .
+
   unit-tests:
     name: Unit tests
     runs-on: ubuntu-latest

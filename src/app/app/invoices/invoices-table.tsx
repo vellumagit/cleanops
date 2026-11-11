@@ -122,10 +122,11 @@ function dateNeedle(iso: string | null, tz: string): string {
   const safeIso = /^\d{4}-\d{2}-\d{2}$/.test(iso) ? `${iso}T12:00:00Z` : iso;
   const d = new Date(safeIso);
   if (Number.isNaN(d.getTime())) return "";
-  const opts = { day: "numeric", year: "numeric", timeZone: tz } as const;
+  // timeZone is written out in each call, not spread in: the lint rule that
+  // guards against zone-less dates reads the literal and can't see a spread.
   return [
-    d.toLocaleDateString("en-US", { month: "short", ...opts }),
-    d.toLocaleDateString("en-US", { month: "long", ...opts }),
+    d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: tz }),
+    d.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: tz }),
     d.toLocaleDateString("en-CA", { timeZone: tz }), // yyyy-mm-dd
   ].join(" ");
 }
