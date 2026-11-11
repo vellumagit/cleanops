@@ -18,45 +18,12 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { hasPostgrest, startApi, type Api } from "./api";
 import { addBooking, addClient, addMember, addOrg, type Member } from "./harness";
+import { request, settle } from "./next-stubs";
 
-const request = vi.hoisted(() => ({
-  cookies: [] as Array<{ name: string; value: string }>,
-  after: [] as Array<Promise<unknown>>,
-}));
-
-vi.mock("next/headers", () => ({
-  cookies: async () => ({
-    get: (name: string) => request.cookies.find((c) => c.name === name),
-    getAll: () => request.cookies,
-    has: (name: string) => request.cookies.some((c) => c.name === name),
-    set: (name: string, value: string) => {
-      request.cookies = [...request.cookies.filter((c) => c.name !== name), { name, value }];
-    },
-    delete: (name: string) => {
-      request.cookies = request.cookies.filter((c) => c.name !== name);
-    },
-  }),
-  headers: async () => new Headers(),
-}));
-vi.mock("next/cache", () => ({
-  revalidatePath: () => {},
-  revalidateTag: () => {},
-  unstable_cache: <T,>(fn: T) => fn,
-}));
-vi.mock("next/navigation", () => ({
-  redirect: (to: string) => {
-    throw new Error(`redirected to ${to}`);
-  },
-  notFound: () => {
-    throw new Error("not found");
-  },
-}));
-vi.mock("next/server", () => ({
-  // Work the app defers until after the response. Run it, and let the test wait for it.
-  after: (work: (() => unknown) | Promise<unknown>) => {
-    request.after.push(Promise.resolve().then(() => (typeof work === "function" ? work() : work)));
-  },
-}));
+vi.mock("next/headers", async () => (await import("./next-stubs")).nextHeaders());
+vi.mock("next/cache", async () => (await import("./next-stubs")).nextCache());
+vi.mock("next/navigation", async () => (await import("./next-stubs")).nextNavigation());
+vi.mock("next/server", async () => (await import("./next-stubs")).nextServer());
 
 type FieldActions = typeof import("@/app/field/jobs/actions");
 type Result = { ok: true } | { ok: false; error: string };
@@ -97,7 +64,7 @@ async function tap(who: Member, what: Tap, job: string): Promise<Result> {
   const action =
     what === "here" ? actions.startJobAction : what === "stop" ? actions.pauseJobAction : actions.completeJobAction;
   const result = await action(form);
-  await Promise.allSettled(request.after.splice(0));
+  await settle();
   return result;
 }
 

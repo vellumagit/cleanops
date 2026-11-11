@@ -150,6 +150,29 @@ export async function startApi(): Promise<Api> {
     await new Promise((r) => setTimeout(r, 100));
   }
 
+  // PGlite has ONE connection. PostgREST runs each request as a transaction
+  // on it over the socket, and a test arranging rows talks to it directly.
+  // If the two overlap, the direct statement lands inside PostgREST's open
+  // transaction: an UPDATE inside its read-only GET, or an error that aborts
+  // a request the app is still waiting on. The app also fires work it does
+  // not wait for (calendar pushes, notifications), so "the action returned"
+  // does not mean "nothing is in flight". Everything therefore takes turns:
+  // each proxied request holds the lock until PostgREST has answered, and
+  // each direct query holds it too.
+  let tail: Promise<unknown> = Promise.resolve();
+  let inFlight = 0;
+  const inTurn = <T>(work: () => Promise<T>): Promise<T> => {
+    inFlight++;
+    const run = tail.then(work, work);
+    tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run.finally(() => {
+      inFlight--;
+    });
+  };
+
   const proxy: Server = createServer((req, res) => {
     const chunks: Buffer[] = [];
     req.on("data", (c: Buffer) => chunks.push(c));
@@ -199,19 +222,24 @@ export async function startApi(): Promise<Api> {
           headers[k] = Array.isArray(v) ? v.join(", ") : v;
         }
         const body = Buffer.concat(chunks);
-        const upstream = await fetch(`${rest}${path.slice("/rest/v1".length) || "/"}`, {
-          method: req.method,
-          headers,
-          body: body.length > 0 ? body : undefined,
+        const answer = await inTurn(async () => {
+          const upstream = await fetch(`${rest}${path.slice("/rest/v1".length) || "/"}`, {
+            method: req.method,
+            headers,
+            body: body.length > 0 ? body : undefined,
+          });
+          const out: Record<string, string> = {};
+          upstream.headers.forEach((v, k) => {
+            if (k !== "transfer-encoding" && k !== "content-encoding" && k !== "content-length" && k !== "connection") {
+              out[k] = v;
+            }
+          });
+          // Read to the end inside the turn: the transaction is over only
+          // when PostgREST has sent the whole response.
+          return { status: upstream.status, headers: out, bytes: Buffer.from(await upstream.arrayBuffer()) };
         });
-        const out: Record<string, string> = {};
-        upstream.headers.forEach((v, k) => {
-          if (k !== "transfer-encoding" && k !== "content-encoding" && k !== "content-length" && k !== "connection") {
-            out[k] = v;
-          }
-        });
-        res.writeHead(upstream.status, out);
-        res.end(Buffer.from(await upstream.arrayBuffer()));
+        res.writeHead(answer.status, answer.headers);
+        res.end(answer.bytes);
       })().catch((err) => {
         res.writeHead(502, { "content-type": "application/json" });
         res.end(JSON.stringify({ message: `test proxy: ${String(err)}` }));
@@ -221,7 +249,19 @@ export async function startApi(): Promise<Api> {
   await new Promise<void>((resolve) => proxy.listen(proxyPort, "127.0.0.1", resolve));
 
   const url = `http://127.0.0.1:${proxyPort}`;
-  const sql: Sql = async <T>(text: string, params: unknown[] = []) => (await db.query<T>(text, params)).rows;
+  const sql: Sql = <T>(text: string, params: unknown[] = []) =>
+    inTurn(async () => (await db.query<T>(text, params)).rows);
+
+  /** Resolves once nothing has been in flight for a moment, or after `maxMs`. */
+  const drain = async (maxMs: number) => {
+    const deadline = Date.now() + maxMs;
+    let quietSince = Date.now();
+    while (Date.now() < deadline) {
+      if (inFlight > 0) quietSince = Date.now();
+      else if (Date.now() - quietSince >= 150) return;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+  };
 
   return {
     db,
@@ -271,6 +311,10 @@ export async function startApi(): Promise<Api> {
     },
     log: () => output,
     stop: async () => {
+      // Let work the app fired without waiting for finish, so it meets a
+      // database rather than a closed port.
+      await drain(5_000);
+      proxy.closeAllConnections?.();
       await new Promise<void>((resolve) => proxy.close(() => resolve()));
       child.kill();
       await socket.stop();
