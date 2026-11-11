@@ -46,3 +46,6 @@ scripts/export/
 
 # Shadow-week morning reports, written by the scheduled task
 reports/
+
+# Product screenshots (pnpm screenshots)
+/screenshots/

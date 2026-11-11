@@ -13,7 +13,8 @@
     "seed": "tsx --tsconfig scripts/tsconfig.json --env-file=.env.local scripts/seed-demo-org.ts",
     "wipe": "tsx --env-file=.env.local scripts/wipe.ts",
     "db:push": "supabase db push --linked --include-all",
-    "db:types": "supabase gen types typescript --linked --schema public > src/lib/supabase/types.ts"
+    "db:types": "supabase gen types typescript --linked --schema public > src/lib/supabase/types.ts",
+    "screenshots": "tsx --env-file=.env.local scripts/screenshots.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.96.0",
