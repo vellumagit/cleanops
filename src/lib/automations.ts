@@ -6281,6 +6281,17 @@ export async function autoVoidOldInvoices(): Promise<{ voided: number }> {
     }
     if (data && data.length > 0) {
       voided += data.length;
+      // A write-off is a void, so its jobs leave automatic billing the same
+      // way a person's void sends them (billing_released_at). Left as they
+      // were, the jobs read as unbilled to "Generate all" and to auto-drafting:
+      // void tonight, draft again tomorrow, overdue again in a year.
+      const { releaseJobsFromVoidedInvoices } = await import("@/lib/billed-bookings");
+      await releaseJobsFromVoidedInvoices(
+        db as never,
+        org.id,
+        data.map((inv) => inv.id),
+        new Date().toISOString(),
+      );
       // This writes off money, so it never happens quietly. It used to leave
       // no audit row and tell nobody: seven unpaid Svit invoices ($1,392.05)
       // went to Void this way, and only a query found them (2026-10-30).

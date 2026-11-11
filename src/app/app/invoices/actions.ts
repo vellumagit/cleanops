@@ -1404,8 +1404,37 @@ export async function deleteInvoiceAction(
     };
   }
 
+  // Void's twin. Deleting an invoice that was already issued holds its jobs
+  // out of automatic billing, exactly as voiding it would; a draft's jobs stay
+  // free (removalReleasesJobs says why). The jobs are read first because the
+  // line links are deleted with the invoice, and a failed read stops the
+  // delete: gone with its jobs unknown, they would be billed again unmarked.
+  const { removalReleasesJobs, jobsBilledByInvoices, markJobsReleased } = await import(
+    "@/lib/billed-bookings"
+  );
+  let releaseIds: string[] = [];
+  if (removalReleasesJobs((prev as { status?: string } | null)?.status)) {
+    try {
+      releaseIds = await jobsBilledByInvoices(supabase, membership.organization_id, [id]);
+    } catch (err) {
+      console.error("[invoices] delete: could not read the invoice's jobs:", err);
+      return {
+        ok: false,
+        error:
+          "Couldn't check which jobs this invoice bills, so nothing was deleted. Try again.",
+      };
+    }
+  }
+
   const { error } = await supabase.from("invoices").delete().eq("id", id);
   if (error) return { ok: false, error: error.message };
+
+  await markJobsReleased(
+    supabase,
+    membership.organization_id,
+    releaseIds,
+    new Date().toISOString(),
+  );
 
   await logAuditEvent({
     membership,
@@ -1413,6 +1442,7 @@ export async function deleteInvoiceAction(
     entity: "invoice",
     entity_id: id,
     before: prev ?? null,
+    ...(releaseIds.length > 0 ? { after: { released_jobs: releaseIds.length } } : {}),
   });
 
   revalidatePath("/app/invoices");

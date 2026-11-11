@@ -164,6 +164,88 @@ export async function releaseJobsFromVoidedInvoices(
 }
 
 /**
+ * Does removing this invoice take its jobs out of automatic billing?
+ *
+ * Deleting is void's harsher twin. The stamp's foreign key nulls itself when
+ * the invoice row goes, so a deleted invoice left its jobs looking unbilled
+ * with no mark, and the next run billed them again: the very thing voiding
+ * stopped doing on 2026-10-30. A person deleting a bill the client may have
+ * seen is deciding about that bill, the same as a void.
+ *
+ * A draft is different. Nobody outside has seen it, the app makes them by
+ * itself, and deleting one says "not this draft": the work is still owed, so
+ * the next run offers it again. A void invoice's jobs were marked when it
+ * was voided.
+ */
+export function removalReleasesJobs(status: string | null | undefined): boolean {
+  return !!status && status !== "draft" && status !== "void";
+}
+
+/**
+ * The jobs these invoices bill, by all three signals. Read BEFORE deleting:
+ * the line links go with the invoice. Throws when a read fails, because a
+ * delete that can't find its jobs frees them with no mark.
+ */
+export async function jobsBilledByInvoices(
+  supabase: SupabaseClient,
+  organizationId: string,
+  invoiceIds: readonly string[],
+): Promise<string[]> {
+  if (invoiceIds.length === 0) return [];
+  const ids = [...invoiceIds];
+  type Res<T> = { data: T[] | null; error: { message: string } | null };
+  const [perJob, lines, stamped] = await Promise.all([
+    supabase.from("invoices").select("booking_id").in("id", ids) as unknown as Promise<
+      Res<{ booking_id: string | null }>
+    >,
+    supabase.from("invoice_line_items").select("booking_id").in("invoice_id", ids) as unknown as Promise<
+      Res<{ booking_id: string | null }>
+    >,
+    supabase
+      .from("bookings")
+      .select("id")
+      .in("billing_invoice_id", ids)
+      .eq("organization_id", organizationId) as unknown as Promise<Res<{ id: string }>>,
+  ]);
+  const failed = perJob.error ?? lines.error ?? stamped.error;
+  if (failed) throw new Error(`could not read the jobs on this invoice: ${failed.message}`);
+  return [
+    ...new Set(
+      [
+        ...(perJob.data ?? []).map((r) => r.booking_id),
+        ...(lines.data ?? []).map((r) => r.booking_id),
+        ...(stamped.data ?? []).map((r) => r.id),
+      ].filter((id): id is string => !!id),
+    ),
+  ];
+}
+
+/**
+ * Mark jobs whose invoice a person removed, so only a person bills them
+ * again. A job another invoice still stamps is left alone. Never throws: the
+ * invoice is already gone by the time this runs.
+ */
+export async function markJobsReleased(
+  supabase: SupabaseClient,
+  organizationId: string,
+  bookingIds: readonly string[],
+  nowIso: string,
+): Promise<void> {
+  if (bookingIds.length === 0) return;
+  try {
+    const { error } = await supabase
+      .from("bookings")
+      .update({ billing_released_at: nowIso } as never)
+      .in("id", [...bookingIds])
+      .eq("organization_id", organizationId)
+      .is("billing_invoice_id", null);
+    if (error) throw new Error(error.message);
+  } catch (err) {
+    console.error(`[billing] delete: release failed for ${bookingIds.length} job(s):`, err);
+  }
+}
+
+/**
  * booking id → the invoice already billing it. Absent means unbilled.
  *
  * A failed read throws. "Couldn't check" must never read as "not billed":

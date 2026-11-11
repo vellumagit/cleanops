@@ -1,9 +1,12 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   noteBilled,
   billableInSweep,
   matchLineToJob,
   releaseJobsFromVoidedInvoices,
+  removalReleasesJobs,
+  jobsBilledByInvoices,
+  markJobsReleased,
   type BilledBy,
 } from "./billed-bookings";
 
@@ -234,5 +237,110 @@ describe("billedRefusal — the one sentence every writer says", () => {
       /^another invoice \(draft\) already bills this job/,
     );
     expect(billedRefusal(undefined, "anything")).toBeNull();
+  });
+});
+
+describe("deleting an invoice is void's twin", () => {
+  it("holds the jobs of an issued invoice, and leaves a draft's free", () => {
+    for (const s of ["sent", "overdue", "paid", "partially_paid", "refunded"]) {
+      expect(removalReleasesJobs(s)).toBe(true);
+    }
+    // Nobody has seen a draft; the work is still owed and the run offers it again.
+    expect(removalReleasesJobs("draft")).toBe(false);
+    // Marked when it was voided.
+    expect(removalReleasesJobs("void")).toBe(false);
+    expect(removalReleasesJobs(null)).toBe(false);
+    expect(removalReleasesJobs(undefined)).toBe(false);
+  });
+
+  /** Reads answer per table; `fail` names a table whose read errors. */
+  function reader(rows: Record<string, unknown[]>, fail?: string) {
+    const seen: Array<{ table: string; filters: Record<string, unknown> }> = [];
+    const client = {
+      from: (table: string) => {
+        const entry = { table, filters: {} as Record<string, unknown> };
+        seen.push(entry);
+        const chain = {
+          select: () => chain,
+          in: (col: string, v: unknown) => ((entry.filters[col] = v), chain),
+          eq: (col: string, v: unknown) => ((entry.filters[col] = v), chain),
+          then: (resolve: (v: unknown) => void) =>
+            resolve(
+              table === fail
+                ? { data: null, error: { message: "boom" } }
+                : { data: rows[table] ?? [], error: null },
+            ),
+        };
+        return chain;
+      },
+    };
+    return { client: client as never, seen };
+  }
+
+  it("finds the jobs by all three signals, once each", async () => {
+    const { client, seen } = reader({
+      invoices: [{ booking_id: "per-job" }],
+      invoice_line_items: [{ booking_id: "on-line" }, { booking_id: null }, { booking_id: "per-job" }],
+      bookings: [{ id: "stamp-only" }, { id: "on-line" }],
+    });
+    await expect(jobsBilledByInvoices(client, "org", ["i1"])).resolves.toEqual([
+      "per-job",
+      "on-line",
+      "stamp-only",
+    ]);
+    // The stamp read stays inside the org.
+    expect(seen.find((s) => s.table === "bookings")?.filters).toEqual({
+      billing_invoice_id: ["i1"],
+      organization_id: "org",
+    });
+  });
+
+  it("throws when any read fails, so the delete stops", async () => {
+    for (const table of ["invoices", "invoice_line_items", "bookings"]) {
+      const { client } = reader({}, table);
+      await expect(jobsBilledByInvoices(client, "org", ["i1"])).rejects.toThrow(/could not read the jobs/);
+    }
+  });
+
+  function writer(result: "ok" | "error" | "reject" = "ok") {
+    const updates: Array<{ set: Record<string, unknown>; filters: Record<string, unknown> }> = [];
+    const client = {
+      from: () => ({
+        update: (set: Record<string, unknown>) => {
+          const entry = { set, filters: {} as Record<string, unknown> };
+          updates.push(entry);
+          const chain = {
+            in: (col: string, v: unknown) => ((entry.filters[col] = v), chain),
+            eq: (col: string, v: unknown) => ((entry.filters[col] = v), chain),
+            is: (col: string, v: unknown) => ((entry.filters[col] = v), chain),
+            then: (resolve: (v: unknown) => void, reject: (e: unknown) => void) =>
+              result === "reject"
+                ? reject(new Error("fail-closed scope rejected"))
+                : resolve({ error: result === "error" ? { message: "boom" } : null }),
+          };
+          return chain;
+        },
+      }),
+    };
+    return { client: client as never, updates };
+  }
+
+  it("marks only jobs no other invoice still stamps", async () => {
+    const { client, updates } = writer();
+    await markJobsReleased(client, "org", ["a", "b"], "NOW");
+    expect(updates).toHaveLength(1);
+    expect(updates[0].set).toEqual({ billing_released_at: "NOW" });
+    expect(updates[0].filters).toEqual({ id: ["a", "b"], organization_id: "org", billing_invoice_id: null });
+  });
+
+  it("writes nothing for no jobs, and never throws once the invoice is gone", async () => {
+    const none = writer();
+    await markJobsReleased(none.client, "org", [], "NOW");
+    expect(none.updates).toHaveLength(0);
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(markJobsReleased(writer("error").client, "org", ["a"], "NOW")).resolves.toBeUndefined();
+    await expect(markJobsReleased(writer("reject").client, "org", ["a"], "NOW")).resolves.toBeUndefined();
+    expect(errors).toHaveBeenCalledTimes(2);
+    errors.mockRestore();
   });
 });

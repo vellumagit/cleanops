@@ -11,7 +11,7 @@ For a client with several unbilled visits (or a company paying for several peopl
 
 - Only unbilled work is offered. A booking already on a *sent* or *paid* invoice is locked to it.
 - A booking sitting on an unsent **draft** can be folded into the batch — the old draft is voided automatically, on the logic that nobody has seen it yet.
-- When you **void an invoice**, its jobs are not billed again automatically: not by monthly billing, not by auto-drafting. If the work is still owed, bill it from the job's page or from Bill for a period.
+- When you **void an invoice**, its jobs are not billed again automatically: not by monthly billing, not by auto-drafting. If the work is still owed, bill it from the job's page or from Bill for a period. **Deleting** an invoice you had already sent works the same way. Deleting a **draft** does not: the work is still owed, so monthly billing offers it again on its next run.
 - "Bill as company" puts the paying company's details on the invoice while the visits stay attached to the people who received them.
 
 **Bill for a period** (Invoices → Bill for a period) does the same thing for a date range: pick the client, a From and To date, and Load bookings.

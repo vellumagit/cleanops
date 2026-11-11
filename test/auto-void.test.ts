@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const notify = vi.fn(async (_input: Record<string, unknown>) => {});
 const audit = vi.fn(async (_input: Record<string, unknown>) => {});
 const invoiceUpdates = vi.fn();
+const release = vi.fn(async (..._args: unknown[]) => {});
 
 let org: {
   id: string;
@@ -21,6 +22,9 @@ let matched: Array<{ id: string; number: string; amount_cents: number }> = [];
 vi.mock("@/lib/notify", () => ({ notify: (input: Record<string, unknown>) => notify(input) }));
 vi.mock("@/lib/audit", () => ({
   logSystemAuditEvent: (input: Record<string, unknown>) => audit(input),
+}));
+vi.mock("@/lib/billed-bookings", () => ({
+  releaseJobsFromVoidedInvoices: (...args: unknown[]) => release(...args),
 }));
 vi.mock("@/lib/supabase/admin", () => {
   // Every chain resolves to its table's result.
@@ -73,6 +77,7 @@ describe("auto-void", () => {
     notify.mockClear();
     audit.mockClear();
     invoiceUpdates.mockClear();
+    release.mockClear();
     matched = [
       { id: "i1", number: "INV-1", amount_cents: 14000 },
       { id: "i2", number: "INV-2", amount_cents: 22050 },
@@ -91,6 +96,7 @@ describe("auto-void", () => {
     expect(await autoVoidOldInvoices()).toEqual({ voided: 0 });
     expect(invoiceUpdates).not.toHaveBeenCalled();
     expect(notify).not.toHaveBeenCalled();
+    expect(release).not.toHaveBeenCalled();
   });
 
   it("touches nothing when the org never set the toggle", async () => {
@@ -119,6 +125,15 @@ describe("auto-void", () => {
     expect(note.title).toBe("2 unpaid invoices were voided automatically");
     expect(String(note.body)).toContain("INV-1");
     expect(String(note.body)).toContain("365 days");
+  });
+
+  it("takes the written-off jobs out of automatic billing, like a person's void", async () => {
+    await autoVoidOldInvoices();
+    expect(release).toHaveBeenCalledTimes(1);
+    const [, orgId, invoiceIds, at] = release.mock.calls[0];
+    expect(orgId).toBe("org");
+    expect(invoiceIds).toEqual(["i1", "i2"]);
+    expect(typeof at).toBe("string");
   });
 
   it("says nothing on a night with nothing to void", async () => {
