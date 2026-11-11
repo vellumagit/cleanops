@@ -21,5 +21,9 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["src/**/*.test.ts", "test/**/*.test.ts"],
+    // The suite now includes tests that read all of src and tests that boot
+    // a database (test/db). Run together they slow each other down, and the
+    // default five seconds failed tests that were only waiting their turn.
+    testTimeout: 20_000,
   },
 });

@@ -77,6 +77,12 @@ export type Api = {
   anonKey: string;
   /** A signed-in user's access token. */
   tokenFor: (userId: string, email?: string) => string;
+  /**
+   * The cookie a browser would carry for that user, in the form @supabase/ssr
+   * stores a session. Hand these to a stubbed next/headers and the app's own
+   * createSupabaseServerClient signs in as her, with nothing else replaced.
+   */
+  sessionCookies: (userId: string, email?: string) => Array<{ name: string; value: string }>;
   /** Point the process at this stack. Returns the undo. */
   useAsSupabase: () => () => void;
   /** PostgREST's own log, for a failing test. */
@@ -152,11 +158,16 @@ export async function startApi(): Promise<Api> {
         const path = req.url ?? "/";
         if (path.startsWith("/auth/v1/user")) {
           const token = String(req.headers.authorization ?? "").replace(/^Bearer\s+/i, "");
+          const [head, payload, signature] = token.split(".");
           let claims: Record<string, unknown> | null = null;
-          try {
-            claims = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8"));
-          } catch {
-            claims = null;
+          // Like GoTrue, only a token this stack signed names a user.
+          const expected = createHmac("sha256", JWT_SECRET).update(`${head}.${payload}`).digest("base64url");
+          if (signature === expected) {
+            try {
+              claims = JSON.parse(Buffer.from(payload ?? "", "base64url").toString("utf8"));
+            } catch {
+              claims = null;
+            }
           }
           if (!claims?.sub) {
             res.writeHead(401, { "content-type": "application/json" });
@@ -219,6 +230,29 @@ export async function startApi(): Promise<Api> {
     serviceKey,
     anonKey,
     tokenFor: (userId, email) => signToken({ role: "authenticated", sub: userId, ...(email ? { email } : {}) }),
+    sessionCookies: (userId, email) => {
+      const access_token = signToken({ role: "authenticated", sub: userId, ...(email ? { email } : {}) });
+      const now = Math.floor(Date.now() / 1000);
+      const session = {
+        access_token,
+        token_type: "bearer",
+        expires_in: 3600,
+        expires_at: now + 3600,
+        refresh_token: "test-refresh-token",
+        user: {
+          id: userId,
+          aud: "authenticated",
+          role: "authenticated",
+          email: email ?? null,
+          app_metadata: {},
+          user_metadata: {},
+          created_at: new Date(0).toISOString(),
+        },
+      };
+      // supabase-js names the cookie after the first label of the API host.
+      const name = `sb-${new URL(url).hostname.split(".")[0]}-auth-token`;
+      return [{ name, value: `base64-${Buffer.from(JSON.stringify(session)).toString("base64url")}` }];
+    },
     useAsSupabase: () => {
       const before = {
         NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
