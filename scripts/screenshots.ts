@@ -53,6 +53,12 @@ if (!URL_ || !KEY) {
 }
 const db = createClient(URL_, KEY, { auth: { autoRefreshToken: false, persistSession: false } });
 
+const T0 = Date.now();
+/** A progress line with seconds since start, so a stall shows where it is. */
+function log(msg: string) {
+  console.log(`  [${((Date.now() - T0) / 1000).toFixed(1).padStart(5)}s] ${msg}`);
+}
+
 function fail(what: string, err?: unknown): never {
   const msg = err && typeof err === "object" && "message" in err ? (err as { message: string }).message : err;
   console.error(`✗ ${what}${msg ? `: ${msg}` : ""}`);
@@ -149,12 +155,14 @@ async function signIn(ctx: BrowserContext, email: string, next: string, viewport
   const hash = data?.properties?.hashed_token;
   if (error || !hash) fail(`sign-in token for ${email}`, error);
 
+  log(`sign-in token minted for ${email}`);
   const page = await ctx.newPage();
   await preparePage(page, viewport, mobile);
   const url = `${BASE}/auth/callback?token_hash=${encodeURIComponent(hash)}&type=magiclink&next=${encodeURIComponent(next)}`;
   await go(page, url);
   const landed = new URL(page.url()).pathname;
   if (landed.startsWith("/login") || landed.startsWith("/mfa")) fail(`sign-in as ${email}`, `landed on ${page.url()}`);
+  log(`signed in, on ${landed}`);
   return page;
 }
 
@@ -190,14 +198,22 @@ async function go(page: Page, url: string) {
 // ---------------------------------------------------------------- shots ----
 type Shot = { name: string; path: string | null; note?: string };
 
-async function capture(page: Page, dir: string, shot: Shot, index: number, prefix: string) {
+/**
+ * One shot in its own tab. The tabs share the signed-in context, so the
+ * session carries over; a page that crashes or reloads itself (seen on the
+ * field job page: "Attempted to use detached Frame") loses only its own
+ * picture instead of every one after it.
+ */
+async function capture(ctx: BrowserContext, view: View, dir: string, shot: Shot, index: number, prefix: string) {
   if (ONLY && !ONLY.includes(shot.name)) return;
   const file = join(dir, `${prefix}-${String(index).padStart(2, "0")}-${shot.name}.png`);
   if (!shot.path) {
     console.log(`  – ${shot.name}: skipped (${shot.note ?? "nothing to show today"})`);
     return;
   }
+  const page = await ctx.newPage();
   try {
+    await preparePage(page, view.viewport, view.mobile);
     await go(page, `${BASE}${shot.path}`);
     await page.evaluate(() => document.fonts?.ready);
     await page.evaluate(() => window.scrollTo(0, 0));
@@ -205,11 +221,17 @@ async function capture(page: Page, dir: string, shot: Shot, index: number, prefi
     const landed = new URL(page.url()).pathname;
     if (landed.startsWith("/login")) throw new Error("bounced to /login");
     await page.screenshot({ path: file as `${string}.png`, fullPage: FULL_PAGE });
-    console.log(`  ✓ ${file}`);
+    log(`✓ ${file.split(/[\\/]/).pop()}`);
   } catch (e) {
     console.log(`  ✗ ${shot.name} (${shot.path}): ${e instanceof Error ? e.message : e}`);
+  } finally {
+    await page.close().catch(() => {});
   }
 }
+
+type View = { viewport: Parameters<Page["setViewport"]>[0]; mobile: boolean };
+const OFFICE_VIEW: View = { viewport: { width: 1440, height: 900, deviceScaleFactor: 2 }, mobile: false };
+const PHONE_VIEW: View = { viewport: { width: 390, height: 844, deviceScaleFactor: 3, isMobile: true, hasTouch: true }, mobile: true };
 
 async function main() {
   const ids = await loadIds();
@@ -248,23 +270,48 @@ async function main() {
 
   let browser: Browser | null = null;
   try {
-    browser = await puppeteer.launch({ executablePath: findChrome(), headless: true, args: ["--no-first-run", "--no-default-browser-check"] });
+    const exe = findChrome();
+    log(`launching ${exe}`);
+    browser = await puppeteer.launch({
+      executablePath: exe,
+      headless: true,
+      // Chrome's background updater can hold the launch past puppeteer's
+      // 30 s default (seen 2026-11-11: "Timed out ... waiting for the WS
+      // endpoint", with updater pipe errors in Chrome's log). These flags
+      // keep the updater, extensions and background services out of a
+      // throwaway profile; with them Chrome 155 launches in about 3 s.
+      timeout: 90_000,
+      protocolTimeout: 120_000,
+      args: [
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-extensions",
+        "--disable-component-update",
+        "--disable-background-networking",
+        "--disable-gpu",
+      ],
+    });
+    log(`launched ${await browser.version()}`);
 
     console.log(`\nOffice, as ${ids.danaEmail} (1440×900)`);
     const officeCtx = await browser.createBrowserContext();
     await officeCtx.overridePermissions(BASE, []); // every permission denied, notifications included
-    const officePage = await signIn(officeCtx, ids.danaEmail, "/app", { width: 1440, height: 900, deviceScaleFactor: 2 }, false);
-    for (const [i, s] of office.entries()) await capture(officePage, dir, s, i + 1, "office");
-    await officeCtx.close();
+    const officeLogin = await signIn(officeCtx, ids.danaEmail, "/app", OFFICE_VIEW.viewport, OFFICE_VIEW.mobile);
+    await officeLogin.close().catch(() => {});
+    for (const [i, s] of office.entries()) await capture(officeCtx, OFFICE_VIEW, dir, s, i + 1, "office");
+    await officeCtx.close().catch(() => {});
 
     console.log(`\nField app, as ${ids.noahEmail} (phone 390×844)`);
     const fieldCtx = await browser.createBrowserContext();
     await fieldCtx.overridePermissions(BASE, []);
-    const fieldPage = await signIn(fieldCtx, ids.noahEmail, "/field", { width: 390, height: 844, deviceScaleFactor: 3, isMobile: true, hasTouch: true }, true);
-    for (const [i, s] of field.entries()) await capture(fieldPage, dir, s, i + 1, "phone");
-    await fieldCtx.close();
+    const fieldLogin = await signIn(fieldCtx, ids.noahEmail, "/field", PHONE_VIEW.viewport, PHONE_VIEW.mobile);
+    await fieldLogin.close().catch(() => {});
+    for (const [i, s] of field.entries()) await capture(fieldCtx, PHONE_VIEW, dir, s, i + 1, "phone");
+    await fieldCtx.close().catch(() => {});
   } finally {
-    await browser?.close();
+    // On Windows the temp profile's lockfile can still be held for a moment
+    // after Chrome exits (EBUSY on unlink). The pictures are already saved.
+    await browser?.close().catch(() => {});
   }
   console.log(`\nDone. Open ${dir}`);
 }
