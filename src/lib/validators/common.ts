@@ -141,9 +141,16 @@ export function localInputToUtcIso(
   }
 
   // Treat the wall-clock string AS IF it were UTC to get a stable anchor
-  // instant, then subtract the org tz's offset AT that instant.
+  // instant, and subtract the zone's offset at that instant for a first
+  // guess. Then ask for the offset again AT the guess. The anchor is hours
+  // away from the moment actually meant, and on the day the clocks change
+  // those hours can sit on the other side of the change: a 3:00 AM start in
+  // Toronto on fall-back day read the anchor's summer offset and landed at
+  // 2:00 AM (September sweep, Tier 1 #7). The second look is at the real
+  // neighbourhood, so it has the right offset.
   const naive = new Date(datetimeLocal + "Z"); // force UTC parse
-  const offsetMs = tzOffsetMsAt(naive, tz);
+  const guess = naive.getTime() - tzOffsetMsAt(naive, tz);
+  const offsetMs = tzOffsetMsAt(new Date(guess), tz);
   return new Date(naive.getTime() - offsetMs).toISOString();
 }
 

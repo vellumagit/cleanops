@@ -225,7 +225,7 @@ export async function updateInvoiceAction(
   const { data: prev } = await supabase
     .from("invoices")
     .select(
-      "organization_id, status, amount_cents, sent_at, paid_at, client_id, tax_rate_bps, tax_label",
+      "organization_id, status, amount_cents, sent_at, paid_at, client_id, booking_id, tax_rate_bps, tax_label",
     )
     .eq("id", id)
     .maybeSingle();
@@ -288,6 +288,8 @@ export async function updateInvoiceAction(
   const managedElsewhere = formData.get("totals_managed_elsewhere") === "1";
   let itemsMoneyFields: Record<string, unknown> | null = null;
   let itemsCount: number | null = null;
+  // Jobs this save takes off the invoice, freed once the save has landed.
+  const jobsTakenOff = new Set<string>();
   let effectiveTotal = managedElsewhere
     ? prev?.amount_cents ?? 0
     : tax.totalCents;
@@ -319,6 +321,7 @@ export async function updateInvoiceAction(
     };
     itemsCount = result.itemCount;
     effectiveTotal = result.totalCents;
+    for (const jobId of result.removedJobIds) jobsTakenOff.add(jobId);
   }
 
   // Respect the payment ledger: if the invoice has recorded payments, the
@@ -408,6 +411,41 @@ export async function updateInvoiceAction(
       },
       values: raw,
     };
+  }
+
+  // The stamp follows the edit. Pointing the invoice at a different job, or
+  // removing a job's line, used to leave the old job stamped as billed by an
+  // invoice that no longer mentioned it: billable by nothing, for good
+  // (September sweep, Tier 1 #3 and #4).
+  {
+    const organizationId = (prev as { organization_id?: string }).organization_id as string;
+    const previousJob = (prev as { booking_id?: string | null }).booking_id ?? null;
+    if (previousJob && previousJob !== parsed.data.booking_id) jobsTakenOff.add(previousJob);
+    if (jobsTakenOff.size > 0) {
+      const { releaseJobsRemovedFromInvoice } = await import("@/lib/billed-bookings");
+      await releaseJobsRemovedFromInvoice(
+        supabase,
+        organizationId,
+        id,
+        [...jobsTakenOff],
+        effectiveStatus,
+        new Date().toISOString(),
+      );
+    }
+    if (parsed.data.booking_id && parsed.data.booking_id !== previousJob) {
+      // And the job it now bills carries the stamp, as it would had the
+      // invoice been created for it. Guarded on still-null.
+      try {
+        await supabase
+          .from("bookings")
+          .update({ billing_invoice_id: id } as never)
+          .eq("id", parsed.data.booking_id)
+          .eq("organization_id", organizationId)
+          .is("billing_invoice_id" as never, null as never);
+      } catch (err) {
+        console.error(`[invoices] invoice ${id}: stamping its new job failed (invoice saved):`, err);
+      }
+    }
   }
 
   // Promote a status change to its own audit action so the viewer can

@@ -140,6 +140,21 @@ async function main() {
   );
   await sql("update public.bookings set billing_invoice_id = $2 where id = $1", [done, invoice.id]);
 
+  // Pay: both cleaners have a rate, and Bea's finished shift sits in a pay run
+  // the office has prepared but not finalized. Her pay page must still show it.
+  await sql("update public.memberships set pay_rate_cents = 2200 where id = any($1::uuid[])", [
+    [anna.membershipId, bea.membershipId],
+  ]);
+  const [draftRun] = await sql<{ id: string }>(
+    `insert into public.payroll_runs (organization_id, period_start, period_end, status, total_cents, created_by)
+     values ($1, (now() - interval '13 days')::date, now()::date, 'draft', 3850, $2) returning id`,
+    [org, owner.membershipId],
+  );
+  await sql("update public.time_entries set payroll_run_id = $2 where employee_id = $1 and clock_out_at is not null", [
+    bea.membershipId,
+    draftRun.id,
+  ]);
+
   // ── Who you can be ───────────────────────────────────────────────────────
   const people = { owner, manager, anna, bea };
   const session: Record<string, { cookie: string; paste: string }> = {};

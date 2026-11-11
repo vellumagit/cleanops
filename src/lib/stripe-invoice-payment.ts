@@ -285,7 +285,15 @@ export async function recordStripeInvoicePayment(
   // A charge that was ENTIRELY tip has nothing to book against the invoice.
   if (invoiceAmountCents <= 0) return;
 
-  const { data: insertedPayment } = (await admin
+  // The claim on this event is already taken, so a ledger write that fails
+  // quietly is a card payment that exists at Stripe and nowhere here
+  // (September sweep, Tier 1 #1). Inside a webhook the fail-closed scope now
+  // rejects such a write, but this function should not depend on who calls
+  // it: it reads the error itself. 23505 is the paired event having written
+  // the same payment a moment earlier, which is the outcome wanted.
+  const { data: insertedPayment, error: insertErr } = (await allowDbErrors(
+    ["23505"],
+    admin
     .from("invoice_payments" as never)
     .insert({
       organization_id: invoice.organization_id,
@@ -299,7 +307,14 @@ export async function recordStripeInvoicePayment(
       provider_fee_cents: args.feeCents,
     } as never)
     .select("id")
-    .maybeSingle()) as unknown as { data: { id: string } | null };
+    .maybeSingle(),
+  )) as unknown as {
+    data: { id: string } | null;
+    error: { code?: string; message: string } | null;
+  };
+  if (insertErr && insertErr.code !== "23505") {
+    throw new Error(`stripe payment ledger insert failed for ${args.piId}: ${insertErr.message}`);
+  }
 
   // Books: the receipt follows the invoice into Sage. Never blocks the
   // webhook; the reconciler picks up anything that doesn't land.

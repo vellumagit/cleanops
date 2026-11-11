@@ -12,6 +12,8 @@
  * screen that ends up in someone's records, so it least of all.
  */
 
+import { resolvePayRate } from "@/lib/pay-rate";
+
 export type RunnableEntry = {
   id: string;
   employee_id: string | null;
@@ -58,10 +60,14 @@ export function groupEntriesForRun(
     );
     if (mins === 0) continue;
 
-    const rate =
-      e.pay_rate_cents_snapshot ??
-      fallbackRateByMember.get(e.employee_id) ??
-      0;
+    // No snapshot and no rate on the person: not priced at $0 and stamped
+    // as paid (lib/pay-rate.ts). The shift stays unstamped for a later
+    // statement, once a rate exists.
+    const rate = resolvePayRate(
+      e.pay_rate_cents_snapshot,
+      fallbackRateByMember.get(e.employee_id),
+    );
+    if (rate == null) continue;
 
     const item = byMember.get(e.employee_id) ?? {
       membershipId: e.employee_id,

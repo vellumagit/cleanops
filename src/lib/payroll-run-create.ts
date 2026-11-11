@@ -3,6 +3,7 @@ import "server-only";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { runFailClosed } from "@/lib/supabase/query-guard";
 import { getOrgTimezone } from "@/lib/org-timezone";
+import { noteUnpriced, resolvePayRate, unpricedSentence, type Unpriced } from "@/lib/pay-rate";
 import { zonedDayStartUtc, zonedMidnightUtc } from "@/lib/wall-clock";
 
 /**
@@ -189,7 +190,8 @@ async function createPayrollRunForOrgImpl(opts: CreateRunOpts): Promise<CreateRu
     bonusCents: number;
     ptoHours: number;
     ptoCents: number;
-    payRateCents: number;
+    /** null = nobody ever set one. Not the same as zero: see lib/pay-rate.ts. */
+    payRateCents: number | null;
   };
 
   const buckets = new Map<string, Bucket>();
@@ -206,7 +208,7 @@ async function createPayrollRunForOrgImpl(opts: CreateRunOpts): Promise<CreateRu
       bonusCents: 0,
       ptoHours: 0,
       ptoCents: 0,
-      payRateCents: emp.pay_rate_cents ?? 0,
+      payRateCents: emp.pay_rate_cents ?? null,
     });
   }
 
@@ -266,11 +268,14 @@ async function createPayrollRunForOrgImpl(opts: CreateRunOpts): Promise<CreateRu
           bonusCents: 0,
           ptoHours: 0,
           ptoCents: 0,
-          payRateCents: m.pay_rate_cents ?? 0,
+          payRateCents: m.pay_rate_cents ?? null,
         });
       }
     }
   }
+
+  // Time that has no rate to be paid at: left out and left unstamped.
+  const unpriced: Unpriced = new Map();
 
   // Sum hours worked; track how much predates the window for the note.
   let stragglerMinutes = 0;
@@ -287,7 +292,6 @@ async function createPayrollRunForOrgImpl(opts: CreateRunOpts): Promise<CreateRu
     ) {
       continue;
     }
-    countedEntries.push({ id: e.id, employeeId: e.employee_id });
     const mins = Math.max(
       0,
       Math.round(
@@ -296,11 +300,17 @@ async function createPayrollRunForOrgImpl(opts: CreateRunOpts): Promise<CreateRu
           60_000,
       ),
     );
-    bucket.minutes += mins;
-    if (e.clock_in_at < fromIso) stragglerMinutes += mins;
     // Wage snapshot first, current wage second — the booking's billing
     // rate never pays anyone.
-    const rate = e.pay_rate_cents_snapshot ?? bucket.payRateCents;
+    const rate = resolvePayRate(e.pay_rate_cents_snapshot, bucket.payRateCents);
+    if (rate == null) {
+      // Not counted, so not stamped: it stays payable for the next run.
+      noteUnpriced(unpriced, e.employee_id, bucket.employeeName, mins);
+      continue;
+    }
+    countedEntries.push({ id: e.id, employeeId: e.employee_id });
+    bucket.minutes += mins;
+    if (e.clock_in_at < fromIso) stragglerMinutes += mins;
     bucket.regularCents += Math.round((mins * rate) / 60);
   }
 
@@ -317,8 +327,12 @@ async function createPayrollRunForOrgImpl(opts: CreateRunOpts): Promise<CreateRu
     if (hoursOnly.has(p.employee_id)) continue;
     const bucket = buckets.get(p.employee_id);
     if (!bucket) continue;
-    countedPto.push({ id: p.id, employeeId: p.employee_id });
     const h = Number(p.hours) || 0;
+    if (bucket.payRateCents == null) {
+      noteUnpriced(unpriced, p.employee_id, bucket.employeeName, Math.round(h * 60));
+      continue;
+    }
+    countedPto.push({ id: p.id, employeeId: p.employee_id });
     bucket.ptoHours += h;
     bucket.ptoCents += Math.round(h * bucket.payRateCents);
   }
@@ -331,7 +345,10 @@ async function createPayrollRunForOrgImpl(opts: CreateRunOpts): Promise<CreateRu
     }))
     .filter((i) => i.minutes > 0 || i.bonusCents > 0 || i.ptoCents > 0);
 
+  const unpricedNote = unpricedSentence(unpriced);
   if (items.length === 0) {
+    // "Nothing to pay" would be false: there is time here, with no rate.
+    if (unpricedNote) return { ok: false, error: unpricedNote };
     return {
       ok: false,
       nothing: true,
@@ -355,7 +372,9 @@ async function createPayrollRunForOrgImpl(opts: CreateRunOpts): Promise<CreateRu
       status: "draft",
       total_cents: runTotalCents,
       created_by: createdByMembershipId,
-      ...(stragglerNote ? { notes: stragglerNote } : {}),
+      ...(stragglerNote || unpricedNote
+        ? { notes: [stragglerNote, unpricedNote].filter(Boolean).join(" ") }
+        : {}),
     } as never)
     .select("id")
     .single()) as unknown as {

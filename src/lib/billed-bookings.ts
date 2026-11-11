@@ -246,6 +246,74 @@ export async function markJobsReleased(
 }
 
 /**
+ * An edit took these jobs off this invoice: free them.
+ *
+ * Saving an invoice could delete a job's line, or point the invoice at a
+ * different job, and leave the old job's stamp behind. The stamp is what the
+ * billing run and every "is this billed?" check read, so the job was billed
+ * by nothing and billable by nothing (September sweep, Tier 1 #3 and #4).
+ *
+ * Only jobs the caller names are considered, never "every stamped job this
+ * invoice doesn't name": older invoices list their jobs as typed text with no
+ * link, and for those the stamp is the only record there is. A named job is
+ * left alone if the invoice still names it some other way.
+ *
+ * Off a draft the job is simply free again; off an invoice that was issued
+ * it is released the way a void releases it (removalReleasesJobs), so only a
+ * person bills it again. Never throws: the invoice is already saved.
+ */
+export async function releaseJobsRemovedFromInvoice(
+  supabase: SupabaseClient,
+  organizationId: string,
+  invoiceId: string,
+  bookingIds: readonly string[],
+  invoiceStatus: string | null | undefined,
+  nowIso: string,
+): Promise<void> {
+  if (bookingIds.length === 0) return;
+  try {
+    const [own, lines] = await Promise.all([
+      supabase.from("invoices").select("booking_id").eq("id", invoiceId).maybeSingle() as unknown as Promise<{
+        data: { booking_id: string | null } | null;
+        error: { message: string } | null;
+      }>,
+      supabase.from("invoice_line_items").select("booking_id").eq("invoice_id", invoiceId) as unknown as Promise<{
+        data: Array<{ booking_id: string | null }> | null;
+        error: { message: string } | null;
+      }>,
+    ]);
+    const failed = own.error ?? lines.error;
+    if (failed) throw new Error(failed.message);
+    const stillNamed = new Set(
+      [own.data?.booking_id, ...(lines.data ?? []).map((r) => r.booking_id)].filter((x): x is string => !!x),
+    );
+    const gone = bookingIds.filter((jobId) => !stillNamed.has(jobId));
+    if (gone.length === 0) return;
+    // Two writes with their columns written out, not one with a computed
+    // payload: test/job-writers.test.ts reads what each bookings update can
+    // change, and a payload it cannot read counts as one that might move a
+    // job. Both filter on a stamp that points HERE; one pointing at another
+    // invoice is that invoice's business.
+    const { error } = removalReleasesJobs(invoiceStatus)
+      ? await supabase
+          .from("bookings")
+          .update({ billing_invoice_id: null, billing_released_at: nowIso } as never)
+          .in("id", gone)
+          .eq("organization_id", organizationId)
+          .eq("billing_invoice_id", invoiceId)
+      : await supabase
+          .from("bookings")
+          .update({ billing_invoice_id: null } as never)
+          .in("id", gone)
+          .eq("organization_id", organizationId)
+          .eq("billing_invoice_id", invoiceId);
+    if (error) throw new Error(error.message);
+  } catch (err) {
+    console.error(`[billing] invoice ${invoiceId}: could not free ${bookingIds.length} job(s) taken off it:`, err);
+  }
+}
+
+/**
  * booking id → the invoice already billing it. Absent means unbilled.
  *
  * A failed read throws. "Couldn't check" must never read as "not billed":

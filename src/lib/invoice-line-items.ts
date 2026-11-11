@@ -48,6 +48,8 @@ export type ReconcileResult =
       taxAmountCents: number | null;
       taxRateBps: number | null;
       taxLabel: string | null;
+      /** Jobs whose line this save removed or re-pointed. The caller frees them. */
+      removedJobIds: string[];
     }
   | { ok: false; error: string };
 
@@ -87,10 +89,13 @@ export async function reconcileInvoiceLineItems(
     return { ok: false, error: "Invalid line items payload" };
   }
 
-  const { data: existingItems, error: existingErr } = await supabase
+  const { data: existingItems, error: existingErr } = (await supabase
     .from("invoice_line_items")
-    .select("id")
-    .eq("invoice_id", invoice.id);
+    .select("id, booking_id")
+    .eq("invoice_id", invoice.id)) as unknown as {
+    data: Array<{ id: string; booking_id: string | null }> | null;
+    error: { message: string } | null;
+  };
   // A failed read is not "no lines yet". Carrying on would insert every
   // submitted row beside the ones it couldn't see: the invoice doubles its
   // lines while its total, computed from the form, says otherwise.
@@ -200,6 +205,18 @@ export async function reconcileInvoiceLineItems(
         null
       : null;
 
+  // Jobs a line named before this save and no line names after it: the line
+  // was deleted, or pointed at a different job. The stamp on those jobs still
+  // says this invoice bills them (Tier 1 #4), and the caller takes it off.
+  const stillNamed = new Set(billedIds);
+  const removedJobIds = [
+    ...new Set(
+      (existingItems ?? [])
+        .map((r) => r.booking_id)
+        .filter((jobId): jobId is string => !!jobId && !stillNamed.has(jobId)),
+    ),
+  ];
+
   return {
     ok: true,
     itemCount: parsed.length,
@@ -207,6 +224,7 @@ export async function reconcileInvoiceLineItems(
     taxAmountCents: tax.taxAmountCents,
     taxRateBps: tax.rateBps,
     taxLabel,
+    removedJobIds,
   };
 }
 

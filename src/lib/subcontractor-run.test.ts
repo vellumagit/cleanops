@@ -81,7 +81,7 @@ describe("groupEntriesForRun", () => {
     expect(items).toHaveLength(0);
   });
 
-  it("a NULL member rate still prices snapshot entries, and floors the rest at 0", () => {
+  it("a NULL member rate still prices snapshot entries, and leaves the rest unstamped", () => {
     const items = groupEntriesForRun(
       [
         entry({ id: "a", pay_rate_cents_snapshot: 2400 }),
@@ -90,7 +90,20 @@ describe("groupEntriesForRun", () => {
       rates([["olha", null]]),
     );
     expect(items[0].totalCents).toBe(7200);
-    expect(items[0].entryIds).toEqual(["a", "b"]);
+    // "b" has no rate anywhere. Priced at $0 and stamped, it could never be
+    // paid; left out, it is still payable once a rate is set.
+    expect(items[0].entryIds).toEqual(["a"]);
+  });
+
+  it("someone with no rate at all gets no statement line", () => {
+    expect(groupEntriesForRun([entry({ id: "b" })], rates([["olha", null]]))).toEqual([]);
+  });
+
+  it("a rate set to zero is still a rate", () => {
+    const items = groupEntriesForRun([entry({ id: "b" })], rates([["olha", 0]]));
+    expect(items).toHaveLength(1);
+    expect(items[0].totalCents).toBe(0);
+    expect(items[0].entryIds).toEqual(["b"]);
   });
 });
 

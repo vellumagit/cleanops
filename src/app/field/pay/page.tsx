@@ -6,6 +6,7 @@ import { FieldHeader } from "@/components/field-shell";
 import { formatCurrencyCents } from "@/lib/format";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { getOrgTimezone } from "@/lib/org-timezone";
+import { stillAnEstimate } from "@/lib/pay-rate";
 import { periodContaining, type PaySchedule } from "@/lib/pay-schedule";
 import {
   zonedYmd,
@@ -87,30 +88,60 @@ export default async function FieldPayPage() {
   // Current-period shifts (mine only).
   const { data: entries } = (await admin
     .from("time_entries")
-    .select("clock_in_at, clock_out_at, needs_review, pay_rate_cents_snapshot")
+    .select(
+      "clock_in_at, clock_out_at, needs_review, pay_rate_cents_snapshot, payroll_run_id, subcontractor_run_id" as never,
+    )
     .eq("employee_id", membership.id)
     .eq("organization_id", membership.organization_id)
     .gte("clock_in_at", periodStartUtc.toISOString())
     .lt("clock_in_at", periodEndUtc.toISOString())
-    // Hours already frozen into a run/statement live in the Statements
-    // section — counting them here too showed the same money twice.
-    .is("payroll_run_id", null)
-    .is("subcontractor_run_id" as never, null as never)
     .limit(500)) as unknown as {
     data: Array<{
       clock_in_at: string;
       clock_out_at: string | null;
       needs_review: boolean | null;
       pay_rate_cents_snapshot: number | null;
+      payroll_run_id: string | null;
+      subcontractor_run_id: string | null;
     }> | null;
   };
+
+  // Hours a FINALIZED run has claimed live in the Statements section below;
+  // counting them here too showed the same money twice. Hours in a DRAFT run
+  // are different: Prepare stamps them at once, the statement doesn't exist
+  // until Finalize, and filtering on "no run" made them vanish from her page
+  // for as long as the office took to review (lib/pay-rate.ts).
+  const claimedBy = {
+    payroll: [...new Set((entries ?? []).map((e) => e.payroll_run_id).filter((x): x is string => !!x))],
+    contractor: [...new Set((entries ?? []).map((e) => e.subcontractor_run_id).filter((x): x is string => !!x))],
+  };
+  const draftRunIds = new Set<string>();
+  if (claimedBy.payroll.length > 0) {
+    const { data: runs } = (await admin
+      .from("payroll_runs")
+      .select("id")
+      .in("id", claimedBy.payroll)
+      .eq("organization_id", membership.organization_id)
+      .eq("status", "draft")) as unknown as { data: Array<{ id: string }> | null };
+    for (const r of runs ?? []) draftRunIds.add(r.id);
+  }
+  if (claimedBy.contractor.length > 0) {
+    const { data: runs } = (await admin
+      .from("subcontractor_pay_runs" as never)
+      .select("id")
+      .in("id" as never, claimedBy.contractor as never)
+      .eq("organization_id" as never, membership.organization_id as never)
+      .eq("status" as never, "draft" as never)) as unknown as { data: Array<{ id: string }> | null };
+    for (const r of runs ?? []) draftRunIds.add(r.id);
+  }
+  const periodEntries = (entries ?? []).filter((e) => stillAnEstimate(e, draftRunIds));
 
   let minutesSoFar = 0;
   let estimateCents = 0;
   let openShifts = 0;
   let flaggedShifts = 0;
   let missingRate = false;
-  for (const e of entries ?? []) {
+  for (const e of periodEntries) {
     if (!e.clock_out_at) {
       openShifts++;
       continue;
