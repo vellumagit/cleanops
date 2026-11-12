@@ -1580,6 +1580,16 @@ export async function sendStaleEstimateFollowups(): Promise<{
 // 7c. Overdue invoice reminder cron — runs daily, sends once per 7 days per invoice
 // ─────────────────────────────────────────────────────────────────
 
+/**
+ * PostgREST `or` filter for invoices the office should count as overdue:
+ * `overdue`, plus part-paid ones past their due date. A part-paid invoice is
+ * chased like an overdue one (sendOverdueReminders) but keeps its
+ * partially_paid status, so a plain status check misses it.
+ */
+export function owedPastDueFilter(todayYmd: string): string {
+  return `status.eq.overdue,and(status.eq.partially_paid,due_date.lt.${todayYmd})`;
+}
+
 export async function sendOverdueReminders(): Promise<{
   considered: number;
   sent: number;
@@ -1614,24 +1624,34 @@ export async function sendOverdueReminders(): Promise<{
     console.error("[auto] sent→overdue flip failed:", flipErr);
   }
 
-  // Find every overdue, unpaid invoice whose last reminder is either null
-  // or older than 7 days. Uses the partial index from migration
-  // 20260418030000_invoice_overdue_reminders.sql.
+  // Find every overdue or part-paid invoice whose last reminder is either
+  // null or older than 7 days.
+  //
+  // Part-paid: a payment moves an invoice to `partially_paid` and it never
+  // becomes `overdue` (the flip above only takes `sent`), so until 2026-11-11
+  // a client who paid part of an invoice was never chased for the rest. They
+  // are reminded on the BALANCE, and only once the invoice was actually sent
+  // and its due date has passed — the payment trigger marks a draft that took
+  // a deposit `partially_paid` too, and that client has never seen it. The
+  // status is left alone on purpose: auto-void writes off `overdue` invoices
+  // by age without looking at payments.
+  const todayUtc = new Date().toISOString().slice(0, 10);
   const sevenDaysAgo = new Date(
     Date.now() - 7 * 24 * 60 * 60 * 1000,
   ).toISOString();
 
-  const { data: candidates } = (await db
+  const { data: rows, error: candidatesErr } = (await db
     .from("invoices")
     .select(
       `
       id, number, organization_id, client_id, amount_cents, due_date, public_token,
-      overdue_reminder_sent_at,
+      status, sent_at, overdue_reminder_sent_at,
       client:clients ( name, email )
     `,
     )
-    .eq("status", "overdue")
+    .in("status", ["overdue", "partially_paid"])
     .is("paid_at", null)
+    .is("voided_at", null)
     .or(
       `overdue_reminder_sent_at.is.null,overdue_reminder_sent_at.lt.${sevenDaysAgo}`,
     )) as unknown as {
@@ -1643,17 +1663,57 @@ export async function sendOverdueReminders(): Promise<{
       amount_cents: number;
       due_date: string | null;
       public_token: string | null;
+      status: string;
+      sent_at: string | null;
       overdue_reminder_sent_at: string | null;
       client: { name: string | null; email: string | null } | null;
     }> | null;
+    error: { message: string } | null;
   };
+  if (candidatesErr) throw new Error(`overdue reminders: ${candidatesErr.message}`);
 
-  const considered = candidates?.length ?? 0;
+  const candidates = (rows ?? []).filter(
+    (inv) =>
+      inv.status === "overdue" ||
+      (inv.sent_at != null && inv.due_date != null && inv.due_date < todayUtc),
+  );
+
+  const considered = candidates.length;
   let sent = 0;
   let skipped = 0;
 
-  if (!candidates || candidates.length === 0) {
+  if (candidates.length === 0) {
     return { considered, sent, skipped };
+  }
+
+  // What each invoice has collected, net of refunds, so a part-paid invoice
+  // is chased for what is still owed and not its total. A read failure stops
+  // the run: guessing would bill a client for money they already paid.
+  const { selectInChunks } = await import("@/lib/supabase/chunked-in");
+  const { netPaidCents, outstandingBalanceCents } = await import(
+    "@/lib/invoice-balance"
+  );
+  const { data: payments, error: paymentsErr } = await selectInChunks(
+    candidates.map((c) => c.id),
+    (ids) =>
+      db
+        .from("invoice_payments")
+        .select("invoice_id, amount_cents, refunded_cents")
+        .in("invoice_id", ids) as unknown as PromiseLike<{
+        data: Array<{
+          invoice_id: string;
+          amount_cents: number | null;
+          refunded_cents: number | null;
+        }> | null;
+        error: { message: string } | null;
+      }>,
+  );
+  if (paymentsErr) throw new Error(`overdue reminders: ${paymentsErr.message}`);
+  const paymentsByInvoice = new Map<string, typeof payments>();
+  for (const p of payments) {
+    const list = paymentsByInvoice.get(p.invoice_id) ?? [];
+    list.push(p);
+    paymentsByInvoice.set(p.invoice_id, list);
   }
 
   // Cache org lookups — many invoices share the same org.
@@ -1738,10 +1798,24 @@ export async function sendOverdueReminders(): Promise<{
       Math.floor((Date.now() - dueDate.getTime()) / (24 * 60 * 60 * 1000)),
     );
     const invoiceNumber = inv.number ?? inv.id.slice(0, 8).toUpperCase();
-    const amountFormatted = formatCurrencyCents(
-      inv.amount_cents,
-      cached.currency,
-    );
+    const paid = paymentsByInvoice.get(inv.id) ?? [];
+    const balanceCents = outstandingBalanceCents(inv.amount_cents, paid);
+    if (balanceCents <= 0) {
+      skipped += 1;
+      continue;
+    }
+    const paidCents = netPaidCents(paid);
+    const amountFormatted = formatCurrencyCents(balanceCents, cached.currency);
+    const partPaid =
+      paidCents > 0
+        ? {
+            paidFormatted: formatCurrencyCents(paidCents, cached.currency),
+            totalFormatted: formatCurrencyCents(
+              inv.amount_cents,
+              cached.currency,
+            ),
+          }
+        : undefined;
     const publicUrl = inv.public_token
       ? `${siteUrl}/i/${inv.public_token}`
       : siteUrl;
@@ -1753,6 +1827,7 @@ export async function sendOverdueReminders(): Promise<{
         clientName: inv.client!.name ?? "there",
         invoiceNumber,
         amountFormatted,
+        partPaid,
         // due_date is a DATE column — pinned, not zoned. See invoice-send.ts.
         dueDate: dueDate.toLocaleDateString("en-US", {
           month: "short",
@@ -1786,6 +1861,7 @@ export async function sendOverdueReminders(): Promise<{
             orgName: cached.name,
             invoiceNumber,
             amountFormatted,
+            partPaid: partPaid != null,
             publicUrl,
           }),
           automationKey: "invoice_overdue_reminder",
@@ -4475,7 +4551,7 @@ export async function sendWeeklyOpsDigests(): Promise<{
         .from("invoices")
         .select("id", { count: "exact", head: true })
         .eq("organization_id", org.id)
-        .eq("status", "overdue")
+        .or(owedPastDueFilter(now.toISOString().slice(0, 10)))
         .is("paid_at", null),
       // Rows, not a count — a bench claim never sets assigned_to, so counting
       // on that column alone reported covered jobs as unstaffed in the digest.

@@ -418,10 +418,13 @@ export function composeInvoiceSms(args: {
 export function composeOverdueReminderSms(args: {
   orgName: string;
   invoiceNumber: string;
+  /** What is still owed: the total, or the balance when part-paid. */
   amountFormatted: string;
+  partPaid?: boolean;
   publicUrl: string;
 }): string {
-  return `${args.orgName}: Reminder — invoice ${args.invoiceNumber} (${args.amountFormatted}) is past due. View & pay: ${args.publicUrl} Reply STOP to opt out.`;
+  const owed = args.partPaid ? `balance ${args.amountFormatted}` : args.amountFormatted;
+  return `${args.orgName}: Reminder — invoice ${args.invoiceNumber} (${owed}) is past due. View & pay: ${args.publicUrl} Reply STOP to opt out.`;
 }
 
 export function composePaymentReceiptSms(args: {

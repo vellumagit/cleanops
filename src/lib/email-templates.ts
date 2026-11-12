@@ -1833,7 +1833,10 @@ export function bookingRescheduledEmail(args: {
 export function invoiceOverdueReminderEmail(args: {
   clientName: string;
   invoiceNumber: string;
+  /** What is still owed: the total, or the balance when part-paid. */
   amountFormatted: string;
+  /** Set when the client has paid part of it: the email shows total, paid and balance. */
+  partPaid?: { paidFormatted: string; totalFormatted: string };
   dueDate: string;
   daysOverdue: number;
   publicUrl: string;
@@ -1842,22 +1845,31 @@ export function invoiceOverdueReminderEmail(args: {
   logoUrl?: string;
 }) {
   const plural = args.daysOverdue === 1 ? "day" : "days";
-  const subject = `Reminder: Invoice ${args.invoiceNumber} is ${args.daysOverdue} ${plural} overdue`;
+  const pp = args.partPaid;
+  const subject = pp
+    ? `Reminder: ${args.amountFormatted} still owing on invoice ${args.invoiceNumber}`
+    : `Reminder: Invoice ${args.invoiceNumber} is ${args.daysOverdue} ${plural} overdue`;
+  const row = (label: string, value: string, strong = false) => `
+      <tr>
+        <td style="font-size:13px;color:#71717a;padding:12px 0;border-bottom:1px solid #f4f4f5;">${label}</td>
+        <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;${strong ? "font-weight:600;" : ""}border-bottom:1px solid #f4f4f5;">${escapeHtml(value)}</td>
+      </tr>`;
+  const amountRows = pp
+    ? row("Invoice total", pp.totalFormatted) +
+      row("Paid", pp.paidFormatted) +
+      row("Balance due", args.amountFormatted, true)
+    : row("Amount", args.amountFormatted, true);
+  const intro = pp
+    ? `thank you for your payment. A balance of <strong style="color:#18181b;">${escapeHtml(args.amountFormatted)}</strong> on your invoice from <strong style="color:#18181b;">${escapeHtml(args.orgName)}</strong> is now <strong style="color:#18181b;">${args.daysOverdue} ${plural} past due</strong>.`
+    : `this is a friendly reminder that your invoice from <strong style="color:#18181b;">${escapeHtml(args.orgName)}</strong> is now <strong style="color:#18181b;">${args.daysOverdue} ${plural} past due</strong>.`;
   const html = layout(
     `
     <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;letter-spacing:-0.02em;color:#18181b;line-height:1.3;">Invoice reminder</h1>
     <p style="margin:0 0 24px;font-size:14px;line-height:1.55;color:#52525b;">
-      Hi ${escapeHtml(args.clientName)}, this is a friendly reminder that your invoice from <strong style="color:#18181b;">${escapeHtml(args.orgName)}</strong> is now <strong style="color:#18181b;">${args.daysOverdue} ${plural} past due</strong>.
+      Hi ${escapeHtml(args.clientName)}, ${intro}
     </p>
     <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;margin-bottom:4px;border-top:1px solid #e4e4e7;">
-      <tr>
-        <td style="font-size:13px;color:#71717a;padding:12px 0;border-bottom:1px solid #f4f4f5;">Invoice</td>
-        <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;font-weight:600;border-bottom:1px solid #f4f4f5;">${escapeHtml(args.invoiceNumber)}</td>
-      </tr>
-      <tr>
-        <td style="font-size:13px;color:#71717a;padding:12px 0;border-bottom:1px solid #f4f4f5;">Amount</td>
-        <td style="font-size:13px;color:#18181b;padding:12px 0;text-align:right;font-weight:600;border-bottom:1px solid #f4f4f5;">${escapeHtml(args.amountFormatted)}</td>
-      </tr>
+      ${row("Invoice", args.invoiceNumber, true)}${amountRows}
       <tr>
         <td style="font-size:13px;color:#71717a;padding:12px 0;">Was due</td>
         <td style="font-size:13px;color:#dc2626;padding:12px 0;text-align:right;">${escapeHtml(args.dueDate)}</td>
@@ -1872,10 +1884,13 @@ export function invoiceOverdueReminderEmail(args: {
       brandColor: args.brandColor,
       orgName: args.orgName,
       logoUrl: args.logoUrl,
-      preheader: `${args.invoiceNumber} · ${args.amountFormatted} · ${args.daysOverdue} ${plural} overdue`,
+      preheader: `${args.invoiceNumber} · ${pp ? `${args.amountFormatted} balance` : args.amountFormatted} · ${args.daysOverdue} ${plural} overdue`,
     },
   );
-  const text = `Invoice ${args.invoiceNumber} from ${args.orgName} is ${args.daysOverdue} ${plural} overdue.\n\nAmount: ${args.amountFormatted}\nWas due: ${args.dueDate}\n\nView & pay: ${args.publicUrl}\n\nAlready paid? Ignore this message.`;
+  const amountText = pp
+    ? `Balance due: ${args.amountFormatted} (${pp.paidFormatted} of ${pp.totalFormatted} paid)`
+    : `Amount: ${args.amountFormatted}`;
+  const text = `Invoice ${args.invoiceNumber} from ${args.orgName} is ${args.daysOverdue} ${plural} overdue.\n\n${amountText}\nWas due: ${args.dueDate}\n\nView & pay: ${args.publicUrl}\n\nAlready paid? Ignore this message.`;
   return { subject, html, text };
 }
 
