@@ -16,6 +16,8 @@
  *   4. Answers HELP with a support message.
  *   5. Replies with TwiML so the sender gets the mandatory opt-out/HELP
  *      confirmation.
+ *   6. Anything else is a real reply: saved to sms_messages and sent to the
+ *      office (lib/sms-inbound-reply.ts), with no text back.
  *
  * Security: no auth session (Twilio is the caller), but the signature check
  * rejects anything not signed with our TWILIO_AUTH_TOKEN, so a stranger can't
@@ -102,12 +104,42 @@ export async function POST(req: NextRequest) {
   const isStart = intent === "start";
   const isHelp = intent === "help";
 
-  // Nothing actionable (a real reply / question) — ack with no auto-reply.
+  const admin = createSupabaseAdminClient();
+
+  // A real reply or question: saved, and put in front of the office
+  // (lib/sms-inbound-reply.ts). Nothing is texted back. Twilio always gets a
+  // 200 — a failure here is ours to log, not the sender's to retry into.
   if (!isStop && !isStart && !isHelp) {
+    try {
+      const { data: org, error: orgErr } = (await admin
+        .from("organizations")
+        .select("id")
+        .eq("sms_from_number" as never, to as never)
+        .maybeSingle()) as unknown as {
+        data: { id: string } | null;
+        error: { message: string } | null;
+      };
+      if (orgErr) throw new Error(orgErr.message);
+      if (!org) {
+        console.warn(`[sms/inbound] reply to a number no company has: To=${maskPhone(to)}`);
+        return twiml(null);
+      }
+      const { recordInboundReply } = await import("@/lib/sms-inbound-reply");
+      const result = await recordInboundReply(admin, org.id, {
+        to,
+        from,
+        body,
+        messageSid: params.get("MessageSid") ?? params.get("SmsSid"),
+        mediaCount: Number(params.get("NumMedia") ?? 0) || 0,
+      });
+      console.log(
+        `[sms/inbound] reply from ${maskPhone(from)} (${result.sender}) in org ${org.id}: ${result.duplicate ? "already seen" : `saved=${result.saved} emailed=${result.emailed}`}`,
+      );
+    } catch (err) {
+      console.error(`[sms/inbound] reply from ${maskPhone(from)} not delivered to the office:`, err);
+    }
     return twiml(null);
   }
-
-  const admin = createSupabaseAdminClient();
 
   // Resolve the org from the number that was texted.
   const { data: orgRow } = (await admin
