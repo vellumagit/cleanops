@@ -3,6 +3,7 @@ import { createHmac } from "node:crypto";
 import {
   classifyInboundSms,
   phoneKey,
+  saysMoreThanKeyword,
   verifyTwilioSignature,
 } from "./sms-inbound";
 
@@ -18,6 +19,30 @@ describe("classifyInboundSms", () => {
     expect(classifyInboundSms("yes")).toBe("start");
     expect(classifyInboundSms("HELP")).toBe("help");
     expect(classifyInboundSms("info")).toBe("help");
+  });
+
+  it("ignores punctuation around a keyword", () => {
+    expect(classifyInboundSms("STOP.")).toBe("stop");
+    expect(classifyInboundSms("Stop !")).toBe("stop");
+    expect(classifyInboundSms("Yes!")).toBe("start");
+    expect(classifyInboundSms("yes 👍")).toBe("start");
+    expect(classifyInboundSms("Help?")).toBe("help");
+  });
+
+  it("treats YES or HELP with more words as a reply, not a keyword", () => {
+    // Answers to a shift offer or a question, for the office to read.
+    expect(classifyInboundSms("Yes I can take Saturday")).toBe("other");
+    expect(classifyInboundSms("Yes, see you Thursday")).toBe("other");
+    expect(classifyInboundSms("Info on pricing?")).toBe("other");
+    expect(classifyInboundSms("Help, I'm locked out")).toBe("other");
+  });
+
+  it("says when an opt-out carried more than the keyword", () => {
+    expect(saysMoreThanKeyword("Cancel my Friday clean please")).toBe(true);
+    expect(saysMoreThanKeyword("STOP please")).toBe(true);
+    expect(saysMoreThanKeyword("STOP")).toBe(false);
+    expect(saysMoreThanKeyword("Stop.")).toBe(false);
+    expect(saysMoreThanKeyword("")).toBe(false);
   });
 
   it("treats a normal reply and empty input as 'other'", () => {

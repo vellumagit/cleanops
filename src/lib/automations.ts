@@ -11,6 +11,7 @@ import { resolveClientNotify } from "@/lib/notification-gate";
 import { sendPushToMembership, sendPushToOrgAdmins } from "@/lib/push";
 import { notify } from "@/lib/notify";
 import type { CurrencyCode } from "@/lib/format";
+import { MIN_CHASED_BALANCE_CENTS, owedPastDueFilter } from "@/lib/invoice-balance";
 import { localInputToUtcIso } from "@/lib/validators/common";
 import type { Database } from "@/lib/supabase/types";
 import { crewForGeneration, splitsFromCrew } from "@/lib/series-crew";
@@ -1580,15 +1581,6 @@ export async function sendStaleEstimateFollowups(): Promise<{
 // 7c. Overdue invoice reminder cron — runs daily, sends once per 7 days per invoice
 // ─────────────────────────────────────────────────────────────────
 
-/**
- * PostgREST `or` filter for invoices the office should count as overdue:
- * `overdue`, plus part-paid ones past their due date. A part-paid invoice is
- * chased like an overdue one (sendOverdueReminders) but keeps its
- * partially_paid status, so a plain status check misses it.
- */
-export function owedPastDueFilter(todayYmd: string): string {
-  return `status.eq.overdue,and(status.eq.partially_paid,due_date.lt.${todayYmd})`;
-}
 
 export async function sendOverdueReminders(): Promise<{
   considered: number;
@@ -1640,42 +1632,45 @@ export async function sendOverdueReminders(): Promise<{
     Date.now() - 7 * 24 * 60 * 60 * 1000,
   ).toISOString();
 
-  const { data: rows, error: candidatesErr } = (await db
-    .from("invoices")
-    .select(
-      `
-      id, number, organization_id, client_id, amount_cents, due_date, public_token,
-      status, sent_at, overdue_reminder_sent_at,
-      client:clients ( name, email )
-    `,
-    )
-    .in("status", ["overdue", "partially_paid"])
-    .is("paid_at", null)
-    .is("voided_at", null)
-    .or(
-      `overdue_reminder_sent_at.is.null,overdue_reminder_sent_at.lt.${sevenDaysAgo}`,
-    )) as unknown as {
-    data: Array<{
-      id: string;
-      number: string | null;
-      organization_id: string;
-      client_id: string | null;
-      amount_cents: number;
-      due_date: string | null;
-      public_token: string | null;
-      status: string;
-      sent_at: string | null;
-      overdue_reminder_sent_at: string | null;
-      client: { name: string | null; email: string | null } | null;
-    }> | null;
-    error: { message: string } | null;
+  // Both conditions in the query (one `or` holding an `and` of two), and
+  // every page: past 1000 rows PostgREST would cut the list silently, the
+  // same invoices every day. Not-yet-due and unsent part-paid invoices are
+  // no longer fetched just to be dropped.
+  type Candidate = {
+    id: string;
+    number: string | null;
+    organization_id: string;
+    client_id: string | null;
+    amount_cents: number;
+    due_date: string | null;
+    public_token: string | null;
+    status: string;
+    overdue_reminder_sent_at: string | null;
+    client: { name: string | null; email: string | null } | null;
   };
-  if (candidatesErr) throw new Error(`overdue reminders: ${candidatesErr.message}`);
-
-  const candidates = (rows ?? []).filter(
-    (inv) =>
-      inv.status === "overdue" ||
-      (inv.sent_at != null && inv.due_date != null && inv.due_date < todayUtc),
+  const { allPages } = await import("@/lib/supabase/all-pages");
+  const candidates = await allPages<Candidate>(
+    (from, to) =>
+      db
+        .from("invoices")
+        .select(
+          `
+          id, number, organization_id, client_id, amount_cents, due_date, public_token,
+          status, overdue_reminder_sent_at,
+          client:clients ( name, email )
+        `,
+        )
+        .is("paid_at", null)
+        .is("voided_at", null)
+        .or(
+          `and(or(${owedPastDueFilter(todayUtc)}),or(overdue_reminder_sent_at.is.null,overdue_reminder_sent_at.lt.${sevenDaysAgo}))`,
+        )
+        .order("id")
+        .range(from, to) as unknown as PromiseLike<{
+        data: Candidate[] | null;
+        error: { message: string } | null;
+      }>,
+    "overdue reminders",
   );
 
   const considered = candidates.length;
@@ -1800,11 +1795,15 @@ export async function sendOverdueReminders(): Promise<{
     const invoiceNumber = inv.number ?? inv.id.slice(0, 8).toUpperCase();
     const paid = paymentsByInvoice.get(inv.id) ?? [];
     const balanceCents = outstandingBalanceCents(inv.amount_cents, paid);
-    if (balanceCents <= 0) {
+    const paidCents = netPaidCents(paid);
+    // Nothing owed, or a part-paid leftover too small to chase every week.
+    if (
+      balanceCents <= 0 ||
+      (paidCents > 0 && balanceCents < MIN_CHASED_BALANCE_CENTS)
+    ) {
       skipped += 1;
       continue;
     }
-    const paidCents = netPaidCents(paid);
     const amountFormatted = formatCurrencyCents(balanceCents, cached.currency);
     const partPaid =
       paidCents > 0

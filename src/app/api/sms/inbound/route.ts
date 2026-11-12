@@ -17,7 +17,9 @@
  *   5. Replies with TwiML so the sender gets the mandatory opt-out/HELP
  *      confirmation.
  *   6. Anything else is a real reply: saved to sms_messages and sent to the
- *      office (lib/sms-inbound-reply.ts), with no text back.
+ *      office (lib/sms-inbound-reply.ts), with no text back. So is an
+ *      opt-out that says more than STOP ("Cancel my Friday clean"), which
+ *      still unsubscribes. YES and HELP count only on their own.
  *
  * Security: no auth session (Twilio is the caller), but the signature check
  * rejects anything not signed with our TWILIO_AUTH_TOKEN, so a stranger can't
@@ -31,6 +33,7 @@ import { rateLimitByIp } from "@/lib/rate-limit-helpers";
 import {
   classifyInboundSms,
   phoneKey,
+  saysMoreThanKeyword,
   verifyTwilioSignature,
 } from "@/lib/sms-inbound";
 import { maskPhone } from "@/lib/log-redact";
@@ -106,9 +109,29 @@ export async function POST(req: NextRequest) {
 
   const admin = createSupabaseAdminClient();
 
-  // A real reply or question: saved, and put in front of the office
-  // (lib/sms-inbound-reply.ts). Nothing is texted back. Twilio always gets a
-  // 200 — a failure here is ours to log, not the sender's to retry into.
+  // Save a reply and put it in front of the office (lib/sms-inbound-reply.ts).
+  // Never throws: Twilio always gets a 200, and a failure here is ours to
+  // log, not the sender's to retry into.
+  async function forwardToOffice(orgId: string, optedOut: boolean): Promise<void> {
+    try {
+      const { recordInboundReply } = await import("@/lib/sms-inbound-reply");
+      const result = await recordInboundReply(admin, orgId, {
+        to,
+        from,
+        body,
+        messageSid: params.get("MessageSid") ?? params.get("SmsSid"),
+        mediaCount: Number(params.get("NumMedia") ?? 0) || 0,
+        optedOut,
+      });
+      console.log(
+        `[sms/inbound] reply from ${maskPhone(from)} (${result.sender}) in org ${orgId}: ${result.duplicate ? "already seen" : `saved=${result.saved} emailed=${result.emailed}`}`,
+      );
+    } catch (err) {
+      console.error(`[sms/inbound] reply from ${maskPhone(from)} not delivered to the office:`, err);
+    }
+  }
+
+  // A real reply or question. Nothing is texted back.
   if (!isStop && !isStart && !isHelp) {
     try {
       const { data: org, error: orgErr } = (await admin
@@ -124,17 +147,7 @@ export async function POST(req: NextRequest) {
         console.warn(`[sms/inbound] reply to a number no company has: To=${maskPhone(to)}`);
         return twiml(null);
       }
-      const { recordInboundReply } = await import("@/lib/sms-inbound-reply");
-      const result = await recordInboundReply(admin, org.id, {
-        to,
-        from,
-        body,
-        messageSid: params.get("MessageSid") ?? params.get("SmsSid"),
-        mediaCount: Number(params.get("NumMedia") ?? 0) || 0,
-      });
-      console.log(
-        `[sms/inbound] reply from ${maskPhone(from)} (${result.sender}) in org ${org.id}: ${result.duplicate ? "already seen" : `saved=${result.saved} emailed=${result.emailed}`}`,
-      );
+      await forwardToOffice(org.id, false);
     } catch (err) {
       console.error(`[sms/inbound] reply from ${maskPhone(from)} not delivered to the office:`, err);
     }
@@ -170,15 +183,26 @@ export async function POST(req: NextRequest) {
   // don't cause a miss).
   const fromKey = phoneKey(from);
   if (fromKey.length === 10) {
-    const { data: clients } = (await admin
-      .from("clients")
-      .select("id, phone")
-      .eq("organization_id", orgRow.id)
-      .not("phone", "is", null)) as unknown as {
-      data: Array<{ id: string; phone: string | null }> | null;
-    };
+    // Every page, not PostgREST's first 1000 rows: an opt-out that misses
+    // the client because they sorted late is an opt-out not recorded.
+    const { allPages } = await import("@/lib/supabase/all-pages");
+    type PhoneRow = { id: string; phone: string | null };
+    const clients = await allPages<PhoneRow>(
+      (lo, hi) =>
+        admin
+          .from("clients")
+          .select("id, phone")
+          .eq("organization_id", orgRow.id)
+          .not("phone", "is", null)
+          .order("id")
+          .range(lo, hi) as unknown as PromiseLike<{
+          data: PhoneRow[] | null;
+          error: { message: string } | null;
+        }>,
+      "clients",
+    );
 
-    const matchIds = (clients ?? [])
+    const matchIds = clients
       .filter((c) => phoneKey(c.phone) === fromKey)
       .map((c) => c.id);
 
@@ -210,13 +234,20 @@ export async function POST(req: NextRequest) {
     // Also honor the opt-out for the SUBCONTRACTOR BENCH (freelancer_contacts).
     // The same phone may be a bench contact, and STOP must stop the shift-offer
     // broadcasts too — not just client messages. TCPA/CTIA applies to both.
-    const { data: benchRows } = (await admin
-      .from("freelancer_contacts")
-      .select("id, phone")
-      .eq("organization_id", orgRow.id)) as unknown as {
-      data: Array<{ id: string; phone: string | null }> | null;
-    };
-    const benchIds = (benchRows ?? [])
+    const benchRows = await allPages<PhoneRow>(
+      (lo, hi) =>
+        admin
+          .from("freelancer_contacts")
+          .select("id, phone")
+          .eq("organization_id", orgRow.id)
+          .order("id")
+          .range(lo, hi) as unknown as PromiseLike<{
+          data: PhoneRow[] | null;
+          error: { message: string } | null;
+        }>,
+      "freelancer_contacts",
+    );
+    const benchIds = benchRows
       .filter((c) => phoneKey(c.phone) === fromKey)
       .map((c) => c.id);
     if (benchIds.length > 0) {
@@ -239,6 +270,9 @@ export async function POST(req: NextRequest) {
 
   // Mandatory confirmation reply.
   if (isStop) {
+    // "Cancel my Friday clean" unsubscribes (above) and is also a message
+    // someone needs to read. A bare STOP is not.
+    if (saysMoreThanKeyword(body)) await forwardToOffice(orgRow.id, true);
     return twiml(
       `${orgRow.name}: You're unsubscribed and won't receive more messages. Reply START to resubscribe.`,
     );

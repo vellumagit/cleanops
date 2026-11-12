@@ -14,7 +14,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { hasPostgrest, startApi, type Api } from "./api";
-import { addClient, addOrg } from "./harness";
+import { addClient, addMember, addOrg } from "./harness";
 
 type Sent = { to: string; subject: string; html: string; text: string };
 const outbox = vi.hoisted(() => ({ email: [] as Sent[], sms: [] as Array<{ to: string; body: string }> }));
@@ -108,6 +108,8 @@ describe.skipIf(!hasPostgrest)("#8 part-paid invoices are reminded on the balanc
     const voided = await invoice(org, { cents: 40_000, due: ymd(-5), paid: 10_000 });
     await api.sql("update public.invoices set voided_at = now() where id = $1", [voided.id]);
     const unpaid = await invoice(org, { cents: 25_000, due: ymd(-5) });
+    // Paid all but 50 cents: below the floor, not chased weekly for change.
+    const pennies = await invoice(org, { cents: 40_000, due: ymd(-5), paid: 39_950 });
 
     // The payment trigger is what made them part-paid; the test relies on it.
     expect((await status(partPaid.id)).status).toBe("partially_paid");
@@ -132,8 +134,9 @@ describe.skipIf(!hasPostgrest)("#8 part-paid invoices are reminded on the balanc
     expect(to(remindedLongAgo)).toHaveLength(1);
     expect(to(remindedLately)).toHaveLength(0);
 
-    // Not chased: not yet due, never sent, company switched it off, voided.
-    for (const quiet of [notYetDue, draftDeposit, switchedOff, voided]) {
+    // Not chased: not yet due, never sent, company switched it off, voided,
+    // a leftover under a dollar.
+    for (const quiet of [notYetDue, draftDeposit, switchedOff, voided, pennies]) {
       expect(to(quiet)).toHaveLength(0);
       expect((await status(quiet.id)).stamped).toBe(false);
     }
@@ -151,8 +154,8 @@ describe.skipIf(!hasPostgrest)("#8 part-paid invoices are reminded on the balanc
     expect(outbox.email.length).toBe(before);
   });
 
-  it("counts part-paid past-due invoices as overdue for the owners' digest", async () => {
-    const { owedPastDueFilter } = await import("@/lib/automations");
+  it("counts part-paid past-due invoices as overdue for the digest and dashboard, but not unsent deposits", async () => {
+    const { owedPastDueFilter } = await import("@/lib/invoice-balance");
     const { createSupabaseAdminClient } = await import("@/lib/supabase/admin");
     const org = await company();
     await invoice(org, { cents: 10_000, due: ymd(-3), paid: 1_000 }); // part-paid, past due
@@ -163,6 +166,7 @@ describe.skipIf(!hasPostgrest)("#8 part-paid invoices are reminded on the balanc
       [org],
     );
     await invoice(org, { cents: 10_000, due: ymd(-3), paid: 10_000 }); // paid
+    await invoice(org, { cents: 10_000, due: ymd(-3), sent: false, paid: 1_000 }); // unsent draft that took a deposit
 
     const { count, error } = await createSupabaseAdminClient()
       .from("invoices")
@@ -172,5 +176,44 @@ describe.skipIf(!hasPostgrest)("#8 part-paid invoices are reminded on the balanc
       .is("paid_at", null);
     expect(error, api.log()).toBeNull();
     expect(count).toBe(2);
+  });
+
+  // The dashboard's two invoice queries (src/app/app/page.tsx), as the signed-in
+  // owner through RLS: part-paid counts as open on its balance, and the overdue
+  // count matches the digest's.
+  it("dashboard: open total is what is left to pay, overdue matches the digest", async () => {
+    const { createClient } = await import("@supabase/supabase-js");
+    const { OPEN_INVOICE_FILTER, outstandingBalanceCents, owedPastDueFilter } = await import("@/lib/invoice-balance");
+    const org = await company();
+    const owner = await addMember(api.sql, org, "owner");
+    await invoice(org, { cents: 40_000, due: ymd(-3), paid: 10_000 }); // part-paid, past due: $300 open
+    await invoice(org, { cents: 25_000, due: ymd(-3) }); // sent, past due
+    await api.sql("update public.invoices set status = 'overdue' where organization_id = $1 and status = 'sent'", [org]);
+    await invoice(org, { cents: 5_000, due: ymd(5) }); // sent, not due: $50 open
+    await invoice(org, { cents: 9_000, due: ymd(-3), sent: false, paid: 1_000 }); // unsent deposit: neither
+
+    const asOwner = createClient(api.url, api.anonKey, {
+      global: { headers: { Authorization: `Bearer ${api.tokenFor(owner.userId)}` } },
+      auth: { persistSession: false },
+    });
+    const open = await asOwner
+      .from("invoices")
+      .select("id, amount_cents, status, payments:invoice_payments ( amount_cents, refunded_cents )")
+      .or(OPEN_INVOICE_FILTER)
+      .is("voided_at", null);
+    expect(open.error, api.log()).toBeNull();
+    const rows = (open.data ?? []) as Array<{ amount_cents: number; status: string; payments: Array<{ amount_cents: number; refunded_cents: number }> }>;
+    // $300 balance + $250 overdue + $50 not yet due. The unsent deposit is not an outstanding invoice.
+    expect(rows).toHaveLength(3);
+    expect(rows.reduce((s, i) => s + outstandingBalanceCents(i.amount_cents, i.payments), 0)).toBe(30_000 + 25_000 + 5_000);
+
+    const overdue = await asOwner
+      .from("invoices")
+      .select("id", { count: "exact", head: true })
+      .or(owedPastDueFilter(ymd(0)))
+      .is("paid_at", null)
+      .is("voided_at", null);
+    expect(overdue.error).toBeNull();
+    expect(overdue.count).toBe(2);
   });
 });

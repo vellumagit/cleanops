@@ -15,6 +15,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { HELP_ARTICLES } from "@/content/help";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { OPEN_INVOICE_FILTER } from "@/lib/invoice-balance";
 
 // The assistant reads the SAME help library the in-app Help section renders
 // (src/content/help). Brian caught it telling a user there was no Help
@@ -178,7 +179,8 @@ export async function POST(request: NextRequest) {
         .from("invoices")
         .select("id", { count: "exact", head: true })
         .eq("organization_id" as never, orgId)
-        .in("status" as never, ["sent", "overdue"]),
+        // Sent and still owed, part-paid included (lib/invoice-balance).
+        .or(OPEN_INVOICE_FILTER),
       Promise.resolve(
         admin
           .from("tasks" as never)

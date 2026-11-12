@@ -2,6 +2,7 @@ import "server-only";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { phoneKey } from "@/lib/sms-inbound";
 import { maskPhone } from "@/lib/log-redact";
+import { allPages, type Page } from "@/lib/supabase/all-pages";
 
 /**
  * A real reply to one of the company's texts: kept, and put in front of the
@@ -32,7 +33,13 @@ export type InboundReply = {
   body: string;
   messageSid: string | null;
   mediaCount: number;
+  /** The message led with an opt-out word, so it also unsubscribed them. */
+  optedOut?: boolean;
 };
+
+/** Longest SMS Twilio delivers (10 segments); nothing real is cut. */
+const MAX_QUOTED = 1600;
+
 
 export type Sender =
   | { kind: "client"; id: string; name: string }
@@ -51,33 +58,38 @@ export async function identifySender(
   const key = phoneKey(from);
   if (key.length !== 10) return { kind: "unknown" };
 
-  const { data: clients, error: clientsErr } = (await db
-    .from("clients")
-    .select("id, name, phone")
-    .eq("organization_id", organizationId)
-    .not("phone", "is", null)) as unknown as {
-    data: Array<{ id: string; name: string | null; phone: string | null }> | null;
-    error: { message: string } | null;
-  };
-  if (clientsErr) throw new Error(`clients: ${clientsErr.message}`);
-  const client = (clients ?? []).find((c) => phoneKey(c.phone) === key);
+  const clients = await allPages<{ id: string; name: string | null; phone: string | null }>(
+    (from, to) =>
+      db
+        .from("clients")
+        .select("id, name, phone")
+        .eq("organization_id", organizationId)
+        .not("phone", "is", null)
+        .order("id")
+        .range(from, to) as unknown as Page<{ id: string; name: string | null; phone: string | null }>,
+    "clients",
+  );
+  const client = clients.find((c) => phoneKey(c.phone) === key);
   if (client) return { kind: "client", id: client.id, name: client.name?.trim() || "a client" };
 
-  const { data: members, error: membersErr } = (await db
-    .from("memberships")
-    .select("id, display_name, contact_phone, profile:profiles ( full_name, phone )")
-    .eq("organization_id", organizationId)
-    .eq("status", "active")) as unknown as {
-    data: Array<{
-      id: string;
-      display_name: string | null;
-      contact_phone: string | null;
-      profile: { full_name: string | null; phone: string | null } | null;
-    }> | null;
-    error: { message: string } | null;
+  type MemberRow = {
+    id: string;
+    display_name: string | null;
+    contact_phone: string | null;
+    profile: { full_name: string | null; phone: string | null } | null;
   };
-  if (membersErr) throw new Error(`memberships: ${membersErr.message}`);
-  const member = (members ?? []).find(
+  const members = await allPages<MemberRow>(
+    (from, to) =>
+      db
+        .from("memberships")
+        .select("id, display_name, contact_phone, profile:profiles ( full_name, phone )")
+        .eq("organization_id", organizationId)
+        .eq("status", "active")
+        .order("id")
+        .range(from, to) as unknown as Page<MemberRow>,
+    "memberships",
+  );
+  const member = members.find(
     (m) => phoneKey(m.contact_phone) === key || phoneKey(m.profile?.phone) === key,
   );
   if (member) {
@@ -88,15 +100,18 @@ export async function identifySender(
     };
   }
 
-  const { data: bench, error: benchErr } = (await db
-    .from("freelancer_contacts")
-    .select("id, full_name, phone")
-    .eq("organization_id", organizationId)) as unknown as {
-    data: Array<{ id: string; full_name: string | null; phone: string | null }> | null;
-    error: { message: string } | null;
-  };
-  if (benchErr) throw new Error(`freelancer_contacts: ${benchErr.message}`);
-  const freelancer = (bench ?? []).find((f) => phoneKey(f.phone) === key);
+  type BenchRow = { id: string; full_name: string | null; phone: string | null };
+  const bench = await allPages<BenchRow>(
+    (from, to) =>
+      db
+        .from("freelancer_contacts")
+        .select("id, full_name, phone")
+        .eq("organization_id", organizationId)
+        .order("id")
+        .range(from, to) as unknown as Page<BenchRow>,
+    "freelancer_contacts",
+  );
+  const freelancer = bench.find((f) => phoneKey(f.phone) === key);
   if (freelancer) {
     return { kind: "freelancer", id: freelancer.id, name: freelancer.full_name?.trim() || "a freelancer" };
   }
@@ -110,7 +125,7 @@ export function displayPhone(raw: string | null): string {
   return key.length === 10 ? `(${key.slice(0, 3)}) ${key.slice(3, 6)}-${key.slice(6)}` : (raw ?? "an unknown number");
 }
 
-export function describeReply(sender: Sender, reply: Pick<InboundReply, "from" | "body" | "mediaCount">): {
+export function describeReply(sender: Sender, reply: Pick<InboundReply, "from" | "body" | "mediaCount" | "optedOut">): {
   title: string;
   body: string;
   href: string;
@@ -126,7 +141,10 @@ export function describeReply(sender: Sender, reply: Pick<InboundReply, "from" |
           : number;
   const text = reply.body.trim();
   const media = reply.mediaCount > 0 ? `[sent ${reply.mediaCount === 1 ? "a picture or file" : `${reply.mediaCount} pictures or files`}]` : "";
-  const quoted = text ? `“${text.length > 300 ? `${text.slice(0, 299)}…` : text}”` : "";
+  const quoted = text ? `“${text.length > MAX_QUOTED ? `${text.slice(0, MAX_QUOTED - 1)}…` : text}”` : "";
+  const unsubscribed = reply.optedOut
+    ? "This also unsubscribed them from texts; they can text START to undo it."
+    : "";
   const href =
     sender.kind === "client"
       ? `/app/clients/${sender.id}`
@@ -137,7 +155,7 @@ export function describeReply(sender: Sender, reply: Pick<InboundReply, "from" |
           : "/app";
   return {
     title: `Text from ${who}`,
-    body: [quoted, media, sender.kind === "unknown" ? "" : `From ${number}.`].filter(Boolean).join(" "),
+    body: [quoted, media, sender.kind === "unknown" ? "" : `From ${number}.`, unsubscribed].filter(Boolean).join(" "),
     href,
   };
 }
@@ -164,35 +182,65 @@ export async function recordInboundReply(
   }
 
   const sender = await identifySender(db, organizationId, reply.from);
-
-  // Did this number already reply in the last half hour? Then the office was
-  // emailed about it; this one goes to the app only.
   const since = new Date(Date.now() - REPLY_EMAIL_WINDOW_MS).toISOString();
-  const { count: recent, error: recentErr } = (await db
-    .from("sms_messages" as never)
-    .select("id", { count: "exact", head: true })
-    .eq("organization_id", organizationId)
-    .eq("direction", "inbound")
-    .eq("from_number", reply.from ?? "")
-    .gte("created_at", since)) as unknown as { count: number | null; error: { message: string } | null };
-  if (recentErr) throw new Error(`sms_messages: ${recentErr.message}`);
+  const fromNumber = reply.from ?? "";
 
-  const { error: insErr } = (await db.from("sms_messages" as never).insert({
-    organization_id: organizationId,
-    direction: "inbound",
-    to_number: reply.to ?? "",
-    from_number: reply.from,
-    body: reply.body || (reply.mediaCount > 0 ? "[picture or file]" : ""),
-    status: "received",
-    twilio_sid: reply.messageSid,
-    client_id: sender.kind === "client" ? sender.id : null,
-  } as never)) as unknown as { error: { message: string } | null };
-  if (insErr) {
-    // Still tell the office: losing the log row is better than losing the reply.
-    console.error(`[sms/inbound] saving reply from ${maskPhone(reply.from)} failed:`, insErr.message);
+  // Save first. The webhook runs fail-closed, so a failed insert throws
+  // rather than returning an error; catch it, because losing the log row is
+  // better than losing the reply. 23505 is the unique index on the message
+  // SID (20261111030000): the same message delivered twice at once, already
+  // in hand.
+  const { allowDbErrors } = await import("@/lib/supabase/query-guard");
+  let savedId: string | null = null;
+  try {
+    const { data, error } = (await allowDbErrors(
+      ["23505"],
+      db
+        .from("sms_messages" as never)
+        .insert({
+          organization_id: organizationId,
+          direction: "inbound",
+          to_number: reply.to ?? "",
+          from_number: reply.from,
+          body: reply.body || (reply.mediaCount > 0 ? "[picture or file]" : ""),
+          status: "received",
+          twilio_sid: reply.messageSid,
+          client_id: sender.kind === "client" ? sender.id : null,
+        } as never)
+        .select("id")
+        .single(),
+    )) as unknown as { data: { id: string } | null; error: { code?: string; message: string } | null };
+    if (error?.code === "23505") return { saved: false, duplicate: true, emailed: false, sender: sender.kind };
+    if (error) throw new Error(error.message);
+    savedId = data?.id ?? null;
+  } catch (err) {
+    console.error(`[sms/inbound] saving reply from ${maskPhone(reply.from)} failed:`, err);
   }
 
-  const emailed = (recent ?? 0) === 0;
+  // One email per sender per half hour. Decided after saving: the email goes
+  // with the earliest of this number's replies in the window, so a text and
+  // a picture arriving together email once, not twice (two requests that
+  // each counted "none yet" before either saved used to both email). If the
+  // save failed, fall back to "nothing from them in the window".
+  let emailed = false;
+  try {
+    const { data: first } = (await db
+      .from("sms_messages" as never)
+      .select("id")
+      .eq("organization_id", organizationId)
+      .eq("direction", "inbound")
+      .eq("from_number", fromNumber)
+      .gte("created_at", since)
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .limit(1)) as unknown as { data: Array<{ id: string }> | null };
+    const earliest = first?.[0]?.id ?? null;
+    emailed = savedId ? earliest === savedId : earliest === null;
+  } catch (err) {
+    // Can't tell; the app notification still goes.
+    console.error(`[sms/inbound] email check for ${maskPhone(reply.from)} failed:`, err);
+  }
+
   const { notify } = await import("@/lib/notify");
   await notify({
     organizationId,
@@ -202,5 +250,5 @@ export async function recordInboundReply(
     ...(reply.messageSid ? { fact: `sms_reply:${reply.messageSid}` } : {}),
   });
 
-  return { saved: !insErr, duplicate: false, emailed, sender: sender.kind };
+  return { saved: savedId !== null, duplicate: false, emailed, sender: sender.kind };
 }

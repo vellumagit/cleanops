@@ -190,4 +190,96 @@ describe.skipIf(!hasPostgrest)("replies to the company's texts reach the office"
     expect(await told(c.owner.membershipId)).toEqual([]);
     expect((await told(other.owner.membershipId)).map((n) => n.title)).toEqual(["Text from (780) 555-0505"]);
   });
+
+  // Keywords used to be read from the first word alone (fixed 2026-11-11).
+  it("passes on an opt-out that says more, and treats 'Yes, ...' as a reply, not consent", async () => {
+    const c = await company();
+    const dana = await addClient(api.sql, c.org, "Dana");
+    await api.sql("update public.clients set name = 'Dana Lee', phone = '7805550606', sms_opted_in = true where id = $1", [dana]);
+    const ivan = await api.sql<{ id: string }>(
+      "insert into public.freelancer_contacts (organization_id, full_name, phone) values ($1, 'Ivan Bench', '7805550707') returning id",
+      [c.org],
+    );
+    const optedIn = async () =>
+      (await api.sql<{ sms_opted_in: boolean }>("select sms_opted_in from public.clients where id = $1", [dana]))[0].sms_opted_in;
+
+    // Unsubscribed, as before, AND the office reads what she asked.
+    const cancel = await text({ From: "+17805550606", To: c.number, Body: "Cancel my Friday clean please" });
+    expect(cancel.xml).toContain("unsubscribed");
+    expect(await optedIn()).toBe(false);
+    expect(await told(c.owner.membershipId)).toEqual([
+      {
+        title: "Text from Dana Lee (client)",
+        body: "“Cancel my Friday clean please” From (780) 555-0606. This also unsubscribed them from texts; they can text START to undo it.",
+        href: `/app/clients/${dana}`,
+      },
+    ]);
+
+    // A bare keyword is still just the keyword: honoured, nobody bothered.
+    const start = await text({ From: "+17805550606", To: c.number, Body: "Yes!" });
+    expect(start.xml).toContain("subscribed");
+    expect(await optedIn()).toBe(true);
+    const stop = await text({ From: "+17805550606", To: c.number, Body: "STOP." });
+    expect(stop.xml).toContain("unsubscribed");
+    expect(await optedIn()).toBe(false);
+    expect(await told(c.owner.membershipId)).toHaveLength(1);
+
+    // "Yes, ..." is an answer: no consent, no auto-text, the office reads it.
+    const yes = await text({ From: "+17805550707", To: c.number, Body: "Yes I can take Saturday" });
+    expect(yes.xml).not.toContain("<Message>");
+    const benchRow = await api.sql<{ sms_opted_out_at: string | null }>(
+      "select sms_opted_out_at from public.freelancer_contacts where id = $1",
+      [ivan[0].id],
+    );
+    expect(benchRow[0].sms_opted_out_at).toBeNull();
+    const yesNote = await api.sql<{ count: number }>(
+      "select count(*)::int as count from public.notifications where recipient_membership_id = $1 and title = 'Text from Ivan Bench (freelancer)'",
+      [c.owner.membershipId],
+    );
+    expect(yesNote[0].count).toBe(1);
+    expect(await optedIn()).toBe(false);
+  });
+
+  it("tells the office even when saving fails, emails once for a text and a picture sent together, and quotes long texts whole", async () => {
+    const c = await company();
+
+    // Saving fails: the office still hears about it.
+    await api.sql(`
+      create or replace function public.test_refuse_save() returns trigger language plpgsql as $$
+      begin
+        if new.body like '%REFUSE-SAVE%' then raise exception 'refused for the test'; end if;
+        return new;
+      end $$`);
+    await api.sql(
+      "create trigger refuse_save before insert on public.sms_messages for each row execute function public.test_refuse_save()",
+    );
+    try {
+      await text({ From: "+14035550808", To: c.number, Body: "Running late REFUSE-SAVE" });
+    } finally {
+      await api.sql("drop trigger refuse_save on public.sms_messages");
+      await api.sql("drop function public.test_refuse_save()");
+    }
+    expect(await saved(c.org)).toEqual([]);
+    expect((await told(c.manager.membershipId)).map((n) => n.body)).toEqual(["“Running late REFUSE-SAVE”"]);
+
+    // A text and a picture arriving together: both saved and shown, one email.
+    outbox.email.length = 0;
+    await Promise.all([
+      text({ From: "+14035550909", To: c.number, Body: "Here's the damage" }),
+      text({ From: "+14035550909", To: c.number, Body: "", NumMedia: "1" }),
+    ]);
+    expect((await saved(c.org)).filter((r) => r.from_number === "+14035550909")).toHaveLength(2);
+    expect(outbox.email.filter((e) => e.to === c.ownerEmail)).toHaveLength(1);
+
+    // Twilio delivering one message twice at the same moment: one saved row.
+    const twice = { From: "+14035551010", To: c.number, Body: "Twice", MessageSid: "SM-twice" };
+    await Promise.all([text(twice), text(twice)]);
+    expect((await saved(c.org)).filter((r) => r.twilio_sid === "SM-twice")).toHaveLength(1);
+
+    // A long text reaches the office whole.
+    const long = "Hi, about the move-out clean: ".padEnd(700, "details ");
+    await text({ From: "+14035551111", To: c.number, Body: long.trim() });
+    const notes = await told(c.owner.membershipId);
+    expect(notes.at(-1)!.body).toBe(`“${long.trim()}”`);
+  });
 });

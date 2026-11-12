@@ -17,6 +17,11 @@ import { requireMembership, can } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getOrgCurrency } from "@/lib/org-currency";
 import {
+  OPEN_INVOICE_FILTER,
+  outstandingBalanceCents,
+  owedPastDueFilter,
+} from "@/lib/invoice-balance";
+import {
   StatusBadge,
   bookingStatusTone,
   formatBookingStatus,
@@ -89,14 +94,20 @@ export default async function DashboardPage() {
       .select("id, total_cents, status")
       .gte("scheduled_at", lastWeekStart.toISOString())
       .lt("scheduled_at", lastWeekEnd.toISOString()),
+    // Open = still owed, part-paid included, totalled on what is left to pay.
+    // Overdue = the same set the reminders chase and the Monday digest counts
+    // (owedPastDueFilter), so the three never disagree.
     supabase
       .from("invoices")
-      .select("id, amount_cents, status")
-      .in("status", ["sent", "overdue"]),
+      .select("id, amount_cents, status, payments:invoice_payments ( amount_cents, refunded_cents )")
+      .or(OPEN_INVOICE_FILTER)
+      .is("voided_at", null),
     supabase
       .from("invoices")
       .select("id", { count: "exact", head: true })
-      .eq("status", "overdue"),
+      .or(owedPastDueFilter(new Date().toISOString().slice(0, 10)))
+      .is("paid_at", null)
+      .is("voided_at", null),
     supabase
       .from("reviews")
       .select(
@@ -185,7 +196,7 @@ export default async function DashboardPage() {
 
   const openInv = openInvoices.data ?? [];
   const openInvoicesTotal = openInv.reduce(
-    (acc, i) => acc + (i.amount_cents ?? 0),
+    (acc, i) => acc + outstandingBalanceCents(i.amount_cents ?? 0, i.payments),
     0,
   );
 
