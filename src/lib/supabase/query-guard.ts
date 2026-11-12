@@ -30,6 +30,16 @@
  * to 11-01: a second bookings→memberships link made four embeds ambiguous
  * (PGRST201); the nightly calendar reconcile read the error as an empty
  * list and did nothing for five days.
+ *
+ * A SIGNED-IN ACTION fails closed on READS only. Someone is at the screen,
+ * and a write's error is the answer the action shows them: "a cleaner is
+ * already booked then" (23P01), "that name is taken" (23505). Rejecting it
+ * jumped past the action's own `if (error) return { errors }` and gave them
+ * a crash screen instead (Svit, 2026-11-12, creating a booking). A failed
+ * write can't masquerade as "no rows", which is the lie this file exists to
+ * stop, so in an action it comes back as the ordinary result, logged as
+ * always. Crons and webhooks keep rejecting on writes too: nobody is there to
+ * read a message, and an unchecked idempotency insert must stop the run.
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -74,7 +84,12 @@ export async function allowDbErrors<T>(codes: readonly string[], query: PromiseL
   }
 }
 
-const failClosedScope = new AsyncLocalStorage<boolean>();
+/**
+ * "background": every failed query rejects. "action": failed reads reject,
+ * failed writes return to the caller (see the header). false: log only.
+ */
+type Scope = "background" | "action" | false;
+const failClosedScope = new AsyncLocalStorage<Scope>();
 
 /**
  * From here to the end of the current async flow, a failed query rejects
@@ -82,12 +97,21 @@ const failClosedScope = new AsyncLocalStorage<boolean>();
  * top, before the first await, and everything the handler awaits is covered.
  */
 export function enterFailClosed(): void {
-  failClosedScope.enterWith(true);
+  failClosedScope.enterWith("background");
+}
+
+/**
+ * enterFailClosed for a signed-in server action: reads reject, a failed
+ * write comes back as `{ error }` so the action can say why to the person
+ * who pressed the button. Same placement rule — before the first await.
+ */
+export function enterActionFailClosed(): void {
+  failClosedScope.enterWith("action");
 }
 
 /** Run `fn` with failed queries rejecting. */
 export function runFailClosed<T>(fn: () => T): T {
-  return failClosedScope.run(true, fn);
+  return failClosedScope.run("background", fn);
 }
 
 /**
@@ -100,7 +124,12 @@ export function runFailOpen<T>(fn: () => T): T {
 }
 
 export function inFailClosedScope(): boolean {
-  return failClosedScope.getStore() === true;
+  const scope = failClosedScope.getStore();
+  return scope === "background" || scope === "action";
+}
+
+function currentScope(): Scope {
+  return failClosedScope.getStore() ?? false;
 }
 
 /**
@@ -145,7 +174,7 @@ function isSchemaError(err: unknown): boolean {
  * a throw there is swallowed by the await machinery and hangs the caller
  * forever. The wrapper routes what we return into the rejection path instead.
  */
-function inspect(result: MaybeResult, table: string, failClosed: boolean): Error | null {
+function inspect(result: MaybeResult, table: string, scope: Scope, write: boolean): Error | null {
   if (!result || typeof result !== "object" || !result.error) return null;
   const err = result.error;
   const detail = describe(err);
@@ -154,10 +183,14 @@ function inspect(result: MaybeResult, table: string, failClosed: boolean): Error
 
   // Background work: every error stops the caller, in production too. The
   // alternative is a cron acting on "no rows" that were really a failure.
+  // A signed-in action's failed WRITE goes back to its `if (error)` branch.
+  const failClosed = scope === "background" || (scope === "action" && !write);
   if (failClosed && !isNoRow(err)) {
     return new DbQueryError(
       `[db-error] ${table}: ${detail}\n` +
-        `Background work stops here rather than treating a failed read as "no rows".`,
+        (scope === "action"
+          ? `The action stops here rather than treating a failed read as "no rows".`
+          : `Background work stops here rather than treating a failed read as "no rows".`),
       err,
     );
   }
@@ -226,7 +259,7 @@ function warnIfTruncated(result: MaybeResult, table: string, watch: Watch): void
 function wrapBuilder<T extends object>(
   builder: T,
   table: string,
-  failClosed: boolean,
+  scope: Scope,
   watch: Watch = { bounded: false, write: false, countOnly: false },
 ): T {
   return new Proxy(builder, {
@@ -242,7 +275,7 @@ function wrapBuilder<T extends object>(
           (value as (...a: unknown[]) => unknown).call(
             target,
             (res: MaybeResult) => {
-              const failure = inspect(res, table, failClosed);
+              const failure = inspect(res, table, scope, watch.write);
               if (failure) {
                 // Route into the REJECTION path. `await` passes its own
                 // resolve/reject here; throwing instead would be swallowed
@@ -267,7 +300,7 @@ function wrapBuilder<T extends object>(
             args,
           );
           return out && typeof out === "object" && "then" in (out as object)
-            ? wrapBuilder(out as object, table, failClosed, watch)
+            ? wrapBuilder(out as object, table, scope, watch)
             : out;
         };
       }
@@ -293,7 +326,7 @@ export function guardQueries<T extends object>(client: T): T {
           );
           const table = typeof args[0] === "string" ? args[0] : "unknown";
           return builder && typeof builder === "object"
-            ? wrapBuilder(builder as object, table, inFailClosedScope())
+            ? wrapBuilder(builder as object, table, currentScope())
             : builder;
         };
       }

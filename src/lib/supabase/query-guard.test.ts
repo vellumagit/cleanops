@@ -196,3 +196,50 @@ describe("entering the scope from an awaited helper", () => {
     expect(await action()).toBe(true);
   });
 });
+
+describe("a signed-in action fails closed on reads, not writes", () => {
+  /** A builder that remembers it was asked to write, like the real chain. */
+  function writeClient(result: Result) {
+    return {
+      from: (_t: string) => {
+        const b = fakeBuilder(result) as FakeBuilder & { insert: () => FakeBuilder; update: () => FakeBuilder };
+        b.insert = () => b;
+        b.update = () => b;
+        return b;
+      },
+    };
+  }
+  const overlap = { data: null, error: { code: "23P01", message: "A cleaner already has an overlapping booking" } };
+
+  it("hands a refused write back to the action's own error branch (Svit, 2026-11-12)", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const { enterActionFailClosed } = await import("./query-guard");
+    const action = async () => {
+      enterActionFailClosed();
+      await Promise.resolve();
+      const db = guardQueries(writeClient(overlap));
+      return db.from("bookings").insert().select("id").single();
+    };
+    const res = await action();
+    expect(res).toBe(overlap);
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("[db-error] bookings: [23P01]"));
+  });
+
+  it("still rejects a failed read inside an action", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const { enterActionFailClosed } = await import("./query-guard");
+    const action = async () => {
+      enterActionFailClosed();
+      await Promise.resolve();
+      const db = guardQueries(writeClient({ data: null, error: { code: "42501", message: "permission denied" } }));
+      return db.from("clients").select("id").eq("x", 1);
+    };
+    await expect(action()).rejects.toThrow(/The action stops here/);
+  });
+
+  it("background work still rejects a failed write", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const db = guardQueries(writeClient(overlap));
+    await expect(runFailClosed(() => db.from("bookings").insert().select("id"))).rejects.toThrow(/Background work stops here/);
+  });
+});

@@ -58,6 +58,7 @@ import { wallClockColumns } from "@/lib/scheduled-local";
 import { runtimeKnowsZone } from "@/lib/tz-probe";
 import { resolveSeriesMove } from "@/lib/series-move";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { allowDbErrors } from "@/lib/supabase/query-guard";
 import { redirectAfterSetup } from "@/lib/setup-return";
 import { logAuditEvent } from "@/lib/audit";
 import { notify } from "@/lib/notify";
@@ -770,7 +771,8 @@ export async function createBookingAction(
       values: raw,
     };
   }
-  const { data: booking, error } = await supabase
+  // 23P01: the database refusing a cleaner who is already booked then.
+  const { data: booking, error } = await allowDbErrors(["23P01"], supabase
     .from("bookings")
     .insert({
       organization_id: membership.organization_id,
@@ -803,9 +805,19 @@ export async function createBookingAction(
       splits: splits,
     })
     .select("id")
-    .single();
+    .single());
 
-  if (error) return { errors: { _form: error.message }, values: raw };
+  if (error) {
+    return {
+      errors: {
+        _form:
+          error.code === "23P01"
+            ? "A cleaner on this job is already booked at that time. Pick a different cleaner or time, or move the other job first."
+            : error.message,
+      },
+      values: raw,
+    };
+  }
 
   // Additional crew (if any) — write to booking_assignees so the primary
   // + extras are all tracked consistently. For split shifts, pass the

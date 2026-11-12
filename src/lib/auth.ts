@@ -19,7 +19,7 @@
  */
 
 import "server-only";
-import { enterFailClosed } from "@/lib/supabase/query-guard";
+import { enterActionFailClosed } from "@/lib/supabase/query-guard";
 
 import { cache } from "react";
 import { redirect } from "next/navigation";
@@ -216,7 +216,7 @@ export async function requireMembership(
 export async function requireActionMembership(
   allowed?: MembershipRole[],
 ): Promise<CurrentMembership> {
-  enterFailClosed();
+  enterActionFailClosed();
   return requireMembershipInner(allowed);
 }
 

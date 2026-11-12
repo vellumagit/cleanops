@@ -2,7 +2,7 @@ import "server-only";
 
 import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { enterFailClosed } from "@/lib/supabase/query-guard";
+import { enterActionFailClosed } from "@/lib/supabase/query-guard";
 import { getOrgName } from "@/lib/org-name";
 
 export type CurrentClient = {
@@ -129,6 +129,6 @@ export async function requireClient(): Promise<CurrentClient> {
  * whose error was dropped must not be followed by the write.
  */
 export async function requireClientAction(): Promise<CurrentClient> {
-  enterFailClosed();
+  enterActionFailClosed();
   return requireClient();
 }

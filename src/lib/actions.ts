@@ -16,7 +16,7 @@ import "server-only";
 import { z } from "zod";
 import { requireMembership, type CurrentMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { enterFailClosed } from "@/lib/supabase/query-guard";
+import { enterActionFailClosed } from "@/lib/supabase/query-guard";
 
 /** A field-level error map keyed by form field name. */
 export type FieldErrors<F extends string> = Partial<Record<F | "_form", string>>;
@@ -40,7 +40,9 @@ export async function getActionContext(): Promise<{
   // from what it reads, and a dropped error upstream of a write is how a
   // billed job got re-billed and a short pay run looked finished. Before
   // the first await, so the scope covers the caller's continuation too.
-  enterFailClosed();
+  // A failed WRITE still comes back as { error }, for the action to explain
+  // ("a cleaner is already booked then") instead of a crash screen.
+  enterActionFailClosed();
   const membership = await requireMembership();
   const supabase = await createSupabaseServerClient();
   return { membership, supabase };
