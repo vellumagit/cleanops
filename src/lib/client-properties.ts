@@ -7,8 +7,8 @@
  * customer was to create four fake clients and lose the single balance, the
  * single contact, and any hope of a per-property answer.
  *
- * Three separate questions get asked about a job's location and they have
- * three different answers. Every one of them is resolved here, because the
+ * Two separate questions get asked about a job's location and they have
+ * different answers. Both are resolved here, because the
  * field app, the invoice, and the office screens must agree — a cleaner
  * driving to one address while the invoice bills another is the failure this
  * module exists to prevent.
@@ -19,7 +19,6 @@ export type PropertyLike = {
   label?: string | null;
   address?: string | null;
   access_notes?: string | null;
-  default_checklist_template_id?: string | null;
 };
 
 /**
@@ -67,26 +66,6 @@ export function jobAddress(args: {
 export function propertyLabel(property?: PropertyLike | null): string | null {
   const l = property?.label;
   return typeof l === "string" && l.trim().length > 0 ? l.trim() : null;
-}
-
-/**
- * WHICH CHECKLIST APPLIES.
- *
- * The property overrides the client. A studio turnover and a four-bedroom
- * house belong to the same payer and are not remotely the same clean, so a
- * client-level default is the wrong altitude the moment a second property
- * exists. Falls back to the client's default so nothing changes for the
- * clients that have only ever had one.
- */
-export function checklistTemplateFor(args: {
-  property?: PropertyLike | null;
-  clientDefaultTemplateId?: string | null;
-}): string | null {
-  return (
-    args.property?.default_checklist_template_id ??
-    args.clientDefaultTemplateId ??
-    null
-  );
 }
 
 /**

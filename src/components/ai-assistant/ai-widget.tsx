@@ -196,8 +196,8 @@ export function AIWidget() {
               </button>
             </div>
             {/* This line used to read "Feedback is shared with the Sollos
-                team". It was not: chats are saved to ai_conversations, which
-                nothing and nobody read. The honest version is a button that
+                team". It was not: chats went to a table nothing and nobody
+                read (no longer saved since 2026-11-11). The honest version is a button that
                 actually reaches someone — and it carries the page the user is
                 on, so the report arrives knowing where they were. */}
             <Link

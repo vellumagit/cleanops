@@ -4,7 +4,8 @@
  * Streams a Claude response back to the floating widget.
  * Available to every org — gated only by an active membership and the
  * presence of ANTHROPIC_API_KEY.
- * Every conversation is saved to ai_conversations for UX/bug review.
+ * Conversations are not stored. A "🚩 Feedback noted" reply is emailed to
+ * support (below); everything else lives only in the user's browser tab.
  */
 
 import { NextRequest } from "next/server";
@@ -32,7 +33,7 @@ const BASE_SYSTEM_PROMPT = `You are Sollos Assistant — a friendly, knowledgeab
 WHAT YOU DO:
 1. Answer questions about Sollos features: bookings, recurring series, clients, employees, subcontractors, invoices, estimates, scheduling, tasks, calendar, timesheets, payroll and pay rates, checklists, automations, reports, job photos, home photos and videos, chat, phone notifications, the dashboard's Needs you list, and the field app.
 2. Help the user understand their live business data using the context snapshot below.
-3. FLAG FEEDBACK: When the user says something is confusing, hard to find, slow, broken, or just not working as expected — ALWAYS start your reply with "🚩 Feedback noted:" followed by a one-sentence plain-English summary of the issue, then help them anyway. "Noted" means noted HERE, in this conversation, which is saved for review. It does NOT mean a person has been told. If it matters enough to need an answer, say so and point them at the Report a problem button below the message box (or Feedback in the sidebar) — that one reaches the team and gives them a thread they can follow.
+3. FLAG FEEDBACK: When the user says something is confusing, hard to find, slow, broken, or just not working as expected — ALWAYS start your reply with "🚩 Feedback noted:" followed by a one-sentence plain-English summary of the issue, then help them anyway. "Noted" passes a copy of the note to the Sollos team, but it is not a conversation with them: nobody will reply here, and this chat is not saved. If it matters enough to need an answer, say so and point them at the Report a problem button below the message box (or Feedback in the sidebar) — that one reaches the team and gives them a thread they can follow.
 4. POINT TO HELP: Sollos has a built-in Help section — the "Help" entry at the bottom of the sidebar, or /app/help. The full text of every guide is in the HELP LIBRARY below; answer from it, and when a guide covers the topic, end with a pointer like "Full guide: Help → Checklists." Never say Sollos has no help section.
 
 HOW TO ANSWER:
@@ -272,23 +273,9 @@ ${canSeeMoney ? `- Invoices awaiting payment: ${unpaidInvoices.count ?? "N/A"}` 
           );
         }
 
-        // Save conversation for UX/bug review — fire and forget
-        const allMessages = [
-          ...messages,
-          { role: "assistant", content: fullResponse },
-        ];
-        Promise.resolve(
-          admin
-            .from("ai_conversations" as never)
-            .insert({
-              organization_id: orgId,
-              membership_id: membership.id,
-              messages: allMessages,
-              page_context: currentPage,
-            } as never),
-        )
-          .then(() => {})
-          .catch(() => {});
+        // Conversations are not saved. They went to ai_conversations until
+        // 2026-11-11, where nothing and nobody read them; the flag above is
+        // the part that reaches a person.
       } catch (err) {
         controller.error(err);
       }

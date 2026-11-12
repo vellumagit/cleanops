@@ -44,8 +44,6 @@ export async function saveClientPropertyAction(
   const address = String(formData.get("address") ?? "").trim() || null;
   const accessNotes = String(formData.get("access_notes") ?? "").trim() || null;
   const notes = String(formData.get("notes") ?? "").trim() || null;
-  const templateId =
-    String(formData.get("default_checklist_template_id") ?? "").trim() || null;
 
   if (!label) return { errors: { label: "Give this property a name." } };
   if (label.length > 120) {
@@ -63,25 +61,14 @@ export async function saveClientPropertyAction(
     .maybeSingle()) as unknown as { data: { id: string } | null };
   if (!client) return { errors: { _form: "Client not found." } };
 
-  // Same proof-of-ownership rule as property_id on bookings: the template
-  // FK only proves the id exists SOMEWHERE — without this check a forged
-  // form stores another org's checklist template on this property.
-  if (templateId) {
-    const { data: tpl } = (await admin
-      .from("checklist_templates")
-      .select("id")
-      .eq("id", templateId)
-      .eq("organization_id", membership.organization_id)
-      .maybeSingle()) as unknown as { data: { id: string } | null };
-    if (!tpl) return { errors: { _form: "Checklist template not found." } };
-  }
-
+  // No checklist here. A per-property checklist was saved but nothing ever
+  // applied it to a job (the client's default is what jobs get), so the field
+  // was removed on 2026-11-11 rather than left promising something.
   const payload = {
     label,
     address,
     access_notes: accessNotes,
     notes,
-    default_checklist_template_id: templateId,
   };
 
   if (propertyId) {

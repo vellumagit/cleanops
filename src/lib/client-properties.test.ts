@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import {
   jobAddress,
   propertyLabel,
-  checklistTemplateFor,
   propertyDisplay,
   isMultiProperty,
 } from "./client-properties";
@@ -71,34 +70,6 @@ describe("naming a property", () => {
     expect(propertyDisplay({ label: "Unit 3" })).toBe("Unit 3");
     expect(propertyDisplay({ address: "155 Whyte Ave" })).toBe("155 Whyte Ave");
     expect(propertyDisplay(null)).toBe("Untitled property");
-  });
-});
-
-describe("which checklist applies", () => {
-  it("lets the property override the client", () => {
-    // A studio turnover and a four-bedroom share a payer, not a clean.
-    expect(
-      checklistTemplateFor({
-        property: { default_checklist_template_id: "prop-tpl" },
-        clientDefaultTemplateId: "client-tpl",
-      }),
-    ).toBe("prop-tpl");
-  });
-
-  it("falls back to the client's default so nothing changes for existing clients", () => {
-    expect(
-      checklistTemplateFor({
-        property: { default_checklist_template_id: null },
-        clientDefaultTemplateId: "client-tpl",
-      }),
-    ).toBe("client-tpl");
-    expect(checklistTemplateFor({ clientDefaultTemplateId: "client-tpl" })).toBe(
-      "client-tpl",
-    );
-  });
-
-  it("is null when neither level sets one", () => {
-    expect(checklistTemplateFor({})).toBeNull();
   });
 });
 

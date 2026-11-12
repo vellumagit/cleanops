@@ -27,7 +27,6 @@ export type PropertyRow = {
   label: string;
   address: string | null;
   access_notes: string | null;
-  default_checklist_template_id: string | null;
   notes: string | null;
   bookingCount: number;
 };
@@ -45,12 +44,10 @@ const initial: PropertyFormState = {};
 export function ClientPropertiesCard({
   clientId,
   properties,
-  checklistTemplates,
   canEdit,
 }: {
   clientId: string;
   properties: PropertyRow[];
-  checklistTemplates: Array<{ id: string; name: string }>;
   canEdit: boolean;
 }) {
   return (
@@ -69,7 +66,6 @@ export function ClientPropertiesCard({
         {canEdit && (
           <PropertyDialog
             clientId={clientId}
-            checklistTemplates={checklistTemplates}
             trigger={
               <Button variant="outline" size="sm">
                 <Plus className="h-3.5 w-3.5" />
@@ -112,7 +108,6 @@ export function ClientPropertiesCard({
                   <PropertyDialog
                     clientId={clientId}
                     property={p}
-                    checklistTemplates={checklistTemplates}
                     trigger={
                       <Button variant="ghost" size="icon-sm">
                         <Pencil className="h-3.5 w-3.5" />
@@ -134,12 +129,10 @@ export function ClientPropertiesCard({
 function PropertyDialog({
   clientId,
   property,
-  checklistTemplates,
   trigger,
 }: {
   clientId: string;
   property?: PropertyRow;
-  checklistTemplates: Array<{ id: string; name: string }>;
   trigger: React.ReactNode;
 }) {
   const router = useRouter();
@@ -229,25 +222,6 @@ function PropertyDialog({
               Shown to the crew on the job screen. Codes, key location, parking.
             </p>
           </div>
-
-          {checklistTemplates.length > 0 && (
-            <div className="space-y-1.5">
-              <Label htmlFor="checklist">Checklist</Label>
-              <select
-                id="checklist"
-                name="default_checklist_template_id"
-                defaultValue={property?.default_checklist_template_id ?? ""}
-                className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
-              >
-                <option value="">Use the client&rsquo;s default</option>
-                {checklistTemplates.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
 
           <div className="space-y-1.5">
             <Label htmlFor="property-notes">Notes</Label>

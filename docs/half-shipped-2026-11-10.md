@@ -67,13 +67,13 @@ Recommendation first in each.
 | Invoice, estimate and contract links readable by managers | **Closed for cleaners** by migration `20261110060000`: only owners, admins and managers read those tables now, which is all the app ever needed. Managers can still read the links; they can already send and act on these documents | **Leave.** Signing these links like the review link means touching 21 files on the payment path for a manager-only risk |
 | Inbound SMS: a client's real reply is acknowledged and thrown away | STOP/START/HELP work. Anything else is stored nowhere and shown to nobody | **Built 2026-11-11:** saved to `sms_messages` (inbound), sender named, owners/admins/managers told in the app and by email (once per sender per 30 min). No auto-reply. `src/lib/sms-inbound-reply.ts`, `test/db/sms-replies.api.test.ts` |
 | Part-paid invoices past due are never chased (money list #8) | No such invoice today; the reminder is off for Svit | **Build** the remind-on-balance version when reminders are switched on |
-| Property-level default checklist | The field saves and nothing applies it. No property has one set | **Drop** the field until someone asks |
+| Property-level default checklist | The field saves and nothing applies it. No property has one set | **Dropped 2026-11-11:** field and helper removed (0 of 83 properties had one). Migration `20261111010000` drops the column; run it after the push |
 | `pay_type` (flat, percent) | Column and constraint exist; nothing writes it; everyone is hourly | **Drop** the column later. Help no longer promises it |
-| Assistant conversations saved and never read | 18 rows. The flag button already emails support | **Drop** the saving |
+| Assistant conversations saved and never read | 18 rows. The flag button already emails support | **Dropped 2026-11-11:** no longer saved, and the assistant no longer tells users the chat is saved. The table and its 18 rows remain until someone decides to delete them |
 | Webhooks for changes made in the app | Nobody has configured a webhook | **Leave** as API-only. After the cutover, status changes have one place to fire from if it is ever wanted |
 | Simulated SMS numbers never upgraded | No company has one | **Leave** |
 | Seven "columns not in the generated types" second queries | Correctness is now checked by `test/db/query-shapes.test.ts` | **Leave**; regenerate types when convenient |
-| One-off scripts from the Supabase project move, and the replaced morning-check script | `export-all-data.ts`, `export-supplement.ts`, `import-all-data.ts`, `verify-export.ts`, `detect-missing-columns.ts`, `shadow-morning-check.ts`. The on-disk export with auth users is not on this machine | **Delete.** Not done unasked |
+| One-off scripts from the Supabase project move, and the replaced morning-check script | `export-all-data.ts`, `export-supplement.ts`, `import-all-data.ts`, `verify-export.ts`, `detect-missing-columns.ts`, `shadow-morning-check.ts`. The on-disk export with auth users is not on this machine | **Deleted 2026-11-11**, all but `shadow-morning-check.ts`: the 8 AM email names it as the by-hand fallback when the cron fails, so it stays |
 
 ## Still open from the security audit, not re-tested today
 
