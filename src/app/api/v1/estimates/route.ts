@@ -1,10 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateApiKey } from "@/lib/api-key-auth";
+import { apiServerError } from "@/lib/api/errors";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { dispatchWebhookEvent } from "@/lib/webhooks";
 import { findOrCreateClient } from "@/lib/find-or-create-client";
 import { findCrossOrgRef } from "@/lib/api/org-scope";
-import { assertSafeOutboundTarget } from "@/lib/url-safety";
+import {
+  estimatePdfLink,
+  fetchPdfFromUrl,
+  storeEstimatePdf,
+  uploadedPdfProblem,
+} from "@/lib/estimate-pdf-storage";
 
 /**
  * GET /api/v1/estimates
@@ -38,10 +44,13 @@ export async function GET(request: NextRequest) {
   if (since) query = query.gte("updated_at", since);
 
   const { data, count, error } = await query;
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return apiServerError("estimates", error);
+
+  // pdf_url is a private reference; the caller gets a link that expires.
+  const rows = await withPdfLinks(admin, (data ?? []) as Array<{ pdf_url: string | null }>);
 
   return NextResponse.json({
-    data,
+    data: rows,
     pagination: { total: count ?? 0, limit, offset },
   });
 }
@@ -57,6 +66,8 @@ export async function GET(request: NextRequest) {
  * PDF attachment — two options:
  *   - `pdf_url` (string) — a publicly accessible URL; we'll download and store it
  *   - Multipart form data with a `pdf` file field
+ * Stored privately. Responses carry `pdf_url` as a signed link that works
+ * for an hour; fetch the estimate again for a fresh one.
  *
  * Body (JSON): { client_id?, client_name?, client_email?, client_phone?,
  *                client_address?, total_cents, service_description?, notes?,
@@ -166,7 +177,7 @@ export async function POST(request: NextRequest) {
     .select("id, client_id, service_description, status, total_cents, notes, pdf_url, created_at")
     .single();
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return apiServerError("estimates", error);
 
   const data = rawData as unknown as {
     id: string;
@@ -179,129 +190,45 @@ export async function POST(request: NextRequest) {
     created_at: string;
   };
 
-  // ── Handle PDF attachment ─────────────────────────────────
-  let pdfPublicUrl: string | null = null;
+  // ── Handle PDF attachment (private bucket; lib/estimate-pdf-storage) ──
+  let pdfBytes: Blob | null = null;
 
   // Option 1: PDF file uploaded via multipart
   if (pdfFile && pdfFile.size > 0) {
-    const result = await uploadPdfToStorage(admin, auth.organizationId, data.id, pdfFile);
-    if (result.error) {
-      return NextResponse.json({ error: result.error }, { status: 400 });
-    }
-    pdfPublicUrl = result.url;
+    const problem = await uploadedPdfProblem(pdfFile);
+    if (problem) return NextResponse.json({ error: problem }, { status: 400 });
+    pdfBytes = pdfFile;
   }
 
   // Option 2: PDF URL provided — download and store
-  if (!pdfPublicUrl && body.pdf_url && typeof body.pdf_url === "string") {
-    const result = await downloadAndStorePdf(admin, auth.organizationId, data.id, body.pdf_url as string);
-    if (result.error) {
-      return NextResponse.json({ error: result.error }, { status: 400 });
-    }
-    pdfPublicUrl = result.url;
+  if (!pdfBytes && body.pdf_url && typeof body.pdf_url === "string") {
+    const fetched = await fetchPdfFromUrl(body.pdf_url);
+    if (fetched.error !== null) return NextResponse.json({ error: fetched.error }, { status: 400 });
+    pdfBytes = fetched.blob;
   }
 
-  // Update the estimate with the PDF URL if we got one
-  if (pdfPublicUrl) {
+  if (pdfBytes) {
+    const stored = await storeEstimatePdf(admin, auth.organizationId, data.id, pdfBytes);
+    if (stored.error !== null) return NextResponse.json({ error: stored.error }, { status: 500 });
     await admin
       .from("estimates" as never)
-      .update({ pdf_url: pdfPublicUrl } as never)
+      .update({ pdf_url: stored.ref } as never)
       .eq("id", data.id);
-    data.pdf_url = pdfPublicUrl;
+    data.pdf_url = stored.ref;
   }
 
-  dispatchWebhookEvent(auth.organizationId, "estimate.created", data).catch(() => {});
+  const [out] = await withPdfLinks(admin, [data]);
+  dispatchWebhookEvent(auth.organizationId, "estimate.created", out).catch(() => {});
 
-  return NextResponse.json({ data }, { status: 201 });
+  return NextResponse.json({ data: out }, { status: 201 });
 }
 
 // ── Helpers ─────────────────────────────────────────────────
 
-const MAX_PDF_SIZE = 10 * 1024 * 1024; // 10 MB
-
-async function uploadPdfToStorage(
+/** Swap each row's stored pdf_url reference for a link that expires. */
+async function withPdfLinks<T extends { pdf_url: string | null }>(
   admin: ReturnType<typeof createSupabaseAdminClient>,
-  orgId: string,
-  estimateId: string,
-  file: File,
-): Promise<{ url: string | null; error: string | null }> {
-  if (file.type !== "application/pdf") {
-    return { url: null, error: "Only PDF files are allowed" };
-  }
-  if (file.size > MAX_PDF_SIZE) {
-    return { url: null, error: "PDF must be under 10 MB" };
-  }
-
-  const path = `${orgId}/estimates/${estimateId}.pdf`;
-  const { error } = await admin.storage
-    .from("org-assets")
-    .upload(path, file, {
-      upsert: true,
-      contentType: "application/pdf",
-      cacheControl: "3600",
-    });
-
-  if (error) return { url: null, error: error.message };
-
-  const { data: urlData } = admin.storage
-    .from("org-assets")
-    .getPublicUrl(path);
-
-  return { url: `${urlData.publicUrl}?v=${Date.now()}`, error: null };
-}
-
-async function downloadAndStorePdf(
-  admin: ReturnType<typeof createSupabaseAdminClient>,
-  orgId: string,
-  estimateId: string,
-  sourceUrl: string,
-): Promise<{ url: string | null; error: string | null }> {
-  // SSRF guard — https-only, no loopback / link-local / RFC1918 / metadata,
-  // resolved before the fetch, and no redirects followed.
-  const safe = await assertSafeOutboundTarget(sourceUrl);
-  if (!safe.ok) {
-    return { url: null, error: `Invalid pdf_url: ${safe.reason}` };
-  }
-
-  try {
-    const res = await fetch(safe.url, {
-      redirect: "manual",
-      signal: AbortSignal.timeout(30_000),
-    });
-    if (!res.ok) {
-      return { url: null, error: "Could not fetch a PDF from that URL" };
-    }
-
-    const contentType = res.headers.get("content-type") ?? "";
-    if (!contentType.includes("pdf")) {
-      return { url: null, error: "That URL did not return a PDF" };
-    }
-
-    const blob = await res.blob();
-    if (blob.size > MAX_PDF_SIZE) {
-      return { url: null, error: "PDF must be under 10 MB" };
-    }
-    const { isRealPdf } = await import("@/lib/file-sniff");
-    if (!(await isRealPdf(blob))) {
-      return { url: null, error: "That URL did not return a PDF" };
-    }
-
-    const path = `${orgId}/estimates/${estimateId}.pdf`;
-    const { error } = await admin.storage
-      .from("org-assets")
-      .upload(path, blob, {
-        upsert: true,
-        contentType: "application/pdf",
-        cacheControl: "3600",
-      });
-
-    if (error) return { url: null, error: error.message };
-
-    const { data: urlData } = admin.storage
-      .from("org-assets")
-      .getPublicUrl(path);
-
-    return { url: `${urlData.publicUrl}?v=${Date.now()}`, error: null };
-  } catch {
-    return { url: null, error: "Could not fetch a PDF from that URL" };
-  }
+  rows: T[],
+): Promise<T[]> {
+  return Promise.all(rows.map(async (r) => ({ ...r, pdf_url: await estimatePdfLink(admin, r.pdf_url) })));
 }

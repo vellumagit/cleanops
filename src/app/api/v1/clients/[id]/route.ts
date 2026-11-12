@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateApiKey } from "@/lib/api-key-auth";
+import { apiServerError } from "@/lib/api/errors";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { dispatchWebhookEvent } from "@/lib/webhooks";
 
@@ -21,7 +22,7 @@ export async function GET(request: NextRequest, { params }: Params) {
     .eq("organization_id", auth.organizationId)
     .maybeSingle();
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return apiServerError("clients/:id", error);
   if (!data) return NextResponse.json({ error: "Client not found" }, { status: 404 });
 
   return NextResponse.json({ data });
@@ -62,7 +63,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     .select("id, name, email, phone, address, preferred_contact, notes, updated_at")
     .single();
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return apiServerError("clients/:id", error);
 
   dispatchWebhookEvent(auth.organizationId, "client.updated", data).catch(() => {});
 
@@ -84,7 +85,7 @@ export async function DELETE(request: NextRequest, { params }: Params) {
     .eq("id", id)
     .eq("organization_id", auth.organizationId);
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return apiServerError("clients/:id", error);
 
   return NextResponse.json({ success: true });
 }

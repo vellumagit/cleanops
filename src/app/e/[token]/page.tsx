@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { FileText } from "lucide-react";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { estimatePdfLink } from "@/lib/estimate-pdf-storage";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { formatCurrencyCents } from "@/lib/format";
@@ -69,6 +70,10 @@ export default async function PublicEstimatePage({
   };
 
   if (!estimate) notFound();
+
+  // Holding this estimate's link is the permission to read its PDF; the
+  // file itself is private, so the link to it is signed and expires.
+  const pdfLink = await estimatePdfLink(admin, estimate.pdf_url);
 
   const currency = await getOrgCurrency(estimate.organization_id);
 
@@ -200,10 +205,10 @@ export default async function PublicEstimatePage({
           )}
 
           {/* PDF */}
-          {estimate.pdf_url && (
+          {pdfLink && (
             <section className="mt-6">
               <a
-                href={estimate.pdf_url}
+                href={pdfLink}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-xs underline underline-offset-2 text-foreground hover:text-muted-foreground"

@@ -5,6 +5,7 @@ import { z } from "zod";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { enterFailClosed } from "@/lib/supabase/query-guard";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { friendlyAuthError, isExistingAccountSignup } from "@/lib/auth-errors";
 
 const JoinSchema = z.object({
   full_name: z
@@ -137,9 +138,22 @@ export async function acceptInvitationAction(
       },
     );
 
+    // The account exists after all (the lookup above reads one page of
+    // users). Same answer as that branch, and never claim the invite onto,
+    // or delete, the stand-in user Supabase may hand back.
+    if (isExistingAccountSignup(signUpError, signUpData?.user)) {
+      return {
+        errors: {
+          _form: `There is already a Sollos account for ${invitation.email}. Sign in with it to accept this invite.`,
+        },
+        values: { full_name: raw.full_name },
+        signInHref: `/login?invite=${encodeURIComponent(meta.token)}`,
+      };
+    }
+
     if (signUpError || !signUpData.user) {
       return {
-        errors: { _form: signUpError?.message ?? "Could not create account." },
+        errors: { _form: friendlyAuthError(signUpError, "sign-up") },
         values: { full_name: raw.full_name },
       };
     }

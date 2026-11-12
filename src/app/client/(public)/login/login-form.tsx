@@ -7,6 +7,7 @@ import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import { friendlyAuthError } from "@/lib/auth-errors";
 
 /**
  * Client sign-in.
@@ -50,7 +51,7 @@ export function ClientLoginForm({ next }: { next?: string | null }) {
       // Deliberately not distinguishing "no such account" — that would let
       // anyone test whether an address is a client of this company.
       if (err && !/signups not allowed|not authorized/i.test(err.message)) {
-        setError(err.message);
+        setError(friendlyAuthError(err, "magic-link"));
         return;
       }
       setSent("link");
@@ -68,9 +69,9 @@ export function ClientLoginForm({ next }: { next?: string | null }) {
       });
       if (signInErr) {
         setError(
-          /invalid login credentials/i.test(signInErr.message)
+          /invalid login credentials/i.test(signInErr.message) || signInErr.code === "invalid_credentials"
             ? "That email and password don't match. Try the emailed sign-in link instead."
-            : signInErr.message,
+            : friendlyAuthError(signInErr, "sign-in"),
         );
         return;
       }
@@ -87,8 +88,10 @@ export function ClientLoginForm({ next }: { next?: string | null }) {
         email.trim().toLowerCase(),
         { redirectTo: `${siteOrigin()}/auth/callback?next=/client/reset` },
       );
-      if (err) {
-        setError(err.message);
+      // Only a rate limit is worth saying; anything else would tell a
+      // stranger something about this address. Same as the staff reset page.
+      if (err && /rate limit/i.test(err.message)) {
+        setError(friendlyAuthError(err, "magic-link"));
         return;
       }
       setSent("reset");

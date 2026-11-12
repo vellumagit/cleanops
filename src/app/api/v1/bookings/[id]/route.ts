@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { authenticateApiKey } from "@/lib/api-key-auth";
+import { apiServerError } from "@/lib/api/errors";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { dispatchWebhookEvent } from "@/lib/webhooks";
 import { findCrossOrgRef } from "@/lib/api/org-scope";
@@ -39,7 +40,7 @@ export async function GET(request: NextRequest, { params }: Params) {
     .maybeSingle();
 
   if (error)
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return apiServerError("bookings/:id", error);
   if (!data)
     return NextResponse.json({ error: "Booking not found" }, { status: 404 });
 
@@ -217,10 +218,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   };
 
   if (error || !data) {
-    return NextResponse.json(
-      { error: error?.message ?? "Update failed" },
-      { status: 500 },
-    );
+    return apiServerError("bookings/:id update", error ?? "no row returned");
   }
 
   // Fire appropriate webhook
@@ -304,7 +302,7 @@ export async function DELETE(request: NextRequest, { params }: Params) {
     .eq("organization_id", auth.organizationId);
 
   if (error)
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return apiServerError("bookings/:id", error);
 
   return NextResponse.json({ success: true });
 }

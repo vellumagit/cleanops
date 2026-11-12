@@ -3,6 +3,8 @@ import { notFound } from "next/navigation";
 import { ArrowRight, CalendarPlus } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { estimatePdfLink } from "@/lib/estimate-pdf-storage";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { PageShell } from "@/components/page-shell";
 import { ContactLine } from "@/components/contact-line";
@@ -71,6 +73,10 @@ export default async function EditEstimatePage({
 
   if (error) throw error;
   if (!estimate) notFound();
+
+  // The attached PDF is private; RLS just let this person read the estimate,
+  // so hand them a link that expires (lib/estimate-pdf-storage.ts).
+  const pdfLink = await estimatePdfLink(createSupabaseAdminClient(), estimate.pdf_url);
 
   // Public shareable URL for the branded estimate page. The customer
   // can view it without logging in; the owner uses this same page to
@@ -160,7 +166,7 @@ export default async function EditEstimatePage({
               notes: estimate.notes,
               status: estimate.status,
               total_dollars: centsToDollarString(estimate.total_cents),
-              pdf_url: estimate.pdf_url,
+              pdf_url: pdfLink,
             }}
           />
         </div>

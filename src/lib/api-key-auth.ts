@@ -76,7 +76,7 @@ export async function authenticateApiKey(
 
   const { data: keyRow, error } = await admin
     .from("api_keys" as never)
-    .select("id, organization_id, revoked_at")
+    .select("id, organization_id, revoked_at, organization:organizations ( suspended_at )")
     .eq("key_hash", keyHash)
     .maybeSingle();
 
@@ -91,12 +91,24 @@ export async function authenticateApiKey(
     id: string;
     organization_id: string;
     revoked_at: string | null;
+    organization: { suspended_at: string | null } | null;
   };
 
   if (row.revoked_at) {
     return {
       ok: false,
       response: jsonError(401, "API key has been revoked"),
+    };
+  }
+
+  // A suspended workspace is shut for its people (lib/auth.ts sends them to
+  // /suspended); until 2026-11-11 its API keys kept reading and writing
+  // anyway, so a workspace suspended for abuse could carry on through its
+  // integration. No company row at all is treated the same way.
+  if (!row.organization || row.organization.suspended_at) {
+    return {
+      ok: false,
+      response: jsonError(403, "This workspace is suspended. Contact support@sollos3.com."),
     };
   }
 

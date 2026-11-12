@@ -133,7 +133,8 @@ export default async function LoginPage({
               className="mb-4 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600"
             >
               Check <span className="font-semibold">{confirmEmail}</span> for a
-              confirmation link before signing in.
+              confirmation link before signing in. Already have an account with
+              this email? Sign in below, or use &ldquo;Forgot password?&rdquo;.
             </div>
           )}
 

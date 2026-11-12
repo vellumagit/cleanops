@@ -75,12 +75,20 @@ Recommendation first in each.
 | Seven "columns not in the generated types" second queries | Correctness is now checked by `test/db/query-shapes.test.ts` | **Leave**; regenerate types when convenient |
 | One-off scripts from the Supabase project move, and the replaced morning-check script | `export-all-data.ts`, `export-supplement.ts`, `import-all-data.ts`, `verify-export.ts`, `detect-missing-columns.ts`, `shadow-morning-check.ts`. The on-disk export with auth users is not on this machine | **Deleted 2026-11-11**, all but `shadow-morning-check.ts`: the 8 AM email names it as the by-hand fallback when the cron fails, so it stays |
 
-## Still open from the security audit, not re-tested today
+## From the security audit, closed 2026-11-11
 
-Listed so they are not mistaken for closed: login and signup echo the auth
-server's messages (lets someone test whether an email has an account, low);
-estimate PDFs are public to anyone holding the file's id; the public API
-echoes database error text; an API key keeps working for a suspended company.
+- **API keys of a suspended company** now get 403 (`src/lib/api-key-auth.ts`).
+- **Estimate PDFs** go to the private `estimate-pdfs` bucket (migration
+  `20261111040000`, run before the push); viewers get links that expire in an
+  hour (`src/lib/estimate-pdf-storage.ts`). No estimate had a PDF attached; one
+  orphaned file is still in the public `org-assets` bucket until deleted.
+- **The public API** answers failures with a sentence and a reference, never
+  the database's text (`src/lib/api/errors.ts`); a cleaner already booked gets
+  409 in words.
+- **Login and signup** show written messages, not the auth server's
+  (`src/lib/auth-errors.ts`). A signup with an email that already has an
+  account is answered exactly like a new one waiting on confirmation, and the
+  stand-in user Supabase can return for it is never given a company or deleted.
 
 ## Still open from August, each a business rule
 

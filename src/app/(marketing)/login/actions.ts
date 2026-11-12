@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { LoginSchema } from "@/lib/validators/auth";
 import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
+import { friendlyAuthError } from "@/lib/auth-errors";
 
 export type LoginActionState = {
   errors?: Partial<Record<"email" | "password" | "_form", string>>;
@@ -85,7 +86,7 @@ export async function loginAction(
 
   if (error) {
     return {
-      errors: { _form: error.message },
+      errors: { _form: friendlyAuthError(error, "sign-in") },
       values: { email: parsed.data.email },
     };
   }

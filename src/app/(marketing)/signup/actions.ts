@@ -9,6 +9,7 @@ import { SignupSchema, slugify } from "@/lib/validators/auth";
 import { checkIpRateLimit, getIp } from "@/lib/rate-limit-helpers";
 import { headers } from "next/headers";
 import { TURNSTILE_FIELD, turnstileConfigured, verifyTurnstile } from "@/lib/turnstile";
+import { friendlyAuthError, isExistingAccountSignup } from "@/lib/auth-errors";
 
 export type SignupActionState = {
   errors?: Partial<Record<"fullName" | "organizationName" | "email" | "password" | "_form", string>>;
@@ -157,9 +158,20 @@ export async function signupAction(
     },
   });
 
+  // An email that already has an account. Answered exactly like a new
+  // sign-up waiting on its confirmation email (the login page tells them to
+  // sign in or reset if they already have one), so this form can't be used
+  // to test which addresses have accounts. Nothing is created, and the
+  // stand-in user Supabase may return is never touched. An invite holder
+  // already knows: send them to sign in and accept.
+  if (isExistingAccountSignup(signUpError, signUpData?.user)) {
+    if (isInvite && inviteToken) redirect(`/login?invite=${encodeURIComponent(inviteToken)}`);
+    redirect(`/login?confirm=1&email=${encodeURIComponent(email)}`);
+  }
+
   if (signUpError || !signUpData.user) {
     return {
-      errors: { _form: signUpError?.message ?? "Could not create account" },
+      errors: { _form: friendlyAuthError(signUpError, "sign-up") },
       values: { fullName, organizationName, email },
     };
   }
@@ -223,9 +235,10 @@ export async function signupAction(
   if (orgError || !org) {
     // Roll back the auth user so they can try again with the same email.
     await admin.auth.admin.deleteUser(userId);
+    console.error("[signup] organization insert failed:", orgError?.message ?? "no row");
     return {
       errors: {
-        _form: orgError?.message ?? "Could not create organization",
+        _form: "We couldn't set up your workspace. Try again in a minute.",
       },
       values: { fullName, organizationName, email },
     };
@@ -242,8 +255,9 @@ export async function signupAction(
     // Best-effort cleanup
     await admin.from("organizations").delete().eq("id", org.id);
     await admin.auth.admin.deleteUser(userId);
+    console.error("[signup] owner membership insert failed:", membershipError.message);
     return {
-      errors: { _form: membershipError.message },
+      errors: { _form: "We couldn't set up your workspace. Try again in a minute." },
       values: { fullName, organizationName, email },
     };
   }

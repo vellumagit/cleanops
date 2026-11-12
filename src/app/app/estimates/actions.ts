@@ -11,6 +11,11 @@ import {
 } from "@/lib/automations";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { isRealPdf } from "@/lib/file-sniff";
+import {
+  ESTIMATE_PDF_MAX_BYTES,
+  removeStoredEstimatePdf,
+  storeEstimatePdf,
+} from "@/lib/estimate-pdf-storage";
 import { canCreateData } from "@/lib/subscription";
 
 type Field = keyof typeof EstimateSchema.shape;
@@ -40,12 +45,12 @@ function maybeStamp(status: string, prev?: { sent_at?: string | null; decided_at
   };
 }
 
-const MAX_PDF_SIZE = 10 * 1024 * 1024; // 10 MB
 const ALLOWED_TYPES = ["application/pdf"];
 
 /**
- * Upload a PDF to org-assets/{org}/estimates/{estimateId}.pdf
- * Returns the public URL or null.
+ * Store an uploaded PDF in the private estimate-pdfs bucket
+ * (lib/estimate-pdf-storage.ts). Returns the reference to save as pdf_url,
+ * not a link: links are signed per viewer and expire.
  */
 async function uploadEstimatePdf(
   orgId: string,
@@ -55,42 +60,22 @@ async function uploadEstimatePdf(
   if (!ALLOWED_TYPES.includes(file.type)) {
     return { url: null, error: "Only PDF files are allowed." };
   }
-  if (file.size > MAX_PDF_SIZE) {
+  if (file.size > ESTIMATE_PDF_MAX_BYTES) {
     return { url: null, error: "PDF must be under 10 MB." };
   }
-  // The label is the browser's word; the bytes are the file's. This lands
-  // in a public bucket, served as application/pdf to anyone with the link.
+  // The label is the browser's word; the bytes are the file's.
   if (!(await isRealPdf(file))) {
     return { url: null, error: "That file isn't a PDF." };
   }
-
-  const admin = createSupabaseAdminClient();
-  const path = `${orgId}/estimates/${estimateId}.pdf`;
-  const { error } = await admin.storage
-    .from("org-assets")
-    .upload(path, file, {
-      upsert: true,
-      contentType: "application/pdf",
-      cacheControl: "3600",
-    });
-
-  if (error) return { url: null, error: error.message };
-
-  const { data: urlData } = admin.storage
-    .from("org-assets")
-    .getPublicUrl(path);
-
-  return { url: `${urlData.publicUrl}?v=${Date.now()}`, error: null };
+  const { ref, error } = await storeEstimatePdf(createSupabaseAdminClient(), orgId, estimateId, file);
+  return { url: ref, error };
 }
 
 /**
  * Remove any existing PDF for an estimate from storage.
  */
 async function removeEstimatePdf(orgId: string, estimateId: string) {
-  const admin = createSupabaseAdminClient();
-  await admin.storage
-    .from("org-assets")
-    .remove([`${orgId}/estimates/${estimateId}.pdf`]);
+  await removeStoredEstimatePdf(createSupabaseAdminClient(), orgId, estimateId);
 }
 
 export async function createEstimateAction(

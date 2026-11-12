@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateApiKey } from "@/lib/api-key-auth";
+import { apiServerError } from "@/lib/api/errors";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { dispatchWebhookEvent } from "@/lib/webhooks";
 import { findOrCreateClient } from "@/lib/find-or-create-client";
@@ -38,7 +39,7 @@ export async function GET(request: NextRequest) {
   if (since) query = query.gte("updated_at", since);
 
   const { data, count, error } = await query;
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return apiServerError("invoices", error);
 
   return NextResponse.json({
     data,
@@ -135,7 +136,7 @@ export async function POST(request: NextRequest) {
     .select("id, client_id, amount_cents, due_date, status, number, created_at")
     .single();
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return apiServerError("invoices", error);
 
   dispatchWebhookEvent(auth.organizationId, "invoice.created", data).catch(() => {});
 

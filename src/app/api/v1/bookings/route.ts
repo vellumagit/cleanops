@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { authenticateApiKey } from "@/lib/api-key-auth";
+import { apiServerError } from "@/lib/api/errors";
+import { allowDbErrors } from "@/lib/supabase/query-guard";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { dispatchWebhookEvent } from "@/lib/webhooks";
 import { findOrCreateClient } from "@/lib/find-or-create-client";
@@ -64,7 +66,7 @@ export async function GET(request: NextRequest) {
 
   const { data, count, error } = await query;
   if (error)
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return apiServerError("bookings", error);
 
   return NextResponse.json({
     data,
@@ -206,7 +208,10 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { data, error } = await admin
+  // 23P01 is the database refusing a cleaner who is already booked then
+  // (assigned_to puts them on the crew as the row goes in). Answered in words;
+  // in the fail-closed scope it would otherwise be a bare 500.
+  const { data, error } = (await allowDbErrors(["23P01"], admin
     .from("bookings" as never)
     .insert({
       organization_id: auth.organizationId,
@@ -231,10 +236,16 @@ export async function POST(request: NextRequest) {
     .select(
       "id, client_id, scheduled_at, duration_minutes, service_type, service_type_id, service_type_label, status, total_cents, address, notes, created_at",
     )
-    .single();
+    .single())) as unknown as { data: Record<string, unknown>; error: { code?: string; message: string } | null };
 
+  if (error?.code === "23P01") {
+    return NextResponse.json(
+      { error: "That cleaner already has a booking at that time. Nothing was created." },
+      { status: 409 },
+    );
+  }
   if (error)
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return apiServerError("bookings", error);
 
   const created = data as unknown as { id: string };
   // The roster lives in booking_assignees; assigned_to is only the
@@ -274,21 +285,27 @@ export async function POST(request: NextRequest) {
       } catch (err) {
         cleanupFailure = messageOf(err);
       }
+      // The caller learns what happened in words, never the database's own
+      // message (table and constraint names); the detail goes to the log.
       if (cleanupFailure) {
         console.error("[api/bookings] crew insert and booking cleanup failed:", crewFailure, cleanupFailure);
         return NextResponse.json(
           {
-            error: `Crew assignment failed: ${crewFailure}. Booking cleanup also failed: ${cleanupFailure}`,
+            error:
+              "The booking was created but the cleaner could not be assigned, and removing the booking also failed. Delete it or assign someone in Sollos.",
             booking_id: created.id,
           },
           { status: 500 },
         );
       }
       const overlap = crewFailure.includes("23P01") || crewFailure.includes("overlapping booking");
-      return NextResponse.json(
-        { error: `Crew assignment failed: ${crewFailure}` },
-        { status: overlap ? 409 : 500 },
-      );
+      if (overlap) {
+        return NextResponse.json(
+          { error: "That cleaner already has a booking at that time. Nothing was created." },
+          { status: 409 },
+        );
+      }
+      return apiServerError("bookings: assign crew", crewFailure);
     }
   }
   await syncJob(created.id, "api_create");
