@@ -80,8 +80,9 @@ Recommendation first in each.
 - **API keys of a suspended company** now get 403 (`src/lib/api-key-auth.ts`).
 - **Estimate PDFs** go to the private `estimate-pdfs` bucket (migration
   `20261111040000`, run before the push); viewers get links that expire in an
-  hour (`src/lib/estimate-pdf-storage.ts`). No estimate had a PDF attached; one
-  orphaned file is still in the public `org-assets` bucket until deleted.
+  hour (`src/lib/estimate-pdf-storage.ts`). No estimate had a PDF attached; the one
+  orphaned file left in the public `org-assets` bucket (its estimate deleted
+  in April) was deleted the same day, with Brian's OK.
 - **The public API** answers failures with a sentence and a reference, never
   the database's text (`src/lib/api/errors.ts`); a cleaner already booked gets
   409 in words.
