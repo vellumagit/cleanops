@@ -13,7 +13,7 @@ it stands, and against Svit's production data (read-only), on 2026-11-10.
 | 5 | Bookings page read crew with one request for up to 1000 ids; past about 390 it failed, crew read as empty, and saving deleted the crew | **Fixed** before today: the read is chunked, and the crew save refuses if it cannot read the current crew | `src/app/app/bookings/page.tsx`, `chunked-in.ts` |
 | 6 | Assigning crew "this and future" wiped who had accepted | **Fixed** before today (`withPriorLifecycle` on both paths) | `src/app/app/bookings/actions.ts` |
 | 7 | Wall time to instant took the zone's offset at the wrong moment: an hour off for a few hours after each clock change | **Was open in the function. Fixed today.** Bookings were already safe (the database derives their instant from the stored wall time); timesheets, payments and reports used the function. "Book again" no longer picks a date at all | `src/lib/validators/common.ts` |
-| 8 | Only `sent` invoices become overdue, so a part-paid invoice past due is never chased | **Still open, on purpose. Needs a decision.** See below | `src/lib/automations.ts` |
+| 8 | Only `sent` invoices become overdue, so a part-paid invoice past due is never chased | **Fixed 2026-11-11** (option 1 below): reminded on the balance, status left part-paid | `sendOverdueReminders` in `src/lib/automations.ts`, `test/db/overdue-reminders.api.test.ts` |
 | 9 | A cleaner's pay page hid hours for as long as their pay run was a draft | **Was open. Fixed today.** | `src/app/field/pay/page.tsx` |
 
 ## What production showed
@@ -48,6 +48,10 @@ only go to `overdue` and only `sent` becomes `overdue`. Two ways to close it:
 
 Either one starts sending email to clients who get none today, so it is a
 product call, not a bug fix to slip in. Option 1 is the one to build.
+
+**Decided 2026-11-11: option 1, built.** Only invoices that were sent and
+are past due; a draft that took a deposit is never chased. The owners'
+weekly digest counts them as overdue.
 
 The second half of the original finding, "the pay page blocks refunded", is
 how the page is meant to read: it tells the client the invoice was refunded
