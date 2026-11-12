@@ -164,7 +164,7 @@ describe.skipIf(!hasPostgrest)("replies to the company's texts reach the office"
     expect(notes).toEqual([
       { title: "Text from Olha M", body: "“Running 10 min late” From (780) 555-0202.", href: `/app/employees/${olha.membershipId}` },
       { title: "Text from Ivan Bench (freelancer)", body: "“I can take Saturday” From (780) 555-0303.", href: "/app/freelancers" },
-      { title: "Text from (403) 555-0404", body: "[sent a picture or file]", href: "/app" },
+      { title: "Text from (403) 555-0404", body: "[sent a picture or file]", href: "/app/texts" },
     ]);
     expect((await saved(c.org)).map((r) => r.body)).toEqual(["Running 10 min late", "I can take Saturday", "[picture or file]"]);
   });

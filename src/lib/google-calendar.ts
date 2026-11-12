@@ -12,6 +12,7 @@
  * `bookings.google_calendar_event_id`.
  */
 
+import { refreshFailureIsPermanent } from "@/lib/oauth-refresh";
 import "server-only";
 import { getEnv } from "@/lib/env";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
@@ -126,6 +127,20 @@ export async function exchangeCodeForTokens(code: string): Promise<{
 }
 
 /**
+ * Whether a stored grant includes calendar access. Google's consent screen
+ * lets a person untick the calendar box and still finish; such a grant
+ * (email only) can neither read nor write their calendar. The callback
+ * refuses those now, but one made before it did (2026-06-09) sat "active"
+ * and failed every night. An empty scope is old data: assume it is fine.
+ */
+export function grantIncludesCalendar(scope: string | null | undefined): boolean {
+  return !scope || /calendar/.test(scope);
+}
+
+const NO_CALENDAR_PERMISSION =
+  "Google Calendar permission wasn't granted. Reconnect, and tick the box that lets Sollos see and edit calendar events.";
+
+/**
  * Refresh an expired access token using the stored refresh token.
  * Updates the `integration_connections` row with the new ciphertext.
  */
@@ -150,9 +165,16 @@ async function refreshAccessToken(
 
   if (!res.ok) {
     const body = await res.text();
-    // Flag the connection AND alert the org's admins (once) that it needs
-    // reconnecting — otherwise sync silently stops with no one the wiser.
-    await markConnectionError(connectionId, `Token refresh failed: ${res.status}`);
+    // Only Google refusing the token (400 invalid_grant: revoked or expired;
+    // 401 invalid_client) means the connection is dead. Flag it AND alert the
+    // org's admins (once) — otherwise sync silently stops with no one the
+    // wiser. Anything else (a 503 or 429 is Google having a bad minute) leaves
+    // it active for the next attempt: on 2026-11-09 a single 503 switched a
+    // cleaner's calendar off for good, and nobody can "reconnect" their way
+    // out of an outage that already ended.
+    if (refreshFailureIsPermanent(res.status)) {
+      await markConnectionError(connectionId, `Token refresh failed: ${res.status}`);
+    }
     throw new Error(`Google token refresh failed: ${res.status} ${body}`);
   }
 
@@ -202,14 +224,19 @@ async function markConnectionError(
     if (data.membership_id) {
       const { data: m } = (await admin
         .from("memberships")
-        .select("display_name, profile:profiles ( full_name )")
+        .select("display_name, status, profile:profiles ( full_name )")
         .eq("id", data.membership_id)
         .maybeSingle()) as unknown as {
         data: {
           display_name: string | null;
+          status: string | null;
           profile: { full_name: string | null } | null;
         } | null;
       };
+      // Someone who has left: the connection is flagged (so it is not tried
+      // again) but nobody is asked to reconnect a calendar that no longer
+      // belongs to anyone on the team.
+      if (m?.status !== "active") return;
       const name = m?.display_name ?? m?.profile?.full_name ?? "A team member";
       whose = `${name}'s Google Calendar`;
     }
@@ -278,7 +305,7 @@ async function getConnection(
   const admin = createSupabaseAdminClient();
   const { data } = (await admin
     .from("integration_connections")
-    .select("id, access_token_ciphertext, refresh_token_ciphertext, token_expires_at, metadata")
+    .select("id, access_token_ciphertext, refresh_token_ciphertext, token_expires_at, metadata, scope")
     .eq("organization_id", organizationId)
     .eq("provider", "google_calendar")
     .eq("status", "active")
@@ -286,6 +313,13 @@ async function getConnection(
     .maybeSingle()) as unknown as { data: ConnectionRow | null };
 
   if (!data || !data.access_token_ciphertext) return null;
+
+  // No calendar permission in the grant: every call would 403. Flag it once
+  // (admins are told to reconnect) and stop trying.
+  if (!grantIncludesCalendar((data as { scope?: string | null }).scope)) {
+    await markConnectionError(data.id, NO_CALENDAR_PERMISSION);
+    return null;
+  }
 
   // Check if token is expired (with 60s buffer)
   const isExpired =
@@ -1634,13 +1668,20 @@ async function getMemberConnection(
   const admin = createSupabaseAdminClient();
   const { data } = (await admin
     .from("integration_connections")
-    .select("id, access_token_ciphertext, refresh_token_ciphertext, token_expires_at, metadata")
+    .select("id, access_token_ciphertext, refresh_token_ciphertext, token_expires_at, metadata, scope")
     .eq("membership_id", membershipId)
     .eq("provider", "google_calendar")
     .eq("status", "active")
     .maybeSingle()) as unknown as { data: MemberConnectionRow | null };
 
   if (!data || !data.access_token_ciphertext) return null;
+
+  // No calendar permission in the grant: every call would 403. Flag it once
+  // (admins are told to reconnect) and stop trying.
+  if (!grantIncludesCalendar((data as { scope?: string | null }).scope)) {
+    await markConnectionError(data.id, NO_CALENDAR_PERMISSION);
+    return null;
+  }
 
   const isExpired =
     data.token_expires_at &&

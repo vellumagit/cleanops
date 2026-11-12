@@ -75,6 +75,22 @@ Recommendation first in each.
 | Seven "columns not in the generated types" second queries | Correctness is now checked by `test/db/query-shapes.test.ts` | **Leave**; regenerate types when convenient |
 | One-off scripts from the Supabase project move, and the replaced morning-check script | `export-all-data.ts`, `export-supplement.ts`, `import-all-data.ts`, `verify-export.ts`, `detect-missing-columns.ts`, `shadow-morning-check.ts`. The on-disk export with auth users is not on this machine | **Deleted 2026-11-11**, all but `shadow-morning-check.ts`: the 8 AM email names it as the by-hand fallback when the cron fails, so it stays |
 
+## Integrations and text replies, 2026-11-12
+
+- **Text replies have a page:** Comms → Text replies (`src/app/app/texts`),
+  for owners, admins and managers: who wrote what, in full, with text-back
+  and call links. Read-only; nothing is sent from it.
+- **A temporary outage no longer switches a connection off.** Google
+  Calendar, QuickBooks and Sage only flag a connection dead when the provider
+  refuses its token (400/401), not on a 5xx or 429 (`src/lib/oauth-refresh.ts`).
+  A single Google 503 on 2026-11-09 had switched off Anastasiia Rozhkova's
+  calendar (25 upcoming jobs).
+- **A grant without calendar permission is flagged once** instead of failing
+  every night (Mariya Frantsuz's, June 9; she has left, so nobody is asked to
+  reconnect it). The OAuth callback already refuses such grants.
+- Velluma's (test company) QuickBooks and Sage connections are dead sandbox
+  tokens from July and August.
+
 ## From the security audit, closed 2026-11-11
 
 - **API keys of a suspended company** now get 403 (`src/lib/api-key-auth.ts`).

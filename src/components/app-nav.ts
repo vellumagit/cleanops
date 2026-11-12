@@ -28,6 +28,7 @@ import {
   Banknote,
   Inbox,
   Megaphone,
+  MessageSquareReply,
 } from "lucide-react";
 import { hasCapability, type CapabilityKey, type CapabilityMap } from "@/lib/capabilities";
 
@@ -159,6 +160,8 @@ export const NAV_SECTIONS: NavSection[] = [
     activeBg: "bg-amber-500/10",
     items: [
       { href: "/app/announce", label: "Announce", icon: Megaphone, roles: ["owner", "admin", "manager"], mobileTier: "more" },
+      // What people texted back to the company's number (app/app/texts).
+      { href: "/app/texts", label: "Text replies", icon: MessageSquareReply, roles: ["owner", "admin", "manager"], mobileTier: "more" },
       { href: "/app/feed", label: "Feed", icon: Rss, mobileTier: "more" },
       { href: "/app/chat", label: "Chat", icon: MessageSquare, mobileTier: "more" },
     ],

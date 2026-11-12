@@ -18,6 +18,7 @@
  *   - Amounts are major units (dollars), not cents.
  */
 
+import { refreshFailureIsPermanent } from "@/lib/oauth-refresh";
 import "server-only";
 import { getEnv } from "@/lib/env";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
@@ -150,13 +151,17 @@ async function refreshQBAccessToken(
     // Keep Intuit's correlation id on auth failures too — token-exchange
     // problems are exactly what their support team gets asked to trace.
     const tid = res.headers.get("intuit_tid") ?? "none";
-    await admin
-      .from("integration_connections" as never)
-      .update({
-        status: "error",
-        last_error: `QBO token refresh failed: ${res.status} [intuit_tid=${tid}]`,
-      } as never)
-      .eq("id" as never, connectionId);
+    // Only Intuit refusing the token kills the connection; a 5xx or 429 is
+    // retried next time (lib/oauth-refresh.ts).
+    if (refreshFailureIsPermanent(res.status)) {
+      await admin
+        .from("integration_connections" as never)
+        .update({
+          status: "error",
+          last_error: `QBO token refresh failed: ${res.status} [intuit_tid=${tid}]`,
+        } as never)
+        .eq("id" as never, connectionId);
+    }
     throw new Error(
       `QuickBooks token refresh failed: ${res.status} [intuit_tid=${tid}]`,
     );

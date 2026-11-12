@@ -49,16 +49,21 @@ export type Sender =
 
 type AdminDb = ReturnType<typeof createSupabaseAdminClient>;
 
-/** Who, in this company, has the number a reply came from. Clients first: they are who the office answers to. */
-export async function identifySender(
-  db: AdminDb,
-  organizationId: string,
-  from: string | null,
-): Promise<Sender> {
-  const key = phoneKey(from);
-  if (key.length !== 10) return { kind: "unknown" };
+/**
+ * Everyone in this company who might text the company's number, by phone
+ * (last 10 digits). Clients win a shared number: they are who the office
+ * answers to. Then active team members, then the on-call pool. The inbox
+ * page reads it once for every reply it shows.
+ */
+export async function senderDirectory(db: AdminDb, organizationId: string): Promise<Map<string, Sender>> {
+  const dir = new Map<string, Sender>();
+  const add = (phone: string | null | undefined, sender: Sender) => {
+    const key = phoneKey(phone);
+    if (key.length === 10 && !dir.has(key)) dir.set(key, sender);
+  };
 
-  const clients = await allPages<{ id: string; name: string | null; phone: string | null }>(
+  type ClientRow = { id: string; name: string | null; phone: string | null };
+  const clients = await allPages<ClientRow>(
     (from, to) =>
       db
         .from("clients")
@@ -66,11 +71,10 @@ export async function identifySender(
         .eq("organization_id", organizationId)
         .not("phone", "is", null)
         .order("id")
-        .range(from, to) as unknown as Page<{ id: string; name: string | null; phone: string | null }>,
+        .range(from, to) as unknown as Page<ClientRow>,
     "clients",
   );
-  const client = clients.find((c) => phoneKey(c.phone) === key);
-  if (client) return { kind: "client", id: client.id, name: client.name?.trim() || "a client" };
+  for (const c of clients) add(c.phone, { kind: "client", id: c.id, name: c.name?.trim() || "a client" });
 
   type MemberRow = {
     id: string;
@@ -89,15 +93,14 @@ export async function identifySender(
         .range(from, to) as unknown as Page<MemberRow>,
     "memberships",
   );
-  const member = members.find(
-    (m) => phoneKey(m.contact_phone) === key || phoneKey(m.profile?.phone) === key,
-  );
-  if (member) {
-    return {
+  for (const m of members) {
+    const sender: Sender = {
       kind: "member",
-      id: member.id,
-      name: member.display_name?.trim() || member.profile?.full_name?.trim() || "a team member",
+      id: m.id,
+      name: m.display_name?.trim() || m.profile?.full_name?.trim() || "a team member",
     };
+    add(m.contact_phone, sender);
+    add(m.profile?.phone, sender);
   }
 
   type BenchRow = { id: string; full_name: string | null; phone: string | null };
@@ -111,12 +114,31 @@ export async function identifySender(
         .range(from, to) as unknown as Page<BenchRow>,
     "freelancer_contacts",
   );
-  const freelancer = bench.find((f) => phoneKey(f.phone) === key);
-  if (freelancer) {
-    return { kind: "freelancer", id: freelancer.id, name: freelancer.full_name?.trim() || "a freelancer" };
-  }
+  for (const b of bench) add(b.phone, { kind: "freelancer", id: b.id, name: b.full_name?.trim() || "a freelancer" });
 
-  return { kind: "unknown" };
+  return dir;
+}
+
+/** Who, in this company, has the number a reply came from. */
+export async function identifySender(
+  db: AdminDb,
+  organizationId: string,
+  from: string | null,
+): Promise<Sender> {
+  const key = phoneKey(from);
+  if (key.length !== 10) return { kind: "unknown" };
+  return (await senderDirectory(db, organizationId)).get(key) ?? { kind: "unknown" };
+}
+
+/** Where a sender's page is in the office app; unknown numbers go to the inbox. */
+export function senderHref(sender: Sender): string {
+  return sender.kind === "client"
+    ? `/app/clients/${sender.id}`
+    : sender.kind === "member"
+      ? `/app/employees/${sender.id}`
+      : sender.kind === "freelancer"
+        ? "/app/freelancers"
+        : "/app/texts";
 }
 
 /** "(780) 555-0142" from "+17805550142"; anything else as it came. */
@@ -145,14 +167,7 @@ export function describeReply(sender: Sender, reply: Pick<InboundReply, "from" |
   const unsubscribed = reply.optedOut
     ? "This also unsubscribed them from texts; they can text START to undo it."
     : "";
-  const href =
-    sender.kind === "client"
-      ? `/app/clients/${sender.id}`
-      : sender.kind === "member"
-        ? `/app/employees/${sender.id}`
-        : sender.kind === "freelancer"
-          ? "/app/freelancers"
-          : "/app";
+  const href = senderHref(sender);
   return {
     title: `Text from ${who}`,
     body: [quoted, media, sender.kind === "unknown" ? "" : `From ${number}.`, unsubscribed].filter(Boolean).join(" "),

@@ -15,6 +15,7 @@
  *     not cents).
  */
 
+import { refreshFailureIsPermanent } from "@/lib/oauth-refresh";
 import "server-only";
 import { getEnv } from "@/lib/env";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
@@ -139,13 +140,17 @@ export async function refreshSageAccessToken(
 
   if (!res.ok) {
     const body = await res.text();
-    await admin
-      .from("integration_connections" as never)
-      .update({
-        status: "error",
-        last_error: `Token refresh failed: ${res.status}`,
-      } as never)
-      .eq("id" as never, connectionId);
+    // Only Sage refusing the token kills the connection; a 5xx or 429 is
+    // retried next time (lib/oauth-refresh.ts).
+    if (refreshFailureIsPermanent(res.status)) {
+      await admin
+        .from("integration_connections" as never)
+        .update({
+          status: "error",
+          last_error: `Token refresh failed: ${res.status}`,
+        } as never)
+        .eq("id" as never, connectionId);
+    }
     throw new Error(`Sage token refresh failed: ${res.status} ${body}`);
   }
 
