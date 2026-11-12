@@ -60,7 +60,6 @@ export type TimesheetEntry = {
   expected_end_at: string | null;
   // Pay
   pay_rate_cents: number;
-  pay_type: "hourly" | "flat" | "percent";
   earned_cents: number;
   /** Which pay system these hours belong to (era snapshot, falling back to
    *  the person's current engagement) — payroll runs vs contractor
@@ -84,7 +83,6 @@ export type EmployeeMeta = {
    *  office staff from regular field crew. */
   role: string;
   pay_rate_cents: number;
-  pay_type: "hourly" | "flat" | "percent";
   /** Which pay system they're in NOW — gates PTO hour summaries (a
    *  subcontractor's time off is unpaid unavailability, never PTO pay). */
   engagement: "employee" | "subcontractor";

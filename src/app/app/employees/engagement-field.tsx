@@ -29,8 +29,8 @@ import {
  * payroll and start appearing in Subcontractor pay.
  *
  * Deliberately sits next to Role and Pay rate but means neither of them:
- * Role is permissions, pay_type is the rate basis. A subcontractor can be a
- * manager on a flat rate.
+ * Role is permissions, Pay rate is the hourly wage. A subcontractor can be a
+ * manager.
  */
 export function EngagementField({
   defaultValue,

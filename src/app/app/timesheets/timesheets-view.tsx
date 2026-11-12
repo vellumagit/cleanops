@@ -61,7 +61,6 @@ type EmpSummary = {
   openShift: boolean;
   earnedCents: number;
   payRateCents: number;
-  payType: string;
   lateCount: number;
   earlyCount: number;
   overCount: number;
@@ -87,7 +86,6 @@ function buildSummaries(
       openShift: false,
       earnedCents: 0,
       payRateCents: employees[e.employee_id]?.pay_rate_cents ?? 0,
-      payType: employees[e.employee_id]?.pay_type ?? "hourly",
       lateCount: 0,
       earlyCount: 0,
       overCount: 0,
@@ -128,7 +126,6 @@ function buildSummaries(
         openShift: false,
         earnedCents: 0,
         payRateCents: employees[p.employee_id]?.pay_rate_cents ?? 0,
-        payType: employees[p.employee_id]?.pay_type ?? "hourly",
         lateCount: 0,
         earlyCount: 0,
         overCount: 0,
@@ -246,7 +243,6 @@ function generateCSV(entries: TimesheetEntry[], orgTz: string): string {
     "Arrival",
     "Completion",
     "Pay Rate",
-    "Pay Type",
     "Earned",
     "Pay System",
   ].join(",");
@@ -264,7 +260,6 @@ function generateCSV(entries: TimesheetEntry[], orgTz: string): string {
       csvField(e.punctuality),
       csvField(e.completion),
       (e.pay_rate_cents / 100).toFixed(2),
-      e.pay_type,
       (e.earned_cents / 100).toFixed(2),
       e.engagement === "subcontractor" ? "Contractor statement" : "Payroll",
     ].join(","),

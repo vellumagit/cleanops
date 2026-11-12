@@ -2760,7 +2760,6 @@ export type Database = {
           id: string
           organization_id: string
           pay_rate_cents: number | null
-          pay_type: string
           profile_id: string | null
           role: Database["public"]["Enums"]["membership_role"]
           status: Database["public"]["Enums"]["membership_status"]
@@ -2777,7 +2776,6 @@ export type Database = {
           id?: string
           organization_id: string
           pay_rate_cents?: number | null
-          pay_type?: string
           profile_id?: string | null
           role: Database["public"]["Enums"]["membership_role"]
           status?: Database["public"]["Enums"]["membership_status"]
@@ -2794,7 +2792,6 @@ export type Database = {
           id?: string
           organization_id?: string
           pay_rate_cents?: number | null
-          pay_type?: string
           profile_id?: string | null
           role?: Database["public"]["Enums"]["membership_role"]
           status?: Database["public"]["Enums"]["membership_status"]

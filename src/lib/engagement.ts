@@ -17,10 +17,9 @@
  * why an owner asking to "add a subcontractor" got sent to a bench of external
  * people instead of their own crew.
  *
- * ORTHOGONAL to two columns it is constantly confused with:
- *   role      PERMISSIONS — owner | admin | manager | employee
- *   pay_type  RATE BASIS  — hourly | flat | percent
- * A subcontractor can be a manager. An employee can be on a flat rate.
+ * ORTHOGONAL to role (PERMISSIONS — owner | admin | manager | employee):
+ * a subcontractor can be a manager. Everyone is paid by the hour; a
+ * flat/percent pay_type column was dropped on 2026-11-11, never used.
  */
 
 export const ENGAGEMENTS = ["employee", "subcontractor"] as const;

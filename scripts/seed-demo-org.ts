@@ -284,7 +284,6 @@ async function main() {
       status: "active",
       display_name: p.name,
       contact_email: email,
-      pay_type: "hourly",
       pay_rate_cents: p.rate,
       engagement: p.engagement,
       calendar_scope: "mine",

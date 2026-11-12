@@ -303,8 +303,8 @@ export default async function TimesheetsPage({
 
   if (error) throw error;
 
-  // Build pay_type map from DB (with fallback for pre-migration)
-  // For now we treat all as hourly since pay_type column may not exist yet
+  // Everyone is paid by the hour. A flat/percent pay_type column existed with
+  // no way to set it and was dropped on 2026-11-11 (20261111020000).
   const empMeta: Record<string, EmployeeMeta> = {};
   for (const emp of employees ?? []) {
     empMeta[emp.id] = {
@@ -312,7 +312,6 @@ export default async function TimesheetsPage({
       name: memberDisplayName(emp),
       role: emp.role,
       pay_rate_cents: emp.pay_rate_cents ?? 0,
-      pay_type: "hourly" as const,
       engagement: toEngagement(
         (emp as { engagement?: string | null }).engagement,
       ),
@@ -426,23 +425,14 @@ export default async function TimesheetsPage({
       entryRow.pay_rate_cents_snapshot ??
       meta?.pay_rate_cents ??
       0;
-    const payType = meta?.pay_type ?? "hourly";
     const entryEngagement = toEngagement(
       (e as { engagement_snapshot?: string | null }).engagement_snapshot ??
         meta?.engagement,
     );
 
-    let earnedCents = 0;
-    if (payType === "hourly") {
-      // Integer-only math to avoid floating-point rounding errors:
-      // (minutes * rateCents) / 60 keeps everything in whole numbers until final division
-      earnedCents = Math.round((actualMinutes * payRateCents) / 60);
-    } else if (payType === "flat") {
-      earnedCents = payRateCents;
-    } else if (payType === "percent" && e.booking?.total_cents) {
-      // payRateCents here is the percentage × 100 (e.g. 1500 = 15%)
-      earnedCents = Math.round((e.booking.total_cents * payRateCents) / 10000);
-    }
+    // Integer-only math to avoid floating-point rounding errors:
+    // (minutes * rateCents) / 60 keeps everything in whole numbers until final division
+    const earnedCents = Math.round((actualMinutes * payRateCents) / 60);
 
     return {
       id: e.id,
@@ -510,7 +500,6 @@ export default async function TimesheetsPage({
       }),
       // Pay
       pay_rate_cents: payRateCents,
-      pay_type: payType,
       earned_cents: earnedCents,
       engagement: entryEngagement,
       attach_suggestion: null as import("./types").TimesheetEntry["attach_suggestion"],
