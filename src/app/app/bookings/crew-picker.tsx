@@ -109,8 +109,18 @@ export function CrewPicker({
   scheduledAtLocal,
   jobMinutes,
   error,
+  formerPeople = [],
+  formerDropped = false,
 }: {
   people: Person[];
+  /** On this job, but no longer active. `people` is active people only, so
+   *  these were on the job with no button to show or remove them, while the
+   *  save refused because of them. */
+  formerPeople?: Person[];
+  /** They were left out of the starting crew (the job is still to come);
+   *  say so, since saving takes them off. Otherwise they are still in
+   *  `state.crew` and get a button like everyone else. */
+  formerDropped?: boolean;
   state: CrewState;
   /** The form's setState, used ONLY in its functional form: every change
    *  builds on the latest crew, so two quick taps can't work from a stale
@@ -127,7 +137,11 @@ export function CrewPicker({
     allowTimes ? state : { ...state, timesOn: false },
     jobMinutes,
   );
-  const byId = new Map(people.map((p) => [p.id, p]));
+  const byId = new Map([...people, ...formerPeople].map((p) => [p.id, p]));
+  // Former people still on the crew: only on a job that has already
+  // happened. Once tapped off they are gone; they can't be added back.
+  const formerOnCrew = formerPeople.filter((p) => state.crew.includes(p.id));
+  const formerNames = formerPeople.map((p) => p.label).join(", ");
   const showTimes = allowTimes && state.crew.length >= 2;
   const windowOf = (id: string): CrewWindow =>
     state.windows[id] ?? wholeVisit(jobMinutes);
@@ -145,6 +159,17 @@ export function CrewPicker({
   return (
     <>
       <FormField label="Crew" htmlFor="crew" error={error}>
+        {formerDropped && formerPeople.length > 0 && (
+          <p
+            role="status"
+            className="mb-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200"
+          >
+            <span className="font-semibold">{formerNames}</span>{" "}
+            {formerPeople.length === 1 ? "is" : "are"} no longer active, so{" "}
+            {formerPeople.length === 1 ? "that name has" : "those names have"}{" "}
+            been taken off this visit. Pick who is going instead, then save.
+          </p>
+        )}
         {people.length === 0 ? (
           <p className="text-xs text-muted-foreground">No active employees yet.</p>
         ) : (
@@ -176,7 +201,28 @@ export function CrewPicker({
                   </button>
                 );
               })}
+              {formerOnCrew.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  aria-pressed
+                  onClick={() => onChange((s) => toggleCrewMember(s, p.id))}
+                  className="rounded-full border border-amber-500 bg-amber-100 px-3 py-1 text-xs font-medium text-amber-900 transition-colors hover:bg-amber-200 dark:bg-amber-950/40 dark:text-amber-200"
+                >
+                  ✓ {p.label} · no longer active
+                </button>
+              ))}
             </div>
+            {formerOnCrew.length > 0 && (
+              <p className="mt-1.5 text-[11px] text-amber-800 dark:text-amber-300">
+                {formerOnCrew.map((p) => p.label).join(", ")}{" "}
+                {formerOnCrew.length === 1 ? "is" : "are"} no longer active,
+                and a job can&rsquo;t be saved with{" "}
+                {formerOnCrew.length === 1 ? "that name" : "those names"} on
+                its crew. Tap to take {formerOnCrew.length === 1 ? "it" : "them"}{" "}
+                off (hours already logged stay), then save.
+              </p>
+            )}
             <p className="mt-1.5 text-[11px] text-muted-foreground">
               {state.crew.length === 0
                 ? "Nobody yet — leave it empty to keep the job unassigned."

@@ -19,6 +19,8 @@ import {
 } from "@/lib/crew-sync";
 import { resolveSegmentWindows } from "@/lib/booking-segments";
 import { crewFromForm } from "@/lib/series-crew";
+import { crewEligibility } from "@/lib/crew-eligibility";
+import { memberDisplayName } from "@/lib/member-display";
 import { resyncBookingCalendarsPaced } from "@/lib/booking-calendar-sync";
 import { after } from "next/server";
 import { syncJob } from "@/lib/job-sync";
@@ -196,6 +198,48 @@ type SplitSegmentInput = {
 };
 
 /**
+ * May these people be on a job's crew? The rule itself is crewEligibility
+ * (src/lib/crew-eligibility.ts): everyone in this company, and active. This
+ * reads what the rule needs, names included, so the refusal can say who.
+ * Returns the error to show, or null.
+ */
+async function crewCheck(
+  supabase: Awaited<
+    ReturnType<
+      typeof import("@/lib/supabase/server").createSupabaseServerClient
+    >
+  >,
+  organizationId: string,
+  submitted: Set<string>,
+): Promise<string | null> {
+  if (submitted.size === 0) return null;
+  const ids = Array.from(submitted);
+
+  const { data: found, error: membersErr } = (await supabase
+    .from("memberships")
+    .select("id, status, display_name, profile:profiles ( full_name )")
+    .eq("organization_id", organizationId)
+    .in("id", ids)) as unknown as {
+    data: Array<{
+      id: string;
+      status: string;
+      display_name: string | null;
+      profile: { full_name: string | null } | null;
+    }> | null;
+    error: { message: string } | null;
+  };
+  if (membersErr) return `Couldn't verify the selected cleaners: ${membersErr.message}`;
+  const members = (found ?? []).map((m) => ({
+    id: m.id,
+    status: m.status,
+    name: memberDisplayName(m),
+  }));
+
+  const verdict = crewEligibility({ submitted, members });
+  return verdict.ok ? null : verdict.error;
+}
+
+/**
  * Sync the booking_assignees junction table for a booking after a
  * create/update. `primary_id` is the single assignee stored in
  * bookings.assigned_to; `additional_ids` is the extra crew. The table's
@@ -264,32 +308,19 @@ async function syncBookingAssignees(
   | BookingAssigneeSyncRowWithLifecycle[]
 > {
   // CROSS-ORG GUARD: every submitted membership_id must belong to the
-  // caller's org and be active. Otherwise a malicious owner with multiple
-  // org memberships could plant a foreign membership in booking_assignees
-  // by spoofing the form payload — RLS won't catch it because the row
-  // itself is in the caller's org. Reject unknown IDs before writing.
+  // caller's org. Otherwise a malicious owner with multiple org memberships
+  // could plant a foreign membership in booking_assignees by spoofing the
+  // form payload — RLS won't catch it because the row itself is in the
+  // caller's org. Reject unknown IDs before writing. Inactive people are
+  // refused too, by name: crewCheck.
   const submitted = new Set<string>();
   if (primaryId) submitted.add(primaryId);
   for (const id of additionalIds) if (id) submitted.add(id);
   for (const s of splits) if (s.assigned_to) submitted.add(s.assigned_to);
 
-  let validIds: Set<string> = new Set();
-  if (submitted.size > 0) {
-    const { data: validMembers, error: membersErr } = (await supabase
-      .from("memberships")
-      .select("id")
-      .eq("organization_id", organizationId)
-      .eq("status", "active")
-      .in("id", Array.from(submitted))) as unknown as {
-      data: Array<{ id: string }> | null;
-      error: { message: string } | null;
-    };
-    if (membersErr) return `Couldn't verify the selected cleaners: ${membersErr.message}`;
-    validIds = new Set((validMembers ?? []).map((m) => m.id));
-  }
-  if (validIds.size !== submitted.size) {
-    return "One or more selected cleaners are no longer active in this workspace. Refresh and try again.";
-  }
+  const crewProblem = await crewCheck(supabase, organizationId, submitted);
+  if (crewProblem) return crewProblem;
+  const validIds = submitted;
   const isValid = (id: string | null | undefined): id is string =>
     !!id && validIds.has(id);
 
@@ -449,23 +480,9 @@ async function syncBookingAssigneesBulk(
   for (const id of additionalIds) if (id) submitted.add(id);
   for (const s of splits) if (s.assigned_to) submitted.add(s.assigned_to);
 
-  let validIds: Set<string> = new Set();
-  if (submitted.size > 0) {
-    const { data: validMembers, error: membersErr } = (await supabase
-      .from("memberships")
-      .select("id")
-      .eq("organization_id", organizationId)
-      .eq("status", "active")
-      .in("id", Array.from(submitted))) as unknown as {
-      data: Array<{ id: string }> | null;
-      error: { message: string } | null;
-    };
-    if (membersErr) return `Couldn't verify the selected cleaners: ${membersErr.message}`;
-    validIds = new Set((validMembers ?? []).map((m) => m.id));
-  }
-  if (validIds.size !== submitted.size) {
-    return "One or more selected cleaners are no longer active in this workspace. Refresh and try again.";
-  }
+  const crewProblem = await crewCheck(supabase, organizationId, submitted);
+  if (crewProblem) return crewProblem;
+  const validIds = submitted;
   const isValid = (id: string | null | undefined): id is string =>
     !!id && validIds.has(id);
 

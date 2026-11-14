@@ -4,6 +4,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { PageShell } from "@/components/page-shell";
+import { memberDisplayName } from "@/lib/member-display";
 import { centsToDollarString, toDatetimeLocal } from "@/lib/validators/common";
 import { BookingForm } from "../../booking-form";
 import { fetchBookingFormOptions } from "../../options";
@@ -74,9 +75,54 @@ export default async function EditBookingPage({
   if (error) throw error;
   if (!booking) notFound();
 
+  // People on this job who are not active any more. The crew picker only
+  // draws active people, so one of these used to be on the job, invisible,
+  // and un-removable, while the save refused because of her (Svit,
+  // 2026-11-14: a series still naming a placeholder deactivated in May).
+  //
+  // On an upcoming job she can't do the work, so she is taken out of what
+  // the form starts with and the form says so; saving makes it real. On a
+  // job that has already happened she is left in and shown with her own
+  // button, because taking someone off a finished job is for a person to
+  // decide; the save still refuses until she is off (crew-eligibility.ts).
+  const activeIds = new Set(options.employees.map((e) => e.id));
+  const onJob = new Set<string>();
+  if (booking.assigned_to) onJob.add(booking.assigned_to);
+  for (const a of assignees ?? []) onJob.add(a.membership_id);
+  for (const s of booking.splits ?? []) if (s.assigned_to) onJob.add(s.assigned_to);
+  const formerIds = [...onJob].filter((mid) => !activeIds.has(mid));
+  let formerCrew: Array<{ id: string; label: string }> = [];
+  if (formerIds.length > 0) {
+    const { data: gone } = (await supabase
+      .from("memberships")
+      .select("id, display_name, profile:profiles ( full_name )")
+      .eq("organization_id", membership.organization_id)
+      .in("id", formerIds)) as unknown as {
+      data: Array<{
+        id: string;
+        display_name: string | null;
+        profile: { full_name: string | null } | null;
+      }> | null;
+    };
+    const names = new Map((gone ?? []).map((m) => [m.id, memberDisplayName(m)]));
+    formerCrew = formerIds.map((mid) => ({
+      id: mid,
+      label: names.get(mid) ?? "Someone who has left",
+    }));
+  }
+  const stillToCome =
+    // eslint-disable-next-line react-hooks/purity -- server component: renders once on the server, no hydration to drift
+    new Date(booking.scheduled_at).getTime() > Date.now() &&
+    !["completed", "cancelled"].includes(booking.status);
+  const dropFormer = stillToCome && formerCrew.length > 0;
+  const former = new Set(formerIds);
+  const keep = (mid: string | null | undefined): mid is string =>
+    !!mid && !(dropFormer && former.has(mid));
+
   const additional_assignees = (assignees ?? [])
     .filter((a) => !a.is_primary)
-    .map((a) => a.membership_id);
+    .map((a) => a.membership_id)
+    .filter(keep);
 
   // Fetch the series row so the "Edit recurring schedule" section can be
   // pre-filled with the current rule. Only needed when this booking belongs
@@ -121,9 +167,11 @@ export default async function EditBookingPage({
             id={booking.id}
             currency={currency}
             {...options}
+            formerCrew={formerCrew}
+            formerCrewDropped={dropFormer}
             defaults={{
               client_id: booking.client_id,
-              assigned_to: booking.assigned_to,
+              assigned_to: keep(booking.assigned_to) ? booking.assigned_to : null,
               additional_assignees,
               scheduled_at_local: toDatetimeLocal(booking.scheduled_at, orgTz),
               duration_minutes: booking.duration_minutes,
@@ -141,7 +189,7 @@ export default async function EditBookingPage({
               property_id: booking.property_id,
               series_id: booking.series_id,
               scheduled_at_utc: booking.scheduled_at,
-              splits: booking.splits ?? [],
+              splits: (booking.splits ?? []).filter((s) => keep(s.assigned_to)),
               divide_hours_evenly: booking.divide_hours_evenly ?? false,
               is_free: booking.is_free ?? false,
               hourly_rate_cents: booking.hourly_rate_cents ?? 0,

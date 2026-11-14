@@ -444,5 +444,67 @@ describe.skipIf(!hasPostgrest).each([
       expect(res.error, "an overlap must be refused").toBeTruthy();
       expect(await crewOf(clash)).toEqual([]);
     });
+
+    // Svit, 2026-11-14: a recurring series kept putting a cleaner who was
+    // deactivated in May on its visits. The crew picker only shows active
+    // people, so she was on the job, invisible, and every save was refused
+    // with "One or more selected cleaners are no longer active... Refresh
+    // and try again." Nobody could change the crew of any of 52 visits.
+    describe("a job that still carries someone who was deactivated", () => {
+      const leftBy = async (c: Company, name: string) => {
+        const gone = await addMember(api.sql, c.org, "employee", name);
+        const job = await jobFor(c, [gone], { startedMinutesAgo: -24 * 60 });
+        await api.sql("update public.bookings set assigned_to = $2 where id = $1", [job, gone.membershipId]);
+        await api.sql("update public.memberships set status = 'disabled', display_name = $2 where id = $1", [gone.membershipId, name]);
+        return { gone, job };
+      };
+      const leadOf = async (job: string) =>
+        (await api.sql<{ assigned_to: string | null }>("select assigned_to from public.bookings where id = $1", [job]))[0].assigned_to;
+
+      it("can be given a new crew", async () => {
+        const c = await company();
+        const { job } = await leftBy(c, "Olga Placeholder");
+        const olha = await addMember(api.sql, c.org, "employee", "Olha");
+        const vira = await addMember(api.sql, c.org, "employee", "Vira");
+
+        const res = await assign(c.manager, job, olha, [vira]);
+        expect(res.error, api.log()).toBeUndefined();
+        expect((await crewOf(job)).sort()).toEqual([olha.membershipId, vira.membershipId].sort());
+        expect(await leadOf(job)).toBe(olha.membershipId);
+      });
+
+      it("is refused by name while she is still picked, and nothing changes", async () => {
+        const c = await company();
+        const { gone, job } = await leftBy(c, "Olga Placeholder");
+        const vira = await addMember(api.sql, c.org, "employee", "Vira");
+
+        const res = await assign(c.manager, job, gone, [vira]);
+        expect(res.error).toContain("Olga Placeholder is no longer active");
+        expect(res.error).toContain("Take that name off the crew");
+        expect(await crewOf(job)).toEqual([gone.membershipId]);
+      });
+
+      it("she cannot be added to another job either, and the refusal names her", async () => {
+        const c = await company();
+        const { gone } = await leftBy(c, "Olga Placeholder");
+        const other = await jobFor(c, [], { startedMinutesAgo: -48 * 60 });
+
+        const res = await assign(c.manager, other, gone, []);
+        expect(res.error).toContain("Olga Placeholder is no longer active");
+        expect(res.error).not.toMatch(/Refresh and try again/);
+        expect(await crewOf(other)).toEqual([]);
+      });
+
+      it("a cleaner from another company is still refused", async () => {
+        const c = await company();
+        const elsewhere = await company();
+        const stranger = await addMember(api.sql, elsewhere.org, "employee", "Stranger");
+        const job = await jobFor(c, [], { startedMinutesAgo: -24 * 60 });
+
+        const res = await assign(c.manager, job, stranger, []);
+        expect(res.error).toMatch(/isn't part of this company/);
+        expect(await crewOf(job)).toEqual([]);
+      });
+    });
   });
 });

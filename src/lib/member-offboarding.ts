@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { zonedYmd } from "@/lib/wall-clock";
 import { notify } from "@/lib/notify";
+import { seriesWithoutMember } from "@/lib/crew-eligibility";
 
 /**
  * Everything that must NOT stay attached to a person the moment they stop
@@ -28,6 +29,8 @@ export type OffboardSweepResult = {
     scheduled_at: string;
     client_name: string | null;
   }>;
+  /** Recurring series templates they were taken off. */
+  seriesCleared: number;
   /** The open time entry that was closed for review, if one existed. */
   closedEntryId: string | null;
   /** Pending PTO requests flipped to cancelled. */
@@ -57,6 +60,7 @@ export async function sweepDeactivatedMember(
   const nowIso = new Date().toISOString();
   const result: OffboardSweepResult = {
     unassignedBookings: [],
+    seriesCleared: 0,
     closedEntryId: null,
     cancelledPtoIds: [],
     pendingBonusCents: 0,
@@ -158,6 +162,38 @@ export async function sweepDeactivatedMember(
     );
   } catch (err) {
     console.error("[offboard] booking unassign failed:", err);
+  }
+
+  // ── 1b. Recurring series that name them ──────────────────────────────
+  // The visits above are the ones that exist today. A series template
+  // names its crew too, and it is what the next batch of visits is copied
+  // from: left alone, it put a deactivated person back on the schedule
+  // every time the series extended (Svit, 2026-11-14). Generation skips
+  // inactive people as well; this keeps the template itself honest, so the
+  // series shows who is really on it.
+  try {
+    const { data: templates, error: tplErr } = (await admin
+      .from("booking_series")
+      .select("id, assigned_to, crew")
+      .eq("organization_id", organizationId)
+      .limit(2000)) as unknown as {
+      data: Array<{ id: string; assigned_to: string | null; crew: unknown }> | null;
+      error: { message: string } | null;
+    };
+    if (tplErr) throw new Error(tplErr.message);
+    for (const tpl of templates ?? []) {
+      const next = seriesWithoutMember(tpl, membershipId);
+      if (!next) continue;
+      const { error: updErr } = (await admin
+        .from("booking_series")
+        .update({ assigned_to: next.assigned_to, crew: next.crew } as never)
+        .eq("organization_id", organizationId)
+        .eq("id", tpl.id)) as unknown as { error: { message: string } | null };
+      if (updErr) throw new Error(updErr.message);
+      result.seriesCleared += 1;
+    }
+  } catch (err) {
+    console.error("[offboard] series template clear failed:", err);
   }
 
   // ── 2. The open clock, if any ────────────────────────────────────────

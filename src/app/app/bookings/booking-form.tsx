@@ -218,11 +218,19 @@ export function BookingForm({
   currency = "CAD",
   divideHoursDefault = false,
   onSuccess,
+  formerCrew = [],
+  formerCrewDropped = false,
 }: {
   mode: "create" | "edit";
   id?: string;
   defaults?: BookingFormDefaults;
   clients: ClientOption[];
+  /** People on this job who are no longer active (edit only). `employees`
+   *  holds active people, so without these the picker couldn't show them. */
+  formerCrew?: Option[];
+  /** The job is still to come, so they were left out of `defaults` and the
+   *  picker says so. False on a past job, where they stay and are shown. */
+  formerCrewDropped?: boolean;
   employees: Option[];
   services: ServiceOption[];
   currency?: "CAD" | "USD";
@@ -1101,6 +1109,8 @@ export function BookingForm({
 
       <CrewPicker
         people={employees}
+        formerPeople={formerCrew}
+        formerDropped={formerCrewDropped}
         state={crewState}
         onChange={setCrewState}
         allowTimes={!isRecurring}

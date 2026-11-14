@@ -15,6 +15,7 @@ import { MIN_CHASED_BALANCE_CENTS, owedPastDueFilter } from "@/lib/invoice-balan
 import { localInputToUtcIso } from "@/lib/validators/common";
 import type { Database } from "@/lib/supabase/types";
 import { crewForGeneration, splitsFromCrew } from "@/lib/series-crew";
+import { activeCrewOnly } from "@/lib/crew-eligibility";
 
 export {
   autoInvoiceOnJobComplete,
@@ -3627,7 +3628,38 @@ export async function autoExtendRecurringSeries(): Promise<number> {
       // person — and lost any per-cleaner times — each time it extended. See
       // lib/series-crew.ts. Series saved before the crew column existed fall
       // back to assigned_to and extend exactly as they always did.
-      const crew = crewForGeneration(s);
+      //
+      // Minus anyone who is no longer active. The template keeps whoever
+      // was on it the day it was saved, and nothing took a deactivated
+      // person off it, so each new batch put her back on the schedule: on
+      // 2026-11-14 a Svit series had 52 upcoming visits led by a
+      // placeholder deactivated in May, none of which could be edited. A
+      // visit left with nobody comes out unassigned, which the office is
+      // told about; a visit staffed by someone who has left is told to
+      // nobody.
+      const namedCrew = crewForGeneration(s);
+      let crew = namedCrew;
+      if (namedCrew.length > 0) {
+        const { data: activeRows, error: activeErr } = (await db
+          .from("memberships")
+          .select("id")
+          .eq("organization_id", s.organization_id)
+          .eq("status", "active")
+          .in(
+            "id",
+            namedCrew.map((m) => m.membership_id),
+          )) as unknown as {
+          data: Array<{ id: string }> | null;
+          error: { message: string } | null;
+        };
+        if (activeErr) throw new Error(activeErr.message);
+        crew = activeCrewOnly(namedCrew, new Set((activeRows ?? []).map((r) => r.id)));
+        if (crew.length < namedCrew.length) {
+          console.warn(
+            `[extend-series] ${s.id}: ${namedCrew.length - crew.length} person(s) on the template are no longer active and were left off ${occurrences.length} new visit(s)`,
+          );
+        }
+      }
       const crewSplits = splitsFromCrew(crew);
       const firstMember = crew[0]?.membership_id ?? null;
       const { zonedYmd } = await import("@/lib/wall-clock");
