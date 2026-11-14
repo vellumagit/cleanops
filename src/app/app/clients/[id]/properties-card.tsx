@@ -148,12 +148,19 @@ function PropertyDialog({
   // as add-manual-dialog.tsx:53.
   useEffect(() => {
     if (state.done) {
-      toast.success(property ? "Property updated." : "Property added.");
+      // An address change says what it did to the visits already booked.
+      toast.success(
+        state.notice
+          ? `Property updated. ${state.notice}`
+          : property
+            ? "Property updated."
+            : "Property added.",
+      );
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setOpen(false);
       router.refresh();
     }
-  }, [state.done, property, router]);
+  }, [state.done, state.notice, property, router]);
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>

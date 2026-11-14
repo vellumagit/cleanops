@@ -3,6 +3,9 @@
 import { randomBytes } from "crypto";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { after } from "next/server";
+import { moveUpcomingVisitsToAddress, type AddressFollowResult } from "@/lib/address-follow";
+import { resyncBookingCalendarsPaced } from "@/lib/booking-calendar-sync";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
 import { canCreateData } from "@/lib/subscription";
 import { logAuditEvent } from "@/lib/audit";
@@ -323,6 +326,48 @@ export async function updateClientAction(
     },
   });
 
+  // The address changed: the visits already booked change with it. Each
+  // booking keeps its own copy of the address and that copy is what the
+  // crew's phones show, so until 2026-11-14 a new address here left every
+  // upcoming visit pointing at the old one (src/lib/address-follow.ts).
+  let addressMoved: AddressFollowResult | null = null;
+  if (previous && (previous.address ?? "").trim() !== (parsed.data.address ?? "").trim()) {
+    try {
+      addressMoved = await moveUpcomingVisitsToAddress(createSupabaseAdminClient(), {
+        organizationId: membership.organization_id,
+        clientId: id,
+        propertyId: null,
+        oldAddress: previous.address,
+        newAddress: parsed.data.address ?? null,
+      });
+    } catch (err) {
+      console.error("[clients] address saved, upcoming visits not updated:", err);
+      return {
+        errors: {
+          _form:
+            "The new address is saved on the client, but their upcoming visits could not be updated and still show the old one. Save again; if this message comes back, open each upcoming visit and change its address there.",
+        },
+        values: raw,
+      };
+    }
+    if (addressMoved.visitIds.length > 0 || addressMoved.seriesMoved > 0) {
+      await logAuditEvent({
+        membership,
+        action: "update",
+        entity: "client",
+        entity_id: id,
+        after: {
+          address_moved_on_visits: addressMoved.visitIds.length,
+          address_moved_on_series: addressMoved.seriesMoved,
+          visits_left_with_their_own_address: addressMoved.leftAlone,
+        },
+      });
+      // The calendar events carry the address too.
+      const movedIds = addressMoved.visitIds;
+      after(() => resyncBookingCalendarsPaced(movedIds));
+    }
+  }
+
   // If the client's NAME changed, the client's name is baked into every
   // booking's Google Calendar event title ("{service} — {name}"), so those
   // events still show the old name until re-synced. Re-push the calendar events
@@ -407,6 +452,16 @@ export async function updateClientAction(
   revalidatePath("/app/clients");
   revalidatePath(`/app/clients/${id}/edit`);
   revalidatePath("/app");
+  if (addressMoved) {
+    revalidatePath("/app/bookings");
+    // Say what the address change did, on the page the save lands on.
+    const said = new URLSearchParams({
+      address_for: parsed.data.name,
+      moved: String(addressMoved.visitIds.length),
+      kept: String(addressMoved.leftAlone),
+    });
+    redirect(`/app/clients?${said.toString()}`);
+  }
   redirect("/app/clients");
 }
 

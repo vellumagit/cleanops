@@ -3,11 +3,16 @@
 import { revalidatePath } from "next/cache";
 import { getActionContext } from "@/lib/actions";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { after } from "next/server";
 import { logAuditEvent } from "@/lib/audit";
+import { moveUpcomingVisitsToAddress } from "@/lib/address-follow";
+import { resyncBookingCalendarsPaced } from "@/lib/booking-calendar-sync";
 
 export type PropertyFormState = {
   errors?: Partial<Record<"label" | "address" | "_form", string>>;
   done?: boolean;
+  /** What an address change did to visits already booked, to say on save. */
+  notice?: string;
 };
 
 type Result = { ok: true } | { ok: false; error: string };
@@ -71,6 +76,20 @@ export async function saveClientPropertyAction(
     notes,
   };
 
+  // The address before this save, so visits already booked at this
+  // property can follow a change (src/lib/address-follow.ts).
+  let previousAddress: string | null = null;
+  if (propertyId) {
+    const { data: before } = (await admin
+      .from("client_properties" as never)
+      .select("address")
+      .eq("id" as never, propertyId as never)
+      .eq("client_id" as never, clientId as never)
+      .eq("organization_id" as never, membership.organization_id as never)
+      .maybeSingle()) as unknown as { data: { address: string | null } | null };
+    previousAddress = before?.address ?? null;
+  }
+
   if (propertyId) {
     // Scoped by org AND by the validated client — id + org alone would let
     // a same-org forged form rewrite a different client's property (door
@@ -103,9 +122,49 @@ export async function saveClientPropertyAction(
     after: { property_label: label, property_address: address },
   });
 
+  let notice: string | undefined;
+  if (propertyId && (previousAddress ?? "").trim() !== (address ?? "").trim()) {
+    try {
+      const moved = await moveUpcomingVisitsToAddress(admin, {
+        organizationId: membership.organization_id,
+        clientId,
+        propertyId,
+        oldAddress: previousAddress,
+        newAddress: address,
+      });
+      if (moved.visitIds.length > 0) {
+        const ids = moved.visitIds;
+        after(() => resyncBookingCalendarsPaced(ids));
+      }
+      notice = addressMovedNotice(moved.visitIds.length, moved.leftAlone);
+    } catch (err) {
+      console.error("[clients] property address saved, upcoming visits not updated:", err);
+      return {
+        errors: {
+          _form:
+            "The new address is saved on the property, but its upcoming visits could not be updated and still show the old one. Save again; if this message comes back, change the address on each upcoming visit.",
+        },
+      };
+    }
+  }
+
   revalidatePath(`/app/clients/${clientId}`);
   revalidatePath("/app/bookings");
-  return { done: true };
+  return { done: true, ...(notice ? { notice } : {}) };
+}
+
+/** "3 upcoming visits now use the new address." Shared wording with the client save. */
+function addressMovedNotice(moved: number, kept: number): string {
+  const plural = (n: number) => `${n} upcoming visit${n === 1 ? "" : "s"}`;
+  const movedPart =
+    moved > 0
+      ? `${plural(moved)} now ${moved === 1 ? "uses" : "use"} the new address.`
+      : "No upcoming visits needed changing.";
+  const keptPart =
+    kept > 0
+      ? ` ${plural(kept)} ${kept === 1 ? "has" : "have"} a different address typed on ${kept === 1 ? "it" : "them"} and ${kept === 1 ? "was" : "were"} left alone.`
+      : "";
+  return movedPart + keptPart;
 }
 
 /**

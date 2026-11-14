@@ -13,7 +13,14 @@ export const metadata = { title: "Clients" };
 export default async function ClientsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ archived?: string }>;
+  searchParams: Promise<{
+    archived?: string;
+    /** Set by a client save that changed the address: whose, and what it did
+     *  to the visits already booked (see updateClientAction). */
+    address_for?: string;
+    moved?: string;
+    kept?: string;
+  }>;
 }) {
   const membership = await requireMembership();
   requireCapability(membership, "clients");
@@ -23,7 +30,9 @@ export default async function ClientsPage({
   const contactDefaultPromise = fetchOrgContactDefault(
     membership.organization_id,
   );
-  const { archived } = await searchParams;
+  const { archived, address_for: addressFor, moved, kept } = await searchParams;
+  const movedCount = Math.max(0, Number.parseInt(moved ?? "", 10) || 0);
+  const keptCount = Math.max(0, Number.parseInt(kept ?? "", 10) || 0);
   const showArchived = archived === "1";
 
   // Default view shows only ACTIVE clients (archived_at IS NULL).
@@ -91,6 +100,22 @@ export default async function ClientsPage({
         </div>
       }
     >
+      {/* After a save that changed a client's address: what it did to the
+          visits already booked. The address used to change on the client
+          and nowhere else, with nothing to say so either way. */}
+      {addressFor && (
+        <div
+          role="status"
+          className="mb-4 rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-200"
+        >
+          <span className="font-semibold">{addressFor}&rsquo;s address is updated.</span>{" "}
+          {movedCount > 0
+            ? `${movedCount} upcoming visit${movedCount === 1 ? " now uses" : "s now use"} the new address.`
+            : "No upcoming visits needed changing."}
+          {keptCount > 0 &&
+            ` ${keptCount} upcoming visit${keptCount === 1 ? " has" : "s have"} a different address typed on ${keptCount === 1 ? "it" : "them"} and ${keptCount === 1 ? "was" : "were"} left alone: open ${keptCount === 1 ? "it" : "them"} to check.`}
+        </div>
+      )}
       <ClientsTable
         rows={rows}
         canEdit={canEdit && !showArchived}
