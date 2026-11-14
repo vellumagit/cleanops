@@ -78,6 +78,9 @@ describe("row-level security", () => {
       "promo_codes",
       "promo_redemptions",
       "quickbooks_oauth_states",
+      // What the app told someone when it said no; written by /api/refusals,
+      // read by the morning check (2026-11-14).
+      "refusal_log",
       "sage_oauth_states",
       "square_oauth_states",
       "stripe_events",

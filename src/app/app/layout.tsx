@@ -8,6 +8,7 @@ import { AdminTabBar } from "@/components/admin-tab-bar";
 import { DesktopToolRibbon } from "@/components/desktop-tool-ribbon";
 import { BrandProvider } from "@/components/brand-provider";
 import { PushPrompt } from "@/components/push-prompt";
+import { RefusalRecorder } from "@/components/refusal-recorder";
 import { TrialBanner } from "@/components/trial-banner";
 import { AutomationsOffBanner } from "@/components/automations-off-banner";
 import { SetupReturnBanner } from "@/components/setup-return-banner";
@@ -186,6 +187,8 @@ export default async function AppLayout({
           membershipId={membership.id}
           organizationId={membership.organization_id}
         />
+        {/* Keeps what the app says when it refuses something. Shows nothing. */}
+        <RefusalRecorder />
         {/* Install prompt for admins on phones. The banner already self-hides
             when installed or dismissed; lg:hidden keeps desktops on the
             quieter Settings card instead. Mounting it here also registers

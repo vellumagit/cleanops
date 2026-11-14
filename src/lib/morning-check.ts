@@ -9,6 +9,11 @@
  *   3. What did managers actually receive? (notifications)
  *   4. Yesterday's, today's and tomorrow's jobs: row vs computed state.
  *   5. Who is on the clock right now?
+ *   6. Did the crons run?
+ *   7. Which upcoming visits disagree with where their details come from?
+ *      (mismatch-check.ts: a stale address, a deactivated cleaner, nobody
+ *      assigned this week)
+ *   8. What did the app refuse, and how often? (refusal_log)
  *
  * Above the five answers sits a short list of what needs a look (flags).
  * A query that fails becomes a flag, never an empty section: a clean email
@@ -19,15 +24,25 @@ import { deriveJobState, type JobStateShift } from "./job-state";
 import { resolveAutomationEnabled } from "./automation-defaults";
 import { zonedDayBoundsUtc } from "./wall-clock";
 import { summarizeCronRuns, type CronRunRow } from "./cron-run-summary";
+import { loadMismatches, mismatchLines, type Mismatch } from "./mismatch-check";
+import { summarizeRefusals, type RefusalRow } from "./refusal-log";
 import vercelConfig from "../../vercel.json";
 
 /** Svit's org — the one the shadow week watches. */
 export const MORNING_CHECK_DEFAULT_ORG = "4cf4c402-5889-43c9-91f3-7186f66ee08b";
 
+/** A handful of refusals a day is the app working; this many is someone
+ *  fighting it. Fewer are still printed, just not raised to the top. */
+export const REFUSALS_WORTH_A_LOOK = 5;
+
 /** Anyone still clocked in after this long is flagged. */
 const LONG_OPEN_CLOCK_HOURS = 12;
 
 export type MorningFlagInput = {
+  /** Upcoming visits that disagree with where their details come from. */
+  mismatches?: number;
+  /** Error messages shown to people in the window. */
+  refusals?: number;
   stateChecks: number;
   disagreeingJobs: number;
   digestMarked: boolean;
@@ -49,6 +64,12 @@ export function morningFlags(f: MorningFlagInput): string[] {
   if (f.duplicateMessages) out.push(`${f.duplicateMessages} message(s) went to the same person twice (section 3)`);
   if (f.longOpenClocks) out.push(`${f.longOpenClocks} cleaner(s) on the clock ${LONG_OPEN_CLOCK_HOURS}+ hours (section 5)`);
   if (!f.digestMarked) out.push("Night-before digest not marked sent (section 2)");
+  // After the job-state lines: these are about tomorrow's visits and
+  // yesterday's frustrations, not about something already broken.
+  if (f.mismatches) out.push(`${f.mismatches} upcoming visit(s) or series don't add up (section 7)`);
+  if (f.refusals && f.refusals >= REFUSALS_WORTH_A_LOOK) {
+    out.push(`The app refused people ${f.refusals} time(s) (section 8)`);
+  }
   return out;
 }
 
@@ -281,7 +302,48 @@ export async function runMorningCheck(
       .lt("started_at", new Date(now - 30 * 86_400_000).toISOString());
   }
 
+  // 7. Things that don't add up ---------------------------------------------
+  // Upcoming visits whose own details disagree with where they came from
+  // (src/lib/mismatch-check.ts). Looks ahead, not back: the point is to see
+  // it before a crew drives to it.
+  const mismatch = await loadMismatches(db, orgId, now).catch((err: unknown) => ({
+    found: [] as Mismatch[],
+    errors: [err instanceof Error ? err.message : String(err)],
+    visitsChecked: 0,
+  }));
+  for (const e of mismatch.errors) readErrors.push(`the mismatch check: ${e}`);
+  out.push("", `7. DON'T ADD UP (${mismatch.visitsChecked} upcoming visits checked): ${mismatch.found.length}`);
+  // Dates with the year: a series runs two years out, and "Dec 2 to Nov 1"
+  // without one reads backwards.
+  const fmtDay = (iso: string) =>
+    new Date(iso).toLocaleDateString("en-CA", { timeZone: tz, month: "short", day: "numeric", year: "numeric" });
+  out.push(...mismatchLines(mismatch.found, fmtDay));
+
+  // 8. What the app refused ----------------------------------------------------
+  // Every error message shown to someone in this company in the window
+  // (refusal_log, written by /api/refusals). The same message many times is
+  // either a rule doing its job or a message nobody can act on.
+  const { data: refusedRows, error: refErr } = (await db
+    .from("refusal_log" as never)
+    .select("message, path, created_at, membership_id")
+    .eq("organization_id", orgId)
+    .gte("created_at", sinceIso)
+    .order("created_at", { ascending: false })
+    .limit(2000)) as unknown as { data: RefusalRow[] | null; error: { message: string } | null };
+  failed("refusals", refErr);
+  const refusals = summarizeRefusals(refusedRows ?? []);
+  out.push("", `8. THE APP SAID NO (last ${hoursBack}h): ${refusals.total}`, ...refusals.lines);
+  // Housekeeping: a month is plenty.
+  if (!refErr) {
+    await db
+      .from("refusal_log" as never)
+      .delete()
+      .lt("created_at", new Date(now - 30 * 86_400_000).toISOString());
+  }
+
   const flags = morningFlags({
+    mismatches: mismatch.found.length,
+    refusals: refusals.total,
     stateChecks: checks?.length ?? 0,
     disagreeingJobs,
     digestMarked: Boolean(digest),

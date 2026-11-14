@@ -3,6 +3,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { FieldShell } from "@/components/field-shell";
 import { BrandProvider } from "@/components/brand-provider";
 import { PushPrompt } from "@/components/push-prompt";
+import { RefusalRecorder } from "@/components/refusal-recorder";
 import { isFeedVisible } from "@/lib/feed-visibility";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { buildTzProbe } from "@/lib/tz-probe";
@@ -78,6 +79,8 @@ export default async function FieldLayout({
           membershipId={membership.id}
           organizationId={membership.organization_id}
         />
+        {/* Keeps what the app says when it refuses something. Shows nothing. */}
+        <RefusalRecorder />
         {children}
       </FieldShell>
     </BrandProvider>
