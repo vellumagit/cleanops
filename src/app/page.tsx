@@ -456,7 +456,7 @@ export default async function Home() {
       </section>
 
       {/* Pricing */}
-      <section id="pricing" className="relative z-10 mx-auto w-full max-w-5xl px-6 pb-20">
+      <section id="pricing" className="relative z-10 mx-auto w-full max-w-6xl px-6 pb-20">
         <div className="text-center mb-12">
           <div className="sollos-kicker inline-flex items-center gap-1.5 rounded-full border border-border bg-white px-3 py-1 text-xs font-medium text-muted-foreground shadow-sm">
             <CreditCard className="h-3 w-3 text-emerald-500" />
@@ -471,7 +471,7 @@ export default async function Home() {
           </p>
         </div>
 
-        <div className="grid gap-5 lg:grid-cols-3">
+        <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-4">
           {/* Starter */}
           <div className="relative rounded-2xl border border-border bg-white p-6 shadow-sm flex flex-col">
             <div>
@@ -481,11 +481,11 @@ export default async function Home() {
               </p>
             </div>
             <div className="mt-5 flex items-baseline gap-1">
-              <span className="text-4xl font-extrabold tracking-tight">$49</span>
+              <span className="text-4xl font-extrabold tracking-tight">$59</span>
               <span className="text-sm text-muted-foreground">/month</span>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
-              Up to <strong className="text-foreground">5 employees</strong>
+              Up to <strong className="text-foreground">3 cleaners</strong>
             </p>
 
             <ul className="mt-6 space-y-2.5 text-sm flex-1">
@@ -496,7 +496,51 @@ export default async function Home() {
                 "Team chat and clock-in",
                 "Subcontractor bench SMS",
                 "Google Calendar sync",
+                "300 texts a month included",
                 "Email support",
+              ].map((item) => (
+                <li key={item} className="flex items-start gap-2 text-muted-foreground">
+                  <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+                  <span>{item}</span>
+                </li>
+              ))}
+            </ul>
+
+            <Link
+              href="/signup"
+              className={cn(
+                buttonVariants({ size: "lg", variant: "outline" }),
+                "mt-6 w-full rounded-full border-border text-sm font-semibold",
+              )}
+            >
+              Start 14-day trial
+            </Link>
+          </div>
+
+          {/* Team */}
+          <div className="relative rounded-2xl border border-border bg-white p-6 shadow-sm flex flex-col">
+            <div>
+              <h3 className="text-sm font-semibold">Team</h3>
+              <p className="mt-1 text-xs text-muted-foreground">
+                For crews that are growing.
+              </p>
+            </div>
+            <div className="mt-5 flex items-baseline gap-1">
+              <span className="text-4xl font-extrabold tracking-tight">$119</span>
+              <span className="text-sm text-muted-foreground">/month</span>
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Up to <strong className="text-foreground">10 cleaners</strong>
+            </p>
+
+            <ul className="mt-6 space-y-2.5 text-sm flex-1">
+              <li className="flex items-start gap-2 font-medium text-foreground">
+                <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+                <span>Everything in Starter, plus:</span>
+              </li>
+              {[
+                "Up to 10 cleaners",
+                "750 texts a month included",
               ].map((item) => (
                 <li key={item} className="flex items-start gap-2 text-muted-foreground">
                   <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
@@ -530,20 +574,21 @@ export default async function Home() {
               </p>
             </div>
             <div className="mt-5 flex items-baseline gap-1">
-              <span className="text-4xl font-extrabold tracking-tight">$99</span>
+              <span className="text-4xl font-extrabold tracking-tight">$189</span>
               <span className="text-sm text-muted-foreground">/month</span>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
-              Up to <strong className="text-foreground">25 employees</strong>
+              Up to <strong className="text-foreground">25 cleaners</strong>
             </p>
 
             <ul className="mt-6 space-y-2.5 text-sm flex-1">
               <li className="flex items-start gap-2 font-medium text-foreground">
                 <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
-                <span>Everything in Starter, plus:</span>
+                <span>Everything in Team, plus:</span>
               </li>
               {[
-                "Up to 25 employees",
+                "Up to 25 cleaners",
+                "1,500 texts a month included",
                 "Priority email support",
                 "Onboarding call included",
                 "Advanced reports and exports",
@@ -583,7 +628,7 @@ export default async function Home() {
               <span className="text-4xl font-extrabold tracking-tight">Custom</span>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
-              <strong className="text-foreground">25+ employees</strong>
+              <strong className="text-foreground">25+ cleaners</strong>
             </p>
 
             <ul className="mt-6 space-y-2.5 text-sm flex-1">
@@ -592,7 +637,8 @@ export default async function Home() {
                 <span>Everything in Growth, plus:</span>
               </li>
               {[
-                "Unlimited employees",
+                "Unlimited cleaners",
+                "5,000 texts a month included",
                 "Dedicated account manager",
                 "Custom integrations",
                 "SSO (single sign-on)",
@@ -937,7 +983,7 @@ const FAQS = [
     a: "Your account pauses — you can still log in and view everything for 30 days. After that, the account is archived. Subscribe anytime in those 30 days and pick up exactly where you left off.",
   },
   {
-    q: "What if my team is bigger than 25 employees?",
+    q: "What if my team is bigger than 25 cleaners?",
     a: "Enterprise plan covers unlimited team size, dedicated onboarding, and custom integrations. Email sales@sollos3.com and we'll get back within a day.",
   },
   {

@@ -17,7 +17,7 @@ const ORG_ID = `${SITE_URL}/#organization`;
 const APP_ID = `${SITE_URL}/#software`;
 
 /**
- * The currency the $49 / $99 list prices are charged in — USD, confirmed by
+ * The currency the $59 / $119 / $189 list prices are charged in — USD, confirmed by
  * the owner (the marketing pages print a bare "$"). Subscriptions only: what
  * an org charges its own clients follows its currency_code, CAD or USD. If
  * the subscription prices ever move to another currency, change this with
@@ -27,8 +27,9 @@ const APP_ID = `${SITE_URL}/#software`;
 const PLAN_CURRENCY: "CAD" | "USD" | null = "USD";
 
 const PLANS = [
-  { name: "Starter", price: "49", description: "For solo owners and small crews. Up to 5 employees." },
-  { name: "Growth", price: "99", description: "For established cleaning operations. Up to 25 employees." },
+  { name: "Starter", price: "59", description: "For solo owners and small crews. Up to 3 cleaners." },
+  { name: "Team", price: "119", description: "For crews that are growing. Up to 10 cleaners." },
+  { name: "Growth", price: "189", description: "For established cleaning operations. Up to 25 cleaners." },
 ];
 
 export function organizationJsonLd() {

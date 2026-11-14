@@ -17,7 +17,10 @@ import { ManageInStripeButton, SubscribeButton } from "./billing-actions";
 
 export const metadata = { title: "Billing" };
 
-type PlanKey = "starter" | "growth" | "enterprise";
+type PlanKey = "starter" | "team" | "growth" | "enterprise";
+
+/** Plan order, cheapest first, for the upgrade/downgrade hints. */
+const PLAN_RANK: Record<PlanKey, number> = { starter: 0, team: 1, growth: 2, enterprise: 3 };
 
 type PlanDef = {
   key: PlanKey;
@@ -39,9 +42,9 @@ const PLANS: PlanDef[] = [
   {
     key: "starter",
     name: "Starter",
-    price: "$49",
+    price: "$59",
     cadence: "/month",
-    employees: "Up to 5 employees",
+    employees: "Up to 3 cleaners",
     tagline: "For solo owners and small crews.",
     features: [
       "All features, zero restrictions",
@@ -50,18 +53,33 @@ const PLANS: PlanDef[] = [
       "Team chat and clock-in",
       "On-call pool SMS offers",
       "Google Calendar sync",
+      "300 texts a month included",
       "Email support",
+    ],
+  },
+  {
+    key: "team",
+    name: "Team",
+    price: "$119",
+    cadence: "/month",
+    employees: "Up to 10 cleaners",
+    tagline: "For crews that are growing.",
+    features: [
+      "Everything in Starter",
+      "Up to 10 cleaners",
+      "750 texts a month included",
     ],
   },
   {
     key: "growth",
     name: "Growth",
-    price: "$99",
+    price: "$189",
     cadence: "/month",
-    employees: "Up to 25 employees",
+    employees: "Up to 25 cleaners",
     tagline: "For established cleaning operations.",
     features: [
-      "Everything in Starter",
+      "Everything in Team",
+      "1,500 texts a month included",
       "Priority email support",
       "Onboarding call included",
       "Advanced reports and exports",
@@ -75,11 +93,12 @@ const PLANS: PlanDef[] = [
     name: "Enterprise",
     price: "Custom",
     cadence: "",
-    employees: "25+ employees",
+    employees: "25+ cleaners",
     tagline: "For large operations with custom needs.",
     features: [
       "Everything in Growth",
-      "Unlimited employees",
+      "Unlimited cleaners",
+      "5,000 texts a month included",
       "Dedicated account manager",
       "Custom integrations",
       "SSO (single sign-on)",
@@ -257,14 +276,13 @@ export default async function BillingPage() {
             </p>
           </div>
 
-          <div className="grid gap-4 lg:grid-cols-3">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             {PLANS.map((plan) => {
               const isCurrent = currentPlan === plan.key;
               const isHigherThanCurrent =
-                currentPlan === "starter" &&
-                (plan.key === "growth" || plan.key === "enterprise");
+                currentPlan !== null && PLAN_RANK[plan.key] > PLAN_RANK[currentPlan];
               const isLowerThanCurrent =
-                currentPlan === "growth" && plan.key === "starter";
+                currentPlan !== null && PLAN_RANK[plan.key] < PLAN_RANK[currentPlan];
 
               return (
                 <div

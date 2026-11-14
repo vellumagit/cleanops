@@ -79,8 +79,8 @@ export default function PricingPage() {
       </section>
 
       {/* Pricing tiers */}
-      <section className="relative z-10 mx-auto w-full max-w-5xl px-6 pb-16">
-        <div className="grid gap-5 lg:grid-cols-3">
+      <section className="relative z-10 mx-auto w-full max-w-6xl px-6 pb-16">
+        <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-4">
           {/* Starter */}
           <div className="relative rounded-2xl border border-border bg-white p-6 shadow-sm flex flex-col">
             <div>
@@ -90,11 +90,11 @@ export default function PricingPage() {
               </p>
             </div>
             <div className="mt-5 flex items-baseline gap-1">
-              <span className="text-4xl font-extrabold tracking-tight">$49</span>
+              <span className="text-4xl font-extrabold tracking-tight">$59</span>
               <span className="text-sm text-muted-foreground">/month</span>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
-              Up to <strong className="text-foreground">5 employees</strong>
+              Up to <strong className="text-foreground">3 cleaners</strong>
             </p>
 
             <ul className="mt-6 space-y-2.5 text-sm flex-1">
@@ -105,7 +105,51 @@ export default function PricingPage() {
                 "Team chat and clock-in",
                 "Subcontractor bench SMS",
                 "Google Calendar sync",
+                "300 texts a month included",
                 "Email support",
+              ].map((item) => (
+                <li key={item} className="flex items-start gap-2 text-muted-foreground">
+                  <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+                  <span>{item}</span>
+                </li>
+              ))}
+            </ul>
+
+            <Link
+              href="/signup"
+              className={cn(
+                buttonVariants({ size: "lg", variant: "outline" }),
+                "mt-6 w-full rounded-full border-border text-sm font-semibold",
+              )}
+            >
+              Start 14-day trial
+            </Link>
+          </div>
+
+          {/* Team */}
+          <div className="relative rounded-2xl border border-border bg-white p-6 shadow-sm flex flex-col">
+            <div>
+              <h3 className="text-sm font-semibold">Team</h3>
+              <p className="mt-1 text-xs text-muted-foreground">
+                For crews that are growing.
+              </p>
+            </div>
+            <div className="mt-5 flex items-baseline gap-1">
+              <span className="text-4xl font-extrabold tracking-tight">$119</span>
+              <span className="text-sm text-muted-foreground">/month</span>
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Up to <strong className="text-foreground">10 cleaners</strong>
+            </p>
+
+            <ul className="mt-6 space-y-2.5 text-sm flex-1">
+              <li className="flex items-start gap-2 font-medium text-foreground">
+                <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+                <span>Everything in Starter, plus:</span>
+              </li>
+              {[
+                "Up to 10 cleaners",
+                "750 texts a month included",
               ].map((item) => (
                 <li key={item} className="flex items-start gap-2 text-muted-foreground">
                   <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
@@ -139,20 +183,21 @@ export default function PricingPage() {
               </p>
             </div>
             <div className="mt-5 flex items-baseline gap-1">
-              <span className="text-4xl font-extrabold tracking-tight">$99</span>
+              <span className="text-4xl font-extrabold tracking-tight">$189</span>
               <span className="text-sm text-muted-foreground">/month</span>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
-              Up to <strong className="text-foreground">25 employees</strong>
+              Up to <strong className="text-foreground">25 cleaners</strong>
             </p>
 
             <ul className="mt-6 space-y-2.5 text-sm flex-1">
               <li className="flex items-start gap-2 font-medium text-foreground">
                 <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
-                <span>Everything in Starter, plus:</span>
+                <span>Everything in Team, plus:</span>
               </li>
               {[
-                "Up to 25 employees",
+                "Up to 25 cleaners",
+                "1,500 texts a month included",
                 "Priority email support",
                 "Onboarding call included",
                 "Advanced reports and exports",
@@ -193,7 +238,7 @@ export default function PricingPage() {
               <span className="text-4xl font-extrabold tracking-tight">Custom</span>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
-              <strong className="text-foreground">25+ employees</strong>
+              <strong className="text-foreground">25+ cleaners</strong>
             </p>
 
             <ul className="mt-6 space-y-2.5 text-sm flex-1">
@@ -202,7 +247,8 @@ export default function PricingPage() {
                 <span>Everything in Growth, plus:</span>
               </li>
               {[
-                "Unlimited employees",
+                "Unlimited cleaners",
+                "5,000 texts a month included",
                 "Dedicated account manager",
                 "Custom integrations",
                 "SSO (single sign-on)",
@@ -246,6 +292,7 @@ export default function PricingPage() {
                 <tr className="border-b border-border text-left">
                   <th className="py-3 pr-4 font-semibold">Feature</th>
                   <th className="py-3 px-3 text-center font-semibold">Starter</th>
+                  <th className="py-3 px-3 text-center font-semibold">Team</th>
                   <th className="py-3 px-3 text-center font-semibold">Growth</th>
                   <th className="py-3 pl-3 text-center font-semibold">Enterprise</th>
                 </tr>
@@ -256,6 +303,9 @@ export default function PricingPage() {
                     <td className="py-3 pr-4 text-muted-foreground">{row.feature}</td>
                     <td className="py-3 px-3 text-center">
                       <FeatureCell value={row.starter} />
+                    </td>
+                    <td className="py-3 px-3 text-center">
+                      <FeatureCell value={row.team} />
                     </td>
                     <td className="py-3 px-3 text-center">
                       <FeatureCell value={row.growth} />
@@ -356,29 +406,31 @@ function FeatureCell({ value }: { value: boolean | string }) {
 const COMPARISON_ROWS: Array<{
   feature: string;
   starter: boolean | string;
+  team: boolean | string;
   growth: boolean | string;
   enterprise: boolean | string;
 }> = [
-  { feature: "Employees", starter: "Up to 5", growth: "Up to 25", enterprise: "Unlimited" },
-  { feature: "Clients and jobs", starter: "Unlimited", growth: "Unlimited", enterprise: "Unlimited" },
-  { feature: "Invoicing and payments", starter: true, growth: true, enterprise: true },
-  { feature: "Team chat", starter: true, growth: true, enterprise: true },
-  { feature: "Clock-in and timesheets", starter: true, growth: true, enterprise: true },
-  { feature: "Subcontractor bench SMS", starter: true, growth: true, enterprise: true },
-  { feature: "Google Calendar sync", starter: true, growth: true, enterprise: true },
-  { feature: "Client records and history", starter: true, growth: true, enterprise: true },
-  { feature: "Estimates and quotes", starter: true, growth: true, enterprise: true },
-  { feature: "Payroll reports", starter: true, growth: true, enterprise: true },
-  { feature: "Custom branding on invoices", starter: false, growth: true, enterprise: true },
-  { feature: "Bulk client import (CSV)", starter: false, growth: true, enterprise: true },
-  { feature: "Advanced reports and exports", starter: false, growth: true, enterprise: true },
-  { feature: "Onboarding call", starter: false, growth: true, enterprise: true },
-  { feature: "Email support", starter: true, growth: "Priority", enterprise: "Priority" },
-  { feature: "Phone support", starter: false, growth: false, enterprise: true },
-  { feature: "Dedicated account manager", starter: false, growth: false, enterprise: true },
-  { feature: "SSO (single sign-on)", starter: false, growth: false, enterprise: true },
-  { feature: "Custom integrations", starter: false, growth: false, enterprise: true },
-  { feature: "SLA and uptime guarantees", starter: false, growth: false, enterprise: true },
+  { feature: "Cleaners", starter: "Up to 3", team: "Up to 10", growth: "Up to 25", enterprise: "Unlimited" },
+  { feature: "Texts included each month", starter: "300", team: "750", growth: "1,500", enterprise: "5,000" },
+  { feature: "Clients and jobs", starter: "Unlimited", team: "Unlimited", growth: "Unlimited", enterprise: "Unlimited" },
+  { feature: "Invoicing and payments", starter: true, team: true, growth: true, enterprise: true },
+  { feature: "Team chat", starter: true, team: true, growth: true, enterprise: true },
+  { feature: "Clock-in and timesheets", starter: true, team: true, growth: true, enterprise: true },
+  { feature: "Subcontractor bench SMS", starter: true, team: true, growth: true, enterprise: true },
+  { feature: "Google Calendar sync", starter: true, team: true, growth: true, enterprise: true },
+  { feature: "Client records and history", starter: true, team: true, growth: true, enterprise: true },
+  { feature: "Estimates and quotes", starter: true, team: true, growth: true, enterprise: true },
+  { feature: "Payroll reports", starter: true, team: true, growth: true, enterprise: true },
+  { feature: "Custom branding on invoices", starter: false, team: false, growth: true, enterprise: true },
+  { feature: "Bulk client import (CSV)", starter: false, team: false, growth: true, enterprise: true },
+  { feature: "Advanced reports and exports", starter: false, team: false, growth: true, enterprise: true },
+  { feature: "Onboarding call", starter: false, team: false, growth: true, enterprise: true },
+  { feature: "Email support", starter: true, team: true, growth: "Priority", enterprise: "Priority" },
+  { feature: "Phone support", starter: false, team: false, growth: false, enterprise: true },
+  { feature: "Dedicated account manager", starter: false, team: false, growth: false, enterprise: true },
+  { feature: "SSO (single sign-on)", starter: false, team: false, growth: false, enterprise: true },
+  { feature: "Custom integrations", starter: false, team: false, growth: false, enterprise: true },
+  { feature: "SLA and uptime guarantees", starter: false, team: false, growth: false, enterprise: true },
 ];
 
 const FAQS = [
@@ -395,11 +447,11 @@ const FAQS = [
     a: "Yes, upgrade or downgrade anytime from your account settings. Upgrades take effect immediately (prorated for the current month). Downgrades take effect at the end of your billing cycle.",
   },
   {
-    q: "What counts as an employee?",
-    a: "Anyone on your team who has a login to Sollos — owners, managers, and cleaners. Subcontractors on your subcontractor bench do NOT count as employees, since they don't have Sollos logins.",
+    q: "What counts as a cleaner?",
+    a: "Anyone active on your crew: employees and subcontractors you've added to your team. Owners, admins and managers don't count, and neither does your on-call bench, who only get shift offers by text. Going over? Nobody is switched off; you just can't add more until you upgrade.",
   },
   {
-    q: "What if I have more than 25 employees?",
+    q: "What if I have more than 25 cleaners?",
     a: "That's what Enterprise is for. Reach out at sales@sollos3.com and we'll set you up with a plan that fits your size and needs.",
   },
   {

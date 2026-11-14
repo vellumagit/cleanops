@@ -123,10 +123,10 @@ export function LandingPage({ page }: { page: LandingPageContent }) {
         <div className="rounded-xl border border-border bg-white/80 p-6 shadow-sm backdrop-blur-sm">
           <p className="text-sm font-semibold">Simple pricing</p>
           <p className="mt-2 text-3xl font-extrabold tracking-tight">
-            From $49<span className="text-sm font-medium text-muted-foreground">/month USD</span>
+            From $59<span className="text-sm font-medium text-muted-foreground">/month USD</span>
           </p>
           <p className="mt-2 text-sm leading-6 text-muted-foreground">
-            Starter covers up to 5 employees; Growth is $99 for up to 25.
+            Starter covers up to 3 cleaners, Team is $119 for up to 10, and Growth is $189 for up to 25.
             Month to month, cancel anytime.
           </p>
           <Link

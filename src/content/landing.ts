@@ -34,7 +34,7 @@ export type LandingPageContent = {
 };
 
 const PRICE_ANSWER =
-  "Starter is $49 a month for up to 5 employees and Growth is $99 a month for up to 25, both in USD and month to month. Every plan starts with a 14-day free trial, no credit card required. Bigger teams can talk to us about Enterprise.";
+  "Starter is $59 a month for up to 3 cleaners, Team is $119 for up to 10, and Growth is $189 for up to 25, all in USD and month to month. Every plan starts with a 14-day free trial, no credit card required. Bigger teams can talk to us about Enterprise.";
 
 const CANADA_US_ANSWER =
   "Yes. You bill your own clients in CAD or USD, put your own tax label and rate on invoices (GST, HST or sales tax), and see your province's or state's statutory holidays on the schedule. Sollos subscription plans are priced in USD.";
@@ -298,7 +298,7 @@ export const LANDING_PAGES = [
       },
       {
         q: "Is it right for a solo cleaner or a small team?",
-        a: "Yes. Starter is built for solo owners and small crews: up to 5 employees for $49 a month (USD), with a 14-day free trial and no card required.",
+        a: "Yes. Starter is built for solo owners and small crews: up to 3 cleaners for $59 a month (USD), with a 14-day free trial and no card required.",
       },
       { q: "Does it work in Canada and the US?", a: CANADA_US_ANSWER },
     ],

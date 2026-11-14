@@ -1,6 +1,6 @@
 /**
  * Stripe billing webhook — handles subscription lifecycle events for our
- * own SaaS billing (charging Sollos 3 customers their $49/$99 subscription).
+ * own SaaS billing (charging Sollos 3 customers their monthly subscription).
  *
  * Security:
  *   1. Signature MUST verify against STRIPE_WEBHOOK_SECRET.
