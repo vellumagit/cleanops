@@ -17,6 +17,7 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { OPEN_QUICK_ACTIONS_EVENT } from "@/components/top-bar-actions";
 
 type Action = {
   id: string;
@@ -142,6 +143,13 @@ export function QuickActions({
     return () => window.removeEventListener("keydown", handler);
   }, [toggle]);
 
+  // The phone top bar's "+" (TopBarActions) opens the same palette.
+  useEffect(() => {
+    const show = () => setOpen(true);
+    window.addEventListener(OPEN_QUICK_ACTIONS_EVENT, show);
+    return () => window.removeEventListener(OPEN_QUICK_ACTIONS_EVENT, show);
+  }, []);
+
   function run(href: string) {
     setOpen(false);
     setSearch("");
@@ -156,21 +164,18 @@ export function QuickActions({
 
   return (
     <>
-      {/* Floating "+" button — bottom-right on mobile, hidden on desktop
-          (on desktop users use Cmd+K or the sidebar links). */}
+      {/* Floating "+" button — desktop only. On phones it covered the
+          bottom-right of every page; the top bar's "+" (TopBarActions)
+          replaces it there. */}
       {!onChat && (
         <button
           type="button"
           onClick={toggle}
           title="Quick actions (⌘K)"
           className={cn(
-            "fixed z-40 flex h-12 w-12 items-center justify-center rounded-full bg-foreground text-background shadow-lg transition-transform active:scale-95 lg:h-10 lg:w-10",
-            // Stack above the AI assistant button when present (bottom-24 on
-            // phones now that the tab bar owns the bottom edge, bottom-5 on
-            // desktop); otherwise sit in the normal bottom-right FAB slot.
-            hasAssistant
-              ? "bottom-40 right-5 lg:bottom-20"
-              : "bottom-24 right-4 lg:bottom-6",
+            "fixed z-40 hidden h-10 w-10 items-center justify-center rounded-full bg-foreground text-background shadow-lg transition-transform active:scale-95 lg:flex",
+            // Stack above the AI assistant button when present.
+            hasAssistant ? "bottom-20 right-5" : "bottom-6 right-4",
           )}
           aria-label="Quick actions"
         >

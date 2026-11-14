@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Sparkles, X, Send, Loader2, Flag } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { OPEN_ASSISTANT_EVENT } from "@/components/top-bar-actions";
 
 type Message = {
   role: "user" | "assistant";
@@ -30,6 +31,14 @@ export function AIWidget() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  // The phone top bar's sparkle (TopBarActions) opens the panel; tapping it
+  // again closes it, like the floating button did.
+  useEffect(() => {
+    const toggle = () => setOpen((v) => !v);
+    window.addEventListener(OPEN_ASSISTANT_EVENT, toggle);
+    return () => window.removeEventListener(OPEN_ASSISTANT_EVENT, toggle);
+  }, []);
 
   // Focus input when opened
   useEffect(() => {
@@ -110,10 +119,11 @@ export function AIWidget() {
   return (
     // bottom-24 below lg: the admin tab bar owns the bottom edge on
     // phones, and bottom-5 parked this button squarely on its More tab.
-    <div className="fixed bottom-24 right-5 z-50 flex flex-col items-end gap-3 lg:bottom-5">
-      {/* Chat panel */}
+    <div className="fixed bottom-24 right-4 z-50 flex flex-col items-end gap-3 lg:bottom-5 lg:right-5">
+      {/* Chat panel. Capped to the screen: a fixed 360x520 ran off the left
+          edge of a 375px phone and under the top bar on short ones. */}
       {open && (
-        <div className="flex h-[520px] w-[360px] flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-2xl">
+        <div className="flex h-[min(520px,calc(100dvh-11rem))] w-[min(360px,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-2xl">
           {/* Header */}
           <div className="flex items-center justify-between bg-primary px-4 py-3">
             <div className="flex items-center gap-2">
@@ -129,6 +139,7 @@ export function AIWidget() {
             </div>
             <button
               onClick={() => setOpen(false)}
+              aria-label="Close assistant"
               className="rounded-md p-1 text-primary-foreground/70 hover:bg-primary-foreground/10 hover:text-primary-foreground"
             >
               <X className="h-4 w-4" />
@@ -212,11 +223,12 @@ export function AIWidget() {
         </div>
       )}
 
-      {/* Floating button */}
+      {/* Floating button — desktop only. Phones open the assistant from the
+          top bar (TopBarActions); floating here it covered page content. */}
       <button
         onClick={() => setOpen((v) => !v)}
         className={cn(
-          "flex h-12 w-12 items-center justify-center rounded-full shadow-lg transition-all hover:scale-105",
+          "hidden h-12 w-12 items-center justify-center rounded-full shadow-lg transition-all hover:scale-105 lg:flex",
           open
             ? "bg-muted text-muted-foreground"
             : "bg-primary text-primary-foreground",

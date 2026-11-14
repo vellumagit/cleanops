@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { Rocket, LogOut, Smartphone } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { NotificationBell } from "@/components/notification-bell";
+import { TopBarActions } from "@/components/top-bar-actions";
 import { type CapabilityMap } from "@/lib/capabilities";
 import {
   NAV_SECTIONS,
@@ -357,7 +358,10 @@ export function AppSidebar({
             {logoUrl ? organizationName : "Sollos 3"}
           </span>
         </div>
-        <NotificationBell count={unreadNotifications} />
+        <div className="flex shrink-0 items-center gap-1">
+          <TopBarActions />
+          <NotificationBell count={unreadNotifications} />
+        </div>
       </div>
 
       {/* ── Desktop sidebar (lg+) ── */}

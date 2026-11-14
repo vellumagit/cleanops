@@ -369,6 +369,223 @@ function ReviewBadge({ autoClosed }: { autoClosed: boolean }) {
   );
 }
 
+/** "1:47 PM" in the org's zone — the card already shows the date once. */
+function clockTime(iso: string, tz: string): string {
+  return new Date(iso).toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: tz,
+  });
+}
+
+/** "Nov 14" in the org's zone. */
+function shortDay(iso: string, tz: string): string {
+  return new Date(iso).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: tz,
+  });
+}
+
+/** "1:31 – 1:49 PM", or "… – in progress" while still on the clock. */
+function timeRange(
+  inIso: string,
+  outIso: string | null,
+  tz: string,
+): string {
+  if (!outIso) return `${clockTime(inIso, tz)} – now`;
+  const a = clockTime(inIso, tz);
+  const b = clockTime(outIso, tz);
+  const ap = (s: string) => s.slice(-2);
+  // Drop the first AM/PM when both match: "1:31 – 1:49 PM".
+  return ap(a) === ap(b) ? `${a.slice(0, -3)} – ${b}` : `${a} – ${b}`;
+}
+
+/**
+ * A visit on a phone. The table needs ~430px for even its narrowest set of
+ * columns and a phone has ~340 inside the card, so below md the page scrolled
+ * sideways and nobody could take a clean screenshot of a person's week. A
+ * card fits the same facts — day, times, hours, break, arrival, speed, pay —
+ * in the width there is, and the clock-ins still open underneath.
+ */
+function VisitCard({
+  visit: v,
+  showEmployee,
+  orgTz,
+  expanded,
+  onToggleExpand,
+  selectedIds,
+  onToggleSelected,
+  onSetSelected,
+  onEdit,
+  onConfirm,
+  confirmPending,
+  onAttach,
+  attachPending,
+}: Parameters<typeof VisitRows>[0]) {
+  const ids = v.entries.map((e) => e.id);
+  const allSelected = ids.every((id) => selectedIds.has(id));
+  const single = v.punch_count === 1 ? v.entries[0] : null;
+  const first = v.entries[0];
+  const flagged = isFlagged(v);
+  const Chevron = expanded ? ChevronDown : ChevronRight;
+  const where = first.client_name ?? categoryLabel(first.work_category);
+
+  return (
+    <li
+      className={cn(
+        "px-3 py-3",
+        allSelected && "bg-muted/40",
+        v.needs_review
+          ? "border-l-4 border-l-amber-500 bg-amber-50/70 dark:bg-amber-950/20"
+          : v.over_allotted_minutes > 0 &&
+              "border-l-4 border-l-orange-300 bg-orange-50/40 dark:border-l-orange-800 dark:bg-orange-950/10",
+      )}
+    >
+      <div className="flex items-start gap-2.5">
+        <input
+          type="checkbox"
+          className="mt-1 shrink-0"
+          aria-label={
+            single ? "Select entry" : `Select all ${v.punch_count} clock-ins`
+          }
+          checked={allSelected}
+          onChange={() => onSetSelected(ids, !allSelected)}
+        />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-baseline justify-between gap-2">
+            <div className="min-w-0 truncate text-sm font-medium">
+              {showEmployee && <>{first.employee_name} · </>}
+              {shortDay(v.clock_in_at, orgTz)} · {where}
+            </div>
+            <div className="shrink-0 text-sm font-semibold tabular-nums">
+              {formatCurrencyCents(v.earned_cents)}
+            </div>
+          </div>
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground tabular-nums">
+            <span>{timeRange(v.clock_in_at, v.clock_out_at, orgTz)}</span>
+            <span className="font-medium text-foreground">
+              {v.worked_minutes === 0 && v.is_open
+                ? "on the clock"
+                : `${formatDurationMinutes(v.worked_minutes)}${v.is_open ? " so far" : ""}`}
+            </span>
+            {v.estimated_minutes ? (
+              <span>of {formatDurationMinutes(v.estimated_minutes)}</span>
+            ) : null}
+            {v.break_minutes > 0 && (
+              <span>· {formatDurationMinutes(v.break_minutes)} break</span>
+            )}
+          </div>
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+            <PunctualityBadge type={v.punctuality} minutes={v.punctuality_minutes} />
+            <CompletionBadge
+              type={v.completion}
+              minutes={v.completion_diff_minutes}
+            />
+            {v.entries.some((e) => e.is_manual) && <ManualBadge />}
+            {v.needs_review && (
+              <ReviewBadge autoClosed={v.entries.some((e) => e.auto_closed)} />
+            )}
+            {v.over_allotted_minutes > 0 && (
+              <span className="rounded-full bg-orange-100 px-1.5 py-0.5 text-[9px] font-semibold text-orange-800 dark:bg-orange-950/40 dark:text-orange-300">
+                +{formatDurationMinutes(v.over_allotted_minutes)}
+              </span>
+            )}
+          </div>
+          {single?.attach_suggestion && (
+            <button
+              type="button"
+              disabled={attachPending}
+              onClick={() => onAttach(single.id, single.attach_suggestion!)}
+              className="mt-1.5 block rounded-full bg-sky-500/10 px-2 py-0.5 text-left text-[11px] font-medium text-sky-700 hover:bg-sky-500/20 dark:text-sky-400"
+            >
+              Looks like {single.attach_suggestion.clientName} — attach
+            </button>
+          )}
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            {!single && (
+              <button
+                type="button"
+                onClick={onToggleExpand}
+                aria-expanded={expanded}
+                className="inline-flex items-center gap-0.5 whitespace-nowrap rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium text-muted-foreground"
+              >
+                <Chevron className="h-3 w-3" />
+                {v.punch_count} clock-ins
+              </button>
+            )}
+            {flagged && (
+              <button
+                type="button"
+                onClick={() => onConfirm(ids)}
+                disabled={confirmPending}
+                className="rounded-md border border-amber-400 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-900 disabled:opacity-50 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
+              >
+                Looks good
+              </button>
+            )}
+            {single && (
+              <button
+                type="button"
+                onClick={() => onEdit(single)}
+                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-muted-foreground hover:bg-muted"
+              >
+                <Pencil className="h-3 w-3" /> Edit
+              </button>
+            )}
+          </div>
+          {!single && expanded && (
+            <ul className="mt-2 divide-y divide-border rounded-lg border border-border bg-muted/20">
+              {v.entries.map((e, i) => (
+                <li
+                  key={e.id}
+                  className={cn(
+                    "flex items-center gap-2 px-2.5 py-2 text-xs",
+                    selectedIds.has(e.id) && "bg-muted/50",
+                  )}
+                >
+                  <input
+                    type="checkbox"
+                    aria-label={`Select clock-in ${i + 1}`}
+                    checked={selectedIds.has(e.id)}
+                    onChange={() => onToggleSelected(e.id)}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="tabular-nums">
+                      {timeRange(e.clock_in_at, e.clock_out_at, orgTz)}
+                    </div>
+                    <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                      Clock-in {i + 1} of {v.punch_count}
+                      {e.is_manual && <ManualBadge />}
+                      {e.needs_review && <ReviewBadge autoClosed={e.auto_closed} />}
+                    </div>
+                  </div>
+                  <div className="text-right tabular-nums">
+                    <div className="font-medium">
+                      {e.is_open ? "—" : formatDurationMinutes(e.actual_minutes)}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground">
+                      {formatCurrencyCents(e.earned_cents)}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onEdit(e)}
+                    aria-label={`Edit clock-in ${i + 1}`}
+                    className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </li>
+  );
+}
+
 /**
  * A visit as table rows: one summary row, plus — when it took more than one
  * clock-in and the owner opens it — a row per punch, where each one is
@@ -938,6 +1155,23 @@ export function TimesheetsView({
   }
 
   const summaries = buildSummaries(filteredVisits, employees, ptoInWindow);
+  // Everything a visit row or card needs from this screen.
+  const visitProps = (v: Visit, showEmployee: boolean) => ({
+    visit: v,
+    showEmployee,
+    orgTz,
+    expanded: openVisits.has(v.key),
+    onToggleExpand: () => toggleVisit(v.key),
+    selectedIds,
+    onToggleSelected: toggleSelected,
+    onSetSelected: setSelected,
+    onEdit: openEdit,
+    onConfirm: quickConfirm,
+    confirmPending,
+    onAttach: handleAttach,
+    attachPending,
+  });
+
   const totalBreakMinutes = filteredVisits.reduce(
     (sum, v) => sum + v.break_minutes,
     0,
@@ -1492,7 +1726,7 @@ export function TimesheetsView({
                         </span>
                       )}
                     </div>
-                    <div className="flex gap-3 text-xs text-muted-foreground mt-0.5">
+                    <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
                       <span>
                         {emp.shiftCount} shift{emp.shiftCount !== 1 ? "s" : ""}
                       </span>
@@ -1550,8 +1784,14 @@ export function TimesheetsView({
                         ))}
                       </div>
                     )}
+                    {/* Phones: cards. Tablet and up: the table. */}
+                    <ul className="divide-y divide-border md:hidden">
+                      {empVisits.map((v) => (
+                        <VisitCard key={v.key} {...visitProps(v, false)} />
+                      ))}
+                    </ul>
                     {/* Shifts table */}
-                    <div className="overflow-x-auto">
+                    <div className="hidden overflow-x-auto md:block">
                       <table className="w-full text-xs">
                         <thead>
                           <tr className="border-b border-border bg-muted/30 text-muted-foreground">
@@ -1635,7 +1875,12 @@ export function TimesheetsView({
         </div>
       ) : (
         <div className="rounded-xl border border-border bg-card overflow-hidden">
-          <div className="overflow-x-auto">
+          <ul className="divide-y divide-border md:hidden">
+            {filteredVisits.map((v) => (
+              <VisitCard key={v.key} {...visitProps(v, true)} />
+            ))}
+          </ul>
+          <div className="hidden overflow-x-auto md:block">
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-border bg-muted/30 text-muted-foreground">
