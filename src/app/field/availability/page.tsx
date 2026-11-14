@@ -63,8 +63,8 @@ export default async function FieldAvailabilityPage() {
   return (
     <>
       <FieldHeader
-        title="Availability"
-        description="Set your regular hours. Add a one-off if a specific day is different."
+        title="When I can work"
+        description="Tell the office which days and hours you can work."
       />
 
       <AvailabilityEditor

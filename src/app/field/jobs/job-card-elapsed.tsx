@@ -32,7 +32,11 @@ export function JobCardElapsed({
   scheduledStartIso,
   scheduledMinutes,
   status,
+  large = false,
 }: {
+  /** The open job's own clock, at the top of its page: same figure, sized
+   *  to be read at arm's length. */
+  large?: boolean;
   sinceIso: string;
   /** Segment-adjusted start — the same value the card prints below the pill. */
   scheduledStartIso: string;
@@ -70,7 +74,10 @@ export function JobCardElapsed({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-xs font-semibold tabular-nums",
+        "inline-flex items-center font-semibold tabular-nums",
+        large
+          ? "w-full justify-center gap-2.5 rounded-xl px-4 py-3 text-lg"
+          : "gap-1.5 rounded-md px-2 py-0.5 text-xs",
         warn
           ? "bg-amber-500/15 text-amber-800 dark:text-amber-300"
           : "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
@@ -78,7 +85,8 @@ export function JobCardElapsed({
     >
       <span
         className={cn(
-          "h-1.5 w-1.5 shrink-0 rounded-full",
+          "shrink-0 rounded-full",
+          large ? "h-2.5 w-2.5" : "h-1.5 w-1.5",
           warn ? "bg-amber-500" : "animate-pulse bg-emerald-500",
         )}
       />

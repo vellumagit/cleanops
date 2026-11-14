@@ -27,6 +27,7 @@ import {
 } from "@/app/app/scheduling/split-shift-timeline";
 import { toneForEmployee } from "@/app/app/scheduling/color";
 import { JobActionButtons } from "./job-actions";
+import { JobCardElapsed } from "../job-card-elapsed";
 import { loadJobState } from "@/lib/job-sync";
 import { jobFactsForMember } from "@/lib/job-facts";
 import { futureStatusError } from "@/lib/booking-status";
@@ -72,7 +73,8 @@ export default async function FieldJobDetailPage({
   const supabaseEarly = await createSupabaseServerClient();
   const { data: myOpenEntryHere } = await supabaseEarly
     .from("time_entries")
-    .select("id")
+    // clock_in_at drives the running clock at the top of the page.
+    .select("id, clock_in_at")
     .eq("employee_id", membership.id)
     .eq("booking_id", id)
     .is("clock_out_at", null)
@@ -448,6 +450,42 @@ export default async function FieldJobDetailPage({
         />
       )}
 
+      {/* The clock, first. It used to be the last thing on the page, under
+          the address, the notes, the crew, the photos and the checklist, so
+          arriving at a job meant scrolling past all of it to say "I'm
+          here", and the running time was only on the jobs list
+          (Brian, 2026-11-14). Everything below is what you read while it
+          runs. */}
+      {!needsAcceptance && (
+        <div className="space-y-3">
+          {myOpenEntryHere?.clock_in_at && (
+            <div className="flex justify-center">
+              <JobCardElapsed
+                large
+                sinceIso={myOpenEntryHere.clock_in_at}
+                scheduledStartIso={effectiveScheduledAt}
+                scheduledMinutes={displayDurationMinutes}
+                status={booking.status}
+              />
+            </div>
+          )}
+          <JobActionButtons
+            bookingId={booking.id}
+            status={booking.status}
+            closedBySollos={booking.status === "completed" && booking.closed_at == null}
+            youCompleted={crewRow?.completed_at != null}
+            myOpenEntryHere={Boolean(myOpenEntryHere)}
+            workedHere={(myEntriesHere ?? 0) > 0}
+            today={zonedYmd(new Date(booking.scheduled_at), tz) === zonedYmd(new Date(), tz)}
+            facts={jobFactsForMember(await jobStatePromise, membership.id, tz)}
+            notDueYet={
+              futureStatusError(booking.scheduled_at, "in_progress") !== null
+            }
+            scheduledLabel={formatDateTime(effectiveScheduledAt, tz)}
+          />
+        </div>
+      )}
+
       <div className="rounded-xl border border-border bg-card p-5">
         {/* Which day this card is, before anything else on it. */}
         <div className="mb-2 flex items-center gap-2">
@@ -698,33 +736,18 @@ export default async function FieldJobDetailPage({
         </div>
       )}
 
-      {!needsAcceptance && (
-        <>
-          <JobActionButtons
+      {/* Once she has worked here, cancelling is not hers to do: the
+          server refuses it (dropShift), and the button would only
+          promise something that can't happen. Kept at the bottom: it is
+          the rare thing, and the clock above is the common one. */}
+      {!needsAcceptance &&
+        booking.status !== "completed" &&
+        (myEntriesHere ?? 0) === 0 && (
+          <ManageShift
             bookingId={booking.id}
-            status={booking.status}
-            closedBySollos={booking.status === "completed" && booking.closed_at == null}
-            youCompleted={crewRow?.completed_at != null}
-            myOpenEntryHere={Boolean(myOpenEntryHere)}
-            workedHere={(myEntriesHere ?? 0) > 0}
-            today={zonedYmd(new Date(booking.scheduled_at), tz) === zonedYmd(new Date(), tz)}
-            facts={jobFactsForMember(await jobStatePromise, membership.id, tz)}
-            notDueYet={
-              futureStatusError(booking.scheduled_at, "in_progress") !== null
-            }
-            scheduledLabel={formatDateTime(effectiveScheduledAt, tz)}
+            isRecurring={Boolean(booking.series_id)}
           />
-          {/* Once she has worked here, cancelling is not hers to do: the
-              server refuses it (dropShift), and the button would only
-              promise something that can't happen. */}
-          {booking.status !== "completed" && (myEntriesHere ?? 0) === 0 && (
-            <ManageShift
-              bookingId={booking.id}
-              isRecurring={Boolean(booking.series_id)}
-            />
-          )}
-        </>
-      )}
+        )}
     </div>
   );
 }

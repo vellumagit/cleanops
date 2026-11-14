@@ -4,16 +4,9 @@ import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { getActionContext } from "@/lib/actions";
 import { notifyManagersOfUnavailability } from "@/lib/unavailability-notice";
+import { hoursError, toHHMM } from "@/lib/availability-week";
 
 type Result = { ok: true } | { ok: false; error: string };
-
-const TIME_PATTERN = /^[0-2]\d:[0-5]\d$/;
-
-function validTime(s: string): boolean {
-  if (!TIME_PATTERN.test(s)) return false;
-  const [h, m] = s.split(":").map(Number);
-  return h >= 0 && h <= 23 && m >= 0 && m <= 59;
-}
 
 /**
  * Replace an employee's recurring weekly availability with the submitted
@@ -55,18 +48,25 @@ export async function saveAvailabilitySlotsAction(
     start_time: string;
     end_time: string;
   }> = [];
+  // Everything is checked before anything is deleted, and one bad row
+  // refuses the whole save with the reason. This loop used to `continue`
+  // past a row it did not like: set Friday to end before it starts, and
+  // the week was saved without Friday under a "Schedule saved". A day that
+  // quietly isn't there is a cleaner the office thinks can't work.
   for (const raw of encoded) {
-    const [dayRaw, start, end] = raw.split("|");
+    const [dayRaw, startRaw, endRaw] = raw.split("|");
     const day = Number(dayRaw);
-    if (!Number.isInteger(day) || day < 0 || day > 6) continue;
-    if (!validTime(start) || !validTime(end)) continue;
-    if (start >= end) continue; // string-compare works for HH:MM
+    if (dayRaw === "" || !Number.isInteger(day) || day < 0 || day > 6) {
+      return { ok: false, error: "One of the days didn't come through. Reload the page and try again." };
+    }
+    const problem = hoursError(startRaw ?? "", endRaw ?? "");
+    if (problem) return { ok: false, error: problem };
     rows.push({
       organization_id: membership.organization_id,
       membership_id: membershipId,
       day_of_week: day,
-      start_time: start,
-      end_time: end,
+      start_time: toHHMM(startRaw) as string,
+      end_time: toHHMM(endRaw) as string,
     });
   }
 
@@ -116,24 +116,22 @@ export async function saveAvailabilityOverrideAction(
 
   const date = String(formData.get("date") ?? "").trim();
   const kind = String(formData.get("kind") ?? "off").trim();
-  const start = String(formData.get("start_time") ?? "").trim();
-  const end = String(formData.get("end_time") ?? "").trim();
+  const startRaw = String(formData.get("start_time") ?? "").trim();
+  const endRaw = String(formData.get("end_time") ?? "").trim();
   const reason = String(formData.get("reason") ?? "").trim();
 
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-    return { ok: false, error: "Pick a valid date." };
+    return { ok: false, error: "Pick a date." };
   }
   if (kind !== "off" && kind !== "custom") {
-    return { ok: false, error: "Invalid override kind." };
+    return { ok: false, error: "Choose a day off or different hours." };
   }
   if (kind === "custom") {
-    if (!validTime(start) || !validTime(end) || start >= end) {
-      return {
-        ok: false,
-        error: "Enter valid start/end times for a custom override.",
-      };
-    }
+    const problem = hoursError(startRaw, endRaw);
+    if (problem) return { ok: false, error: problem };
   }
+  const start = toHHMM(startRaw) ?? "";
+  const end = toHHMM(endRaw) ?? "";
 
   // Was this date already marked off? Re-saving it (a changed reason) is not
   // news, and shouldn't notify the office a second time.
