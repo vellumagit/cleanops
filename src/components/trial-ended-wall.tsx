@@ -73,13 +73,13 @@ export function TrialEndedWall({
               <div className="space-y-2">
                 <div className="flex flex-wrap gap-2">
                   <SubscribeButton
-                    plan="growth"
-                    label="Subscribe to Growth — $189/mo"
+                    plan="team"
+                    label="Subscribe to Team — $119/mo"
                     variant="default"
                   />
                   <SubscribeButton
-                    plan="team"
-                    label="Team — $119/mo"
+                    plan="growth"
+                    label="Growth — $189/mo"
                     variant="outline"
                   />
                   <SubscribeButton

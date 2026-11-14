@@ -69,6 +69,7 @@ const PLANS: PlanDef[] = [
       "Up to 10 cleaners",
       "750 texts a month included",
     ],
+    highlight: true,
   },
   {
     key: "growth",
@@ -86,7 +87,6 @@ const PLANS: PlanDef[] = [
       "Custom branding on invoices",
       "Bulk client import from CSV",
     ],
-    highlight: true,
   },
   {
     key: "enterprise",

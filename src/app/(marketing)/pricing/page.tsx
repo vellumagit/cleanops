@@ -126,8 +126,13 @@ export default function PricingPage() {
             </Link>
           </div>
 
-          {/* Team */}
-          <div className="relative rounded-2xl border border-border bg-white p-6 shadow-sm flex flex-col">
+          {/* Team — highlighted */}
+          <div className="relative rounded-2xl border-2 border-foreground bg-white p-6 shadow-lg flex flex-col">
+            <div className="absolute -top-3 left-1/2 -translate-x-1/2">
+              <span className="rounded-full bg-foreground px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-background">
+                Most popular
+              </span>
+            </div>
             <div>
               <h3 className="text-sm font-semibold">Team</h3>
               <p className="mt-1 text-xs text-muted-foreground">
@@ -161,21 +166,17 @@ export default function PricingPage() {
             <Link
               href="/signup"
               className={cn(
-                buttonVariants({ size: "lg", variant: "outline" }),
-                "mt-6 w-full rounded-full border-border text-sm font-semibold",
+                buttonVariants({ size: "lg" }),
+                "mt-6 w-full rounded-full text-sm font-semibold sollos-cta-glow",
               )}
             >
               Start 14-day trial
+              <ArrowRight className="ml-1.5 h-4 w-4" />
             </Link>
           </div>
 
-          {/* Growth — highlighted */}
-          <div className="relative rounded-2xl border-2 border-foreground bg-white p-6 shadow-lg flex flex-col">
-            <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-              <span className="rounded-full bg-foreground px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-background">
-                Most popular
-              </span>
-            </div>
+          {/* Growth */}
+          <div className="relative rounded-2xl border border-border bg-white p-6 shadow-sm flex flex-col">
             <div>
               <h3 className="text-sm font-semibold">Growth</h3>
               <p className="mt-1 text-xs text-muted-foreground">
@@ -214,12 +215,11 @@ export default function PricingPage() {
             <Link
               href="/signup"
               className={cn(
-                buttonVariants({ size: "lg" }),
-                "mt-6 w-full rounded-full text-sm font-semibold sollos-cta-glow",
+                buttonVariants({ size: "lg", variant: "outline" }),
+                "mt-6 w-full rounded-full border-border text-sm font-semibold",
               )}
             >
               Start 14-day trial
-              <ArrowRight className="ml-1.5 h-4 w-4" />
             </Link>
           </div>
 
