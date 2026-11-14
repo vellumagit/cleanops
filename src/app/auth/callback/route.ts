@@ -11,6 +11,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { authCallbackFailure } from "@/lib/auth-callback-failure";
 import { enterFailClosed } from "@/lib/supabase/query-guard";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -32,8 +33,10 @@ export async function GET(request: NextRequest) {
   const supabase = await createSupabaseServerClient();
 
   // ── Method 1: PKCE code exchange (OAuth, magic-link, etc.) ──
+  let exchangeErrorCode: string | undefined;
   if (code) {
     const { error } = await supabase.auth.exchangeCodeForSession(code);
+    exchangeErrorCode = error?.code;
     if (!error) {
       const redirectUrl = url.clone();
       redirectUrl.pathname = safeNext;
@@ -65,9 +68,9 @@ export async function GET(request: NextRequest) {
     console.error("[auth/callback] verifyOtp failed:", error.message);
   }
 
-  // ── Fallback — bounce to login with the actual error ──
+  // ── Fallback — bounce to login with what actually went wrong ──
   const loginUrl = url.clone();
   loginUrl.pathname = isClientFlow ? "/client/login" : "/login";
-  loginUrl.search = "?auth_error=confirmation_failed";
+  loginUrl.search = `?auth_error=${authCallbackFailure(exchangeErrorCode, safeNext)}`;
   return NextResponse.redirect(loginUrl);
 }

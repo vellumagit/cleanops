@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { LoginForm } from "./login-form";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { authUserExistsForEmail } from "@/lib/portal-claim";
+import { isAuthCallbackFailure } from "@/lib/auth-callback-failure";
 
 export const metadata: Metadata = {
   title: "Sign in",
@@ -61,7 +62,12 @@ export default async function LoginPage({
   }
   const confirmEmail = params.confirm ? params.email : undefined;
   const joinedEmail = params.joined ? params.email : undefined;
-  const authError = params.auth_error;
+  // Any other value (an old link, a hand-typed URL) reads as the generic one.
+  const authError = params.auth_error
+    ? isAuthCallbackFailure(params.auth_error)
+      ? params.auth_error
+      : "confirmation_failed"
+    : undefined;
 
   return (
     <main className="sollos-wash relative flex flex-1 items-center justify-center px-6 py-16">
@@ -117,13 +123,34 @@ export default async function LoginPage({
             </div>
           )}
 
-          {authError && (
+          {authError === "other_browser" && (
+            <div
+              role="status"
+              className="mb-4 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800"
+            >
+              Your email is confirmed. The link opened in a different browser
+              from the one you signed up in, so sign in below to continue.
+            </div>
+          )}
+
+          {authError === "reset_other_browser" && (
             <div
               role="alert"
               className="mb-4 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive"
             >
-              Email confirmation failed. The link may have expired — try
-              signing in below and a new confirmation email will be sent.
+              That reset link opened in a different browser from the one you
+              asked for it in. Use &ldquo;Forgot password?&rdquo; below for a
+              new link, and open it on this device.
+            </div>
+          )}
+
+          {authError === "confirmation_failed" && (
+            <div
+              role="alert"
+              className="mb-4 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive"
+            >
+              That link has expired or was already used. If you&apos;ve
+              confirmed your email before, sign in below.
             </div>
           )}
 
