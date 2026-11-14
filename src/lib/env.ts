@@ -100,6 +100,7 @@ const BaseSchema = z.object({
   // prices when creating checkout sessions. Missing = that tier isn't
   // purchasable.
   STRIPE_PRICE_STARTER: z.string().optional(),
+  STRIPE_PRICE_TEAM: z.string().optional(),
   STRIPE_PRICE_GROWTH: z.string().optional(),
   // Metered price for SMS overage (Phase 1, model B). Attached as a
   // subscription item when an org enables SMS; usage reported per overage

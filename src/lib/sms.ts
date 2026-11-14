@@ -21,6 +21,7 @@ import "server-only";
 import { sendSms, smsSegments, type SmsSendResult } from "@/lib/twilio";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { resolveAutomationEnabled } from "@/lib/automation-defaults";
+import type { PlanTier } from "@/lib/stripe";
 
 // ---------------------------------------------------------------------------
 // Model B packaging: SMS is included in the plan the org already pays for, up
@@ -33,14 +34,19 @@ import { resolveAutomationEnabled } from "@/lib/automation-defaults";
  * offering (e.g. drop `starter` to 0 to make SMS a Growth+ upsell). Comped orgs
  * bypass this entirely (see COMP_SAFETY_CAP_SEGMENTS).
  */
-export const SMS_INCLUDED_BY_PLAN: Record<string, number> = {
-  starter: 500,
-  growth: 1000,
+export const SMS_INCLUDED_BY_PLAN: Record<PlanTier, number> = {
+  starter: 300,
+  team: 750,
+  growth: 1500,
   enterprise: 5000,
 };
 
-/** Fallback allotment for an accessible org with no known plan tier (legacy / trialing). */
-export const SMS_INCLUDED_DEFAULT = 500;
+/**
+ * Fallback allotment for an accessible org with no known plan tier (legacy /
+ * trialing). Matches Starter, the smallest plan, so a trial never gets more
+ * free texts than the cheapest thing it can buy.
+ */
+export const SMS_INCLUDED_DEFAULT = SMS_INCLUDED_BY_PLAN.starter;
 
 /**
  * Safety ceiling for COMPED orgs (billing_override). They're never charged, so
@@ -402,6 +408,14 @@ export async function sendOrgSms(
 // Allotment helpers
 // ---------------------------------------------------------------------------
 
+/** Included monthly segments for a plan tier as stored on `subscriptions.plan_tier`. */
+export function includedSegmentsForPlan(plan: string | null): number {
+  if (plan && Object.hasOwn(SMS_INCLUDED_BY_PLAN, plan)) {
+    return SMS_INCLUDED_BY_PLAN[plan as PlanTier];
+  }
+  return SMS_INCLUDED_DEFAULT;
+}
+
 /** Included monthly segments for an org: comp safety cap, else its plan tier. */
 async function resolveIncludedSegments(
   admin: ReturnType<typeof createSupabaseAdminClient>,
@@ -414,11 +428,7 @@ async function resolveIncludedSegments(
     .select("plan_tier")
     .eq("organization_id", orgId)
     .maybeSingle()) as unknown as { data: { plan_tier: string | null } | null };
-  const plan = data?.plan_tier ?? null;
-  if (plan && SMS_INCLUDED_BY_PLAN[plan] !== undefined) {
-    return SMS_INCLUDED_BY_PLAN[plan];
-  }
-  return SMS_INCLUDED_DEFAULT;
+  return includedSegmentsForPlan(data?.plan_tier ?? null);
 }
 
 /** Sum of billable (status='sent') outbound segments this calendar month. */

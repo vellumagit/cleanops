@@ -2,7 +2,7 @@
  * Create a Stripe Checkout Session for Sollos 3 subscription signup.
  *
  * Called from the pricing page and the billing settings page. The caller
- * posts { plan: 'starter' | 'growth' }; we resolve the authenticated user's
+ * posts { plan: 'starter' | 'team' | 'growth' }; we resolve the authenticated user's
  * org + email server-side (nothing is trusted from the body beyond the plan).
  *
  * Redirect URLs are computed from NEXT_PUBLIC_SITE_URL so an attacker can't
@@ -15,13 +15,14 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
   createCheckoutSession,
   isStripeEnabled,
+  PURCHASABLE_PLANS,
   type PlanTier,
 } from "@/lib/stripe";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const VALID_PLANS: PlanTier[] = ["starter", "growth"];
+const VALID_PLANS: readonly PlanTier[] = PURCHASABLE_PLANS;
 
 export async function POST(req: NextRequest) {
   if (!isStripeEnabled()) {

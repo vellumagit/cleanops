@@ -2,6 +2,7 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { assignOnboardingTraining } from "@/lib/onboarding-training";
+import { checkCleanerSeat, CLEANER_LIMIT_CLAIM_MESSAGE } from "@/lib/plan-limits";
 
 /**
  * The ONE place an invitation becomes (or re-becomes) a membership.
@@ -31,6 +32,10 @@ import { assignOnboardingTraining } from "@/lib/onboarding-training";
  *
  * Onboarding training assigns on every outcome that (re)activates someone;
  * the helper is idempotent so a returning member never gets duplicates.
+ *
+ * The plan's cleaner limit (plan-limits.ts) is checked on every outcome that
+ * would ADD an active cleaner, so an invite sent while there was room can't
+ * push the company past it if the spot was filled in the meantime.
  */
 
 export type ClaimableInvitation = {
@@ -44,7 +49,22 @@ export type ClaimableInvitation = {
 
 export type ClaimOutcome =
   | { ok: true; membershipId: string; alreadyActive: boolean }
-  | { ok: false; error: string };
+  | { ok: false; error: string; code?: "cleaner_limit" };
+
+const LIMIT_REFUSAL = {
+  ok: false,
+  error: CLEANER_LIMIT_CLAIM_MESSAGE,
+  code: "cleaner_limit",
+} as const satisfies ClaimOutcome;
+
+/** True when the company has no room for one more active cleaner. */
+async function atCleanerLimit(admin: SupabaseClient, invitation: ClaimableInvitation) {
+  if (invitation.role !== "employee") return false;
+  // Pending invites are NOT counted here: this one is among them, and the
+  // others were counted when they were sent.
+  const seat = await checkCleanerSeat(admin, invitation.organization_id);
+  return !seat.ok;
+}
 
 export async function claimInvitation(
   admin: SupabaseClient,
@@ -78,6 +98,7 @@ export async function claimInvitation(
   }
 
   if (existing) {
+    if (await atCleanerLimit(admin, invitation)) return LIMIT_REFUSAL;
     // Rehire ends the exit record the same way the status-flip path does
     // (employees/actions.ts): date AND reason, or a refire years later
     // pre-fills last time's reason as if it were new.
@@ -101,14 +122,19 @@ export async function claimInvitation(
   // several (ambiguous) fall through to a fresh row rather than guessing.
   const { data: shadows } = (await admin
     .from("memberships")
-    .select("id")
+    .select("id, role, status")
     .eq("organization_id", invitation.organization_id)
     .is("profile_id", null)
     .eq("contact_email" as never, invitation.email.toLowerCase() as never)) as unknown as {
-    data: Array<{ id: string }> | null;
+    data: Array<{ id: string; role: string; status: string }> | null;
   };
 
   if (shadows && shadows.length === 1) {
+    // An active cleaner record getting a login is the same person, already
+    // counted. Anything else (a disabled record, an office record becoming
+    // a cleaner) adds one.
+    const alreadyCounted = shadows[0].role === "employee" && shadows[0].status === "active";
+    if (!alreadyCounted && (await atCleanerLimit(admin, invitation))) return LIMIT_REFUSAL;
     const { error } = await admin
       .from("memberships")
       .update({
@@ -128,6 +154,8 @@ export async function claimInvitation(
     await stampAccepted(admin, invitation.id);
     return { ok: true, membershipId: shadows[0].id, alreadyActive: false };
   }
+
+  if (await atCleanerLimit(admin, invitation)) return LIMIT_REFUSAL;
 
   const { data: created, error } = await admin
     .from("memberships")

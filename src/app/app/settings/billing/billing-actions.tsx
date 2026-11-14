@@ -45,7 +45,7 @@ export function SubscribeButton({
   label,
   variant = "default",
 }: {
-  plan: "starter" | "growth";
+  plan: "starter" | "team" | "growth";
   label: string;
   variant?: "default" | "outline";
 }) {

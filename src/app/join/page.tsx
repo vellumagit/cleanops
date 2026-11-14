@@ -93,7 +93,17 @@ export default async function JoinPage({
   const claimed = await claimInvitation(admin, invite, user.id);
 
   if (!claimed.ok) {
-    return <ErrorPage message="Could not join team. Please try again or contact support." />;
+    // The plan-limit refusal is written for the invitee and says what to do;
+    // anything else stays generic rather than echoing a database error.
+    return (
+      <ErrorPage
+        message={
+          claimed.code === "cleaner_limit"
+            ? claimed.error
+            : "Could not join team. Please try again or contact support."
+        }
+      />
+    );
   }
 
   // Set the new org as the active org cookie. Cookie name must match

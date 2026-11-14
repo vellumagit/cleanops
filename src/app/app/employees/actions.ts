@@ -11,6 +11,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { allowDbErrors } from "@/lib/supabase/query-guard";
 import { readWorkHistory, workHistoryRefusal } from "@/lib/member-history";
 import { InvitationSchema } from "@/lib/validators/invitations";
+import { checkCleanerSeat, cleanerLimitMessage } from "@/lib/plan-limits";
 
 type Field = "name" | "email" | "role" | "pay_rate";
 export type InviteFormState = ActionState<Field>;
@@ -77,6 +78,20 @@ export async function sendInvitationAction(
 
   if (existingInvite) {
     return { errors: { email: "An invitation is already pending for this email." }, values: raw };
+  }
+
+  // The plan's cleaner limit. Open invites count, or a Starter company could
+  // send ten invites at 2 of 3 and have them all accepted.
+  if (parsed.data.role === "employee") {
+    const seat = await checkCleanerSeat(admin, membership.organization_id, {
+      includePendingInvites: true,
+    });
+    if (!seat.ok) {
+      return {
+        errors: { _form: cleanerLimitMessage(seat, { countsInvites: true }) },
+        values: raw,
+      };
+    }
   }
 
   // Create the invitation
@@ -451,6 +466,18 @@ export async function updateMemberAction(
         };
       }
     }
+  }
+
+  // The plan's cleaner limit, only when this save ADDS an active cleaner:
+  // reactivating one, or moving an active office member onto the crew.
+  // Editing someone already counted never trips it, so a company that is
+  // over its limit can still fix a phone number or deactivate people.
+  const roleAfter = parsed.data.role ?? before.role;
+  const statusAfter = parsed.data.status ?? before.status;
+  const wasCleaner = before.role === "employee" && before.status === "active";
+  if (roleAfter === "employee" && statusAfter === "active" && !wasCleaner) {
+    const seat = await checkCleanerSeat(adminForBefore, membership.organization_id);
+    if (!seat.ok) return { errors: { _form: cleanerLimitMessage(seat) } };
   }
 
   // Build the memberships update payload (public-ish fields only).
@@ -856,6 +883,12 @@ export async function createManualEmployeeAction(
   }
 
   const admin = createSupabaseAdminClient();
+
+  if (parsed.data.role === "employee") {
+    const seat = await checkCleanerSeat(admin, membership.organization_id);
+    if (!seat.ok) return { errors: { _form: cleanerLimitMessage(seat) }, values: raw };
+  }
+
   const { data: inserted, error } = (await admin
     .from("memberships")
     .insert({

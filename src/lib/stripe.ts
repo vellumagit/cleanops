@@ -1,6 +1,6 @@
 /**
- * Stripe SaaS billing (charging customers of Sollos 3 the $49/$99/Enterprise
- * subscription). Connect logic lives in `stripe-connect.ts`.
+ * Stripe SaaS billing (charging customers of Sollos 3 their Starter / Team /
+ * Growth / Enterprise subscription). Connect logic lives in `stripe-connect.ts`.
  *
  * Security posture:
  *   - Secret keys never touch the client bundle (this module is server-only).
@@ -59,16 +59,22 @@ export function getStripe(): Stripe {
   return _client;
 }
 
-export type PlanTier = "starter" | "growth" | "enterprise";
+export type PlanTier = "starter" | "team" | "growth" | "enterprise";
+
+/** The tiers a customer can buy at checkout. Enterprise is sold by hand. */
+export const PURCHASABLE_PLANS = ["starter", "team", "growth"] as const satisfies readonly PlanTier[];
 
 /**
  * Map from our internal plan name to the Stripe Price ID. Price IDs come
  * from the Stripe Dashboard (Products → your product → Pricing section).
+ * A tier whose env var is unset simply isn't purchasable.
  */
 export function getPriceIdForPlan(plan: PlanTier): string | null {
   switch (plan) {
     case "starter":
       return process.env.STRIPE_PRICE_STARTER ?? null;
+    case "team":
+      return process.env.STRIPE_PRICE_TEAM ?? null;
     case "growth":
       return process.env.STRIPE_PRICE_GROWTH ?? null;
     case "enterprise":
@@ -79,6 +85,7 @@ export function getPriceIdForPlan(plan: PlanTier): string | null {
 export function getPlanFromPriceId(priceId: string | null): PlanTier | null {
   if (!priceId) return null;
   if (priceId === process.env.STRIPE_PRICE_STARTER) return "starter";
+  if (priceId === process.env.STRIPE_PRICE_TEAM) return "team";
   if (priceId === process.env.STRIPE_PRICE_GROWTH) return "growth";
   return null;
 }
