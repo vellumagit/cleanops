@@ -130,6 +130,53 @@ async function enablePush(
   return "granted";
 }
 
+const BOUND_KEY = "sollos-push-bound";
+
+/**
+ * Tie the registration this device already holds to whoever is signed in.
+ *
+ * "On" was read from the browser alone: a registration exists, so the bell
+ * says on. The server keeps one row per device, owned by whoever last tapped
+ * "Turn on", so after a second person signed in on the same phone it said on
+ * for them while every push still went to the first person, on that same
+ * phone (2026-11-14: a test employee on a phone registered to another test
+ * login got nothing, and no banner offered to fix it). The same lie covered
+ * a row the server had dropped after the push service refused it once.
+ *
+ * Saving again is the route's own upsert, so this is the "Turn on" tap
+ * without the question. Once per app session per account and device; a
+ * failure is left for the next open rather than shown, since nothing here
+ * was asked for by the person.
+ */
+async function bindExisting(
+  subscription: PushSubscription,
+  membershipId: string,
+  organizationId: string,
+): Promise<void> {
+  const mark = `${membershipId}|${subscription.endpoint}`;
+  try {
+    if (sessionStorage.getItem(BOUND_KEY) === mark) return;
+  } catch {
+    // Storage can be unavailable (private mode); bind every time instead.
+  }
+  try {
+    const res = await fetch("/api/push/subscribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ subscription: subscription.toJSON(), membershipId, organizationId }),
+    });
+    if (res.ok) {
+      try {
+        sessionStorage.setItem(BOUND_KEY, mark);
+      } catch {
+        // See above.
+      }
+    }
+  } catch (err) {
+    console.error("[push] could not re-bind this device:", err);
+  }
+}
+
 type PushState = "loading" | "blocked" | "prompt" | "subscribing" | "subscribed" | "dismissed";
 
 /**
@@ -158,6 +205,7 @@ export function PushPrompt({
     navigator.serviceWorker.ready
       .then((reg) => reg.pushManager.getSubscription())
       .then((sub) => {
+        if (sub) void bindExisting(sub, membershipId, organizationId);
         if (!cancelled) setState(sub ? "subscribed" : "prompt");
       })
       .catch(() => {
@@ -166,7 +214,7 @@ export function PushPrompt({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [membershipId, organizationId]);
 
   const subscribe = useCallback(async () => {
     setState("subscribing");
@@ -246,6 +294,7 @@ export function PushToggle({
     navigator.serviceWorker.ready
       .then((reg) => reg.pushManager.getSubscription())
       .then((sub) => {
+        if (sub) void bindExisting(sub, membershipId, organizationId);
         if (!cancelled) setSubscribed(!!sub);
       })
       .catch(() => {
@@ -254,7 +303,7 @@ export function PushToggle({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [membershipId, organizationId]);
 
   const toggle = useCallback(async () => {
     setBusy(true);
