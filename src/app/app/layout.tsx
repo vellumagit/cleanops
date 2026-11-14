@@ -135,7 +135,9 @@ export default async function AppLayout({
   return (
     <BrandProvider
       brandColor={org?.brand_color ?? null}
-      className="flex min-h-[100dvh] lg:h-screen"
+      // fill-screen-root: a page holding a `.fill-screen` pane (chat) makes
+      // the shell exactly one screen tall. See FILL-SCREEN in globals.css.
+      className="fill-screen-root flex min-h-[100dvh] lg:h-screen"
     >
       <AppSidebar
         organizationName={membership.organization_name}
@@ -171,7 +173,7 @@ export default async function AppLayout({
           html/body and never applied here. Wide content is unaffected: every
           table and board carries its own overflow-x-auto scroller, which is
           where sideways movement belongs. */}
-      <div className="flex min-w-0 flex-1 flex-col overflow-y-auto overflow-x-hidden overscroll-x-none pb-[calc(4rem+env(safe-area-inset-bottom))] pt-14 lg:pb-0 lg:pt-0">
+      <div className="fill-screen-column flex min-w-0 flex-1 flex-col overflow-y-auto overflow-x-hidden overscroll-x-none pb-[calc(4rem+env(safe-area-inset-bottom))] pt-14 lg:pb-0 lg:pt-0">
         <DesktopToolRibbon />
         <StaleTimezoneBanner probe={buildTzProbe(orgTz)} />
         <TrialBanner info={subscriptionInfo} role={membership.role} />

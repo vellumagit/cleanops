@@ -57,6 +57,8 @@ export default async function AppChatPage({
     <PageShell
       title="Chat"
       description="Realtime DMs and the org-wide #general thread."
+      // One screen tall, only the messages scroll. See FILL-SCREEN in globals.css.
+      className="fill-screen-column"
     >
       <ChatView
         threads={threads}

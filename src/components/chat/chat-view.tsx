@@ -20,6 +20,7 @@ import { FormSelect } from "@/components/form-field";
 import { cn } from "@/lib/utils";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { shrinkPhoto } from "@/lib/shrink-photo";
+import { useVisibleHeight } from "@/components/use-visible-height";
 import {
   CHAT_MEDIA_BUCKET,
   CHAT_PHOTO_MAX_BYTES,
@@ -197,6 +198,10 @@ export function ChatView({
 
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
   const isMobile = variant === "mobile";
+
+  // The chat is one screen tall and only the message list scrolls; this
+  // keeps "one screen" honest when the on-screen keyboard is up.
+  useVisibleHeight();
 
   // For DM threads we can resolve any incoming sender's name from the thread
   // (it's the other participant), so realtime rows that arrive without a name
@@ -591,7 +596,11 @@ export function ChatView({
         // on a phone the message list grew to its full content height and
         // pushed the composer 579px below the fold: Veronika's cleaner could
         // read the thread and had no box to reply in.
-        "flex h-[calc(100dvh-12rem)] w-full flex-col overflow-hidden",
+        //
+        // The height comes from `fill-screen` (globals.css): whatever is
+        // left of the screen under the banners and heading above, instead
+        // of the old `100dvh - 12rem` guess that let the page scroll.
+        "fill-screen flex w-full flex-col overflow-hidden",
         // The border, rounding and background ARE desktop dressing: on a phone
         // the panes run edge to edge like the field app.
         responsive &&
@@ -601,9 +610,12 @@ export function ChatView({
       {showThreadList && (
         <aside
           className={cn(
+            // The list scrolls inside itself too: with the chat held to one
+            // screen, a long list of threads would otherwise be cut off.
+            "min-h-0 overflow-y-auto overscroll-contain",
             isMobile
-              ? "w-full"
-              : "w-full md:w-64 md:shrink-0 md:border-r md:border-border md:bg-background/60",
+              ? "w-full flex-1"
+              : "w-full flex-1 md:w-64 md:flex-none md:shrink-0 md:border-r md:border-border md:bg-background/60",
             // Phone + a thread open: the list steps aside for the conversation.
             responsive && activeThread && "hidden md:block",
           )}
@@ -778,7 +790,9 @@ export function ChatView({
 
               <div
                 ref={scrollerRef}
-                className="min-h-0 flex-1 space-y-1 overflow-y-auto px-3 py-4"
+                // overscroll-contain: reaching the top or bottom of the
+                // messages stops there instead of tugging the page behind.
+                className="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain px-3 py-4"
               >
                 {messages.length === 0 ? (
                   <div className="flex h-full flex-col items-center justify-center gap-1 text-center">

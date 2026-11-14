@@ -71,7 +71,10 @@ export function FieldShell({
   );
 
   return (
-    <div className="flex min-h-[100dvh] flex-col bg-muted/30">
+    // fill-screen-root / fill-screen-column: a page holding a `.fill-screen`
+    // pane (chat) makes this shell exactly one screen tall and <main> a
+    // column that hands the pane the rest. See FILL-SCREEN in globals.css.
+    <div className="fill-screen-root flex min-h-[100dvh] flex-col bg-muted/30">
       {/* ── Sticky header ── */}
       <header
         className="sticky top-0 z-20 flex items-center justify-between border-b bg-card px-4 py-3 supports-[backdrop-filter]:bg-card/80 supports-[backdrop-filter]:backdrop-blur supports-[padding-top:env(safe-area-inset-top)]:pt-[max(0.75rem,env(safe-area-inset-top))]"
@@ -123,7 +126,10 @@ export function FieldShell({
       <PwaInstallBanner />
 
       {/* ── Main content ── */}
-      <main className="mx-auto w-full max-w-2xl flex-1 px-4 pb-28 pt-5">
+      {/* pb-28 leaves breathing room above the tab bar on a page that
+          scrolls. A fill-screen pane ends on the tab bar instead:
+          fill-screen-above-tabbar keeps only the bar's own height. */}
+      <main className="fill-screen-column fill-screen-above-tabbar mx-auto w-full max-w-2xl flex-1 px-4 pb-28 pt-5">
         {children}
       </main>
 

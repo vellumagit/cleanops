@@ -565,3 +565,60 @@
 .blog-article table { width: 100%; border-collapse: collapse; display: block; overflow-x: auto; }
 .blog-article th, .blog-article td { border: 1px solid var(--color-border); padding: 0.45em 0.7em; text-align: left; }
 .blog-article hr { border: 0; border-top: 1px solid var(--color-border); }
+
+/* FILL-SCREEN PAGES (chat). The page itself never scrolls; one pane inside
+   it does.
+
+   Chat used to size itself as `100dvh - 12rem`, a guess at everything above
+   and below it. Right on a bare desktop window; wrong as soon as a banner
+   sat above it (trial, automations off, "Enable notifications") or on a
+   phone, where the top bar, page heading and tab bar add up to something
+   else. Then the page was taller than the screen and the whole chat slid up
+   and down under the finger (Brian, 2026-11-14).
+
+   Nothing is guessed now. A pane marked `.fill-screen` makes the shell
+   around it exactly one screen tall, and every box between the shell and
+   the pane a column that passes down whatever height is left:
+
+     .fill-screen-root    the shell (src/app/app/layout.tsx, field-shell.tsx)
+     .fill-screen-column  each box on the way down
+     .fill-screen         the pane that takes the rest
+
+   `--app-vh` is the visible height in px, kept by useVisibleHeight() while
+   such a pane is mounted, so the on-screen keyboard shrinks the chat
+   instead of covering its message box. Without it (first paint, no JS) the
+   fallback is 100dvh.
+
+   Unlayered on purpose: these have to beat the shells' own height and
+   overflow utilities, which live in Tailwind's layers.
+
+   Under 420px of height (a phone on its side) there is no room for a fixed
+   layout: the pane gets a set height and the page scrolls like any other. */
+.fill-screen {
+  height: 28rem;
+}
+@media (min-height: 420px) {
+  .fill-screen-root:has(.fill-screen) {
+    height: var(--app-vh, 100dvh);
+    min-height: 0;
+    overflow: hidden;
+  }
+  .fill-screen-column:has(.fill-screen) {
+    display: flex;
+    flex: 1 1 0%;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+  /* The field app's <main> keeps 7rem under a page that scrolls, so the last
+     card clears the tab bar with room to spare. A pane that ends ON the tab
+     bar needs only the bar's own height (65px) and a sliver of air. */
+  .fill-screen-above-tabbar:has(.fill-screen) {
+    padding-bottom: calc(4.5rem + env(safe-area-inset-bottom));
+  }
+  .fill-screen {
+    flex: 1 1 0%;
+    height: auto;
+    min-height: 0;
+  }
+}
