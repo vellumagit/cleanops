@@ -228,25 +228,43 @@ export async function computeEfficiencyBonusesAction(): Promise<ComputeResult> {
     }
   }
 
+  // Minutes each person actually worked on each job, ALL punches summed.
+  // Judging punch by punch counted a job clocked in and out of four times
+  // as four jobs, each "finished early" — a 15-minute job worked in full
+  // across four punches booked 45 minutes saved and four toward the
+  // minimum-jobs bar. One person, one job, one comparison.
+  const workedByJob = new Map<
+    string,
+    { employeeId: string; bookingId: string; minutes: number }
+  >();
+  for (const te of timeEntries ?? []) {
+    if (!te.booking_id || !te.clock_in_at || !te.clock_out_at) continue;
+    if (!bookingMap.has(te.booking_id)) continue;
+    const key = `${te.employee_id}:${te.booking_id}`;
+    const cur = workedByJob.get(key) ?? {
+      employeeId: te.employee_id,
+      bookingId: te.booking_id,
+      minutes: 0,
+    };
+    cur.minutes +=
+      (new Date(te.clock_out_at).getTime() -
+        new Date(te.clock_in_at).getTime()) /
+      (1000 * 60);
+    workedByJob.set(key, cur);
+  }
+
   // Calculate time saved per employee
   type EffBucket = { totalMinutesSaved: number; jobCount: number };
   const byEmployee = new Map<string, EffBucket>();
 
-  for (const te of timeEntries ?? []) {
-    if (!te.booking_id || !te.clock_in_at || !te.clock_out_at) continue;
-    const booking = bookingMap.get(te.booking_id);
-    if (!booking) continue;
-
-    const actualMs =
-      new Date(te.clock_out_at).getTime() -
-      new Date(te.clock_in_at).getTime();
-    const actualMinutes = actualMs / (1000 * 60);
+  for (const w of workedByJob.values()) {
+    const booking = bookingMap.get(w.bookingId)!;
     const estimatedMinutes = booking.duration_minutes;
 
     // Only count jobs where they finished faster (positive time saved)
-    const minutesSaved = estimatedMinutes - actualMinutes;
+    const minutesSaved = estimatedMinutes - w.minutes;
 
-    const bucket = byEmployee.get(te.employee_id) ?? {
+    const bucket = byEmployee.get(w.employeeId) ?? {
       totalMinutesSaved: 0,
       jobCount: 0,
     };
@@ -254,7 +272,7 @@ export async function computeEfficiencyBonusesAction(): Promise<ComputeResult> {
     if (minutesSaved > 0) {
       bucket.totalMinutesSaved += minutesSaved;
     }
-    byEmployee.set(te.employee_id, bucket);
+    byEmployee.set(w.employeeId, bucket);
   }
 
   // Check for existing efficiency bonuses in this period

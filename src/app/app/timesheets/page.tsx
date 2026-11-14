@@ -17,6 +17,7 @@ import {
   zonedYmd,
 } from "@/lib/wall-clock";
 import { maybeDecryptField } from "@/lib/field-encryption";
+import { judgeCompletion } from "@/lib/job-visits";
 import { TimesheetsView } from "./timesheets-view";
 import { periodContaining, type PaySchedule } from "@/lib/pay-schedule";
 import type {
@@ -390,21 +391,21 @@ export default async function TimesheetsPage({
       }
     }
 
-    // Completion: compare actual vs what THIS person was allotted.
-    let completion: "under" | "on_target" | "over" | null = null;
-    let completionDiffMinutes = 0;
-    if (estimatedMinutes && actualMinutes > 0) {
-      const diff = actualMinutes - estimatedMinutes;
-      if (diff < -5) {
-        completion = "under";
-        completionDiffMinutes = Math.abs(diff);
-      } else if (diff > 5) {
-        completion = "over";
-        completionDiffMinutes = diff;
-      } else {
-        completion = "on_target";
-      }
-    }
+    // Completion: compare actual vs what THIS person was allotted. Per
+    // punch; the view judges a whole visit (several punches) the same way.
+    const { completion, diffMinutes: completionDiffMinutes } =
+      judgeCompletion(actualMinutes, estimatedMinutes);
+
+    // When this person's window on the job opened — the overrun below and
+    // a multi-punch visit in the view both measure from it.
+    const shiftStartAt = scheduledAt
+      ? shiftWindow
+        ? new Date(
+            new Date(scheduledAt).getTime() +
+              shiftWindow.startOffsetMinutes * 60_000,
+          ).toISOString()
+        : scheduledAt
+      : null;
 
     // Pay calculation. Precedence (first non-null wins):
     //   1. time_entries.pay_rate_cents_snapshot — locked at clock-in time
@@ -490,14 +491,11 @@ export default async function TimesheetsPage({
         // second cleaner's window opens hours after the job does; anchoring
         // to the booking told someone who left 87 minutes early that they
         // ran 33 minutes over.
-        scheduledStartIso: shiftWindow
-          ? new Date(
-              new Date(scheduledAt!).getTime() +
-                shiftWindow.startOffsetMinutes * 60_000,
-            ).toISOString()
-          : scheduledAt,
+        scheduledStartIso: shiftStartAt,
         scheduledMinutes: shiftWindow?.allottedMinutes ?? estimatedMinutes,
       }),
+      over_confirmed: Boolean(e.over_confirmed_at),
+      shift_start_at: shiftStartAt,
       // Pay
       pay_rate_cents: payRateCents,
       earned_cents: earnedCents,

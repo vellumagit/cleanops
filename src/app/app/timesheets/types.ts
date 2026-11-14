@@ -50,6 +50,13 @@ export type TimesheetEntry = {
    * booking if someone edits the job's duration afterwards.
    */
   over_allotted_minutes: number;
+  /** An owner confirmed these hours (over_confirmed_at is set). A visit of
+   *  several punches stops flagging once every punch is confirmed. */
+  over_confirmed: boolean;
+  /** When this person's window on the job opened — the booking's start
+   *  moved by their split-shift offset. Null for off-job time. Lets a
+   *  visit of several punches measure them all against one allotment. */
+  shift_start_at: string | null;
   /**
    * When this person's shift was due to end — max(clock-in, their segment
    * start) + their allotment, the same arithmetic the cron and the field

@@ -27,6 +27,7 @@ import {
   formatCurrencyCents,
 } from "@/lib/format";
 import { zonedDayStartUtc, zonedYmd } from "@/lib/wall-clock";
+import { groupIntoVisits, type JobVisit } from "@/lib/job-visits";
 import { cn } from "@/lib/utils";
 import type {
   TimesheetEntry,
@@ -51,13 +52,27 @@ function subscribeToMinutes(onTick: () => void) {
 const currentMinute = () => Math.floor(Date.now() / 60_000) * 60_000;
 const noClockOnServer = () => null;
 
+/**
+ * One person's work on one job on one day — every clock-in/out of it as a
+ * single row. See src/lib/job-visits.ts for why the timesheet reads punches
+ * this way and what each number means.
+ */
+type Visit = JobVisit<TimesheetEntry>;
+
+function isFlagged(v: Visit): boolean {
+  return v.needs_review || v.over_allotted_minutes > 0;
+}
+
 type EmpSummary = {
   id: string;
   name: string;
   totalMinutes: number;
   jobMinutes: number; // clocked against a booking (cleaning)
   otherMinutes: number; // off-job (manager / admin / etc.)
+  /** Visits — one per job per day, however many punches it took. */
   shiftCount: number;
+  /** Time between a clock-out and the next clock-in on the same job. */
+  breakMinutes: number;
   openShift: boolean;
   earnedCents: number;
   payRateCents: number;
@@ -69,40 +84,44 @@ type EmpSummary = {
 };
 
 function buildSummaries(
-  entries: TimesheetEntry[],
+  visits: Visit[],
   employees: Record<string, EmployeeMeta>,
   ptoEntries: PtoEntry[],
 ): EmpSummary[] {
   const map = new Map<string, EmpSummary>();
 
-  for (const e of entries) {
-    const existing = map.get(e.employee_id) ?? {
-      id: e.employee_id,
-      name: e.employee_name,
+  for (const v of visits) {
+    const existing = map.get(v.employee_id) ?? {
+      id: v.employee_id,
+      name: v.entries[0].employee_name,
       totalMinutes: 0,
       jobMinutes: 0,
       otherMinutes: 0,
       shiftCount: 0,
+      breakMinutes: 0,
       openShift: false,
       earnedCents: 0,
-      payRateCents: employees[e.employee_id]?.pay_rate_cents ?? 0,
+      payRateCents: employees[v.employee_id]?.pay_rate_cents ?? 0,
       lateCount: 0,
       earlyCount: 0,
       overCount: 0,
       underCount: 0,
       ptoHours: 0,
     };
-    existing.totalMinutes += e.actual_minutes;
-    if (e.booking_id) existing.jobMinutes += e.actual_minutes;
-    else existing.otherMinutes += e.actual_minutes;
+    existing.totalMinutes += v.worked_minutes;
+    if (v.booking_id) existing.jobMinutes += v.worked_minutes;
+    else existing.otherMinutes += v.worked_minutes;
     existing.shiftCount += 1;
-    existing.earnedCents += e.earned_cents;
-    if (e.is_open) existing.openShift = true;
-    if (e.punctuality === "late") existing.lateCount += 1;
-    if (e.punctuality === "early") existing.earlyCount += 1;
-    if (e.completion === "over") existing.overCount += 1;
-    if (e.completion === "under") existing.underCount += 1;
-    map.set(e.employee_id, existing);
+    existing.breakMinutes += v.break_minutes;
+    existing.earnedCents += v.earned_cents;
+    if (v.is_open) existing.openShift = true;
+    // Judged per visit: resuming after a break is not arriving late, and
+    // four short punches on one job are not four jobs finished early.
+    if (v.punctuality === "late") existing.lateCount += 1;
+    if (v.punctuality === "early") existing.earlyCount += 1;
+    if (v.completion === "over") existing.overCount += 1;
+    if (v.completion === "under") existing.underCount += 1;
+    map.set(v.employee_id, existing);
   }
 
   // Add PTO hours — employees only. A subcontractor's approved time off is
@@ -123,6 +142,7 @@ function buildSummaries(
         jobMinutes: 0,
         otherMinutes: 0,
         shiftCount: 0,
+        breakMinutes: 0,
         openShift: false,
         earnedCents: 0,
         payRateCents: employees[p.employee_id]?.pay_rate_cents ?? 0,
@@ -230,7 +250,13 @@ function csvField(v: string | number | null | undefined): string {
   return `"${guarded.replace(/"/g, '""')}"`;
 }
 
-function generateCSV(entries: TimesheetEntry[], orgTz: string): string {
+/**
+ * One line per visit, like the table: a job clocked in and out of four
+ * times is one line with its summed minutes, its break time and how many
+ * clock-ins it took — not four lines, three of them "late". New columns go
+ * on the END so a spreadsheet built on the old column order still lines up.
+ */
+function generateCSV(visits: Visit[], orgTz: string): string {
   const header = [
     "Employee",
     "Clock In",
@@ -245,25 +271,30 @@ function generateCSV(entries: TimesheetEntry[], orgTz: string): string {
     "Pay Rate",
     "Earned",
     "Pay System",
+    "Break Minutes",
+    "Clock-ins",
   ].join(",");
 
-  const rows = entries.map((e) =>
-    [
+  const rows = visits.map((v) => {
+    const e = v.entries[0];
+    return [
       csvField(e.employee_name),
-      csvField(formatDateTime(e.clock_in_at, orgTz)),
-      csvField(e.clock_out_at ? formatDateTime(e.clock_out_at, orgTz) : ""),
-      e.actual_minutes,
+      csvField(formatDateTime(v.clock_in_at, orgTz)),
+      csvField(v.clock_out_at ? formatDateTime(v.clock_out_at, orgTz) : ""),
+      v.worked_minutes,
       csvField(e.client_name),
       csvField(e.service_type),
       csvField(e.scheduled_at ? formatDateTime(e.scheduled_at, orgTz) : ""),
-      e.estimated_minutes ?? "",
-      csvField(e.punctuality),
-      csvField(e.completion),
+      v.estimated_minutes ?? "",
+      csvField(v.punctuality),
+      csvField(v.completion),
       (e.pay_rate_cents / 100).toFixed(2),
-      (e.earned_cents / 100).toFixed(2),
+      (v.earned_cents / 100).toFixed(2),
       e.engagement === "subcontractor" ? "Contractor statement" : "Payroll",
-    ].join(","),
-  );
+      v.break_minutes,
+      v.punch_count,
+    ].join(",");
+  });
 
   return [header, ...rows].join("\n");
 }
@@ -309,6 +340,321 @@ function PunchPin({
     >
       <MapPin className="h-3 w-3" />
     </a>
+  );
+}
+
+function ManualBadge() {
+  return (
+    <span
+      title="Manually entered"
+      className="rounded-full bg-sky-100 px-1.5 py-0.5 text-[9px] font-semibold text-sky-700 dark:bg-sky-950/40 dark:text-sky-300"
+    >
+      M
+    </span>
+  );
+}
+
+function ReviewBadge({ autoClosed }: { autoClosed: boolean }) {
+  return (
+    <span
+      title={
+        autoClosed
+          ? "Nobody clocked out — the system capped this shift. Confirm or correct the hours."
+          : "Flagged as implausible. Confirm or correct the hours."
+      }
+      className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold text-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
+    >
+      REVIEW
+    </span>
+  );
+}
+
+/**
+ * A visit as table rows: one summary row, plus — when it took more than one
+ * clock-in and the owner opens it — a row per punch, where each one is
+ * still edited, selected and deleted on its own. Shared by the per-employee
+ * table and "All entries" so the two can't drift.
+ */
+function VisitRows({
+  visit: v,
+  showEmployee,
+  orgTz,
+  expanded,
+  onToggleExpand,
+  selectedIds,
+  onToggleSelected,
+  onSetSelected,
+  onEdit,
+  onConfirm,
+  confirmPending,
+  onAttach,
+  attachPending,
+}: {
+  visit: Visit;
+  showEmployee: boolean;
+  orgTz: string;
+  expanded: boolean;
+  onToggleExpand: () => void;
+  selectedIds: Set<string>;
+  onToggleSelected: (id: string) => void;
+  onSetSelected: (ids: string[], on: boolean) => void;
+  onEdit: (entry: TimesheetEntry) => void;
+  onConfirm: (ids: string[]) => void;
+  confirmPending: boolean;
+  onAttach: (
+    entryId: string,
+    s: NonNullable<TimesheetEntry["attach_suggestion"]>,
+  ) => void;
+  attachPending: boolean;
+}) {
+  const ids = v.entries.map((e) => e.id);
+  const allSelected = ids.every((id) => selectedIds.has(id));
+  const single = v.punch_count === 1 ? v.entries[0] : null;
+  const first = v.entries[0];
+  const last = v.entries[v.entries.length - 1];
+  const anyManual = v.entries.some((e) => e.is_manual);
+  const flagged = isFlagged(v);
+  const Chevron = expanded ? ChevronDown : ChevronRight;
+
+  return (
+    <>
+      <tr
+        className={cn(
+          "group border-b border-border last:border-0",
+          allSelected && "bg-muted/40",
+          v.needs_review
+            ? "border-l-4 border-l-amber-500 bg-amber-50/70 dark:bg-amber-950/20"
+            : v.over_allotted_minutes > 0 &&
+                "border-l-4 border-l-orange-300 bg-orange-50/40 dark:border-l-orange-800 dark:bg-orange-950/10",
+        )}
+      >
+        <td className="px-2 py-2.5">
+          <input
+            type="checkbox"
+            aria-label={
+              single ? "Select entry" : `Select all ${v.punch_count} clock-ins`
+            }
+            checked={allSelected}
+            onChange={() => onSetSelected(ids, !allSelected)}
+          />
+        </td>
+        {showEmployee && (
+          <td className="px-4 py-2.5 font-medium">
+            <div className="flex items-center gap-1.5">
+              {first.employee_name}
+              {anyManual && <ManualBadge />}
+            </div>
+          </td>
+        )}
+        <td className="px-4 py-2.5 tabular-nums">
+          <div className="flex flex-wrap items-center gap-1.5">
+            {formatDateTime(v.clock_in_at, orgTz)}
+            <PunchPin
+              lat={first.clock_in_lat}
+              lng={first.clock_in_lng}
+              jobAddress={first.booking_address}
+              label="in"
+            />
+            {!showEmployee && anyManual && <ManualBadge />}
+            {v.needs_review && (
+              <ReviewBadge autoClosed={v.entries.some((e) => e.auto_closed)} />
+            )}
+            {v.over_allotted_minutes > 0 && (
+              <span
+                title={`Ran ${formatDurationMinutes(
+                  v.over_allotted_minutes,
+                )} past the time allotted for this job. Not necessarily wrong — confirm it before paying.`}
+                className="rounded-full bg-orange-100 px-1.5 py-0.5 text-[9px] font-semibold text-orange-800 dark:bg-orange-950/40 dark:text-orange-300"
+              >
+                +{formatDurationMinutes(v.over_allotted_minutes)}
+              </span>
+            )}
+          </div>
+          {!single && (
+            <button
+              type="button"
+              onClick={onToggleExpand}
+              aria-expanded={expanded}
+              className="mt-1 inline-flex items-center gap-0.5 whitespace-nowrap rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
+            >
+              <Chevron className="h-3 w-3" />
+              {v.punch_count} clock-ins
+            </button>
+          )}
+        </td>
+        <td className="px-4 py-2.5 tabular-nums">
+          {v.is_open ? (
+            <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              In progress
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5">
+              {formatDateTime(v.clock_out_at, orgTz)}
+              <PunchPin
+                lat={last.clock_out_lat}
+                lng={last.clock_out_lng}
+                jobAddress={last.booking_address}
+                label="out"
+              />
+            </span>
+          )}
+        </td>
+        <td className="px-4 py-2.5 tabular-nums">
+          <div className="font-medium">
+            {v.worked_minutes === 0 && v.is_open
+              ? "—"
+              : formatDurationMinutes(v.worked_minutes)}
+            {v.is_open && v.worked_minutes > 0 && (
+              <span className="font-normal text-muted-foreground"> so far</span>
+            )}
+          </div>
+          {v.break_minutes > 0 && (
+            <div
+              className="whitespace-nowrap text-[10px] text-muted-foreground"
+              title="Time between clocking out and clocking back in on this job"
+            >
+              {formatDurationMinutes(v.break_minutes)} break
+            </div>
+          )}
+        </td>
+        <td className="px-4 py-2.5 tabular-nums text-muted-foreground hidden sm:table-cell">
+          {v.estimated_minutes ? formatDurationMinutes(v.estimated_minutes) : "—"}
+        </td>
+        <td className="px-4 py-2.5 hidden sm:table-cell text-muted-foreground">
+          {first.client_name ?? categoryLabel(first.work_category)}
+          {single?.attach_suggestion && (
+            <button
+              type="button"
+              disabled={attachPending}
+              onClick={(e) => {
+                e.stopPropagation();
+                onAttach(single.id, single.attach_suggestion!);
+              }}
+              title={
+                single.attach_suggestion.candidateCount > 1
+                  ? `Best of ${single.attach_suggestion.candidateCount} overlapping jobs`
+                  : undefined
+              }
+              className="mt-1 block rounded-full bg-sky-500/10 px-2 py-0.5 text-left text-[10px] font-medium text-sky-700 hover:bg-sky-500/20 dark:text-sky-400"
+            >
+              Looks like {single.attach_suggestion.clientName} ·{" "}
+              {formatDateTime(single.attach_suggestion.scheduledAt, orgTz)} —
+              attach
+            </button>
+          )}
+        </td>
+        <td className="px-4 py-2.5 hidden md:table-cell">
+          <PunctualityBadge type={v.punctuality} minutes={v.punctuality_minutes} />
+        </td>
+        <td className="px-4 py-2.5 hidden md:table-cell">
+          <CompletionBadge
+            type={v.completion}
+            minutes={v.completion_diff_minutes}
+          />
+        </td>
+        <td className="px-4 py-2.5 text-right font-medium tabular-nums">
+          {formatCurrencyCents(v.earned_cents)}
+        </td>
+        <td className="px-2 py-2.5 text-right">
+          <span className="inline-flex items-center gap-1">
+            {flagged && (
+              <button
+                type="button"
+                onClick={() => onConfirm(ids)}
+                disabled={confirmPending}
+                title="These hours are right — clear the flag"
+                className="rounded-md border border-amber-400 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-50 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200 dark:hover:bg-amber-950/60"
+              >
+                Looks good
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => (single ? onEdit(single) : onToggleExpand())}
+              aria-label={single ? "Edit entry" : "Show clock-ins to edit"}
+              className="rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground group-hover:opacity-100"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+            </button>
+          </span>
+        </td>
+      </tr>
+      {!single &&
+        expanded &&
+        v.entries.map((e, i) => (
+          <tr
+            key={e.id}
+            className={cn(
+              "group border-b border-border bg-muted/20 text-muted-foreground last:border-0",
+              selectedIds.has(e.id) && "bg-muted/50",
+            )}
+          >
+            <td className="px-2 py-1.5">
+              <input
+                type="checkbox"
+                aria-label="Select this clock-in"
+                checked={selectedIds.has(e.id)}
+                onChange={() => onToggleSelected(e.id)}
+              />
+            </td>
+            {showEmployee && <td />}
+            <td className="px-4 py-1.5 tabular-nums">
+              <div className="flex items-center gap-1.5 pl-3">
+                <span aria-hidden>↳</span>
+                {formatDateTime(e.clock_in_at, orgTz)}
+                <PunchPin
+                  lat={e.clock_in_lat}
+                  lng={e.clock_in_lng}
+                  jobAddress={e.booking_address}
+                  label="in"
+                />
+                {e.is_manual && <ManualBadge />}
+                {e.needs_review && <ReviewBadge autoClosed={e.auto_closed} />}
+              </div>
+            </td>
+            <td className="px-4 py-1.5 tabular-nums">
+              {e.is_open ? (
+                <span className="text-emerald-600 dark:text-emerald-400">
+                  In progress
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5">
+                  {formatDateTime(e.clock_out_at, orgTz)}
+                  <PunchPin
+                    lat={e.clock_out_lat}
+                    lng={e.clock_out_lng}
+                    jobAddress={e.booking_address}
+                    label="out"
+                  />
+                </span>
+              )}
+            </td>
+            <td className="px-4 py-1.5 tabular-nums">
+              {e.is_open ? "—" : formatDurationMinutes(e.actual_minutes)}
+            </td>
+            <td className="hidden sm:table-cell" />
+            <td className="px-4 py-1.5 text-[10px] hidden sm:table-cell">
+              Clock-in {i + 1} of {v.punch_count}
+            </td>
+            <td className="hidden md:table-cell" />
+            <td className="hidden md:table-cell" />
+            <td className="px-4 py-1.5 text-right tabular-nums">
+              {formatCurrencyCents(e.earned_cents)}
+            </td>
+            <td className="px-2 py-1.5 text-right">
+              <button
+                type="button"
+                onClick={() => onEdit(e)}
+                aria-label="Edit this clock-in"
+                className="rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground group-hover:opacity-100"
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </button>
+            </td>
+          </tr>
+        ))}
+    </>
   );
 }
 
@@ -376,6 +722,28 @@ export function TimesheetsView({
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
+      return next;
+    });
+  }
+
+  function setSelected(ids: string[], on: boolean) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) {
+        if (on) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+  }
+
+  // Visits opened to show their individual clock-ins.
+  const [openVisits, setOpenVisits] = useState<Set<string>>(new Set());
+  function toggleVisit(key: string) {
+    setOpenVisits((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   }
@@ -487,18 +855,21 @@ export function TimesheetsView({
   const [reviewOnly, setReviewOnly] = useState(false);
   // One-tap "these capped hours are right" — clears the flag without
   // opening the editor. Same meaning as an edit-save: a human looked.
+  // A visit of several punches confirms every one of them: its overrun is
+  // measured across all of them, so it only clears when all are looked at.
   const [confirmPending, startConfirm] = useTransition();
-  function quickConfirm(id: string) {
+  function quickConfirm(ids: string[]) {
     startConfirm(async () => {
-      const fd = new FormData();
-      fd.set("id", id);
-      const r = await confirmTimeEntryAction(fd);
-      if (r.ok) {
-        toast.success("Hours confirmed");
-        router.refresh();
-      } else {
-        toast.error(r.error);
+      let failed: string | null = null;
+      for (const id of ids) {
+        const fd = new FormData();
+        fd.set("id", id);
+        const r = await confirmTimeEntryAction(fd);
+        if (!r.ok) failed = r.error;
       }
+      if (failed) toast.error(failed);
+      else toast.success("Hours confirmed");
+      router.refresh();
     });
   }
 
@@ -528,13 +899,19 @@ export function TimesheetsView({
     }
   }
 
-  const filteredEntries = entries.filter((e) => {
-    if (empFilter !== "all" && e.employee_id !== empFilter) return false;
-    if (manualOnly && !e.is_manual) return false;
-    if (reviewOnly && !(e.needs_review || e.over_allotted_minutes > 0))
-      return false;
-    return true;
-  });
+  // Punches grouped into visits AFTER the row filters (so "manual only"
+  // shows the manual punches), then the review filter judges whole visits —
+  // a visit's overrun only exists across all of its punches.
+  const filteredVisits = groupIntoVisits(
+    entries.filter((e) => {
+      if (empFilter !== "all" && e.employee_id !== empFilter) return false;
+      if (manualOnly && !e.is_manual) return false;
+      return true;
+    }),
+    (iso) => zonedYmd(new Date(iso), orgTz),
+  ).filter((v) => !reviewOnly || isFlagged(v));
+  // The punches behind the visits on screen — totals and bulk select.
+  const filteredEntries = filteredVisits.flatMap((v) => v.entries);
 
   function openCreate() {
     setDialogMode("create");
@@ -560,7 +937,11 @@ export function TimesheetsView({
     setDialogOpen(true);
   }
 
-  const summaries = buildSummaries(filteredEntries, employees, ptoInWindow);
+  const summaries = buildSummaries(filteredVisits, employees, ptoInWindow);
+  const totalBreakMinutes = filteredVisits.reduce(
+    (sum, v) => sum + v.break_minutes,
+    0,
+  );
 
   const totalHours = Math.round(
     filteredEntries.reduce((sum, e) => sum + e.actual_minutes, 0) / 60,
@@ -602,7 +983,7 @@ export function TimesheetsView({
   }
 
   function downloadReport() {
-    const csv = generateCSV(filteredEntries, orgTz);
+    const csv = generateCSV(filteredVisits, orgTz);
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -627,9 +1008,7 @@ export function TimesheetsView({
         // hours simply exceeded what the job allowed. The second is the
         // common case — nobody forgot anything, the job just ran long — and
         // it went completely unsurfaced before.
-        const flagged = filteredEntries.filter(
-          (e) => e.needs_review || e.over_allotted_minutes > 0,
-        );
+        const flagged = filteredVisits.filter(isFlagged);
         if (flagged.length === 0) {
           if (!reviewOnly) return null;
           // The filter is on but nothing flagged remains — say so instead
@@ -648,7 +1027,7 @@ export function TimesheetsView({
           );
         }
         const hrs =
-          flagged.reduce((sum, e) => sum + (e.actual_minutes ?? 0), 0) / 60;
+          flagged.reduce((sum, v) => sum + v.worked_minutes, 0) / 60;
         const cappedCount = flagged.filter((e) => e.needs_review).length;
         const overCount = flagged.filter(
           (e) => !e.needs_review && e.over_allotted_minutes > 0,
@@ -952,9 +1331,18 @@ export function TimesheetsView({
         <div className="rounded-xl border border-border bg-card px-4 py-3">
           <div className="text-xs text-muted-foreground">Shifts</div>
           <div className="mt-1 text-xl font-semibold tabular-nums">
-            {/* Same population as the hours/earnings cards beside it. */}
-            {filteredEntries.length}
+            {/* Same population as the hours/earnings cards beside it. One
+                per job per day — clocking out for a break and back in is
+                still one shift. */}
+            {filteredVisits.length}
           </div>
+          {filteredEntries.length > filteredVisits.length && (
+            <div className="mt-0.5 text-[11px] text-muted-foreground">
+              {filteredEntries.length} clock-ins
+              {totalBreakMinutes > 0 &&
+                ` · ${formatDurationMinutes(totalBreakMinutes)} on break`}
+            </div>
+          )}
         </div>
         <div className="rounded-xl border border-border bg-card px-4 py-3">
           <div className="text-xs text-muted-foreground">PTO hours</div>
@@ -1066,9 +1454,10 @@ export function TimesheetsView({
             // set, and the select-all below feeds bulk delete: with the
             // unfiltered list, "manual entries only" + select-all queued
             // every shift the person had for deletion.
-            const empEntries = filteredEntries.filter(
-              (e) => e.employee_id === emp.id,
+            const empVisits = filteredVisits.filter(
+              (v) => v.employee_id === emp.id,
             );
+            const empEntries = empVisits.flatMap((v) => v.entries);
             const hours = Math.floor(emp.totalMinutes / 60);
             const mins = emp.totalMinutes % 60;
             const empPto = ptoEntries.filter(
@@ -1107,6 +1496,11 @@ export function TimesheetsView({
                       <span>
                         {emp.shiftCount} shift{emp.shiftCount !== 1 ? "s" : ""}
                       </span>
+                      {emp.breakMinutes > 0 && (
+                        <span title="Time between clocking out and clocking back in on the same job">
+                          {formatDurationMinutes(emp.breakMinutes)} break
+                        </span>
+                      )}
                       {emp.otherMinutes > 0 && (
                         <span>
                           {Math.round((emp.jobMinutes / 60) * 10) / 10}h jobs ·{" "}
@@ -1212,142 +1606,23 @@ export function TimesheetsView({
                           </tr>
                         </thead>
                         <tbody>
-                          {empEntries.map((r) => (
-                            <tr
-                              key={r.id}
-                              className={cn(
-                                "group border-b border-border last:border-0",
-                                selectedIds.has(r.id) && "bg-muted/40",
-                                r.needs_review
-                                  ? "border-l-4 border-l-amber-500 bg-amber-50/70 dark:bg-amber-950/20"
-                                  : r.over_allotted_minutes > 0 &&
-                                      "border-l-4 border-l-orange-300 bg-orange-50/40 dark:border-l-orange-800 dark:bg-orange-950/10",
-                              )}
-                            >
-                              <td className="px-2 py-2.5">
-                                <input
-                                  type="checkbox"
-                                  aria-label="Select entry"
-                                  checked={selectedIds.has(r.id)}
-                                  onChange={() => toggleSelected(r.id)}
-                                />
-                              </td>
-                              <td className="px-4 py-2.5 tabular-nums">
-                                <div className="flex items-center gap-1.5">
-                                  {formatDateTime(r.clock_in_at, orgTz)}
-                                  <PunchPin
-                                    lat={r.clock_in_lat}
-                                    lng={r.clock_in_lng}
-                                    jobAddress={r.booking_address}
-                                    label="in"
-                                  />
-                                  {r.is_manual && (
-                                    <span
-                                      title="Manually entered"
-                                      className="rounded-full bg-sky-100 px-1.5 py-0.5 text-[9px] font-semibold text-sky-700 dark:bg-sky-950/40 dark:text-sky-300"
-                                    >
-                                      M
-                                    </span>
-                                  )}
-                                  {r.needs_review && (
-                                    <span
-                                      title={
-                                        r.auto_closed
-                                          ? "Nobody clocked out — the system capped this shift. Confirm or correct the hours."
-                                          : "Flagged as implausible. Confirm or correct the hours."
-                                      }
-                                      className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold text-amber-800 dark:bg-amber-950/40 dark:text-amber-300"
-                                    >
-                                      REVIEW
-                                    </span>
-                                  )}
-                                  {r.over_allotted_minutes > 0 && (
-                                    <span
-                                      title={`Ran ${formatDurationMinutes(
-                                        r.over_allotted_minutes,
-                                      )} past the time allotted for this job. Not necessarily wrong — confirm it before paying.`}
-                                      className="rounded-full bg-orange-100 px-1.5 py-0.5 text-[9px] font-semibold text-orange-800 dark:bg-orange-950/40 dark:text-orange-300"
-                                    >
-                                      +
-                                      {formatDurationMinutes(
-                                        r.over_allotted_minutes,
-                                      )}
-                                    </span>
-                                  )}
-                                </div>
-                              </td>
-                              <td className="px-4 py-2.5 tabular-nums">
-                                {r.is_open ? (
-                                  <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
-                                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                                    In progress
-                                  </span>
-                                ) : (
-                                  <span className="inline-flex items-center gap-1.5">
-                                    {formatDateTime(r.clock_out_at, orgTz)}
-                                    <PunchPin
-                                      lat={r.clock_out_lat}
-                                      lng={r.clock_out_lng}
-                                      jobAddress={r.booking_address}
-                                      label="out"
-                                    />
-                                  </span>
-                                )}
-                              </td>
-                              <td className="px-4 py-2.5 font-medium tabular-nums">
-                                {r.is_open
-                                  ? "—"
-                                  : formatDurationMinutes(r.actual_minutes)}
-                              </td>
-                              <td className="px-4 py-2.5 tabular-nums text-muted-foreground hidden sm:table-cell">
-                                {r.estimated_minutes
-                                  ? formatDurationMinutes(r.estimated_minutes)
-                                  : "—"}
-                              </td>
-                              <td className="px-4 py-2.5 hidden sm:table-cell text-muted-foreground">
-                                {r.client_name ??
-                                  categoryLabel(r.work_category)}
-                              </td>
-                              <td className="px-4 py-2.5 hidden md:table-cell">
-                                <PunctualityBadge
-                                  type={r.punctuality}
-                                  minutes={r.punctuality_minutes}
-                                />
-                              </td>
-                              <td className="px-4 py-2.5 hidden md:table-cell">
-                                <CompletionBadge
-                                  type={r.completion}
-                                  minutes={r.completion_diff_minutes}
-                                />
-                              </td>
-                              <td className="px-4 py-2.5 text-right font-medium tabular-nums">
-                                {formatCurrencyCents(r.earned_cents)}
-                              </td>
-                              <td className="px-2 py-2.5 text-right">
-                                <span className="inline-flex items-center gap-1">
-                                  {(r.needs_review ||
-                                    r.over_allotted_minutes > 0) && (
-                                    <button
-                                      type="button"
-                                      onClick={() => quickConfirm(r.id)}
-                                      disabled={confirmPending}
-                                      title="These hours are right — clear the flag"
-                                      className="rounded-md border border-amber-400 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-50 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200 dark:hover:bg-amber-950/60"
-                                    >
-                                      Looks good
-                                    </button>
-                                  )}
-                                  <button
-                                    type="button"
-                                    onClick={() => openEdit(r)}
-                                    aria-label="Edit entry"
-                                    className="rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground group-hover:opacity-100"
-                                  >
-                                    <Pencil className="h-3.5 w-3.5" />
-                                  </button>
-                                </span>
-                              </td>
-                            </tr>
+                          {empVisits.map((v) => (
+                            <VisitRows
+                              key={v.key}
+                              visit={v}
+                              showEmployee={false}
+                              orgTz={orgTz}
+                              expanded={openVisits.has(v.key)}
+                              onToggleExpand={() => toggleVisit(v.key)}
+                              selectedIds={selectedIds}
+                              onToggleSelected={toggleSelected}
+                              onSetSelected={setSelected}
+                              onEdit={openEdit}
+                              onConfirm={quickConfirm}
+                              confirmPending={confirmPending}
+                              onAttach={handleAttach}
+                              attachPending={attachPending}
+                            />
                           ))}
                         </tbody>
                       </table>
@@ -1412,141 +1687,23 @@ export function TimesheetsView({
                 </tr>
               </thead>
               <tbody>
-                {filteredEntries.map((r) => (
-                  <tr
-                    key={r.id}
-                    className={cn(
-                      "group border-b border-border last:border-0",
-                      selectedIds.has(r.id) && "bg-muted/40",
-                      r.needs_review
-                        ? "border-l-4 border-l-amber-500 bg-amber-50/70 dark:bg-amber-950/20"
-                        : r.over_allotted_minutes > 0 &&
-                            "border-l-4 border-l-orange-300 bg-orange-50/40 dark:border-l-orange-800 dark:bg-orange-950/10",
-                    )}
-                  >
-                    <td className="px-2 py-2.5">
-                      <input
-                        type="checkbox"
-                        aria-label="Select entry"
-                        checked={selectedIds.has(r.id)}
-                        onChange={() => toggleSelected(r.id)}
-                      />
-                    </td>
-                    <td className="px-4 py-2.5 font-medium">
-                      <div className="flex items-center gap-1.5">
-                        {r.employee_name}
-                        {r.is_manual && (
-                          <span
-                            title="Manually entered"
-                            className="rounded-full bg-sky-100 px-1.5 py-0.5 text-[9px] font-semibold text-sky-700 dark:bg-sky-950/40 dark:text-sky-300"
-                          >
-                            M
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-4 py-2.5 tabular-nums">
-                      <span className="inline-flex items-center gap-1.5">
-                        {formatDateTime(r.clock_in_at, orgTz)}
-                        <PunchPin
-                          lat={r.clock_in_lat}
-                          lng={r.clock_in_lng}
-                          jobAddress={r.booking_address}
-                          label="in"
-                        />
-                      </span>
-                    </td>
-                    <td className="px-4 py-2.5 tabular-nums">
-                      {r.is_open ? (
-                        <span className="inline-flex items-center gap-1 text-emerald-600">
-                          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                          In progress
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1.5">
-                          {formatDateTime(r.clock_out_at, orgTz)}
-                          <PunchPin
-                            lat={r.clock_out_lat}
-                            lng={r.clock_out_lng}
-                            jobAddress={r.booking_address}
-                            label="out"
-                          />
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-4 py-2.5 font-medium tabular-nums">
-                      {r.is_open
-                        ? "—"
-                        : formatDurationMinutes(r.actual_minutes)}
-                    </td>
-                    <td className="px-4 py-2.5 tabular-nums text-muted-foreground hidden sm:table-cell">
-                      {r.estimated_minutes
-                        ? formatDurationMinutes(r.estimated_minutes)
-                        : "—"}
-                    </td>
-                    <td className="px-4 py-2.5 hidden sm:table-cell text-muted-foreground">
-                      {r.client_name ?? categoryLabel(r.work_category)}
-                      {r.attach_suggestion && (
-                        <button
-                          type="button"
-                          disabled={attachPending}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleAttach(r.id, r.attach_suggestion!);
-                          }}
-                          title={
-                            r.attach_suggestion.candidateCount > 1
-                              ? `Best of ${r.attach_suggestion.candidateCount} overlapping jobs`
-                              : undefined
-                          }
-                          className="mt-1 block rounded-full bg-sky-500/10 px-2 py-0.5 text-left text-[10px] font-medium text-sky-700 hover:bg-sky-500/20 dark:text-sky-400"
-                        >
-                          Looks like {r.attach_suggestion.clientName} ·{" "}
-                          {formatDateTime(r.attach_suggestion.scheduledAt, orgTz)}{" "}
-                          — attach
-                        </button>
-                      )}
-                    </td>
-                    <td className="px-4 py-2.5 hidden md:table-cell">
-                      <PunctualityBadge
-                        type={r.punctuality}
-                        minutes={r.punctuality_minutes}
-                      />
-                    </td>
-                    <td className="px-4 py-2.5 hidden md:table-cell">
-                      <CompletionBadge
-                        type={r.completion}
-                        minutes={r.completion_diff_minutes}
-                      />
-                    </td>
-                    <td className="px-4 py-2.5 text-right font-medium tabular-nums">
-                      {formatCurrencyCents(r.earned_cents)}
-                    </td>
-                    <td className="px-2 py-2.5 text-right">
-                      <span className="inline-flex items-center gap-1">
-                        {(r.needs_review ||
-                          r.over_allotted_minutes > 0) && (
-                          <button
-                            type="button"
-                            onClick={() => quickConfirm(r.id)}
-                            disabled={confirmPending}
-                            title="These hours are right — clear the flag"
-                            className="rounded-md border border-amber-400 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-50 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200 dark:hover:bg-amber-950/60"
-                          >
-                            Confirm
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => openEdit(r)}
-                          aria-label="Edit entry"
-                          className="rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground group-hover:opacity-100"
-                        >
-                          <Pencil className="h-3.5 w-3.5" />
-                        </button>
-                      </span>
-                    </td>
-                  </tr>
+                {filteredVisits.map((v) => (
+                  <VisitRows
+                    key={v.key}
+                    visit={v}
+                    showEmployee={true}
+                    orgTz={orgTz}
+                    expanded={openVisits.has(v.key)}
+                    onToggleExpand={() => toggleVisit(v.key)}
+                    selectedIds={selectedIds}
+                    onToggleSelected={toggleSelected}
+                    onSetSelected={setSelected}
+                    onEdit={openEdit}
+                    onConfirm={quickConfirm}
+                    confirmPending={confirmPending}
+                    onAttach={handleAttach}
+                    attachPending={attachPending}
+                  />
                 ))}
               </tbody>
             </table>
