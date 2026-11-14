@@ -690,11 +690,26 @@ function TableView({
                     "cursor-pointer transition-colors hover:bg-muted/30",
                 )}
               >
-                <td className="px-3 py-2.5 tabular-nums whitespace-nowrap">
-                  {formatDateTime(r.scheduled_at, tz)}
+                {/* The date and the time each stay whole, and below xl the
+                    pair may break between them. As one unbreakable line it
+                    held this column at 194px on windows where the row had
+                    nothing left to give; from xl up there is room and it
+                    stays on one line. */}
+                <td className="px-3 py-2.5 tabular-nums xl:whitespace-nowrap">
+                  {formatDateTime(r.scheduled_at, tz)
+                    .split(" · ")
+                    .map((part, i) => (
+                      <span key={i}>
+                        {i > 0 && " · "}
+                        <span className="whitespace-nowrap">{part}</span>
+                      </span>
+                    ))}
                 </td>
+                {/* flex-wrap: the chips (recurring, double-booked, split)
+                    drop under the name on a tight row instead of holding
+                    the column as wide as all of them in a line. */}
                 <td className="px-3 py-2.5">
-                  <span className="flex items-center gap-1.5">
+                  <span className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
                     <span className="font-medium">{r.client_name}</span>
                     {r.series_id && (
                       <span
@@ -720,10 +735,22 @@ function TableView({
                     )}
                   </span>
                   {/* A 1000-row table can't take a note block, so one
-                      truncated line with the rest on hover. */}
+                      truncated line with the rest on hover.
+
+                      w-0 min-w-full: the note takes whatever width the
+                      column has and asks for none of its own. It used to be
+                      `max-w-[22rem] truncate`, and a line that can't wrap
+                      demands its full length, so one long note held the
+                      Client column at 376px however tight the row was. The
+                      table was then wider than its box and the Total
+                      column hung off the right edge: 65px over at a
+                      1441px window once the deactivated-crew sign added
+                      its 24px (Brian, 2026-11-14). The note is the one
+                      thing in the row that is already cut short, so it is
+                      the one that gives way. */}
                   {(r.notes || r.client_notes) && (
                     <span
-                      className="mt-0.5 block max-w-[22rem] truncate text-xs text-muted-foreground"
+                      className="mt-0.5 block w-0 min-w-full truncate text-xs text-muted-foreground"
                       title={[r.notes, r.client_notes]
                         .filter(Boolean)
                         .join("\n\n")}
@@ -740,28 +767,34 @@ function TableView({
                   {formatDurationMinutes(r.duration_minutes)}
                 </td>
                 <td className="px-3 py-2.5 hidden sm:table-cell">
-                  <div className="flex items-center gap-2">
-                    <InactiveCrewWarning
-                      names={r.inactive_crew_names}
-                      isSeries={Boolean(r.series_id)}
-                    />
-                    {r.assigned_name ? (
-                      <span className="text-muted-foreground">
-                        {r.assigned_name}
-                        {r.covered_by_name && (
-                          <span className="ml-1 text-xs">
-                            + {r.covered_by_name} (subcontractor)
-                          </span>
-                        )}
-                      </span>
-                    ) : r.covered_by_name ? (
-                      <span className="text-muted-foreground">
-                        {r.covered_by_name}
-                        <span className="ml-1 text-xs">(subcontractor)</span>
-                      </span>
-                    ) : (
-                      <AssignedCell row={r} canEdit={canEdit} />
-                    )}
+                  {/* flex-wrap: on a tight row the Change button drops
+                      under the name instead of holding the column wide. The
+                      warning sign and the name travel together, so the sign
+                      is never left on a line of its own. */}
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                    <span className="inline-flex items-center gap-1.5">
+                      <InactiveCrewWarning
+                        names={r.inactive_crew_names}
+                        isSeries={Boolean(r.series_id)}
+                      />
+                      {r.assigned_name ? (
+                        <span className="text-muted-foreground">
+                          {r.assigned_name}
+                          {r.covered_by_name && (
+                            <span className="ml-1 text-xs">
+                              + {r.covered_by_name} (subcontractor)
+                            </span>
+                          )}
+                        </span>
+                      ) : r.covered_by_name ? (
+                        <span className="text-muted-foreground">
+                          {r.covered_by_name}
+                          <span className="ml-1 text-xs">(subcontractor)</span>
+                        </span>
+                      ) : (
+                        <AssignedCell row={r} canEdit={canEdit} />
+                      )}
+                    </span>
                     {canEdit && employees.length > 0 && (
                       <span onClick={(e) => e.stopPropagation()}>
                         <AssignCrewButton
@@ -789,7 +822,7 @@ function TableView({
                     seriesId={r.series_id}
                   />
                 </td>
-                <td className="px-3 py-2.5 text-right tabular-nums font-medium">
+                <td className="px-3 py-2.5 whitespace-nowrap text-right tabular-nums font-medium">
                   {/* "$0.00" reads like a legitimate free visit; "No price"
                       reads like the loose end it usually is. A comp clean IS
                       a legitimate free visit, so it gets its own word. */}
