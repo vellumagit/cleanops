@@ -20,6 +20,8 @@ import {
 import { resolveSegmentWindows } from "@/lib/booking-segments";
 import { crewFromForm } from "@/lib/series-crew";
 import { crewEligibility } from "@/lib/crew-eligibility";
+import { explainDoubleBooking } from "@/lib/crew-clashes";
+import { isDoubleBookingError, type ProposedCrew } from "@/lib/crew-clash-text";
 import { memberDisplayName } from "@/lib/member-display";
 import { resyncBookingCalendarsPaced } from "@/lib/booking-calendar-sync";
 import { after } from "next/server";
@@ -196,6 +198,193 @@ type SplitSegmentInput = {
    *  2026-10-02, which fall back to cumulative — see lib/booking-segments.ts. */
   start_offset_minutes?: number;
 };
+
+/** The crew a form is asking for, in the shape the clash finder reads. */
+function proposedCrewFrom(
+  primaryId: string | null,
+  additionalIds: string[],
+  splits: SplitSegmentInput[],
+): ProposedCrew[] {
+  const crew: ProposedCrew[] = [];
+  const seen = new Set<string>();
+  const add = (c: ProposedCrew) => {
+    if (!c.membershipId || seen.has(c.membershipId)) return;
+    seen.add(c.membershipId);
+    crew.push(c);
+  };
+  if (splits.length > 0) {
+    for (const seg of resolveSegmentWindows(splits)) {
+      if (!seg.assigned_to) continue;
+      add({
+        membershipId: seg.assigned_to,
+        startOffsetMinutes: seg.start_offset_minutes,
+        durationMinutes: seg.duration_minutes,
+      });
+    }
+  } else if (primaryId) {
+    add({ membershipId: primaryId });
+  }
+  for (const id of additionalIds) add({ membershipId: id });
+  return crew;
+}
+
+/**
+ * The double-booking refusal for crew rows about to be written, in words:
+ * who is already on which job, when (src/lib/crew-clashes.ts). Reads each
+ * visit's time as the save would leave it. Null when nothing can be named.
+ */
+async function overlapExplanation(
+  organizationId: string,
+  rows: Array<{
+    booking_id: string;
+    membership_id: string;
+    split_start_offset_minutes: number | null;
+    split_duration_minutes: number | null;
+  }>,
+  bookingPatch: Record<string, Json>,
+): Promise<string | null> {
+  const admin = createSupabaseAdminClient();
+  const ids = [...new Set(rows.map((r) => r.booking_id))];
+  if (ids.length === 0) return null;
+  const visits: Array<{
+    id: string;
+    scheduled_at: string;
+    duration_minutes: number;
+    divide_hours_evenly: boolean | null;
+  }> = [];
+  // A this-and-future save can name hundreds of visits; keep each id list
+  // short enough for the URL it travels in.
+  for (let i = 0; i < ids.length; i += 150) {
+    const { data, error } = (await admin
+      .from("bookings")
+      .select("id, scheduled_at, duration_minutes, divide_hours_evenly")
+      .eq("organization_id", organizationId)
+      .in("id", ids.slice(i, i + 150))) as unknown as {
+      data: typeof visits | null;
+      error: { message: string } | null;
+    };
+    if (error) return null;
+    visits.push(...(data ?? []));
+  }
+  // The patch is the same for every visit, so only a single visit can be
+  // taking a new start time from it; length and shared hours apply to all.
+  const patchedStart =
+    ids.length === 1 && typeof bookingPatch.scheduled_at === "string"
+      ? bookingPatch.scheduled_at
+      : null;
+  const patchedMinutes =
+    typeof bookingPatch.duration_minutes === "number" ? bookingPatch.duration_minutes : null;
+  const patchedDivide =
+    typeof bookingPatch.divide_hours_evenly === "boolean" ? bookingPatch.divide_hours_evenly : null;
+  return explainDoubleBooking(
+    admin,
+    organizationId,
+    visits.map((v) => ({
+      bookingId: v.id,
+      scheduledAt: patchedStart ?? v.scheduled_at,
+      durationMinutes: patchedMinutes ?? v.duration_minutes,
+      divideHoursEvenly: patchedDivide ?? v.divide_hours_evenly,
+      crew: rows
+        .filter((r) => r.booking_id === v.id)
+        .map((r) => ({
+          membershipId: r.membership_id,
+          startOffsetMinutes: r.split_start_offset_minutes,
+          durationMinutes: r.split_duration_minutes,
+        })),
+    })),
+  );
+}
+
+/**
+ * The same, for a "this and all future" save on a recurring series: every
+ * visit from `from` on, with the crew the form asked for. These saves go
+ * through update_booking_series_with_assignees, where one clash anywhere
+ * in the series refuses all of it. This is the save Svitlana was making on
+ * 2026-11-14, and the one where the dates matter most: the cleaner was
+ * free on the visit she had open and booked months later.
+ *
+ * `replacementVisits`: the schedule itself is changing, so the dates to
+ * check are the new ones and the old visits are about to be replaced.
+ */
+async function seriesOverlapExplanation(
+  organizationId: string,
+  opts: {
+    seriesId: string;
+    from: string;
+    crew: ProposedCrew[];
+    /** The visit being edited, when its own start is changing. */
+    current?: { id: string; scheduledAt?: string | null };
+    durationMinutes?: number | null;
+    divideHoursEvenly?: boolean | null;
+    replacementVisits?: Array<{ scheduled_at: string }>;
+  },
+): Promise<string | null> {
+  if (opts.crew.length === 0) return null;
+  const admin = createSupabaseAdminClient();
+  const { data: future, error } = (await admin
+    .from("bookings")
+    .select("id, scheduled_at, duration_minutes, divide_hours_evenly")
+    .eq("organization_id", organizationId)
+    .eq("series_id", opts.seriesId)
+    .gte("scheduled_at", opts.from)
+    .not("status", "in", "(cancelled,completed)")
+    .order("scheduled_at")
+    .limit(1000)) as unknown as {
+    data: Array<{
+      id: string;
+      scheduled_at: string;
+      duration_minutes: number;
+      divide_hours_evenly: boolean | null;
+    }> | null;
+    error: { message: string } | null;
+  };
+  if (error) return null;
+  const existing = future ?? [];
+
+  if (opts.replacementVisits) {
+    const current = existing.find((v) => v.id === opts.current?.id);
+    const visits = [
+      // The visit being edited stays, at the time the form gives it.
+      ...(opts.current
+        ? [
+            {
+              bookingId: opts.current.id,
+              scheduledAt: opts.current.scheduledAt ?? current?.scheduled_at ?? opts.from,
+              durationMinutes: opts.durationMinutes ?? current?.duration_minutes ?? 0,
+              divideHoursEvenly: opts.divideHoursEvenly ?? current?.divide_hours_evenly ?? null,
+              crew: opts.crew,
+            },
+          ]
+        : []),
+      ...opts.replacementVisits.map((v) => ({
+        bookingId: null,
+        scheduledAt: v.scheduled_at,
+        durationMinutes: opts.durationMinutes ?? current?.duration_minutes ?? 0,
+        divideHoursEvenly: opts.divideHoursEvenly ?? null,
+        crew: opts.crew,
+      })),
+    ];
+    return explainDoubleBooking(
+      admin,
+      organizationId,
+      visits,
+      existing.map((v) => v.id),
+    );
+  }
+
+  return explainDoubleBooking(
+    admin,
+    organizationId,
+    existing.map((v) => ({
+      bookingId: v.id,
+      scheduledAt:
+        v.id === opts.current?.id && opts.current.scheduledAt ? opts.current.scheduledAt : v.scheduled_at,
+      durationMinutes: opts.durationMinutes ?? v.duration_minutes,
+      divideHoursEvenly: opts.divideHoursEvenly ?? v.divide_hours_evenly,
+      crew: opts.crew,
+    })),
+  );
+}
 
 /**
  * May these people be on a job's crew? The rule itself is crewEligibility
@@ -437,6 +626,13 @@ async function syncBookingAssignees(
     // failed reached nobody, and the owner saw "An unexpected error occurred"
     // with a digest only the server logs can decode. The reason belongs on the
     // form, next to the field the person was editing.
+    // A double-booking refusal says who, which job and when. The
+    // database's own sentence ("A cleaner already has an overlapping
+    // booking") named none of the three.
+    if (isDoubleBookingError(insertErr)) {
+      const clash = await overlapExplanation(organizationId, updatedRows, bookingPatch);
+      if (clash) return clash;
+    }
     const operation = Object.keys(bookingPatch).length
       ? "booking and crew"
       : "crew";
@@ -592,6 +788,13 @@ async function syncBookingAssigneesBulk(
     },
   );
   if (bulkErr) {
+    // One clash anywhere in the series refuses all of it, so the dates
+    // matter most here: a cleaner free this week and booked in January
+    // could otherwise never be found from the form.
+    if (isDoubleBookingError(bulkErr)) {
+      const clash = await overlapExplanation(organizationId, allRows, bookingPatch);
+      if (clash) return clash;
+    }
     const operation = Object.keys(bookingPatch).length
       ? "future bookings and crew"
       : "crew on the future bookings";
@@ -825,12 +1028,29 @@ export async function createBookingAction(
     .single());
 
   if (error) {
+    const doubleBooked = error.code === "23P01";
+    const clash =
+      doubleBooked
+        ? await explainDoubleBooking(createSupabaseAdminClient(), membership.organization_id, [
+            {
+              bookingId: null,
+              scheduledAt: parsed.data.scheduled_at,
+              durationMinutes: parsed.data.duration_minutes,
+              divideHoursEvenly: parsed.data.divide_hours_evenly,
+              crew: proposedCrewFrom(
+                effectiveAssignedTo,
+                readAdditionalAssignees(formData),
+                splits as SplitSegmentInput[],
+              ),
+            },
+          ])
+        : null;
     return {
       errors: {
-        _form:
-          error.code === "23P01"
-            ? "A cleaner on this job is already booked at that time. Pick a different cleaner or time, or move the other job first."
-            : error.message,
+        _form: doubleBooked
+          ? (clash ??
+            "A cleaner on this job is already booked at that time. Pick a different cleaner or time, or move the other job first.")
+          : error.message,
       },
       values: raw,
     };
@@ -1246,24 +1466,51 @@ export async function createRecurringBookingAction(
   // extend cron racing this exact window could otherwise double-insert the
   // same dates. Skipped rows are excluded from the returned set, so the
   // crew/calendar follow-ups below only touch what this call created.
-  const { data: insertedBookings, error: bookingsErr } = await (supabase
-    .from("bookings")
-    .upsert(bookingRows, {
-      onConflict: "series_id,scheduled_at",
-      ignoreDuplicates: true,
-    })
-    .select("id, scheduled_at") as unknown as {
+  //
+  // 23P01: the database refusing a cleaner who is already booked on one of
+  // these dates. Expected, and answered below with which dates.
+  const { data: insertedBookings, error: bookingsErr } = (await allowDbErrors(
+    ["23P01"],
+    supabase
+      .from("bookings")
+      .upsert(bookingRows, {
+        onConflict: "series_id,scheduled_at",
+        ignoreDuplicates: true,
+      })
+      .select("id, scheduled_at"),
+  )) as unknown as {
     data: { id: string; scheduled_at: string }[] | null;
-    error: { message: string } | null;
-  });
+    error: { message: string; code?: string | null } | null;
+  };
+
+  // Every date of the series, with the crew the form asked for: what the
+  // clash finder needs to say which dates are the problem. Asked after the
+  // failed series is cleaned up, so its own visits are not in the way.
+  const explainSeriesClash = () =>
+    explainDoubleBooking(
+      createSupabaseAdminClient(),
+      membership.organization_id,
+      bookingRows.map((row) => ({
+        bookingId: null,
+        scheduledAt: row.scheduled_at,
+        durationMinutes: parsed.data.duration_minutes,
+        crew: proposedCrewFrom(
+          parsed.data.assigned_to ?? null,
+          readAdditionalAssignees(formData),
+          [],
+        ),
+      })),
+    );
 
   if (bookingsErr) {
     const cleanupErrors = await cleanupFailedSeries();
+    const clash = isDoubleBookingError(bookingsErr) ? await explainSeriesClash() : null;
+    const reason = clash ?? bookingsErr.message;
     return {
       errors: {
         _form: cleanupErrors.length
-          ? `${bookingsErr.message} Cleanup also failed: ${cleanupErrors.join("; ")}`
-          : bookingsErr.message,
+          ? `${reason} Cleanup also failed: ${cleanupErrors.join("; ")}`
+          : reason,
       },
       values: raw,
     };
@@ -1300,11 +1547,17 @@ export async function createRecurringBookingAction(
       );
       if (seriesCrewErr) {
         const cleanupErrors = await cleanupFailedSeries();
+        // The crew save stops at the first visit it can't staff and names
+        // that one date. For a series, say all of them.
+        const clash = /already booked|overlapping booking/i.test(seriesCrewErr)
+          ? await explainSeriesClash()
+          : null;
+        const reason = clash ?? seriesCrewErr;
         return {
           errors: {
             _form: cleanupErrors.length
-              ? `${seriesCrewErr} Cleanup also failed: ${cleanupErrors.join("; ")}`
-              : seriesCrewErr,
+              ? `${reason} Cleanup also failed: ${cleanupErrors.join("; ")}`
+              : reason,
           },
           values: raw,
         };
@@ -2173,9 +2426,26 @@ export async function updateBookingAction(
           },
         );
         if (regenerationErr) {
+          const clash = isDoubleBookingError(regenerationErr)
+            ? await seriesOverlapExplanation(membership.organization_id, {
+                seriesId,
+                from: seriesScheduledAt,
+                crew: proposedCrewFrom(
+                  updateEffectiveAssignedTo,
+                  readAdditionalAssignees(formData),
+                  updateSplits as SplitSegmentInput[],
+                ),
+                current: { id, scheduledAt: parsed.data.scheduled_at },
+                durationMinutes: parsed.data.duration_minutes,
+                divideHoursEvenly: parsed.data.divide_hours_evenly,
+                replacementVisits: bookingRows,
+              })
+            : null;
           return {
             errors: {
-              _form: `Nothing was saved because the recurring update failed: ${regenerationErr.message}`,
+              _form:
+                clash ??
+                `Nothing was saved because the recurring update failed: ${regenerationErr.message}`,
             },
             values: raw,
           };
@@ -2318,9 +2588,25 @@ export async function updateBookingAction(
         },
       );
       if (seriesUpdateErr) {
+        const clash = isDoubleBookingError(seriesUpdateErr)
+          ? await seriesOverlapExplanation(membership.organization_id, {
+              seriesId,
+              from: seriesScheduledAt,
+              crew: proposedCrewFrom(
+                updateEffectiveAssignedTo,
+                readAdditionalAssignees(formData),
+                updateSplits as SplitSegmentInput[],
+              ),
+              current: { id, scheduledAt: parsed.data.scheduled_at },
+              durationMinutes: parsed.data.duration_minutes,
+              divideHoursEvenly: parsed.data.divide_hours_evenly,
+            })
+          : null;
         return {
           errors: {
-            _form: `Nothing was saved because the recurring update failed: ${seriesUpdateErr.message}`,
+            _form:
+              clash ??
+              `Nothing was saved because the recurring update failed: ${seriesUpdateErr.message}`,
           },
           values: raw,
         };
@@ -3706,8 +3992,17 @@ export async function assignBookingCrewAction(
         },
       );
     if (seriesUpdateErr) {
+      const clash = isDoubleBookingError(seriesUpdateErr)
+        ? await seriesOverlapExplanation(membership.organization_id, {
+            seriesId,
+            from: seriesScheduledAt,
+            crew: proposedCrewFrom(primaryId, additionalIds, []),
+          })
+        : null;
       return {
-        error: `Nothing was saved because the recurring crew update failed: ${seriesUpdateErr.message}`,
+        error:
+          clash ??
+          `Nothing was saved because the recurring crew update failed: ${seriesUpdateErr.message}`,
       };
     }
     const updatedSiblings = updatedRows ?? [];

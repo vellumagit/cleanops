@@ -15,6 +15,7 @@ import {
   sendBookingRescheduled,
 } from "@/lib/automations";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { explainDoubleBooking } from "@/lib/crew-clashes";
 
 export type RescheduleResult =
   /** notice: saved, but worth a second look (someone's off that day). */
@@ -240,10 +241,34 @@ export async function rescheduleBookingAction(
   );
   if (updateError) {
     const overlap = updateError.code === "23P01" || updateError.message.includes("overlapping booking");
+    // Who is already where: the crew as this drag would leave it, at the
+    // slot the card was dropped on. A split job keeps each person's own
+    // times.
+    const clash = overlap
+      ? await explainDoubleBooking(createSupabaseAdminClient(), membership.organization_id, [
+          {
+            bookingId: id,
+            scheduledAt: wall.scheduled_at,
+            durationMinutes: current.duration_minutes,
+            crew:
+              plan.kind === "changed"
+                ? plan.crew.map((membershipId) => ({ membershipId }))
+                : crewNow.map((membershipId) => {
+                    const row = (crewRows ?? []).find((r) => r.membership_id === membershipId);
+                    return {
+                      membershipId,
+                      startOffsetMinutes: row?.split_start_offset_minutes ?? null,
+                      durationMinutes: row?.split_duration_minutes ?? null,
+                    };
+                  }),
+          },
+        ])
+      : null;
     return {
       ok: false,
       error: overlap
-        ? "A cleaner on this job is already booked at that time. Move the other job first or pick a different slot."
+        ? (clash ??
+          "A cleaner on this job is already booked at that time. Move the other job first or pick a different slot.")
         : updateError.message,
     };
   }
