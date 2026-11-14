@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { JsonLd } from "@/components/json-ld";
-import { LANDING_PAGES } from "@/content/landing";
+import { MarketingFooter } from "@/components/marketing-chrome";
 import {
   faqPageJsonLd,
   organizationJsonLd,
@@ -89,6 +89,12 @@ export default async function Home() {
             className="hidden rounded-full px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:inline-flex"
           >
             Pricing
+          </Link>
+          <Link
+            href="/blog"
+            className="hidden rounded-full px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:inline-flex"
+          >
+            Blog
           </Link>
           <Link
             href="/login"
@@ -741,93 +747,7 @@ export default async function Home() {
         </div>
       </section>
 
-      {/* Footer */}
-      <footer className="relative z-10 border-t border-border bg-white/50 backdrop-blur-sm">
-        <div className="mx-auto w-full max-w-6xl px-6 py-12">
-          <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-5">
-            {/* Brand */}
-            <div className="sm:col-span-2 lg:col-span-1">
-              <Link href="/" className="flex items-center gap-2">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src="/sollos-logo.png"
-                  alt="Sollos 3"
-                  className="h-7 w-7 shrink-0 rounded-lg"
-                />
-                <span className="text-sm font-semibold tracking-tight">
-                  Sollos 3
-                </span>
-              </Link>
-              <p className="mt-3 text-xs leading-relaxed text-muted-foreground max-w-xs">
-                Operations software for cleaning companies. Bookings,
-                scheduling, employees, invoicing, chat and field tools —
-                all in one place.
-              </p>
-            </div>
-
-            {/* Product */}
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                Product
-              </p>
-              <ul className="mt-3 space-y-2">
-                <FooterLink href="#features">Features</FooterLink>
-                <FooterLink href="/pricing">Pricing</FooterLink>
-                <FooterLink href="#how-it-works">How it works</FooterLink>
-                <FooterLink href="/help">Help guides</FooterLink>
-                <FooterLink href="/signup">Start free trial</FooterLink>
-                <FooterLink href="/login">Sign in</FooterLink>
-              </ul>
-            </div>
-
-            {/* Solutions — one landing page per kind of cleaning business */}
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                Solutions
-              </p>
-              <ul className="mt-3 space-y-2">
-                {LANDING_PAGES.map((l) => (
-                  <FooterLink key={l.slug} href={`/${l.slug}`}>
-                    {l.navLabel}
-                  </FooterLink>
-                ))}
-              </ul>
-            </div>
-
-            {/* Legal */}
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                Legal
-              </p>
-              <ul className="mt-3 space-y-2">
-                <FooterLink href="/security">Security</FooterLink>
-                <FooterLink href="/privacy">Privacy policy</FooterLink>
-                <FooterLink href="/terms">Terms of service</FooterLink>
-              </ul>
-            </div>
-
-            {/* Contact */}
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                Contact
-              </p>
-              <ul className="mt-3 space-y-2">
-                <FooterLink href="mailto:hello@sollos3.com">hello@sollos3.com</FooterLink>
-                <FooterLink href="mailto:support@sollos3.com">support@sollos3.com</FooterLink>
-              </ul>
-            </div>
-          </div>
-
-          <div className="mt-10 flex flex-wrap items-center justify-between gap-4 border-t border-border pt-6">
-            <p className="text-xs text-muted-foreground">
-              © {new Date().getFullYear()} Sollos 3. All rights reserved.
-            </p>
-            <p className="text-xs text-muted-foreground">
-              Made with care for the people who keep things clean.
-            </p>
-          </div>
-        </div>
-      </footer>
+      <MarketingFooter />
     </main>
   );
 }
@@ -843,24 +763,6 @@ function Stat({ value, label }: { value: string; label: string }) {
   );
 }
 
-function FooterLink({
-  href,
-  children,
-}: {
-  href: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <li>
-      <Link
-        href={href}
-        className="text-xs text-muted-foreground hover:text-foreground transition-colors"
-      >
-        {children}
-      </Link>
-    </li>
-  );
-}
 
 const FEATURES = [
   {

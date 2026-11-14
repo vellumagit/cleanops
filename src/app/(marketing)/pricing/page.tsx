@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { MarketingFooter } from "@/components/marketing-chrome";
 import {
   ArrowRight,
   Check,
@@ -42,6 +43,12 @@ export default function PricingPage() {
             className="rounded-full px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
             Home
+          </Link>
+          <Link
+            href="/blog"
+            className="hidden rounded-full px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:inline-flex"
+          >
+            Blog
           </Link>
           <Link
             href="/login"
@@ -371,24 +378,7 @@ export default function PricingPage() {
       </section>
 
       {/* Footer */}
-      <footer className="relative z-10 border-t border-border bg-white/50 backdrop-blur-sm">
-        <div className="mx-auto w-full max-w-6xl px-6 py-8">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <p className="text-xs text-muted-foreground">
-              © {new Date().getFullYear()} Sollos 3
-            </p>
-            <nav className="flex items-center gap-4 text-xs text-muted-foreground">
-              <Link href="/privacy" className="hover:text-foreground">Privacy</Link>
-              <span>·</span>
-              <Link href="/terms" className="hover:text-foreground">Terms</Link>
-              <span>·</span>
-              <Link href="/help" className="hover:text-foreground">Help</Link>
-              <span>·</span>
-              <Link href="mailto:hello@sollos3.com" className="hover:text-foreground">Contact</Link>
-            </nav>
-          </div>
-        </div>
-      </footer>
+      <MarketingFooter />
     </main>
   );
 }

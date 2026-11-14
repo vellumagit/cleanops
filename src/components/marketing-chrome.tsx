@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { LANDING_PAGES } from "@/content/landing";
 
 /**
  * Header and footer for public pages that aren't the homepage — the same
@@ -29,6 +30,12 @@ export function MarketingHeader() {
           Pricing
         </Link>
         <Link
+          href="/blog"
+          className="hidden rounded-full px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:inline-flex"
+        >
+          Blog
+        </Link>
+        <Link
           href="/login"
           className="rounded-full px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
         >
@@ -48,32 +55,85 @@ export function MarketingHeader() {
   );
 }
 
+/**
+ * The one footer for every public page: home, pricing, the landing pages,
+ * help and the blog. Until 2026-11-14 the homepage had this full footer and
+ * every other page a one-line version with different links, so the blog
+ * looked like a different site and the homepage had no way to reach it.
+ */
 export function MarketingFooter() {
   return (
     <footer className="relative z-10 border-t border-border bg-white/50 backdrop-blur-sm">
-      <div className="mx-auto w-full max-w-6xl px-6 py-8">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <p className="text-xs text-muted-foreground">
-            © {new Date().getFullYear()} Sollos 3
-          </p>
-          <nav className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
-            <Link href="/pricing" className="hover:text-foreground">Pricing</Link>
-            <span>·</span>
-            <Link href="/help" className="hover:text-foreground">Help</Link>
-            <span>·</span>
-            <Link href="/blog" className="hover:text-foreground">Blog</Link>
-            <span>·</span>
-            <Link href="/security" className="hover:text-foreground">Security</Link>
-            <span>·</span>
-            <Link href="/privacy" className="hover:text-foreground">Privacy</Link>
-            <span>·</span>
-            <Link href="/terms" className="hover:text-foreground">Terms</Link>
-            <span>·</span>
-            <Link href="mailto:hello@sollos3.com" className="hover:text-foreground">Contact</Link>
-          </nav>
+      <div className="mx-auto w-full max-w-6xl px-6 py-12">
+        <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="sm:col-span-2 lg:col-span-1">
+            <Link href="/" className="flex items-center gap-2">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/sollos-logo.png" alt="Sollos 3" className="h-7 w-7 shrink-0 rounded-lg" />
+              <span className="text-sm font-semibold tracking-tight">Sollos 3</span>
+            </Link>
+            <p className="mt-3 max-w-xs text-xs leading-relaxed text-muted-foreground">
+              Operations software for cleaning companies. Bookings, scheduling, employees, invoicing, chat and field
+              tools — all in one place.
+            </p>
+          </div>
+
+          <FooterColumn title="Product">
+            <FooterLink href="/#features">Features</FooterLink>
+            <FooterLink href="/pricing">Pricing</FooterLink>
+            <FooterLink href="/#how-it-works">How it works</FooterLink>
+            <FooterLink href="/help">Help guides</FooterLink>
+            <FooterLink href="/blog">Blog</FooterLink>
+            <FooterLink href="/signup">Start free trial</FooterLink>
+            <FooterLink href="/login">Sign in</FooterLink>
+          </FooterColumn>
+
+          {/* One landing page per kind of cleaning business */}
+          <FooterColumn title="Solutions">
+            {LANDING_PAGES.map((l) => (
+              <FooterLink key={l.slug} href={`/${l.slug}`}>
+                {l.navLabel}
+              </FooterLink>
+            ))}
+          </FooterColumn>
+
+          <FooterColumn title="Legal">
+            <FooterLink href="/security">Security</FooterLink>
+            <FooterLink href="/privacy">Privacy policy</FooterLink>
+            <FooterLink href="/terms">Terms of service</FooterLink>
+          </FooterColumn>
+
+          <FooterColumn title="Contact">
+            <FooterLink href="mailto:hello@sollos3.com">hello@sollos3.com</FooterLink>
+            <FooterLink href="mailto:support@sollos3.com">support@sollos3.com</FooterLink>
+          </FooterColumn>
+        </div>
+
+        <div className="mt-10 flex flex-wrap items-center justify-between gap-4 border-t border-border pt-6">
+          <p className="text-xs text-muted-foreground">© {new Date().getFullYear()} Sollos 3. All rights reserved.</p>
+          <p className="text-xs text-muted-foreground">Made with care for the people who keep things clean.</p>
         </div>
       </div>
     </footer>
+  );
+}
+
+function FooterColumn({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{title}</p>
+      <ul className="mt-3 space-y-2">{children}</ul>
+    </div>
+  );
+}
+
+function FooterLink({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <li>
+      <Link href={href} className="text-xs text-muted-foreground transition-colors hover:text-foreground">
+        {children}
+      </Link>
+    </li>
   );
 }
 
