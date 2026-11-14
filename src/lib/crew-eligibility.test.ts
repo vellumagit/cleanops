@@ -69,3 +69,35 @@ describe("seriesWithoutMember", () => {
     });
   });
 });
+
+describe("inactiveCrewWarning", () => {
+  it("says nothing when everyone on the job is active", async () => {
+    const { inactiveCrewWarning } = await import("./crew-eligibility");
+    expect(inactiveCrewWarning([], false)).toBeNull();
+    expect(inactiveCrewWarning([], true)).toBeNull();
+  });
+
+  it("names the person and says what to do", async () => {
+    const { inactiveCrewWarning } = await import("./crew-eligibility");
+    const text = inactiveCrewWarning(["Olga Musnytska"], false);
+    expect(text).toContain("Olga Musnytska is deactivated");
+    expect(text).toContain("Change the crew");
+    expect(text).not.toMatch(/recurring/);
+  });
+
+  it("on a recurring booking, points at the series", async () => {
+    const { inactiveCrewWarning } = await import("./crew-eligibility");
+    const text = inactiveCrewWarning(["Olga Musnytska", "Anna Vasylieva"], true);
+    expect(text).toContain("Olga Musnytska and Anna Vasylieva are deactivated");
+    expect(text).toContain("all future bookings");
+    expect(text).toContain("recurring series");
+  });
+
+  it("only a job still to be done is worth warning about", async () => {
+    const { jobStillOpen } = await import("./crew-eligibility");
+    expect(jobStillOpen("confirmed")).toBe(true);
+    expect(jobStillOpen("in_progress")).toBe(true);
+    expect(jobStillOpen("completed")).toBe(false);
+    expect(jobStillOpen("cancelled")).toBe(false);
+  });
+});

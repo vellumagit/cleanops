@@ -26,6 +26,8 @@ import {
 } from "@/lib/format";
 import { fetchJobPhotos } from "@/lib/job-photos";
 import { memberDisplayName } from "@/lib/member-display";
+import { jobStillOpen } from "@/lib/crew-eligibility";
+import { InactiveCrewWarning } from "@/components/inactive-crew-warning";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { getFlaggedCrewIds } from "@/lib/crew-accommodations";
 import { resolveFreelancerCoverageNames } from "@/lib/booking-coverage";
@@ -127,7 +129,7 @@ export default async function BookingDetailPage({
         estimate_id, series_id,
         client:clients ( id, name, phone, email, address, notes ),
         assigned:memberships!bookings_assigned_to_fkey (
-          id, display_name, profile:profiles ( full_name )
+          id, display_name, status, profile:profiles ( full_name )
         )
       `,
     )
@@ -371,7 +373,7 @@ export default async function BookingDetailPage({
   const { data: crewRows } = (await supabase
     .from("booking_assignees" as never)
     .select(
-      "membership_id, is_primary, acceptance_status, responded_at, membership:memberships ( display_name, profile:profiles ( full_name ) )",
+      "membership_id, is_primary, acceptance_status, responded_at, membership:memberships ( display_name, status, profile:profiles ( full_name ) )",
     )
     .eq("booking_id" as never, booking.id as never)
     .order(
@@ -384,10 +386,28 @@ export default async function BookingDetailPage({
       responded_at: string | null;
       membership: {
         display_name: string | null;
+        status?: string | null;
         profile: { full_name: string | null } | null;
       } | null;
     }> | null;
   };
+  // Anyone on this job who has been deactivated, while the job is still to
+  // be done: the warning sign beside "Assigned" (see inactive-crew-warning).
+  const inactiveCrewNames = jobStillOpen(booking.status)
+    ? [
+        ...new Set(
+          [
+            (booking.assigned as { status?: string | null } | null)?.status &&
+            (booking.assigned as { status?: string | null }).status !== "active"
+              ? memberDisplayName(booking.assigned as Parameters<typeof memberDisplayName>[0])
+              : null,
+            ...(crewRows ?? [])
+              .filter((r) => r.membership?.status && r.membership.status !== "active")
+              .map((r) => memberDisplayName(r.membership ?? {})),
+          ].filter((n): n is string => !!n),
+        ),
+      ]
+    : [];
   const crew = (crewRows ?? []).map((r, i) => ({
     key: `${i}`,
     name:
@@ -644,6 +664,14 @@ export default async function BookingDetailPage({
               <div>
                 <dt className="text-xs text-muted-foreground">Assigned</dt>
                 <dd className="mt-0.5 font-medium text-foreground">
+                  {inactiveCrewNames.length > 0 && (
+                    <span className="mr-1.5">
+                      <InactiveCrewWarning
+                        names={inactiveCrewNames}
+                        isSeries={Boolean((booking as { series_id?: string | null }).series_id)}
+                      />
+                    </span>
+                  )}
                   {booking.assigned ? (
                     memberDisplayName(booking.assigned)
                   ) : coveringFreelancerNames.length > 0 ? (

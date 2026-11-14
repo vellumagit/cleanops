@@ -12,6 +12,7 @@ import { describeRecurrence } from "@/lib/recurrence";
 import { getFlaggedCrewIds } from "@/lib/crew-accommodations";
 import { resolveFreelancerCoverageNames } from "@/lib/booking-coverage";
 import { selectInChunks } from "@/lib/supabase/chunked-in";
+import { jobStillOpen } from "@/lib/crew-eligibility";
 import { BookingsTable, type BookingRow } from "./bookings-table";
 
 export const metadata = { title: "Bookings" };
@@ -214,6 +215,50 @@ export default async function BookingsPage({
     }
   }
 
+  // People on these bookings who have been deactivated. The list showed
+  // their name like anyone else's, so a job looked staffed by someone who
+  // could not turn up (Svit, 2026-11-14: 52 upcoming visits of one series
+  // led by a placeholder deactivated in May). Each such booking gets a
+  // warning sign beside its crew; finished and cancelled jobs don't, since
+  // there it is just history.
+  const activeIds = new Set(employees.map((e) => e.id));
+  const crewByBooking = new Map<string, Set<string>>();
+  const onCrew = (bookingId: string, memberId: string | null) => {
+    if (!memberId) return;
+    const set = crewByBooking.get(bookingId) ?? new Set<string>();
+    set.add(memberId);
+    crewByBooking.set(bookingId, set);
+  };
+  for (const b of data ?? []) onCrew(b.id, b.assigned_to);
+  for (const r of assigneesData ?? []) onCrew(r.booking_id, r.membership_id);
+  const inactiveIds = [
+    ...new Set([...crewByBooking.values()].flatMap((s) => [...s])),
+  ].filter((mid) => !activeIds.has(mid));
+  const inactiveNames = new Map<string, string>();
+  if (inactiveIds.length > 0) {
+    const { data: gone } = await selectInChunks(inactiveIds, (chunk) =>
+      supabase
+        .from("memberships")
+        .select("id, display_name, profile:profiles ( full_name )")
+        .eq("organization_id", membership.organization_id)
+        .in("id", chunk) as unknown as Promise<{
+        data: Array<{
+          id: string;
+          display_name: string | null;
+          profile: { full_name: string | null } | null;
+        }> | null;
+        error: { message: string } | null;
+      }>,
+    );
+    for (const m of gone ?? []) inactiveNames.set(m.id, memberDisplayName(m));
+  }
+  const inactiveCrewOf = (bookingId: string, status: string): string[] =>
+    jobStillOpen(status)
+      ? [...(crewByBooking.get(bookingId) ?? [])]
+          .filter((mid) => inactiveNames.has(mid))
+          .map((mid) => inactiveNames.get(mid) as string)
+      : [];
+
   // Subcontractor coverage — who claimed a shift offer on each booking. Read
   // from the claims table, not job_offers.filled_*: a 1-of-N claim leaves the
   // offer 'open' and a later claim overwrites the single filled pointer, so
@@ -238,6 +283,7 @@ export default async function BookingsPage({
     assigned_name: b.assigned ? memberDisplayName(b.assigned) : null,
     covered_by_name: coverageMap.get(b.id)?.join(", ") ?? null,
     assigned_to: b.assigned_to,
+    inactive_crew_names: inactiveCrewOf(b.id, b.status),
     additional_assignee_ids: additionalByBooking.get(b.id) ?? [],
     // Per-booking flag wins when set; otherwise the org default. Matches
     // resolveTeamDivision, which is what the rest of the app divides by.

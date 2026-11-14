@@ -29,6 +29,7 @@ import {
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { AssignCrewButton } from "./assign-crew-button";
+import { InactiveCrewWarning } from "@/components/inactive-crew-warning";
 import type { AssignableEmployee } from "./assign-crew-dialog";
 
 import {
@@ -88,6 +89,10 @@ export type BookingRow = {
   /** Primary assignee membership id — feeds the Assign dialog's
    *  pre-filled radio so opening it shows the current state. */
   assigned_to: string | null;
+  /** People on this booking (lead or crew) who have been deactivated, for a
+   *  job that is still to be done. Empty otherwise. Drives the warning sign
+   *  beside the crew. */
+  inactive_crew_names: string[];
   /** Non-primary crew membership ids on this booking, sourced from
    *  the booking_assignees junction. Pre-checked in the dialog. */
   additional_assignee_ids: string[];
@@ -736,6 +741,10 @@ function TableView({
                 </td>
                 <td className="px-3 py-2.5 hidden sm:table-cell">
                   <div className="flex items-center gap-2">
+                    <InactiveCrewWarning
+                      names={r.inactive_crew_names}
+                      isSeries={Boolean(r.series_id)}
+                    />
                     {r.assigned_name ? (
                       <span className="text-muted-foreground">
                         {r.assigned_name}
@@ -942,6 +951,10 @@ function CardsView({
                   )}
                   <div className="flex items-center gap-1.5">
                     <User className="h-3 w-3 shrink-0" />
+                    <InactiveCrewWarning
+                      names={r.inactive_crew_names}
+                      isSeries={Boolean(r.series_id)}
+                    />
                     {r.assigned_name ? (
                       <span>
                         {r.assigned_name}

@@ -119,3 +119,28 @@ export function seriesWithoutMember(
     crew: crew && crew.length > 0 ? crew : null,
   };
 }
+
+/** A job that is still to be done: the only kind worth warning about. A
+ *  finished or cancelled job naming someone who has since left is history. */
+export function jobStillOpen(status: string): boolean {
+  return status !== "completed" && status !== "cancelled";
+}
+
+/**
+ * What the warning sign beside a booking's crew says when someone on it has
+ * been deactivated, or null when nobody has.
+ *
+ * Before 2026-11-14 the bookings list showed a deactivated cleaner's name
+ * like anyone else's: the job looked staffed, and nothing said the person
+ * on it could not turn up. For a recurring booking the fix has to reach the
+ * series, or the next visit is the same again, so the text says that.
+ */
+export function inactiveCrewWarning(names: string[], isSeries: boolean): string | null {
+  if (names.length === 0) return null;
+  const who = listNames(names);
+  const one = names.length === 1;
+  const lead = `${who} ${one ? "is" : "are"} deactivated and can't do this job.`;
+  return isSeries
+    ? `${lead} Change the crew, and choose "all future bookings" when you save so the rest of this recurring series is updated too.`
+    : `${lead} Change the crew to someone active.`;
+}
