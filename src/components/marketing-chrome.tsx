@@ -61,6 +61,8 @@ export function MarketingFooter() {
             <span>·</span>
             <Link href="/help" className="hover:text-foreground">Help</Link>
             <span>·</span>
+            <Link href="/blog" className="hover:text-foreground">Blog</Link>
+            <span>·</span>
             <Link href="/security" className="hover:text-foreground">Security</Link>
             <span>·</span>
             <Link href="/privacy" className="hover:text-foreground">Privacy</Link>

@@ -36,6 +36,9 @@ const BaseSchema = z.object({
   TWILIO_ENABLED: z.enum(["true", "false"]).optional(),
   TWILIO_ACCOUNT_SID: z.string().optional(),
   TWILIO_AUTH_TOKEN: z.string().optional(),
+  // Signs Holo's blog webhook (app/api/integrations/holo/webhook). Unset:
+  // the webhook answers 503 and nothing is published.
+  HOLO_WEBHOOK_SECRET: z.string().optional(),
   TWILIO_FROM_NUMBER: z.string().optional(),
 
   // Cloudflare Turnstile on the signup form. Site key ships to the browser;

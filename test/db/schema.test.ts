@@ -69,6 +69,8 @@ describe("row-level security", () => {
   it("only the known service-only tables have no policy", async () => {
     const SERVICE_ONLY = [
       "api_keys",
+      // Public blog pages read it on the server; Holo's webhook writes it (2026-11-13).
+      "blog_posts",
       "changelog_entries",
       "cron_runs",
       "email_suppressions",

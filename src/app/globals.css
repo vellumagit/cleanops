@@ -537,3 +537,31 @@
     transform: none;
   }
 }
+
+/* Blog articles (app/blog/[slug]): Holo's HTML, already cleaned to plain
+   article tags (lib/blog.ts). No typography plugin in this project, so the
+   few elements an article can contain are styled here. */
+.blog-article {
+  font-size: 1rem;
+  line-height: 1.75;
+  color: var(--color-foreground);
+}
+.blog-article > * + * { margin-top: 1.1em; }
+.blog-article h2 { margin-top: 1.8em; font-size: 1.45rem; line-height: 1.3; font-weight: 700; letter-spacing: -0.01em; }
+.blog-article h3 { margin-top: 1.5em; font-size: 1.2rem; line-height: 1.35; font-weight: 650; }
+.blog-article h4, .blog-article h5, .blog-article h6 { margin-top: 1.3em; font-weight: 650; }
+.blog-article :first-child { margin-top: 0; }
+.blog-article a { color: var(--color-primary); text-decoration: underline; text-underline-offset: 2px; }
+.blog-article ul, .blog-article ol { padding-left: 1.4em; }
+.blog-article ul { list-style: disc; }
+.blog-article ol { list-style: decimal; }
+.blog-article li + li { margin-top: 0.35em; }
+.blog-article blockquote { border-left: 3px solid var(--color-border); padding-left: 1em; color: var(--color-muted-foreground); }
+.blog-article img { max-width: 100%; height: auto; border-radius: 0.6rem; }
+.blog-article figcaption { margin-top: 0.4em; font-size: 0.85rem; color: var(--color-muted-foreground); }
+.blog-article code { font-size: 0.9em; background: color-mix(in oklab, var(--color-foreground) 7%, transparent); padding: 0.1em 0.35em; border-radius: 0.3em; }
+.blog-article pre { overflow-x: auto; padding: 1em; border-radius: 0.6rem; background: color-mix(in oklab, var(--color-foreground) 6%, transparent); }
+.blog-article pre code { background: none; padding: 0; }
+.blog-article table { width: 100%; border-collapse: collapse; display: block; overflow-x: auto; }
+.blog-article th, .blog-article td { border: 1px solid var(--color-border); padding: 0.45em 0.7em; text-align: left; }
+.blog-article hr { border: 0; border-top: 1px solid var(--color-border); }
