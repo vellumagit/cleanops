@@ -5,7 +5,8 @@ import { runFailClosed } from "@/lib/supabase/query-guard";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { zonedDayStartUtc, zonedMidnightUtc } from "@/lib/wall-clock";
 import { memberDisplayName } from "@/lib/member-display";
-import { groupEntriesForRun, runTotalCents } from "@/lib/subcontractor-run";
+import { groupEntriesForRun, runTotalCents, type RunItemDraft } from "@/lib/subcontractor-run";
+import { totalAddons, type AddonRow } from "@/lib/pay-addons";
 
 /**
  * Subcontractor statement creation, moved verbatim from
@@ -159,7 +160,43 @@ async function createContractorRunForOrgImpl(opts: CreateStatementOpts): Promise
     }
   }
 
-  const items = groupEntriesForRun(entries ?? [], rateById);
+  // Add-ons (travel, reimbursements) dated in the window and not yet on a
+  // statement. Only for people paid as contractors: an employee's extra
+  // pay is a bonus, and goes through the payroll run.
+  let addonQuery = admin
+    .from("pay_addons" as never)
+    .select("id, membership_id, kind, amount_cents")
+    .eq("organization_id" as never, organizationId as never)
+    .is("subcontractor_run_id" as never, null as never)
+    .lte("work_date" as never, period_end as never)
+    .in("membership_id" as never, (subIds.length > 0 ? subIds : ["00000000-0000-0000-0000-000000000000"]) as never);
+  if (!includeStragglers) addonQuery = addonQuery.gte("work_date" as never, period_start as never);
+  const { data: addonRows } = (await addonQuery) as unknown as { data: AddonRow[] | null };
+  const addons = totalAddons(addonRows ?? []);
+
+  const hourItems = groupEntriesForRun(entries ?? [], rateById);
+  type StatementItem = RunItemDraft & { addonsCents: number; reimbursementCents: number; addonIds: string[] };
+  const byMember = new Map<string, StatementItem>(
+    hourItems.map((i) => [i.membershipId, { ...i, addonsCents: 0, reimbursementCents: 0, addonIds: [] }]),
+  );
+  for (const [memberId, t] of addons) {
+    const item = byMember.get(memberId) ?? {
+      membershipId: memberId,
+      minutes: 0,
+      entryCount: 0,
+      totalCents: 0,
+      entryIds: [],
+      addonsCents: 0,
+      reimbursementCents: 0,
+      addonIds: [],
+    };
+    item.addonsCents += t.addonsCents;
+    item.reimbursementCents += t.reimbursementCents;
+    item.totalCents += t.addonsCents;
+    item.addonIds.push(...t.ids);
+    byMember.set(memberId, item);
+  }
+  const items = [...byMember.values()].sort((a, b) => b.totalCents - a.totalCents);
   if (items.length === 0) {
     return {
       ok: false,
@@ -201,6 +238,8 @@ async function createContractorRunForOrgImpl(opts: CreateStatementOpts): Promise
         minutes: i.minutes,
         entry_count: i.entryCount,
         total_cents: i.totalCents,
+        addons_cents: i.addonsCents,
+        reimbursement_cents: i.reimbursementCents,
       })) as never,
     )) as unknown as { error: { message: string } | null };
   if (itemsErr) {
@@ -248,6 +287,41 @@ async function createContractorRunForOrgImpl(opts: CreateStatementOpts): Promise
         stampErr?.message ??
         "Another statement consumed some of these hours at the same moment — check the statements list before trying again.",
     };
+  }
+
+  // The add-ons, claimed the same way: only rows still on no statement.
+  const addonIds = items.flatMap((i) => i.addonIds);
+  if (addonIds.length > 0) {
+    const { data: claimedAddons, error: addonStampErr } = (await admin
+      .from("pay_addons" as never)
+      .update({ subcontractor_run_id: run.id } as never)
+      .is("subcontractor_run_id" as never, null as never)
+      .eq("organization_id" as never, organizationId as never)
+      .in("id" as never, addonIds as never)
+      .select("id")) as unknown as {
+      data: Array<{ id: string }> | null;
+      error: { message: string } | null;
+    };
+    if (addonStampErr || (claimedAddons?.length ?? 0) !== addonIds.length) {
+      await admin
+        .from("pay_addons" as never)
+        .update({ subcontractor_run_id: null } as never)
+        .eq("subcontractor_run_id" as never, run.id as never);
+      await admin
+        .from("time_entries")
+        .update({ subcontractor_run_id: null } as never)
+        .eq("subcontractor_run_id" as never, run.id as never);
+      await admin
+        .from("subcontractor_pay_runs" as never)
+        .delete()
+        .eq("id" as never, run.id as never);
+      return {
+        ok: false,
+        error:
+          addonStampErr?.message ??
+          "Another statement took some of these add-ons at the same moment. Check the statements list before trying again.",
+      };
+    }
   }
 
   return { ok: true, id: run.id, totalCents: runTotalCents(items) };

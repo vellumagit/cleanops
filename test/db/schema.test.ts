@@ -75,6 +75,9 @@ describe("row-level security", () => {
       "cron_runs",
       "email_suppressions",
       "org_email_counters",
+      // Travel and reimbursements for contractors; the office writes them
+      // through the app, a cleaner sees hers via the server (2026-11-15).
+      "pay_addons",
       // Pay rates are hidden from the team; each change and its start date,
       // read by the employee page for owners and admins (2026-11-15).
       "pay_rate_changes",

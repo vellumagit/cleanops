@@ -72,6 +72,7 @@ const TENANT_TABLES = [
   "network_contacts",
   "notifications",
   "packages",
+  "pay_addons",
   "pay_rate_changes",
   "payroll_items",
   "payroll_runs",
@@ -512,6 +513,9 @@ export async function purgeOrgData(
     "bonus_rules",
     "reviews",
     "time_entries",
+    // Pay changes and add-ons (reference memberships)
+    "pay_addons",
+    "pay_rate_changes",
     // Payroll (items reference runs)
     "payroll_items",
     "payroll_runs",

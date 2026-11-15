@@ -483,6 +483,15 @@ export default async function PayrollPage() {
             endsAhead={periodEndsAhead}
           />
         )}
+        {!currentRun && (
+          <Link
+            href={periodHref(suggestedStart, suggestedEnd)}
+            className="-mt-2 inline-flex items-center gap-1 text-xs font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+          >
+            Travel or reimbursements to add first? Add them to this period
+            <ChevronRight className="h-3.5 w-3.5" />
+          </Link>
+        )}
 
         {/* The schedule is EDITED in Settings now (Brian: "move that
             setting to the settings page"); this row just states it and

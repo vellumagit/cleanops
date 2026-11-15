@@ -12,6 +12,9 @@ import { getOrgTimezone } from "@/lib/org-timezone";
 import { periodContaining, type PaySchedule } from "@/lib/pay-schedule";
 import { periodHref } from "@/lib/pay-period";
 import { describeRateGaps, loadRateGaps } from "@/lib/pay-rate-gaps";
+import { memberDisplayName } from "@/lib/member-display";
+import type { AddonKind } from "@/lib/pay-addons";
+import { AddonsCard, type AddonListRow } from "./addons-card";
 
 export const metadata = { title: "Pay period" };
 
@@ -224,7 +227,7 @@ export default async function PayPeriodPage({
     subRun
       ? (admin
           .from("subcontractor_pay_items" as never)
-          .select("payee_name, minutes, total_cents")
+          .select("payee_name, minutes, total_cents, addons_cents, reimbursement_cents")
           .eq("run_id" as never, subRun.id as never)
           .order("total_cents" as never, {
             ascending: false,
@@ -233,10 +236,67 @@ export default async function PayPeriodPage({
             payee_name: string;
             minutes: number;
             total_cents: number;
+            addons_cents: number;
+            reimbursement_cents: number;
           }> | null;
         }>)
       : Promise.resolve({ data: null }),
   ]);
+
+  // ── Add-ons dated in this period ─────────────────────────────────────
+  // Read apart from the rest and allowed to fail quietly: the period page
+  // must still open if the add-ons table is missing or briefly unreadable.
+  const [addonRes, contractorRes] = await Promise.all([
+    (admin
+      .from("pay_addons" as never)
+      .select(
+        "id, kind, amount_cents, work_date, note, subcontractor_run_id, person:memberships!pay_addons_membership_id_fkey ( display_name, profile:profiles ( full_name ) )",
+      )
+      .eq("organization_id" as never, membership.organization_id as never)
+      .gte("work_date" as never, periodStart as never)
+      .lte("work_date" as never, periodEnd as never)
+      .order("work_date" as never, { ascending: true } as never)
+      .limit(500) as unknown as Promise<{
+      data: Array<{
+        id: string;
+        kind: AddonKind;
+        amount_cents: number;
+        work_date: string;
+        note: string;
+        subcontractor_run_id: string | null;
+        person: { display_name: string | null; profile: { full_name: string | null } | null } | null;
+      }> | null;
+      error: { message: string } | null;
+    }>).then(
+      (r) => r,
+      () => ({ data: null, error: { message: "unreadable" } }),
+    ),
+    admin
+      .from("memberships")
+      .select("id, display_name, profile:profiles ( full_name )")
+      .eq("organization_id", membership.organization_id)
+      .eq("engagement" as never, "subcontractor" as never)
+      .eq("status", "active")
+      .limit(500) as unknown as Promise<{
+      data: Array<{ id: string; display_name: string | null; profile: { full_name: string | null } | null }> | null;
+    }>,
+  ]);
+  const addonsReadable = !addonRes.error;
+  const addonRows: AddonListRow[] = (addonRes.data ?? []).map((a) => ({
+    id: a.id,
+    name: a.person ? memberDisplayName(a.person) : "Someone",
+    kind: a.kind,
+    amountLabel: formatCurrencyCents(a.amount_cents, currency),
+    dayLabel: shortDate(a.work_date),
+    note: a.note,
+    onStatement: a.subcontractor_run_id != null,
+  }));
+  const addonTotal = (addonRes.data ?? []).reduce((sum, a) => sum + a.amount_cents, 0);
+  const contractorPeople = (contractorRes.data ?? [])
+    .map((p) => ({ id: p.id, name: memberDisplayName(p) }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const todayYmd = localYmd.format(new Date());
+  const addonMax = periodEnd < todayYmd ? periodEnd : todayYmd;
 
   const combined =
     (payrollRun?.total_cents ?? 0) + (subRun?.total_cents ?? 0) + benchTotal;
@@ -298,7 +358,8 @@ export default async function PayPeriodPage({
         {!payrollRun && !subRun && (
           <p className="rounded-lg border border-dashed border-border bg-muted/20 p-8 text-center text-sm text-muted-foreground">
             This period hasn&rsquo;t been prepared yet — start it from the
-            Payroll page.
+            Payroll page. Add any travel or reimbursements below first, so
+            they go on the statement.
           </p>
         )}
 
@@ -408,6 +469,11 @@ export default async function PayPeriodPage({
                     <span className="tabular-nums">
                       {Math.floor(i.minutes / 60)}h {i.minutes % 60}m
                     </span>
+                    {(i.addons_cents ?? 0) > 0 && (
+                      <span className="tabular-nums">
+                        +{formatCurrencyCents(i.addons_cents, currency)} add-ons
+                      </span>
+                    )}
                     <span className="text-sm font-semibold tabular-nums text-foreground">
                       {formatCurrencyCents(i.total_cents, currency)}
                     </span>
@@ -422,6 +488,19 @@ export default async function PayPeriodPage({
             </p>
           </section>
         )}
+        {addonsReadable && (contractorPeople.length > 0 || addonRows.length > 0) && (
+          <AddonsCard
+            rows={addonRows}
+            people={contractorPeople}
+            defaultDate={addonMax}
+            minDate={periodStart}
+            maxDate={addonMax}
+            totalLabel={addonTotal > 0 ? formatCurrencyCents(addonTotal, currency) : null}
+            canManage
+            statementPrepared={subRun != null}
+          />
+        )}
+
         {benchRows.length > 0 && (
           <section className="rounded-xl border border-border bg-card">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">

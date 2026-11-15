@@ -196,7 +196,7 @@ export default async function FieldPayPage() {
     (admin
       .from("subcontractor_pay_items" as never)
       .select(
-        "id, minutes, entry_count, total_cents, run:subcontractor_pay_runs!inner ( period_start, period_end, status, paid_at )",
+        "id, minutes, entry_count, total_cents, addons_cents, reimbursement_cents, run:subcontractor_pay_runs!inner ( period_start, period_end, status, paid_at )",
       )
       .eq("membership_id" as never, membership.id as never)
       .eq(
@@ -211,6 +211,8 @@ export default async function FieldPayPage() {
         minutes: number;
         entry_count: number;
         total_cents: number;
+        addons_cents: number | null;
+        reimbursement_cents: number | null;
         run: {
           period_start: string;
           period_end: string;
@@ -228,6 +230,7 @@ export default async function FieldPayPage() {
     hours: number;
     totalCents: number;
     extraCents: number; // bonuses + PTO on top of hourly (employee runs)
+    addonsCents: number; // travel, reimbursements (contractor statements)
     paid: boolean;
     paidAt: string | null;
   };
@@ -241,6 +244,7 @@ export default async function FieldPayPage() {
         hours: Number(i.hours_worked),
         totalCents: i.total_cents,
         extraCents: i.bonus_cents + i.pto_pay_cents,
+        addonsCents: 0,
         paid: i.run!.status === "paid",
         paidAt: i.run!.paid_at,
       })),
@@ -253,10 +257,30 @@ export default async function FieldPayPage() {
         hours: i.minutes / 60,
         totalCents: i.total_cents,
         extraCents: 0,
+        addonsCents: i.addons_cents ?? 0,
         paid: i.run!.status === "paid",
         paidAt: i.run!.paid_at,
       })),
   ].sort((a, b) => b.periodStart.localeCompare(a.periodStart));
+
+  // Add-ons the office has entered for this period that no statement has
+  // paid yet: shown so she knows they are coming. Read for her alone by the
+  // server; a failed read just leaves the list off.
+  const { data: waitingAddons } = (await admin
+    .from("pay_addons" as never)
+    .select("id, kind, amount_cents, work_date, note")
+    .eq("membership_id" as never, membership.id as never)
+    .eq("organization_id" as never, membership.organization_id as never)
+    .is("subcontractor_run_id" as never, null as never)
+    .order("work_date" as never, { ascending: true } as never)
+    .limit(50)
+    .then(
+      (r: unknown) => r,
+      () => ({ data: null }),
+    )) as unknown as {
+    data: Array<{ id: string; kind: string; amount_cents: number; work_date: string; note: string }> | null;
+  };
+  const waitingTotal = (waitingAddons ?? []).reduce((sum, a) => sum + a.amount_cents, 0);
 
   const fmtDay = (ymd: string) =>
     new Date(`${ymd}T12:00:00Z`).toLocaleDateString("en-US", {
@@ -315,6 +339,33 @@ export default async function FieldPayPage() {
         )}
       </div>
 
+      {(waitingAddons ?? []).length > 0 && (
+        <div className="mt-4 rounded-xl border border-border bg-card p-5">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Added by the office · on your next statement
+          </p>
+          <p className="mt-1 text-2xl font-bold tabular-nums">
+            {formatCurrencyCents(waitingTotal, currency)}
+          </p>
+          <ul className="mt-3 space-y-1.5 text-sm">
+            {(waitingAddons ?? []).map((a) => (
+              <li key={a.id} className="flex items-start justify-between gap-3">
+                <span className="min-w-0">
+                  <span className="font-medium">
+                    {a.kind === "reimbursement" ? "Reimbursement" : a.kind === "travel" ? "Travel" : "Other"}
+                  </span>
+                  <span className="text-muted-foreground">
+                    {" "}
+                    · {fmtDay(a.work_date)} · {a.note}
+                  </span>
+                </span>
+                <span className="shrink-0 tabular-nums">{formatCurrencyCents(a.amount_cents, currency)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {/* Statements — the frozen layer. */}
       <div className="mb-2 mt-6 flex items-baseline justify-between">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
@@ -345,6 +396,9 @@ export default async function FieldPayPage() {
                       {`${s.hours.toFixed(1)}h`}
                       {s.extraCents > 0
                         ? ` · includes ${formatCurrencyCents(s.extraCents, currency)} bonus/PTO`
+                        : ""}
+                      {s.addonsCents > 0
+                        ? ` · includes ${formatCurrencyCents(s.addonsCents, currency)} travel/reimbursements`
                         : ""}
                     </span>
                   </p>
