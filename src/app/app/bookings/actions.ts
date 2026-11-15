@@ -991,13 +991,23 @@ export async function createBookingAction(
       values: raw,
     };
   }
+  // A lead who has other people on the crew goes on WITH them, in the crew
+  // save below, not on this row. The database checks a new booking's lead
+  // the moment the row exists, and at that moment she is the only person
+  // on it: the whole job's hours, where her share of a job split between
+  // two is half. That refused a new booking for a clash the finished crew
+  // does not have (2026-11-15, the same fault as on the edit form).
+  const leadWithCrew =
+    (splits as SplitSegmentInput[]).length === 0 &&
+    !!effectiveAssignedTo &&
+    readAdditionalAssignees(formData).some((id) => id !== effectiveAssignedTo);
   // 23P01: the database refusing a cleaner who is already booked then.
   const { data: booking, error } = await allowDbErrors(["23P01"], supabase
     .from("bookings")
     .insert({
       organization_id: membership.organization_id,
       client_id: parsed.data.client_id,
-      assigned_to: effectiveAssignedTo,
+      assigned_to: leadWithCrew ? null : effectiveAssignedTo,
       scheduled_at: parsed.data.scheduled_at,
       // The time as typed, in the org's zone: the truth scheduled_at is
       // derived from (scheduled-local.ts).
@@ -1066,6 +1076,7 @@ export async function createBookingAction(
     effectiveAssignedTo,
     readAdditionalAssignees(formData),
     splits as SplitSegmentInput[],
+    leadWithCrew ? { assigned_to: effectiveAssignedTo } : {},
   );
   if (crewErr) {
     const { error: cleanupErr } = await createSupabaseAdminClient()
@@ -1441,10 +1452,16 @@ export async function createRecurringBookingAction(
   }
 
   // 3. Insert all booking instances (recurringServiceExtras declared above)
+  // With more people on the crew, the lead goes on together with them in
+  // the crew save below, not on the visit row: see leadWithCrew in
+  // createBookingAction.
+  const leadJoinsWithCrew =
+    !!parsed.data.assigned_to &&
+    readAdditionalAssignees(formData).some((id) => id !== parsed.data.assigned_to);
   const bookingRows = occurrences.map((scheduled_at) => ({
     organization_id: membership.organization_id,
     client_id: parsed.data.client_id,
-    assigned_to: parsed.data.assigned_to ?? null,
+    assigned_to: leadJoinsWithCrew ? null : (parsed.data.assigned_to ?? null),
     scheduled_at,
     // The series' own words for this visit — its date at its start time.
     ...wallClockColumns(`${zonedYmd(new Date(scheduled_at), orgTz)}T${parsed.data.start_time}`, orgTz),
@@ -1544,6 +1561,7 @@ export async function createRecurringBookingAction(
         parsed.data.assigned_to ?? null,
         additionalIds,
         [],
+        leadJoinsWithCrew ? { assigned_to: parsed.data.assigned_to ?? null } : {},
       );
       if (seriesCrewErr) {
         const cleanupErrors = await cleanupFailedSeries();

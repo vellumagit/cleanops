@@ -211,6 +211,32 @@ describe.skipIf(!hasPostgrest)("double-booking: the refusal names who, which job
     expect(res.error).toContain("is already booked then: Nancy Whitson,");
   });
 
+  // 2026-11-15, Svitlana, Stacie Moore: three hours at 9:00 for Olha and
+  // Vira, who are both on another job at 11:30. Shared between two, each is
+  // there until 10:30, so there is no clash, and the save was refused anyway.
+  // The database checked each person as she was added, while the job still
+  // looked like a one-person job: three hours each, 9:00 to 12:00.
+  it("shared hours: putting two people on a job at once checks each for her share, not the whole job", async () => {
+    const c = await company({ sharesHours: true });
+    const olha = await addMember(api.sql, c.org, "employee", "Olha");
+    const vira = await addMember(api.sql, c.org, "employee", "Vira");
+    await job(c, "Sylvia Gillespie", at(20, 11), 240, [olha, vira]);
+    await api.sql(
+      "update public.bookings set scheduled_at = scheduled_at + interval '30 minutes' where client_id = (select id from public.clients where organization_id = $1 and name = 'Sylvia Gillespie')",
+      [c.org],
+    );
+    const stacie = await job(c, "Stacie Moore", at(20), 180, []);
+
+    expect((await assign(c.manager, stacie, olha, [vira])).error, api.log()).toBeUndefined();
+    expect((await crewOf(stacie)).sort()).toEqual([olha.membershipId, vira.membershipId].sort());
+
+    // And the rule still bites: alone, Olha would be there the full three
+    // hours, into the 11:30 job.
+    const alone = await job(c, "Alone Job", at(21), 180, []);
+    await job(c, "Later That Day", at(21, 11), 120, [olha]);
+    expect((await assign(c.manager, alone, olha)).error).toContain("is already booked then: Later That Day");
+  });
+
   // The save Svitlana was making: the Assign dialog, "This and all future
   // bookings". It goes through its own database function, and on the test
   // stack it was still answering with the bare sentence after the other
@@ -310,6 +336,104 @@ describe.skipIf(!hasPostgrest)("double-booking: the refusal names who, which job
     expect(await api.sql("select 1 from public.booking_series where organization_id = $1", [c.org])).toEqual([]);
     const [row] = await api.sql<{ series_id: string | null }>("select series_id from public.bookings where id = $1", [first]);
     expect(row.series_id).toBeNull();
+  });
+
+  it("shared hours: a NEW booking with two people is judged on each one's share too", async () => {
+    const c = await company({ sharesHours: true });
+    const olha = await addMember(api.sql, c.org, "employee", "Olha");
+    const vira = await addMember(api.sql, c.org, "employee", "Vira");
+    await job(c, "Sylvia Gillespie", at(22, 11), 240, [olha, vira]);
+    const [client] = await api.sql<{ id: string }>(
+      "insert into public.clients (organization_id, name) values ($1, 'Stacie Moore') returning id",
+      [c.org],
+    );
+    const [service] = await api.sql<{ id: string }>(
+      "insert into public.service_types (organization_id, name) values ($1, 'Standard clean') returning id",
+      [c.org],
+    );
+    const create = async (crew: Member[]) => {
+      request.cookies = api.sessionCookies(c.manager.userId);
+      try {
+        const form = new FormData();
+        form.set("client_id", client.id);
+        form.set("assigned_to", crew[0].membershipId);
+        for (const m of crew.slice(1)) form.append("additional_assignees", m.membershipId);
+        form.set("scheduled_at", at(22).slice(0, 16));
+        form.set("duration_minutes", "180");
+        form.set("service_type", "standard");
+        form.set("service_type_id", service.id);
+        form.set("service_type_label", "Standard clean");
+        form.set("status", "confirmed");
+        form.set("total_cents", "100");
+        const res = await bookings.createBookingAction({}, form);
+        return `returned ${JSON.stringify(res)}`;
+      } catch (err) {
+        return err instanceof Error ? err.message : String(err);
+      } finally {
+        await settle();
+      }
+    };
+
+    // Three hours for two: each until 10:30, clear of the 11:00 job.
+    expect(await create([olha, vira]), api.log()).toMatch(/^redirected to /);
+    const made = await api.sql<{ id: string; assigned_to: string | null }>(
+      "select id, assigned_to from public.bookings where client_id = $1",
+      [client.id],
+    );
+    expect(made).toHaveLength(1);
+    expect(made[0].assigned_to).toBe(olha.membershipId);
+    expect((await crewOf(made[0].id)).sort()).toEqual([olha.membershipId, vira.membershipId].sort());
+
+    // Alone she would be there the full three hours, into the 11:00 job:
+    // refused, by name, and nothing is left behind.
+    const refused = await create([olha]);
+    expect(refused).toContain("is already booked");
+    expect(refused).toContain("Sylvia Gillespie");
+    expect(await api.sql("select 1 from public.bookings where client_id = $1", [client.id])).toHaveLength(1);
+  });
+
+  it("shared hours: taking someone off a job is never refused, even though the one left now runs long", async () => {
+    const c = await company({ sharesHours: true });
+    const olha = await addMember(api.sql, c.org, "employee", "Olha");
+    const vira = await addMember(api.sql, c.org, "employee", "Vira");
+    const shared = await job(c, "Shared Morning", at(23), 180, [olha, vira]);
+    await job(c, "Half Past Eleven", at(23, 11), 120, [olha]);
+
+    // Vira calls in sick. Olha alone is there 9:00 to 12:00, over the 11:00
+    // job; that is for the morning check to list, not for this save to refuse.
+    expect((await assign(c.manager, shared, olha)).error, api.log()).toBeUndefined();
+    expect(await crewOf(shared)).toEqual([olha.membershipId]);
+  });
+
+  it("shared hours: swapping one person for another checks the newcomer and leaves the one who stays alone", async () => {
+    const c = await company({ sharesHours: true });
+    const olha = await addMember(api.sql, c.org, "employee", "Olha");
+    const vira = await addMember(api.sql, c.org, "employee", "Vira");
+    const anna = await addMember(api.sql, c.org, "employee", "Anna");
+    const busy = await addMember(api.sql, c.org, "employee", "Busy");
+    await api.sql("update public.memberships set display_name = 'Busy Person' where id = $1", [busy.membershipId]);
+    const shared = await job(c, "Shared Morning", at(24), 240, [olha, vira]);
+    await job(c, "Ten O'Clock", at(24, 10), 60, [busy]);
+
+    // Busy is on another job at 10:00, inside her 9:00 to 11:00 share here.
+    const refused = await assign(c.manager, shared, olha, [busy]);
+    expect(refused.error).toContain("Busy Person is already booked then: Ten O'Clock");
+    expect((await crewOf(shared)).sort()).toEqual([olha.membershipId, vira.membershipId].sort());
+
+    expect((await assign(c.manager, shared, olha, [anna])).error, api.log()).toBeUndefined();
+    expect((await crewOf(shared)).sort()).toEqual([olha.membershipId, anna.membershipId].sort());
+  });
+
+  it("the database change is safe to run a second time", async () => {
+    const { readFileSync } = await import("node:fs");
+    const sqlText = readFileSync("supabase/migrations/20261115010000_overlap_guard_whole_crew.sql", "utf8");
+    await api.db.exec(sqlText);
+    const c = await company({ sharesHours: true });
+    const olha = await addMember(api.sql, c.org, "employee", "Olha");
+    const vira = await addMember(api.sql, c.org, "employee", "Vira");
+    await job(c, "Later", at(25, 11), 120, [olha, vira]);
+    const morning = await job(c, "Morning", at(25), 180, []);
+    expect((await assign(c.manager, morning, olha, [vira])).error, api.log()).toBeUndefined();
   });
 
   it("Assign, this and all future, with someone free on every date goes through", async () => {
