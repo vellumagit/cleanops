@@ -261,6 +261,57 @@ describe.skipIf(!hasPostgrest)("double-booking: the refusal names who, which job
     for (const v of visits) expect(await crewOf(v.id)).toEqual([]);
   });
 
+  it("bringing back a cancelled job whose cleaner has since been booked then names her and that job", async () => {
+    const c = await company();
+    const olha = await addMember(api.sql, c.org, "employee", "Olha");
+    await api.sql("update public.memberships set display_name = 'Olha Musnytska' where id = $1", [olha.membershipId]);
+    const cancelled = await job(c, "Was Cancelled", at(6), 180, [olha]);
+    await api.sql("update public.bookings set status = 'cancelled' where id = $1", [cancelled]);
+    await job(c, "Booked Since", at(6, 10), 180, [olha]);
+
+    request.cookies = api.sessionCookies(c.manager.userId);
+    let result: { ok: boolean; error?: string };
+    try {
+      const form = new FormData();
+      form.set("id", cancelled);
+      form.set("status", "confirmed");
+      result = await bookings.setBookingStatusAction(form);
+    } finally {
+      await settle();
+    }
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("Olha Musnytska is already booked then: Booked Since");
+    expect(result.error).not.toMatch(/overlapping booking/i);
+    const [row] = await api.sql<{ status: string }>("select status from public.bookings where id = $1", [cancelled]);
+    expect(row.status).toBe("cancelled");
+  });
+
+  it("making a booking recurring when its cleaner is booked on a later date names that date and leaves no series behind", async () => {
+    const c = await company();
+    const olha = await addMember(api.sql, c.org, "employee", "Olha");
+    await api.sql("update public.memberships set display_name = 'Olha Musnytska' where id = $1", [olha.membershipId]);
+    const first = await job(c, "Goes Weekly", at(3), 180, [olha]);
+    // Two weeks after the first visit, same hour: the third visit would land on it.
+    await job(c, "In The Way", at(17, 10), 180, [olha]);
+
+    request.cookies = api.sessionCookies(c.manager.userId);
+    let result: { ok: boolean; error?: string };
+    try {
+      const form = new FormData();
+      form.set("pattern", "weekly");
+      result = await bookings.convertBookingToRecurringAction(first, form);
+    } finally {
+      await settle();
+    }
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("Olha Musnytska is already booked");
+    expect(result.error).toContain("In The Way");
+    expect(result.error).not.toMatch(/overlapping booking/i);
+    expect(await api.sql("select 1 from public.booking_series where organization_id = $1", [c.org])).toEqual([]);
+    const [row] = await api.sql<{ series_id: string | null }>("select series_id from public.bookings where id = $1", [first]);
+    expect(row.series_id).toBeNull();
+  });
+
   it("Assign, this and all future, with someone free on every date goes through", async () => {
     const c = await company();
     const vira = await addMember(api.sql, c.org, "employee", "Vira");

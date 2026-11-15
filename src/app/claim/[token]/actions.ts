@@ -6,6 +6,9 @@ import { enterFailClosed } from "@/lib/supabase/query-guard";
 import { formatDateTime, humanizeEnum } from "@/lib/format";
 import { planOfferSwap, type CrewRow } from "@/lib/offer-swap";
 import { syncJob } from "@/lib/job-sync";
+import { findCrewClashes } from "@/lib/crew-clashes";
+import { orgDividesCrewHours } from "@/lib/crew-hours";
+import { getOrgTimezone } from "@/lib/org-timezone";
 
 /**
  * Claim a shift offer via the unique token sent to one freelancer.
@@ -128,6 +131,30 @@ export async function claimOfferAction(token: string): Promise<ClaimResult> {
       reason: "already_claimed",
       message: "You already claimed this shift.",
     };
+  }
+
+  // 1b. One of the company's own people can only take a shift they are free
+  //     for. Claiming puts them on the job's crew (4b), and the database
+  //     refuses a crew row that overlaps another of their jobs. That refusal
+  //     used to land after the spot was taken and was swallowed with the rest
+  //     of 4b's errors: the page said the shift was theirs, the offer counted
+  //     as filled, and nobody was on the job. Asked here, before anything is
+  //     written, in the words the office gets for the same refusal.
+  if (dispatch.membership_id) {
+    // A link sent to someone who has since been deactivated is dead: they
+    // can't be put on a job (the crew rules refuse them), so letting the
+    // claim through took the spot for nobody.
+    const { data: who } = (await admin
+      .from("memberships")
+      .select("status")
+      .eq("id", dispatch.membership_id)
+      .eq("organization_id", dispatch.organization_id)
+      .maybeSingle()) as unknown as { data: { status: string } | null };
+    if (!who || who.status !== "active") return { ok: false, reason: "invalid" };
+  }
+  if (dispatch.membership_id && offer.booking_id) {
+    const busy = await alreadyBookedThen(admin, dispatch.organization_id, offer.id, offer.booking_id, dispatch.membership_id);
+    if (busy) return { ok: false, reason: "error", message: busy };
   }
 
   // 2. Determine the new filled count and whether this claim completes the offer.
@@ -632,4 +659,87 @@ async function syncClaimCalendars(
   } catch (err) {
     console.error("[claim] calendar sync setup failed:", err);
   }
+}
+
+/**
+ * The sentence for a claimer who is already on another job at that time, or
+ * null when they are free (or the job can't be read, in which case the claim
+ * goes ahead as it always did).
+ */
+async function alreadyBookedThen(
+  admin: ReturnType<typeof createSupabaseAdminClient>,
+  organizationId: string,
+  offerId: string,
+  bookingId: string,
+  claimerId: string,
+): Promise<string | null> {
+  const { data: job } = (await admin
+    .from("bookings")
+    .select("id, scheduled_at, duration_minutes, divide_hours_evenly, assigned_to")
+    .eq("id", bookingId)
+    .eq("organization_id", organizationId)
+    .maybeSingle()) as unknown as {
+    data: {
+      id: string;
+      scheduled_at: string;
+      duration_minutes: number | null;
+      divide_hours_evenly: boolean | null;
+      assigned_to: string | null;
+    } | null;
+  };
+  if (!job) return null;
+
+  const { data: crewRows } = (await admin
+    .from("booking_assignees")
+    .select("membership_id, split_start_offset_minutes, split_duration_minutes")
+    .eq("booking_id", bookingId)) as unknown as {
+    data: Array<{
+      membership_id: string;
+      split_start_offset_minutes: number | null;
+      split_duration_minutes: number | null;
+    }> | null;
+  };
+  // Already on this job: nothing new to clash.
+  if (job.assigned_to === claimerId || (crewRows ?? []).some((c) => c.membership_id === claimerId)) return null;
+
+  // Someone this offer replaces comes off when it is claimed, so they are
+  // not part of the crew the claimer would share the hours with.
+  const { data: rep } = (await admin
+    .from("job_offers")
+    .select("replaces_membership_id" as never)
+    .eq("id", offerId)
+    .maybeSingle()) as unknown as { data: { replaces_membership_id: string | null } | null };
+  const leaving = rep?.replaces_membership_id ?? null;
+
+  const crew = (crewRows ?? [])
+    .filter((c) => c.membership_id !== leaving)
+    .map((c) => ({
+      membershipId: c.membership_id,
+      startOffsetMinutes: c.split_start_offset_minutes,
+      durationMinutes: c.split_duration_minutes,
+    }));
+  if (job.assigned_to && job.assigned_to !== leaving && !crew.some((c) => c.membershipId === job.assigned_to)) {
+    crew.push({ membershipId: job.assigned_to, startOffsetMinutes: null, durationMinutes: null });
+  }
+  crew.push({ membershipId: claimerId, startOffsetMinutes: null, durationMinutes: null });
+
+  const [orgDivides, tz] = await Promise.all([orgDividesCrewHours(organizationId), getOrgTimezone(organizationId)]);
+  const clashes = (
+    await findCrewClashes(admin, organizationId, [
+      {
+        bookingId: job.id,
+        scheduledAt: job.scheduled_at,
+        durationMinutes: job.duration_minutes ?? 0,
+        dividesHours: job.divide_hours_evenly === true || orgDivides,
+        crew,
+      },
+    ])
+  )
+    // The rest of the crew's clashes, if any, are the office's to see, not
+    // a reason to turn this person away.
+    .filter((c) => c.memberId === claimerId)
+    .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt));
+  if (clashes.length === 0) return null;
+  const other = clashes[0];
+  return `You're already booked then: ${other.clientName}, ${formatDateTime(other.scheduledAt, tz)}. Ask the office to move one of them, then try again.`;
 }

@@ -3,6 +3,7 @@ import { authenticateApiKey } from "@/lib/api-key-auth";
 import { apiServerError } from "@/lib/api/errors";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { dispatchWebhookEvent } from "@/lib/webhooks";
+import { moveUpcomingVisitsToAddress } from "@/lib/address-follow";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -55,6 +56,17 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   }
 
   const admin = createSupabaseAdminClient();
+  // The address before the change, for the visits that copied it.
+  let addressBefore: string | null | undefined;
+  if ("address" in updates) {
+    const { data: before } = (await admin
+      .from("clients")
+      .select("address")
+      .eq("id", id)
+      .eq("organization_id", auth.organizationId)
+      .maybeSingle()) as unknown as { data: { address: string | null } | null };
+    addressBefore = before ? before.address : undefined;
+  }
   const { data, error } = await admin
     .from("clients")
     .update(updates)
@@ -65,9 +77,38 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
   if (error) return apiServerError("clients/:id", error);
 
+  // A new address reaches the visits already booked, as it does when the
+  // office changes it on the client's page (src/lib/address-follow.ts).
+  // Without this an integration that corrects an address left every
+  // upcoming visit sending the crew to the old one.
+  let visitsMoved: number | undefined;
+  if (addressBefore !== undefined) {
+    const next = typeof updates.address === "string" ? updates.address : null;
+    try {
+      const moved = await moveUpcomingVisitsToAddress(admin, {
+        organizationId: auth.organizationId,
+        clientId: id,
+        propertyId: null,
+        oldAddress: addressBefore,
+        newAddress: next,
+      });
+      visitsMoved = moved.visitIds.length;
+    } catch (err) {
+      console.error("[api/v1/clients] address saved, upcoming visits not updated:", err);
+      return NextResponse.json(
+        {
+          data,
+          error:
+            "The address is saved on the client, but their upcoming visits could not be updated and still show the old one. Send the same change again.",
+        },
+        { status: 500 },
+      );
+    }
+  }
+
   dispatchWebhookEvent(auth.organizationId, "client.updated", data).catch(() => {});
 
-  return NextResponse.json({ data });
+  return NextResponse.json(visitsMoved === undefined ? { data } : { data, upcoming_visits_updated: visitsMoved });
 }
 
 /**

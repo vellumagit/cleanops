@@ -105,3 +105,55 @@ describe.skipIf(!hasPostgrest)("security audit leftovers", { timeout: 90_000 }, 
     expect(bucket).toEqual({ public: false, allowed_mime_types: ["application/pdf"] });
   });
 });
+
+// A client's address corrected through the API reaches the visits already
+// booked, as it does from the client's page (src/lib/address-follow.ts,
+// 2026-11-14). The API was the one writer of clients.address the first fix
+// did not cover.
+describe.skipIf(!hasPostgrest)("PATCH /api/v1/clients/:id with a new address", () => {
+  it("moves the upcoming visit, leaves the finished one, and says how many moved", async () => {
+    const org = await addOrg(api.sql, "Address By Api");
+    const [client] = await api.sql<{ id: string }>(
+      "insert into public.clients (organization_id, name, address) values ($1, 'Hilda Daubner', '13825 155 Avenue NW') returning id",
+      [org],
+    );
+    const day = 86_400_000;
+    const upcoming = await addBooking(api.sql, org, client.id, { scheduledAt: new Date(Date.now() + 3 * day).toISOString() });
+    const done = await addBooking(api.sql, org, client.id, {
+      scheduledAt: new Date(Date.now() - 10 * day).toISOString(),
+      status: "completed",
+    });
+    await api.sql("update public.bookings set address = '13825 155 Ave NW' where id = any($1::uuid[])", [[upcoming, done]]);
+
+    const { PATCH } = await import("@/app/api/v1/clients/[id]/route");
+    const res = await PATCH(
+      call(await apiKey(org), `/api/v1/clients/${client.id}`, { method: "PATCH", body: { address: "6315 135 Avenue NW" } }),
+      { params: Promise.resolve({ id: client.id }) },
+    );
+    await settle();
+    expect(res.status, api.log()).toBe(200);
+    expect((await res.json()).upcoming_visits_updated).toBe(1);
+
+    const rows = await api.sql<{ id: string; address: string }>("select id, address from public.bookings where id = any($1::uuid[])", [
+      [upcoming, done],
+    ]);
+    expect(rows.find((r) => r.id === upcoming)?.address).toBe("6315 135 Avenue NW");
+    expect(rows.find((r) => r.id === done)?.address).toBe("13825 155 Ave NW");
+  });
+
+  it("a change that does not touch the address reports nothing about visits", async () => {
+    const org = await addOrg(api.sql, "Phone By Api");
+    const [client] = await api.sql<{ id: string }>(
+      "insert into public.clients (organization_id, name, address) values ($1, 'Someone', '1 First Street') returning id",
+      [org],
+    );
+    const { PATCH } = await import("@/app/api/v1/clients/[id]/route");
+    const res = await PATCH(
+      call(await apiKey(org), `/api/v1/clients/${client.id}`, { method: "PATCH", body: { phone: "780-555-0100" } }),
+      { params: Promise.resolve({ id: client.id }) },
+    );
+    await settle();
+    expect(res.status, api.log()).toBe(200);
+    expect("upcoming_visits_updated" in (await res.json())).toBe(false);
+  });
+});

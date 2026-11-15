@@ -3030,9 +3030,24 @@ export async function convertBookingToRecurringAction(
       error: { message: string } | null;
     };
     if (insertErr) {
+      // The new visits carry this booking's cleaner, and one clash on any
+      // date refuses them all. Name the dates, as a new series does.
+      const clash =
+        isDoubleBookingError(insertErr) && booking.assigned_to
+          ? await explainDoubleBooking(
+              createSupabaseAdminClient(),
+              membership.organization_id,
+              rows.map((r) => ({
+                bookingId: null,
+                scheduledAt: r.scheduled_at,
+                durationMinutes: r.duration_minutes,
+                crew: [{ membershipId: booking.assigned_to as string }],
+              })),
+            )
+          : null;
       return {
         ok: false,
-        error: await rollbackFailedConversion(insertErr.message),
+        error: await rollbackFailedConversion(clash ?? insertErr.message),
       };
     }
     const newRows = inserted ?? [];
@@ -3206,7 +3221,32 @@ export async function setBookingStatusAction(
     } as never)
     .eq("id", id)
     .eq("organization_id", membership.organization_id);
-  if (error) return { ok: false, error: error.message };
+  if (error) {
+    // Bringing a cancelled job back puts its crew back on the calendar, and
+    // the database checks them in full: someone may have been given another
+    // job in that slot since. Say who and which job, as every other
+    // double-booking refusal does.
+    if (isDoubleBookingError(error)) {
+      const { data: crewRows } = (await createSupabaseAdminClient()
+        .from("booking_assignees")
+        .select("booking_id, membership_id, split_start_offset_minutes, split_duration_minutes")
+        .eq("booking_id", id)
+        .eq("organization_id", membership.organization_id)) as unknown as {
+        data: Array<{
+          booking_id: string;
+          membership_id: string;
+          split_start_offset_minutes: number | null;
+          split_duration_minutes: number | null;
+        }> | null;
+      };
+      const clash = await overlapExplanation(membership.organization_id, crewRows ?? [], {});
+      return {
+        ok: false,
+        error: clash ?? "Someone on this job's crew is booked on another job at that time now. Change the crew or the time, then bring it back.",
+      };
+    }
+    return { ok: false, error: error.message };
+  }
 
   // Status is the booking's most consequential field (completed invoices;
   // cancelled notifies people) and this was the one write nobody could
