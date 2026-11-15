@@ -621,4 +621,17 @@
     height: auto;
     min-height: 0;
   }
+  /* The keyboard is up (useVisibleHeight sets data-keyboard). One screen is
+     now about 350px. A page heading, a warning banner and the space kept
+     for a tab bar the keyboard is covering add up to more than that: with
+     the time zone banner showing, the message box itself was pushed below
+     what was visible. So while typing, everything beside the pane on the
+     way down steps aside, and the bottom space closes. It all comes back
+     when the keyboard goes. */
+  :root[data-keyboard="open"] .fill-screen-column:has(.fill-screen) > :not(.fill-screen):not(:has(.fill-screen)) {
+    display: none;
+  }
+  :root[data-keyboard="open"] .fill-screen-column:has(.fill-screen) {
+    padding-bottom: 0.25rem;
+  }
 }

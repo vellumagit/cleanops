@@ -455,8 +455,10 @@ export async function updateClientAction(
   if (addressMoved) {
     revalidatePath("/app/bookings");
     // Say what the address change did, on the page the save lands on.
+    // The client's id, not their name: a link lives in browser history and
+    // request logs.
     const said = new URLSearchParams({
-      address_for: parsed.data.name,
+      address_for: id,
       moved: String(addressMoved.visitIds.length),
       kept: String(addressMoved.leftAlone),
     });

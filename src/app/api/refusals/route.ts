@@ -18,6 +18,11 @@ import { refusalMessage, refusalPath, type RefusalKind } from "@/lib/refusal-log
 
 /** One page can't post more than this in one request. */
 const MAX_PER_REQUEST = 10;
+/** Nor one person more than this in ten minutes. Someone fighting the app
+ *  hard is a few dozen; past that it is a loop or a script, and the rows
+ *  would push real refusals out of the morning report's read. */
+const MAX_PER_PERSON_WINDOW = 60;
+const WINDOW_MS = 10 * 60_000;
 
 export async function POST(request: NextRequest) {
   enterFailClosed();
@@ -68,9 +73,19 @@ export async function POST(request: NextRequest) {
   // fail-closed scope a failed write throws. The person already saw their
   // message; losing the record of it must not add to it.
   try {
-    const { error } = (await createSupabaseAdminClient()
+    const admin = createSupabaseAdminClient();
+    const { count } = (await admin
       .from("refusal_log" as never)
-      .insert(rows as never)) as unknown as { error: { message: string } | null };
+      .select("id", { count: "exact", head: true })
+      .eq("membership_id" as never, membership.id as never)
+      .gte("created_at" as never, new Date(Date.now() - WINDOW_MS).toISOString() as never)) as unknown as {
+      count: number | null;
+    };
+    const room = MAX_PER_PERSON_WINDOW - (count ?? 0);
+    if (room <= 0) return new NextResponse(null, { status: 204 });
+    const { error } = (await admin
+      .from("refusal_log" as never)
+      .insert(rows.slice(0, room) as never)) as unknown as { error: { message: string } | null };
     if (error) console.error("[refusals] could not record:", error.message);
   } catch (err) {
     console.error("[refusals] could not record:", err instanceof Error ? err.message : err);

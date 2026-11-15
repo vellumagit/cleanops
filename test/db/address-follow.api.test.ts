@@ -138,6 +138,27 @@ describe.skipIf(!hasPostgrest)("a client's new address reaches the visits alread
     expect(await addressOf(blank)).toBeNull();
   });
 
+  it("a visit that should have started and has not is still to be done, and moves", async () => {
+    const s = await setup();
+    // 9:00 visit, nobody clocked in, the client phones at 9:05.
+    const late = await visit(s, { inDays: -1 / 24, address: OLD });
+    // Still "confirmed" two days on: a job that never happened. Left alone.
+    const stale = await visit(s, { inDays: -2, address: OLD });
+
+    const landed = await saveClient(s, NEW);
+    expect(landed).toContain("moved=1");
+    expect(await addressOf(late)).toBe(NEW);
+    expect(await addressOf(stale)).toBe(OLD);
+  });
+
+  it("the save lands on a link that names the client by id, never by name", async () => {
+    const s = await setup();
+    await visit(s, { inDays: 3, address: OLD });
+    const landed = await saveClient(s, NEW);
+    expect(landed).toContain(`address_for=${s.client}`);
+    expect(landed).not.toMatch(/Hilda|Daubner/);
+  });
+
   it("the recurring series moves too, so new visits come out at the new address", async () => {
     const s = await setup();
     const [series] = await api.sql<{ id: string }>(

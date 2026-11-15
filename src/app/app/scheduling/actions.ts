@@ -103,13 +103,14 @@ export async function rescheduleBookingAction(
   // can detect split-shift bookings and avoid wiping their assignees.
   const { data: current, error: fetchError } = (await supabase
     .from("bookings")
-    .select("id, scheduled_at, duration_minutes, assigned_to, splits, status")
+    .select("id, scheduled_at, duration_minutes, assigned_to, splits, status, divide_hours_evenly")
     .eq("id", id)
     .maybeSingle()) as unknown as {
     data: {
       id: string;
       scheduled_at: string;
       duration_minutes: number;
+      divide_hours_evenly?: boolean | null;
       assigned_to: string | null;
       status: string;
       splits: Array<{ assigned_to?: string; duration_minutes?: number }> | null;
@@ -250,6 +251,8 @@ export async function rescheduleBookingAction(
             bookingId: id,
             scheduledAt: wall.scheduled_at,
             durationMinutes: current.duration_minutes,
+            // The database timed each person by this; so must the lookup.
+            divideHoursEvenly: current.divide_hours_evenly ?? null,
             crew:
               plan.kind === "changed"
                 ? plan.crew.map((membershipId) => ({ membershipId }))

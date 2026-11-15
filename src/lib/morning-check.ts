@@ -1,5 +1,6 @@
 /**
- * The morning check, as a report. Read-only.
+ * The morning check, as a report. Read-only, unless the caller passes
+ * `housekeeping` (the 8 AM cron does, to trim month-old records).
  *
  * Shared by scripts/shadow-morning-check.ts (prints it) and
  * /api/cron/morning-check (emails it at 8 AM Edmonton), so the email and the
@@ -84,6 +85,10 @@ export async function runMorningCheck(
     orgId?: string;
     hoursBack?: number;
     now?: number;
+    /** Also delete cron and refusal records older than a month. Only the
+     *  8 AM cron asks for this: a report someone runs by hand for a second
+     *  look must not remove the history they came to read. */
+    housekeeping?: boolean;
     /** Override the org's zone for formatting (stale local tzdata). */
     zoneFor?: (tz: string) => string;
   } = {},
@@ -295,7 +300,7 @@ export async function runMorningCheck(
       );
   out.push("", ...cronSummary.lines);
   // Housekeeping: the ledger keeps a month.
-  if (!runErr) {
+  if (!runErr && opts.housekeeping) {
     await db
       .from("cron_runs" as never)
       .delete()
@@ -334,7 +339,7 @@ export async function runMorningCheck(
   const refusals = summarizeRefusals(refusedRows ?? []);
   out.push("", `8. THE APP SAID NO (last ${hoursBack}h): ${refusals.total}`, ...refusals.lines);
   // Housekeeping: a month is plenty.
-  if (!refErr) {
+  if (!refErr && opts.housekeeping) {
     await db
       .from("refusal_log" as never)
       .delete()

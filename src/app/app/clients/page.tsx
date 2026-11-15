@@ -30,7 +30,19 @@ export default async function ClientsPage({
   const contactDefaultPromise = fetchOrgContactDefault(
     membership.organization_id,
   );
-  const { archived, address_for: addressFor, moved, kept } = await searchParams;
+  const { archived, address_for: addressForId, moved, kept } = await searchParams;
+  // The banner names the client from the id, read inside this company: a
+  // made-up link shows nothing.
+  let addressFor: string | null = null;
+  if (addressForId && /^[0-9a-f-]{36}$/i.test(addressForId)) {
+    const { data: named } = (await supabase
+      .from("clients")
+      .select("name")
+      .eq("id", addressForId)
+      .eq("organization_id" as never, membership.organization_id as never)
+      .maybeSingle()) as unknown as { data: { name: string } | null };
+    addressFor = named?.name ?? null;
+  }
   const movedCount = Math.max(0, Number.parseInt(moved ?? "", 10) || 0);
   const keptCount = Math.max(0, Number.parseInt(kept ?? "", 10) || 0);
   const showArchived = archived === "1";

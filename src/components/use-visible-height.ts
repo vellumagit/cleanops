@@ -19,6 +19,9 @@ import { useEffect } from "react";
  * viewport would crush it, so while zoomed the variable is removed and the
  * CSS falls back to 100dvh.
  */
+/** No browser toolbar is this tall; an on-screen keyboard always is. */
+const KEYBOARD_MIN_PX = 150;
+
 export function useVisibleHeight(): void {
   useEffect(() => {
     const vv = window.visualViewport;
@@ -28,9 +31,16 @@ export function useVisibleHeight(): void {
     const apply = () => {
       if (Math.abs(vv.scale - 1) > 0.01) {
         root.style.removeProperty("--app-vh");
+        delete root.dataset.keyboard;
         return;
       }
       root.style.setProperty("--app-vh", `${Math.round(vv.height)}px`);
+      // The keyboard is up when far less is visible than the page is tall.
+      // The fill-screen rules use this to give the page heading and the
+      // tab bar's reserved space back to the pane (globals.css): at 350px
+      // visible, they left a chat about 15px of messages to type under.
+      if (window.innerHeight - vv.height > KEYBOARD_MIN_PX) root.dataset.keyboard = "open";
+      else delete root.dataset.keyboard;
       // The browser may already have slid the page to reach the caret.
       if (window.scrollY !== 0) window.scrollTo(0, 0);
     };
@@ -42,6 +52,7 @@ export function useVisibleHeight(): void {
       vv.removeEventListener("resize", apply);
       vv.removeEventListener("scroll", apply);
       root.style.removeProperty("--app-vh");
+      delete root.dataset.keyboard;
     };
   }, []);
 }

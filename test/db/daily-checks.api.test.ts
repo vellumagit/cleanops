@@ -193,6 +193,23 @@ describe.skipIf(!hasPostgrest)("what the app refused", () => {
     expect(rows.every((r) => r.message.length === 600)).toBe(true);
   });
 
+  it("one person can only add so many in ten minutes", async () => {
+    const org = await addOrg(api.sql, "Company");
+    const svitlana = await addMember(api.sql, org, "owner", "Svitlana");
+    const olha = await addMember(api.sql, org, "employee", "Olha");
+    for (let batch = 0; batch < 9; batch++) {
+      await post(
+        svitlana,
+        Array.from({ length: 10 }, (_, i) => ({ message: `Looping refusal ${batch}-${i}`, path: "/app", kind: "toast" })),
+      );
+    }
+    // Someone else in the same company is not held back by her.
+    await post(olha, [{ message: "Could not save the job.", path: "/field/jobs", kind: "toast" }]);
+    const rows = await rowsFor(org);
+    expect(rows.filter((r) => r.membership_id === svitlana.membershipId)).toHaveLength(60);
+    expect(rows.filter((r) => r.membership_id === olha.membershipId)).toHaveLength(1);
+  });
+
   it("the table is closed to signed-in people: nobody reads errors through the API", async () => {
     const org = await addOrg(api.sql, "Company");
     const svitlana = await addMember(api.sql, org, "owner", "Svitlana");

@@ -114,7 +114,12 @@ export default async function EditBookingPage({
     // eslint-disable-next-line react-hooks/purity -- server component: renders once on the server, no hydration to drift
     new Date(booking.scheduled_at).getTime() > Date.now() &&
     !["completed", "cancelled"].includes(booking.status);
-  const dropFormer = stillToCome && formerCrew.length > 0;
+  // Not on a job with per-person times: older segments have no start of
+  // their own and are timed one after another, so taking one out here would
+  // move everyone after it. There the person is shown and taken off by
+  // hand in the picker, which keeps each remaining person's own times.
+  const hasSegments = (booking.splits ?? []).length > 0;
+  const dropFormer = stillToCome && formerCrew.length > 0 && !hasSegments;
   const former = new Set(formerIds);
   const keep = (mid: string | null | undefined): mid is string =>
     !!mid && !(dropFormer && former.has(mid));

@@ -53,6 +53,9 @@ export function StaleTimezoneBanner({ probe }: { probe: TzProbe }) {
   return (
     <div
       role="alert"
+      // A standing warning, not the app refusing something: the refusal
+      // recorder skips it (refusal-recorder.tsx).
+      data-not-a-refusal
       className="flex items-start gap-3 border-b border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/60 dark:text-amber-100"
     >
       <Clock className="mt-0.5 h-4 w-4 shrink-0" />

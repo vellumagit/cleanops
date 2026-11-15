@@ -22,11 +22,23 @@ function words(address: string | null | undefined): string[] {
     .filter(Boolean);
 }
 
+/** The unit named after a street ("… Unit 304", "… Apt 12B", "… #5"), or null. */
+function unitOf(address: string | null | undefined): string | null {
+  // \b after the word: "Stephen Ave" and "Unity Square" are streets.
+  const m = /(?:\b(?:unit|apt|apartment|suite|ste)\b\.?\s*#?\s*|#\s*)([a-z0-9-]+)/i.exec(address ?? "");
+  return m ? m[1].toLowerCase() : null;
+}
+
 export function samePlace(a: string | null | undefined, b: string | null | undefined): boolean {
   const wa = words(a);
   const wb = words(b);
   if (wa.length === 0 || wb.length === 0) return false;
   if (wa.join(" ") === wb.join(" ")) return true;
+  // Same building, different unit: two homes. When only one of the two
+  // names a unit it is the same address written with more or less detail.
+  const ua = unitOf(a);
+  const ub = unitOf(b);
+  if (ua && ub && ua !== ub) return false;
   return wa.length >= 2 && wb.length >= 2 && wa[0] === wb[0] && wa[1] === wb[1];
 }
 

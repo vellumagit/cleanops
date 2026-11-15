@@ -73,12 +73,17 @@ export function RefusalRecorder() {
 
     // 2. Error boxes. Every one in the app is `role="alert"`; they appear
     // (or change their words) after a save comes back.
+    // A standing warning (the out-of-date time zone banner) is an alert
+    // box too, and is not the app saying no to anything. Counted, it would
+    // add a row per person per visit and bury the real ones.
+    const isRefusal = (el: Element) => !el.closest("[data-not-a-refusal]");
     const seenBoxes = new WeakMap<Element, string>();
     const look = (root: ParentNode | Element) => {
       const boxes: Element[] = [];
       if (root instanceof Element && root.matches('[role="alert"]')) boxes.push(root);
       root.querySelectorAll?.('[role="alert"]').forEach((el) => boxes.push(el));
       for (const el of boxes) {
+        if (!isRefusal(el)) continue;
         const text = (el.textContent ?? "").replace(/\s+/g, " ").trim();
         if (!text || seenBoxes.get(el) === text) continue;
         seenBoxes.set(el, text);
@@ -120,6 +125,7 @@ export function RefusalRecorder() {
           pending.delete(t);
           if (!scope.isConnected) return;
           scope.querySelectorAll('[role="alert"]').forEach((el) => {
+            if (!isRefusal(el)) return;
             const text = (el.textContent ?? "").replace(/\s+/g, " ").trim();
             // note() ignores the same words inside a few seconds, so the two
             // looks and the watcher above count one failure once.

@@ -25,6 +25,9 @@ import { hasNoAddress, samePlace } from "@/lib/address-match";
  * started or finished, and (for a client-level change) a visit tied to one
  * of the client's properties, which follows that property instead.
  */
+/** How long after its start an unstarted visit still counts as to be done. */
+const STILL_TO_DO_MS = 12 * 3_600_000;
+
 export type AddressFollowResult = {
   /** Upcoming visits moved to the new address. */
   visitIds: string[];
@@ -67,7 +70,11 @@ export async function moveUpcomingVisitsToAddress(
     .eq("organization_id", organizationId)
     .eq("client_id", clientId)
     .in("status", ["pending", "confirmed"])
-    .gte("scheduled_at", new Date().toISOString())
+    // Not "from now": a 9:00 visit nobody has clocked into is still to be
+    // done at 9:06, and that is exactly when a client phones to say the
+    // address is wrong. Still pending or confirmed half a day later, it is
+    // a job that never happened, and stays as it was.
+    .gte("scheduled_at", new Date(Date.now() - STILL_TO_DO_MS).toISOString())
     .limit(2000)) as unknown as {
     data: Array<{ id: string; address: string | null; property_id: string | null }> | null;
     error: { message: string } | null;

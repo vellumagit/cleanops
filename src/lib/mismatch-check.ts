@@ -129,6 +129,11 @@ export function mismatchLines(
   return lines;
 }
 
+/** Rows per read, at the API's own cap, and how many reads before saying
+ *  out loud that there were more. */
+const VISIT_PAGE = 1000;
+const MAX_VISIT_PAGES = 20;
+
 type Named = { display_name: string | null; profile: { full_name: string | null } | null } | null;
 const nameOf = (m: Named) => m?.display_name?.trim() || m?.profile?.full_name?.trim() || "?";
 
@@ -167,16 +172,31 @@ export async function loadMismatches(
     client: { name: string | null; address: string | null } | null;
     property: { address: string | null } | null;
   };
-  const { data: rows, error: vErr } = (await db
-    .from("bookings")
-    .select("id, scheduled_at, address, assigned_to, property_id, client:clients ( name, address ), property:client_properties ( address )")
-    .eq("organization_id", orgId)
-    .in("status", ["pending", "confirmed"])
-    .gte("scheduled_at", new Date(nowMs).toISOString())
-    .order("scheduled_at")
-    .limit(5000)) as unknown as { data: VisitRow[] | null; error: { message: string } | null };
-  note("upcoming visits", vErr);
-  const visitRows = rows ?? [];
+  // In pages. The API answers at most 1000 rows whatever limit is asked
+  // (supabase/config.toml max_rows), so one read with a bigger limit quietly
+  // checked the nearest thousand visits and called it all of them.
+  const visitRows: VisitRow[] = [];
+  const nowIso = new Date(nowMs).toISOString();
+  for (let page = 0; page < MAX_VISIT_PAGES; page++) {
+    const { data: rows, error: vErr } = (await db
+      .from("bookings")
+      .select("id, scheduled_at, address, assigned_to, property_id, client:clients ( name, address ), property:client_properties ( address )")
+      .eq("organization_id", orgId)
+      .in("status", ["pending", "confirmed"])
+      .gte("scheduled_at", nowIso)
+      .order("scheduled_at")
+      .order("id")
+      .range(page * VISIT_PAGE, page * VISIT_PAGE + VISIT_PAGE - 1)) as unknown as {
+      data: VisitRow[] | null;
+      error: { message: string } | null;
+    };
+    note("upcoming visits", vErr);
+    visitRows.push(...(rows ?? []));
+    if (vErr || (rows ?? []).length < VISIT_PAGE) break;
+    if (page === MAX_VISIT_PAGES - 1) {
+      errors.push(`upcoming visits (more than ${MAX_VISIT_PAGES * VISIT_PAGE}; the rest were not checked)`);
+    }
+  }
 
   const crewBy = new Map<string, Set<string>>();
   const covered = new Set<string>();

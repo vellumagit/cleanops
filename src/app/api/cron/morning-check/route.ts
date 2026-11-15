@@ -50,6 +50,8 @@ async function cronGet(request: NextRequest) {
     const report = await runFailOpen(() =>
       runMorningCheck(createSupabaseAdminClient(), {
         orgId: process.env.MORNING_CHECK_ORG_ID || undefined,
+        // Trim month-old cron and refusal records; a dry run only looks.
+        housekeeping: !dryRun,
       }),
     );
     if (dryRun) return NextResponse.json({ ok: true, dry_run: true, ...report });
