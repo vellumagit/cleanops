@@ -153,7 +153,11 @@ vi.mock("@/lib/job-watch", () => ({
   saidForThisSchedule: mocks.saidForThisSchedule,
   autoCompleteDue: mocks.autoCompleteDue,
 }));
-vi.mock("@/lib/format", () => ({
+vi.mock("@/lib/format", async (importOriginal) => ({
+  // The real helpers for everything not stubbed here: a stub that leaves a
+  // name out makes it undefined, and billed-bookings names invoices with
+  // formatInvoiceNumber.
+  ...(await importOriginal<typeof import("@/lib/format")>()),
   formatDateTime: vi.fn((value: string) => value),
   formatCurrencyCents: vi.fn((amount: number) => String(amount)),
 }));

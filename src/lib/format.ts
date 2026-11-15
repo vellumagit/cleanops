@@ -113,3 +113,21 @@ export function humanizeEnum(value: string | null | undefined): string {
   const spaced = value.replace(/_/g, " ");
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
+
+/**
+ * An invoice's number as people read it: "INV-2026-0350".
+ *
+ * invoices.number is text and already carries its prefix. Writers that
+ * assumed a bare integer prepended another one, so refusals and the Bill
+ * for a period list read "INV-INV-2026-0350" (Brian, 2026-11-15). A bare
+ * numeric value — legacy rows, test fixtures — still gets the old
+ * "INV-064" treatment.
+ */
+export function formatInvoiceNumber(
+  number: string | number | null | undefined,
+): string | null {
+  if (number == null) return null;
+  const s = String(number).trim();
+  if (!s) return null;
+  return /^\d+$/.test(s) ? `INV-${s.padStart(3, "0")}` : s;
+}

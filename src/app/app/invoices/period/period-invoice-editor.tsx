@@ -8,7 +8,7 @@ import { DateInput } from "@/components/when-preview";
 import { Button } from "@/components/ui/button";
 import { FormError } from "@/components/form-field";
 import { SubmitButton } from "@/components/submit-button";
-import { formatCurrencyCents, type CurrencyCode } from "@/lib/format";
+import { formatCurrencyCents, formatInvoiceNumber, type CurrencyCode } from "@/lib/format";
 import { computeTax, formatTaxRate, parseTaxRate } from "@/lib/invoice-tax";
 import {
   createPeriodInvoiceAction,
@@ -34,7 +34,8 @@ export type InitialLine = {
 export type BilledElsewhere = InitialLine & {
   scheduledAt: string;
   invoiceId: string;
-  invoiceNumber: number | null;
+  /** invoices.number is text with its prefix ("INV-2026-0350"). */
+  invoiceNumber: string | number | null;
   invoiceStatus: string;
   invoiceAmountCents: number;
   /** Drafts only. A sent or paid invoice is in the client's hands already. */
@@ -194,7 +195,7 @@ export function PeriodInvoiceEditor({
                     <span className="min-w-0 flex-1">
                       <span className="font-medium">
                         {b.invoiceNumber
-                          ? `INV-${b.invoiceNumber}`
+                          ? formatInvoiceNumber(b.invoiceNumber)
                           : "Draft invoice"}
                       </span>{" "}
                       (draft) — {b.label}
@@ -223,7 +224,7 @@ export function PeriodInvoiceEditor({
                     key={b.invoiceId}
                     className="text-xs text-amber-900/80 dark:text-amber-200/80"
                   >
-                    {b.invoiceNumber ? `INV-${b.invoiceNumber}` : "Invoice"} (
+                    {b.invoiceNumber ? formatInvoiceNumber(b.invoiceNumber) : "Invoice"} (
                     {b.invoiceStatus}) — {b.label}
                   </li>
                 ))}
@@ -260,7 +261,7 @@ export function PeriodInvoiceEditor({
                 <p className="truncate text-sm">{b.label}</p>
                 <p className="text-[11px] text-amber-800 dark:text-amber-300">
                   From{" "}
-                  {b.invoiceNumber ? `INV-${b.invoiceNumber}` : "a draft"} —
+                  {b.invoiceNumber ? formatInvoiceNumber(b.invoiceNumber) : "a draft"} —
                   that draft is voided when this invoice is created
                 </p>
               </div>

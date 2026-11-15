@@ -6,6 +6,7 @@ import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
 import { logAuditEvent } from "@/lib/audit";
 import { netPaidCents } from "@/lib/invoice-balance";
 import { billedRefusal, resolveBilledBookings } from "@/lib/billed-bookings";
+import { formatInvoiceNumber } from "@/lib/format";
 import { InvoiceSchema } from "@/lib/validators/invoices";
 import { autoInvoiceOnJobComplete } from "@/lib/automations";
 import {
@@ -83,10 +84,9 @@ async function friendlyInvoiceDbError(
       .eq("booking_id", bookingId)
       .is("voided_at" as never, null as never)
       .limit(1)
-      .maybeSingle()) as unknown as { data: { number: number | null } | null };
-    if (existing?.number != null) {
-      label = `invoice INV-${String(existing.number).padStart(3, "0")}`;
-    }
+      .maybeSingle()) as unknown as { data: { number: string | null } | null };
+    const num = formatInvoiceNumber(existing?.number);
+    if (num) label = `invoice ${num}`;
   }
   return `That booking is already billed by ${label} — a booking can only carry one live invoice. Open that invoice instead, or void it first if this is a correction.`;
 }
@@ -1653,12 +1653,54 @@ export async function createPeriodInvoiceAction(
     return { errors: { _form: "Add at least one line item." } };
   }
 
+  // The per-job drafts this invoice replaces (ticked on the period page).
+  // Only drafts, only this client, only this org — re-proved here rather
+  // than trusted from the form, because voiding is money and the ids arrived
+  // in a POST body. A sent or paid invoice is never absorbed: the client
+  // already has it, and quietly voiding it would erase something they see.
+  //
+  // Resolved BEFORE the billed check below, which has to look past exactly
+  // these drafts. It used to run after it: the check found each ticked job
+  // on the draft about to be voided and refused, so ticking a draft — the
+  // whole point of the list — could never create the invoice (Brian,
+  // 2026-11-15: "INV-…-0350 (draft) already bills this job").
+  let absorbIds: string[] = [];
+  try {
+    const raw = JSON.parse(String(formData.get("absorb_invoice_ids") ?? "[]"));
+    if (Array.isArray(raw)) {
+      absorbIds = raw.filter((v): v is string => typeof v === "string");
+    }
+  } catch {
+    absorbIds = [];
+  }
+  let voidableIds: string[] = [];
+  if (absorbIds.length > 0) {
+    const { data: voidable, error: voidableErr } = (await supabase
+      .from("invoices")
+      .select("id")
+      .in("id", absorbIds)
+      .eq("client_id", clientId)
+      .eq("organization_id", membership.organization_id)
+      .eq("status", "draft")) as unknown as {
+      data: Array<{ id: string }> | null;
+      error: { message: string } | null;
+    };
+    if (voidableErr) {
+      return { errors: { _form: `Couldn't check the drafts being combined (${voidableErr.message}). Nothing was created.` } };
+    }
+    voidableIds = (voidable ?? []).map((r) => r.id);
+  }
+
   // The period page offered only unbilled jobs, but the ids come back from
   // the form, and a stale tab or a crafted post can name a job billed since.
-  // Checked again here, all three ways, before anything is written.
+  // Checked again here, all three ways, before anything is written —
+  // looking past only the drafts proved voidable above. A job those drafts
+  // hold that ANOTHER live invoice also bills is still refused.
   const namedJobs = Array.from(new Set(lineRows.map((r) => r.booking_id).filter((b): b is string => Boolean(b))));
   if (namedJobs.length > 0) {
-    const billedBy = await resolveBilledBookings(supabase, namedJobs);
+    const billedBy = await resolveBilledBookings(supabase, namedJobs, {
+      ignoreInvoiceIds: new Set(voidableIds),
+    });
     const first = billedBy.values().next().value;
     if (first) {
       return { errors: { _form: billedRefusal(first, "bill it here") ?? "One of these jobs is already billed." } };
@@ -1758,37 +1800,30 @@ export async function createPeriodInvoiceAction(
   // consolidate; their lines are already in this invoice, so the drafts must
   // now be voided or the work is billed twice.
   //
-  // Only drafts, only this client, only this org — re-proved here rather than
-  // trusted from the form, because voiding is money and the ids arrived in a
-  // POST body. A sent or paid invoice is never absorbed: the client already
-  // has it, and quietly voiding it would erase something they can see.
-  let absorbIds: string[] = [];
-  try {
-    const raw = JSON.parse(String(formData.get("absorb_invoice_ids") ?? "[]"));
-    if (Array.isArray(raw)) {
-      absorbIds = raw.filter((v): v is string => typeof v === "string");
-    }
-  } catch {
-    absorbIds = [];
-  }
+  // Which drafts: voidableIds, proved before the billed check above. The
+  // void is still guarded on status = draft, so one sent in the seconds
+  // between is not voided — and then the rollback below runs, because its
+  // jobs would otherwise be billed by both.
   let absorbed = 0;
-  if (absorbIds.length > 0) {
-    const { data: voidable } = (await supabase
-      .from("invoices")
-      .select("id")
-      .in("id", absorbIds)
-      .eq("client_id", clientId)
-      .eq("organization_id", membership.organization_id)
-      .eq("status", "draft")
-      .neq("id", inv.id)) as unknown as { data: Array<{ id: string }> | null };
-
-    const ids = (voidable ?? []).map((r) => r.id);
+  {
+    const ids = voidableIds;
     if (ids.length > 0) {
       const nowIso = new Date().toISOString();
-      const { error: voidErr } = await supabase
+      const { data: voidedRows, error: voidErr0 } = (await supabase
         .from("invoices")
         .update({ status: "void", voided_at: nowIso })
-        .in("id", ids);
+        .in("id", ids)
+        .eq("organization_id", membership.organization_id)
+        .eq("status", "draft")
+        .select("id")) as unknown as {
+        data: Array<{ id: string }> | null;
+        error: { message: string } | null;
+      };
+      const voidErr =
+        voidErr0 ??
+        ((voidedRows ?? []).length !== ids.length
+          ? { message: "one of them was sent or changed a moment ago" }
+          : null);
       if (voidErr) {
         // The new invoice and the old drafts would both bill this work. Undo
         // the new one — unstamp, lines, invoice — and say why; the drafts
@@ -1797,6 +1832,16 @@ export async function createPeriodInvoiceAction(
           `[invoices] period invoice ${inv.id}: consolidating drafts failed; removing the new invoice:`,
           voidErr.message,
         );
+        // Any draft that DID void goes back to draft first: its jobs are
+        // still stamped to it, and leaving it void with the new invoice
+        // deleted would leave that work billed by nothing.
+        const partlyVoided = (voidedRows ?? []).map((r) => r.id);
+        if (partlyVoided.length > 0) {
+          await supabase
+            .from("invoices")
+            .update({ status: "draft", voided_at: null } as never)
+            .in("id", partlyVoided);
+        }
         await supabase
           .from("bookings")
           .update({ billing_invoice_id: null } as never)
@@ -1805,7 +1850,7 @@ export async function createPeriodInvoiceAction(
         await supabase.from("invoices").delete().eq("id", inv.id).eq("status", "draft");
         return {
           errors: {
-            _form: `Couldn't void the drafts being consolidated (${voidErr.message}); nothing was created. Try again.`,
+            _form: `Couldn't void the drafts being combined (${voidErr.message}); nothing was created. Try again.`,
           },
         };
       } else {

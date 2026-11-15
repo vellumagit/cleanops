@@ -1,5 +1,6 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { formatInvoiceNumber } from "@/lib/format";
 
 /**
  * "Is this job already on an invoice?" — asked once, in one place.
@@ -28,14 +29,14 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 export type BilledBy = {
   id: string;
-  number: number | null;
+  number: string | number | null;
   status: string;
   amountCents: number;
 };
 
 type Invoiceish = {
   id: string;
-  number: number | null;
+  number: string | number | null;
   status: string;
   amount_cents: number | null;
 } | null;
@@ -322,13 +323,22 @@ export async function releaseJobsRemovedFromInvoice(
  * the screen says it has. Until 2026-11-07 only the billing run opted in
  * (`failClosed`); the option stays for the signature, but it is on unless a
  * caller says otherwise, and no caller does.
+ *
+ * `ignoreInvoiceIds`: invoices to look past — Bill for a period passes the
+ * drafts it is about to void, so a job held only by one of them reads as
+ * free, while a job ALSO held by any other live invoice is still reported.
  */
 export async function resolveBilledBookings(
   supabase: SupabaseClient,
   bookingIds: readonly string[],
-  opts: { failClosed?: boolean } = {},
+  opts: { failClosed?: boolean; ignoreInvoiceIds?: ReadonlySet<string> } = {},
 ): Promise<Map<string, BilledBy>> {
   const failClosed = opts.failClosed ?? true;
+  const ignore = opts.ignoreInvoiceIds;
+  const note = (bookingId: string | null | undefined, inv: Invoiceish) => {
+    if (inv && ignore?.has(inv.id)) return;
+    noteBilled(billedBy, bookingId, inv);
+  };
   const billedBy = new Map<string, BilledBy>();
   if (bookingIds.length === 0) return billedBy;
   const ids = [...bookingIds];
@@ -341,7 +351,7 @@ export async function resolveBilledBookings(
       .in("booking_id", ids) as unknown as Promise<{
       data: Array<{
         id: string;
-        number: number | null;
+        number: string | null;
         status: string;
         amount_cents: number | null;
         booking_id: string | null;
@@ -370,23 +380,23 @@ export async function resolveBilledBookings(
   }
 
   for (const r of invRes.data ?? []) {
-    noteBilled(billedBy, r.booking_id, {
+    note(r.booking_id, {
       id: r.id,
       number: r.number,
       status: r.status,
       amount_cents: r.amount_cents,
     });
   }
-  for (const r of liRes.data ?? []) noteBilled(billedBy, r.booking_id, r.invoice);
-  for (const r of stampRes.data ?? []) noteBilled(billedBy, r.id, r.invoice);
+  for (const r of liRes.data ?? []) note(r.booking_id, r.invoice);
+  for (const r of stampRes.data ?? []) note(r.id, r.invoice);
 
   return billedBy;
 }
 
 /** "invoice INV-064 (sent)" — how a billing invoice is named in a refusal. */
 export function billedByLabel(inv: BilledBy): string {
-  const num = inv.number != null ? `INV-${String(inv.number).padStart(3, "0")}` : "another invoice";
-  return `${inv.number != null ? "invoice " : ""}${num} (${inv.status})`;
+  const num = formatInvoiceNumber(inv.number);
+  return `${num ? `invoice ${num}` : "another invoice"} (${inv.status})`;
 }
 
 /**
