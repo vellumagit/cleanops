@@ -24,13 +24,13 @@ const LineItemRowSchema = z.object({
     .string()
     .transform((s) => Number(s))
     .refine((n) => Number.isFinite(n) && n > 0, "Qty must be > 0"),
+  // A price below zero is a discount line (migration
+  // 20261115040000_invoice_discount_lines.sql). Zero is still refused: a
+  // line that adds nothing is a mistake, not a discount.
   unit_price_dollars: z
     .string()
-    .transform((s) => {
-      const c = parseDollarsToCents(s);
-      return c;
-    })
-    .refine((c) => c != null && c > 0, "Price must be > 0"),
+    .transform((s) => signedDollarsToCents(s))
+    .refine((c) => c != null && c !== 0, "Enter a price for every line (a discount goes in as its own line)."),
   sort_order: z.number(),
   /** The job this line bills. Round-tripped, never entered by hand. */
   booking_id: z.string().nullable().optional(),
@@ -39,6 +39,32 @@ const LineItemRowSchema = z.object({
 const LineItemsPayloadSchema = z
   .array(LineItemRowSchema)
   .min(1, "Add at least one line item");
+
+/** "200", "-200", "$-1,015.50" to signed cents; null for anything else. */
+function signedDollarsToCents(raw: string): number | null {
+  const s = String(raw ?? "").replace(/[$,\s]/g, "");
+  const negative = s.startsWith("-");
+  const cents = parseDollarsToCents(negative ? s.slice(1) : s);
+  if (cents == null) return null;
+  return negative ? -cents : cents;
+}
+
+/**
+ * The discount rules, without a database: a discount line names no job, and
+ * the invoice still comes to more than nothing. Null when the lines are fine.
+ */
+export function discountProblem(
+  rows: ReadonlyArray<{ quantity: number; unit_price_cents: number; booking_id?: string | null }>,
+): string | null {
+  if (rows.some((r) => r.unit_price_cents < 0 && r.booking_id)) {
+    return "A discount can't be on a job's own line. Add it as a separate Discount line.";
+  }
+  const subtotal = rows.reduce((sum, r) => sum + Math.round(r.quantity * r.unit_price_cents), 0);
+  if (subtotal <= 0 && rows.some((r) => r.unit_price_cents < 0)) {
+    return "The discounts come to as much as the rest of the invoice or more. An invoice has to be for more than $0.";
+  }
+  return null;
+}
 
 export type ReconcileResult =
   | {
@@ -87,6 +113,16 @@ export async function reconcileInvoiceLineItems(
     parsed = result.data;
   } catch {
     return { ok: false, error: "Invalid line items payload" };
+  }
+  {
+    const problem = discountProblem(
+      parsed.map((r) => ({
+        quantity: r.quantity as number,
+        unit_price_cents: r.unit_price_dollars as number,
+        booking_id: r.booking_id ?? null,
+      })),
+    );
+    if (problem) return { ok: false, error: problem };
   }
 
   const { data: existingItems, error: existingErr } = (await supabase
@@ -244,7 +280,8 @@ async function linkHandAddedLines(
     booking_id?: string | null;
   }>,
 ): Promise<void> {
-  const unlinked = rows.filter((r) => !r.booking_id);
+  // A discount line is never a job's line.
+  const unlinked = rows.filter((r) => !r.booking_id && (r.unit_price_dollars ?? 0) > 0);
   if (unlinked.length === 0) return;
   try {
     const { data: inv } = (await supabase

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { Plus, Trash2, GripVertical } from "lucide-react";
+import { Plus, Trash2, GripVertical, Tag } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { formatCurrencyCents } from "@/lib/format";
@@ -17,6 +17,10 @@ import { computeTax, formatTaxRate, parseTaxRate } from "@/lib/invoice-tax";
  *   line_items_json         — the rows
  *   items_tax_rate_percent  — tax on top of the items ("" = none)
  *   items_tax_label         — what the client sees
+ *
+ * A discount is its own row: the amount is typed as a positive number (or
+ * worked out from a percentage of the other lines) and posted as a negative
+ * price. Tax is worked out on the total after it.
  */
 
 type LineItem = {
@@ -35,6 +39,10 @@ type LineItem = {
    * from the jobs they bill — which is how a job got billed twice.
    */
   bookingId: string | null;
+  /** A discount row: unitPriceDollars holds the amount off, as a positive number. */
+  discount: boolean;
+  /** Percent typed for a discount; while set, the amount follows it. */
+  percent: string;
 };
 
 function newBlank(): LineItem {
@@ -45,8 +53,16 @@ function newBlank(): LineItem {
     quantity: "1",
     unitPriceDollars: "",
     bookingId: null,
+    discount: false,
+    percent: "",
   };
 }
+
+function newDiscount(): LineItem {
+  return { ...newBlank(), label: "Discount", discount: true };
+}
+
+const toNumber = (s: string) => Number(s.replace(/[$,\s]/g, "")) || 0;
 
 function centsToDollars(cents: number): string {
   return (cents / 100).toFixed(2);
@@ -82,13 +98,19 @@ export function LineItemsFields({
         dbId: e.id,
         label: e.label,
         quantity: String(e.quantity),
-        unitPriceDollars: centsToDollars(e.unit_price_cents),
+        unitPriceDollars: centsToDollars(Math.abs(e.unit_price_cents)),
         bookingId: e.booking_id ?? null,
+        discount: e.unit_price_cents < 0,
+        percent: "",
       }));
   });
 
   const addRow = useCallback(() => {
     setItems((prev) => [...prev, newBlank()]);
+  }, []);
+
+  const addDiscount = useCallback(() => {
+    setItems((prev) => [...prev, newDiscount()]);
   }, []);
 
   const removeRow = useCallback((key: string) => {
@@ -115,13 +137,24 @@ export function LineItemsFields({
   );
   const [labelText, setLabelText] = useState<string>(taxLabel ?? "");
 
+  // What the ordinary lines come to: the base a percentage discount is
+  // taken from.
+  const itemsCents = items.reduce((sum, item) => {
+    if (item.discount) return sum;
+    return sum + Math.round((Number(item.quantity) || 0) * toNumber(item.unitPriceDollars) * 100);
+  }, 0);
+  // A discount's amount: from its percentage while one is typed, else as typed.
+  const discountCents = (item: LineItem) => {
+    const pct = toNumber(item.percent);
+    if (item.percent.trim() !== "" && pct > 0) return Math.round((itemsCents * Math.min(pct, 100)) / 100);
+    return Math.round(toNumber(item.unitPriceDollars) * 100);
+  };
   // Line items are the subtotal; tax is applied on top so this preview
   // matches the total that actually gets saved.
-  const subtotalCents = items.reduce((sum, item) => {
-    const qty = Number(item.quantity) || 0;
-    const price = Number(item.unitPriceDollars.replace(/[$,\s]/g, "")) || 0;
-    return sum + Math.round(qty * price * 100);
-  }, 0);
+  const subtotalCents = items.reduce(
+    (sum, item) => (item.discount ? sum - discountCents(item) : sum),
+    itemsCents,
+  );
   const rateBps = taxEnabled ? parseTaxRate(rateText) : null;
   const tax = computeTax(subtotalCents, { rateBps });
 
@@ -135,10 +168,12 @@ export function LineItemsFields({
           items.map((item, idx) => ({
             db_id: item.dbId,
             label: item.label,
-            quantity: item.quantity,
-            unit_price_dollars: item.unitPriceDollars,
+            quantity: item.discount ? "1" : item.quantity,
+            unit_price_dollars: item.discount
+              ? `-${(discountCents(item) / 100).toFixed(2)}`
+              : item.unitPriceDollars,
             sort_order: idx,
-            booking_id: item.bookingId,
+            booking_id: item.discount ? null : item.bookingId,
           })),
         )}
       />
@@ -161,7 +196,59 @@ export function LineItemsFields({
           <span />
         </div>
 
-        {items.map((item) => (
+        {items.map((item) =>
+          item.discount ? (
+          <div
+            key={item.key}
+            className="flex flex-col gap-2 rounded-md border border-emerald-300/60 bg-emerald-50/50 p-3 dark:border-emerald-800/50 dark:bg-emerald-950/20 sm:grid sm:grid-cols-[1fr_80px_110px_32px] sm:items-center sm:p-2"
+          >
+            <div className="flex items-center gap-2">
+              <Tag className="hidden h-4 w-4 shrink-0 text-emerald-700 dark:text-emerald-400 sm:block" />
+              <Input
+                placeholder="Discount"
+                value={item.label}
+                onChange={(e) => updateRow(item.key, "label", e.target.value)}
+                className="min-w-0"
+                aria-label="Discount description"
+                required
+              />
+            </div>
+            <div className="relative">
+              <Input
+                placeholder="0"
+                value={item.percent}
+                onChange={(e) => updateRow(item.key, "percent", e.target.value)}
+                inputMode="decimal"
+                className="pr-6 tabular-nums"
+                aria-label="Discount percent (optional)"
+              />
+              <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">%</span>
+            </div>
+            <div className="relative">
+              <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">−</span>
+              <Input
+                placeholder="0.00"
+                value={item.percent.trim() !== "" ? (discountCents(item) / 100).toFixed(2) : item.unitPriceDollars}
+                onChange={(e) => {
+                  updateRow(item.key, "percent", "");
+                  updateRow(item.key, "unitPriceDollars", e.target.value.replace(/^-/, ""));
+                }}
+                inputMode="decimal"
+                className="pl-5 tabular-nums"
+                aria-label="Discount amount"
+                required
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => removeRow(item.key)}
+              className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+              aria-label="Remove discount"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </div>
+          ) : (
           <div
             key={item.key}
             className="group flex flex-col gap-2 rounded-md border border-border bg-background p-3 sm:grid sm:grid-cols-[1fr_80px_110px_32px] sm:items-center sm:border-0 sm:bg-transparent sm:p-0 sm:px-2"
@@ -203,7 +290,8 @@ export function LineItemsFields({
               <Trash2 className="h-4 w-4" />
             </button>
           </div>
-        ))}
+          ),
+        )}
       </div>
 
       <div className="rounded-md border border-border bg-muted/30 p-3">
@@ -243,10 +331,16 @@ export function LineItemsFields({
       </div>
 
       <div className="flex items-center justify-between gap-3">
-        <Button type="button" onClick={addRow} variant="outline" size="sm">
-          <Plus className="h-4 w-4" />
-          Add line item
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" onClick={addRow} variant="outline" size="sm">
+            <Plus className="h-4 w-4" />
+            Add line item
+          </Button>
+          <Button type="button" onClick={addDiscount} variant="outline" size="sm">
+            <Tag className="h-4 w-4" />
+            Add discount
+          </Button>
+        </div>
         <div className="text-right">
           {tax.rateBps && tax.taxAmountCents !== null ? (
             <div className="space-y-0.5">

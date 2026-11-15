@@ -889,13 +889,18 @@ export async function pushInvoiceToSage(
   const rawLines = (invoice.line_items ?? []).slice().sort(
     (a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0),
   );
+  // A discount line never goes over as a negative line: it is spread
+  // across the others (lib/invoice-discount.ts).
+  const { spreadDiscounts } = await import("@/lib/invoice-discount");
   const sageLines =
     rawLines.length > 0
-      ? rawLines.map((li) => ({
-          description: li.label,
-          quantity: Number(li.quantity) || 1,
-          unitPriceCents: li.unit_price_cents,
-        }))
+      ? spreadDiscounts(
+          rawLines.map((li) => ({
+            description: li.label,
+            quantity: Number(li.quantity) || 1,
+            unitPriceCents: li.unit_price_cents,
+          })),
+        )
       : [
           {
             description: "Services",
