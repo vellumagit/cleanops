@@ -113,6 +113,37 @@ describe.skipIf(!hasPostgrest)("things that don't add up", () => {
     expect(found.find((m) => m.kind === "inactive_crew")?.detail).toBe("Olga Placeholder");
   });
 
+  it("lists a double-booking that was already there, which the overlap guard lets stand", async () => {
+    const org = await addOrg(api.sql, "Doubled");
+    const olha = await addMember(api.sql, org, "employee", "Olha");
+    await api.sql("update public.memberships set display_name = 'Olha Musnytska' where id = $1", [olha.membershipId]);
+    const leslie = await clientNamed(org, "Leslie Saumer", "1 First Street");
+    const amanda = await clientNamed(org, "Amanda SJ", "2 Second Street");
+    const first = await visit(org, leslie, { inDays: 4, address: "1 First Street", crew: [olha] });
+    const second = await visit(org, amanda, { inDays: 6, address: "2 Second Street", crew: [olha] });
+    // Clear, and a clash months out is not this report's business.
+    await visit(org, amanda, { inDays: 8, address: "2 Second Street", crew: [olha] });
+
+    // The guard refuses this move today. Bookings made before it shipped are
+    // in this state anyway, so put one there the way they got there: with
+    // the guard not looking.
+    await api.sql("alter table public.bookings disable trigger user");
+    try {
+      await api.sql(
+        "update public.bookings set scheduled_at = (select scheduled_at + interval '1 hour' from public.bookings where id = $2) where id = $1",
+        [second, first],
+      );
+    } finally {
+      await api.sql("alter table public.bookings enable trigger user");
+    }
+
+    const { loadMismatches } = await import("@/lib/mismatch-check");
+    const { found, errors } = await loadMismatches(await admin(), org, Date.now());
+    expect(errors).toEqual([]);
+    expect(found.map((m) => m.kind)).toEqual(["double_booked"]);
+    expect(found[0].client).toBe("Olha Musnytska: Leslie Saumer and Amanda SJ");
+  });
+
   it("another company's visits are not in this company's list", async () => {
     const mine = await addOrg(api.sql, "Mine");
     const theirs = await addOrg(api.sql, "Theirs");

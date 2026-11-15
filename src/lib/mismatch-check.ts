@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { hasNoAddress, samePlace } from "./address-match";
+import { proposedWindows, type ProposedVisit } from "./crew-clash-text";
 
 /**
  * Things that don't add up: upcoming visits whose details disagree with
@@ -13,6 +14,11 @@ import { hasNoAddress, samePlace } from "./address-match";
  * results instead, every morning, however they came to be wrong, so the
  * next one of this shape is on a list before a crew drives to it.
  *
+ * Double-bookings are here for a different reason. The overlap guard
+ * (migration 20261108060000) refuses only a clash a change ADDS, so the ones
+ * booked before it shipped stand, and nothing said so: on 2026-11-14 one
+ * cleaner had three in December that nobody knew about.
+ *
  * Read-only. The 8 AM email prints it (src/lib/morning-check.ts).
  */
 
@@ -20,7 +26,8 @@ export type MismatchKind =
   | "address"
   | "inactive_crew"
   | "series_inactive_crew"
-  | "unassigned_soon";
+  | "unassigned_soon"
+  | "double_booked";
 
 export type Mismatch = {
   kind: MismatchKind;
@@ -36,11 +43,16 @@ export type Mismatch = {
 /** A visit this close with nobody on it is worth a line. */
 export const UNASSIGNED_WITHIN_DAYS = 7;
 
+/** How far ahead double-bookings are listed: near enough to act on, far
+ *  enough to move a job before the day. */
+export const DOUBLE_BOOKED_WITHIN_DAYS = 14;
+
 export const MISMATCH_TITLES: Record<MismatchKind, string> = {
   address: "address is a different place from the client's",
   inactive_crew: "someone on the crew is deactivated",
   series_inactive_crew: "recurring series names someone deactivated",
   unassigned_soon: `nobody assigned, within ${UNASSIGNED_WITHIN_DAYS} days`,
+  double_booked: `one person on two jobs at once, within ${DOUBLE_BOOKED_WITHIN_DAYS} days`,
 };
 
 export type MismatchVisit = {
@@ -62,6 +74,57 @@ export type MismatchSeries = {
   client: string;
   crew: Array<{ name: string; active: boolean }>;
 };
+
+/** A visit as the double-booking rule reads it: who is on it and when. */
+export type TimedVisit = ProposedVisit & { bookingId: string; client: string };
+
+/**
+ * People on two jobs whose times overlap, one finding per person per pair.
+ * The times are the ones the overlap guard uses (proposedWindows: shared
+ * hours divided across the crew, a person's own segment kept), so a pair
+ * listed here is a pair the guard would refuse if it were booked today.
+ * A pair counts when the later job starts within the horizon.
+ */
+export function findDoubleBookings(
+  visits: TimedVisit[],
+  nameOfMember: (membershipId: string) => string,
+  nowMs: number,
+): Mismatch[] {
+  const horizon = nowMs + DOUBLE_BOOKED_WITHIN_DAYS * 86_400_000;
+  const byMember = new Map<string, Array<{ s: number; e: number; v: TimedVisit }>>();
+  for (const v of visits) {
+    for (const [memberId, windows] of proposedWindows([v])) {
+      for (const w of windows) {
+        const list = byMember.get(memberId) ?? [];
+        list.push({ s: new Date(w.start_at).getTime(), e: new Date(w.end_at).getTime(), v });
+        byMember.set(memberId, list);
+      }
+    }
+  }
+  const out: Mismatch[] = [];
+  const seen = new Set<string>();
+  for (const [memberId, list] of byMember) {
+    list.sort((a, b) => a.s - b.s);
+    for (let i = 0; i < list.length; i++) {
+      for (let j = i + 1; j < list.length && list[j].s < list[i].e; j++) {
+        const a = list[i];
+        const b = list[j];
+        if (a.v.bookingId === b.v.bookingId || b.s > horizon) continue;
+        const key = `${memberId}|${a.v.bookingId}|${b.v.bookingId}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({
+          kind: "double_booked",
+          id: `${a.v.bookingId}:${b.v.bookingId}:${memberId}`,
+          client: `${nameOfMember(memberId)}: ${a.v.client} and ${b.v.client}`,
+          when: b.v.scheduledAt,
+          detail: "overlapping times",
+        });
+      }
+    }
+  }
+  return out;
+}
 
 /** The rule, without a database. */
 export function findMismatches(
@@ -121,7 +184,7 @@ export function mismatchLines(
           : g.length === 1
             ? ` ${fmt(first.when)}`
             : ` ${g.length} visits, ${fmt(first.when)} to ${fmt(g[g.length - 1].when as string)}`;
-      const detail = kind === "address" || kind === "unassigned_soon" ? "" : ` — ${first.detail}`;
+      const detail = kind === "address" || kind === "unassigned_soon" || kind === "double_booked" ? "" : ` — ${first.detail}`;
       lines.push(`          ${first.client}${span}${detail}`);
     }
     if (groups.length > perKind) lines.push(`          … and ${groups.length - perKind} more client(s)`);
@@ -166,6 +229,8 @@ export async function loadMismatches(
   type VisitRow = {
     id: string;
     scheduled_at: string;
+    duration_minutes: number | null;
+    divide_hours_evenly: boolean | null;
     address: string | null;
     assigned_to: string | null;
     property_id: string | null;
@@ -180,7 +245,7 @@ export async function loadMismatches(
   for (let page = 0; page < MAX_VISIT_PAGES; page++) {
     const { data: rows, error: vErr } = (await db
       .from("bookings")
-      .select("id, scheduled_at, address, assigned_to, property_id, client:clients ( name, address ), property:client_properties ( address )")
+      .select("id, scheduled_at, duration_minutes, divide_hours_evenly, address, assigned_to, property_id, client:clients ( name, address ), property:client_properties ( address )")
       .eq("organization_id", orgId)
       .in("status", ["pending", "confirmed"])
       .gte("scheduled_at", nowIso)
@@ -199,19 +264,30 @@ export async function loadMismatches(
   }
 
   const crewBy = new Map<string, Set<string>>();
+  const segmentBy = new Map<string, Map<string, { offset: number | null; minutes: number | null }>>();
   const covered = new Set<string>();
   const ids = visitRows.map((v) => v.id);
   for (let i = 0; i < ids.length; i += 150) {
     const chunk = ids.slice(i, i + 150);
     const { data: crew, error: cErr } = (await db
       .from("booking_assignees")
-      .select("booking_id, membership_id")
+      .select("booking_id, membership_id, split_start_offset_minutes, split_duration_minutes")
       .in("booking_id", chunk)) as unknown as {
-      data: Array<{ booking_id: string; membership_id: string }> | null;
+      data: Array<{
+        booking_id: string;
+        membership_id: string;
+        split_start_offset_minutes: number | null;
+        split_duration_minutes: number | null;
+      }> | null;
       error: { message: string } | null;
     };
     note("crew", cErr);
-    for (const r of crew ?? []) crewBy.set(r.booking_id, (crewBy.get(r.booking_id) ?? new Set()).add(r.membership_id));
+    for (const r of crew ?? []) {
+      crewBy.set(r.booking_id, (crewBy.get(r.booking_id) ?? new Set()).add(r.membership_id));
+      const segs = segmentBy.get(r.booking_id) ?? new Map();
+      segs.set(r.membership_id, { offset: r.split_start_offset_minutes, minutes: r.split_duration_minutes });
+      segmentBy.set(r.booking_id, segs);
+    }
     // A claimed shift offer staffs a visit with nobody from the roster on it.
     const { data: claims, error: clErr } = (await db
       .from("job_offer_claims" as never)
@@ -261,5 +337,43 @@ export async function loadMismatches(
     return { id: s.id, client: s.client?.name ?? "?", crew: [...crewIds].map(person) };
   });
 
-  return { found: findMismatches(visits, series, nowMs), errors, visitsChecked: visits.length };
+  // Double-bookings. Does the company share a job's hours across its crew?
+  // Read the way the database's booking_shares_hours does, so the times here
+  // are the overlap guard's.
+  const { data: org, error: oErr } = (await db
+    .from("organizations")
+    .select("automations_enabled, automation_settings")
+    .eq("id", orgId)
+    .maybeSingle()) as unknown as {
+    data: { automations_enabled: boolean | null; automation_settings: Record<string, { enabled?: unknown } | undefined> | null } | null;
+    error: { message: string } | null;
+  };
+  note("company settings", oErr);
+  const enabled = org?.automation_settings?.divide_crew_hours?.enabled;
+  const orgShares = org?.automations_enabled === true && (enabled === true || enabled === "true");
+  // Only visits near enough to matter; the day after the horizon is included
+  // so a job that starts inside it is compared with whatever it runs into.
+  const until = nowMs + (DOUBLE_BOOKED_WITHIN_DAYS + 1) * 86_400_000;
+  const timed: TimedVisit[] = visitRows
+    .filter((v) => new Date(v.scheduled_at).getTime() <= until)
+    .map((v) => {
+      const crewIds = new Set(crewBy.get(v.id) ?? []);
+      if (v.assigned_to) crewIds.add(v.assigned_to);
+      const segs = segmentBy.get(v.id);
+      return {
+        bookingId: v.id,
+        client: v.client?.name ?? "?",
+        scheduledAt: v.scheduled_at,
+        durationMinutes: v.duration_minutes ?? 0,
+        dividesHours: v.divide_hours_evenly === true || orgShares,
+        crew: [...crewIds].map((id) => ({
+          membershipId: id,
+          startOffsetMinutes: segs?.get(id)?.offset ?? null,
+          durationMinutes: segs?.get(id)?.minutes ?? null,
+        })),
+      };
+    });
+  const doubled = findDoubleBookings(timed, (id) => person(id).name, nowMs);
+
+  return { found: [...findMismatches(visits, series, nowMs), ...doubled], errors, visitsChecked: visits.length };
 }

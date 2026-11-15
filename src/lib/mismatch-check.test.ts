@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  DOUBLE_BOOKED_WITHIN_DAYS,
   UNASSIGNED_WITHIN_DAYS,
+  findDoubleBookings,
   findMismatches,
   mismatchLines,
   type MismatchSeries,
   type MismatchVisit,
+  type TimedVisit,
 } from "./mismatch-check";
 
 const NOW = Date.parse("2026-11-14T15:00:00Z");
@@ -69,7 +72,7 @@ describe("mismatchLines", () => {
 
   it("always prints every kind with its count, so a clean day reads as zeros", () => {
     const lines = mismatchLines([], fmt);
-    expect(lines).toHaveLength(4);
+    expect(lines).toHaveLength(5);
     expect(lines.every((l) => /^\s+0\s/.test(l))).toBe(true);
   });
 
@@ -91,5 +94,93 @@ describe("mismatchLines", () => {
     );
     const lines = mismatchLines(findMismatches(visits, [], NOW), fmt, 8);
     expect(lines.some((l) => l.includes("and 4 more client(s)"))).toBe(true);
+  });
+});
+
+describe("findDoubleBookings", () => {
+  const names: Record<string, string> = { olha: "Olha Musnytska", vira: "Vira Karpynska" };
+  const nameOfMember = (id: string) => names[id] ?? "?";
+  const at = (days: number, hour: number) => new Date(NOW + days * DAY + hour * 3_600_000).toISOString();
+  const job = (over: Partial<TimedVisit> & { bookingId: string; client: string }): TimedVisit => ({
+    scheduledAt: at(3, 0),
+    durationMinutes: 240,
+    dividesHours: false,
+    crew: [{ membershipId: "olha" }],
+    ...over,
+  });
+
+  it("one person on two jobs at overlapping times is one finding naming her and both clients", () => {
+    const found = findDoubleBookings(
+      [
+        job({ bookingId: "a", client: "Leslie Saumer", durationMinutes: 300 }),
+        job({ bookingId: "b", client: "Amanda SJ", scheduledAt: at(3, 1) }),
+      ],
+      nameOfMember,
+      NOW,
+    );
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({ kind: "double_booked", client: "Olha Musnytska: Leslie Saumer and Amanda SJ", when: at(3, 1) });
+  });
+
+  it("back-to-back jobs, and two different people at the same time, are not double-bookings", () => {
+    const found = findDoubleBookings(
+      [
+        job({ bookingId: "a", client: "First" }),
+        job({ bookingId: "b", client: "Second", scheduledAt: at(3, 4) }),
+        job({ bookingId: "c", client: "Third", crew: [{ membershipId: "vira" }] }),
+      ],
+      nameOfMember,
+      NOW,
+    );
+    expect(found).toEqual([]);
+  });
+
+  it("shared hours shorten each person's time: 8 hours for two ends at noon, so a 1 PM job is clear and a 10:30 one is not", () => {
+    const big = job({
+      bookingId: "big",
+      client: "Raheem Dhanani",
+      durationMinutes: 480,
+      dividesHours: true,
+      crew: [{ membershipId: "olha" }, { membershipId: "vira" }],
+    });
+    expect(findDoubleBookings([big, job({ bookingId: "pm", client: "After", scheduledAt: at(3, 4) })], nameOfMember, NOW)).toEqual([]);
+    const clash = findDoubleBookings([big, job({ bookingId: "mid", client: "Promotional Wearhouse", scheduledAt: at(3, 1.5) })], nameOfMember, NOW);
+    expect(clash.map((m) => m.client)).toEqual(["Olha Musnytska: Raheem Dhanani and Promotional Wearhouse"]);
+  });
+
+  it("a person's own segment is the time that counts", () => {
+    const split = job({
+      bookingId: "split",
+      client: "Split Shift",
+      durationMinutes: 480,
+      crew: [
+        { membershipId: "vira", startOffsetMinutes: 0, durationMinutes: 240 },
+        { membershipId: "olha", startOffsetMinutes: 240, durationMinutes: 240 },
+      ],
+    });
+    // Olha's part starts four hours in; a two-hour job at the start is clear.
+    expect(findDoubleBookings([split, job({ bookingId: "early", client: "Early", durationMinutes: 120 })], nameOfMember, NOW)).toEqual([]);
+    expect(findDoubleBookings([split, job({ bookingId: "late", client: "Late", scheduledAt: at(3, 5) })], nameOfMember, NOW)).toHaveLength(1);
+  });
+
+  it("only within the horizon", () => {
+    const far = DOUBLE_BOOKED_WITHIN_DAYS + 2;
+    const found = findDoubleBookings(
+      [job({ bookingId: "a", client: "A", scheduledAt: at(far, 0) }), job({ bookingId: "b", client: "B", scheduledAt: at(far, 1) })],
+      nameOfMember,
+      NOW,
+    );
+    expect(found).toEqual([]);
+  });
+
+  it("prints as its own line in the report", () => {
+    const found = findDoubleBookings(
+      [job({ bookingId: "a", client: "Leslie Saumer" }), job({ bookingId: "b", client: "Amanda SJ", scheduledAt: at(3, 1) })],
+      nameOfMember,
+      NOW,
+    );
+    const lines = mismatchLines(found, (iso) => iso.slice(0, 10));
+    expect(lines.some((l) => l.includes(" 1  one person on two jobs at once"))).toBe(true);
+    expect(lines.some((l) => l.includes("Olha Musnytska: Leslie Saumer and Amanda SJ " + at(3, 1).slice(0, 10)))).toBe(true);
   });
 });
