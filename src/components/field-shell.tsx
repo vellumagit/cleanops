@@ -134,7 +134,9 @@ export function FieldShell({
       </main>
 
       {/* ── Bottom tab bar ── */}
-      <nav className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-card pb-[env(safe-area-inset-bottom)]">
+      {/* fill-screen-tabbar: hidden while the keyboard is up on a
+          fill-screen page (globals.css). */}
+      <nav className="fill-screen-tabbar fixed inset-x-0 bottom-0 z-20 border-t border-border bg-card pb-[env(safe-area-inset-bottom)]">
         <ul className="mx-auto flex max-w-2xl">
           {visibleNav.map((item) => {
             const active =

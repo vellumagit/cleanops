@@ -28,18 +28,32 @@ export function useVisibleHeight(): void {
     if (!vv) return;
     const root = document.documentElement;
 
+    // The tallest the visible area has been at this width: the screen with
+    // no keyboard. Compared against that rather than against the page's own
+    // height, because browsers disagree about the page: iOS and Chrome
+    // leave it alone when the keyboard opens, Firefox on Android shrinks it
+    // too, and then "visible vs page" sees no keyboard at all. Turning the
+    // phone changes the width, which starts the measure again.
+    let tallest = vv.height;
+    let widthThen = vv.width;
+
     const apply = () => {
       if (Math.abs(vv.scale - 1) > 0.01) {
         root.style.removeProperty("--app-vh");
         delete root.dataset.keyboard;
         return;
       }
+      if (Math.abs(vv.width - widthThen) > 1) {
+        widthThen = vv.width;
+        tallest = vv.height;
+      }
+      tallest = Math.max(tallest, vv.height);
       root.style.setProperty("--app-vh", `${Math.round(vv.height)}px`);
-      // The keyboard is up when far less is visible than the page is tall.
-      // The fill-screen rules use this to give the page heading and the
-      // tab bar's reserved space back to the pane (globals.css): at 350px
-      // visible, they left a chat about 15px of messages to type under.
-      if (window.innerHeight - vv.height > KEYBOARD_MIN_PX) root.dataset.keyboard = "open";
+      // The keyboard is up when far less is visible than the screen shows
+      // without it. The fill-screen rules use this to give the page heading,
+      // banners and the tab bar's reserved space back to the pane
+      // (globals.css): at 350px visible they left a chat next to nothing.
+      if (tallest - vv.height > KEYBOARD_MIN_PX) root.dataset.keyboard = "open";
       else delete root.dataset.keyboard;
       // The browser may already have slid the page to reach the caret.
       if (window.scrollY !== 0) window.scrollTo(0, 0);

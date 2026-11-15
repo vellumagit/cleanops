@@ -634,4 +634,11 @@
   :root[data-keyboard="open"] .fill-screen-column:has(.fill-screen) {
     padding-bottom: 0.25rem;
   }
+  /* The tab bar is pinned to the bottom of the page. Where the keyboard
+     covers the page (iOS, Chrome) it is behind the keyboard anyway; where
+     the page shrinks to make room (Firefox on Android) it rides up and sat
+     on top of the message box. Either way it has no use while typing. */
+  :root[data-keyboard="open"] .fill-screen-root:has(.fill-screen) > .fill-screen-tabbar {
+    display: none;
+  }
 }
