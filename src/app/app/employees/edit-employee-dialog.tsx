@@ -3,6 +3,7 @@
 import { useActionState, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { PayRateField } from "@/components/pay-rate-field";
 import { Pencil } from "lucide-react";
 import {
   Dialog,
@@ -84,12 +85,12 @@ export function EditEmployeeDialog({ member, viewerRole, isSelf }: Props) {
   // successful finish.
   useEffect(() => {
     if (state.done && !pending) {
-      toast.success("Saved");
+      toast.success(state.notice ?? "Saved", state.notice ? { duration: 12_000 } : undefined);
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setOpen(false);
       router.refresh();
     }
-  }, [state.done, pending, router]);
+  }, [state.done, state.notice, pending, router]);
 
   const canChangeRole = viewerRole === "owner";
   const canDeactivate = !isSelf;
@@ -263,30 +264,11 @@ export function EditEmployeeDialog({ member, viewerRole, isSelf }: Props) {
             </div>
           )}
 
-          <div className="space-y-1.5">
-            <Label htmlFor={`pay-${member.id}`}>
-              Pay rate{" "}
-              <span className="font-normal text-muted-foreground">
-                ($/hr)
-              </span>
-            </Label>
-            <Input
-              id={`pay-${member.id}`}
-              name="pay_rate"
-              inputMode="decimal"
-              placeholder="22.00"
-              defaultValue={
-                member.pay_rate_cents != null
-                  ? (member.pay_rate_cents / 100).toFixed(2)
-                  : ""
-              }
-            />
-            {state.errors?.pay_rate && (
-              <p className="text-xs text-destructive">
-                {state.errors.pay_rate}
-              </p>
-            )}
-          </div>
+          <PayRateField
+            id={`pay-${member.id}`}
+            initialCents={member.pay_rate_cents}
+            error={state.errors?.pay_rate}
+          />
 
           {canDeactivate && (
             <div className="space-y-1.5">

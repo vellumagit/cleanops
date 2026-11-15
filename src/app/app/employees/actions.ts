@@ -12,6 +12,10 @@ import { allowDbErrors } from "@/lib/supabase/query-guard";
 import { readWorkHistory, workHistoryRefusal } from "@/lib/member-history";
 import { InvitationSchema } from "@/lib/validators/invitations";
 import { checkCleanerSeat, cleanerLimitMessage } from "@/lib/plan-limits";
+import { applyRateChange, effectiveFrom, rateChangeNotice } from "@/lib/pay-rate-change";
+import { getOrgTimezone } from "@/lib/org-timezone";
+import { zonedMidnightUtc, zonedYmd } from "@/lib/wall-clock";
+import { memberDisplayName } from "@/lib/member-display";
 
 type Field = "name" | "email" | "role" | "pay_rate";
 export type InviteFormState = ActionState<Field>;
@@ -335,6 +339,8 @@ export type UpdateMemberState = {
     >
   >;
   done?: boolean;
+  /** Something worth saying beyond "Saved": what a rate change reached. */
+  notice?: string;
 };
 
 export async function updateMemberAction(
@@ -506,6 +512,36 @@ export async function updateMemberAction(
   // that doesn't must not be able to wipe someone's rate by omission.
   if (formData.has("pay_rate"))
     updatePayload.pay_rate_cents = parsed.data.pay_rate;
+
+  // A changed rate says when it starts, and a lower one is confirmed
+  // (src/lib/pay-rate-change.ts). Decided before anything is written.
+  const oldRate = (before.pay_rate_cents as number | null) ?? null;
+  const newRate = formData.has("pay_rate") ? (parsed.data.pay_rate ?? null) : oldRate;
+  const rateChanged = newRate !== oldRate;
+  let rateStart: { at: Date; backdated: boolean } | null = null;
+  if (rateChanged) {
+    if (oldRate != null && newRate != null && newRate < oldRate && formData.get("pay_rate_lower_ok") !== "1") {
+      return {
+        errors: {
+          pay_rate: `This lowers the rate from $${(oldRate / 100).toFixed(2)} to $${(newRate / 100).toFixed(2)}. Tick "Yes, lower the rate" to save it.`,
+        },
+      };
+    }
+    const tz = await getOrgTimezone(membership.organization_id);
+    const now = new Date();
+    const fromDate = String(formData.get("pay_rate_from") ?? "").trim();
+    if (formData.get("pay_rate_from_mode") === "date" && fromDate === "") {
+      return { errors: { pay_rate: "Pick the date the new rate starts from." } };
+    }
+    const start = effectiveFrom(
+      fromDate,
+      zonedYmd(now, tz),
+      (ymd) => zonedMidnightUtc(ymd, tz),
+      now,
+    );
+    if ("error" in start) return { errors: { pay_rate: start.error } };
+    rateStart = start;
+  }
   if (parsed.data.display_name && parsed.data.display_name.length > 0) {
     updatePayload.display_name = parsed.data.display_name;
   }
@@ -600,6 +636,37 @@ export async function updateMemberAction(
     }
   }
 
+  // The rate is saved. What follows from it: unpaid shifts from the start
+  // date take the new rate, and the change goes in the history.
+  let rateNotice: string | null = null;
+  if (rateChanged && rateStart) {
+    try {
+      const plan = await applyRateChange(admin, {
+        organizationId: membership.organization_id,
+        membershipId: memberId,
+        oldRateCents: oldRate,
+        newRateCents: newRate,
+        from: rateStart.at,
+        backdated: rateStart.backdated,
+        changedBy: membership.id,
+      });
+      if (newRate != null) {
+        const name = memberDisplayName({
+          display_name: (parsed.data.display_name || before.display_name) ?? null,
+        });
+        rateNotice = rateChangeNotice(plan, name, newRate);
+      }
+    } catch (err) {
+      console.error("[updateMember] rate saved, shifts not re-priced:", err);
+      return {
+        errors: {
+          pay_rate:
+            "The new rate is saved, but the shifts from the start date could not be re-priced. Nothing else was changed. Tell support before running payroll.",
+        },
+      };
+    }
+  }
+
   if (Object.keys(adminDataPayload).length > 0) {
     await (admin
       .from("membership_admin_data" as never)
@@ -667,8 +734,9 @@ export async function updateMemberAction(
   revalidatePath("/app/settings/members");
   revalidatePath("/app/bookings");
   revalidatePath("/app/timesheets", "page");
+  revalidatePath("/app/payroll", "layout");
 
-  return { done: true };
+  return rateNotice ? { done: true, notice: rateNotice } : { done: true };
 }
 
 /* ------------------------------------------------------------------ */

@@ -3,6 +3,7 @@
 import { useActionState, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { PayRateField } from "@/components/pay-rate-field";
 import { UserCircle } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -62,7 +63,7 @@ export function EmployeeEditForm({
 
   useEffect(() => {
     if (state.done && !pending) {
-      toast.success("Employee updated");
+      toast.success(state.notice ?? "Employee updated", state.notice ? { duration: 12_000 } : undefined);
       router.refresh();
     }
   }, [state.done, pending, router]);
@@ -179,23 +180,11 @@ export function EmployeeEditForm({
             </FormField>
           )}
 
-          <FormField
-            label="Pay rate ($/hr)"
-            htmlFor="pay_rate"
+          <PayRateField
+            id="pay_rate"
+            initialCents={defaults.pay_rate_cents}
             error={state.errors?.pay_rate}
-          >
-            <Input
-              id="pay_rate"
-              name="pay_rate"
-              inputMode="decimal"
-              placeholder="22.00"
-              defaultValue={
-                defaults.pay_rate_cents != null
-                  ? (defaults.pay_rate_cents / 100).toFixed(2)
-                  : ""
-              }
-            />
-          </FormField>
+          />
 
           {!isSelf && (
             <FormField label="Status" htmlFor="status" error={state.errors?.status}>

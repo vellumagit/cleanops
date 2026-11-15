@@ -2,7 +2,6 @@
 
 import { useActionState, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Dialog,
@@ -22,6 +21,7 @@ import {
 import { StatusBadge, type StatusTone } from "@/components/status-badge";
 import { formatCurrencyCents, formatDate, humanizeEnum } from "@/lib/format";
 import { Pencil } from "lucide-react";
+import { PayRateField } from "@/components/pay-rate-field";
 import {
   updateMemberAction,
   type UpdateMemberState,
@@ -80,6 +80,9 @@ function EditMemberDialog({
   // Close dialog on success
   if (state.done && open) {
     setOpen(false);
+    // The page reloads, which would take a toast with it; what a rate
+    // change reached is worth a moment in front of the person.
+    if (state.notice) window.alert(state.notice);
     window.location.reload();
   }
 
@@ -131,24 +134,11 @@ function EditMemberDialog({
             </div>
           )}
 
-          <div className="space-y-1.5">
-            <Label htmlFor={`pay-${member.id}`}>
-              Pay rate{" "}
-              <span className="font-normal text-muted-foreground">($/hr)</span>
-            </Label>
-            <Input
-              id={`pay-${member.id}`}
-              name="pay_rate"
-              type="text"
-              inputMode="decimal"
-              placeholder="22.00"
-              defaultValue={
-                member.pay_rate_cents != null
-                  ? (member.pay_rate_cents / 100).toFixed(2)
-                  : ""
-              }
-            />
-          </div>
+          <PayRateField
+            id={`pay-${member.id}`}
+            initialCents={member.pay_rate_cents}
+            error={state.errors?.pay_rate}
+          />
 
           {canDeactivate && (
             <div className="space-y-1.5">

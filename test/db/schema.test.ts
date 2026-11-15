@@ -75,6 +75,9 @@ describe("row-level security", () => {
       "cron_runs",
       "email_suppressions",
       "org_email_counters",
+      // Pay rates are hidden from the team; each change and its start date,
+      // read by the employee page for owners and admins (2026-11-15).
+      "pay_rate_changes",
       "promo_codes",
       "promo_redemptions",
       "quickbooks_oauth_states",

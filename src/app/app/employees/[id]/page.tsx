@@ -210,6 +210,35 @@ export default async function EmployeeFilePage({
     member.id,
   );
 
+  // Pay rate history: each change, when it applies from, and who made it
+  // (src/lib/pay-rate-change.ts). A missing table reads as no history
+  // rather than breaking the page, so this is safe ahead of its migration.
+  type RateChangeRow = {
+    id: string;
+    old_rate_cents: number | null;
+    new_rate_cents: number | null;
+    effective_from: string;
+    shifts_repriced: number;
+    shifts_on_runs: number;
+    owed_cents: number;
+    created_at: string;
+    changer: { display_name: string | null; profile: { full_name: string | null } | null } | null;
+  };
+  const rateHistoryPromise = (
+    admin
+      .from("pay_rate_changes" as never)
+      .select(
+        "id, old_rate_cents, new_rate_cents, effective_from, shifts_repriced, shifts_on_runs, owed_cents, created_at, changer:memberships!pay_rate_changes_changed_by_fkey ( display_name, profile:profiles ( full_name ) )" as never,
+      )
+      .eq("membership_id" as never, id as never)
+      .eq("organization_id" as never, viewer.organization_id as never)
+      .order("created_at" as never, { ascending: false } as never)
+      .limit(20) as unknown as Promise<{ data: RateChangeRow[] | null }>
+  ).then(
+    (r) => r.data ?? [],
+    () => [] as RateChangeRow[],
+  );
+
   // ONE wave. Everything below depends only on `member`, `id` and `viewer`,
   // never on each other, so they all go at once instead of nose-to-tail.
   const [
@@ -220,6 +249,7 @@ export default async function EmployeeFilePage({
     { data: rawDocs },
     [{ data: orgModules }, { data: trainingRows }],
     attendance,
+    rateHistory,
   ] = await Promise.all([
     tzPromise,
     adminDataPromise,
@@ -228,6 +258,7 @@ export default async function EmployeeFilePage({
     rawDocsPromise,
     trainingPair,
     attendancePromise,
+    rateHistoryPromise,
   ]);
 
   const lifecycle: Array<{ label: string; date: string | null }> = [];
@@ -725,6 +756,49 @@ export default async function EmployeeFilePage({
             </>
           )}
         </div>
+
+        {/* Pay rate history */}
+        {rateHistory.length > 0 && (
+          <div className="rounded-xl border border-border bg-card">
+            <div className="border-b border-border px-4 py-3">
+              <h2 className="text-sm font-semibold">Pay rate history</h2>
+            </div>
+            <ul className="divide-y divide-border text-sm">
+              {rateHistory.map((c) => {
+                const rate = (cents: number | null) =>
+                  cents == null ? "no rate" : `${formatCurrencyCents(cents)}/hr`;
+                const lowered =
+                  c.old_rate_cents != null && c.new_rate_cents != null && c.new_rate_cents < c.old_rate_cents;
+                return (
+                  <li key={c.id} className="px-4 py-3">
+                    <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                      <span className={cn("font-medium", lowered && "text-amber-700 dark:text-amber-300")}>
+                        {rate(c.old_rate_cents)} to {rate(c.new_rate_cents)}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        from {formatDate(c.effective_from, tz)}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      Changed {formatDateTime(c.created_at, tz)}
+                      {c.changer ? ` by ${memberDisplayName(c.changer)}` : ""}
+                      {c.shifts_repriced > 0
+                        ? ` · ${c.shifts_repriced} unpaid shift${c.shifts_repriced === 1 ? "" : "s"} re-priced`
+                        : ""}
+                      {c.shifts_on_runs > 0
+                        ? ` · ${c.shifts_on_runs} already on a pay run, not changed${
+                            c.owed_cents !== 0
+                              ? ` (${c.owed_cents > 0 ? "would add" : "would take off"} ${formatCurrencyCents(Math.abs(c.owed_cents))})`
+                              : ""
+                          }`
+                        : ""}
+                    </p>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
 
         {/* Training */}
         <div className="rounded-xl border border-border bg-card">

@@ -72,6 +72,7 @@ const TENANT_TABLES = [
   "network_contacts",
   "notifications",
   "packages",
+  "pay_rate_changes",
   "payroll_items",
   "payroll_runs",
   "promo_codes",
