@@ -82,16 +82,19 @@ export function BookingStatusDropdown({
       } else {
         const n = res.changed ?? 0;
         const skipped = res.skipped ?? [];
+        const notReached = res.notReached ?? 0;
         // Partial success is normal here — a completed visit with a live
         // invoice refuses on purpose. Say so rather than claiming a clean run.
+        // And say when it stopped short: it changes a limited number at once.
+        const notes = [
+          skipped.length ? `${skipped.length} left unchanged — ${skipped[0].reason}` : null,
+          notReached && res.nextFromLabel
+            ? `${notReached} later ${notReached === 1 ? "visit was" : "visits were"} not changed: open the visit on ${res.nextFromLabel} and change it again for the rest.`
+            : null,
+        ].filter(Boolean);
         toast.success(
           `${n} ${n === 1 ? "visit is" : "visits are"} now ${formatBookingStatus(target).toLowerCase()}.`,
-          skipped.length
-            ? {
-                description: `${skipped.length} left unchanged — ${skipped[0].reason}`,
-                duration: 8000,
-              }
-            : undefined,
+          notes.length ? { description: notes.join(" "), duration: 10000 } : undefined,
         );
       }
       setAskScopeFor(null);

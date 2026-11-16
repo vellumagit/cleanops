@@ -81,7 +81,7 @@ export default async function BookingDetailPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ _return?: string; note_error?: string }>;
+  searchParams: Promise<{ _return?: string; note_error?: string; close_error?: string }>;
 }) {
   const membership = await requireMembership();
   const canEdit = membership.role === "owner" || membership.role === "admin";
@@ -89,7 +89,7 @@ export default async function BookingDetailPage({
   // This page is itself reachable from the scheduler, so forward whatever
   // origin brought us here. Otherwise scheduler -> details -> edit -> save
   // would lose the board on the last hop.
-  const { _return: returnTo, note_error: noteError } = await searchParams;
+  const { _return: returnTo, note_error: noteError, close_error: closeError } = await searchParams;
   const editHref = returnTo
     ? `/app/bookings/${id}/edit?_return=${encodeURIComponent(returnTo)}`
     : `/app/bookings/${id}/edit`;
@@ -520,6 +520,13 @@ export default async function BookingDetailPage({
                 confirmed is the wrong end of that mistake to discover. Confirm
                 it first — the status dropdown on the list does that in a
                 click. */}
+            {/* Why "Mark complete" did nothing, when it refused: a visit that
+                has not started yet, say. It used to redirect back in silence. */}
+            {closeError && (
+              <p role="alert" className="basis-full text-xs font-medium text-amber-700 dark:text-amber-400">
+                {closeError}
+              </p>
+            )}
             {bookingStatus !== "completed" &&
               bookingStatus !== "cancelled" &&
               bookingStatus !== "pending" && (

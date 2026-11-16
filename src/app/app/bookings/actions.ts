@@ -2369,6 +2369,49 @@ export async function updateBookingAction(
           staleMemberEvents = memberEvents ?? [];
         }
 
+        // Weeks taken out of this series stay out. The rule used to be built
+        // without the series' skip_dates, so a week removed with "Skip this
+        // one" (its row deleted, its date on skip_dates) came back as a
+        // confirmed visit the next time anyone saved "this and all future";
+        // and a later visit cancelled on its own (a client's skipped week)
+        // came back whenever that save changed the time, because the
+        // cancelled row no longer sat at the same instant as the new one.
+        const { data: seriesSkips, error: seriesSkipsErr } = (await admin
+          .from("booking_series")
+          .select("skip_dates")
+          .eq("id", seriesId)
+          .eq("organization_id", membership.organization_id)
+          .maybeSingle()) as unknown as {
+          data: { skip_dates: string[] | null } | null;
+          error: { message: string } | null;
+        };
+        const { data: cancelledLater, error: cancelledLaterErr } = (await admin
+          .from("bookings")
+          .select("scheduled_at")
+          .eq("series_id", seriesId)
+          .eq("organization_id", membership.organization_id)
+          .neq("id", id)
+          .gte("scheduled_at", seriesScheduledAt)
+          .eq("status", "cancelled")) as unknown as {
+          data: Array<{ scheduled_at: string }> | null;
+          error: { message: string } | null;
+        };
+        if (seriesSkipsErr || cancelledLaterErr) {
+          return {
+            errors: {
+              _form: `Nothing was saved because the series' skipped weeks could not be read: ${(seriesSkipsErr ?? cancelledLaterErr)!.message}`,
+            },
+            values: raw,
+          };
+        }
+        const { zonedYmd } = await import("@/lib/wall-clock");
+        const keptOut = Array.from(
+          new Set([
+            ...(seriesSkips?.skip_dates ?? []),
+            ...(cancelledLater ?? []).map((b) => zonedYmd(new Date(b.scheduled_at), orgTz)),
+          ]),
+        );
+
         // Generate new occurrences strictly after the edited visit — at its NEW
         // time. Stepping from the old time is what kept Lane on Thursdays
         // after her visit moved to a Wednesday: every later visit was counted
@@ -2382,6 +2425,7 @@ export async function updateBookingAction(
           generate_ahead: 52,
           monthly_nth: parsedMonthlyNth,
           monthly_dow: parsedMonthlyDow,
+          skip_dates: keptOut,
           tz: orgTz,
         };
 
@@ -3128,13 +3172,17 @@ export async function convertBookingToRecurringAction(
 export async function markBookingCompleteAction(id: string) {
   const { membership, supabase } = await getActionContext();
   // The decision and its side effects live in lib/close-job.ts, shared with
-  // the dashboard's "Close it". This action has no error channel — it
-  // redirects either way, and the page shows the real status.
-  await closeJob({ membership, supabase, bookingId: id });
+  // the dashboard's "Close it". A refusal comes back on the page as words
+  // (close_error): it used to redirect in silence, so pressing it on a
+  // visit that had not started yet did nothing and said nothing.
+  const result = await closeJob({ membership, supabase, bookingId: id });
   revalidatePath("/app/bookings");
   revalidatePath(`/app/bookings/${id}`);
   // Same URL we came from — pushing would add a duplicate history entry.
-  redirect(`/app/bookings/${id}`, RedirectType.replace);
+  redirect(
+    result.ok ? `/app/bookings/${id}` : `/app/bookings/${id}?close_error=${encodeURIComponent(result.error)}`,
+    RedirectType.replace,
+  );
 }
 
 // ─── Quick status set (bookings-list dropdown) ────────────────────────────────
@@ -3353,6 +3401,11 @@ export async function setSeriesStatusAction(formData: FormData): Promise<{
   error?: string;
   changed?: number;
   skipped?: Array<{ scheduled_at: string; reason: string }>;
+  /** Later visits past the cap, not looked at, and the first of them. */
+  notReached?: number;
+  nextFrom?: string | null;
+  /** nextFrom as the company reads it ("Feb 18, 2027"), for the toast. */
+  nextFromLabel?: string | null;
 }> {
   const id = String(formData.get("id") ?? "").trim();
   const target = String(formData.get("status") ?? "").trim();
@@ -3376,20 +3429,56 @@ export async function setSeriesStatusAction(formData: FormData): Promise<{
     return { ok: false, error: "This booking isn't part of a series." };
   }
 
-  const { data: siblings } = (await supabase
+  // One more than the cap, so the visits it does not reach are known and
+  // said. It used to stop at the cap in silence: on a two-year weekly
+  // series (about 104 visits) the last 44 kept their old status and the
+  // toast said the series was done.
+  const { data: fetched } = (await supabase
     .from("bookings")
-    .select("id, scheduled_at")
+    .select("id, scheduled_at, status")
     .eq("organization_id", membership.organization_id)
     .eq("series_id", anchor.series_id)
     .gte("scheduled_at", anchor.scheduled_at)
     .order("scheduled_at", { ascending: true })
-    .limit(SERIES_STATUS_CAP)) as unknown as {
-    data: Array<{ id: string; scheduled_at: string }> | null;
+    .order("id", { ascending: true })
+    .limit(SERIES_STATUS_CAP + 1)) as unknown as {
+    data: Array<{ id: string; scheduled_at: string; status: string }> | null;
   };
+  const siblings = (fetched ?? []).slice(0, SERIES_STATUS_CAP);
+  let notReached = 0;
+  let nextFrom: string | null = null;
+  let nextFromLabel: string | null = null;
+  if ((fetched ?? []).length > SERIES_STATUS_CAP) {
+    nextFrom = fetched![SERIES_STATUS_CAP].scheduled_at;
+    nextFromLabel = new Date(nextFrom).toLocaleDateString("en-CA", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      timeZone: await getOrgTimezone(membership.organization_id),
+    });
+    const { count } = (await supabase
+      .from("bookings")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", membership.organization_id)
+      .eq("series_id", anchor.series_id)
+      .gte("scheduled_at", nextFrom)) as unknown as { count: number | null };
+    notReached = count ?? 1;
+  }
 
   let changed = 0;
   const skipped: Array<{ scheduled_at: string; reason: string }> = [];
-  for (const b of siblings ?? []) {
+  for (const b of siblings) {
+    // A later visit cancelled on its own (a client's skipped week) stays
+    // cancelled. One future visit may be brought back on purpose, which the
+    // status rules allow; spreading "confirmed" down a series brought back
+    // every cancelled one with it, and the crew would have gone.
+    if (b.id !== anchor.id && b.status === "cancelled" && target !== "cancelled") {
+      skipped.push({
+        scheduled_at: b.scheduled_at,
+        reason: "it was cancelled on its own, so it stays cancelled. Open that visit to bring it back.",
+      });
+      continue;
+    }
     const fd = new FormData();
     fd.set("id", b.id);
     fd.set("status", target);
@@ -3403,7 +3492,7 @@ export async function setSeriesStatusAction(formData: FormData): Promise<{
     }
   }
 
-  return { ok: true, changed, skipped };
+  return { ok: true, changed, skipped, notReached, nextFrom, nextFromLabel };
 }
 
 export async function deleteBookingAction(formData: FormData) {

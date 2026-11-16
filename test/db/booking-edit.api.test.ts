@@ -224,6 +224,38 @@ describe.skipIf(!hasPostgrest)("the booking edit form on a weekly series", () =>
     expect(new Set(rows.map((r) => r.date)).size).toBe(rows.length);
   });
 
+  it("this and all future, moved from 9:00 to 10:00: a skipped week stays out and a cancelled week stays cancelled", async () => {
+    const s = await weeklySeries();
+    // Week 2 was taken out with "Skip this one" (row gone, date on the
+    // series' skip list); week 3 was cancelled on its own, a client's skip.
+    await api.sql("delete from public.bookings where id = $1", [s.visits[2]]);
+    await api.sql("update public.booking_series set skip_dates = array[$2::date] where id = $1", [s.series, ymd(s.base + 2 * 7 * DAY)]);
+    await api.sql("update public.bookings set status = 'cancelled' where id = $1", [s.visits[3]]);
+
+    const thisWeek = ymd(s.base + 7 * DAY);
+    const res = await save(
+      s.owner,
+      s.visits[1],
+      editForm(s, 1, {
+        scheduled_at: `${thisWeek}T10:00`,
+        update_scope: "this_and_future",
+        ...sameSchedule(s, 1),
+        series_start_time: "10:00",
+      }),
+    );
+    expect(res, api.log()).toMatch(/^redirected to /);
+
+    const rows = await seriesVisits(s);
+    const dates = rows.map((r) => r.date);
+    expect(dates).toContain(thisWeek);
+    expect(dates, "the skipped week is not booked again").not.toContain(ymd(s.base + 2 * 7 * DAY));
+    expect(dates, "the cancelled week is not booked again at the new time").not.toContain(ymd(s.base + 3 * 7 * DAY));
+    expect(dates, "the series goes on after them").toContain(ymd(s.base + 4 * 7 * DAY));
+    expect(rows.slice(1).map((r) => r.time)).toEqual(rows.slice(1).map(() => "10:00"));
+    const [cancelled] = await api.sql<{ status: string }>("select status::text as status from public.bookings where id = $1", [s.visits[3]]);
+    expect(cancelled.status).toBe("cancelled");
+  });
+
   it("a finished job an invoice bills: its price does not change from under the invoice", async () => {
     const s = await weeklySeries();
     const done = await addBooking(api.sql, s.org, s.client, { scheduledAt: new Date(Date.now() - 3 * DAY).toISOString(), durationMinutes: 120, status: "completed" });
