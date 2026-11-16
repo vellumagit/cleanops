@@ -204,8 +204,6 @@
     "app/client/(portal)/request/actions.ts#submitBookingRequestAction",
     "app/field/availability/actions.ts#deleteAvailabilityOverrideAction",
     "app/field/availability/actions.ts#saveAvailabilityOverrideAction",
-    "app/field/clock/actions.ts#clockInAction",
-    "app/field/clock/actions.ts#clockOutAction",
     "app/field/jobs/[id]/photo-actions.ts#deleteJobPhotoAction",
     "app/field/jobs/[id]/photo-actions.ts#uploadJobPhotoAction",
     "app/field/jobs/actions.ts#acceptGpsConsentAction",
