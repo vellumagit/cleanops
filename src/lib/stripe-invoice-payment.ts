@@ -445,6 +445,22 @@ export async function recordProviderRefund(args: {
     payment.amount_cents,
   );
 
+  // NEVER BACKWARDS. The number is cumulative, so an event carrying less than
+  // is already recorded is older news: Stripe does not promise order, a
+  // delivery that failed is retried hours later with its original payload,
+  // and the in-app refund writes the full amount before any webhook lands.
+  // Writing it anyway put a fully refunded invoice back to "partially paid",
+  // showing money held that the client already had back. A stale event's tip
+  // share is always zero (it is below the invoice portion), so nothing below
+  // needs it either.
+  const previousRefunded = payment.refunded_cents ?? 0;
+  if (invoiceRefundCents < previousRefunded) {
+    console.warn(
+      `[${provider}] refund event for ${args.piId} carries ${invoiceRefundCents}c, ${previousRefunded}c is already recorded; older event, ignored`,
+    );
+    return;
+  }
+
   // Cumulative write, clamped — idempotent across partial-refund events and
   // webhook retries, and it can never drive net-paid negative.
   // Books: the refunded amount becomes a Sage credit note + customer refund.
@@ -460,7 +476,11 @@ export async function recordProviderRefund(args: {
   const { error: refundErr } = await (admin
     .from("invoice_payments" as never)
     .update({ refunded_cents: invoiceRefundCents } as never)
-    .eq("id" as never, payment.id as never) as unknown as Promise<{
+    .eq("id" as never, payment.id as never)
+    // The same rule against a writer racing this one (the in-app refund's
+    // own reconcile and the webhook run side by side): a smaller number
+    // matches no row and changes nothing.
+    .lte("refunded_cents" as never, invoiceRefundCents as never) as unknown as Promise<{
     error: { message: string } | null;
   }>);
   if (refundErr) {
@@ -480,7 +500,6 @@ export async function recordProviderRefund(args: {
   // forward may speak — exactly one notification, whichever writer wins.
   // Brian's first live refund produced silence, and silence around money
   // reads as "did that work?".
-  const previousRefunded = payment.refunded_cents ?? 0;
   if (invoiceRefundCents > previousRefunded) {
     try {
       const { data: inv } = (await admin
