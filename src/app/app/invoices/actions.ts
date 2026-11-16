@@ -1739,6 +1739,82 @@ export async function createPeriodInvoiceAction(
     return { errors: { _form: invErr?.message ?? "Couldn't create invoice." } };
   }
 
+  // Claim every job this invoice bills BEFORE writing a line that bills it.
+  //
+  // The billed check above reads; two submissions in the same instant (two
+  // people, or one retried) both pass it before either has written, and both
+  // used to go on to bill the same jobs. Found by the load tests
+  // (test/load/money.load.test.ts) on 2026-11-15: both jobs ended up on two
+  // live invoices.
+  //
+  // The job's own stamp is the lock. One UPDATE claims every job whose stamp
+  // is empty, or is one of the drafts being combined here; the database takes
+  // those rows one writer at a time, so a second submission finds them
+  // already claimed and stops. Every job claimed, or nothing is created.
+  // Only a job whose stamp WE moved is ever put back, and back to exactly
+  // what it was.
+  const billedBookingIds = namedJobs;
+  const stampBefore = new Map<string, string | null>();
+  const restoreStamps = async () => {
+    const byPrevious = new Map<string | null, string[]>();
+    for (const [jobId, previous] of stampBefore) {
+      const group = byPrevious.get(previous) ?? [];
+      group.push(jobId);
+      byPrevious.set(previous, group);
+    }
+    for (const [previous, jobIds] of byPrevious) {
+      await supabase
+        .from("bookings")
+        .update({ billing_invoice_id: previous } as never)
+        .in("id", jobIds)
+        .eq("organization_id", membership.organization_id)
+        .eq("billing_invoice_id" as never, inv.id as never);
+    }
+  };
+  if (billedBookingIds.length > 0) {
+    const { data: current, error: currentErr } = (await supabase
+      .from("bookings")
+      .select("id, billing_invoice_id")
+      .in("id", billedBookingIds)
+      .eq("organization_id", membership.organization_id)) as unknown as {
+      data: Array<{ id: string; billing_invoice_id: string | null }> | null;
+      error: { message: string } | null;
+    };
+    const free = (stamp: string | null) => stamp === null || voidableIds.includes(stamp);
+    const stillFree = (current ?? []).filter((b) => free(b.billing_invoice_id));
+    let claimed: Array<{ id: string }> = [];
+    let claimErr: { message: string } | null = currentErr;
+    if (!claimErr && stillFree.length === billedBookingIds.length) {
+      for (const b of stillFree) stampBefore.set(b.id, b.billing_invoice_id);
+      const freeNow =
+        voidableIds.length > 0
+          ? `billing_invoice_id.is.null,billing_invoice_id.in.(${voidableIds.join(",")})`
+          : "billing_invoice_id.is.null";
+      const res = (await supabase
+        .from("bookings")
+        .update({ billing_invoice_id: inv.id } as never)
+        .in("id", billedBookingIds)
+        .eq("organization_id", membership.organization_id)
+        .or(freeNow)
+        .select("id")) as unknown as { data: Array<{ id: string }> | null; error: { message: string } | null };
+      claimed = res.data ?? [];
+      claimErr = res.error;
+    }
+    if (claimErr || claimed.length !== billedBookingIds.length) {
+      await restoreStamps();
+      await supabase.from("invoices").delete().eq("id", inv.id).eq("status", "draft");
+      if (claimErr) {
+        return { errors: { _form: `Couldn't reserve these jobs for this invoice (${claimErr.message}). Nothing was created.` } };
+      }
+      return {
+        errors: {
+          _form:
+            "One of these jobs was put on another invoice a moment ago, so nothing was created. Reload the period to see what is still unbilled.",
+        },
+      };
+    }
+  }
+
   const itemsPayload = lineRows.map((r) => ({
     invoice_id: inv.id,
     organization_id: membership.organization_id,
@@ -1755,41 +1831,18 @@ export async function createPeriodInvoiceAction(
   }>));
   if (itemsErr) {
     // The invoice was inserted above; without its lines it is a total with
-    // no breakdown. Take the draft back out rather than leave it.
+    // no breakdown. Give the jobs back and take the draft out.
+    await restoreStamps();
     await supabase.from("invoices").delete().eq("id", inv.id).eq("status", "draft");
     return { errors: { _form: itemsErr.message } };
   }
 
-  // Stamp every booking on this invoice as billed — the same guard
-  // createInvoiceAction applies at the top of this file, which the period
-  // builder never did.
-  //
+  // Every job on this invoice is stamped as billed by it: the claim above.
   // A consolidated invoice has no single invoices.booking_id (it is set null
-  // above), so the ONLY record that this work is billed lives on the line
-  // items. The billing-cycle cron does not read those: it selects bookings
-  // with billing_invoice_id IS NULL (api/cron/billing-cycle/route.ts:166).
-  // So for a monthly or biweekly client, every job billed here was invisible
-  // to the cron and would be billed a second time on the 1st or 15th.
-  //
-  // Guarded on still-null so a booking already linked to another invoice is
-  // never re-pointed at this one.
-  const billedBookingIds = Array.from(
-    new Set(lineRows.map((r) => r.booking_id).filter(Boolean) as string[]),
-  );
-  if (billedBookingIds.length > 0) {
-    const { error: stampErr } = await supabase
-      .from("bookings")
-      .update({ billing_invoice_id: inv.id } as never)
-      .in("id", billedBookingIds)
-      .eq("organization_id", membership.organization_id)
-      .is("billing_invoice_id" as never, null as never);
-    if (stampErr) {
-      console.error(
-        `[invoices] period invoice ${inv.id}: billing_invoice_id stamp failed (invoice still created):`,
-        stampErr.message,
-      );
-    }
-  }
+  // above), and the billing-cycle cron selects bookings with
+  // billing_invoice_id IS NULL (api/cron/billing-cycle/route.ts), so without
+  // the stamp a monthly or biweekly client's jobs billed here would be billed
+  // again on the 1st or 15th.
 
   // Fold in the per-job drafts this invoice replaces.
   //
@@ -1842,10 +1895,7 @@ export async function createPeriodInvoiceAction(
             .update({ status: "draft", voided_at: null } as never)
             .in("id", partlyVoided);
         }
-        await supabase
-          .from("bookings")
-          .update({ billing_invoice_id: null } as never)
-          .eq("billing_invoice_id" as never, inv.id as never);
+        await restoreStamps();
         await supabase.from("invoice_line_items").delete().eq("invoice_id", inv.id);
         await supabase.from("invoices").delete().eq("id", inv.id).eq("status", "draft");
         return {
