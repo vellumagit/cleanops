@@ -22,7 +22,10 @@ async function cronGet(request: Request) {
   const now = new Date();
   const in24h = new Date(now.getTime() + 24 * 60 * 60 * 1000);
 
-  // Find bookings starting within 24h that have no assigned_to
+  // Every booking starting within 24h; who is actually coming is decided by
+  // the coverage check below. Not prefiltered on assigned_to IS NULL: a
+  // visit whose only cleaner was deactivated still names her there, and
+  // that filter hid it from the one check that knows she is not coming.
   const { data: unfilledBookings, error } = await admin
     .from("bookings")
     .select(
@@ -31,7 +34,6 @@ async function cronGet(request: Request) {
       client:clients ( name )
     `,
     )
-    .is("assigned_to", null)
     .gte("scheduled_at", now.toISOString())
     .lte("scheduled_at", in24h.toISOString())
     .in("status", ["pending", "confirmed"]);

@@ -40,7 +40,8 @@ beforeEach(() => {
   request.after = [];
 });
 
-describe.skipIf(!hasPostgrest)("generate invoices for all completed jobs, at Svit's size", () => {
+// 420 jobs take longer than the default 20 seconds when the whole suite runs at once.
+describe.skipIf(!hasPostgrest)("generate invoices for all completed jobs, at Svit's size", { timeout: 120_000 }, () => {
   it("420 finished jobs, 415 already billed: the 5 get one invoice each, nothing billed twice", async () => {
     const { bulkGenerateInvoicesAction } = await import("@/app/app/invoices/actions");
     const org = await addOrg(api.sql, "Bulk Co");

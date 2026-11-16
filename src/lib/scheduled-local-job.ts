@@ -4,6 +4,7 @@ import { logSystemAuditEvent } from "@/lib/audit";
 import { syncJob } from "@/lib/job-sync";
 import { resyncBookingCalendarsPaced } from "@/lib/booking-calendar-sync";
 import { planRederive, type RederiveRow } from "@/lib/scheduled-local";
+import { allPages, type Page } from "@/lib/supabase/all-pages";
 
 /**
  * Nightly: re-derive every future visit's instant from its wall clock under
@@ -22,6 +23,8 @@ export async function rederiveScheduledInstants(opts: { dryRun?: boolean; now?: 
   considered: number;
   changed: number;
   refusedZones: string[];
+  /** Visits that needed moving and could not be: still at the wrong time. */
+  refused: string[];
   dbDisagreed: number;
   dryRun: boolean;
 }> {
@@ -29,19 +32,23 @@ export async function rederiveScheduledInstants(opts: { dryRun?: boolean; now?: 
   const now = opts.now ?? Date.now();
   const dryRun = opts.dryRun === true;
 
-  const { data, error } = (await db
-    .from("bookings")
-    .select("id, organization_id, scheduled_at, scheduled_local, scheduled_tz" as never)
-    .gte("scheduled_at", new Date(now).toISOString())
-    .is("archived_at", null)
-    .not("status", "in", "(cancelled,completed)")
-    .order("scheduled_at")
-    .limit(5000)) as unknown as {
-    data: Array<RederiveRow & { organization_id: string }> | null;
-    error: { message: string } | null;
-  };
-  if (error) throw new Error(`rederive: bookings query failed: ${error.message}`);
-  const rows = data ?? [];
+  // Every future visit, in pages. One read asked for 5,000 and the API
+  // answers at most 1,000 (supabase/config.toml max_rows), so the visits
+  // past the nearest thousand were never looked at. There were 876 across
+  // all companies on 2026-11-16.
+  const rows = await allPages<RederiveRow & { organization_id: string }>(
+    (from, to) =>
+      db
+        .from("bookings")
+        .select("id, organization_id, scheduled_at, scheduled_local, scheduled_tz" as never)
+        .gte("scheduled_at", new Date(now).toISOString())
+        .is("archived_at", null)
+        .not("status", "in", "(cancelled,completed)")
+        .order("scheduled_at")
+        .order("id")
+        .range(from, to) as unknown as Page<RederiveRow & { organization_id: string }>,
+    "rederive: future visits",
+  );
 
   const { changes, refusedZones } = planRederive(rows, { now });
   if (refusedZones.length > 0) {
@@ -50,13 +57,14 @@ export async function rederiveScheduledInstants(opts: { dryRun?: boolean; now?: 
     );
   }
   if (dryRun) {
-    return { considered: rows.length, changed: changes.length, refusedZones, dbDisagreed: 0, dryRun };
+    return { considered: rows.length, changed: changes.length, refusedZones, refused: [], dbDisagreed: 0, dryRun };
   }
 
   const orgOf = new Map(rows.map((r) => [r.id, r.organization_id]));
   let changed = 0;
   let dbDisagreed = 0;
   const moved: string[] = [];
+  const refused: string[] = [];
   for (const c of changes) {
     // Guard on the instant we read: a visit someone moved in the meantime
     // carries a new wall clock too, and the next night re-plans from that.
@@ -78,6 +86,7 @@ export async function rederiveScheduledInstants(opts: { dryRun?: boolean; now?: 
       upd = data;
     } catch (err) {
       console.error("[rederive] update failed", c.id, err instanceof Error ? err.message : err);
+      refused.push(c.id);
       continue;
     }
     if (!upd || upd.length === 0) continue;
@@ -104,5 +113,25 @@ export async function rederiveScheduledInstants(opts: { dryRun?: boolean; now?: 
   // Each moved visit's calendar events move with it, at the reconcile's pace.
   if (moved.length > 0) await resyncBookingCalendarsPaced(moved);
   if (changed > 0) console.log(`[rederive] moved ${changed} visit(s) to match their wall clock`);
-  return { considered: rows.length, changed, refusedZones, dbDisagreed, dryRun };
+  return { considered: rows.length, changed, refusedZones, refused, dbDisagreed, dryRun };
+}
+
+/**
+ * What the morning email should say about a run, or null when there is
+ * nothing to say. A visit left at the wrong time is fine for one night only
+ * if someone is told: the route answers 500 with this, the cron ledger
+ * records it as a failed run, and the 8 AM email prints it.
+ */
+export function rederiveProblem(r: { refusedZones: string[]; refused: string[]; dryRun: boolean }): string | null {
+  if (r.dryRun) return null;
+  const parts: string[] = [];
+  if (r.refused.length > 0) {
+    parts.push(
+      `${r.refused.length} visit(s) could not be moved back to their booked time and are an hour off: ${r.refused.slice(0, 5).join(", ")}${r.refused.length > 5 ? " …" : ""}`,
+    );
+  }
+  if (r.refusedZones.length > 0) {
+    parts.push(`visits in ${r.refusedZones.join(", ")} were left alone: this server's time zone rules for it are out of date`);
+  }
+  return parts.length > 0 ? parts.join(". ") : null;
 }

@@ -12,7 +12,7 @@
  * Protected by CRON_SECRET.
  */
 import { requireCronAuth } from "@/lib/cron-auth";
-import { rederiveScheduledInstants } from "@/lib/scheduled-local-job";
+import { rederiveProblem, rederiveScheduledInstants } from "@/lib/scheduled-local-job";
 import { withCronRun } from "@/lib/cron-run";
 
 export const runtime = "nodejs";
@@ -24,7 +24,8 @@ async function cronGet(request: Request) {
   try {
     const dryRun = new URL(request.url).searchParams.get("dry") === "1";
     const result = await rederiveScheduledInstants({ dryRun });
-    return Response.json(result);
+    const problem = rederiveProblem(result);
+    return problem ? Response.json({ error: problem, ...result }, { status: 500 }) : Response.json(result);
   } catch (err) {
     console.error("[cron/rederive-times] error:", err);
     return Response.json(

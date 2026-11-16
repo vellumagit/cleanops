@@ -3564,6 +3564,7 @@ export async function autoExtendRecurringSeries(): Promise<number> {
     let totalGenerated = 0;
     const overlapSkipped: string[] = [];
     const seriesFailed: string[] = [];
+    const zoneRefused: string[] = [];
 
     for (const s of series) {
       try {
@@ -3602,6 +3603,9 @@ export async function autoExtendRecurringSeries(): Promise<number> {
         console.error(
           `[extend-series] refusing to generate for ${s.id}: this runtime's rules for ${orgTz} are out of date (tzdata ${process.versions.tz ?? "?"})`,
         );
+        // Not in silence: held back every night, a series runs dry a month
+        // later with nobody told. Named in the run's failure below.
+        zoneRefused.push(`series ${s.id} (${orgTz})`);
         continue;
       }
       const occurrences = generateOccurrences(
@@ -3853,11 +3857,14 @@ export async function autoExtendRecurringSeries(): Promise<number> {
     // Reported as a failed run (the cron ledger and the morning check read
     // it), naming what was skipped: a visit nobody generated is a client
     // nobody cleans.
-    if (seriesFailed.length > 0 || overlapSkipped.length > 0) {
+    if (seriesFailed.length > 0 || overlapSkipped.length > 0 || zoneRefused.length > 0) {
       const parts = [
         `${totalGenerated} visit(s) generated`,
         overlapSkipped.length > 0
           ? `${overlapSkipped.length} skipped because the cleaner already has an overlapping booking: ${overlapSkipped.slice(0, 8).join("; ")}${overlapSkipped.length > 8 ? " …" : ""}`
+          : null,
+        zoneRefused.length > 0
+          ? `${zoneRefused.length} series not extended because this server's time zone rules are out of date: ${zoneRefused.slice(0, 5).join("; ")}`
           : null,
         seriesFailed.length > 0 ? `${seriesFailed.length} series failed: ${seriesFailed.slice(0, 5).join("; ")}` : null,
       ].filter(Boolean);
@@ -4018,12 +4025,16 @@ export async function sendUnassignedBookingAlerts(): Promise<{
   const now = Date.now();
   const windowEnd = new Date(now + 24 * 60 * 60 * 1000).toISOString();
 
+  // Every visit in the window, not only those with no first cleaner: a visit
+  // whose only cleaner has been deactivated still names her in assigned_to,
+  // and filtering on that column here kept it out before the coverage check
+  // below could see she is not coming. Svit had 51 such visits on
+  // 2026-11-16, the first on Dec 14.
   const { data: rawCandidates } = (await db
     .from("bookings")
     .select(
       "id, organization_id, scheduled_at, service_type, service_type_label, address, client:clients ( name )",
     )
-    .is("assigned_to", null)
     .is("unassigned_alert_sent_at", null)
     .in("status", ["pending", "confirmed"])
     .gte("scheduled_at", new Date(now).toISOString())
@@ -4530,6 +4541,11 @@ export async function sendWeeklyOpsDigests(): Promise<{
     const orgTz = org.timezone ?? "America/Edmonton";
     const weekLabel = `${start.toLocaleDateString("en-US", { timeZone: orgTz, month: "short", day: "numeric" })} – ${end.toLocaleDateString("en-US", { timeZone: orgTz, month: "short", day: "numeric", year: "numeric" })}`;
 
+    // Visits that may have nobody coming, including those whose only
+    // cleaner was deactivated (maybeUnstaffedFilter); coverage decides below.
+    const { maybeUnstaffedFilter } = await import("@/lib/booking-coverage");
+    const maybeUnstaffed = await maybeUnstaffedFilter(org.id);
+
     // Gather stats in parallel.
     const [
       { data: paidInvoices },
@@ -4590,7 +4606,7 @@ export async function sendWeeklyOpsDigests(): Promise<{
         .from("bookings")
         .select("id")
         .eq("organization_id", org.id)
-        .is("assigned_to", null)
+        .or(maybeUnstaffed)
         .in("status", ["pending", "confirmed"])
         .gte("scheduled_at", now.toISOString())
         .lte(
@@ -5195,6 +5211,13 @@ export async function sendDailyEmployeeSchedules(): Promise<{
       bookings.map((b) => b.id),
     );
     const assignments = effectiveAssignments(bookings, rowsByBooking);
+    // Each person's own length on a job, the way the field app works it out
+    // (resolveShiftWindows): a team job whose hours are shared is the booked
+    // hours divided by the crew. Svit shares them, and this email printed the
+    // whole booking for each cleaner: "4h" on a four-hour job for two, which
+    // the field app shows each of them as two.
+    const { resolveShiftWindows, shiftWindowKey } = await import("@/lib/crew-hours");
+    const allotted = await resolveShiftWindows(bookings);
 
     const byEmployee = new Map<string, typeof assignments>();
     for (const a of assignments) {
@@ -5219,10 +5242,13 @@ export async function sendDailyEmployeeSchedules(): Promise<{
             nameById,
             tz: orgTz,
           });
-          return { booking, win };
+          const minutes = win.isSplit
+            ? win.durationMinutes
+            : (allotted.get(shiftWindowKey(booking.id, row.membership_id))?.allottedMinutes ?? win.durationMinutes);
+          return { booking, win, minutes };
         })
         .sort((a, b) => a.win.start.getTime() - b.win.start.getTime())
-        .map(({ booking, win }) => ({
+        .map(({ booking, win, minutes }) => ({
           time: win.start.toLocaleTimeString("en-US", {
             hour: "numeric",
             minute: "2-digit",
@@ -5234,9 +5260,9 @@ export async function sendDailyEmployeeSchedules(): Promise<{
           address:
             booking.address ?? booking.client?.address ?? "(address on file)",
           durationLabel:
-            win.durationMinutes >= 60
-              ? `${Math.round((win.durationMinutes / 60) * 10) / 10}h`
-              : `${win.durationMinutes}m`,
+            minutes >= 60
+              ? `${Math.round((minutes / 60) * 10) / 10}h`
+              : `${minutes}m`,
           notes: booking.notes,
           windowLabel: win.windowLabel,
           handoffLabel: win.handoffLabel,

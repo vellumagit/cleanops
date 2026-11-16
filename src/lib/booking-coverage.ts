@@ -201,6 +201,31 @@ export async function resolveBookingCoverage(
   return out;
 }
 
+/**
+ * A PostgREST `or` filter for the visits that MAY have nobody coming: no
+ * first cleaner, or a first cleaner who is no longer active. Narrow a
+ * bookings query with it, then let resolveBookingCoverage decide.
+ *
+ * `assigned_to is null` alone was used for this, and it hides the visit
+ * whose only cleaner has been deactivated, because her name is still in
+ * assigned_to. Svit had 51 such visits on 2026-11-16 (Nancy Ellestad, from
+ * Dec 14), absent from the unfilled panel, the bench page, the weekly
+ * digest and both day-before alerts.
+ */
+export async function maybeUnstaffedFilter(organizationId: string): Promise<string> {
+  const db = createSupabaseAdminClient();
+  const { data, error } = (await db
+    .from("memberships")
+    .select("id")
+    .eq("organization_id", organizationId)
+    .neq("status", "active")
+    .order("id")
+    .limit(1000)) as unknown as { data: Array<{ id: string }> | null; error: { message: string } | null };
+  if (error) throw new Error(`inactive members: ${error.message}`);
+  const ids = (data ?? []).map((r) => r.id);
+  return ids.length > 0 ? `assigned_to.is.null,assigned_to.in.(${ids.join(",")})` : "assigned_to.is.null";
+}
+
 /** Single-booking convenience wrapper. */
 export async function isBookingStaffed(bookingId: string): Promise<boolean> {
   const map = await resolveBookingCoverage([bookingId]);

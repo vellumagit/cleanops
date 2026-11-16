@@ -33,6 +33,8 @@ export async function CoveragePanel({
 }) {
   const supabase = await createSupabaseServerClient();
   const nowIso = new Date().toISOString();
+  const { maybeUnstaffedFilter, resolveBookingCoverage } = await import("@/lib/booking-coverage");
+  const maybeUnstaffed = await maybeUnstaffedFilter(organizationId);
 
   const [{ data: requests }, { data: openBookings }] = await Promise.all([
     supabase
@@ -50,19 +52,20 @@ export async function CoveragePanel({
       .limit(20) as unknown as { data: RequestRow[] | null },
     // Rows, not a count: assigned_to being NULL does not mean nobody is
     // coming. A bench freelancer who claimed the shift can't be written to
-    // that column, so a plain count reported covered jobs as unfilled.
+    // that column, so a plain count reported covered jobs as unfilled. And
+    // a name there does not mean someone is: see maybeUnstaffedFilter.
     supabase
       .from("bookings")
       .select("id")
       .eq("organization_id", organizationId)
       .gte("scheduled_at", nowIso)
       .in("status", ["pending", "confirmed"])
-      .is("assigned_to", null)
+      .or(maybeUnstaffed)
+      .order("scheduled_at")
       .limit(200) as unknown as { data: Array<{ id: string }> | null },
   ]);
 
   const reqs = requests ?? [];
-  const { resolveBookingCoverage } = await import("@/lib/booking-coverage");
   const cov = await resolveBookingCoverage((openBookings ?? []).map((b) => b.id));
   const unfilledCount = (openBookings ?? []).filter(
     (b) => !cov.get(b.id)?.staffed,

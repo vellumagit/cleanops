@@ -20,6 +20,8 @@ export default async function FreelancersPage() {
   const tz = await getOrgTimezone(membership.organization_id);
   const canEdit = true;
   const supabase = await createSupabaseServerClient();
+  const { maybeUnstaffedFilter, resolveBookingCoverage } = await import("@/lib/booking-coverage");
+  const maybeUnstaffed = await maybeUnstaffedFilter(membership.organization_id);
 
   const [
     { data: contacts, error: contactsErr },
@@ -38,7 +40,8 @@ export default async function FreelancersPage() {
         `id, scheduled_at, duration_minutes, service_type, status, total_cents,
            client:clients ( name )`,
       )
-      .is("assigned_to", null)
+      .eq("organization_id", membership.organization_id)
+      .or(maybeUnstaffed)
       .in("status", ["pending", "confirmed"])
       .order("scheduled_at", { ascending: true })
       .limit(50),
@@ -52,11 +55,10 @@ export default async function FreelancersPage() {
 
   // A freelancer who claims an offer CANNOT be written to bookings.assigned_to
   // — they aren't a membership, and that column is a FK to memberships. So
-  // `.is("assigned_to", null)` above still matches jobs the bench has already
-  // covered, and this panel kept asking you to fill a shift Big Bob had
-  // already accepted, while the bookings list correctly showed it as his.
-  // resolveBookingCoverage is the shared rule: assignee OR crew OR claim.
-  const { resolveBookingCoverage } = await import("@/lib/booking-coverage");
+  // the filter above still matches jobs the bench has already covered, and
+  // this panel kept asking you to fill a shift Big Bob had already accepted,
+  // while the bookings list correctly showed it as his. resolveBookingCoverage
+  // is the shared rule: an active assignee OR crew OR claim.
   const coverage = await resolveBookingCoverage(
     (bookings ?? []).map((b) => b.id),
   );

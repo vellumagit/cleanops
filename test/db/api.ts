@@ -278,6 +278,29 @@ export async function startApi(): Promise<Api> {
           );
           return;
         }
+        // GoTrue's admin lookup, which the app uses to find an owner's email
+        // (getOrgAdminRecipients): only with the service key, like GoTrue.
+        const adminUser = /^\/auth\/v1\/admin\/users\/([0-9a-f-]{36})$/.exec(path.split("?")[0]);
+        if (adminUser && req.method === "GET") {
+          const key = String(req.headers.authorization ?? "").replace(/^Bearer\s+/i, "");
+          if (key !== serviceKey) {
+            res.writeHead(401, { "content-type": "application/json" });
+            res.end(JSON.stringify({ code: 401, msg: "service key required" }));
+            return;
+          }
+          const [user] = await sql<{ id: string; email: string | null; meta: Record<string, unknown> | null }>(
+            "select id, email, raw_user_meta_data as meta from auth.users where id = $1",
+            [adminUser[1]],
+          );
+          if (!user) {
+            res.writeHead(404, { "content-type": "application/json" });
+            res.end(JSON.stringify({ code: 404, msg: "User not found" }));
+            return;
+          }
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ id: user.id, email: user.email, user_metadata: user.meta ?? {}, app_metadata: {} }));
+          return;
+        }
         if (!path.startsWith("/rest/v1")) {
           res.writeHead(404, { "content-type": "application/json" });
           res.end(JSON.stringify({ message: `test stack has no ${path}` }));
