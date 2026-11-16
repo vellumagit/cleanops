@@ -73,6 +73,20 @@ export function signToken(claims: Record<string, unknown>): string {
   return `${body}.${createHmac("sha256", JWT_SECRET).update(body).digest("base64url")}`;
 }
 
+/** One database call the app made through the stack. */
+export type Traffic = {
+  method: string;
+  /** Table or function, e.g. "bookings" or "rpc/syncJob". */
+  path: string;
+  query: string;
+  status: number;
+  ms: number;
+  /** Rows in the answer, from Content-Range (null when not reported). */
+  rows: number | null;
+  /** Exactly 1,000 rows with no limit or range of its own: the API's cap, probably cut short. */
+  capped: boolean;
+};
+
 export type Api = {
   /** What is underneath: PGlite (one connection, the default) or a real server. */
   kind: "pglite" | "postgres";
@@ -97,6 +111,8 @@ export type Api = {
   useAsSupabase: () => () => void;
   /** PostgREST's own log, for a failing test. */
   log: () => string;
+  /** Record every database call the app makes between start() and stop(). */
+  traffic: { start: () => void; stop: () => Traffic[] };
   stop: () => Promise<void>;
 };
 
@@ -141,6 +157,10 @@ export async function startApi(): Promise<Api> {
       PGRST_DB_POOL: real ? String(process.env.SOLLOS_TEST_REST_POOL ?? 10) : "1",
       PGRST_DB_CHANNEL_ENABLED: "false",
       PGRST_DB_PREPARED_STATEMENTS: real ? "true" : "false",
+      // Production's cap, so a read that would be cut short there is cut
+      // short here too (checked 2026-11-15: audit_log had 1,756 rows and one
+      // read returned 1,000). Without it every unbounded read looked whole.
+      PGRST_DB_MAX_ROWS: "1000",
       PGRST_LOG_LEVEL: "warn",
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -204,6 +224,8 @@ export async function startApi(): Promise<Api> {
     });
   };
 
+  let recording: Traffic[] | null = null;
+
   const proxy: Server = createServer((req, res) => {
     const chunks: Buffer[] = [];
     req.on("data", (c: Buffer) => chunks.push(c));
@@ -265,6 +287,7 @@ export async function startApi(): Promise<Api> {
           headers[k] = Array.isArray(v) ? v.join(", ") : v;
         }
         const body = Buffer.concat(chunks);
+        const started = performance.now();
         const answer = await inTurn(async () => {
           const upstream = await fetch(`${rest}${path.slice("/rest/v1".length) || "/"}`, {
             method: req.method,
@@ -281,6 +304,23 @@ export async function startApi(): Promise<Api> {
           // when PostgREST has sent the whole response.
           return { status: upstream.status, headers: out, bytes: Buffer.from(await upstream.arrayBuffer()) };
         });
+        if (recording) {
+          const rest = path.slice("/rest/v1/".length);
+          const [table, query = ""] = rest.split("?");
+          const range = answer.headers["content-range"] ?? "";
+          const m = /^(\d+)-(\d+)\//.exec(range);
+          const rows = m ? Number(m[2]) - Number(m[1]) + 1 : /^\*\//.test(range) ? 0 : null;
+          const askedForRange = /(^|&)(limit|offset)=/.test(query) || Boolean(req.headers.range);
+          recording.push({
+            method: req.method ?? "GET",
+            path: table,
+            query: decodeURIComponent(query).slice(0, 300),
+            status: answer.status,
+            ms: Math.round(performance.now() - started),
+            rows,
+            capped: rows === 1000 && !askedForRange,
+          });
+        }
         res.writeHead(answer.status, answer.headers);
         res.end(answer.bytes);
       })().catch((err) => {
@@ -355,6 +395,16 @@ export async function startApi(): Promise<Api> {
       };
     },
     log: () => output,
+    traffic: {
+      start: () => {
+        recording = [];
+      },
+      stop: () => {
+        const out = recording ?? [];
+        recording = null;
+        return out;
+      },
+    },
     stop: async () => {
       // Let work the app fired without waiting for finish, so it meets a
       // database rather than a closed port.
