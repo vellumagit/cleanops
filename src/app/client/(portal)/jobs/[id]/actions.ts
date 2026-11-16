@@ -5,8 +5,7 @@ import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { requireClientAction } from "@/lib/client-auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { syncJob } from "@/lib/job-sync";
-import { resyncBookingCalendars } from "@/lib/booking-calendar-sync";
+import { cancelJobs } from "@/lib/cancel-jobs";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { detectCardNumber, CARD_DETECTED_MESSAGE } from "@/lib/card-detection";
 import { notify } from "@/lib/notify";
@@ -235,16 +234,27 @@ export async function requestSkipAction(
     // schedule — but it would erase the record of what the client asked for,
     // and it permanently removes this date from the standing series. A client
     // skipping one week has not changed their contract.
-    const { error: cancelErr } = await admin
-      .from("bookings")
-      .update({ status: "cancelled" })
-      .eq("id", booking.id)
-      .eq("client_id", client.id);
-    if (cancelErr) return { error: cancelErr.message };
-    await syncJob(booking.id, "client_skip");
-    // Off the cleaners' and the company's Google Calendars too, or the
-    // visit stays on their phones until the nightly reconcile.
-    after(() => resyncBookingCalendars(booking.id));
+    // Through the one cancel path. The client is the actor, so the history
+    // row has no member on it and says "client_skip". Own wording for the
+    // office and crew below, so no standard notices. Calendars after the
+    // response: the visit comes off the cleaners' and the company's Google
+    // Calendars without the client waiting on Google.
+    const res = await cancelJobs({
+      organizationId: booking.organization_id,
+      bookingIds: [booking.id],
+      clientId: client.id,
+      fromStatuses: ["pending", "confirmed"],
+      via: "client_skip",
+      syncReason: "client_skip",
+      actorId: null,
+      calendars: "all",
+      notices: "none",
+      defer: true,
+    });
+    if (res.error) return { error: res.error };
+    if (res.cancelled.length === 0) {
+      return { error: "This visit changed a moment ago and can't be skipped here now. Reload the page." };
+    }
     // An auto-applied skip has happened, so it is not a decision anyone has
     // to make — the office queue only holds open questions.
     const { error: resolveErr } = await admin

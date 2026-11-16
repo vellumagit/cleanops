@@ -27,6 +27,7 @@ import { resyncBookingCalendarsPaced } from "@/lib/booking-calendar-sync";
 import { after } from "next/server";
 import { syncJob } from "@/lib/job-sync";
 import { closeJob } from "@/lib/close-job";
+import { cancelJobs } from "@/lib/cancel-jobs";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
 import { readServiceExtras } from "@/lib/service-extras";
 import { can } from "@/lib/auth";
@@ -3229,6 +3230,36 @@ export async function setBookingStatusAction(
   const dateErr = futureStatusError(booking.scheduled_at, target);
   if (dateErr) return { ok: false, error: dateErr };
 
+  // Cancelling has one path (src/lib/cancel-jobs.ts): the write, the history
+  // row, the recompute, the calendars and the notices. Everything above is
+  // this door's own rules about WHETHER; that is the how.
+  if (target === "cancelled") {
+    const res = await cancelJobs({
+      organizationId: membership.organization_id,
+      bookingIds: [id],
+      fromStatuses: [booking.status],
+      via: "status_set",
+      syncReason: "status_set",
+      actorId: membership.id,
+      calendars: "all",
+      notices: "crew_and_client",
+      defer: true,
+    });
+    if (res.error) return { ok: false, error: res.error };
+    if (res.cancelled.length === 0) {
+      return {
+        ok: false,
+        error: "This job changed while you had it open. Reload the page and try again.",
+      };
+    }
+    revalidatePath("/app/bookings");
+    revalidatePath(`/app/bookings/${id}`);
+    revalidatePath("/app/scheduling");
+    revalidatePath("/app/calendar");
+    revalidatePath("/app");
+    return { ok: true };
+  }
+
   const { error } = await supabase
     .from("bookings")
     .update({
@@ -3282,54 +3313,6 @@ export async function setBookingStatusAction(
     await autoInvoiceOnJobComplete(id);
   }
   await syncJob(id, "status_set");
-  if (target === "cancelled") {
-    // Calendar hygiene — mirror the edit-form cancellation cleanup so a
-    // cancelled job doesn't linger on anyone's Google Calendar.
-    if (booking.google_calendar_event_id) {
-      await deleteCalendarEvent(
-        membership.organization_id,
-        booking.google_calendar_event_id,
-      ).catch((e) => console.error("[gcal] status-cancel cleanup failed:", e));
-      await supabase
-        .from("bookings")
-        .update({ google_calendar_event_id: null })
-        .eq("id", id);
-    }
-    await syncMemberCalendarEvents(id, [], {
-      id,
-      scheduled_at: booking.scheduled_at,
-      duration_minutes: booking.duration_minutes,
-      service_type: booking.service_type,
-      address: booking.address ?? null,
-      notes: booking.notes ?? null,
-      client_name: booking.client?.name ?? "",
-    }).catch((e) =>
-      console.error("[gcal/member] status-cancel cleanup failed:", e),
-    );
-
-    // Cancellation notices — the crew push and client notice previously only
-    // fired from the edit-form path, so cancelling via this quick dropdown
-    // sent NOTHING: the cleaner still drove out, the client was never told
-    // (audit B2). Mirrors the edit-form calls; both are internally gated and
-    // deduped.
-    //
-    // EXCEPT when un-completing. These notices exist so a cleaner doesn't
-    // drive out and a client isn't left waiting — news about a visit that
-    // ISN'T going to happen. A completed job already happened; flipping it to
-    // cancelled is correcting the record (July 17: the cleaner was sick,
-    // auto-complete stamped it done anyway), and texting the client "your
-    // cleaning was cancelled" five weeks after the date would read as
-    // nonsense at best and an accidental cancellation of something real at
-    // worst. booking.status still holds the PRE-update status here.
-    if (booking.status !== "completed") {
-      notifyBookingCancelledToEmployee(id).catch((e) =>
-        console.error("[auto] status-cancel employee push failed:", e),
-      );
-      sendBookingCancelledToClient(id).catch((e) =>
-        console.error("[auto] status-cancel client notice failed:", e),
-      );
-    }
-  }
 
   revalidatePath("/app/bookings");
   revalidatePath(`/app/bookings/${id}`);
@@ -3747,107 +3730,53 @@ export async function cancelSeriesAction(formData: FormData) {
       membership.organization_id,
     ) as unknown as Promise<unknown>);
 
-  // Pull the affected occurrences FIRST so we have their event IDs.
-  // After the status flip the booking rows still exist but their GCal
-  // events need explicit DELETE calls — calendar API knows nothing about
-  // booking.status.
-  const { data: affected } = (await supabase
-    .from("bookings")
-    .select("id, status, google_calendar_event_id, scheduled_at")
-    .eq("series_id", seriesId)
-    .eq("organization_id", membership.organization_id)
-    .in("status", ["pending", "confirmed"])
-    .gte("scheduled_at", now)) as unknown as {
-    data: Array<{
-      id: string;
-      status: string;
-      google_calendar_event_id: string | null;
-      scheduled_at: string;
-    }> | null;
-  };
-
-  // Flip status to cancelled.
-  await (supabase
-    .from("bookings")
-    .update({ status: "cancelled" })
-    .eq("series_id", seriesId)
-    .eq("organization_id", membership.organization_id)
-    .in("status", ["pending", "confirmed"])
-    .gte("scheduled_at", now) as unknown as Promise<unknown>);
-
-  // One audit row and one recompute per visit, like the status dropdown
-  // gives a single cancel. Cancelled is terminal to the rules, so the
-  // recompute agrees; the audit row is what a cancelled series had none of.
-  for (const r of affected ?? []) {
-    await logAuditEvent({
-      membership,
-      action: "status_change",
-      entity: "booking",
-      entity_id: r.id,
-      before: { status: r.status },
-      after: { status: "cancelled", via: "cancel_series" },
-    });
-    await syncJob(r.id, "status_set");
-  }
-
-  // Delete the corresponding calendar events. Order matters: the booking
-  // rows still exist (cancelled, not deleted), so booking_member_calendar_events
-  // mapping rows survive — syncMemberCalendarEvents(_, [], _) walks them
-  // and issues DELETEs to each member's personal calendar.
-  if (affected && affected.length > 0) {
-    await Promise.all([
-      ...affected
-        .filter((r) => r.google_calendar_event_id)
-        .map((r) =>
-          deleteCalendarEvent(
-            membership.organization_id,
-            r.google_calendar_event_id!,
-          ).catch((err) =>
-            console.error("[gcal] cancel-series cleanup failed:", err),
-          ),
-        ),
-      ...affected.map((r) =>
-        syncMemberCalendarEvents(r.id, [], {
-          id: r.id,
-          scheduled_at: "",
-          duration_minutes: 0,
-          service_type: "",
-          address: null,
-          notes: null,
-        }).catch((err) =>
-          console.error("[gcal/member] cancel-series cleanup failed:", err),
-        ),
-      ),
-    ]);
-
-    // Clear stored event IDs so a later un-cancel re-creates cleanly.
-    await supabase
+  // The visits that have not happened yet, read a page at a time (the API
+  // returns at most 1,000 rows, and a cancelled visit drops out of the next
+  // read). cancelJobs cancels only the ones still pending or confirmed when
+  // its write lands. The crew of every visit is pushed; the client is told
+  // ONCE, about the nearest visit (one decision to them, not N emails).
+  const cancelledVisits: Array<{ id: string; scheduled_at: string }> = [];
+  for (let round = 0; round < 5; round++) {
+    const { data: affected } = (await supabase
       .from("bookings")
-      .update({ google_calendar_event_id: null })
-      .in(
-        "id",
-        affected.map((r) => r.id),
-      )
-      .eq("organization_id", membership.organization_id);
-
-    // Notices — series cancel previously sent NOTHING for any occurrence
-    // (audit B3): cleaners' only signal was a vanished calendar event.
-    // Push every affected occurrence's crew; tell the client ONCE, about the
-    // nearest upcoming visit (per-booking dedup would otherwise allow N
-    // emails for what the client sees as one decision).
-    for (const r of affected) {
-      notifyBookingCancelledToEmployee(r.id).catch((e) =>
-        console.error("[auto] series-cancel employee push failed:", e),
-      );
+      .select("id")
+      .eq("series_id", seriesId)
+      .eq("organization_id", membership.organization_id)
+      .in("status", ["pending", "confirmed"])
+      .gte("scheduled_at", now)
+      .order("scheduled_at", { ascending: true })
+      .limit(500)) as unknown as {
+      data: Array<{ id: string }> | null;
+    };
+    if (!affected || affected.length === 0) break;
+    const res = await cancelJobs({
+      organizationId: membership.organization_id,
+      bookingIds: affected.map((r) => r.id),
+      fromStatuses: ["pending", "confirmed"],
+      via: "cancel_series",
+      syncReason: "status_set",
+      actorId: membership.id,
+      calendars: "all",
+      notices: "crew",
+      // A long series is dozens of pushes and Google calls: after the response.
+      defer: true,
+    });
+    cancelledVisits.push(...res.cancelled);
+    if (res.error) {
+      console.error("[cancel-series] cancel failed part-way:", res.error);
+      break;
     }
-    const nearest = [...affected].sort((a, b) =>
-      a.scheduled_at.localeCompare(b.scheduled_at),
-    )[0];
-    if (nearest) {
-      sendBookingCancelledToClient(nearest.id).catch((e) =>
-        console.error("[auto] series-cancel client notice failed:", e),
-      );
-    }
+    // Nothing changed this round (someone else got there first): stop
+    // rather than read the same rows again.
+    if (res.cancelled.length === 0 || affected.length < 500) break;
+  }
+  const nearest = [...cancelledVisits].sort((a, b) =>
+    a.scheduled_at.localeCompare(b.scheduled_at),
+  )[0];
+  if (nearest) {
+    sendBookingCancelledToClient(nearest.id).catch((e) =>
+      console.error("[auto] series-cancel client notice failed:", e),
+    );
   }
 
   revalidatePath("/app/bookings");

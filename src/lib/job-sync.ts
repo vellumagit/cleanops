@@ -298,7 +298,13 @@ export async function loadJobTimeline(
             ? `Closed by ${who(a.actor_id)}`
             : `Closed by Sollos (${String(after.reason ?? "automatic").replace(/_/g, " ")})`
           : status === "cancelled"
-            ? `Cancelled by ${who(a.actor_id)}`
+            ? after.via === "client_skip"
+              ? "Cancelled: the client skipped this visit"
+              : after.via === "client_archived"
+                ? "Cancelled when the client was archived"
+                : after.via === "client_skip_approved"
+                  ? `Cancelled by ${who(a.actor_id)} (the client asked to skip)`
+                  : `Cancelled by ${who(a.actor_id)}`
             : `Set to ${status.replace("_", " ")} by ${who(a.actor_id)}`;
       events.push({ atMs: ms(a.created_at), text: label, tone: "neutral" });
     } else if (a.action === "terms_change") {

@@ -1,7 +1,7 @@
 import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { syncJob } from "@/lib/job-sync";
+import { cancelJobs } from "@/lib/cancel-jobs";
 
 /**
  * Everything that must stop the moment a client is archived.
@@ -93,29 +93,16 @@ export async function sweepArchivedClient(
   // relationship, and a burst of "your cleaning was cancelled" texts to
   // someone who just left is noise at best.
   try {
-    type SweepBooking = {
-      id: string;
-      scheduled_at: string;
-      duration_minutes: number;
-      service_type: string;
-      address: string | null;
-      notes: string | null;
-      google_calendar_event_id: string | null;
-      client: { name: string | null } | null;
-    };
-
     // Read first, so billed jobs can be filtered out BEFORE anything is
     // written — the status flip is not reversible.
     const { data: candidates } = (await admin
       .from("bookings")
-      .select(
-        "id, scheduled_at, duration_minutes, service_type, address, notes, google_calendar_event_id, client:clients ( name )",
-      )
+      .select("id")
       .eq("organization_id", organizationId)
       .eq("client_id", clientId)
       .gte("scheduled_at", lookbackIso)
       .in("status", ["pending", "confirmed"])) as unknown as {
-      data: SweepBooking[] | null;
+      data: Array<{ id: string }> | null;
     };
 
     const { resolveBilledBookings } = await import("@/lib/billed-bookings");
@@ -125,67 +112,23 @@ export async function sweepArchivedClient(
     );
     const toCancel = (candidates ?? []).filter((b) => !billed.has(b.id));
 
-    const { data: cancelled } = toCancel.length
-      ? ((await admin
-          .from("bookings")
-          .update({ status: "cancelled" } as never)
-          .eq("organization_id", organizationId)
-          .in(
-            "id",
-            toCancel.map((b) => b.id),
-          )
-          .select("id")) as unknown as { data: Array<{ id: string }> | null })
-      : { data: [] };
-    const cancelledIds = new Set((cancelled ?? []).map((b) => b.id));
-    result.cancelledBookingIds = [...cancelledIds];
-    // Every status write recomputes the job. Cancelled is terminal to the
-    // rules, so this is the audit trail catching up, not a disagreement.
-    for (const id of cancelledIds) await syncJob(id, "client_archived");
-
-    const [
-      { deleteCalendarEvent, syncMemberCalendarEvents },
-      { notifyBookingCancelledToEmployee },
-    ] = await Promise.all([
-      import("@/lib/google-calendar"),
-      import("@/lib/automations"),
-    ]);
-    // Teardown + crew notice for the jobs that HAVEN'T happened yet only.
-    // Nobody needs a push saying they don't have to attend a job from last
-    // week, and a calendar event in the past is harmless — while looping
-    // every historical row through Google's API inside one server action is
-    // how this step times out half-done.
-    const nowIso = new Date().toISOString();
-    const upcoming = toCancel.filter(
-      (b) => cancelledIds.has(b.id) && b.scheduled_at >= nowIso,
-    );
-    for (const b of upcoming) {
-      if (b.google_calendar_event_id) {
-        await deleteCalendarEvent(
-          organizationId,
-          b.google_calendar_event_id,
-        ).catch((e) =>
-          console.error("[client-archive] gcal cleanup failed:", e),
-        );
-        await admin
-          .from("bookings")
-          .update({ google_calendar_event_id: null })
-          .eq("id", b.id);
-      }
-      await syncMemberCalendarEvents(b.id, [], {
-        id: b.id,
-        scheduled_at: b.scheduled_at,
-        duration_minutes: b.duration_minutes,
-        service_type: b.service_type,
-        address: b.address ?? null,
-        notes: b.notes ?? null,
-        client_name: b.client?.name ?? "",
-      }).catch((e) =>
-        console.error("[client-archive] member gcal cleanup failed:", e),
-      );
-      await notifyBookingCancelledToEmployee(b.id).catch((e) =>
-        console.error("[client-archive] employee push failed:", e),
-      );
-    }
+    // Through the one cancel path. Calendars and the crew push only for
+    // visits that have not happened yet: nobody needs a push about a job
+    // from last week, and walking every historical row through Google
+    // inside one server action is how this step timed out half-done.
+    const res = await cancelJobs({
+      organizationId,
+      bookingIds: toCancel.map((b) => b.id),
+      clientId,
+      fromStatuses: ["pending", "confirmed"],
+      via: "client_archived",
+      syncReason: "client_archived",
+      actorId: null,
+      calendars: "upcoming",
+      notices: "crew",
+    });
+    if (res.error) console.error("[client-archive] booking cancel failed part-way:", res.error);
+    result.cancelledBookingIds = res.cancelled.map((b) => b.id);
   } catch (err) {
     console.error("[client-archive] booking cancel failed:", err);
   }
