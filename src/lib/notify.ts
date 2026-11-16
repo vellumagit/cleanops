@@ -1,6 +1,7 @@
 import "server-only";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { sendPushToMembership, sendPushToOrg } from "@/lib/push";
+import type { NotificationType } from "@/lib/notification-types";
 
 /**
  * The ONE way to send a notification (in-app row + web push).
@@ -34,8 +35,9 @@ type NotifyBase = {
   title: string;
   body: string;
   href: string;
-  /** Notification `type` (defaults to "general"). */
-  type?: string;
+  /** Notification `type` (defaults to "general"). Only values the
+   *  notification_type enum accepts; see lib/notification-types.ts. */
+  type?: NotificationType;
   /**
    * Channels. inApp and push are on by default; email is OPT-IN.
    *

@@ -16,14 +16,15 @@
  * invoice is recorded but the invoice stays void; a refund brings the
  * invoice down to what is still held, and a refund event that arrives late
  * never undoes a bigger one; an event naming another company cannot touch
- * this company's invoice; and an event the processor did not sign is
- * turned away.
+ * this company's invoice; an event the processor did not sign is turned
+ * away; and the owner is told, once, about each refund and about money
+ * paid on a void invoice.
  */
 import { createHmac } from "node:crypto";
 import Stripe from "stripe";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { hasPostgrest, startApi, type Api } from "./api";
-import { addClient, addOrg } from "./harness";
+import { addClient, addMember, addOrg } from "./harness";
 
 vi.mock("next/headers", async () => (await import("./next-stubs")).nextHeaders());
 vi.mock("next/cache", async () => (await import("./next-stubs")).nextCache());
@@ -70,6 +71,7 @@ const next = () => `${++n}_${Date.now()}`;
 async function company(opts: { stripeAccount?: string; squareMerchant?: string; squareOrder?: string } = {}) {
   const org = await addOrg(api.sql, "Card Co");
   await api.sql("update public.organizations set timezone = 'UTC', stripe_account_id = $2 where id = $1", [org, opts.stripeAccount ?? null]);
+  await addMember(api.sql, org, "owner", "Owner");
   const client = await addClient(api.sql, org);
   const [inv] = await api.sql<{ id: string }>(
     "insert into public.invoices (organization_id, client_id, status, amount_cents, sent_at, due_date, square_order_id) values ($1, $2, 'sent', 14000, now(), current_date + 14, $3) returning id",
@@ -220,6 +222,12 @@ const tipsOn = async (invoice: string) =>
     await api.sql<{ tips: number }>("select coalesce(sum(amount_cents), 0)::int as tips from public.invoice_tips where invoice_id = $1", [invoice])
   )[0].tips;
 
+/** What the owners were told, by title. */
+const toldOwner = async (org: string, title: string) =>
+  (
+    await api.sql<{ n: number }>("select count(*)::int as n from public.notifications where organization_id = $1 and title = $2", [org, title])
+  )[0].n;
+
 const UNPAID = { status: "sent", payments: 0, paid: 0 };
 const PAID = { status: "paid", payments: 1, paid: 14000 };
 
@@ -260,6 +268,7 @@ describe.skipIf(!hasPostgrest)("card payments on the platform Stripe endpoint (w
     expect(await books(c.invoice)).toEqual({ status: "partially_paid", payments: 1, paid: 10000 });
     await deliverStripe("platform", refundEvent(pi, 14000));
     expect(await books(c.invoice)).toEqual({ status: "refunded", payments: 1, paid: 0 });
+    expect(await toldOwner(c.org, "Refund issued"), "one notice per refund").toBe(2);
   });
 
   it("refund events out of order (the full refund first, the earlier partial late): the invoice stays refunded", async () => {
@@ -286,6 +295,7 @@ describe.skipIf(!hasPostgrest)("card payments on the platform Stripe endpoint (w
     await deliverStripe("platform", refundEvent(pi, 16000));
     expect(await books(c.invoice)).toEqual({ status: "refunded", payments: 1, paid: 0 });
     expect(await tipsOn(c.invoice)).toBe(0);
+    expect(await toldOwner(c.org, "Refund issued"), "told once, not once per writer").toBe(1);
   });
 
   it("an event not signed by Stripe is turned away, and nothing is recorded", async () => {
@@ -330,6 +340,7 @@ describe.skipIf(!hasPostgrest)("card payments on the Connect Stripe endpoint (ch
     await api.sql("update public.invoices set status = 'void', voided_at = now() where id = $1", [c.invoice]);
     await deliverStripe("connect", checkoutEvent({ account, invoice: c.invoice, pi: `pi_test_${next()}` }));
     expect(await books(c.invoice)).toEqual({ status: "void", payments: 1, paid: 14000 });
+    expect(await toldOwner(c.org, "Payment on a voided invoice")).toBe(1);
   });
 
   it("an event from another company's Stripe account cannot pay this company's invoice", async () => {
