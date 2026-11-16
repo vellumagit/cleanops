@@ -28,6 +28,7 @@ import { summarizeCronRuns, type CronRunRow } from "./cron-run-summary";
 import { loadMismatches, mismatchLines, type Mismatch } from "./mismatch-check";
 import { billedAgreementLines, loadBilledAgreement, type BilledAgreement } from "./billed-agreement";
 import { summarizeRefusals, type RefusalRow } from "./refusal-log";
+import { selectInChunks } from "./supabase/chunked-in";
 import vercelConfig from "../../vercel.json";
 
 /** Svit's org — the one the shadow week watches. */
@@ -217,14 +218,29 @@ export async function runMorningCheck(
   // 4. Jobs yesterday → tomorrow --------------------------------------------
   const { start } = zonedDayBoundsUtc(new Date(now), tz, -1);
   const { end } = zonedDayBoundsUtc(new Date(now), tz, 1);
-  const { data: rows, error: bErr } = await db
-    .from("bookings")
-    .select("id, status, scheduled_at, duration_minutes, total_cents, hourly_rate_cents, is_free, closed_at, divide_hours_evenly, client:clients ( name )")
-    .eq("organization_id", orgId)
-    .gte("scheduled_at", start.toISOString())
-    .lt("scheduled_at", end.toISOString())
-    .neq("status", "cancelled")
-    .order("scheduled_at");
+  // A page at a time: the API returns at most 1,000 rows, and a company
+  // booking a few hundred jobs a day has more than that in three days.
+  // Found by test/load/volume.load.test.ts (2026-11-15).
+  const rows: unknown[] = [];
+  let bErr: { message: string } | null = null;
+  for (let from = 0; ; from += 1000) {
+    const page = await db
+      .from("bookings")
+      .select("id, status, scheduled_at, duration_minutes, total_cents, hourly_rate_cents, is_free, closed_at, divide_hours_evenly, client:clients ( name )")
+      .eq("organization_id", orgId)
+      .gte("scheduled_at", start.toISOString())
+      .lt("scheduled_at", end.toISOString())
+      .neq("status", "cancelled")
+      .order("scheduled_at")
+      .order("id")
+      .range(from, from + 999);
+    if (page.error) {
+      bErr = page.error;
+      break;
+    }
+    rows.push(...(page.data ?? []));
+    if ((page.data ?? []).length < 1000) break;
+  }
   failed("jobs", bErr);
   type Row = {
     id: string; status: string; scheduled_at: string; duration_minutes: number;
@@ -233,12 +249,24 @@ export async function runMorningCheck(
   };
   const jobs = (rows ?? []) as unknown as Row[];
   const ids = jobs.map((j) => j.id);
-  const [{ data: crew, error: crewErr }, { data: shifts, error: shiftErr }] = ids.length
-    ? await Promise.all([
-        db.from("booking_assignees").select("booking_id, membership_id, split_start_offset_minutes, split_duration_minutes, acceptance_status, membership:memberships ( display_name, profile:profiles ( full_name ) )").in("booking_id", ids),
-        db.from("time_entries").select("booking_id, employee_id, clock_in_at, clock_out_at, auto_closed_at, employee:memberships!time_entries_employee_id_fkey ( display_name, profile:profiles ( full_name ) )").in("booking_id", ids),
-      ])
-    : [{ data: [], error: null }, { data: [], error: null }];
+  // In chunks: every id goes in the address, and a few hundred of them is
+  // more than the server accepts. That failed with an empty message and left
+  // every job looking crewless, so the report flagged hundreds of them as
+  // disagreeing with their computed state (test/load/volume.load.test.ts).
+  const [{ data: crew, error: crewErr }, { data: shifts, error: shiftErr }] = await Promise.all([
+    selectInChunks(ids, (chunk) =>
+      db
+        .from("booking_assignees")
+        .select("booking_id, membership_id, split_start_offset_minutes, split_duration_minutes, acceptance_status, membership:memberships ( display_name, profile:profiles ( full_name ) )")
+        .in("booking_id", chunk),
+    ),
+    selectInChunks(ids, (chunk) =>
+      db
+        .from("time_entries")
+        .select("booking_id, employee_id, clock_in_at, clock_out_at, auto_closed_at, employee:memberships!time_entries_employee_id_fkey ( display_name, profile:profiles ( full_name ) )")
+        .in("booking_id", chunk),
+    ),
+  ]);
   failed("crew", crewErr);
   failed("shifts", shiftErr);
   type CrewRow = { booking_id: string; membership_id: string; split_start_offset_minutes: number | null; split_duration_minutes: number | null; acceptance_status: string | null; membership: Member };
