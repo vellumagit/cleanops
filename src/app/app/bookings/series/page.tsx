@@ -5,6 +5,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
 import { SeriesTable, type SeriesRow } from "./series-table";
+import { withoutAnInvoice } from "@/lib/billed-bookings";
 import { getOrgTimezone } from "@/lib/org-timezone";
 
 export const metadata = { title: "Recurring bookings" };
@@ -94,23 +95,35 @@ export default async function SeriesPage() {
     // series has earned that nothing has billed yet. Surfacing it here is
     // the difference between "the cron will get it" and finding out at
     // month-end that it never did.
-    const { data: unbilledData } = await (supabase
+    //
+    // Narrowed to unstamped jobs to keep the list short, then asked the
+    // shared question (withoutAnInvoice): an invoice can name a job whose
+    // stamp is missing, and counting from the stamp alone called those
+    // unbilled and invited a second invoice.
+    const { data: unstamped } = await (supabase
       .from("bookings")
-      .select("series_id")
+      .select("id, series_id")
       .in("series_id" as never, seriesIds as never)
       .eq("status" as never, "completed" as never)
       .is("billing_invoice_id" as never, null as never)
       .is("billing_released_at" as never, null as never)
       .lt("scheduled_at" as never, now as never) as unknown as Promise<{
-      data: Array<{ series_id: string }> | null;
+      data: Array<{ id: string; series_id: string }> | null;
     }>);
+    let unbilledData: Array<{ id: string; series_id: string }> = unstamped ?? [];
+    try {
+      unbilledData = await withoutAnInvoice(supabase, unbilledData);
+    } catch (err) {
+      // The count is a prompt, not a ledger: if invoices can't be read,
+      // show the wider number rather than fail the whole page.
+      console.error("[series] could not check which visits are billed:", err);
+    }
 
     for (const id of seriesIds) {
       bookingCounts[id] = {
         total: (totalData ?? []).filter((b) => b.series_id === id).length,
         upcoming: (upcomingData ?? []).filter((b) => b.series_id === id).length,
-        unbilled: (unbilledData ?? []).filter((b) => b.series_id === id)
-          .length,
+        unbilled: unbilledData.filter((b) => b.series_id === id).length,
       };
     }
   }

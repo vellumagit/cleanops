@@ -53,6 +53,58 @@ describe("the office, on a job", () => {
   });
 });
 
+describe("the office, on the recurring list", () => {
+  it("a visit an invoice already names is not offered for billing again, even when the job's own stamp is missing", async () => {
+    const c = await company(stack, "Series");
+    const sql = stack.api.sql;
+    const [other] = await sql<{ id: string }>(
+      "insert into public.clients (organization_id, name) values ($1, 'Pat Unbilled') returning id",
+      [c.org],
+    );
+    const series = async (client: string) =>
+      (
+        await sql<{ id: string }>(
+          `insert into public.booking_series (organization_id, client_id, pattern, start_time, starts_at, duration_minutes)
+           values ($1, $2, 'weekly', '09:00', current_date - 30, 120) returning id`,
+          [c.org, client],
+        )
+      )[0].id;
+    const billedSeries = await series(c.client);
+    const owedSeries = await series(other.id);
+
+    // Billed in June-2026 fashion: a line names the job, nothing stamped it.
+    const billedVisit = await job(stack, c, { at: minutesFromNow(-5 * 24 * 60), status: "completed", crew: [c.anna] });
+    await sql("update public.bookings set series_id = $2 where id = $1", [billedVisit, billedSeries]);
+    const [inv] = await sql<{ id: string }>(
+      `insert into public.invoices (organization_id, client_id, status, amount_cents)
+       values ($1, $2, 'sent', 14000) returning id`,
+      [c.org, c.client],
+    );
+    await sql(
+      `insert into public.invoice_line_items (organization_id, invoice_id, label, quantity, unit_price_cents, booking_id)
+       values ($1, $2, 'Standard clean', 1, 14000, $3)`,
+      [c.org, inv.id, billedVisit],
+    );
+    // Really owed: finished, on no invoice.
+    const owedVisit = await job(stack, c, { at: minutesFromNow(-4 * 24 * 60), status: "completed", crew: [c.bea] });
+    await sql("update public.bookings set series_id = $2, client_id = $3 where id = $1", [owedVisit, owedSeries, other.id]);
+
+    const owner = await openAs(stack, c.owner);
+    try {
+      await visit(stack, owner.page, "/app/bookings/series");
+      await says(owner.page, "Pat Unbilled");
+      const rows = await owner.page.$$eval("tbody tr", (trs) => trs.map((tr) => (tr as HTMLElement).innerText.replace(/\s+/g, " ")));
+      const rowFor = (name: string) => rows.find((r) => r.includes(name)) ?? "";
+      expect(rowFor("Pat Unbilled")).toContain("1 unbilled");
+      expect(rowFor(c.clientName)).toContain("billed up");
+      expect(rowFor(c.clientName)).not.toContain("unbilled");
+      await expectNoCrash(owner);
+    } finally {
+      await owner.close();
+    }
+  });
+});
+
 describe("the office, on an invoice", () => {
   it("Add discount: 10% of $140 takes $14 off, saved as its own line", async () => {
     const c = await company(stack, "Discount");

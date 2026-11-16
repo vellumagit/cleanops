@@ -841,15 +841,20 @@ export async function autoGenerateRecurringInvoices(): Promise<{
     // a client whose standing fee is for something else) — so a human gets
     // the question, with the numbers.
     try {
-      const { count: unbilledCount } = (await db
+      // Unstamped first, to keep the list short; then the shared question,
+      // so a job an invoice names without a stamp is not counted as unbilled.
+      const { data: unstamped } = (await db
         .from("bookings")
-        .select("id", { count: "exact", head: true })
+        .select("id")
         .eq("client_id", series.client_id)
         .eq("organization_id", series.organization_id)
         .eq("status", "completed")
         .is("billing_invoice_id", null)
-        .lt("scheduled_at", nowIso)) as unknown as { count: number | null };
-      if ((unbilledCount ?? 0) > 0) {
+        .lt("scheduled_at", nowIso)
+        .limit(1000)) as unknown as { data: Array<{ id: string }> | null };
+      const { withoutAnInvoice } = await import("@/lib/billed-bookings");
+      const unbilledCount = (await withoutAnInvoice(db, unstamped ?? [])).length;
+      if (unbilledCount > 0) {
         await notify({
           organizationId: series.organization_id,
           audience: "org-management",

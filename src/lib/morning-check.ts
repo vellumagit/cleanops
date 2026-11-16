@@ -26,6 +26,7 @@ import { resolveAutomationEnabled } from "./automation-defaults";
 import { zonedDayBoundsUtc } from "./wall-clock";
 import { summarizeCronRuns, type CronRunRow } from "./cron-run-summary";
 import { loadMismatches, mismatchLines, type Mismatch } from "./mismatch-check";
+import { billedAgreementLines, loadBilledAgreement, type BilledAgreement } from "./billed-agreement";
 import { summarizeRefusals, type RefusalRow } from "./refusal-log";
 import vercelConfig from "../../vercel.json";
 
@@ -52,6 +53,10 @@ export type MorningFlagInput = {
   readErrors: string[];
   cronsFailed?: number;
   cronsMissing?: number;
+  /** Jobs two live invoices both claim. */
+  billedTwice?: number;
+  /** Jobs a live invoice names that carry no stamp. */
+  billedNoStamp?: number;
 };
 
 /** What the reader should look at, most serious first. Empty means clean. */
@@ -60,6 +65,8 @@ export function morningFlags(f: MorningFlagInput): string[] {
   // A cron that failed or stopped is the one thing nothing else surfaces.
   if (f.cronsMissing) out.push(`${f.cronsMissing} cron(s) have stopped running (section 6)`);
   if (f.cronsFailed) out.push(`${f.cronsFailed} cron run(s) failed (section 6)`);
+  // Money next: a job on two live invoices is a client charged twice.
+  if (f.billedTwice) out.push(`${f.billedTwice} job(s) are claimed by two live invoices (section 9)`);
   if (f.disagreeingJobs) out.push(`${f.disagreeingJobs} job(s) disagree with the computed state right now (section 4)`);
   if (f.stateChecks) out.push(`${f.stateChecks} state check(s) logged a disagreement (section 1)`);
   if (f.duplicateMessages) out.push(`${f.duplicateMessages} message(s) went to the same person twice (section 3)`);
@@ -71,6 +78,7 @@ export function morningFlags(f: MorningFlagInput): string[] {
   if (f.refusals && f.refusals >= REFUSALS_WORTH_A_LOOK) {
     out.push(`The app refused people ${f.refusals} time(s) (section 8)`);
   }
+  if (f.billedNoStamp) out.push(`${f.billedNoStamp} billed job(s) carry no stamp (section 9)`);
   return out;
 }
 
@@ -348,7 +356,20 @@ export async function runMorningCheck(
       .lt("created_at", new Date(now - 30 * 86_400_000).toISOString());
   }
 
+  // 9. Do the records of what is billed agree? --------------------------------
+  // (src/lib/billed-agreement.ts.) Not a window: the whole company, every
+  // morning, because drift here has no symptom until a client is charged
+  // twice or a job is billed again.
+  const billed: BilledAgreement = await loadBilledAgreement(db, orgId).catch((err: unknown) => {
+    readErrors.push(`what is billed: ${err instanceof Error ? err.message : String(err)}`);
+    return { billedJobs: 0, found: [] };
+  });
+  out.push("", `9. BILLED RECORDS (${billed.billedJobs} billed jobs compared): ${billed.found.length} disagree`);
+  out.push(...billedAgreementLines(billed));
+
   const flags = morningFlags({
+    billedTwice: billed.found.filter((f) => f.kind === "two_invoices").length,
+    billedNoStamp: billed.found.filter((f) => f.kind === "no_stamp").length,
     mismatches: mismatch.found.length,
     refusals: refusals.total,
     stateChecks: checks?.length ?? 0,

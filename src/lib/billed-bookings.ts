@@ -427,6 +427,28 @@ export async function resolveBilledBookingsChunked(
   return out;
 }
 
+/**
+ * Of these jobs, the ones no live invoice bills, by any of the three
+ * signals. For every screen or notice that counts "unbilled" work.
+ *
+ * Counting from the stamp alone (`billing_invoice_id is null`) calls a job
+ * unbilled when an invoice names it and the stamp is missing: 14 of Svit's
+ * jobs on 2026-11-15, all billed between April and July. A caller may still
+ * narrow its read to unstamped jobs first, to keep the list short; what it
+ * may not do is stop there.
+ */
+export async function withoutAnInvoice<T extends { id: string }>(
+  supabase: SupabaseClient,
+  jobs: readonly T[],
+): Promise<T[]> {
+  if (jobs.length === 0) return [];
+  const billed = await resolveBilledBookingsChunked(
+    supabase,
+    jobs.map((j) => j.id),
+  );
+  return jobs.filter((j) => !billed.has(j.id));
+}
+
 export type UnbilledBooking = {
   id: string;
   scheduled_at: string;

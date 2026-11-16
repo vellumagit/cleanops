@@ -21,6 +21,12 @@ describe("morningFlags", () => {
     expect(morningFlags({ ...clean, longOpenClocks: 1 })[0]).toMatch(/on the clock/);
     expect(morningFlags({ ...clean, digestMarked: false })[0]).toMatch(/digest/);
   });
+  it("a job two live invoices both claim is raised; a missing stamp is raised after it", () => {
+    const f = morningFlags({ ...clean, billedTwice: 1, billedNoStamp: 14 });
+    expect(f).toHaveLength(2);
+    expect(f[0]).toContain("1 job(s) are claimed by two live invoices");
+    expect(f[1]).toContain("14 billed job(s) carry no stamp");
+  });
   it("a failed read is never clean, and comes first", () => {
     const f = morningFlags({ ...clean, stateChecks: 3, readErrors: ["notifications (timeout)"] });
     expect(f).toHaveLength(2);
