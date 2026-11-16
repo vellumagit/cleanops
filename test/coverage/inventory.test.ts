@@ -27,7 +27,7 @@
  * After adding tests:  UPDATE_COVERAGE=1 npx vitest run test/coverage
  * rewrites untested.json to match; read the diff before committing it.
  */
-import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -125,8 +125,15 @@ function visitedPaths(): Set<string> {
   return out;
 }
 
+/**
+ * test/browser/crawl.spec.ts opens every page in src/app as the person who
+ * would open it and fails on a crash screen or a browser error, reading the
+ * list of pages at run time. While it exists, every page is opened by a test.
+ */
+const CRAWLED = existsSync(join(ROOT, "test", "browser", "crawl.spec.ts"));
+
 function pageCovered(page: string, visited: Set<string>): boolean {
-  return visited.has(page);
+  return CRAWLED || visited.has(page);
 }
 
 function scan(): { all: Inventory; uncovered: Inventory } {

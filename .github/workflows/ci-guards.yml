@@ -127,7 +127,8 @@ jobs:
   browser-tests:
     name: Browser tests
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # The every-page crawl opens all 164 pages; dev mode builds each on first visit.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
