@@ -90,7 +90,6 @@
     "app/app/invoices/actions.ts#deleteInvoicePaymentAction",
     "app/app/invoices/actions.ts#generateReviewTokenAction",
     "app/app/invoices/actions.ts#holdInvoiceAutoSendAction",
-    "app/app/invoices/actions.ts#recordInvoicePaymentAction",
     "app/app/invoices/actions.ts#refundSquarePaymentAction",
     "app/app/invoices/actions.ts#refundStripePaymentAction",
     "app/app/invoices/actions.ts#resendInvoiceEmailAction",
