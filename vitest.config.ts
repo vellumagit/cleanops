@@ -1,4 +1,4 @@
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 import { fileURLToPath } from "node:url";
 
 /**
@@ -21,6 +21,9 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["src/**/*.test.ts", "test/**/*.test.ts"],
+    // The load tests need a real server and run on their own (pnpm test:load,
+    // vitest.load.config.ts).
+    exclude: [...configDefaults.exclude, "test/load/**"],
     // The suite now includes tests that read all of src and tests that boot
     // a database (test/db). Run together they slow each other down, and the
     // default five seconds failed tests that were only waiting their turn.

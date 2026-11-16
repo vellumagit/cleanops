@@ -20,6 +20,11 @@
  * The binary is not in the repo. `node scripts/fetch-postgrest.mjs` puts it
  * in node_modules/.cache/postgrest; CI does the same. Without it these tests
  * skip locally and fail in CI.
+ *
+ * SOLLOS_TEST_DB=postgres swaps PGlite for a real PostgreSQL server
+ * (real-postgres.ts; `node scripts/fetch-postgres.mjs` fetches it). Then
+ * PostgREST gets a real pool, requests are no longer taken in turn, and two
+ * things can genuinely happen at once: what the load tests are for.
  */
 import type { PGlite } from "@electric-sql/pglite";
 import { PGLiteSocketServer } from "@electric-sql/pglite-socket";
@@ -31,6 +36,7 @@ import { createServer as createNetServer } from "node:net";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openDb, type Sql } from "./harness";
+import { hasRealPostgres, startRealDatabase, type RealDatabase } from "./real-postgres";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const JWT_SECRET = "sollos-test-jwt-secret-not-a-real-one-0123456789";
@@ -68,8 +74,12 @@ export function signToken(claims: Record<string, unknown>): string {
 }
 
 export type Api = {
-  /** The database itself, as its owner. For arranging rows between app calls. */
-  db: PGlite;
+  /** What is underneath: PGlite (one connection, the default) or a real server. */
+  kind: "pglite" | "postgres";
+  /** The database itself, as its owner: for a script of several statements. */
+  db: Pick<PGlite, "exec">;
+  /** The real server and its pool, when kind is "postgres". */
+  real: RealDatabase | null;
   sql: Sql;
   /** What NEXT_PUBLIC_SUPABASE_URL would be. */
   url: string;
@@ -94,29 +104,43 @@ export async function startApi(): Promise<Api> {
   const binary = postgrestBinary();
   if (!binary) throw new Error("PostgREST binary not found: run `node scripts/fetch-postgrest.mjs`");
 
-  const db = await openDb();
-  const [dbPort, restPort, proxyPort] = [await freePort(), await freePort(), await freePort()];
+  const usePostgres = process.env.SOLLOS_TEST_DB === "postgres";
+  if (usePostgres && !hasRealPostgres) {
+    throw new Error("SOLLOS_TEST_DB=postgres, but PostgreSQL is not fetched: run `node scripts/fetch-postgres.mjs`");
+  }
+  const real = usePostgres ? await startRealDatabase() : null;
+  const db = real ? null : await openDb();
+  const [restPort, proxyPort] = [await freePort(), await freePort()];
 
-  // One database connection, shared in turn. PostgREST's pool is set to one
-  // below, so its requests queue instead of interleaving transactions.
-  const socket = new PGLiteSocketServer({ db, port: dbPort, host: "127.0.0.1" });
-  await socket.start();
+  let socket: PGLiteSocketServer | null = null;
+  let dbUri: string;
+  if (real) {
+    dbUri = `${real.uri}?sslmode=disable`;
+  } else {
+    // One database connection, shared in turn. PostgREST's pool is set to one
+    // below, so its requests queue instead of interleaving transactions.
+    const dbPort = await freePort();
+    socket = new PGLiteSocketServer({ db: db!, port: dbPort, host: "127.0.0.1" });
+    await socket.start();
+    dbUri = `postgres://postgres:postgres@127.0.0.1:${dbPort}/postgres?sslmode=disable`;
+  }
 
   let output = "";
   const child: ChildProcess = spawn(binary, [], {
     env: {
       ...process.env,
-      PGRST_DB_URI: `postgres://postgres:postgres@127.0.0.1:${dbPort}/postgres?sslmode=disable`,
+      PGRST_DB_URI: dbUri,
       PGRST_DB_SCHEMAS: "public",
       PGRST_DB_ANON_ROLE: "anon",
       PGRST_JWT_SECRET: JWT_SECRET,
       PGRST_SERVER_HOST: "127.0.0.1",
       PGRST_SERVER_PORT: String(restPort),
-      PGRST_DB_POOL: "1",
-      // No LISTEN connection, and no server-side prepared statements: both
-      // assume more than the one multiplexed connection PGlite has.
+      // On PGlite: one connection, no LISTEN connection and no server-side
+      // prepared statements, which all assume more than the one multiplexed
+      // connection it has. On a real server: a real pool, as in production.
+      PGRST_DB_POOL: real ? String(process.env.SOLLOS_TEST_REST_POOL ?? 10) : "1",
       PGRST_DB_CHANNEL_ENABLED: "false",
-      PGRST_DB_PREPARED_STATEMENTS: "false",
+      PGRST_DB_PREPARED_STATEMENTS: real ? "true" : "false",
       PGRST_LOG_LEVEL: "warn",
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -161,13 +185,20 @@ export async function startApi(): Promise<Api> {
   // each direct query holds it too.
   let tail: Promise<unknown> = Promise.resolve();
   let inFlight = 0;
+  // On a real server nothing takes turns: requests overlap as they would in
+  // production. They are still counted, so stop() can wait for them.
   const inTurn = <T>(work: () => Promise<T>): Promise<T> => {
     inFlight++;
-    const run = tail.then(work, work);
-    tail = run.then(
-      () => undefined,
-      () => undefined,
-    );
+    let run: Promise<T>;
+    if (real) {
+      run = work();
+    } else {
+      run = tail.then(work, work);
+      tail = run.then(
+        () => undefined,
+        () => undefined,
+      );
+    }
     return run.finally(() => {
       inFlight--;
     });
@@ -262,7 +293,7 @@ export async function startApi(): Promise<Api> {
 
   const url = `http://127.0.0.1:${proxyPort}`;
   const sql: Sql = <T>(text: string, params: unknown[] = []) =>
-    inTurn(async () => (await db.query<T>(text, params)).rows);
+    inTurn(async () => (real ? await real.sql<T>(text, params) : (await db!.query<T>(text, params)).rows));
 
   /** Resolves once nothing has been in flight for a moment, or after `maxMs`. */
   const drain = async (maxMs: number) => {
@@ -276,7 +307,9 @@ export async function startApi(): Promise<Api> {
   };
 
   return {
-    db,
+    kind: real ? "postgres" : "pglite",
+    db: real ? { exec: real.exec as PGlite["exec"] } : db!,
+    real,
     sql,
     url,
     serviceKey,
@@ -329,8 +362,9 @@ export async function startApi(): Promise<Api> {
       proxy.closeAllConnections?.();
       await new Promise<void>((resolve) => proxy.close(() => resolve()));
       child.kill();
-      await socket.stop();
-      await db.close();
+      await socket?.stop();
+      await db?.close();
+      await real?.stop();
     },
   };
 }

@@ -47,7 +47,7 @@ const EXTENSIONS = { citext, pgcrypto, btree_gist };
  * as the migrations need; when a migration reaches for something that isn't
  * here, add it here rather than editing the migration.
  */
-const SUPABASE_SHIM = String.raw`
+export const SUPABASE_SHIM = String.raw`
 do $$ begin
   if not exists (select from pg_roles where rolname = 'anon') then create role anon nologin; end if;
   if not exists (select from pg_roles where rolname = 'authenticated') then create role authenticated nologin; end if;
@@ -164,7 +164,8 @@ async function build(): Promise<PGlite> {
   return db;
 }
 
-function fingerprint(): string {
+/** Keys a cached schema: the shim and every migration's bytes. */
+export function fingerprint(): string {
   const h = createHash("sha1");
   h.update(SUPABASE_SHIM);
   for (const file of migrationFiles()) {

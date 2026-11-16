@@ -8,17 +8,56 @@
  *
  *   vi.mock("next/headers", async () => (await import("./next-stubs")).nextHeaders());
  */
-type Cookie = { name: string; value: string };
+import { AsyncLocalStorage } from "node:async_hooks";
 
-/** The "request" in flight: whose cookies, and the work deferred with after(). */
+type Cookie = { name: string; value: string };
+type RequestState = { cookies: Cookie[]; after: Array<Promise<unknown>> };
+
+const base: RequestState = { cookies: [], after: [] };
+const scoped = new AsyncLocalStorage<RequestState>();
+const current = (): RequestState => scoped.getStore() ?? base;
+
+/**
+ * The "request" in flight: whose cookies, and the work deferred with after().
+ *
+ * One shared request by default, which is what a test acting as one person
+ * at a time wants. inRequest() gives a block of work its own, so several
+ * people can act at the same moment (test/load) without reading each
+ * other's cookies.
+ */
 export const request = {
-  cookies: [] as Cookie[],
-  after: [] as Array<Promise<unknown>>,
+  get cookies(): Cookie[] {
+    return current().cookies;
+  },
+  set cookies(value: Cookie[]) {
+    current().cookies = value;
+  },
+  get after(): Array<Promise<unknown>> {
+    return current().after;
+  },
+  set after(value: Array<Promise<unknown>>) {
+    current().after = value;
+  },
 };
 
 /** Wait for everything the last action deferred until after its response. */
 export async function settle(): Promise<void> {
   await Promise.allSettled(request.after.splice(0));
+}
+
+/**
+ * Run `work` as a request of its own, signed in with these cookies, and wait
+ * for what it deferred with after() before returning.
+ */
+export async function inRequest<T>(cookies: Cookie[], work: () => Promise<T>): Promise<T> {
+  const state: RequestState = { cookies: [...cookies], after: [] };
+  return scoped.run(state, async () => {
+    try {
+      return await work();
+    } finally {
+      await Promise.allSettled(state.after.splice(0));
+    }
+  });
 }
 
 export const nextHeaders = () => ({
