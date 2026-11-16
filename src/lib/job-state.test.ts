@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { deriveJobState, describeJobState, finishesBeforeCutover, reopensBeforeCutover, teamMinutes, type JobStateInput } from "./job-state";
+import { deriveJobState, describeJobState, teamMinutes, type JobStateInput } from "./job-state";
 
 const T = (iso: string) => new Date(iso).getTime();
 // Lori Moeller, 2026-10-27: 9:00 AM Edmonton (15:00Z), 18h entered, 4 crew.
@@ -277,179 +277,6 @@ describe("describeJobState", () => {
   });
 });
 
-describe("finishesBeforeCutover — the one answer stored while in shadow", () => {
-  // Oliver Little, 2026-10-28: 9:00 AM (15:00Z), three crew. One clocked out
-  // from her phone at 3:24 PM; the office ended the other two at 4:20 PM.
-  const OL = "2026-10-28T15:00:00Z";
-  const crew3 = [P, A, I].map((membership_id) => ({ membership_id }));
-  const oliver = (shifts: ReturnType<typeof shift>[], now: string, status = "in_progress") => {
-    const inp = input({
-      booking: { ...input().booking, status, scheduled_at: OL, divides_hours: true },
-      crew: crew3,
-      shifts,
-      now: T(now),
-    });
-    return finishesBeforeCutover(status, deriveJobState(inp), T(OL), T(now));
-  };
-  const allOut = [
-    shift(P, "2026-10-28T15:15:00Z", "2026-10-28T21:24:31Z"),
-    shift(A, "2026-10-28T15:15:00Z", "2026-10-28T22:20:00Z"),
-    shift(I, "2026-10-28T15:15:00Z", "2026-10-28T22:20:00Z"),
-  ];
-
-  it("finishes the job when the office ends the last open shifts", () => {
-    expect(oliver(allOut, "2026-10-28T22:20:56Z")).toBe(true);
-  });
-  it("finishes a job whose clock-in never moved the row off confirmed", () => {
-    expect(oliver(allOut, "2026-10-28T22:20:56Z", "confirmed")).toBe(true);
-  });
-  it("waits while anyone is still on the clock", () => {
-    const oneOpen = [...allOut.slice(0, 2), shift(I, "2026-10-28T15:15:00Z")];
-    expect(oliver(oneOpen, "2026-10-28T22:20:56Z")).toBe(false);
-  });
-  it("waits for a rostered person still coming, until the window ends", () => {
-    const twoCame = allOut.slice(0, 2);
-    // Window: 18h shared by three = 6h, so 3:00 PM (21:00Z).
-    expect(oliver(twoCame, "2026-10-28T17:00:00Z")).toBe(false);
-    expect(oliver(twoCame, "2026-10-28T22:20:56Z")).toBe(true);
-  });
-  it("leaves a job nobody worked to the nightly sweep", () => {
-    expect(oliver([], "2026-10-29T08:00:00Z")).toBe(false);
-  });
-  it("never touches a job that is already closed or cancelled", () => {
-    expect(oliver(allOut, "2026-10-28T22:20:56Z", "completed")).toBe(false);
-    expect(oliver(allOut, "2026-10-28T22:20:56Z", "cancelled")).toBe(false);
-  });
-  it("never finishes a job dated in the future (moved while she was on the clock)", () => {
-    const state = deriveJobState(input({
-      booking: { ...input().booking, status: "in_progress", scheduled_at: "2026-11-02T15:00:00Z" },
-      crew: crew3,
-      shifts: allOut,
-      now: T("2026-10-28T22:20:56Z"),
-    }));
-    expect(finishesBeforeCutover("in_progress", state, T("2026-11-02T15:00:00Z"), T("2026-10-28T22:20:56Z"))).toBe(false);
-  });
-});
-
-describe("reopensBeforeCutover — a job Sollos closed is not stuck closed", () => {
-  const OL = "2026-10-28T15:00:00Z";
-  const crew3 = [P, A, I].map((membership_id) => ({ membership_id }));
-  const at = (now: string, shifts: ReturnType<typeof shift>[], closed_at: string | null = null) =>
-    deriveJobState(input({
-      booking: { ...input().booking, status: "completed", scheduled_at: OL, divides_hours: true, closed_at },
-      crew: crew3,
-      shifts,
-      now: T(now),
-    }));
-  const twoOut = [
-    shift(P, "2026-10-28T15:15:00Z", "2026-10-28T21:24:31Z"),
-    shift(A, "2026-10-28T15:15:00Z", "2026-10-28T22:20:00Z"),
-  ];
-
-  it("reopens when a queued I'm here lands after the office ended the last shift", () => {
-    const late = [...twoOut, shift(I, "2026-10-28T19:00:00Z")];
-    expect(reopensBeforeCutover("completed", null, at("2026-10-28T22:30:00Z", late))).toBe(true);
-  });
-  it("reopens when someone clocks back in after a break", () => {
-    const back = [...twoOut, shift(I, "2026-10-28T15:15:00Z", "2026-10-28T18:00:00Z"), shift(I, "2026-10-28T18:40:00Z")];
-    expect(reopensBeforeCutover("completed", null, at("2026-10-28T18:41:00Z", back))).toBe(true);
-  });
-  it("never reopens a job a person closed", () => {
-    const late = [...twoOut, shift(I, "2026-10-28T19:00:00Z")];
-    expect(reopensBeforeCutover("completed", "2026-10-28T23:22:46Z", at("2026-10-28T23:30:00Z", late, "2026-10-28T23:22:46Z"))).toBe(false);
-  });
-  it("does nothing while everyone is out, or on a job that isn't completed", () => {
-    expect(reopensBeforeCutover("completed", null, at("2026-10-28T22:30:00Z", twoOut))).toBe(false);
-    const late = [...twoOut, shift(I, "2026-10-28T19:00:00Z")];
-    expect(reopensBeforeCutover("in_progress", null, at("2026-10-28T22:30:00Z", late))).toBe(false);
-  });
-});
-
-describe("finish/reopen invariants over random jobs", () => {
-  // A small seeded generator so the cases are the same every run. 3000
-  // jobs: 0–4 rostered, each with no shift, a closed shift, an open one,
-  // or two shifts; row status and closed_at random; now anywhere from
-  // before the start to a day past the window.
-  let seed = 20261029;
-  const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
-  const pick = <T,>(xs: T[]) => xs[Math.floor(rnd() * xs.length)];
-  const START_MS = T(START);
-  const statuses = ["pending", "confirmed", "en_route", "in_progress", "completed", "cancelled"];
-
-  function randomJob() {
-    const crewN = Math.floor(rnd() * 5);
-    const crew = [P, A, N, I].slice(0, crewN).map((membership_id) => ({ membership_id }));
-    const shifts: ReturnType<typeof shift>[] = [];
-    for (const c of crew) {
-      const kind = pick(["none", "closed", "open", "two"]);
-      const inAt = START_MS + Math.floor(rnd() * 4 * 3_600_000) - 1_800_000;
-      const outAt = inAt + 600_000 + Math.floor(rnd() * 6 * 3_600_000);
-      if (kind === "closed" || kind === "two") shifts.push(shift(c.membership_id, new Date(inAt).toISOString(), new Date(outAt).toISOString()));
-      if (kind === "open") shifts.push(shift(c.membership_id, new Date(inAt).toISOString()));
-      if (kind === "two") shifts.push(shift(c.membership_id, new Date(outAt + 1_800_000).toISOString(), rnd() < 0.5 ? null : new Date(outAt + 3_600_000).toISOString()));
-    }
-    // Someone off the roster with hours on the job, now and then.
-    if (rnd() < 0.1) shifts.push(shift("stranger", new Date(START_MS + 600_000).toISOString(), new Date(START_MS + 3_600_000).toISOString()));
-    const status = pick(statuses);
-    const closed_at = rnd() < 0.2 ? new Date(START_MS + 5 * 3_600_000).toISOString() : null;
-    const now = START_MS - 3_600_000 + Math.floor(rnd() * 30 * 3_600_000);
-    const inp = input({
-      booking: { ...input().booking, status, closed_at, divides_hours: rnd() < 0.7, duration_minutes: pick([120, 360, 1080]) },
-      crew,
-      shifts,
-      now,
-    });
-    return { inp, status, closed_at, now };
-  }
-
-  it("holds on 3000 random jobs", () => {
-    for (let i = 0; i < 3000; i++) {
-      const { inp, status, closed_at, now } = randomJob();
-      const state = deriveJobState(inp);
-      const finish = finishesBeforeCutover(status, state, START_MS, now);
-      const reopen = reopensBeforeCutover(status, closed_at, state);
-      const label = `case ${i}: status=${status} closed_at=${closed_at} now=+${Math.round((now - START_MS) / 60000)}m crew=${inp.crew.length} shifts=${JSON.stringify(inp.shifts)}`;
-
-      // Never both.
-      expect(finish && reopen, label).toBe(false);
-
-      if (finish) {
-        // Nobody on the clock, someone worked, the job has started, the row was open.
-        expect(state.onSite, label).toEqual([]);
-        expect(state.finished.length, label).toBeGreaterThan(0);
-        expect(now, label).toBeGreaterThanOrEqual(START_MS);
-        expect(["in_progress", "en_route", "confirmed"], label).toContain(status);
-        // Nobody rostered is still expected — each either worked, or the
-        // window is over — unless a person closed it, which outranks waiting.
-        if (closed_at == null) expect(state.waitingOn, label).toEqual([]);
-        // Stable: stored as completed, the next look neither finishes nor reopens.
-        const again = deriveJobState({ ...inp, booking: { ...inp.booking, status: "completed" } });
-        expect(finishesBeforeCutover("completed", again, START_MS, now), label).toBe(false);
-        expect(reopensBeforeCutover("completed", closed_at, again), label).toBe(false);
-        // Someone clocking in now reverses it (unless a person had closed it).
-        const back = deriveJobState({ ...inp, booking: { ...inp.booking, status: "completed" }, shifts: [...inp.shifts, shift(P, new Date(now).toISOString())] });
-        expect(reopensBeforeCutover("completed", closed_at, back), label).toBe(closed_at == null);
-      }
-
-      if (reopen) {
-        expect(status, label).toBe("completed");
-        expect(closed_at, label).toBeNull();
-        expect(state.onSite.length, label).toBeGreaterThan(0);
-        // Stable: stored as in progress, the next look does nothing more.
-        const again = deriveJobState({ ...inp, booking: { ...inp.booking, status: "in_progress" } });
-        expect(reopensBeforeCutover("in_progress", closed_at, again), label).toBe(false);
-        expect(finishesBeforeCutover("in_progress", again, START_MS, now), label).toBe(false);
-      }
-
-      // A person's close is never undone, and a cancelled job is never touched.
-      if (closed_at != null) expect(reopen, label).toBe(false);
-      if (status === "cancelled") expect(finish || reopen, label).toBe(false);
-      // A job nobody worked is never finished here (that stays with the sweep).
-      if (inp.shifts.length === 0) expect(finish, label).toBe(false);
-    }
-  });
-});
-
 describe("Stop my clock is a break, not a finish (Olha, 2026-11-03)", () => {
   // Solo, 9:00 AM for 4h: the window ends 1:00 PM (19:00Z).
   const solo = (completed_at: string | null | undefined) =>
@@ -467,7 +294,6 @@ describe("Stop my clock is a break, not a finish (Olha, 2026-11-03)", () => {
     expect(s.onBreak).toEqual([P]);
     expect(s.finished).toEqual([]);
     expect(s.closesAtMs).toBe(T("2026-10-27T19:00:00Z"));
-    expect(finishesBeforeCutover("in_progress", s, T(START), T("2026-10-27T16:45:00Z"))).toBe(false);
     expect(describeJobState(s, { nameOf: () => "Pristine", formatTime: () => "1:00 PM", crewSize: 1 })).toBe(
       "Pristine on a break · closes itself 1:00 PM",
     );

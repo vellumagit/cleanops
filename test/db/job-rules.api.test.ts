@@ -27,12 +27,10 @@ beforeAll(async () => {
   if (!hasPostgrest) return;
   api = await startApi();
   restoreEnv = api.useAsSupabase();
-  process.env.JOB_STATE_WRITE = "1";
   sync = await import("@/lib/job-sync");
 }, 180_000);
 
 afterAll(async () => {
-  delete process.env.JOB_STATE_WRITE;
   restoreEnv?.();
   await api?.stop();
 });
@@ -103,13 +101,12 @@ const statusChanges = (job: string) =>
 // ---------------------------------------------------------------------------
 
 describe.skipIf(!hasPostgrest)("job rules, write mode, real database", { timeout: 60_000 }, () => {
-  it("the stack is the real one: syncJob reads a job through PostgREST and reports write mode", async () => {
+  it("the stack is the real one: syncJob reads a job through PostgREST", async () => {
     const c = await company();
     const anna = await addMember(api.sql, c.org, "employee", "Anna");
     const job = await jobFor(c, [anna], { startedMinutesAgo: 10, minutes: 120 });
     const res = await sync.syncJob(job, "test");
     expect(res, api.log()).not.toBeNull();
-    expect(res?.mode).toBe("write");
     expect(res?.after).toBe("confirmed");
   });
 
@@ -281,37 +278,6 @@ describe.skipIf(!hasPostgrest)("the 2 AM sweep, write mode, real database", { ti
     expect(await statusOf(onTheClock)).not.toBe("completed");
     expect((await statusChanges(due)).map((r) => r.reason)).toEqual(["nightly_sweep"]);
   }, 60_000);
-});
-
-describe.skipIf(!hasPostgrest)("the same code with the flag off (what rolling back returns to)", { timeout: 60_000 }, () => {
-  it("shadow mode records the disagreement and stores nothing, except a finished job", async () => {
-    delete process.env.JOB_STATE_WRITE;
-    try {
-      const c = await company();
-      const anna = await addMember(api.sql, c.org, "employee", "Anna");
-      const job = await jobFor(c, [anna], { startedMinutesAgo: 30, minutes: 240 });
-      await clockIn(c, anna, job, 30);
-
-      const res = await sync.syncJob(job, "clock_in");
-      expect(res?.mode).toBe("shadow");
-      expect(res?.state.status).toBe("in_progress");
-      // The old writers own the status in shadow; the rules only say so.
-      expect(await statusOf(job)).toBe("confirmed");
-      const checks = await api.sql<{ actual: string; derived: string }>(
-        `select after ->> 'actual' as actual, after ->> 'derived' as derived
-         from public.audit_log where entity = 'booking' and entity_id = $1 and action = 'state_check'`,
-        [job],
-      );
-      expect(checks).toEqual([{ actual: "confirmed", derived: "in_progress" }]);
-
-      // The one thing shadow mode does store: the last clock stopped, the job is done.
-      await clockOut(anna, job, true);
-      await sync.syncJob(job, "clock_out");
-      expect(await statusOf(job)).toBe("completed");
-    } finally {
-      process.env.JOB_STATE_WRITE = "1";
-    }
-  });
 });
 
 describe("the API stack itself", () => {

@@ -8,9 +8,8 @@
  * person doing it, with a cleaner's real taps (field/jobs/actions.ts)
  * setting the scene.
  *
- * As in field-taps.api.test.ts, every scenario runs with the rules
- * shadowing and with the rules writing. Where the two are meant to differ
- * the test says so; everywhere else the job must end the same way.
+ * Until the 2026-11-14 cutover each scenario also ran with the rules
+ * shadowing; since then the rules are the only writer.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { hasPostgrest, startApi, type Api } from "./api";
@@ -40,7 +39,6 @@ beforeAll(async () => {
 }, 240_000);
 
 afterAll(async () => {
-  delete process.env.JOB_STATE_WRITE;
   restoreEnv?.();
   await api?.stop();
 });
@@ -136,14 +134,7 @@ const crewOf = async (job: string): Promise<string[]> =>
 
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!hasPostgrest).each([
-  ["with the rules shadowing (production until the cutover)", undefined],
-  ["with the rules writing (production after it)", "1"],
-] as const)("the office's actions, %s", { timeout: 90_000 }, (_label, flag) => {
-  beforeEach(() => {
-    if (flag) process.env.JOB_STATE_WRITE = flag;
-    else delete process.env.JOB_STATE_WRITE;
-  });
+describe.skipIf(!hasPostgrest)("the office's actions", { timeout: 90_000 }, () => {
 
   describe("closing a job", () => {
     /**

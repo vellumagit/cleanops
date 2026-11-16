@@ -7,8 +7,6 @@ import { formatCurrencyCents, formatDurationMinutes } from "@/lib/format";
 import {
   deriveJobState,
   describeJobState,
-  finishesBeforeCutover,
-  reopensBeforeCutover,
   type JobState,
   type JobStateCrewRow,
   type JobStateShift,
@@ -24,20 +22,18 @@ import {
  * logs it, and drafts the invoice on done. Nothing else is meant to write
  * bookings.status.
  *
- * Shadow mode, the default until JOB_STATE_WRITE=1: it computes and
- * compares, and when the answer differs from the row it writes one
- * audit_log row (action "state_check") and touches nothing else — with one
- * exception: when the last clock stops and the job is done, it stores
- * completed (finishesBeforeCutover in job-state.ts), because no old path
- * did that except the cleaner's own "I'm done" tap. The old direct writes
- * keep running alongside. A week of those rows on real jobs, each one
- * explained, is the test before the flip.
+ * Until 2026-11-14 this ran in shadow beside the old writers, recording
+ * where it disagreed (audit action "state_check"; those rows remain as
+ * history). It has been the writer since. The one other place a status is
+ * set is a person saying so: closing a job (close-job.ts writes closed_at
+ * and completed together, which is what the rules compute from closed_at),
+ * the status dropdown, cancelling, and creating a visit as pending or
+ * confirmed. Everything derived from shifts is decided here.
  */
 
 export type JobSyncResult = {
   state: JobState;
   summary: string;
-  mode: "shadow" | "write";
   /** Stored status before and after; equal when nothing changed. */
   before: string;
   after: string;
@@ -51,10 +47,6 @@ export type JobStateView = {
   shifts: Array<JobStateShift & { id: string; name: string }>;
   windowEndMs: number;
 };
-
-export function jobSyncMode(): "shadow" | "write" {
-  return process.env.JOB_STATE_WRITE === "1" ? "write" : "shadow";
-}
 
 type BookingRow = {
   id: string;
@@ -339,17 +331,17 @@ export async function loadJobTimeline(
 }
 
 /**
- * Recompute one job and store the answer (write mode), or record where it
- * disagrees with the row (shadow mode). Never throws: a job's status must
+ * Recompute one job and store the answer. Never throws: a job's status must
  * never be the reason a clock-in fails.
  *
  * `reason` names the event that triggered it ("clock_in", "manager_close",
- * "nightly_sweep"…) and lands in the audit row, so a disagreement can be
- * traced to what just happened.
+ * "nightly_sweep"…) and lands in the audit row; `actorId` is the member whose
+ * tap or click it follows, so the job's history says who, not just "Sollos".
  */
 export async function syncJob(
   bookingId: string,
   reason: string,
+  opts: { actorId?: string | null } = {},
 ): Promise<JobSyncResult | null> {
   try {
     const loaded = await load(bookingId);
@@ -362,74 +354,23 @@ export async function syncJob(
       formatTime: formatTimeIn(tz),
       crewSize: crew.length,
     });
-    const mode = jobSyncMode();
     const before = booking.status;
 
     if (state.status === before) {
-      return { state, summary, mode, before, after: before };
+      return { state, summary, before, after: before };
     }
 
-    // In shadow, two transitions are stored anyway: the last clock stopped
-    // and the job is done, and its reverse, someone clocked in on a job
-    // Sollos had closed (see finishesBeforeCutover / reopensBeforeCutover).
-    // Everything else only logs.
-    const earlyFinish =
-      mode === "shadow" &&
-      finishesBeforeCutover(before, state, new Date(booking.scheduled_at).getTime(), now);
-    const earlyReopen =
-      mode === "shadow" && reopensBeforeCutover(before, booking.closed_at, state);
-
-    if (mode === "shadow" && !earlyFinish && !earlyReopen) {
-      console.log(
-        `[job-state shadow] ${bookingId} after ${reason}: row=${before} computed=${state.status} (${state.phase}) — ${summary}`,
-      );
-      // One row per disagreement, not one per look. The heartbeat recomputes
-      // every live job each half hour, and a job that sits in progress all
-      // evening with a no-show rostered would otherwise write the same
-      // state_check row 20 times.
-      const { data: last } = (await db
-        .from("audit_log")
-        .select("after")
-        .eq("entity", "booking")
-        .eq("entity_id", bookingId)
-        .eq("action", "state_check")
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle()) as unknown as {
-        data: { after: { actual?: string; derived?: string } | null } | null;
-      };
-      if (last?.after?.actual === before && last.after.derived === state.status) {
-        return { state, summary, mode, before, after: before };
-      }
-      await logSystemAuditEvent({
-        organizationId: booking.organization_id,
-        action: "state_check",
-        entity: "booking",
-        entity_id: bookingId,
-        after: {
-          mode: "shadow",
-          reason,
-          actual: before,
-          derived: state.status,
-          phase: state.phase,
-          needs: state.needs,
-          summary,
-        },
-      });
-      return { state, summary, mode, before, after: before };
-    }
-
-    // Write mode. Guard on the status we read so a human changing it in the
-    // same moment wins — the next event recomputes anyway.
-    // The rules can reopen a finished job (a late clock-in on a job the
-    // sweep closed), but not out from under an invoice: the money has moved
-    // on the strength of "completed". Same guard as every human writer.
+    // Guard on the status we read so a human changing it in the same moment
+    // wins — the next event recomputes anyway. The rules can reopen a
+    // finished job (a late clock-in on a job nobody closed), but not out from
+    // under an invoice: the money has moved on the strength of "completed".
+    // Same guard as every human writer.
     if (before === "completed" && state.status !== "completed") {
       const { resolveBilledBookings } = await import("@/lib/billed-bookings");
       const inv = (await resolveBilledBookings(db, [bookingId])).get(bookingId);
       if (inv) {
         console.log(`[job-state] ${bookingId}: rules say ${state.status} but invoice ${inv.number ?? inv.id} bills it; left completed`);
-        return { state, summary, mode, before, after: before };
+        return { state, summary, before, after: before };
       }
     }
 
@@ -440,27 +381,26 @@ export async function syncJob(
       .eq("status", before as never)
       .select("id")) as unknown as { data: Array<{ id: string }> | null };
     if (!written || written.length === 0) {
-      return { state, summary, mode, before, after: before };
+      return { state, summary, before, after: before };
     }
     await logSystemAuditEvent({
       organizationId: booking.organization_id,
       action: "status_change",
       entity: "booking",
       entity_id: bookingId,
+      actorId: opts.actorId ?? null,
       after: {
         status: state.status,
         reason,
         phase: state.phase,
         summary,
-        ...(earlyFinish ? { mode: "shadow_finish" } : {}),
-        ...(earlyReopen ? { mode: "shadow_reopen" } : {}),
       },
     });
     if (state.status === "completed") {
       const { autoInvoiceOnJobComplete } = await import("@/lib/automations");
       await autoInvoiceOnJobComplete(bookingId);
     }
-    return { state, summary, mode, before, after: state.status };
+    return { state, summary, before, after: state.status };
   } catch (err) {
     console.error("[job-state] sync failed:", bookingId, reason, err);
     return null;
@@ -475,8 +415,7 @@ export async function syncJob(
  * auto-complete grace running out on a job nobody tapped. Until this ran,
  * closesAtMs was a forecast with nothing to carry it out; the 2 AM sweep
  * closed those jobs by its own rule hours later. Every 30 minutes from the
- * shift-reminders cron. In shadow mode it only writes a state_check row
- * when the disagreement is new (see syncJob).
+ * shift-reminders cron.
  */
 export async function syncLiveJobs(now = Date.now()): Promise<{
   considered: number;

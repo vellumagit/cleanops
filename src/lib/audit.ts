@@ -132,12 +132,14 @@ export async function logSystemAuditEvent(args: {
   entity: AuditEntity;
   entity_id?: string | null;
   after?: Record<string, unknown> | null;
+  /** The member whose tap or click this follows, when there was one. */
+  actorId?: string | null;
 }): Promise<void> {
   try {
     const admin = createSupabaseAdminClient();
     const { error } = await admin.from("audit_log").insert({
       organization_id: args.organizationId,
-      actor_id: null,
+      actor_id: args.actorId ?? null,
       action: args.action,
       entity: args.entity,
       entity_id: args.entity_id ?? null,
