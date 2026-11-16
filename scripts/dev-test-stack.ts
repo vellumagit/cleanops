@@ -19,38 +19,15 @@
  *
  * The database lives in memory. Stop the script and it is gone.
  */
-import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { createRequire } from "node:module";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startApi } from "../test/db/api";
+import { spawnApp } from "../test/db/app-process";
 import { addBooking, addClient, addMember, addOrg } from "../test/db/harness";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const PORT = Number(process.env.PORT ?? 3100);
-
-/** Keys the app may keep from .env.local: nothing that reaches a real service. */
-const KEEP = new Set(["NODE_ENV", "NEXT_PUBLIC_APP_URL", "NEXT_PUBLIC_SITE_URL"]);
-
-function blankedSecrets(): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const file of [".env.local", ".env", ".env.development", ".env.development.local"]) {
-    const path = join(ROOT, file);
-    if (!existsSync(path)) continue;
-    for (const line of readFileSync(path, "utf8").split(/\r?\n/)) {
-      const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(line);
-      // Defined wins over the file: Next never overrides a variable the
-      // process already has. Empty for secrets; but an on/off flag has to be
-      // a valid "off", because src/lib/env.ts rejects an empty string for
-      // those and every page that asks for the environment would fail.
-      if (!m || KEEP.has(m[1])) continue;
-      const key = m[1];
-      out[key] = /_(ENABLED|PAUSED|UNPAUSED)$/.test(key) ? "false" : /_ENVIRONMENT$/.test(key) ? "sandbox" : "";
-    }
-  }
-  return out;
-}
 
 async function main() {
   const api = await startApi();
@@ -194,21 +171,8 @@ async function main() {
   console.log(`[test-stack] starting the app on http://localhost:${PORT}`);
 
   // ── The app, pointed at it, with every real secret blanked ───────────────
-  const require = createRequire(import.meta.url);
-  const nextBin = require.resolve("next/dist/bin/next");
-  const child = spawn(process.execPath, [nextBin, "dev", "-p", String(PORT)], {
-    cwd: ROOT,
-    stdio: "inherit",
-    env: {
-      ...process.env,
-      ...blankedSecrets(),
-      NEXT_PUBLIC_SUPABASE_URL: api.url,
-      NEXT_PUBLIC_SUPABASE_ANON_KEY: api.anonKey,
-      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: api.anonKey,
-      SUPABASE_SERVICE_ROLE_KEY: api.serviceKey,
-      SOLLOS_TEST_STACK: "1",
-    },
-  });
+  // (test/db/app-process.ts, shared with the browser tests.)
+  const child = spawnApp(api, PORT);
   const shutdown = async () => {
     if (child.exitCode === null) child.kill();
     await api.stop().catch(() => {});

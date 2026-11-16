@@ -123,3 +123,37 @@ jobs:
 
       - name: Run unit tests
         run: pnpm test
+
+  browser-tests:
+    name: Browser tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Fetch PostgREST for the test database
+        run: node scripts/fetch-postgrest.mjs
+
+      # The real app in Chrome against a throwaway database (test/browser).
+      # Unit and database tests check what the code does; these check what a
+      # person sees. A refusal the database rightly made reached Olha as a
+      # crash screen on 2026-11-12 and nothing failed for five days.
+      # The runner image ships Chrome; nothing is downloaded.
+      - name: Run browser tests
+        run: pnpm test:browser
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
