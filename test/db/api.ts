@@ -40,6 +40,8 @@ import { hasRealPostgres, startRealDatabase, type RealDatabase } from "./real-po
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const JWT_SECRET = "sollos-test-jwt-secret-not-a-real-one-0123456789";
+/** A little under where production starts refusing (see the proxy). About 320 ids in one `in.(...)`. */
+export const MAX_URL_BYTES = 12_000;
 
 export function postgrestBinary(): string | null {
   const candidates = [
@@ -281,6 +283,23 @@ export async function startApi(): Promise<Api> {
           res.end(JSON.stringify({ message: `test stack has no ${path}` }));
           return;
         }
+        // Production refuses a request whose address is too long: measured
+        // 2026-11-16, 375 ids in an `in.(...)` (13,950 bytes) went through and
+        // 400 (14,875) failed. The app learns that only from production, so
+        // the stack refuses earlier, at MAX_URL_BYTES, and every test meets it:
+        // an id list that grows with a company's history fails here first.
+        if (path.length > MAX_URL_BYTES) {
+          res.writeHead(414, { "content-type": "application/json" });
+          res.end(
+            JSON.stringify({
+              code: "414",
+              message: `test stack: request address is ${path.length} bytes, over ${MAX_URL_BYTES}; production refuses these (send the ids in chunks, or filter by a join)`,
+              details: null,
+              hint: null,
+            }),
+          );
+          return;
+        }
         const headers: Record<string, string> = {};
         for (const [k, v] of Object.entries(req.headers)) {
           if (v == null || k === "host" || k === "connection" || k === "content-length") continue;
@@ -309,12 +328,18 @@ export async function startApi(): Promise<Api> {
           const [table, query = ""] = rest.split("?");
           const range = answer.headers["content-range"] ?? "";
           const m = /^(\d+)-(\d+)\//.exec(range);
-          const rows = m ? Number(m[2]) - Number(m[1]) + 1 : /^\*\//.test(range) ? 0 : null;
-          const askedForRange = /(^|&)(limit|offset)=/.test(query) || Boolean(req.headers.range);
+          // A HEAD (a count with head: true) returns no rows, whatever range
+          // the header names.
+          const rows = req.method === "HEAD" ? 0 : m ? Number(m[2]) - Number(m[1]) + 1 : /^\*\//.test(range) ? 0 : null;
+          // A read that asked for at most 1,000 rows and got 1,000 is whole.
+          // One that asked for more (.range(0, 4999)) is cut all the same:
+          // the server's cap wins over what the code asked for.
+          const limit = Number(/(?:^|&)limit=(\d+)/.exec(query)?.[1] ?? NaN);
+          const askedForRange = (Number.isFinite(limit) && limit <= 1000) || Boolean(req.headers.range);
           recording.push({
             method: req.method ?? "GET",
             path: table,
-            query: decodeURIComponent(query).slice(0, 300),
+            query: decodeURIComponent(query).slice(0, 4000),
             status: answer.status,
             ms: Math.round(performance.now() - started),
             rows,

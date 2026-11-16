@@ -84,45 +84,67 @@ export default async function AuditLogPage({
   const hasFilters = Boolean(actionFilter || fromFilter || toFilter);
 
   const supabase = await createSupabaseServerClient();
-  let query = supabase
-    .from("audit_log")
-    .select(
-      `
-        id,
-        created_at,
-        action,
-        entity,
-        entity_id,
-        before,
-        after,
-        actor:memberships (
+  // When filtering, allow a deeper window for CSV export; otherwise the
+  // default recent slice keeps the page light.
+  const want = hasFilters ? EXPORT_LIMIT : 200;
+  const page = (from: number, to: number) => {
+    let query = supabase
+      .from("audit_log")
+      .select(
+        `
           id,
-          role,
-          display_name,
-          profile:profiles ( full_name )
-        )
-      `,
-    )
-    .order("created_at", { ascending: false })
-    // When filtering, allow a deeper window for CSV export; otherwise the
-    // default recent slice keeps the page light.
-    .limit(hasFilters ? EXPORT_LIMIT : 200);
+          created_at,
+          action,
+          entity,
+          entity_id,
+          before,
+          after,
+          actor:memberships (
+            id,
+            role,
+            display_name,
+            profile:profiles ( full_name )
+          )
+        `,
+      )
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(from, to);
 
-  if (actionFilter) query = query.eq("action", actionFilter);
-  // Filter by the ORG's calendar days, not the database's. The bare
-  // `T00:00:00` strings parsed as UTC midnight, so a Brasilia admin
-  // filtering "Aug 22" got a window starting at 9 PM Aug 21 and cutting off
-  // 3 hours before Aug 22 actually ended.
-  if (fromFilter)
-    query = query.gte("created_at", zonedMidnightUtc(fromFilter, tz).toISOString());
-  if (toFilter) {
-    const nextYmd = new Date(Date.parse(`${toFilter}T12:00:00Z`) + 86_400_000)
-      .toISOString()
-      .slice(0, 10);
-    query = query.lt("created_at", zonedMidnightUtc(nextYmd, tz).toISOString());
+    if (actionFilter) query = query.eq("action", actionFilter);
+    // Filter by the ORG's calendar days, not the database's. The bare
+    // `T00:00:00` strings parsed as UTC midnight, so a Brasilia admin
+    // filtering "Aug 22" got a window starting at 9 PM Aug 21 and cutting off
+    // 3 hours before Aug 22 actually ended.
+    if (fromFilter)
+      query = query.gte("created_at", zonedMidnightUtc(fromFilter, tz).toISOString());
+    if (toFilter) {
+      const nextYmd = new Date(Date.parse(`${toFilter}T12:00:00Z`) + 86_400_000)
+        .toISOString()
+        .slice(0, 10);
+      query = query.lt("created_at", zonedMidnightUtc(nextYmd, tz).toISOString());
+    }
+    return query;
+  };
+
+  // A page at a time, up to `want`. One read of 2,000 came back with 1,000:
+  // the API stops there without saying so, the page said "1000 matching
+  // events" and the CSV dropped the oldest. Svit had 1,682 events on
+  // 2026-11-16, so a filter from the start was already short.
+  const collected: unknown[] = [];
+  let error: { message: string } | null = null;
+  for (let from = 0; from < want; from += 1000) {
+    const to = Math.min(from + 1000, want) - 1;
+    const res = await page(from, to);
+    if (res.error) {
+      error = res.error;
+      break;
+    }
+    collected.push(...(res.data ?? []));
+    if ((res.data ?? []).length < to - from + 1) break;
   }
-
-  const { data, error } = await query;
+  const data = collected;
+  const atLimit = collected.length >= want;
 
   if (error) {
     return (
@@ -157,7 +179,11 @@ export default async function AuditLogPage({
       title="Audit log"
       description={
         hasFilters
-          ? `Append-only record of sensitive mutations. ${rows.length} matching event${rows.length === 1 ? "" : "s"}.`
+          ? `Append-only record of sensitive mutations. ${
+              atLimit
+                ? `The most recent ${rows.length} matching events; narrow the dates to see older ones.`
+                : `${rows.length} matching event${rows.length === 1 ? "" : "s"}.`
+            }`
           : "Append-only record of sensitive mutations. Most recent 200 events."
       }
       actions={

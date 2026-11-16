@@ -44,8 +44,10 @@ next-env.d.ts
 .vercel
 scripts/export/
 
-# Shadow-week morning reports, written by the scheduled task
-reports/
+# Shadow-week morning reports, written by the scheduled task. Anchored to the
+# repo root: unanchored, it also ignored src/app/app/reports/, so a new file
+# there would never be committed (or deployed), and search tools skipped it.
+/reports/
 
 # Product screenshots (pnpm screenshots)
 /screenshots/

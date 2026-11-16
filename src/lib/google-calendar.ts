@@ -775,8 +775,11 @@ export async function pruneOrgCalendarOrphans(
       .not("google_calendar_event_id", "is", null)
       // Ordered so the pages don't overlap or skip. Without a sort key
       // Postgres may return rows in a different order per page, and a valid
-      // id missed that way is deleted off the customer's calendar.
+      // id missed that way is deleted off the customer's calendar. The time
+      // alone is not enough: two 9:00 jobs tie, and a tie that straddles a
+      // page can come back once twice and the other never. The id breaks it.
       .order("scheduled_at", { ascending: true })
+      .order("id", { ascending: true })
       .range(from, from + 999)) as unknown as {
       data: Array<{ google_calendar_event_id: string | null }> | null;
     };
@@ -1506,7 +1509,10 @@ export async function reconcileOrgCalendarEvents(
           .gte("scheduled_at", since.toISOString())
           .not("google_calendar_event_id", "is", null)
           .neq("status", "cancelled")
+          // The id breaks ties between jobs at the same time, so a tie on a
+          // page boundary is neither read twice nor skipped.
           .order("scheduled_at", { ascending: true })
+          .order("id", { ascending: true })
           .range(from, from + 999)) as unknown as {
           data: Array<{ id: string; google_calendar_event_id: string }> | null;
           error: { message: string } | null;

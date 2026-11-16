@@ -22,6 +22,7 @@
 
 import "server-only";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { allPages, type Page } from "@/lib/supabase/all-pages";
 import { releaseOrgNumber } from "@/lib/twilio-provision";
 
 /**
@@ -94,6 +95,11 @@ const TENANT_TABLES = [
   "webhooks",
 ] as const;
 
+/** The unique key to page an exported table by, where it isn't `id`. */
+const EXPORT_ORDER_KEY: Partial<Record<(typeof TENANT_TABLES)[number], string>> = {
+  membership_admin_data: "membership_id",
+};
+
 const DELETION_GRACE_DAYS = 30;
 
 // ---------------------------------------------------------------------------
@@ -107,6 +113,8 @@ export type ExportBundle = {
   counts: Record<string, number>;
   /** bucket → time-limited signed download URLs for the org's stored files. */
   storage_files?: Record<string, string[]>;
+  /** Tables that could not be read: their empty lists mean "unknown", not "none". */
+  failed_tables?: string[];
 };
 
 /**
@@ -127,23 +135,36 @@ export async function exportOrgData(orgId: string): Promise<ExportBundle> {
   const tables: Record<string, unknown[]> = {};
   const counts: Record<string, number> = {};
 
+  const failed: string[] = [];
   for (const tableName of TENANT_TABLES) {
-    const { data, error } = await db
-      // Some tables (e.g. booking_series) aren't in the generated types
-      // yet; the admin client bypasses the type narrowing at runtime.
-      .from(tableName as never)
-      .select("*")
-      .eq("organization_id" as never, orgId as never);
-    if (error) {
-      // Log and skip — better to ship a partial bundle than to fail the
-      // whole export because one table errored.
-      console.error(`[tenant-export] ${tableName} failed:`, error.message);
+    // Every row, a page at a time. One read per table used to stop at the
+    // API's 1,000 rows without saying so: on 2026-11-16 Svit's export held
+    // 1,000 of 25,131 checklist items, 1,000 of 1,682 audit rows and 1,000
+    // of 1,464 notifications, and its counts said 1,000 as if that were all.
+    try {
+      const rows = await allPages<Record<string, unknown>>(
+        (from, to) =>
+          db
+            // Some tables (e.g. booking_series) aren't in the generated types
+            // yet; the admin client bypasses the type narrowing at runtime.
+            .from(tableName as never)
+            .select("*")
+            .eq("organization_id" as never, orgId as never)
+            .order((EXPORT_ORDER_KEY[tableName] ?? "id") as never)
+            .range(from, to) as unknown as Page<Record<string, unknown>>,
+        `export ${tableName}`,
+      );
+      tables[tableName] = rows;
+      counts[tableName] = rows.length;
+    } catch (err) {
+      // Better to ship the rest than to fail the whole export because one
+      // table errored; the bundle names the table so nobody reads its
+      // empty list as "none".
+      console.error(`[tenant-export] ${tableName} failed:`, err);
       tables[tableName] = [];
       counts[tableName] = 0;
-      continue;
+      failed.push(tableName);
     }
-    tables[tableName] = data ?? [];
-    counts[tableName] = data?.length ?? 0;
   }
 
   // Storage files (job photos, contract/estimate PDFs, org logo). Data
@@ -206,6 +227,7 @@ export async function exportOrgData(orgId: string): Promise<ExportBundle> {
     tables,
     counts,
     storage_files,
+    ...(failed.length ? { failed_tables: failed } : {}),
   };
 }
 

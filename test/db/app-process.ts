@@ -71,12 +71,14 @@ export function spawnApp(
   api: Api,
   port: number,
   stdio: "inherit" | "pipe" = "inherit",
+  /** Test-only additions, e.g. a throwaway CRON_SECRET so a test can run the crons. */
+  extraEnv: Record<string, string> = {},
 ): ChildProcess {
   const require = createRequire(import.meta.url);
   const nextBin = require.resolve("next/dist/bin/next");
   return spawn(process.execPath, [nextBin, "dev", "-p", String(port)], {
     cwd: ROOT,
     stdio: stdio === "inherit" ? "inherit" : ["ignore", "pipe", "pipe"],
-    env: appEnv(api),
+    env: { ...appEnv(api), ...extraEnv },
   });
 }

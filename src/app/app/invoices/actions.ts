@@ -24,6 +24,8 @@ import { redirectBack } from "@/lib/return-to";
 import { computeTax, parseTaxRate } from "@/lib/invoice-tax";
 import { pushInvoiceToSage, pushInvoicePaymentToSage } from "@/lib/sage";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { allPages, type Page } from "@/lib/supabase/all-pages";
+import { selectInChunks } from "@/lib/supabase/chunked-in";
 import {
   pushInvoiceToQuickBooks,
   pushInvoicePaymentToQuickBooks,
@@ -1513,49 +1515,65 @@ export async function bulkGenerateInvoicesAction(): Promise<BulkInvoiceResult> {
   }
 
   // Find completed bookings with a total set that have no invoice yet.
-  const { data: bookings, error } = await supabase
-    .from("bookings")
-    .select("id")
-    .eq("organization_id" as never, membership.organization_id as never)
-    .eq("status", "completed")
-    .not("total_cents", "is", null)
-    .is("archived_at" as never, null as never)
-    // One button shouldn't undo every void at once. Billing a voided job is a
-    // decision about that job: its own page, or Bill for a period.
-    .is("billing_released_at" as never, null as never);
-
-  if (error) return { created: 0, skipped: 0, errors: [error.message] };
-  if (!bookings?.length) return { created: 0, skipped: 0, errors: [] };
-
-  // Filter to those without an existing invoice.
-  const { data: existing } = await supabase
-    .from("invoices")
-    .select("booking_id")
-    .eq("organization_id" as never, membership.organization_id as never)
-    .not("booking_id", "is", null)
-    .in(
-      "booking_id",
-      bookings.map((b) => b.id),
+  // Every one, a page at a time: this read has no date bound, and one read
+  // stops at the API's 1,000 rows without saying so.
+  let bookings: Array<{ id: string }>;
+  try {
+    bookings = await allPages<{ id: string }>(
+      (from, to) =>
+        supabase
+          .from("bookings")
+          .select("id")
+          .eq("organization_id" as never, membership.organization_id as never)
+          .eq("status", "completed")
+          .not("total_cents", "is", null)
+          .is("archived_at" as never, null as never)
+          // One button shouldn't undo every void at once. Billing a voided job is a
+          // decision about that job: its own page, or Bill for a period.
+          .is("billing_released_at" as never, null as never)
+          .order("id")
+          .range(from, to) as unknown as Page<{ id: string }>,
+      "bulk invoice: completed jobs",
     );
+  } catch (err) {
+    return { created: 0, skipped: 0, errors: [err instanceof Error ? err.message : String(err)] };
+  }
+  if (!bookings.length) return { created: 0, skipped: 0, errors: [] };
+  const jobIds = bookings.map((b) => b.id);
+
+  // Filter to those without an existing invoice. The ids go in chunks: all
+  // of them in one request is an address production refuses past about 390
+  // (Svit had 400 completed jobs on 2026-11-16), and the button crashed.
+  const existing = await selectInChunks<{ booking_id: string | null }>(jobIds, (chunk) =>
+    supabase
+      .from("invoices")
+      .select("booking_id")
+      .eq("organization_id" as never, membership.organization_id as never)
+      .not("booking_id", "is", null)
+      .in("booking_id", chunk),
+  );
+  if (existing.error) return { created: 0, skipped: 0, errors: [existing.error.message] };
 
   const alreadyInvoiced = new Set(
-    (existing ?? []).map((r) => r.booking_id as string),
+    existing.data.map((r) => r.booking_id as string),
   );
 
   // Also exclude bookings already billed on a consolidated "period" invoice —
   // those are recorded via invoice_line_items.booking_id (invoices.booking_id
   // is null), so the single-invoice check above misses them. Void invoices
   // don't count. Without this the booking gets a second invoice.
-  const { data: liExisting } = (await supabase
-    .from("invoice_line_items")
-    .select("booking_id, invoices!inner ( voided_at )")
-    .in(
-      "booking_id" as never,
-      bookings.map((b) => b.id) as never,
-    )
-    .is("invoices.voided_at" as never, null as never)) as unknown as {
-    data: Array<{ booking_id: string | null }> | null;
-  };
+  const liExistingResult = await selectInChunks<{ booking_id: string | null }>(jobIds, (chunk) =>
+    supabase
+      .from("invoice_line_items")
+      .select("booking_id, invoices!inner ( voided_at )")
+      .in("booking_id" as never, chunk as never)
+      .is("invoices.voided_at" as never, null as never) as unknown as PromiseLike<{
+      data: Array<{ booking_id: string | null }> | null;
+      error: { message: string } | null;
+    }>,
+  );
+  if (liExistingResult.error) return { created: 0, skipped: 0, errors: [liExistingResult.error.message] };
+  const liExisting = liExistingResult.data;
   for (const r of liExisting ?? []) {
     if (r.booking_id) alreadyInvoiced.add(r.booking_id);
   }

@@ -17,6 +17,9 @@ import { BookingsTable, type BookingRow } from "./bookings-table";
 
 export const metadata = { title: "Bookings" };
 
+/** How many bookings the list holds, newest first. The page says when there are more. */
+const LIST_LIMIT = 1000;
+
 export default async function BookingsPage({
   searchParams,
 }: {
@@ -93,7 +96,8 @@ export default async function BookingsPage({
 
   const { data, error } = await (query
     .order("scheduled_at", { ascending: false })
-    .limit(1000) as unknown as Promise<{
+    .order("id", { ascending: false })
+    .limit(LIST_LIMIT) as unknown as Promise<{
     data: Array<{
       id: string;
       scheduled_at: string;
@@ -118,6 +122,24 @@ export default async function BookingsPage({
   }>);
 
   if (error) throw error;
+
+  // The list stops at LIST_LIMIT, newest first. Past it the oldest jobs fell
+  // off without a word, and searching the table for one found nothing (Svit
+  // reached 983 bookings on 2026-11-16). When the list is full, count what
+  // there is and say so above the table.
+  let total: number | null = null;
+  if ((data ?? []).length >= LIST_LIMIT) {
+    let counted = supabase
+      .from("bookings")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", membership.organization_id);
+    if (clientFilter) counted = counted.eq("client_id", clientFilter);
+    counted = showArchived
+      ? counted.not("archived_at" as never, "is" as never, null as never)
+      : counted.is("archived_at" as never, null as never);
+    const { count } = await counted;
+    total = count ?? null;
+  }
 
   const tz = await tzPromise;
   const orgDividesHours = await dividesPromise;
@@ -381,6 +403,12 @@ export default async function BookingsPage({
             Show all bookings
           </Link>
         </div>
+      )}
+      {total != null && total > rows.length && (
+        <p className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-800 dark:text-amber-300">
+          Showing the latest {rows.length.toLocaleString()} of {total.toLocaleString()} bookings. The oldest
+          aren&apos;t listed here: open a client to see all of theirs.
+        </p>
       )}
       <BookingsTable
         rows={rows}

@@ -66,8 +66,9 @@ export async function GET(request: NextRequest) {
       .not("google_calendar_event_id", "is", null)
       // Ordered so pages can't overlap or skip — an unsorted paginated read
       // can drop a row, and a dropped row here is an event id nulled for no
-      // reason.
+      // reason. The id breaks ties between jobs at the same time.
       .order("scheduled_at", { ascending: true })
+      .order("id", { ascending: true })
       .range(from, from + 999)) as unknown as {
       data: Array<{ id: string; google_calendar_event_id: string }> | null;
     };
