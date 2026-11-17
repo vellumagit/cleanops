@@ -27,31 +27,23 @@ export async function saveTippingAction(
     return { errors: { _form: "You don't have permission." } };
   }
 
-  const admin = createSupabaseAdminClient();
-
   // Read first, then merge. The public tipping wording is edited on a
   // DIFFERENT screen (Settings › Payment instructions) but lives in this same
   // JSONB column, so writing the object wholesale from here would silently
-  // erase it.
-  const { data: currentRow } = (await admin
-    .from("organizations")
-    .select("tipping_settings")
-    .eq("id", membership.organization_id)
-    .maybeSingle()) as unknown as {
-    data: { tipping_settings: unknown } | null;
-  };
-
+  // erase it. Merged onto what is there NOW (updateOrgSettingsColumn), so a
+  // save on the other screen at the same moment isn't undone either.
   const { tippingSettingsFromForm } = await import("@/lib/tip-split");
-  const settings = tippingSettingsFromForm(
-    formData.get("enabled") === "on",
-    formData.getAll("presets").map((v) => String(v)),
-    currentRow?.tipping_settings,
-  );
-  const { error } = await admin
-    .from("organizations")
-    .update({ tipping_settings: settings } as never)
-    .eq("id", membership.organization_id);
-  if (error) return { errors: { _form: error.message } };
+  const { updateOrgSettingsColumn } = await import("@/lib/automation-settings-write");
+  let settings: unknown = null;
+  const saved = await updateOrgSettingsColumn<unknown>(membership.organization_id, "tipping_settings", (current) => {
+    settings = tippingSettingsFromForm(
+      formData.get("enabled") === "on",
+      formData.getAll("presets").map((v) => String(v)),
+      current,
+    );
+    return settings;
+  });
+  if (!saved.ok) return { errors: { _form: saved.error } };
 
   await logAuditEvent({
     membership,

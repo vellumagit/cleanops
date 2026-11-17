@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { getActionContext } from "@/lib/actions";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { updateAutomationSettings } from "@/lib/automation-settings-write";
 
 export type AutomationKey =
   | "auto_invoice_on_job_complete"
@@ -218,25 +219,18 @@ export async function applyAutomationPresetAction(formData: FormData) {
     return;
   }
 
-  const admin = createSupabaseAdminClient();
-  const { data: org } = (await admin
-    .from("organizations")
-    .select("automation_settings")
-    .eq("id", membership.organization_id)
-    .maybeSingle()) as unknown as {
-    data: { automation_settings: Record<string, { enabled: boolean }> } | null;
-  };
-
-  const merged = { ...(org?.automation_settings ?? {}) };
-  for (const key of keys) merged[key] = { enabled: true };
-
-  await admin
-    .from("organizations")
-    .update({
-      automation_settings: merged,
-      automations_enabled: true,
-    } as never)
-    .eq("id", membership.organization_id);
+  // Spread each entry, as the single switch does: a preset turns things on,
+  // it doesn't reset their thresholds or cadence.
+  const saved = await updateAutomationSettings(
+    membership.organization_id,
+    (current) => {
+      const merged = { ...current };
+      for (const key of keys) merged[key] = { ...(current[key] ?? {}), enabled: true };
+      return merged;
+    },
+    { automations_enabled: true },
+  );
+  if (!saved.ok) console.error("[automations] preset not saved:", saved.error);
 
   revalidatePath("/app/settings/automations", "page");
   revalidatePath("/app", "layout");
@@ -365,33 +359,19 @@ export async function toggleAutomationAction(formData: FormData) {
   const key = rawKey as AutomationKey;
   const enabled = formData.get("enabled") === "true";
 
-  const admin = createSupabaseAdminClient();
-
-  // Fetch current settings
-  const { data: org } = (await admin
-    .from("organizations")
-    .select("automation_settings")
-    .eq("id", membership.organization_id)
-    .maybeSingle()) as unknown as {
-    data: {
-      automation_settings: Record<string, Record<string, unknown>> | null;
-    } | null;
-  };
-
-  const current = org?.automation_settings ?? {};
   // Spread the EXISTING entry, don't replace it. Some automations store
   // numeric config beside `enabled` (shift_clock_out_reminder's thresholds);
   // `{ enabled }` alone would silently reset those every time the switch
-  // was flipped.
-  const updated = {
+  // was flipped. And merge onto what is there NOW (updateAutomationSettings),
+  // or a second switch flipped at the same moment is undone.
+  const saved = await updateAutomationSettings(membership.organization_id, (current) => ({
     ...current,
     [key]: { ...(current[key] ?? {}), enabled },
-  };
-
-  await admin
-    .from("organizations")
-    .update({ automation_settings: updated } as never)
-    .eq("id", membership.organization_id);
+  }));
+  if (!saved.ok) {
+    console.error(`[automations] ${key} not saved:`, saved.error);
+    return;
+  }
 
   // Flipping "divide crew hours" changes the length of every existing team
   // booking's calendar events — reshape them now (both directions) so existing
@@ -443,32 +423,15 @@ export async function updateClockOutThresholdsAction(
     },
   });
 
-  const admin = createSupabaseAdminClient();
-  const { data: org } = (await admin
-    .from("organizations")
-    .select("automation_settings")
-    .eq("id", membership.organization_id)
-    .maybeSingle()) as unknown as {
-    data: {
-      automation_settings: Record<string, Record<string, unknown>> | null;
-    } | null;
-  };
-
-  const current = org?.automation_settings ?? {};
-  const updated = {
+  const saved = await updateAutomationSettings(membership.organization_id, (current) => ({
     ...current,
     shift_clock_out_reminder: {
       ...(current["shift_clock_out_reminder"] ?? {}),
       grace_minutes: requested.graceMinutes,
       reminder_interval_minutes: requested.reminderIntervalMinutes,
     },
-  };
-
-  const { error } = await admin
-    .from("organizations")
-    .update({ automation_settings: updated } as never)
-    .eq("id", membership.organization_id);
-  if (error) return { ok: false, error: error.message };
+  }));
+  if (!saved.ok) return { ok: false, error: saved.error };
 
   revalidatePath("/app/settings/automations", "page");
   return { ok: true };
@@ -493,28 +456,14 @@ export async function setAutomationFrequencyAction(formData: FormData) {
     (key === "rebooking_prompt_email" && isRebookingFrequency(raw));
   if (!valid) return;
 
-  const admin = createSupabaseAdminClient();
-  const { data: org } = (await admin
-    .from("organizations")
-    .select("automation_settings")
-    .eq("id", membership.organization_id)
-    .maybeSingle()) as unknown as {
-    data: {
-      automation_settings: Record<string, Record<string, unknown>> | null;
-    } | null;
-  };
-  const current = org?.automation_settings ?? {};
-  const updated = {
+  const saved = await updateAutomationSettings(membership.organization_id, (current) => ({
     ...current,
     [key]: {
       ...(current[key] ?? {}),
       frequency: raw,
     },
-  };
-  await admin
-    .from("organizations")
-    .update({ automation_settings: updated } as never)
-    .eq("id", membership.organization_id);
+  }));
+  if (!saved.ok) console.error(`[automations] ${key} frequency not saved:`, saved.error);
 
   revalidatePath("/app/settings/automations");
 }

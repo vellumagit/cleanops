@@ -119,24 +119,13 @@ export async function saveTipInstructionsAction(
   );
   const instructions = normalizeTipInstructions(formData.get("instructions"));
 
-  const admin = createSupabaseAdminClient();
-  const { data: current } = (await admin
-    .from("organizations")
-    .select("tipping_settings")
-    .eq("id", membership.organization_id)
-    .maybeSingle()) as unknown as {
-    data: { tipping_settings: unknown } | null;
-  };
-
-  const settings = mergeTippingSettings(current?.tipping_settings, {
-    instructions,
-  });
-
-  const { error } = await admin
-    .from("organizations")
-    .update({ tipping_settings: settings } as never)
-    .eq("id", membership.organization_id);
-  if (error) return { errors: { _form: error.message } };
+  // Merged onto what is there NOW: the on/off and presets are saved from
+  // another screen into the same column (updateOrgSettingsColumn).
+  const { updateOrgSettingsColumn } = await import("@/lib/automation-settings-write");
+  const saved = await updateOrgSettingsColumn<unknown>(membership.organization_id, "tipping_settings", (current) =>
+    mergeTippingSettings(current, { instructions }),
+  );
+  if (!saved.ok) return { errors: { _form: saved.error } };
 
   await logAuditEvent({
     membership,
