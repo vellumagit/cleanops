@@ -232,7 +232,7 @@ describe.skipIf(!hasPostgrest)("a day off, or different hours, on one date", { t
  * existed for them; this is the check that one doesn't silently fail again.
  */
 describe.skipIf(!hasPostgrest)("the cleaner's own writes all land", { timeout: 120_000 }, () => {
-  it("GPS consent, her profile, a training step and a chat message, each pressed as a cleaner", async () => {
+  it("GPS consent, her profile, a training step, a checklist tick and a chat message, each pressed as a cleaner", async () => {
     const { acceptGpsConsentAction } = await import("@/app/field/jobs/actions");
     const { updateProfileAction } = await import("@/app/field/profile/actions");
     const { toggleStepAction } = await import("@/app/field/training/actions");
@@ -271,6 +271,47 @@ describe.skipIf(!hasPostgrest)("the cleaner's own writes all land", { timeout: 1
       [mod.id, c.anna.membershipId],
     );
     expect(assignment.steps).toEqual([step.id]);
+
+    // A checklist item on her job ticks, and unticks; a heading can't be ticked
+    // and says so instead of looking saved.
+    const { toggleChecklistItemAction } = await import("@/app/app/checklists/actions");
+    const client = await addClient(api.sql, c.org, "Nancy Ellestad");
+    const [bk] = await api.sql<{ id: string }>(
+      `insert into public.bookings (organization_id, client_id, scheduled_at, duration_minutes, service_type, status, assigned_to)
+       values ($1, $2, now() - interval '30 minutes', 180, 'standard', 'confirmed', $3) returning id`,
+      [c.org, client, c.anna.membershipId],
+    );
+    await api.sql("insert into public.booking_assignees (organization_id, booking_id, membership_id, acceptance_status) values ($1, $2, $3, 'accepted')", [
+      c.org,
+      bk.id,
+      c.anna.membershipId,
+    ]);
+    const [heading] = await api.sql<{ id: string }>(
+      "insert into public.booking_checklist_items (organization_id, booking_id, ordinal, title, kind) values ($1, $2, 0, 'Kitchen', 'section') returning id",
+      [c.org, bk.id],
+    );
+    const [item] = await api.sql<{ id: string }>(
+      "insert into public.booking_checklist_items (organization_id, booking_id, ordinal, title, kind) values ($1, $2, 1, 'Wipe the stovetop', 'item') returning id",
+      [c.org, bk.id],
+    );
+    const tickForm = (id: string, on: boolean) => {
+      const f = new FormData();
+      f.set("id", id);
+      f.set("checked", on ? "1" : "0");
+      return f;
+    };
+    expect(await as(c.anna, () => toggleChecklistItemAction(tickForm(item.id, true)))).toEqual({ ok: true });
+    const [onItem] = await api.sql<{ checked: boolean; by: string }>(
+      "select checked_at is not null as checked, checked_by as by from public.booking_checklist_items where id = $1",
+      [item.id],
+    );
+    expect(onItem).toEqual({ checked: true, by: c.anna.membershipId });
+    expect(await as(c.anna, () => toggleChecklistItemAction(tickForm(heading.id, true)))).toEqual({
+      ok: false,
+      error: "That item couldn't be ticked. Refresh the page and try again.",
+    });
+    expect(await as(c.anna, () => toggleChecklistItemAction(tickForm(item.id, false)))).toEqual({ ok: true });
+    expect((await api.sql<{ c: boolean }>("select checked_at is null as c from public.booking_checklist_items where id = $1", [item.id]))[0].c).toBe(true);
 
     const thread = await as(c.anna, () => createDmThreadAction(c.bea.membershipId));
     expect(thread, JSON.stringify(thread)).toMatchObject({ ok: true });

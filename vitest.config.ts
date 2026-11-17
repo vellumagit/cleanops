@@ -27,6 +27,9 @@ export default defineConfig({
     // The suite now includes tests that read all of src and tests that boot
     // a database (test/db). Run together they slow each other down, and the
     // default five seconds failed tests that were only waiting their turn.
-    testTimeout: 20_000,
+    // 20 seconds did the same once the suite passed 160 files (2026-11-16:
+    // four tests timed out in full runs at 21 to 23 seconds and passed alone
+    // in two). A test that is wrong still fails; one that waits doesn't.
+    testTimeout: 60_000,
   },
 });

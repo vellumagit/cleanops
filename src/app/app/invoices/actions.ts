@@ -25,7 +25,7 @@ import { computeTax, parseTaxRate } from "@/lib/invoice-tax";
 import { pushInvoiceToSage, pushInvoicePaymentToSage } from "@/lib/sage";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { allPages, type Page } from "@/lib/supabase/all-pages";
-import { selectInChunks } from "@/lib/supabase/chunked-in";
+import { chunkIds, IN_CHUNK_SIZE, selectInChunks } from "@/lib/supabase/chunked-in";
 import {
   pushInvoiceToQuickBooks,
   pushInvoicePaymentToQuickBooks,
@@ -1060,15 +1060,23 @@ export async function holdInvoiceAutoSendAction(
     return { error: "Only owners and admins can change invoices." };
   }
 
-  const { error } = await (supabase
+  const { data: held, error } = await (supabase
     .from("invoices")
     .update({ auto_send_state: "held", auto_send_at: null } as never)
     .eq("id", id)
     .eq("organization_id" as never, membership.organization_id as never)
-    .eq("auto_send_state" as never, "scheduled" as never) as unknown as Promise<{
+    .eq("auto_send_state" as never, "scheduled" as never)
+    .select("id") as unknown as Promise<{
+    data: Array<{ id: string }> | null;
     error: { message: string } | null;
   }>);
   if (error) return { error: error.message };
+  // Only a scheduled send can be held. Matching nothing reports no error,
+  // and this used to answer "held" (and log it) for an invoice that had
+  // already gone out, so the owner believed it would not.
+  if (!held || held.length === 0) {
+    return { error: "This invoice isn't waiting to send. It may have gone out already; check its status." };
+  }
 
   await logAuditEvent({
     membership,
@@ -1323,9 +1331,14 @@ export async function bulkVoidInvoicesAction(
     return { ok: false, error: "Only owners and admins can void invoices." };
   }
 
-  let outcomes: Map<string, VoidOutcome>;
+  // A chunk at a time. Every id goes in the request address, and production
+  // refuses an address past roughly 375 ids (measured 2026-11-16), so
+  // selecting 400 invoices failed outright while this offered up to 500.
+  const outcomes = new Map<string, VoidOutcome>();
   try {
-    outcomes = await voidInvoices(ctx, clean);
+    for (const chunk of chunkIds(clean, IN_CHUNK_SIZE)) {
+      for (const [id, o] of await voidInvoices(ctx, chunk)) outcomes.set(id, o);
+    }
   } catch (err) {
     return {
       ok: false,
@@ -1339,10 +1352,12 @@ export async function bulkVoidInvoicesAction(
     .map(([id]) => id);
   let hasPayments: string[] = [];
   if (blocked.length > 0) {
-    const { data } = await ctx.supabase
-      .from("invoices")
-      .select("id, number")
-      .in("id", blocked);
+    const { data } = await selectInChunks(blocked, (chunk) =>
+      ctx.supabase.from("invoices").select("id, number").in("id", chunk) as unknown as Promise<{
+        data: Array<{ id: string; number: string | null }> | null;
+        error: { message: string } | null;
+      }>,
+    );
     hasPayments = (data ?? []).map((r) => r.number ?? r.id.slice(0, 8));
   }
 

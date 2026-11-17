@@ -481,7 +481,7 @@ export async function toggleChecklistItemAction(
   const checked = formData.get("checked") === "1";
   if (!id) return { ok: false, error: "Missing item id." };
 
-  const { error } = (await supabase
+  const { data: ticked, error } = (await supabase
     .from("booking_checklist_items")
     .update({
       checked_at: checked ? new Date().toISOString() : null,
@@ -489,10 +489,17 @@ export async function toggleChecklistItemAction(
     })
     .eq("id", id)
     // Only tasks tick. A section or sub-section is a heading.
-    .eq("kind" as never, "item" as never)) as unknown as {
+    .eq("kind" as never, "item" as never)
+    .select("id")) as unknown as {
+    data: Array<{ id: string }> | null;
     error: { message: string } | null;
   };
   if (error) return { ok: false, error: error.message };
+  // An update that matched nothing reports no error, and the box on her
+  // screen had already ticked itself: it looked saved and was not.
+  if (!ticked || ticked.length === 0) {
+    return { ok: false, error: "That item couldn't be ticked. Refresh the page and try again." };
+  }
 
   revalidatePath("/field/jobs");
   return { ok: true };
