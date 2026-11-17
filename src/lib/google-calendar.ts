@@ -17,6 +17,7 @@ import "server-only";
 import { getEnv } from "@/lib/env";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { selectInChunks } from "@/lib/supabase/chunked-in";
 import { resolveTeamDivision } from "@/lib/crew-hours";
 
 // ---------------------------------------------------------------------------
@@ -804,8 +805,30 @@ export async function pruneOrgCalendarOrphans(
     };
   }
 
-  const managed = await listManagedEventIds(organizationId, now, timeMax);
-  const orphans = managed.filter((id) => !validIds.has(id));
+  const managedEvents = await listOrgManagedEvents(organizationId, now, timeMax);
+  const managed = managedEvents.map((e) => e.id);
+  // Never another company's live event. skipWhenNoValid covers a shared
+  // calendar only when THIS company has no events of its own; with some of
+  // its own, every event of the other company's looked like an orphan and
+  // was deleted. Each event names its booking (/app/bookings/{id}): one
+  // whose booking belongs to another company is theirs, and stays.
+  const candidateIds = managedEvents.filter((e) => !validIds.has(e.id));
+  const namedBookings = [...new Set(candidateIds.map((e) => e.bookingId).filter((b): b is string => Boolean(b)))];
+  const elsewhere = new Set<string>();
+  for (let i = 0; i < namedBookings.length; i += 150) {
+    const { data: rows, error } = (await admin
+      .from("bookings")
+      .select("id")
+      .in("id", namedBookings.slice(i, i + 150))
+      .neq("organization_id", organizationId)) as unknown as {
+      data: Array<{ id: string }> | null;
+      error: { message: string } | null;
+    };
+    // "Couldn't check" must never read as "nobody else's".
+    if (error) throw new Error(`prune: checking event owners failed: ${error.message}`);
+    for (const r of rows ?? []) elsewhere.add(r.id);
+  }
+  const orphans = candidateIds.filter((e) => !e.bookingId || !elsewhere.has(e.bookingId)).map((e) => e.id);
 
   if (dryRun) {
     return {
@@ -2312,14 +2335,20 @@ export async function bulkSyncMemberBookings(
   if (bookings.length === 0) return;
 
   // Find which booking IDs already have a member event (don't double-create).
+  // In chunks: every id goes in the request address, production refuses one
+  // past about 375 ids, and Olha alone had 273 upcoming jobs on 2026-11-16.
   const bookingIds = bookings.map((b) => b.booking.id);
-  const { data: existingMappings } = (await admin
-    .from("booking_member_calendar_events")
-    .select("booking_id")
-    .eq("membership_id", membershipId)
-    .in("booking_id", bookingIds)) as unknown as {
-    data: Array<{ booking_id: string }> | null;
-  };
+  const { data: existingMappings, error: mappingsErr } = await selectInChunks(bookingIds, (chunk) =>
+    admin
+      .from("booking_member_calendar_events")
+      .select("booking_id")
+      .eq("membership_id", membershipId)
+      .in("booking_id", chunk) as unknown as Promise<{
+      data: Array<{ booking_id: string }> | null;
+      error: { message: string } | null;
+    }>,
+  );
+  if (mappingsErr) throw new Error(`member calendar: reading existing events failed: ${mappingsErr.message}`);
   const alreadySynced = new Set((existingMappings ?? []).map((r) => r.booking_id));
 
   const toSync = bookings.filter((b) => !alreadySynced.has(b.booking.id));
@@ -2429,17 +2458,10 @@ export async function reconcileMemberCalendarEvents(
       .limit(500)) as unknown as { data: MB[] | null };
     targets = data ?? [];
   } else {
-    const { data } = (await admin
-      .from("booking_member_calendar_events")
-      .select(
-        `booking:bookings!inner ( id, scheduled_at, duration_minutes, service_type, address, notes, status, client:clients ( name ) )`,
-      )
-      .eq("membership_id", membershipId)
-      .gte("booking.scheduled_at", sinceIso)
-      .lte("booking.scheduled_at", untilIso)
-      .neq("booking.status", "cancelled")
-      .limit(300)) as unknown as { data: Array<{ booking: MB | null }> | null };
-    // Also include assigned bookings that don't yet have an event (create-missing).
+    // The jobs she is ON: her crew rows, and any job naming her as its first
+    // cleaner without one. Not the jobs she already has an event for: that
+    // set used to be added in, so a job she had been taken off stayed a
+    // "target" and its event was re-pushed every night instead of removed.
     const { data: assigned } = (await admin
       .from("booking_assignees")
       .select(
@@ -2450,10 +2472,17 @@ export async function reconcileMemberCalendarEvents(
       .lte("booking.scheduled_at", untilIso)
       .neq("booking.status", "cancelled")
       .limit(300)) as unknown as { data: Array<{ booking: MB | null }> | null };
+    const { data: leading } = (await admin
+      .from("bookings")
+      .select("id, scheduled_at, duration_minutes, service_type, address, notes, status, client:clients ( name )")
+      .eq("assigned_to", membershipId)
+      .gte("scheduled_at", sinceIso)
+      .lte("scheduled_at", untilIso)
+      .neq("status", "cancelled")
+      .limit(300)) as unknown as { data: MB[] | null };
     const byId = new Map<string, MB>();
-    for (const r of [...(data ?? []), ...(assigned ?? [])]) {
-      if (r.booking) byId.set(r.booking.id, r.booking);
-    }
+    for (const r of assigned ?? []) if (r.booking) byId.set(r.booking.id, r.booking);
+    for (const b of leading ?? []) byId.set(b.id, b);
     targets = [...byId.values()];
   }
 

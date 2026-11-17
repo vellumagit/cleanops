@@ -31,5 +31,10 @@ export default defineConfig({
     // four tests timed out in full runs at 21 to 23 seconds and passed alone
     // in two). A test that is wrong still fails; one that waits doesn't.
     testTimeout: 60_000,
+    // Half the machine. Each test/db file starts its own database and API
+    // server; fifteen at once on a 16-core, 17 GB machine dropped
+    // connections in a different handful of files every full run
+    // (2026-11-16), each of which passed alone.
+    maxWorkers: "50%",
   },
 });

@@ -135,7 +135,11 @@ export async function startApi(): Promise<Api> {
   }
   const real = usePostgres ? await startRealDatabase() : null;
   const db = real ? null : await openDb();
-  const [restPort, proxyPort] = [await freePort(), await freePort()];
+  // freePort finds a port and lets it go; with eight files starting at once,
+  // another can take it before this one listens (EADDRINUSE, 2026-11-16: a
+  // file hung four minutes in setup). The proxy listens on port 0 instead
+  // (below), and the database socket tries again on a new port.
+  const restPort = await freePort();
 
   let socket: PGLiteSocketServer | null = null;
   let dbUri: string;
@@ -144,9 +148,17 @@ export async function startApi(): Promise<Api> {
   } else {
     // One database connection, shared in turn. PostgREST's pool is set to one
     // below, so its requests queue instead of interleaving transactions.
-    const dbPort = await freePort();
-    socket = new PGLiteSocketServer({ db: db!, port: dbPort, host: "127.0.0.1" });
-    await socket.start();
+    let dbPort = 0;
+    for (let attempt = 1; ; attempt++) {
+      dbPort = await freePort();
+      socket = new PGLiteSocketServer({ db: db!, port: dbPort, host: "127.0.0.1" });
+      try {
+        await socket.start();
+        break;
+      } catch (err) {
+        if (attempt >= 5 || !/EADDRINUSE/.test(String(err))) throw err;
+      }
+    }
     dbUri = `postgres://postgres:postgres@127.0.0.1:${dbPort}/postgres?sslmode=disable`;
   }
 
@@ -419,11 +431,34 @@ export async function startApi(): Promise<Api> {
       });
     });
   });
-  await new Promise<void>((resolve) => proxy.listen(proxyPort, "127.0.0.1", resolve));
+  // Port 0: the system picks a free one, so two files never collide here.
+  await new Promise<void>((resolve, reject) => {
+    proxy.once("error", reject);
+    proxy.listen(0, "127.0.0.1", () => resolve());
+  });
+  const proxyAddress = proxy.address();
+  const proxyPort = typeof proxyAddress === "object" && proxyAddress ? proxyAddress.port : 0;
 
   const url = `http://127.0.0.1:${proxyPort}`;
+  // One thing takes turns badly: PostgREST reloading its schema after its
+  // connection dropped. That reload is its own, not a proxied request, so it
+  // holds no turn, and a direct statement can land inside its read-only
+  // transaction under a busy full run ("cannot execute INSERT in a read-only
+  // transaction", 2026-11-16, a file that passed alone). Postgres refused the
+  // statement before running it, so it is safe to try again once the reload
+  // has finished.
   const sql: Sql = <T>(text: string, params: unknown[] = []) =>
-    inTurn(async () => (real ? await real.sql<T>(text, params) : (await db!.query<T>(text, params)).rows));
+    inTurn(async () => {
+      if (real) return await real.sql<T>(text, params);
+      for (let attempt = 1; ; attempt++) {
+        try {
+          return (await db!.query<T>(text, params)).rows;
+        } catch (err) {
+          if (attempt >= 5 || !/read-only transaction/.test(err instanceof Error ? err.message : String(err))) throw err;
+          await new Promise((r) => setTimeout(r, 200 * attempt));
+        }
+      }
+    });
 
   /** Resolves once nothing has been in flight for a moment, or after `maxMs`. */
   const drain = async (maxMs: number) => {
