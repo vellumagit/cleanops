@@ -252,7 +252,7 @@ describe.skipIf(!hasPostgrest)("extend-series: the next visits of every recurrin
     expect(fresh).toEqual([1, 3, 4, 5].map((w) => nineAm(latest + w * 7 * DAY)));
   });
 
-  it("a date where the cleaner is already booked is left out and named in the morning email; every other visit is still made", async () => {
+  it("a date where the cleaner is already booked gets its visit with no cleaner, named in the morning email; every other visit is made with her", async () => {
     const { GET } = await import("@/app/api/cron/extend-series/route");
     const c = await company();
     const latest = mondayAhead(7);
@@ -280,11 +280,17 @@ describe.skipIf(!hasPostgrest)("extend-series: the next visits of every recurrin
     expect(String(run.body.error)).toContain("already has an overlapping booking");
     expect(String(run.body.error)).toContain(nineAm(clashDay));
 
-    // Anna is never put in two places: the clashing Monday either has no
-    // visit or has one without her.
+    expect(String(run.body.error)).toContain("WITHOUT a cleaner");
+
+    // Anna is never put in two places, and the client is not dropped: the
+    // clashing Monday has its visit, with nobody on it.
     const visits = await visitsOf(clashing);
     const onClashDay = visits.find((v) => iso(v.scheduled_at) === nineAm(clashDay));
-    if (onClashDay) expect((await crewOf(onClashDay.id)).map((r) => r.membership_id)).not.toContain(c.anna.membershipId);
+    expect(onClashDay, "the visit exists").toBeTruthy();
+    expect(await crewOf(onClashDay!.id)).toEqual([]);
+    expect(
+      (await api.sql<{ a: string | null }>("select assigned_to as a from public.bookings where id = $1", [onClashDay!.id]))[0].a,
+    ).toBeNull();
     // The other three Mondays are made, with Anna on them.
     const others = visits.slice(1).filter((v) => iso(v.scheduled_at) !== nineAm(clashDay));
     expect(others).toHaveLength(3);
@@ -294,6 +300,11 @@ describe.skipIf(!hasPostgrest)("extend-series: the next visits of every recurrin
     const ledger = await lastRun("/api/cron/extend-series");
     expect(ledger.ok).toBe(false);
     expect(ledger.error).toContain("overlapping booking");
+
+    // The next night it is not made a second time.
+    const again = await runCron(GET, "/api/cron/extend-series");
+    expect(again.status, JSON.stringify(again.body)).toBe(200);
+    expect(await visitsOf(clashing)).toHaveLength(visits.length);
   });
 
   it("a company whose zone this computer has wrong gets no visits tonight, and the morning email says so", async () => {

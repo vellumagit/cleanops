@@ -160,14 +160,52 @@ export async function updateServiceTypeAction(
     return { errors: { _form: error.message }, values: raw };
   }
 
+  // A rename follows the service onto what is still to come. Each visit and
+  // each recurring series keeps its own copy of the name (so an invoice for
+  // last month's "Deep clean" still says so); without this, upcoming visits
+  // kept the old name after a rename. Past visits are left as they were.
+  let renamedVisits = 0;
+  if (before && before.name !== parsed.data.name) {
+    const { data: visits, error: visitsErr } = (await supabase
+      .from("bookings")
+      .update({ service_type_label: parsed.data.name } as never)
+      .eq("organization_id", membership.organization_id)
+      .eq("service_type_id" as never, id as never)
+      .gte("scheduled_at", new Date().toISOString())
+      .select("id")) as unknown as {
+      data: Array<{ id: string }> | null;
+      error: { message: string } | null;
+    };
+    const { error: seriesErr } = (await supabase
+      .from("booking_series")
+      .update({ service_type_label: parsed.data.name } as never)
+      .eq("organization_id", membership.organization_id)
+      .eq("service_type_id" as never, id as never)) as unknown as {
+      error: { message: string } | null;
+    };
+    if (visitsErr || seriesErr) {
+      return {
+        errors: {
+          _form: `The service was renamed, but upcoming visits could not be updated: ${(visitsErr ?? seriesErr)!.message}`,
+        },
+        values: raw,
+      };
+    }
+    renamedVisits = visits?.length ?? 0;
+  }
+
   await logAuditEvent({
     membership,
     action: "update",
     entity: "service_type",
     entity_id: id,
     before,
-    after: parsed.data as Record<string, unknown>,
+    after: {
+      ...(parsed.data as Record<string, unknown>),
+      ...(renamedVisits > 0 ? { upcoming_visits_renamed: renamedVisits } : {}),
+    },
   });
+  if (renamedVisits > 0) revalidatePath("/app/bookings");
 
   revalidatePath("/app/settings/services");
   // `ok: true` sentinel — see ServiceTypeFormState comment. Without it,

@@ -742,4 +742,51 @@ describe.skipIf(!hasPostgrest)("sending a contract and signing it", { timeout: 1
     expect(told.filter((t) => t.r === c.owner.membershipId), JSON.stringify(told)).toHaveLength(1);
     expect(`${(await contractRow(id)).signer_name} signed the contract.`).toBe(told[0].body);
   });
+
+  it("a cancelled contract can't be signed or sent; set back to active, it can", async () => {
+    const c = await company();
+    const id = await contract(c, (await withEmail(c, "Cancelled Client")).id, { public_token: "cancelledtoken01", sign_status: "sent" });
+    await api.sql("update public.contracts set status = 'cancelled' where id = $1", [id]);
+
+    const refused = (await as(null, () => signContractAction({}, signForm("cancelledtoken01")))) as { error?: string };
+    expect(refused.error).toMatch(/cancelled/);
+    expect(await contractRow(id)).toMatchObject({ sign_status: "sent", signer_name: null });
+    expect(await signedNotices(c.org)).toEqual([]);
+    expect(((await send(c.owner, id)) as { error?: string }).error).toMatch(/cancelled/);
+
+    await api.sql("update public.contracts set status = 'active' where id = $1", [id]);
+    expect(await as(null, () => signContractAction({}, signForm("cancelledtoken01")))).toEqual({ ok: true });
+    expect((await contractRow(id)).sign_status).toBe("signed");
+  });
+
+  it("a signed contract's terms can't be edited, but its status still can", async () => {
+    const c = await company();
+    const client = (await withEmail(c, "Signed Client")).id;
+    const id = await contract(c, client, { public_token: "signedtermstok01", sign_status: "sent" });
+    await api.sql("update public.contracts set service_type_id = $2 where id = $1 and service_type_id is null", [id, c.service]);
+    // What the office saved, as the form would post it back unchanged.
+    const [saved] = await api.sql<{ start_date: string; end_date: string | null; price: number; payment_terms: string | null; service_type_id: string | null }>(
+      "select start_date::text as start_date, end_date::text as end_date, agreed_price_cents as price, payment_terms, service_type_id from public.contracts where id = $1",
+      [id],
+    );
+    const asSaved = (over: Record<string, string> = {}) =>
+      contractForm(c, client, {
+        service_type_id: saved.service_type_id ?? c.service,
+        start_date: saved.start_date,
+        end_date: saved.end_date ?? "",
+        agreed_price_cents: (saved.price / 100).toFixed(2),
+        payment_terms: saved.payment_terms ?? "",
+        ...over,
+      });
+    await as(null, () => signContractAction({}, signForm("signedtermstok01")));
+
+    const priced = (await as(c.owner, () => contracts.updateContractAction(id, {}, asSaved({ agreed_price_cents: "999.00" })))) as { errors?: Record<string, string> };
+    expect(priced.errors?._form, JSON.stringify(priced)).toMatch(/signed/);
+    const [after] = await api.sql<{ price: number; status: string }>("select agreed_price_cents as price, status::text as status from public.contracts where id = $1", [id]);
+    expect(after).toEqual({ price: saved.price, status: "active" });
+
+    expect(await as(c.owner, () => contracts.updateContractAction(id, {}, asSaved({ status: "ended" }))), api.log().slice(-400)).toEqual({ redirected: "/app/contracts" });
+    const [ended] = await api.sql<{ price: number; status: string }>("select agreed_price_cents as price, status::text as status from public.contracts where id = $1", [id]);
+    expect(ended).toEqual({ price: saved.price, status: "ended" });
+  });
 });

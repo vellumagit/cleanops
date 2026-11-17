@@ -99,6 +99,67 @@ export async function updateContractAction(
       values: raw,
     };
   }
+  // A SIGNED contract's terms are what the client agreed to: they can't be
+  // changed afterwards. Its status still can (ended, cancelled), so that is
+  // the only thing a save on a signed contract may write.
+  const { data: current } = (await supabase
+    .from("contracts")
+    .select(
+      "sign_status, client_id, estimate_id, service_type_id, start_date, end_date, agreed_price_cents, payment_terms",
+    )
+    .eq("id", id)
+    .eq("organization_id", membership.organization_id)
+    .maybeSingle()) as unknown as {
+    data: {
+      sign_status: string | null;
+      client_id: string;
+      estimate_id: string | null;
+      service_type_id: string | null;
+      start_date: string;
+      end_date: string | null;
+      agreed_price_cents: number;
+      payment_terms: string | null;
+    } | null;
+  };
+  if (current?.sign_status === "signed") {
+    const blank = (v: unknown) => (v === "" || v === undefined ? null : v);
+    const same = (a: unknown, b: unknown) => blank(a) === blank(b);
+    const termsChanged =
+      !same(current.client_id, parsed.data.client_id) ||
+      !same(current.estimate_id, parsed.data.estimate_id) ||
+      !same(current.service_type_id, extras.service_type_id) ||
+      !same(current.start_date, parsed.data.start_date) ||
+      !same(current.end_date, parsed.data.end_date) ||
+      !same(current.agreed_price_cents, parsed.data.agreed_price_cents) ||
+      !same(current.payment_terms, parsed.data.payment_terms);
+    if (termsChanged) {
+      return {
+        errors: {
+          _form:
+            "This contract has been signed, so its terms can't be changed. You can still change its status; for new terms, make a new contract.",
+        },
+        values: raw,
+      };
+    }
+    const { data: statusRows, error: statusErr } = await supabase
+      .from("contracts")
+      .update({ status: parsed.data.status } as never)
+      .eq("id", id)
+      .eq("organization_id", membership.organization_id)
+      .select("id");
+    if (statusErr) return { errors: { _form: statusErr.message }, values: raw };
+    if (!statusRows?.length) {
+      return {
+        errors: { _form: "This contract wasn't saved. It may have been deleted, or your access doesn't allow changing it." },
+        values: raw,
+      };
+    }
+    revalidatePath("/app/contracts");
+    revalidatePath(`/app/contracts/${id}/edit`);
+    revalidatePath("/app");
+    redirect("/app/contracts");
+  }
+
   // IMMUTABILITY: service_type (the legacy enum) is omitted from the
   // UPDATE so re-categorizing a service in Settings → Services can't
   // silently rewrite the contract's historical enum bucket. The FK
@@ -216,7 +277,7 @@ export async function sendContractForSignatureAction(
     .from("contracts")
     .select(
       `
-        id, organization_id, public_token, sign_status,
+        id, organization_id, public_token, sign_status, status,
         agreed_price_cents, service_type, start_date, end_date,
         client:clients ( id, name, email )
       `,
@@ -228,6 +289,7 @@ export async function sendContractForSignatureAction(
       organization_id: string;
       public_token: string | null;
       sign_status: string | null;
+      status: string | null;
       agreed_price_cents: number;
       service_type: string;
       start_date: string;
@@ -239,6 +301,10 @@ export async function sendContractForSignatureAction(
   if (!existing) return { error: "Contract not found." };
   if (existing.organization_id !== membership.organization_id) {
     return { error: "Contract not found." };
+  }
+
+  if (existing.status === "cancelled") {
+    return { error: "This contract is cancelled. Set it back to active before sending it for signature." };
   }
 
   // Don't mint a new token on resend — the client's old link should

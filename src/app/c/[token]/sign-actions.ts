@@ -87,7 +87,7 @@ export async function signContractAction(
     // No "title": contracts has never had that column, and naming it made
     // this read fail, so nobody could sign (found by test/db/query-shapes,
     // 2026-11-10; production had no contracts yet).
-    .select("id, sign_status, signed_at, organization_id")
+    .select("id, sign_status, signed_at, organization_id, status")
     .eq("public_token" as never, token as never)
     .maybeSingle()) as unknown as {
     data: {
@@ -95,6 +95,7 @@ export async function signContractAction(
       sign_status: string;
       signed_at: string | null;
       organization_id: string;
+      status: string | null;
     } | null;
     error: { message: string } | null;
   };
@@ -110,6 +111,13 @@ export async function signContractAction(
     // Already signed — this is a re-submit of the form. Idempotent
     // success so a double-click doesn't confuse the client.
     return { ok: true };
+  }
+  // The office cancelled it after sending the link. The link still opens,
+  // but a signature now would bind the client to something withdrawn.
+  if (contract.status === "cancelled") {
+    return {
+      error: "This contract was cancelled and can no longer be signed. Contact the sender.",
+    };
   }
   if (contract.sign_status === "declined") {
     return {
@@ -142,6 +150,7 @@ export async function signContractAction(
       signer_signature_data_url: signatureDataUrl,
     } as never)
     .eq("id", contract.id)
+    .neq("status", "cancelled")
     .or("sign_status.is.null,sign_status.neq.signed")
     .select("id");
 
@@ -155,7 +164,19 @@ export async function signContractAction(
 
   // Someone else's submit signed it a moment ago: it IS signed, so the
   // signer sees success, and the first submit's evidence and notice stand.
-  if (!signedRows?.length) return { ok: true };
+  if (!signedRows?.length) {
+    const { data: now } = (await admin
+      .from("contracts")
+      .select("status")
+      .eq("id", contract.id)
+      .maybeSingle()) as unknown as { data: { status: string | null } | null };
+    if (now?.status === "cancelled") {
+      return {
+        error: "This contract was cancelled and can no longer be signed. Contact the sender.",
+      };
+    }
+    return { ok: true };
+  }
 
   // A signature is a business event, not a database whisper — reviews and
   // payments notify; until now the owner discovered signatures by opening

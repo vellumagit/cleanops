@@ -712,6 +712,28 @@ describe.skipIf(!hasPostgrest)("bonuses", () => {
     expect((await bonusesOf(c)).map((b) => b.bonus_type)).toEqual(["efficiency", "review"]);
   });
 
+  it("pressing Compute again a few days later doesn't pay the same reviews twice; once the earlier period is behind the window, it pays again", async () => {
+    const c = await company();
+    await rule(c);
+    await review(c, c.anna, 5, 2);
+    await review(c, c.anna, 5, 4);
+    expect(await as(c.owner, () => bonuses.computeBonusesAction())).toMatchObject({ ok: true, created: 1 });
+    // The same press three days ago would have left this period on the row.
+    await api.sql(
+      "update public.bonuses set period_start = period_start - 3, period_end = period_end - 3 where organization_id = $1 and bonus_type = 'review'",
+      [c.org],
+    );
+    expect(await as(c.owner, () => bonuses.computeBonusesAction())).toEqual({ ok: true, created: 0, skipped: 1 });
+    expect((await bonusesOf(c)).filter((b) => b.bonus_type === "review")).toHaveLength(1);
+
+    // A bonus for a period that ended before this window began doesn't block a new one.
+    await api.sql(
+      "update public.bonuses set period_start = period_start - 60, period_end = period_end - 60 where organization_id = $1 and bonus_type = 'review'",
+      [c.org],
+    );
+    expect(await as(c.owner, () => bonuses.computeBonusesAction())).toMatchObject({ ok: true, created: 1 });
+  });
+
   it("efficiency bonuses go to whoever finished faster than booked, once per period", async () => {
     const c = await company();
     await rule(c);

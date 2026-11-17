@@ -633,36 +633,8 @@ export async function autoGenerateRecurringInvoices(): Promise<{
     const current = new Date(series.next_run_at);
     const anchorDay =
       (series as { anchor_day?: number | null }).anchor_day ?? current.getUTCDate();
-    const addMonthsClamped = (from: Date, months: number): Date => {
-      const y = from.getUTCFullYear();
-      const m = from.getUTCMonth() + months;
-      const lastDayOfTarget = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
-      return new Date(
-        Date.UTC(
-          y,
-          m,
-          Math.min(anchorDay, lastDayOfTarget),
-          from.getUTCHours(),
-          from.getUTCMinutes(),
-          from.getUTCSeconds(),
-        ),
-      );
-    };
-    let next = new Date(current);
-    switch (series.cadence) {
-      case "weekly":
-        next.setUTCDate(current.getUTCDate() + 7);
-        break;
-      case "biweekly":
-        next.setUTCDate(current.getUTCDate() + 14);
-        break;
-      case "monthly":
-        next = addMonthsClamped(current, 1);
-        break;
-      case "quarterly":
-        next = addMonthsClamped(current, 3);
-        break;
-    }
+    const { nextInvoiceRun } = await import("@/lib/invoice-series-dates");
+    const next = nextInvoiceRun(current, series.cadence, anchorDay);
 
     // CLAIM the run BEFORE creating the invoice. Advancing next_run_at is a
     // conditional update guarded on its current value, so two concurrent runs

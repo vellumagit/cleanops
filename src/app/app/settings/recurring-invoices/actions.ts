@@ -275,9 +275,35 @@ export async function toggleRecurringInvoiceAction(formData: FormData) {
   const active = String(formData.get("active") ?? "") === "true";
   if (!id) return;
 
+  // Resuming: bill from here on, not for the time it was paused. A paused
+  // series keeps its old next date, so on resume the nightly job used to
+  // make one invoice a night for every period missed. The next date moves
+  // forward, on the series' own rhythm, to the first one not in the past.
+  const patch: Record<string, unknown> = { active: !active };
+  if (!active) {
+    const { data: row } = (await supabase
+      .from("invoice_series" as never)
+      .select("next_run_at, cadence, anchor_day")
+      .eq("id" as never, id as never)
+      .eq("organization_id" as never, membership.organization_id as never)
+      .maybeSingle()) as unknown as {
+      data: { next_run_at: string; cadence: string; anchor_day: number | null } | null;
+    };
+    if (row) {
+      const { firstInvoiceRunFrom } = await import("@/lib/invoice-series-dates");
+      const current = new Date(row.next_run_at);
+      const anchorDay = row.anchor_day ?? current.getUTCDate();
+      const resumed = firstInvoiceRunFrom(current, row.cadence, anchorDay, new Date());
+      if (resumed.getTime() !== current.getTime()) {
+        patch.next_run_at = resumed.toISOString();
+        patch.anchor_day = anchorDay;
+      }
+    }
+  }
+
   await (supabase
     .from("invoice_series" as never)
-    .update({ active: !active } as never)
+    .update(patch as never)
     .eq("id" as never, id as never)
     .eq("organization_id" as never, membership.organization_id as never) as unknown as Promise<unknown>);
 

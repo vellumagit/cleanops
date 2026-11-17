@@ -81,8 +81,12 @@ export async function computeBonusesAction(): Promise<ComputeResult> {
     .from("bonuses")
     .select("employee_id")
     .eq("organization_id", membership.organization_id)
-    .eq("period_start", periodStartDate)
-    .eq("period_end", periodEndDate)
+    // Any review bonus whose period reaches into this window, not only one
+    // with the very same dates. The window is the last N days, so pressing
+    // the button again on a later day gave a new pair of dates, matched
+    // nothing, and paid the same reviews a second time. (The weekly job has
+    // compared by overlap since audit T4; this button did not.)
+    .gte("period_end", periodStartDate)
     // Review bonuses only (null covers rows from before the type existed).
     // Without this, an efficiency bonus computed first for the same period
     // counted as "already awarded" and the review bonus was never paid.

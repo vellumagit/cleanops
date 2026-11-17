@@ -332,6 +332,33 @@ describe.skipIf(!hasPostgrest)("the recurring invoice form", { timeout: 90_000 }
     expect((await seriesRow(theirs)).active, "another company's series is out of reach").toBe(true);
   });
 
+  it("resuming a series paused for months bills from here on: the next date moves to the first one not in the past, on its own day", async () => {
+    const c = await company();
+    // Monthly on the 15th, paused since three months ago.
+    const now = new Date();
+    const due = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 3, 15, 6, 0, 0));
+    const id = await standing(c, await addClient(api.sql, c.org, "Resume Client"), { next_run_at: due.toISOString(), active: false });
+
+    await as(c.owner, () => series.toggleRecurringInvoiceAction(form({ id, active: "false" })));
+    const row = await seriesRow(id);
+    expect(row.active).toBe(true);
+    const next = new Date(row.next_run_at);
+    expect(next.getTime(), `next run ${next.toISOString()}`).toBeGreaterThanOrEqual(now.getTime());
+    expect(next.getTime() - now.getTime(), "no further than one period ahead").toBeLessThanOrEqual(32 * 86_400_000);
+    expect(next.getUTCDate()).toBe(15);
+    expect(next.getUTCHours()).toBe(6);
+
+    // Tonight's job makes nothing for the months it was paused.
+    await runCron();
+    expect(await invoicesFor((await api.sql<{ client_id: string }>("select client_id from public.invoice_series where id = $1", [id]))[0].client_id)).toEqual([]);
+
+    // A series whose next date is still ahead keeps it through a pause and resume.
+    const ahead = new Date(now.getTime() + 10 * 86_400_000).toISOString();
+    const kept = await standing(c, await addClient(api.sql, c.org, "Kept Client"), { next_run_at: ahead, active: false });
+    await as(c.owner, () => series.toggleRecurringInvoiceAction(form({ id: kept, active: "false" })));
+    expect(new Date((await seriesRow(kept)).next_run_at).toISOString()).toBe(ahead);
+  });
+
   it("the owner deletes a series, and nothing of another company's goes with it", async () => {
     const c = await company();
     const other = await company();

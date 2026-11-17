@@ -3633,6 +3633,9 @@ export async function autoExtendRecurringSeries(): Promise<number> {
 
     let totalGenerated = 0;
     const overlapSkipped: string[] = [];
+    // Visits made with no cleaner because the series' cleaner was already
+    // booked then. Reported, so the office staffs them.
+    const madeUnstaffed: string[] = [];
     const seriesFailed: string[] = [];
     const zoneRefused: string[] = [];
 
@@ -3786,7 +3789,10 @@ export async function autoExtendRecurringSeries(): Promise<number> {
       // puts a cleaner in two places. One such visit used to fail the whole
       // batch, and in a fail-closed cron the throw ended the run for every
       // series after it. The batch is tried whole; on an overlap each visit
-      // is tried alone and the refused ones are skipped and reported.
+      // is tried alone. A visit the guard refuses is then made WITHOUT a
+      // cleaner and reported: the client is still on the schedule and the
+      // office is told to staff it. (Until 2026-11-17 it was skipped, so a
+      // client's visit quietly did not exist.)
       const upsertVisits = async (batch: typeof rows) => {
         const { data, error } = (await db
           .from("bookings")
@@ -3802,6 +3808,7 @@ export async function autoExtendRecurringSeries(): Promise<number> {
         return data ?? [];
       };
       let inserted: Array<{ id: string; scheduled_at: string }> = [];
+      const unstaffedIds = new Set<string>();
       try {
         inserted = await upsertVisits(rows);
       } catch (err) {
@@ -3811,7 +3818,17 @@ export async function autoExtendRecurringSeries(): Promise<number> {
             inserted.push(...(await upsertVisits([row])));
           } catch (rowErr) {
             if (!isOverlapError(rowErr)) throw rowErr;
-            overlapSkipped.push(`series ${s.id} ${row.scheduled_at}`);
+            try {
+              const bare = { ...row, assigned_to: null } as unknown as typeof row;
+              delete (bare as { splits?: unknown }).splits;
+              const made = await upsertVisits([bare]);
+              inserted.push(...made);
+              for (const b of made) unstaffedIds.add(b.id);
+              madeUnstaffed.push(`series ${s.id} ${row.scheduled_at}`);
+            } catch (bareErr) {
+              if (!isOverlapError(bareErr)) throw bareErr;
+              overlapSkipped.push(`series ${s.id} ${row.scheduled_at}`);
+            }
           }
         }
       }
@@ -3852,7 +3869,9 @@ export async function autoExtendRecurringSeries(): Promise<number> {
 
         const windows = crewSplits.length > 0;
         const now = new Date().toISOString();
-        const junctionRows = inserted.flatMap((b) =>
+        const junctionRows = inserted
+          .filter((b) => !unstaffedIds.has(b.id))
+          .flatMap((b) =>
           crew.map((m, i) => ({
             organization_id: s.organization_id,
             booking_id: b.id,
@@ -3927,9 +3946,12 @@ export async function autoExtendRecurringSeries(): Promise<number> {
     // Reported as a failed run (the cron ledger and the morning check read
     // it), naming what was skipped: a visit nobody generated is a client
     // nobody cleans.
-    if (seriesFailed.length > 0 || overlapSkipped.length > 0 || zoneRefused.length > 0) {
+    if (seriesFailed.length > 0 || overlapSkipped.length > 0 || madeUnstaffed.length > 0 || zoneRefused.length > 0) {
       const parts = [
         `${totalGenerated} visit(s) generated`,
+        madeUnstaffed.length > 0
+          ? `${madeUnstaffed.length} made WITHOUT a cleaner, to be staffed by the office, because the series' cleaner already has an overlapping booking: ${madeUnstaffed.slice(0, 8).join("; ")}${madeUnstaffed.length > 8 ? " …" : ""}`
+          : null,
         overlapSkipped.length > 0
           ? `${overlapSkipped.length} skipped because the cleaner already has an overlapping booking: ${overlapSkipped.slice(0, 8).join("; ")}${overlapSkipped.length > 8 ? " …" : ""}`
           : null,

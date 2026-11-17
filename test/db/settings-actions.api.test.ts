@@ -261,6 +261,44 @@ describe.skipIf(!hasPostgrest)("Settings → Services", { timeout: 90_000 }, () 
     expect(await serviceRow(c.org, "Anna's service")).toBeUndefined();
   });
 
+  it("renaming a service renames upcoming visits and recurring series that use it; past visits and other services keep their names", async () => {
+    const c = await company();
+    await as(c.owner, () => services.createServiceTypeAction({}, serviceForm({ name: "Deep clean" })));
+    await as(c.owner, () => services.createServiceTypeAction({}, serviceForm({ name: "Move-out" })));
+    const deep = (await serviceRow(c.org, "Deep clean")).id;
+    const moveOut = (await serviceRow(c.org, "Move-out")).id;
+    const client = await addClient(api.sql, c.org, "Rename Client");
+    const visit = async (service: string, label: string, when: string) =>
+      (
+        await api.sql<{ id: string }>(
+          `insert into public.bookings (organization_id, client_id, scheduled_at, duration_minutes, service_type, service_type_id, service_type_label, status)
+           values ($1, $2, now() + ($5 || ' days')::interval, 120, 'deep', $3, $4, 'confirmed') returning id`,
+          [c.org, client, service, label, when],
+        )
+      )[0].id;
+    const upcoming = await visit(deep, "Deep clean", "3");
+    const past = await visit(deep, "Deep clean", "-3");
+    const otherService = await visit(moveOut, "Move-out", "4");
+    const [series] = await api.sql<{ id: string }>(
+      `insert into public.booking_series (organization_id, client_id, pattern, start_time, starts_at, duration_minutes, service_type, service_type_id, service_type_label, total_cents)
+       values ($1, $2, 'weekly', '09:00', current_date, 120, 'deep', $3, 'Deep clean', 15000) returning id`,
+      [c.org, client, deep],
+    );
+    const label = async (table: "bookings" | "booking_series", id: string) =>
+      (await api.sql<{ l: string | null }>(`select service_type_label as l from public.${table} where id = $1`, [id]))[0].l;
+
+    expect(await as(c.owner, () => services.updateServiceTypeAction(deep, {}, serviceForm({ name: "Top-to-bottom clean" }))), api.log().slice(-600)).toEqual({ ok: true });
+    expect(await label("bookings", upcoming)).toBe("Top-to-bottom clean");
+    expect(await label("booking_series", series.id)).toBe("Top-to-bottom clean");
+    expect(await label("bookings", past), "last week's visit keeps the name it was done under").toBe("Deep clean");
+    expect(await label("bookings", otherService)).toBe("Move-out");
+
+    // A save that doesn't change the name leaves a visit's own label alone.
+    await api.sql("update public.bookings set service_type_label = 'Hand-written label' where id = $1", [upcoming]);
+    expect(await as(c.owner, () => services.updateServiceTypeAction(deep, {}, serviceForm({ name: "Top-to-bottom clean", sort_order: "20" })))).toEqual({ ok: true });
+    expect(await label("bookings", upcoming)).toBe("Hand-written label");
+  });
+
   it("archive takes a service out of the list and bring-back restores it, for this company's services only", async () => {
     const c = await company();
     const other = await company();

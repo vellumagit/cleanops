@@ -528,6 +528,36 @@ describe.skipIf(!hasPostgrest)("the public API: estimates", { timeout: 90_000 },
     expect(res.data.client_id, "the estimate isn't filed under Margaret").not.toBe(margaret);
   });
 
+  it("a visitor who shares a name with a client but has a different email is a person of their own; the same name with no email on file is the same person", async () => {
+    const c = await company();
+    const raw = await keyFor(c);
+    const ask = async (name: string, email: string, phone?: string) =>
+      (
+        await json(
+          await estimatesRoute.POST(
+            call(raw, "/api/v1/estimates", { method: "POST", body: { client_name: name, client_email: email, client_phone: phone, total_cents: 9900 } }),
+          ),
+        )
+      ).data.client_id as string;
+    const row = async (id: string) => (await api.sql<{ email: string | null; lifecycle: string }>("select email, lifecycle::text as lifecycle from public.clients where id = $1", [id]))[0];
+
+    // An existing client with an email of her own.
+    const john = await addClient(api.sql, c.org, "John Smith");
+    await api.sql("update public.clients set name = 'John Smith', email = 'john@first.example.com' where id = $1", [john]);
+    const other = await ask("John Smith", "john@second.example.com");
+    expect(other, "a second John Smith, not the first").not.toBe(john);
+    expect(await row(other)).toMatchObject({ email: "john@second.example.com", lifecycle: "lead" });
+    expect((await row(john)).email).toBe("john@first.example.com");
+    // Asking again with the same email finds the second one, and makes no third.
+    expect(await ask("John Smith", "john@second.example.com")).toBe(other);
+
+    // A client on file with no email: the same name is taken as the same person, and the email is kept.
+    const anna = await addClient(api.sql, c.org, "Anna Kowalski");
+    await api.sql("update public.clients set name = 'Anna Kowalski', email = null where id = $1", [anna]);
+    expect(await ask("Anna Kowalski", "anna@example.com")).toBe(anna);
+    expect((await row(anna)).email).toBe("anna@example.com");
+  });
+
   it("a malformed id answers 404 rather than crashing the route", async () => {
     const c = await company();
     const raw = await keyFor(c);

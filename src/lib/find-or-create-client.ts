@@ -4,7 +4,11 @@
  *
  * Match priority:
  *   1. Exact email match (case-insensitive)
- *   2. Exact name match (case-insensitive)
+ *   2. Exact name match (case-insensitive), but ONLY when one side has no
+ *      email. Two people with the same name and different emails are two
+ *      people: the second used to be filed under the first, their own email
+ *      and phone saved nowhere, and "Send estimate" would have mailed their
+ *      quote to the other person.
  *   3. Create new client
  */
 
@@ -95,18 +99,41 @@ export async function findOrCreateClient(
     }
   }
 
-  // 2. Try name match
-  const { data: byName } = (await admin
+  // 2. Try name match. With an email in hand (and no record holding it,
+  // or step 1 would have returned), only a record with NO email can be the
+  // same person. Oldest first, one row: two records sharing a name must not
+  // make this read fail.
+  let nameQuery = admin
     .from("clients")
-    .select("id, lifecycle")
+    .select("id, lifecycle, email, phone")
     .eq("organization_id", organizationId)
-    .ilike("name", exactIlike(input.name))
-    .maybeSingle()) as unknown as {
-    data: { id: string; lifecycle: string | null } | null;
+    .ilike("name", exactIlike(input.name));
+  if (input.email) nameQuery = nameQuery.is("email", null);
+  const { data: nameRows } = (await nameQuery
+    .order("created_at", { ascending: true })
+    .limit(1)) as unknown as {
+    data: Array<{
+      id: string;
+      lifecycle: string | null;
+      email: string | null;
+      phone: string | null;
+    }> | null;
   };
+  const byName = nameRows?.[0] ?? null;
 
   if (byName) {
     await maybeReopen(admin, byName, asLead);
+    // The record had no email (or no phone) and this inquiry brings one:
+    // keep it, so the office can reach the person the way they asked.
+    const fill: Record<string, string> = {};
+    if (!byName.email && input.email) fill.email = input.email;
+    if (!byName.phone && input.phone) fill.phone = input.phone;
+    if (Object.keys(fill).length > 0) {
+      await (admin
+        .from("clients")
+        .update(fill as never)
+        .eq("id", byName.id) as unknown as Promise<unknown>);
+    }
     return byName.id;
   }
 

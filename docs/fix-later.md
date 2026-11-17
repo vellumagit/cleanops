@@ -123,6 +123,21 @@ on today). Open it and pick its date again to put it back.
   the 24 hours its email promises (#18; the issue time rides in the link,
   no database change). Migration:
   20261117020000_notification_reads_and_anchor_day.sql.
+- **17 Nov, the six decisions (all answered "yes" by Brian):**
+  1. A website visitor who shares a name with a client but has a different
+     email gets a record of their own; the same name is taken as the same
+     person only when one side has no email, and then the email is kept (#1).
+  2. Renaming a service renames upcoming visits and recurring series that
+     use it; past visits keep the name they were done under.
+  3. When a series is extended and its cleaner is already booked, the visit
+     is made with no cleaner and named in the morning email, instead of
+     being skipped.
+  4. Resuming a paused recurring invoice moves its next date forward to the
+     first one not in the past, so the paused months are not billed.
+  5. A cancelled contract can't be signed or sent for signature; a signed
+     contract's terms can't be edited (its status still can).
+  6. "Compute review bonuses" skips anyone who already has a review bonus
+     whose period reaches into the window, as the weekly job already did.
 - **17 Nov:** the production catch-up (see the next section).
 
 ## Waiting on you
@@ -224,10 +239,12 @@ on today). Open it and pick its date again to put it back.
 
 ## Decisions for you
 
-1. **Should renaming a service update upcoming visits?** 8 visits still show
-   "Deep clean" after a rename. (Nov 15 batches.)
-2. **Series extension when the cleaner is busy:** today the visit is skipped.
-   Create it without that cleaner instead? (Nov 15 batches.)
+None open. The two that were here (service rename; series extension when
+the cleaner is busy) were decided and built on 17 Nov, with four more from
+the Questions section; see "Fixed so far".
+
+Left as it was, on purpose: a signed contract can still be DELETED. Say if
+that should be refused too.
 
 ## Faults
 
@@ -235,7 +252,7 @@ on today). Open it and pick its date again to put it back.
 
 | # | Sev | What's wrong | Where | Shown by |
 |---|---|---|---|---|
-| 1 | Med (the `_` wildcard part FIXED 17 Nov; the same-name rule is still open) | A new person who shares a name with an existing client but has a different email is filed under that client: their email and phone are saved nowhere, and "Send estimate" would email the quote to the other person. The email match also uses `ilike`, so `_` in an address is a wildcard (`m_underwood@` lands on `m.underwood@`). Fix: match by name only when one side has no email; compare emails exactly. | `src/lib/find-or-create-client.ts` | `settings-api-v1` "a visitor whose email only looks like an existing client's gets a lead of their own" |
+| 1 | FIXED 17 Nov (was Med) | A new person who shares a name with an existing client but has a different email is filed under that client: their email and phone are saved nowhere, and "Send estimate" would email the quote to the other person. The email match also uses `ilike`, so `_` in an address is a wildcard (`m_underwood@` lands on `m.underwood@`). Fix: match by name only when one side has no email; compare emails exactly. | `src/lib/find-or-create-client.ts` | `settings-api-v1` "a visitor whose email only looks like an existing client's gets a lead of their own" |
 | 2 | Low | Booking create, edit and skip start the Google Calendar sync without waiting; the redirect can end the function first. The nightly reconcile repairs misses. Fix: wrap in `after()`. | `src/app/app/bookings/actions.ts` (`syncMemberCalendarEvents(...).catch`) | — |
 | 3 | Low | An estimate the expiry job marks expired still shows "Valid until …" on the client's page (reads `expires_at`, not status). Svit has auto-expire off. | `src/app/e/[token]/page.tsx` | — |
 | 4 | Low | Saving an archived estimate shows the raw database message instead of plain words. | `src/app/app/estimates/actions.ts` | — |
