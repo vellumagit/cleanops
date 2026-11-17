@@ -332,6 +332,45 @@ export async function startApi(): Promise<Api> {
           }
           return reply(405, { error: `stand-in storage has no ${req.method}` });
         }
+        // GoTrue's admin list and create, which the portal claim uses (is
+        // there a login for this email already? make one): service key only.
+        if (path.split("?")[0] === "/auth/v1/admin/users" && (req.method === "GET" || req.method === "POST")) {
+          const key = String(req.headers.authorization ?? "").replace(/^Bearer\s+/i, "");
+          const reply = (status: number, body: unknown) => {
+            res.writeHead(status, { "content-type": "application/json" });
+            res.end(JSON.stringify(body));
+          };
+          if (key !== serviceKey) return reply(401, { code: 401, msg: "service key required" });
+          const asUser = (u: { id: string; email: string | null; meta: Record<string, unknown> | null }) => ({
+            id: u.id,
+            aud: "authenticated",
+            role: "authenticated",
+            email: u.email,
+            user_metadata: u.meta ?? {},
+            app_metadata: {},
+            created_at: new Date(0).toISOString(),
+          });
+          if (req.method === "GET") {
+            const q = new URL(path, "http://stack").searchParams;
+            const perPage = Math.min(Number(q.get("per_page") ?? 50), 1000);
+            const page = Math.max(Number(q.get("page") ?? 1), 1);
+            const users = await sql<{ id: string; email: string | null; meta: Record<string, unknown> | null }>(
+              "select id, email, raw_user_meta_data as meta from auth.users order by id limit $1 offset $2",
+              [perPage, (page - 1) * perPage],
+            );
+            return reply(200, { users: users.map(asUser), aud: "authenticated" });
+          }
+          const body = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}") as { email?: string; user_metadata?: Record<string, unknown> };
+          const email = String(body.email ?? "").toLowerCase();
+          if (!email) return reply(400, { code: 400, msg: "email required" });
+          const [exists] = await sql("select 1 from auth.users where lower(email) = $1", [email]);
+          if (exists) return reply(422, { code: 422, error_code: "email_exists", msg: "A user with this email address has already been registered" });
+          const [created] = await sql<{ id: string; email: string; meta: Record<string, unknown> | null }>(
+            "insert into auth.users (email, raw_user_meta_data) values ($1, $2::jsonb) returning id, email, raw_user_meta_data as meta",
+            [email, JSON.stringify(body.user_metadata ?? {})],
+          );
+          return reply(200, asUser(created));
+        }
         // GoTrue's admin lookup, which the app uses to find an owner's email
         // (getOrgAdminRecipients): only with the service key, like GoTrue.
         const adminUser = /^\/auth\/v1\/admin\/users\/([0-9a-f-]{36})$/.exec(path.split("?")[0]);
