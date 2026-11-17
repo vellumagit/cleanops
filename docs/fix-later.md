@@ -20,10 +20,58 @@ Faults marked **Security** should go first.
   clients' billing day to blank after the Nov 15 monthly run. It may already
   be done.
 
-- **The live database has drifted from the migrations. Run
-  `docs/production-drift-check.sql` in the Supabase SQL editor** (read-only;
-  returns only the differences) and paste me the result. What the read-only
-  API comparison found on 16 Nov:
+- **Production drift, confirmed by `docs/production-drift-check.sql` (run 16
+  Nov). Fix this first: it is a live security gap, and until it's fixed the
+  tests describe a stricter database than the one Svit is on.**
+  - **Never ran in production:**
+    - `20260913030000_insider_guards.sql`. None of its guards exist: a
+      cleaner limited to a job's status and notes, only an owner may make or
+      change an owner, a cleaner can't insert time entries for others, and the
+      client must belong to the same company (bookings, invoices, estimates,
+      contracts). Its removal of the "employees can insert own pto requests"
+      rule (which let a cleaner insert an approved request for 9,999 hours)
+      didn't happen either.
+    - `20260914010000_profitability_reports.sql`: the two report functions
+      don't exist, so those reports can't load.
+    - `20261007020000_crew_update_bookings.sql`: production still has the old
+      "admins or assignee update bookings" rule.
+    - `20260421020000_webhooks_unification.sql`: no one uses webhooks yet.
+  - **Hand-made rules in production, in no migration (wording confirmed by
+    `docs/production-policy-check.sql`, 16 Nov):** "Members can update their
+    org bookings", "…estimates" and "…invoices". Each is permissive, for every
+    role, and checks only that the row is in the member's company (their
+    first active membership, `LIMIT 1`), never their role. So any active
+    member, a cleaner included, can change any booking, estimate or invoice
+    in their company through the API, for example an invoice's amount or
+    status. With the insider guards missing, nothing limits which booking
+    columns a cleaner can change. At Svit that is 10 cleaners and 2
+    managers. It needs the API used directly with their own sign-in (not
+    possible through the app's screens), and there's no sign of use. Time-off
+    requests show none (no approved request without an approver, none over
+    16 hours), and bookings, estimates and invoices don't record who changed
+    them, so they can't be checked.
+  - **Why the app works today despite the missing October rule:** managers'
+    and crew members' booking edits, and managers' estimate and invoice
+    edits, go through these member-wide rules. Drop them and add the correct
+    rules in the same step, or those edits stop.
+  - **Missing rules that matter less:** owner/admin read rules on payroll
+    runs and items, and the subcontractor bill and payout read rules (other
+    rules or the service key may cover these; check before relying on it).
+  - **Nothing live calls a missing function:** `memberships_owner_guard`
+    exists (from the Nov 11 migration) but has no trigger, so its call to the
+    missing `is_service_role` never runs.
+  - **How to fix:** don't replay the old files as they are. The Sep 13 file's
+    `memberships_owner_guard` still compares `pay_type`, which the Nov 11
+    migration dropped, so replaying it would break every admin editing their
+    own membership. Write one catch-up migration for today's schema instead:
+    the guard functions and triggers as they are now, the report functions,
+    the crew booking rule, dropping the hand-made member-wide rules and the PTO
+    insert rule. Prove it first on a copy built from production's real rules.
+  - The managers migration from the last batch (`20261116060000`) assumed
+    managers couldn't change estimates or invoices. In production the
+    hand-made rules may already let them, and every member too; the policy
+    check will tell.
+- **Earlier read-only API comparison (16 Nov), kept for the record:**
   - **Webhooks (Apr 21) never ran:** `webhook_subscriptions` still exists and
     `webhook_deliveries` has its old columns. No company uses webhooks yet.
   - **Four functions the migrations create aren't there:** `is_service_role`
