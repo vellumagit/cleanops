@@ -349,8 +349,7 @@ describe.skipIf(!hasPostgrest)("rebooking prompt", { timeout: 180_000 }, () => {
 // Last: these leave hundreds of rows that every later run would read.
 
 describe.skipIf(!hasPostgrest)("a busy database", { timeout: 240_000 }, () => {
-  // FIX-LATER: sendBookingReviewRequests reads the 200 oldest unasked completed jobs across every company, and jobs it skips (company switched off, house default "none") are never stamped, so they hold the window and newer jobs are never asked.
-  it.fails("booking review requests reach a company switched on even when 200 older jobs elsewhere will never be asked", async () => {
+  it("booking review requests reach a company switched on even when 200 older jobs elsewhere will never be asked", async () => {
     const quiet = await company({});
     const regular = await person(quiet, "Regular Elsewhere");
     await api.sql(
@@ -365,8 +364,7 @@ describe.skipIf(!hasPostgrest)("a busy database", { timeout: 240_000 }, () => {
     expect(mailTo(waiting)).toHaveLength(1);
   });
 
-  // FIX-LATER: sendRebookingPrompts takes the first 500 clients with an email (no order) and never marks the ones that don't qualify, so in a company past 500 clients the rest are never considered.
-  it.fails("the rebooking prompt reaches a client past the first 500 in a big company", async () => {
+  it("the rebooking prompt reaches a client past the first 500 in a big company", async () => {
     const c = await company({ rebooking_prompt_email: { enabled: true } });
     await api.sql(
       `insert into public.clients (organization_id, name, email)

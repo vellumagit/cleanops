@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { getActionContext } from "@/lib/actions";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { allowDbErrors } from "@/lib/supabase/query-guard";
 import { logAuditEvent } from "@/lib/audit";
 import {
   CLIENT_MEDIA_BUCKET,
@@ -143,7 +144,9 @@ export async function finishClientMediaUploadAction(input: {
     Number((obj.metadata as { size?: number } | null)?.size ?? input.size) || input.size;
 
   const caption = (input.caption ?? "").trim().slice(0, 300) || null;
-  const { error } = (await (admin
+  // allowDbErrors: where queries are fail-closed, the duplicate this code
+  // expects (23505, below) would be thrown before it could be read.
+  const { error } = (await allowDbErrors(["23505"], admin
     .from("client_media" as never)
     .insert({
       organization_id: membership.organization_id,
@@ -155,8 +158,13 @@ export async function finishClientMediaUploadAction(input: {
       size_bytes: size,
       caption,
       uploaded_by: membership.id,
-    } as never) as unknown as Promise<{ error: { message: string } | null }>));
+    } as never) as never)) as unknown as { error: { code?: string; message: string } | null };
   if (error) {
+    // 23505: this path is already recorded, so this is a retry of a finish
+    // that worked (a double tap, a flaky connection). It IS saved. Removing
+    // the file here, as every failure used to, left the first record
+    // pointing at a deleted photo.
+    if (error.code === "23505") return { ok: true };
     await admin.storage.from(CLIENT_MEDIA_BUCKET).remove([input.path]).catch(() => {});
     return { ok: false, error: error.message };
   }

@@ -1240,23 +1240,37 @@ export async function sendRebookingPrompts(): Promise<{
   // forever. 14d..180d is the actionable window.
   const ceilingIso = new Date(now - 180 * 24 * 60 * 60 * 1000).toISOString();
 
-  const { data: candidates } = (await db
-    .from("clients")
-    .select("id, organization_id, name, email, last_rebook_prompt_at")
-    .in("organization_id", Array.from(enabledOrgs.keys()))
-    .not("email", "is", null)
-    .or(
-      `last_rebook_prompt_at.is.null,last_rebook_prompt_at.lt.${rebookThreshold}`,
-    )
-    .limit(500)) as unknown as {
-    data: Array<{
-      id: string;
-      organization_id: string;
-      name: string | null;
-      email: string | null;
-      last_rebook_prompt_at: string | null;
-    }> | null;
+  // Every candidate, in pages and in a fixed order. This used to take "the
+  // first 500" with no order; clients who didn't qualify were never marked,
+  // so they kept the 500 places and anyone past them was never considered.
+  type RebookCandidate = {
+    id: string;
+    organization_id: string;
+    name: string | null;
+    email: string | null;
+    last_rebook_prompt_at: string | null;
   };
+  const { allPages: rebookPages } = await import("@/lib/supabase/all-pages");
+  const { chunkIds: rebookOrgChunks } = await import("@/lib/supabase/chunked-in");
+  const candidates: RebookCandidate[] = [];
+  for (const orgChunk of rebookOrgChunks(Array.from(enabledOrgs.keys()), 100)) {
+    candidates.push(
+      ...(await rebookPages<RebookCandidate>(
+        (from, to) =>
+          db
+            .from("clients")
+            .select("id, organization_id, name, email, last_rebook_prompt_at")
+            .in("organization_id", orgChunk)
+            .not("email", "is", null)
+            .or(
+              `last_rebook_prompt_at.is.null,last_rebook_prompt_at.lt.${rebookThreshold}`,
+            )
+            .order("id", { ascending: true })
+            .range(from, to) as never,
+        "rebooking prompt",
+      )),
+    );
+  }
 
   if (!candidates || candidates.length === 0) {
     return { considered: 0, sent: 0 };
@@ -1965,26 +1979,12 @@ export async function sendBookingReviewRequests(): Promise<{
     Date.now() - 30 * 60 * 1000, // at LEAST 30 min must have elapsed
   ).toISOString();
 
-  const { data: candidates } = (await db
-    .from("bookings")
-    .select(
-      `
-      id, organization_id, scheduled_at, service_type, duration_minutes, assigned_to,
-      client:clients ( id, name, email ),
-      assigned:memberships!bookings_assigned_to_fkey (
-        display_name,
-        profile:profiles ( full_name )
-      )
-    `,
-    )
-    .eq("status", "completed")
-    .is("review_request_sent_at", null)
-    .gte("scheduled_at", earliestCutoff)
-    .lte("scheduled_at", latestCutoff)
-    // Deterministic under backlog — oldest first so catch-up drains in order.
-    .order("scheduled_at", { ascending: true })
-    .limit(200)) as unknown as {
-    data: Array<{
+  // Only companies with this switched on, and ALL their jobs in the window.
+  // This used to read the 200 oldest unasked jobs across every company. Jobs
+  // it skips (company switched off, house default "none", no email) are
+  // never stamped, so once 200 of those sat in the 30-day window they held
+  // it, and clients who should have been asked never were.
+  type ReviewCandidate = {
       id: string;
       organization_id: string;
       scheduled_at: string;
@@ -2000,8 +2000,57 @@ export async function sendBookingReviewRequests(): Promise<{
         display_name: string | null;
         profile: { full_name: string | null } | null;
       } | null;
+    };
+  const { resolveAutomationEnabled: reviewSwitchOn } = await import("@/lib/automation-defaults");
+  const { data: reviewOrgRows } = (await db
+    .from("organizations")
+    .select("id, automations_enabled, automation_settings")) as unknown as {
+    data: Array<{
+      id: string;
+      automations_enabled: boolean | null;
+      automation_settings: Record<string, { enabled?: boolean }> | null;
     }> | null;
   };
+  const reviewOrgIds = (reviewOrgRows ?? [])
+    .filter(
+      (o) =>
+        o.automations_enabled === true &&
+        reviewSwitchOn(o.automation_settings, "review_request_after_completion"),
+    )
+    .map((o) => o.id);
+
+  const { allPages: reviewPages } = await import("@/lib/supabase/all-pages");
+  const { chunkIds: reviewOrgChunks } = await import("@/lib/supabase/chunked-in");
+  const candidates: ReviewCandidate[] = [];
+  for (const orgChunk of reviewOrgChunks(reviewOrgIds, 100)) {
+    candidates.push(
+      ...(await reviewPages<ReviewCandidate>(
+        (from, to) =>
+          db
+            .from("bookings")
+            .select(
+              `
+      id, organization_id, scheduled_at, service_type, duration_minutes, assigned_to,
+      client:clients ( id, name, email ),
+      assigned:memberships!bookings_assigned_to_fkey (
+        display_name,
+        profile:profiles ( full_name )
+      )
+    `,
+            )
+            .in("organization_id", orgChunk)
+            .eq("status", "completed")
+            .is("review_request_sent_at", null)
+            .gte("scheduled_at", earliestCutoff)
+            .lte("scheduled_at", latestCutoff)
+            // Oldest first; id breaks ties so pages never overlap.
+            .order("scheduled_at", { ascending: true })
+            .order("id", { ascending: true })
+            .range(from, to) as never,
+        "booking review requests",
+      )),
+    );
+  }
 
   const considered = candidates?.length ?? 0;
   let sent = 0;

@@ -594,8 +594,7 @@ describe.skipIf(!hasPostgrest)("the on-call list", () => {
     expect(await benchRow(made.id)).toBeUndefined();
   });
 
-  // FIX-LATER: FreelancerContactSchema puts "+" in front of a ten-digit number, so "780 271 1971" is stored as +7802711971 (Russia), the fault normalizePhone fixed for other phones
-  it.fails("a local ten-digit number is saved as the North American number it is", async () => {
+  it("a local ten-digit number is saved as the North American number it is", async () => {
     const c = await company();
     await as(c.olha, () => freelancers.createFreelancerContactAction({}, benchForm({ phone: "780 271 1971" })));
     const [made] = await api.sql<{ phone: string }>("select phone from public.freelancer_contacts where organization_id = $1", [c.org]);
@@ -819,9 +818,9 @@ describe.skipIf(!hasPostgrest)("tasks", () => {
     expect(res, api.log()).toEqual({ redirected: "/app/tasks" });
     expect(await taskRow(id)).toMatchObject({ title: "Order microfibre cloths", assigned_to: c.bea.membershipId });
 
-    // Unassigning it is a manager's call; the database refuses a cleaner.
+    // Editing is the office's; a cleaner is told so.
     const byAnna = await as(c.anna, () => tasks.updateTaskAction(id, {}, taskForm({ title: "Anna was here" })));
-    expect(formErrors(byAnna)?._form).toBe("Failed to save task. Please try again.");
+    expect(formErrors(byAnna)?._form).toBe("Only the office can edit a task.");
     expect((await taskRow(id)).title).toBe("Order microfibre cloths");
 
     const theirs = await task(other, { title: "Their task" });
@@ -829,11 +828,21 @@ describe.skipIf(!hasPostgrest)("tasks", () => {
     expect((await taskRow(theirs)).title).toBe("Their task");
   });
 
-  // FIX-LATER: the tasks UPDATE policy admits any member (USING) and only checks the NEW row is hers, so a cleaner can rewrite any task by assigning it to herself
-  it.fails("a cleaner can't take over a task that isn't hers", async () => {
+  it("a cleaner can't take over a task that isn't hers, through the app or straight through the API", async () => {
     const c = await company();
     const id = await task(c, { title: "Call the window supplier", assignedTo: c.olha });
     await as(c.anna, () => tasks.updateTaskAction(id, {}, taskForm({ title: "Nothing to see", assigned_to: c.anna.membershipId })));
+    expect(await taskRow(id)).toMatchObject({ title: "Call the window supplier", assigned_to: c.olha.membershipId });
+    // Around the app, with her own sign-in: the database rule is the backstop.
+    await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/tasks?id=eq.${id}`, {
+      method: "PATCH",
+      headers: {
+        apikey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "",
+        Authorization: `Bearer ${api.tokenFor(c.anna.userId)}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ title: "Mine now", assigned_to: c.anna.membershipId }),
+    });
     expect(await taskRow(id)).toMatchObject({ title: "Call the window supplier", assigned_to: c.olha.membershipId });
   });
 

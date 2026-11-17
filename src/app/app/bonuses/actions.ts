@@ -1,6 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { chunkIds, IN_CHUNK_SIZE, selectInChunks } from "@/lib/supabase/chunked-in";
+import { resolveShiftWindows, shiftWindowKey } from "@/lib/crew-hours";
 import { getActionContext } from "@/lib/actions";
 import { logAuditEvent } from "@/lib/audit";
 import { getOrgTimezone } from "@/lib/org-timezone";
@@ -80,7 +82,11 @@ export async function computeBonusesAction(): Promise<ComputeResult> {
     .select("employee_id")
     .eq("organization_id", membership.organization_id)
     .eq("period_start", periodStartDate)
-    .eq("period_end", periodEndDate);
+    .eq("period_end", periodEndDate)
+    // Review bonuses only (null covers rows from before the type existed).
+    // Without this, an efficiency bonus computed first for the same period
+    // counted as "already awarded" and the review bonus was never paid.
+    .or("bonus_type.eq.review,bonus_type.is.null");
 
   if (existingErr) return { ok: false, error: existingErr.message };
   const alreadyAwarded = new Set(
@@ -204,15 +210,37 @@ export async function computeEfficiencyBonusesAction(): Promise<ComputeResult> {
   const bookingIds = bookings.map((b) => b.id);
 
   // Get all closed time entries for these bookings
-  const { data: timeEntries, error: teErr } = await supabase
-    .from("time_entries")
-    .select("booking_id, employee_id, clock_in_at, clock_out_at")
-    .eq("organization_id", membership.organization_id)
-    .in("booking_id", bookingIds)
-    .not("clock_out_at", "is", null)
-    .limit(10000);
+  // In chunks: every job id in one request made it too long past about 320
+  // jobs in the window, and the whole computation failed.
+  const { data: timeEntries, error: teErr } = await selectInChunks<{
+    booking_id: string | null;
+    employee_id: string;
+    clock_in_at: string | null;
+    clock_out_at: string | null;
+  }>(bookingIds, (chunk) =>
+    supabase
+      .from("time_entries")
+      .select("booking_id, employee_id, clock_in_at, clock_out_at")
+      .eq("organization_id", membership.organization_id)
+      .in("booking_id", chunk)
+      .not("clock_out_at", "is", null)
+      .limit(10000),
+  );
 
   if (teErr) return { ok: false, error: teErr.message };
+
+  // Each person's OWN allotment on each job. The booked duration is the
+  // one-person estimate: on a job that divides its hours across the crew, or
+  // is split into segments, a person's share is smaller. Comparing everyone
+  // with the full duration paid two cleaners who each worked their half of
+  // a four-hour job for "saving" two hours apiece.
+  const shareOf = new Map<string, number>();
+  for (const chunk of chunkIds(bookings, IN_CHUNK_SIZE)) {
+    const windows = await resolveShiftWindows(
+      chunk.map((b) => ({ id: b.id, duration_minutes: b.duration_minutes })),
+    );
+    for (const [key, w] of windows) shareOf.set(key, w.allottedMinutes);
+  }
 
   // Build a map: booking_id → { estimated_minutes, assigned_to }
   const bookingMap = new Map<
@@ -259,7 +287,8 @@ export async function computeEfficiencyBonusesAction(): Promise<ComputeResult> {
 
   for (const w of workedByJob.values()) {
     const booking = bookingMap.get(w.bookingId)!;
-    const estimatedMinutes = booking.duration_minutes;
+    const estimatedMinutes =
+      shareOf.get(shiftWindowKey(w.bookingId, w.employeeId)) ?? booking.duration_minutes;
 
     // Only count jobs where they finished faster (positive time saved)
     const minutesSaved = estimatedMinutes - w.minutes;

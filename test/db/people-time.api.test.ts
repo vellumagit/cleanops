@@ -708,8 +708,7 @@ describe.skipIf(!hasPostgrest)("bonuses", () => {
     expect(await as(c.owner, () => bonuses.computeBonusesAction())).toEqual({ ok: false, error: "The review bonus engine is currently disabled." });
   });
 
-  // FIX-LATER: computeBonusesAction's "already awarded" check ignores bonus_type, so an efficiency bonus computed first for the same period blocks the review bonus
-  it.fails("a cleaner who earned both gets her review bonus even when efficiency was computed first", async () => {
+  it("a cleaner who earned both gets her review bonus even when efficiency was computed first", async () => {
     const c = await company();
     await rule(c);
     await review(c, c.anna, 5, 2);
@@ -743,8 +742,7 @@ describe.skipIf(!hasPostgrest)("bonuses", () => {
     expect(await as(c.owner, () => bonuses.computeEfficiencyBonusesAction())).toEqual({ ok: false, error: "The efficiency bonus engine is currently disabled." });
   });
 
-  // FIX-LATER: computeEfficiencyBonusesAction compares each cleaner's own minutes with the booking's one-person estimate, so a crew working its divided share is paid for "saving" time
-  it.fails("two cleaners who each worked their half of a divided job saved nothing", async () => {
+  it("two cleaners who each worked their half of a divided job saved nothing", async () => {
     const c = await company();
     await rule(c);
     await api.sql(`update public.organizations set automation_settings = '{"divide_crew_hours": {"enabled": true}}'::jsonb where id = $1`, [c.org]);
@@ -756,8 +754,7 @@ describe.skipIf(!hasPostgrest)("bonuses", () => {
     expect(await bonusesOf(c)).toEqual([]);
   });
 
-  // FIX-LATER: computeEfficiencyBonusesAction puts every completed booking id in one `in.(...)` filter; past ~320 jobs in the window the request is too long and the compute fails
-  it.fails("a company with 400 finished jobs in the window still gets its efficiency bonuses", async () => {
+  it("a company with 400 finished jobs in the window still gets its efficiency bonuses", async () => {
     const c = await company();
     await rule(c);
     const client = await addClient(api.sql, c.org, "Busy Client");

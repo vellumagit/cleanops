@@ -748,8 +748,7 @@ describe.skipIf(!hasPostgrest)("home photos and videos on a client", { timeout: 
     expect(await prep(other.owner)).toEqual({ ok: false, error: "Client not found." });
   });
 
-  // FIX-LATER: finishClientMediaUploadAction removes the stored file whenever its insert fails, including the unique-path failure of a retried finish, so the photo the first save recorded loses its file.
-  it.fails("finishing the same upload twice (a retry) keeps the file the first save recorded", async () => {
+  it("finishing the same upload twice (a retry) keeps the file the first save recorded", async () => {
     const c = await company();
     const client = await person(c, "Retry Client");
     const prep = (await as(c.owner, () =>

@@ -609,6 +609,32 @@ export async function runInvoiceAutoSend(): Promise<{
       console.log(
         `[invoice-auto-send] invoice ${inv.id} skipped — client notification preference (${decision.reason})`,
       );
+      // A CHOICE not to be contacted (do-not-contact, billing off, muted) is
+      // skipped quietly. But a client we simply can't reach, with no email
+      // or usable phone on file, is money that didn't go out through nobody's
+      // decision, and the morning digest had listed it as going. Tell the
+      // owner, the way the comment at the top of this file always promised;
+      // the alert further down could never be reached for this case.
+      if (
+        decision.reason === "no_email_address" ||
+        decision.reason === "no_reachable_channel" ||
+        decision.reason === "sms_not_opted_in"
+      ) {
+        try {
+          const { notify } = await import("@/lib/notify");
+          await notify({
+            audience: "org-admins",
+            organizationId: inv.organization_id,
+            type: "invoice_auto_send_failed",
+            title: "An invoice couldn't auto-send",
+            body: `Invoice ${inv.number ?? inv.id.slice(0, 8)} wasn't sent automatically: the client has no email address (or phone we may text) on file. Add one and send it from the invoice.`,
+            href: `/app/invoices/${inv.id}`,
+            channels: { email: true },
+          });
+        } catch (notifyErr) {
+          console.error("[invoice-send] auto-send unreachable-client notify failed:", notifyErr);
+        }
+      }
       continue;
     }
 

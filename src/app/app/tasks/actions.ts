@@ -145,6 +145,12 @@ export async function updateTaskAction(
   formData: FormData,
 ): Promise<TaskFormState> {
   const { membership, supabase } = await getActionContext();
+  // Editing a task is the office's (the edit page only admits them). A
+  // cleaner ticks their own task off with completeTaskAction; through this
+  // action one could take over anyone's task by assigning it to themselves.
+  if (!["owner", "admin", "manager"].includes(membership.role)) {
+    return { errors: { _form: "Only the office can edit a task." } };
+  }
   const raw = readFormValues(formData);
   const parsed = parseForm(TaskSchema, raw);
 

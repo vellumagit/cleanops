@@ -383,8 +383,7 @@ describe.skipIf(!hasPostgrest)("invoice-auto-send: each due draft goes once, and
     expect(mailTo(k.email)).toHaveLength(0);
   });
 
-  // FIX-LATER: a client with no email is skipped silently by the contact-preference gate; the owner is never told the invoice did not go
-  it.fails("a client with no email: the draft is skipped and the owner is told it did not go", async () => {
+  it("a client with no email: the draft is skipped and the owner is told it did not go", async () => {
     const { GET } = await import("@/app/api/cron/invoice-auto-send/route");
     const c = await company("No Email Co", { autoSend: true });
     const k = await client(c.org, { email: null });

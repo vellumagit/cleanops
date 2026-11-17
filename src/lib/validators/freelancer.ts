@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { optionalText, requiredText, dollarStringToCents } from "./common";
+import { normalizePhone } from "@/lib/phone";
 
 /**
  * Validators for the Phase 11 freelancer bench.
@@ -10,14 +11,17 @@ import { optionalText, requiredText, dollarStringToCents } from "./common";
  * are malformed.
  */
 
+// Through normalizePhone, like every other phone in the app. This used to put
+// a bare "+" in front of whatever was typed, so a local "780 271 1971" was
+// saved as +7802711971, which Twilio routes to Russia: shift-offer texts
+// went nowhere. normalizePhone reads ten digits as a North American number.
 const e164 = z
   .string()
-  .transform((s) => s.trim().replace(/[\s().-]/g, ""))
+  .transform((s) => normalizePhone(s))
   .refine(
-    (s) => /^\+?[1-9]\d{7,14}$/.test(s),
-    "Phone must be in E.164 format (e.g. +15125550101)",
-  )
-  .transform((s) => (s.startsWith("+") ? s : `+${s}`));
+    (s) => /^\+[1-9]\d{7,14}$/.test(s),
+    "Phone must be a full number, e.g. 780 271 1971 or +15125550101",
+  );
 
 export const FreelancerContactSchema = z.object({
   full_name: requiredText("Name", 200),
