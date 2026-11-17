@@ -111,7 +111,7 @@ export async function updateCalendarScopeAction(
  * connect their personal Google Calendar.
  *
  * Any active member (not just admin) may connect their own calendar.
- * State is prefixed with "mbr:" so the callback knows to use the
+ * The state is a sealed token whose scope tells the callback to use the
  * member-level flow rather than the org-level flow.
  *
  * An ITP-safe cookie is set before the redirect so Safari doesn't lose
@@ -120,8 +120,11 @@ export async function updateCalendarScopeAction(
 export async function connectMyGoogleCalendarAction(): Promise<never> {
   const membership = await requireMembership();
 
+  // A sealed token only this server can make; see lib/gcal-oauth-state.
+  const { issueGcalOAuthState } = await import("@/lib/gcal-oauth-state");
+  const state = issueGcalOAuthState("member", membership.id);
   const cookieStore = await cookies();
-  cookieStore.set("gcal_member_oauth_state", membership.id, {
+  cookieStore.set("gcal_member_oauth_state", state, {
     httpOnly: true,
     sameSite: "lax",
     maxAge: 600, // 10 minutes
@@ -129,8 +132,8 @@ export async function connectMyGoogleCalendarAction(): Promise<never> {
     secure: process.env.NODE_ENV === "production",
   });
 
-  // Prefix state with "mbr:" so the callback routes to the member handler.
-  const url = buildGoogleOAuthUrl(`mbr:${membership.id}`);
+  // The token's own scope ("member") routes the callback to the member handler.
+  const url = buildGoogleOAuthUrl(state);
   redirect(url);
 }
 

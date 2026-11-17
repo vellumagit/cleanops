@@ -9,14 +9,16 @@ import {
   buildGoogleOAuthUrl,
   cleanupOrgCalendarEvents,
 } from "@/lib/google-calendar";
+import { issueGcalOAuthState } from "@/lib/gcal-oauth-state";
 
 /**
  * Redirect the admin to Google's OAuth consent screen.
- * The membership ID is passed as `state` so the callback can verify
- * who initiated the flow.
+ * `state` is a sealed token only this server can make (lib/gcal-oauth-state),
+ * naming who started the flow. It used to be the bare membership id, which
+ * anyone who knew it could forge.
  *
  * We also set a short-lived same-site cookie (`gcal_oauth_state`) with the
- * membership ID. This lets the callback verify the flow without needing the
+ * same token. This lets the callback verify the flow without needing the
  * Supabase session cookie — important on Safari/Mac where ITP can strip
  * session cookies that were set before a cross-site redirect (e.g. to
  * accounts.google.com).
@@ -24,10 +26,11 @@ import {
 export async function connectGoogleCalendarAction() {
   const membership = await requireActionMembership(["owner", "admin"]);
 
-  // Persist the membership ID in a short-lived same-site cookie so the
-  // callback can verify state even if the Supabase session is unavailable.
+  // Persist the sealed state in a short-lived same-site cookie so the
+  // callback can verify it even if the Supabase session is unavailable.
+  const state = issueGcalOAuthState("org", membership.id);
   const cookieStore = await cookies();
-  cookieStore.set("gcal_oauth_state", membership.id, {
+  cookieStore.set("gcal_oauth_state", state, {
     httpOnly: true,
     sameSite: "lax",
     maxAge: 600, // 10 minutes — more than enough for any OAuth flow
@@ -35,7 +38,7 @@ export async function connectGoogleCalendarAction() {
     secure: process.env.NODE_ENV === "production",
   });
 
-  const url = buildGoogleOAuthUrl(membership.id);
+  const url = buildGoogleOAuthUrl(state);
   redirect(url);
 }
 
@@ -59,7 +62,11 @@ export async function disconnectGoogleCalendarAction() {
     .update({ status: "disconnected", last_error: null } as never)
     .eq("organization_id" as never, membership.organization_id)
     .eq("provider" as never, "google_calendar")
-    .eq("status" as never, "active");
+    .eq("status" as never, "active")
+    // The COMPANY's calendar only. Without this, Disconnect also switched off
+    // every cleaner's own calendar connection (membership_id set), silently,
+    // leaving their events stranded.
+    .is("membership_id" as never, null);
 
   revalidatePath("/app/settings/integrations");
 }

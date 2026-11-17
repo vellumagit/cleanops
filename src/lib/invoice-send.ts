@@ -328,13 +328,19 @@ export async function markInvoiceSentSystem(
   const db = createSupabaseAdminClient();
   const { data: prev } = await db
     .from("invoices")
-    .select("sent_at")
+    .select("sent_at, status")
     .eq("id", invoiceId)
     .maybeSingle();
 
   const sentAt =
     (prev as { sent_at: string | null } | null)?.sent_at ??
     new Date().toISOString();
+  // Only a draft becomes "sent". An invoice that already has money on it
+  // (partially_paid) keeps that status and just gets its sent date: writing
+  // "sent" over it would hide the payment, and later let auto-void write
+  // off an invoice someone has paid toward.
+  const wasDraft = (prev as { status?: string } | null)?.status === "draft";
+  const sentPatch = wasDraft ? { status: "sent" as const, sent_at: sentAt } : { sent_at: sentAt };
 
   // The email is out. Record the status flip — retry a couple of times so a
   // transient DB blip doesn't leave a sent invoice stuck as a draft. If it
@@ -343,7 +349,7 @@ export async function markInvoiceSentSystem(
   for (let attempt = 0; attempt < 3; attempt++) {
     const { error } = await db
       .from("invoices")
-      .update({ status: "sent", sent_at: sentAt })
+      .update(sentPatch)
       .eq("id", invoiceId);
     if (!error) {
       pushInvoiceToSage(invoiceId).catch((err) =>
@@ -434,12 +440,15 @@ async function deliverInvoiceSmsSystem(
 
     // The text is out. If this was the delivery (draft), flip the status —
     // same retry shape as the email path.
-    if (inv.status === "draft") {
+    // A never-sent part-paid invoice (a prepaid draft) gets its sent date
+    // and keeps its status; see markInvoiceSentSystem.
+    if (inv.status === "draft" || (inv.status === "partially_paid" && !inv.sent_at)) {
       const sentAt = inv.sent_at ?? new Date().toISOString();
+      const sentPatch = inv.status === "draft" ? { status: "sent" as const, sent_at: sentAt } : { sent_at: sentAt };
       for (let attempt = 0; attempt < 3; attempt++) {
         const { error } = await db
           .from("invoices")
-          .update({ status: "sent", sent_at: sentAt })
+          .update(sentPatch)
           .eq("id", invoiceId);
         if (!error) {
           pushInvoiceToSage(invoiceId).catch((err) =>
@@ -508,7 +517,12 @@ export async function runInvoiceAutoSend(): Promise<{
     )
     .eq("auto_send_state" as never, "scheduled" as never)
     .lte("auto_send_at" as never, nowIso as never)
-    .eq("status", "draft")
+    // A draft, or a draft a prepayment has already turned part-paid. The
+    // payment trigger flips a draft with money on it to partially_paid; with
+    // "draft" alone here it sat scheduled forever and the client never got
+    // the bill for the balance. Never-sent only (sent_at is null).
+    .in("status", ["draft", "partially_paid"])
+    .is("sent_at", null)
     .order("auto_send_at" as never, { ascending: true }) // FIFO if we hit the cap
     .limit(200)) as unknown as {
     data: Array<{
@@ -615,7 +629,7 @@ export async function runInvoiceAutoSend(): Promise<{
       .from("invoices")
       .update({ auto_send_state: "held" } as never)
       .eq("id", inv.id)
-      .eq("status", "draft")
+      .in("status", ["draft", "partially_paid"])
       .eq("auto_send_state" as never, "scheduled" as never)
       .select("id")) as unknown as { data: Array<{ id: string }> | null };
     if (!claimed || claimed.length === 0) {

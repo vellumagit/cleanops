@@ -12,13 +12,17 @@ import {
   bulkSyncMemberBookings,
 } from "@/lib/google-calendar";
 import { getEnv } from "@/lib/env";
+import { readGcalOAuthState } from "@/lib/gcal-oauth-state";
 
 /**
  * Google Calendar OAuth callback — handles BOTH org-level and per-member flows.
  *
- * STATE ENCODING
- *   Org-level  : state = membershipId  (bare UUID, existing behaviour)
- *   Member-level: state = "mbr:{membershipId}"
+ * STATE
+ *   A sealed token only this server can make (lib/gcal-oauth-state): the
+ *   membership that pressed Connect, which calendar (company or their own),
+ *   and a ten-minute expiry. A bare membership id, the old state, is refused:
+ *   it is not a secret, and anyone who knew an owner's could connect that
+ *   company's calendar to their own Google account.
  *
  * COOKIE NAMES
  *   Org-level  : gcal_oauth_state
@@ -41,11 +45,11 @@ export async function GET(request: NextRequest) {
   const env = getEnv();
   const siteUrl = env.NEXT_PUBLIC_SITE_URL;
 
-  // Determine scope from state prefix.
-  const isMemberScope = (state ?? "").startsWith("mbr:");
-  const membershipIdFromState = isMemberScope
-    ? state!.slice(4)
-    : (state ?? "");
+  // Who started this flow, read from the sealed state. Null when it is
+  // forged, edited or more than ten minutes old.
+  const issued = readGcalOAuthState(state);
+  const isMemberScope = issued?.scope === "member";
+  const membershipIdFromState = issued?.membershipId ?? "";
 
   // Redirect targets differ by scope.
   const successRedirect = isMemberScope
@@ -61,6 +65,7 @@ export async function GET(request: NextRequest) {
   // User denied consent.
   if (error) return errRedirect(error);
   if (!code || !state) return errRedirect("Missing authorization code");
+  if (!issued) return errRedirect("Invalid session — please try again");
 
   // ---------------------------------------------------------------------------
   // Branch A: Member-level flow
@@ -68,6 +73,7 @@ export async function GET(request: NextRequest) {
   if (isMemberScope) {
     return handleMemberCallback(
       code,
+      state,
       membershipIdFromState,
       successRedirect,
       errRedirect,
@@ -79,7 +85,8 @@ export async function GET(request: NextRequest) {
   // ---------------------------------------------------------------------------
   return handleOrgCallback(
     code,
-    membershipIdFromState, // bare membership UUID
+    state,
+    membershipIdFromState,
     siteUrl,
     successRedirect,
     errRedirect,
@@ -92,7 +99,8 @@ export async function GET(request: NextRequest) {
 
 async function handleOrgCallback(
   code: string,
-  stateValue: string, // raw membership UUID
+  state: string, // the sealed token, as sent
+  stateValue: string, // the membership it was issued to
   siteUrl: string,
   successRedirect: string,
   errRedirect: (msg: string) => NextResponse,
@@ -103,8 +111,9 @@ async function handleOrgCallback(
 
   let organizationId: string | null = null;
 
-  if (stateCookie && stateCookie === stateValue) {
-    // PRIMARY PATH (ITP-safe cookie)
+  if (stateCookie && stateCookie === state) {
+    // PRIMARY PATH (ITP-safe cookie): this browser holds the very token
+    // that came back, and only the server could have made it.
     cookieStore.delete(cookieName);
 
     const admin = createSupabaseAdminClient();
@@ -244,7 +253,8 @@ async function handleOrgCallback(
 
 async function handleMemberCallback(
   code: string,
-  membershipId: string,
+  state: string, // the sealed token, as sent
+  membershipId: string, // the membership it was issued to
   successRedirect: string,
   errRedirect: (msg: string) => NextResponse,
 ): Promise<NextResponse> {
@@ -255,7 +265,7 @@ async function handleMemberCallback(
   // Verify the membership is active (no role restriction — any member can connect).
   let orgId: string | null = null;
 
-  if (stateCookie && stateCookie === membershipId) {
+  if (stateCookie && stateCookie === state) {
     // ITP-safe cookie path.
     cookieStore.delete("gcal_member_oauth_state");
 

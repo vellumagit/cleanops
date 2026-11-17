@@ -249,8 +249,7 @@ describe.skipIf(!hasPostgrest)("the recurring invoice form", { timeout: 90_000 }
     expect(await seriesRows(c.org)).toEqual([]);
   });
 
-  // FIX-LATER: a series can name another company's client; nothing checks client_id belongs to the org (invoice_series has no client_org_guard).
-  it.fails("never makes a series for another company's client", async () => {
+  it("never makes a series for another company's client", async () => {
     const c = await company();
     const other = await company();
     const theirs = await addClient(api.sql, other.org, "Their Client");
@@ -496,8 +495,7 @@ describe.skipIf(!hasPostgrest)("the nightly recurring invoice job", { timeout: 1
     expect(inv.due_date, "Dec 1 + 14 days in the company's calendar").toBe("2026-12-15");
   });
 
-  // FIX-LATER: in the cron's fail-closed scope a failed invoice insert throws, so the claim rollback never runs and the whole run (every other company) stops with a 500.
-  it.fails("a series whose invoice can't be made gives its period back and doesn't stop other companies' invoices", async () => {
+  it("a series whose invoice can't be made gives its period back and doesn't stop other companies' invoices", async () => {
     const stranger = await company();
     const c = await company();
     const good = await company();

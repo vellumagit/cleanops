@@ -712,21 +712,34 @@ export async function autoGenerateRecurringInvoices(): Promise<{
     // and this automation never generated a single invoice (audit C1).
     // Line items live in invoice_line_items; notes are applied as a
     // separate best-effort update below.
-    const { data: inserted, error } = (await db
-      .from("invoices")
-      .insert({
-        organization_id: series.organization_id,
-        client_id: series.client_id,
-        // number: omitted → trigger fills it
-        status: "draft",
-        amount_cents: series.amount_cents,
-        due_date: dueDate.toISOString().slice(0, 10),
-      })
-      .select("id")
-      .single()) as unknown as {
-      data: { id: string } | null;
-      error: { message: string } | null;
-    };
+    // In a cron the database client is fail-closed: a refused insert THROWS
+    // rather than returning an error. Uncaught, that skipped the rollback
+    // below (this series lost its period for good) and ended the run, so
+    // every company after it got no invoice that night. Catch it here and
+    // treat it as the failure it is: one series, one period, retried.
+    let inserted: { id: string } | null = null;
+    let error: { message: string } | null = null;
+    try {
+      const res = (await db
+        .from("invoices")
+        .insert({
+          organization_id: series.organization_id,
+          client_id: series.client_id,
+          // number: omitted → trigger fills it
+          status: "draft",
+          amount_cents: series.amount_cents,
+          due_date: dueDate.toISOString().slice(0, 10),
+        })
+        .select("id")
+        .single()) as unknown as {
+        data: { id: string } | null;
+        error: { message: string } | null;
+      };
+      inserted = res.data;
+      error = res.error;
+    } catch (thrown) {
+      error = { message: thrown instanceof Error ? thrown.message : String(thrown) };
+    }
 
     if (error || !inserted) {
       console.error(

@@ -70,6 +70,17 @@ const { GET: gcalCallback } = await import("@/app/api/integrations/google-calend
 const { GET: qbCallback } = await import("@/app/api/integrations/quickbooks/callback/route");
 const { GET: sageCallback } = await import("@/app/api/integrations/sage/callback/route");
 const { encryptSecret, decryptSecret } = await import("@/lib/crypto");
+const { issueGcalOAuthState } = await import("@/lib/gcal-oauth-state");
+
+/** A calendar flow this person really started: the sealed state Google sends back, and the cookie their browser holds. */
+const startedOrg = (m: Member) => {
+  const state = issueGcalOAuthState("org", m.membershipId);
+  return { q: encodeURIComponent(state), cookie: { name: "gcal_oauth_state", value: state } };
+};
+const startedOwn = (m: Member) => {
+  const state = issueGcalOAuthState("member", m.membershipId);
+  return { q: encodeURIComponent(state), cookie: { name: "gcal_member_oauth_state", value: state } };
+};
 
 let api: Api;
 let restoreEnv: () => void;
@@ -338,8 +349,7 @@ describe.skipIf(!hasPostgrest)("Google Calendar for the company (Settings)", { t
     expect(exchanged.google, "the code is never even exchanged").toEqual([]);
   });
 
-  // FIX-LATER: the Google Calendar OAuth state is the bare membership id, so a forged state cookie + state connects any company's calendar to the sender's Google account
-  it.fails("a forged state cookie naming another company's owner cannot connect that company's calendar to the sender's Google account", async () => {
+  it("a forged state cookie naming another company's owner cannot connect that company's calendar to the sender's Google account", async () => {
     const victim = await company("Victim Co");
     await job(victim, at(2));
     const code = uniq("code");
@@ -356,8 +366,7 @@ describe.skipIf(!hasPostgrest)("Google Calendar for the company (Settings)", { t
     expect(landed).toContain("gcal_error=");
   });
 
-  // FIX-LATER: same cause: with no state cookie the callback falls back to "is this the signed-in owner's membership id?", so a link carrying her (non-secret) id and someone else's code connects her company to that Google account
-  it.fails("a callback the owner never started (no state cookie) is refused, so a link can't connect her company to someone else's Google account", async () => {
+  it("a callback the owner never started (no state cookie) is refused, so a link can't connect her company to someone else's Google account", async () => {
     const c = await company();
     const code = uniq("code");
     const attackerToken = uniq("tok-attacker");
@@ -383,8 +392,8 @@ describe.skipIf(!hasPostgrest)("Google Calendar for the company (Settings)", { t
     );
     const code = uniq("code");
     googleGrants.set(code, { token: uniq("tok"), email: "office@example.com", scope: "openid https://www.googleapis.com/auth/userinfo.email" });
-    const stateCookie = { name: "gcal_oauth_state", value: c.owner.membershipId };
-    expect(await back(gcalCallback, `${base}?code=${code}&state=${c.owner.membershipId}`, [...session, stateCookie])).toContain(
+    const flow = startedOrg(c.owner);
+    expect(await back(gcalCallback, `${base}?code=${code}&state=${flow.q}`, [...session, flow.cookie])).toContain(
       `gcal_error=${encodeURIComponent("Calendar access wasn't granted.")}`.replace("'", "%27"),
     );
     expect(await connections(c.org)).toEqual([]);
@@ -399,8 +408,8 @@ describe.skipIf(!hasPostgrest)("Google Calendar for the company (Settings)", { t
     googleGrants.set(code, { token: newToken, email: "office@example.com" });
     const landed = await back(
       gcalCallback,
-      `/api/integrations/google-calendar/callback?code=${code}&state=${c.owner.membershipId}`,
-      [...api.sessionCookies(c.owner.userId), { name: "gcal_oauth_state", value: c.owner.membershipId }],
+      `/api/integrations/google-calendar/callback?code=${code}&state=${startedOrg(c.owner).q}`,
+      [...api.sessionCookies(c.owner.userId)],
     );
     expect(landed).toContain("gcal_connected=true");
     const rows = await connections(c.org, "google_calendar");
@@ -423,8 +432,8 @@ describe.skipIf(!hasPostgrest)("Google Calendar for the company (Settings)", { t
     googleGrants.set(code, { token: newToken, email: "new@example.com" });
     const landed = await back(
       gcalCallback,
-      `/api/integrations/google-calendar/callback?code=${code}&state=${c.owner.membershipId}`,
-      [...api.sessionCookies(c.owner.userId), { name: "gcal_oauth_state", value: c.owner.membershipId }],
+      `/api/integrations/google-calendar/callback?code=${code}&state=${startedOrg(c.owner).q}`,
+      [...api.sessionCookies(c.owner.userId)],
     );
     expect(landed).toContain("gcal_connected=true");
     expect((await connections(c.org, "google_calendar")).map((r) => [r.external_account_id, r.status])).toEqual([
@@ -462,8 +471,7 @@ describe.skipIf(!hasPostgrest)("Google Calendar for the company (Settings)", { t
     expect(await active(other.org, "google_calendar"), "another company's stays on").toHaveLength(1);
   });
 
-  // FIX-LATER: disconnectGoogleCalendarAction has no membership_id IS NULL filter, so the company's Disconnect also switches off every cleaner's personal calendar (and leaves their events stranded on it)
-  it.fails("the company's Disconnect leaves each cleaner's own calendar connected", async () => {
+  it("the company's Disconnect leaves each cleaner's own calendar connected", async () => {
     const c = await company();
     await connected(c.org, "google_calendar", uniq("tok-office"));
     await connected(c.org, "google_calendar", uniq("tok-anna"), { member: c.anna });
@@ -491,14 +499,15 @@ describe.skipIf(!hasPostgrest)("a cleaner's own Google Calendar (Field → Profi
     const go = await as(c.anna, () => profile.connectMyGoogleCalendarAction());
     const to = new URL(redirectOf(go));
     expect(to.hostname).toBe("accounts.google.com");
-    expect(to.searchParams.get("state")).toBe(`mbr:${c.anna.membershipId}`);
-    expect(cookie("gcal_member_oauth_state")).toBe(c.anna.membershipId);
+    const state = to.searchParams.get("state")!;
+    expect(state, "not her bare id any more").not.toContain(c.anna.membershipId);
+    expect(cookie("gcal_member_oauth_state"), "the same-site cookie the callback checks").toBe(state);
     const browser = [...request.cookies];
 
     const code = uniq("code");
     const token = uniq("tok-anna");
     googleGrants.set(code, { token, email: "anna@example.com" });
-    const landed = await back(gcalCallback, `/api/integrations/google-calendar/callback?code=${code}&state=${encodeURIComponent(`mbr:${c.anna.membershipId}`)}`, browser);
+    const landed = await back(gcalCallback, `/api/integrations/google-calendar/callback?code=${code}&state=${encodeURIComponent(state)}`, browser);
     expect(landed, api.log().slice(-800)).toBe(`${SITE}/field/profile?gcal_connected=true`);
 
     const rows = await active(c.org, "google_calendar");
@@ -521,15 +530,14 @@ describe.skipIf(!hasPostgrest)("a cleaner's own Google Calendar (Field → Profi
     googleGrants.set(code, { token: uniq("tok-bea"), email: "bea@example.com" });
     const landed = await back(
       gcalCallback,
-      `/api/integrations/google-calendar/callback?code=${code}&state=${encodeURIComponent(`mbr:${c.anna.membershipId}`)}`,
+      `/api/integrations/google-calendar/callback?code=${code}&state=${startedOwn(c.anna).q}`,
       api.sessionCookies(c.bea.userId),
     );
     expect(landed).toBe(`${SITE}/field/profile?gcal_error=${encodeURIComponent("Invalid session — please try again")}`);
     expect(await connections(c.org)).toEqual([]);
   });
 
-  // FIX-LATER: same cause as the company flow: the member state is "mbr:<membership id>" and the cookie path checks nothing else, so a teammate who sets her own cookie takes over another cleaner's calendar connection (wiping her events)
-  it.fails("a teammate who sets her own state cookie to Anna's membership can't take over Anna's calendar", async () => {
+  it("a teammate who sets her own state cookie to Anna's membership can't take over Anna's calendar", async () => {
     const c = await company();
     const annaToken = uniq("tok-anna");
     await connected(c.org, "google_calendar", annaToken, { member: c.anna, email: "anna@example.com" });
@@ -561,8 +569,8 @@ describe.skipIf(!hasPostgrest)("a cleaner's own Google Calendar (Field → Profi
     googleGrants.set(code, { token: newToken, email: "anna.new@example.com" });
     const landed = await back(
       gcalCallback,
-      `/api/integrations/google-calendar/callback?code=${code}&state=${encodeURIComponent(`mbr:${c.anna.membershipId}`)}`,
-      [...api.sessionCookies(c.anna.userId), { name: "gcal_member_oauth_state", value: c.anna.membershipId }],
+      `/api/integrations/google-calendar/callback?code=${code}&state=${startedOwn(c.anna).q}`,
+      [...api.sessionCookies(c.anna.userId)],
     );
     expect(landed).toContain("gcal_connected=true");
     expect(google.calendar(oldToken).has(ev.id), "the old event was taken off").toBe(false);

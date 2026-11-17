@@ -4,6 +4,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
 import { TaskForm } from "../../task-form";
 import { fetchTaskMemberOptions } from "../../options";
+import { getOrgTimezone } from "@/lib/org-timezone";
 
 export const metadata = { title: "Edit task" };
 
@@ -12,7 +13,8 @@ export default async function EditTaskPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  await requireMembership(["owner", "admin", "manager"]);
+  const membership = await requireMembership(["owner", "admin", "manager"]);
+  const timezone = await getOrgTimezone(membership.organization_id);
   const { id } = await params;
   const supabase = await createSupabaseServerClient();
 
@@ -44,6 +46,7 @@ export default async function EditTaskPage({
       <div className="max-w-2xl rounded-lg border border-border bg-card p-6">
         <TaskForm
           mode="edit"
+          timezone={timezone}
           id={task.id}
           defaults={{
             title: task.title,

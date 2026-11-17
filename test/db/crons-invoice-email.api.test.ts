@@ -398,8 +398,7 @@ describe.skipIf(!hasPostgrest)("invoice-auto-send: each due draft goes once, and
     expect(told.map((t) => t.recipient_membership_id).sort()).toEqual([c.owner.membershipId, c.admin.membershipId].sort());
   });
 
-  // FIX-LATER: a scheduled draft that took a prepayment becomes partially_paid and auto-send (status = 'draft' only) never sends it
-  it.fails("a scheduled draft that took a part prepayment is still sent to the client", async () => {
+  it("a scheduled draft that took a part prepayment is still sent to the client, and stays part-paid", async () => {
     const { GET } = await import("@/app/api/cron/invoice-auto-send/route");
     const c = await company("Prepaid Co", { autoSend: true });
     const k = await client(c.org);
@@ -412,6 +411,9 @@ describe.skipIf(!hasPostgrest)("invoice-auto-send: each due draft goes once, and
     expect((await call(GET, "/api/cron/invoice-auto-send")).status).toBe(200);
     expect(mailTo(k.email)).toHaveLength(1);
     expect((await inv(id)).sent_at).not.toBeNull();
+    expect((await inv(id)).status, "the payment still shows").toBe("partially_paid");
+    expect((await call(GET, "/api/cron/invoice-auto-send")).status).toBe(200);
+    expect(mailTo(k.email), "once").toHaveLength(1);
   });
 });
 

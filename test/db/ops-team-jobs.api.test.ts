@@ -409,8 +409,7 @@ describe.skipIf(!hasPostgrest)("announce to team", () => {
     for (const nobody of [dina, ivy, other.owner, other.anna]) expect(outbox.email.map((m) => m.to)).not.toContain(await emailOf(nobody));
   });
 
-  // FIX-LATER: deactivating a member leaves her in #general (and her push subscription in place), and sendChatMessageAction pushes every thread member whatever her status, so the announcement buzzes her phone
-  it.fails("doesn't buzz the phone of a cleaner who has been deactivated", async () => {
+  it("doesn't buzz the phone of a cleaner who has been deactivated", async () => {
     const c = await company();
     const dina = await addMember(api.sql, c.org, "employee", "Dina");
     await api.sql(

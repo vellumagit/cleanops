@@ -837,8 +837,7 @@ describe.skipIf(!hasPostgrest)("tasks", () => {
     expect(await taskRow(id)).toMatchObject({ title: "Call the window supplier", assigned_to: c.olha.membershipId });
   });
 
-  // FIX-LATER: updateTaskAction stores the form's wall-clock due/remind times as UTC, so each save of the edit page moves them 6 hours earlier in Regina
-  it.fails("opening a task and saving it unchanged keeps its due time and reminder", async () => {
+  it("opening a task and saving it unchanged keeps its due time and reminder", async () => {
     const c = await company();
     // Due 9:00 AM Regina on Dec 1 (15:00 UTC), reminder at 8:00 AM.
     const id = await task(c, { title: "Inspect the Hill house", assignedTo: c.olha, dueAt: "2026-12-01T15:00:00Z", remindAt: "2026-12-01T14:00:00Z" });
@@ -856,8 +855,7 @@ describe.skipIf(!hasPostgrest)("tasks", () => {
     expect(await taskRow(id)).toMatchObject({ due_at: "2026-12-01T15:00Z", remind_at: "2026-12-01T14:00Z" });
   });
 
-  // FIX-LATER: updateTaskAction clears reminded_at on every save, not only when remind_at changes, so the hourly job sends an old reminder again
-  it.fails("editing a task whose reminder already went doesn't send it again", async () => {
+  it("editing a task whose reminder already went doesn't send it again", async () => {
     const c = await company();
     const remindAt = new Date(Date.now() - 2 * 3_600_000).toISOString();
     const id = await task(c, { title: "Restock the van", assignedTo: c.olha, remindAt, remindedAt: new Date(Date.now() - 3_600_000).toISOString() });
@@ -868,8 +866,7 @@ describe.skipIf(!hasPostgrest)("tasks", () => {
     expect(outbox.push.filter((p) => p.to === c.olha.membershipId && p.title.includes("Restock the van"))).toEqual([]);
   });
 
-  // FIX-LATER: updateTaskAction treats an update that matched no task as saved (redirects to the list)
-  it.fails("a save that changed no task says so", async () => {
+  it("a save that changed no task says so", async () => {
     const c = await company();
     const other = await company("Other Co");
     const theirs = await task(other, { title: "Their task" });

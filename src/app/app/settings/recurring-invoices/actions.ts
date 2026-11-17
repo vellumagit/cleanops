@@ -39,6 +39,26 @@ function readForm(formData: FormData) {
   };
 }
 
+/**
+ * The client a standing invoice bills must be one of this company's. The
+ * form's picker only lists them, but the action took any id: the database
+ * rule on invoice_series checks the series' company, not the client's, so a
+ * series could be saved against another company's client and billed nightly.
+ */
+async function isOwnClient(
+  supabase: Awaited<ReturnType<typeof getActionContext>>["supabase"],
+  organizationId: string,
+  clientId: string,
+): Promise<boolean> {
+  const { data } = (await supabase
+    .from("clients")
+    .select("id")
+    .eq("id", clientId)
+    .eq("organization_id", organizationId)
+    .maybeSingle()) as unknown as { data: { id: string } | null };
+  return Boolean(data);
+}
+
 export async function createRecurringInvoiceAction(
   _prev: RecurringInvoiceState,
   formData: FormData,
@@ -75,6 +95,13 @@ export async function createRecurringInvoiceAction(
         values: Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, String(v ?? "")])),
       };
     }
+  }
+
+  if (!(await isOwnClient(supabase, membership.organization_id, parsed.data.client_id))) {
+    return {
+      errors: { client_id: "Pick one of your clients." },
+      values: Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, String(v ?? "")])),
+    };
   }
 
   const { error } = await (supabase
@@ -150,6 +177,15 @@ export async function updateRecurringInvoiceAction(
         ),
       };
     }
+  }
+
+  if (!(await isOwnClient(supabase, membership.organization_id, parsed.data.client_id))) {
+    return {
+      errors: { client_id: "Pick one of your clients." },
+      values: Object.fromEntries(
+        Object.entries(raw).map(([k, v]) => [k, String(v ?? "")]),
+      ),
+    };
   }
 
   const { error } = await (supabase

@@ -13,6 +13,7 @@ import {
   updateTaskAction,
   type TaskFormState,
 } from "./actions";
+import { toDatetimeLocal } from "@/lib/validators/common";
 
 const empty: TaskFormState = {};
 
@@ -28,19 +29,16 @@ type Defaults = {
 };
 
 /**
- * Convert a UTC ISO string to a datetime-local value (YYYY-MM-DDTHH:mm)
- * in local browser time — used to pre-fill date/time inputs.
+ * A stored instant as the datetime-local value (YYYY-MM-DDTHH:mm) for the
+ * COMPANY's timezone: the same clock the save reads it back in. (It used to
+ * be the browser's, or the server's while rendering, which is how a task
+ * drifted six hours on every save.) A value that is already a form value,
+ * handed back after a validation error, passes through.
  */
-function isoToLocalInput(iso: string | null | undefined): string {
+function isoToLocalInput(iso: string | null | undefined, timezone: string): string {
   if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  const y = d.getFullYear();
-  const mo = String(d.getMonth() + 1).padStart(2, "0");
-  const da = String(d.getDate()).padStart(2, "0");
-  const h = String(d.getHours()).padStart(2, "0");
-  const mi = String(d.getMinutes()).padStart(2, "0");
-  return `${y}-${mo}-${da}T${h}:${mi}`;
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(iso)) return iso;
+  return toDatetimeLocal(iso, timezone);
 }
 
 export function TaskForm({
@@ -48,11 +46,14 @@ export function TaskForm({
   id,
   defaults,
   members = [],
+  timezone,
 }: {
   mode: "create" | "edit";
   id?: string;
   defaults?: Defaults;
   members?: MemberOption[];
+  /** The company's timezone: task times are shown and saved in it. */
+  timezone: string;
 }) {
   const action =
     mode === "create"
@@ -101,7 +102,7 @@ export function TaskForm({
           <DateTimeInput
             id="due_at"
             name="due_at"
-            defaultValue={isoToLocalInput(v.due_at)}
+            defaultValue={isoToLocalInput(v.due_at, timezone)}
           />
         </FormField>
 
@@ -114,7 +115,7 @@ export function TaskForm({
           <DateTimeInput
             id="remind_at"
             name="remind_at"
-            defaultValue={isoToLocalInput(v.remind_at)}
+            defaultValue={isoToLocalInput(v.remind_at, timezone)}
           />
         </FormField>
       </div>

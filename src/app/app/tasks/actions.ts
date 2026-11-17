@@ -82,6 +82,26 @@ async function spawnNextOccurrence(
   });
 }
 
+/**
+ * The form's "2026-12-01T09:00" is a wall-clock time in the COMPANY's
+ * timezone. Stored as typed, Postgres read it as UTC: 9:00 AM became 3:00 AM
+ * in Alberta, and because the edit page showed that back as local time, every
+ * save moved a task another six hours earlier. A value that already carries
+ * its own offset (an exact instant) is kept as it is.
+ */
+async function toInstant(value: string | null | undefined, organizationId: string): Promise<string | null> {
+  const v = (value ?? "").trim();
+  if (!v) return null;
+  if (/(?:[zZ]|[+-]\d{2}:?\d{2})$/.test(v)) {
+    const d = new Date(v);
+    return Number.isNaN(d.getTime()) ? null : d.toISOString();
+  }
+  const { getOrgTimezone } = await import("@/lib/org-timezone");
+  const { localInputToUtcIso } = await import("@/lib/validators/common");
+  const iso = localInputToUtcIso(v, await getOrgTimezone(organizationId));
+  return Number.isNaN(new Date(iso).getTime()) ? null : iso;
+}
+
 // ---------------------------------------------------------------------------
 // Create
 // ---------------------------------------------------------------------------
@@ -102,8 +122,8 @@ export async function createTaskAction(
     title: parsed.data.title,
     notes: parsed.data.notes ?? null,
     assigned_to: parsed.data.assigned_to ?? null,
-    due_at: parsed.data.due_at ?? null,
-    remind_at: parsed.data.remind_at ?? null,
+    due_at: await toInstant(parsed.data.due_at, membership.organization_id),
+    remind_at: await toInstant(parsed.data.remind_at, membership.organization_id),
     recurrence: parsed.data.recurrence ?? null,
   });
 
@@ -124,28 +144,47 @@ export async function updateTaskAction(
   _prev: TaskFormState,
   formData: FormData,
 ): Promise<TaskFormState> {
-  const { supabase } = await getActionContext();
+  const { membership, supabase } = await getActionContext();
   const raw = readFormValues(formData);
   const parsed = parseForm(TaskSchema, raw);
 
   if (!parsed.ok) return { errors: parsed.errors, values: raw as never };
 
-  const { error } = await supabase
+  const dueAt = await toInstant(parsed.data.due_at, membership.organization_id);
+  const remindAt = await toInstant(parsed.data.remind_at, membership.organization_id);
+
+  // Re-arm the reminder only when its time actually changed. Clearing
+  // reminded_at on every save sent an old reminder again after any edit.
+  const { data: before } = (await supabase
+    .from("tasks")
+    .select("remind_at")
+    .eq("id", id)
+    .maybeSingle()) as unknown as { data: { remind_at: string | null } | null };
+  const sameReminder =
+    (before?.remind_at ? new Date(before.remind_at).getTime() : null) ===
+    (remindAt ? new Date(remindAt).getTime() : null);
+
+  // .select() so a save that matched no task says so instead of returning
+  // to the list as if it had saved.
+  const { data: saved, error } = (await supabase
     .from("tasks")
     .update({
       title: parsed.data.title,
       notes: parsed.data.notes ?? null,
       assigned_to: parsed.data.assigned_to ?? null,
-      due_at: parsed.data.due_at ?? null,
-      remind_at: parsed.data.remind_at ?? null,
+      due_at: dueAt,
+      remind_at: remindAt,
       recurrence: parsed.data.recurrence ?? null,
-      // Reset reminded_at whenever remind_at changes so the reminder fires again.
-      reminded_at: null,
+      ...(sameReminder ? {} : { reminded_at: null }),
     })
-    .eq("id", id);
+    .eq("id", id)
+    .select("id")) as unknown as { data: Array<{ id: string }> | null; error: { message: string } | null };
 
   if (error) {
     return { errors: { _form: "Failed to save task. Please try again." } };
+  }
+  if (!saved?.length) {
+    return { errors: { _form: "This task wasn't saved. It may have been deleted, or it isn't yours to change." } };
   }
 
   revalidatePath("/app/tasks");

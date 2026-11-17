@@ -219,10 +219,10 @@ export async function sendChatMessageAction(
     const [membersResult, senderResult] = await Promise.all([
       adminDb
         .from("chat_thread_members")
-        .select("membership_id, member:memberships ( role )")
+        .select("membership_id, member:memberships ( role, status )")
         .eq("thread_id", threadId)
         .neq("membership_id", senderMembershipId) as unknown as Promise<{
-        data: Array<{ membership_id: string; member: { role: string } | null }> | null;
+        data: Array<{ membership_id: string; member: { role: string; status: string } | null }> | null;
       }>,
       adminDb
         .from("memberships")
@@ -232,7 +232,10 @@ export async function sendChatMessageAction(
         data: { display_name: string | null; profile: { full_name: string | null } | null } | null;
       }>,
     ]);
-    const members = membersResult?.data ?? [];
+    // Active people only. Deactivating someone leaves them in #general (and
+    // their phone subscribed), so every team message and announcement, with
+    // its preview, kept buzzing the phone of a cleaner who had left.
+    const members = (membersResult?.data ?? []).filter((m) => m.member?.status === "active");
     if (members.length === 0) return;
     const sender = senderResult?.data;
     let senderName = sender?.display_name?.trim() || sender?.profile?.full_name?.trim() || "";

@@ -10,6 +10,19 @@ Severity: **High** = money, privacy or another company's data at risk;
 **Med** = wrong result someone will notice; **Low** = wording, edge cases.
 Faults marked **Security** should go first.
 
+## Fixed so far
+
+- **17 Nov, first six:** Google Calendar connect now uses a sealed one-time
+  state (#20); the company's Disconnect leaves cleaners' calendars alone
+  (#22); part-prepaid invoices are auto-sent and stay part-paid (#66);
+  deactivated people get no pushes, in chat or anywhere else (#51); task
+  times are read and shown in the company's timezone, a reminder re-arms
+  only when its time changes, and a task save that saved nothing says so
+  (#52, #56); a recurring invoice must be for one of the company's own
+  clients, and one that fails no longer stops the night's run (#5, #6).
+  Each fault's test is now a normal test.
+- **17 Nov:** the production catch-up (see the next section).
+
 ## Waiting on you
 
 - **Managers migration.** `supabase/migrations/20261116060000_managers_update_estimates_invoices.sql`
@@ -121,8 +134,8 @@ Faults marked **Security** should go first.
 
 | # | Sev | What's wrong | Where | Shown by |
 |---|---|---|---|---|
-| 5 | High | A recurring invoice can be set up for another company's client: the action doesn't check the client, and `invoice_series` lacks the client-company guard `invoices` has. | `settings/recurring-invoices/actions.ts` create + update | `settings-recurring-invoices` "never makes a series for another company's client" |
-| 6 | High | One recurring invoice that fails to save stops the whole nightly run: its period is skipped silently, and every company later in the run gets no invoice that night. Fix: catch per series and give the period back. | `src/lib/automations/billing.ts` ~715–745 | "…gives its period back and doesn't stop other companies' invoices" |
+| 5 | FIXED 17 Nov (was High) | A recurring invoice can be set up for another company's client: the action doesn't check the client, and `invoice_series` lacks the client-company guard `invoices` has. | `settings/recurring-invoices/actions.ts` create + update | `settings-recurring-invoices` "never makes a series for another company's client" |
+| 6 | FIXED 17 Nov (was High) | One recurring invoice that fails to save stops the whole nightly run: its period is skipped silently, and every company later in the run gets no invoice that night. Fix: catch per series and give the period back. | `src/lib/automations/billing.ts` ~715–745 | "…gives its period back and doesn't stop other companies' invoices" |
 | 7 | Med | The form's line-item example uses `description`/`unit_cents`; the job reads `label`/`unit_price_cents`. Lines written like the example bill at $0 under a correct total. | `recurring-invoices/form.tsx` placeholder vs `billing.ts` ~768–790 | "…bills lines that add up to the invoice" |
 | 8 | Med | Recurring-invoice buttons ignore a manager's Invoices switch. | `recurring-invoices/actions.ts`, `page.tsx` | "a manager with Invoices & estimates switched off can't make a standing invoice" |
 | 9 | Med | The first-run date is saved as UTC midnight, a day early in Alberta: the list shows Nov 30 for Dec 1. | `recurring-invoices/actions.ts` ~89, ~163 | "the first invoice date … is that date in the company's own calendar" |
@@ -151,9 +164,9 @@ Faults marked **Security** should go first.
 
 | # | Sev | What's wrong | Where | Shown by |
 |---|---|---|---|---|
-| 20 | High, Security | Google Calendar connect uses the person's membership id as its OAuth state, not a one-time secret. Anyone who knows an owner's id (a teammate, an ex-employee) can connect that company's calendar to their own Google account and receive every job (client names, addresses, notes); the same works against a cleaner's personal calendar. Fix: `issueOAuthState`/`consumeOAuthState`, as QuickBooks and Sage do. | `settings/integrations/google-calendar-actions.ts` ~30, `field/profile/actions.ts` ~124, `api/integrations/google-calendar/callback/route.ts` | `integrations-oauth` (3 tests: forged state cookie, callback never started, teammate takeover) |
+| 20 | FIXED 17 Nov (was High, Security) | Google Calendar connect uses the person's membership id as its OAuth state, not a one-time secret. Anyone who knows an owner's id (a teammate, an ex-employee) can connect that company's calendar to their own Google account and receive every job (client names, addresses, notes); the same works against a cleaner's personal calendar. Fix: `issueOAuthState`/`consumeOAuthState`, as QuickBooks and Sage do. | `settings/integrations/google-calendar-actions.ts` ~30, `field/profile/actions.ts` ~124, `api/integrations/google-calendar/callback/route.ts` | `integrations-oauth` (3 tests: forged state cookie, callback never started, teammate takeover) |
 | 21 | High, Security | "Sync to QuickBooks/Sage" doesn't check the invoice belongs to the caller's company: any office person can book another company's invoice (even a draft) into that company's books, and the error leaks its client name. | `invoices/actions.ts` ~1139, ~1175; `lib/quickbooks.ts` ~574, `lib/sage.ts` ~806 | `integrations-sync` "another company's invoice id books nothing into their QuickBooks / Sage" |
-| 22 | Med | The company's Google Disconnect also switches off every cleaner's own calendar connection. Fix: `.is("membership_id", null)`. | `google-calendar-actions.ts` ~57–62 | `integrations-oauth` "the company's Disconnect leaves each cleaner's own calendar connected" |
+| 22 | FIXED 17 Nov (was Med) | The company's Google Disconnect also switches off every cleaner's own calendar connection. Fix: `.is("membership_id", null)`. | `google-calendar-actions.ts` ~57–62 | `integrations-oauth` "the company's Disconnect leaves each cleaner's own calendar connected" |
 | 23 | Med | After switching Google accounts, a 30-second token cache pushes the jobs back onto the old calendar; the new one stays empty. | `lib/google-calendar.ts` ~274–290 | "reconnecting with a different Google account moves the company's jobs…" (+ cleaner version) |
 | 24 | Med | A voided invoice can be booked into QuickBooks/Sage as revenue (from a stale page). | `lib/quickbooks.ts` ~611, `lib/sage.ts` ~847 | "a voided invoice is not booked into QuickBooks / Sage" |
 | 25 | Low | Sync buttons ignore a manager's Invoices switch (other invoice actions don't check it either). | `invoices/actions.ts` ~1139, ~1175 | "a manager with invoicing switched off can't push an invoice into the books" |
@@ -202,12 +215,12 @@ touch no one yet.
 
 | # | Sev | What's wrong | Where | Shown by |
 |---|---|---|---|---|
-| 51 | Med, Privacy | Deactivated cleaners still get team chat pushes (#general and announcements, with the message preview): pushes go to every thread member whatever their status, and deactivation never removes them. Svit has deactivated cleaners (Olga, for one). | `lib/chat-actions.ts` ~217–262 | `ops-team-jobs` "doesn't buzz the phone of a cleaner who has been deactivated" |
-| 52 | Med | Saving a task moves its due and reminder times 6 hours earlier: the form's time is stored as UTC, so 9:00 AM becomes 3 AM Alberta, and every save shifts it again. | `tasks/actions.ts` ~139, `lib/validators/tasks.ts` | `ops-team-jobs` "opening a task and saving it unchanged keeps its due time and reminder" |
+| 51 | FIXED 17 Nov (was Med, Privacy) | Deactivated cleaners still get team chat pushes (#general and announcements, with the message preview): pushes go to every thread member whatever their status, and deactivation never removes them. Svit has deactivated cleaners (Olga, for one). | `lib/chat-actions.ts` ~217–262 | `ops-team-jobs` "doesn't buzz the phone of a cleaner who has been deactivated" |
+| 52 | FIXED 17 Nov (was Med) | Saving a task moves its due and reminder times 6 hours earlier: the form's time is stored as UTC, so 9:00 AM becomes 3 AM Alberta, and every save shifts it again. | `tasks/actions.ts` ~139, `lib/validators/tasks.ts` | `ops-team-jobs` "opening a task and saving it unchanged keeps its due time and reminder" |
 | 53 | Med | A cleaner can take over any task by assigning it to themselves: the task update policy admits any member, and the action has no role check. | `tasks/actions.ts` ~122–145, migration `20260514010000_tasks.sql` ~92 | "a cleaner can't take over a task that isn't hers" |
 | 54 | Med | One person's "mark all read" clears the team announcement for everyone (an org-wide notice is one row), though the code promises it doesn't. | `notifications/actions.ts` ~26–36, `lib/notify.ts` ~236 | "the owner marking everything read leaves the team announcement unread for the manager" |
 | 55 | Med | An on-call contact's phone typed without +1 ("780 271 1971") is saved as `+7802711971`, a Russian number, so shift-offer texts go astray. `lib/phone.ts` fixed this elsewhere. | `lib/validators/freelancer.ts` ~13–20 | `ops-office-lists` "a local ten-digit number is saved as the North American number it is" |
-| 56 | Low | Editing a task whose reminder already went sends it again. | `tasks/actions.ts` ~142 | "editing a task whose reminder already went doesn't send it again" |
+| 56 | FIXED 17 Nov (was Low) | Editing a task whose reminder already went sends it again. | `tasks/actions.ts` ~142 | "editing a task whose reminder already went doesn't send it again" |
 | 57 | Low | Managers with the on-call pool switched off can still add, change and remove contacts, and cancel offers. | `freelancers/actions.ts` | "a manager without the on-call pool can't…" (2 tests) |
 | 58 | Low | Deleting an on-call contact logs a deletion that didn't happen (e.g. a cleaner's press). | `freelancers/actions.ts` ~153 | "a delete that removed nothing leaves no 'deleted' in the history" |
 | 59 | Low | A manager pinning someone else's post is told "Pinned", but nothing changes (the database allows only the author or owner/admin). | `lib/feed-actions.ts` ~163 | "a manager pinning someone else's post either pins it or is told she can't" |
@@ -222,7 +235,7 @@ touch no one yet.
 | 63 | High (not live: see drift) | The purge list still names `webhook_subscriptions`, which the migrations dropped, so against the migrated schema every purge stops before the tombstone and before erasing members' logins, and `admin/purge-org` always answers not-ok. Production still has the table (drift), and no company is due for purge. | `lib/tenant-data.ts` ~582 | "a purge against the schema the migrations build finishes without errors…" |
 | 64 | Med | The purge's batched-delete fallback (for a big company that times out) can't run inside the cron: the fail-closed guard throws first, so a large company can never be purged. | `lib/tenant-data.ts` ~338–346 | "falls back to batched deletes when the one-statement delete times out…" |
 | 65 | Low | A purge that failed is still reported as purged, hiding it from the morning check. | `lib/tenant-data.ts` ~842–853 | "an org whose purge failed is not reported as purged" |
-| 66 | Med | A scheduled invoice that took a part prepayment is never auto-sent: the payment makes it part-paid, and auto-send only looks at drafts. The client never gets the bill for the balance (Svit's prepay flow). | `lib/invoice-send.ts` ~511, ~618 | `crons-invoice-email` "a scheduled draft that took a part prepayment is still sent to the client" |
+| 66 | FIXED 17 Nov (was Med) | A scheduled invoice that took a part prepayment is never auto-sent: the payment makes it part-paid, and auto-send only looks at drafts. The client never gets the bill for the balance (Svit's prepay flow). | `lib/invoice-send.ts` ~511, ~618 | `crons-invoice-email` "a scheduled draft that took a part prepayment is still sent to the client" |
 | 67 | Med | Auto-send skips a client with no email and never tells the owner, though the code promises an alert; the morning digest had listed it as going out. | `lib/invoice-send.ts` ~590–599 | "a client with no email: the draft is skipped and the owner is told…" |
 | 68 | Low | Two overdue-reminder runs at once both remind the same client (sends, then stamps). | `lib/automations.ts` ~1823–1884 | "two runs at the same moment remind each client once" |
 | 69 | Med | The in-app assistant refuses anyone active in two companies (you, for one: Svit plus the Velluma demo). | `api/ai-chat/route.ts` ~84–104 | `crons-assistant` "someone active in two companies can use the assistant" |

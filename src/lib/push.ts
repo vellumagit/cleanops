@@ -57,6 +57,18 @@ export async function sendPushToMembership(
   if (!isConfigured) return 0;
 
   const db = createSupabaseAdminClient();
+
+  // The last gate for every push to one person, whoever asked for it: someone
+  // deactivated (or still only invited) gets nothing. Their subscription row
+  // outlives the deactivation, so without this any caller that forgets to
+  // check status reaches a phone that should have gone quiet.
+  const { data: who } = (await db
+    .from("memberships")
+    .select("status")
+    .eq("id", membershipId)
+    .maybeSingle()) as unknown as { data: { status: string } | null };
+  if (who && who.status !== "active") return 0;
+
   const { data: subs } = await db
     .from("push_subscriptions" as never)
     .select("id, endpoint, keys_p256dh, keys_auth")
