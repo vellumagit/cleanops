@@ -77,9 +77,20 @@ describe.skipIf(!hasPostgrest)("the field app for someone with a long history", 
         profile_id: olha.userId,
         capabilities: null as never,
       });
-      // From yesterday on (an overnight or overdue job stays in view), so
-      // yesterday's job and the thirty ahead.
-      expect(jobs).toHaveLength(31);
+      // From yesterday on (an overnight or overdue job stays in view): the
+      // thirty ahead, and the one or two behind that fall after the app's
+      // "yesterday, midnight", which is this computer's local midnight while
+      // the jobs sit on UTC days. Worked out the app's way, not hard-coded:
+      // near midnight UTC it is two behind, not one.
+      const since = new Date();
+      since.setDate(since.getDate() - 1);
+      since.setHours(0, 0, 0, 0);
+      const [{ n }] = await api.sql<{ n: number }>(
+        "select count(*)::int as n from public.bookings where organization_id = $1 and scheduled_at >= $2",
+        [org, since.toISOString()],
+      );
+      expect(n).toBeGreaterThanOrEqual(31);
+      expect(jobs).toHaveLength(n);
       expect(jobs.every((j) => new Date(j.scheduled_at) > new Date(Date.now() - 2 * 86_400_000))).toBe(true);
       expect(jobs.find((j) => j.id === team.id)).toMatchObject({ crew_size: 2 });
       expect(jobs.filter((j) => j.id !== team.id).every((j) => j.crew_size === 1)).toBe(true);

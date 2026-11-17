@@ -329,7 +329,7 @@ export async function createPtoRequestAction(
 export async function submitSelfPtoRequestAction(
   formData: FormData,
 ): Promise<Result> {
-  const { membership, supabase } = await getActionContext();
+  const { membership } = await getActionContext();
 
   const start_date = String(formData.get("start_date") ?? "");
   const end_date = String(formData.get("end_date") ?? "");
@@ -353,7 +353,16 @@ export async function submitSelfPtoRequestAction(
   }
   const hours = isSub ? 0 : postedHours;
 
-  const { error } = await (supabase
+  // Written by the server, not as the cleaner. Migration 20260913030000
+  // (insider guards, S2) dropped the policy that let an employee insert her
+  // own request, reasoning that "the field app has no PTO submit path"; it
+  // has one (/field/time-off), and from Sep 13 every cleaner who asked for
+  // time off was refused with a raw row-level security error. Only managers
+  // (who pass the admin policy) could. The guard's point stands: nobody
+  // writes their own status or a 9,999-hour request. Every value below is
+  // the server's: her own membership, her org, pending, hours bounded above.
+  const { createSupabaseAdminClient } = await import("@/lib/supabase/admin");
+  const { error } = await (createSupabaseAdminClient()
     .from("pto_requests")
     .insert({
       organization_id: membership.organization_id,

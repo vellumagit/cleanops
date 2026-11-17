@@ -362,7 +362,9 @@ describe.skipIf(!hasPostgrest)("rederive-times: future visits back at the local 
     const tenUtcOff = new Date(new Date(nine).getTime() + HOUR).toISOString();
     const off = await visit(c, day, tenUtcOff);
     const right = await visit(c, day + DAY, nineAm(day + DAY));
-    const yesterday = mondayAhead(0) - 6 * DAY;
+    // Two days ago, whatever day of the week the suite runs on.
+    const today = new Date();
+    const yesterday = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()) - 2 * DAY;
     const past = await visit(c, yesterday, new Date(new Date(nineAm(yesterday)).getTime() + HOUR).toISOString());
     const finished = await visit(c, day + 2 * DAY, new Date(new Date(nineAm(day + 2 * DAY)).getTime() + HOUR).toISOString(), {
       status: "cancelled",

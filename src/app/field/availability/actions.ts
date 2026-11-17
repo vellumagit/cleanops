@@ -197,14 +197,21 @@ export async function deleteAvailabilityOverrideAction(
   const id = String(formData.get("id") ?? "").trim();
   if (!id) return { ok: false, error: "Missing override id." };
 
-  // RLS gates the delete to the owner of the row (self) or a manager.
-  const { error } = await (supabase
+  // RLS gates the delete to the owner of the row (self) or a manager. A
+  // refused delete removes nothing and reports no error, so ask what went:
+  // someone else's day off used to come back "removed" and stay.
+  const { data: removed, error } = await (supabase
     .from("availability_overrides" as never)
     .delete()
-    .eq("id" as never, id as never) as unknown as Promise<{
+    .eq("id" as never, id as never)
+    .select("id") as unknown as Promise<{
+    data: Array<{ id: string }> | null;
     error: { message: string } | null;
   }>);
   if (error) return { ok: false, error: error.message };
+  if (!removed || removed.length === 0) {
+    return { ok: false, error: "Only the person whose day it is, or a manager, can remove it." };
+  }
 
   revalidatePath("/field/availability", "page");
   revalidatePath("/app/scheduling", "page");

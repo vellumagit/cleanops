@@ -601,11 +601,18 @@ export async function completeJobAction(
  * sessions on any device.
  */
 export async function acceptGpsConsentAction(): Promise<void> {
-  const { membership, supabase } = await getActionContext();
-  await supabase
+  const { membership } = await getActionContext();
+  // Written by the server, for her own membership and this one column.
+  // As the cleaner, row-level security refused it without an error (no
+  // member may update a memberships row), so "Got it" never stuck: on
+  // 2026-11-16 not one employee or manager at any company had consent on
+  // record, and the banner came back on every load.
+  const { error } = (await createSupabaseAdminClient()
     .from("memberships")
     .update({ gps_consent_accepted_at: new Date().toISOString() })
-    .eq("id", membership.id);
+    .eq("id", membership.id)
+    .eq("organization_id", membership.organization_id)) as unknown as { error: { message: string } | null };
+  if (error) console.error("[gps-consent] could not record consent:", error.message);
   revalidatePath("/field", "layout");
 }
 

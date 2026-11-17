@@ -277,14 +277,22 @@ export async function deleteJobPhotoAction(
   if (!photo) return { ok: false, error: "Photo not found" };
 
   // Delete the row first — RLS handles authorization. If that succeeds,
-  // the object is orphaned and we can clean it up.
-  const { error: deleteRowErr } = (await supabase
+  // the object is orphaned and we can clean it up. "Succeeds" means a row
+  // went: a delete row-level security refuses deletes nothing and reports
+  // no error, so a teammate's photo used to come back "deleted" (and the
+  // file was then removed from under a row that still pointed at it).
+  const { data: deletedRows, error: deleteRowErr } = (await supabase
     .from("job_photos" as never)
     .delete()
-    .eq("id" as never, photoId as never)) as unknown as {
+    .eq("id" as never, photoId as never)
+    .select("id")) as unknown as {
+    data: Array<{ id: string }> | null;
     error: { message: string } | null;
   };
   if (deleteRowErr) return { ok: false, error: deleteRowErr.message };
+  if (!deletedRows || deletedRows.length === 0) {
+    return { ok: false, error: "Only the person who added this photo, or a manager, can delete it." };
+  }
 
   const { error: removeErr } = await supabase.storage
     .from("job-photos")

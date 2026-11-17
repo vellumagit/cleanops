@@ -115,6 +115,13 @@ export type Api = {
   log: () => string;
   /** Record every database call the app makes between start() and stop(). */
   traffic: { start: () => void; stop: () => Traffic[] };
+  /**
+   * Files the app put in storage, "bucket/path" to byte size. The stand-in
+   * keeps files and answers uploads, removals and signed links; it does not
+   * enforce storage policies, so a test here proves what the app asked for,
+   * not what storage would have allowed.
+   */
+  storage: Map<string, number>;
   stop: () => Promise<void>;
 };
 
@@ -227,6 +234,7 @@ export async function startApi(): Promise<Api> {
   };
 
   let recording: Traffic[] | null = null;
+  const stored = new Map<string, number>();
 
   const proxy: Server = createServer((req, res) => {
     const chunks: Buffer[] = [];
@@ -277,6 +285,40 @@ export async function startApi(): Promise<Api> {
             }),
           );
           return;
+        }
+        // Storage, as far as the app uses it: upload, remove, signed link.
+        if (path.startsWith("/storage/v1/object/")) {
+          const rest = decodeURIComponent(path.split("?")[0].slice("/storage/v1/object/".length));
+          const reply = (status: number, body: unknown) => {
+            res.writeHead(status, { "content-type": "application/json" });
+            res.end(JSON.stringify(body));
+          };
+          if (!req.headers.authorization) return reply(401, { error: "no key" });
+          if (req.method === "POST" && rest.startsWith("sign/")) {
+            const key = rest.slice("sign/".length);
+            if (!stored.has(key)) return reply(404, { statusCode: "404", error: "not_found", message: "Object not found" });
+            return reply(200, { signedURL: `/object/sign/${key}?token=test` });
+          }
+          if (req.method === "POST" || req.method === "PUT") {
+            const body = Buffer.concat(chunks);
+            if (req.method === "POST" && stored.has(rest)) {
+              return reply(409, { statusCode: "409", error: "Duplicate", message: "The resource already exists" });
+            }
+            stored.set(rest, body.length);
+            return reply(200, { Key: rest, Id: rest });
+          }
+          if (req.method === "DELETE") {
+            const bucket = rest.split("/")[0];
+            let prefixes: string[] = [];
+            try {
+              prefixes = (JSON.parse(Buffer.concat(chunks).toString("utf8")) as { prefixes?: string[] }).prefixes ?? [];
+            } catch {
+              prefixes = [];
+            }
+            const removed = prefixes.filter((p) => stored.delete(`${bucket}/${p}`)).map((name) => ({ name, bucket_id: bucket }));
+            return reply(200, removed);
+          }
+          return reply(405, { error: `stand-in storage has no ${req.method}` });
         }
         // GoTrue's admin lookup, which the app uses to find an owner's email
         // (getOrgAdminRecipients): only with the service key, like GoTrue.
@@ -453,6 +495,7 @@ export async function startApi(): Promise<Api> {
         return out;
       },
     },
+    storage: stored,
     stop: async () => {
       // Let work the app fired without waiting for finish, so it meets a
       // database rather than a closed port.

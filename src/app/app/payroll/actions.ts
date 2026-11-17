@@ -221,11 +221,22 @@ export async function deletePayrollRunAction(formData: FormData) {
   // this is a sensitive financial record and we don't want accidents.
   if (run.status !== "draft" && confirmPhrase !== "DELETE") return;
 
-  await (supabase
+  // Checked. This was fire-and-forget: a delete that failed still logged
+  // "deleted" and sent the owner back to the list as though it had gone.
+  const { data: deleted, error: deleteErr } = await (supabase
     .from("payroll_runs")
     .delete()
     .eq("id", id)
-    .eq("organization_id", membership.organization_id) as unknown as Promise<unknown>);
+    .eq("organization_id", membership.organization_id)
+    .select("id") as unknown as Promise<{
+    data: Array<{ id: string }> | null;
+    error: { message: string } | null;
+  }>);
+  if (deleteErr) throw new Error(`The pay period wasn't deleted: ${deleteErr.message}`);
+  if (!deleted || deleted.length === 0) {
+    revalidatePath("/app/payroll", "page");
+    redirect("/app/payroll");
+  }
 
   await logAuditEvent({
     membership,

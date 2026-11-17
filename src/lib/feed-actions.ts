@@ -117,14 +117,22 @@ export async function deleteFeedPostAction(
     .eq("id" as never, postId as never)
     .maybeSingle()) as unknown as { data: { image_url: string | null } | null };
 
-  const { error } = await (supabase
+  // Ask what went. A delete row-level security refuses removes nothing and
+  // reports no error, and the image below is removed with full access: a
+  // refused delete used to leave the post standing with its picture gone.
+  const { data: removed, error } = await (supabase
     .from("feed_posts" as never)
     .delete()
-    .eq("id" as never, postId as never) as unknown as Promise<{
+    .eq("id" as never, postId as never)
+    .select("id") as unknown as Promise<{
+    data: Array<{ id: string }> | null;
     error: { message: string } | null;
   }>);
 
   if (error) return { ok: false, error: error.message };
+  if (!removed || removed.length === 0) {
+    return { ok: false, error: "Only the person who posted this, or a manager, can delete it." };
+  }
 
   const marker = "/org-assets/";
   const at = post?.image_url?.indexOf(marker) ?? -1;
