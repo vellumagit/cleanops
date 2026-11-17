@@ -40,11 +40,23 @@ Faults marked **Security** should go first.
     `docs/production-policy-check.sql`, 16 Nov):** "Members can update their
     org bookings", "…estimates" and "…invoices". Each is permissive, for every
     role, and checks only that the row is in the member's company (their
-    first active membership, `LIMIT 1`), never their role. So any active
-    member, a cleaner included, can change any booking, estimate or invoice
-    in their company through the API, for example an invoice's amount or
-    status. With the insider guards missing, nothing limits which booking
-    columns a cleaner can change. At Svit that is 10 cleaners and 2
+    first active membership, `LIMIT 1`), never their role. Measured on a copy
+    shaped like production (`test/db/catch-up-production.api.test.ts`):
+    **bookings**: any active member, a cleaner included, can change any
+    booking in their company through the API, the price included (with the
+    insider guards missing, nothing limits the columns). **Invoices and
+    estimates**: cleaners can't read them (the Nov 10 office-only read
+    rule), so they can't single one out; but an edit with no filter needs no
+    read and rewrote every invoice in the company at once on the copy.
+    Whether production's API refuses filterless edits (an optional Supabase
+    safeguard) can't be seen without trying a write there.
+  - **FIX READY: `supabase/migrations/20261116070000_catch_up_production.sql`.**
+    Run it in the SQL editor, then run `docs/production-drift-check.sql`
+    again: only these rows should remain (none of them touched by the fix):
+    `function extra` regexp_* (5) and rls_auto_enable (Supabase's own);
+    `policy extra` membership_admin_notes, the two webhook_subscriptions
+    rules and the old webhook_deliveries rule; `policy missing`
+    webhook_deliveries org_admins_read_webhook_deliveries. At Svit that is 10 cleaners and 2
     managers. It needs the API used directly with their own sign-in (not
     possible through the app's screens), and there's no sign of use. Time-off
     requests show none (no approved request without an approver, none over
@@ -60,17 +72,14 @@ Faults marked **Security** should go first.
   - **Nothing live calls a missing function:** `memberships_owner_guard`
     exists (from the Nov 11 migration) but has no trigger, so its call to the
     missing `is_service_role` never runs.
-  - **How to fix:** don't replay the old files as they are. The Sep 13 file's
+  - **Why a catch-up and not a replay:** the Sep 13 file's
     `memberships_owner_guard` still compares `pay_type`, which the Nov 11
     migration dropped, so replaying it would break every admin editing their
-    own membership. Write one catch-up migration for today's schema instead:
-    the guard functions and triggers as they are now, the report functions,
-    the crew booking rule, dropping the hand-made member-wide rules and the PTO
-    insert rule. Prove it first on a copy built from production's real rules.
-  - The managers migration from the last batch (`20261116060000`) assumed
-    managers couldn't change estimates or invoices. In production the
-    hand-made rules may already let them, and every member too; the policy
-    check will tell.
+    own membership. The catch-up was generated from the database the
+    migrations build today, and proven on a copy built with production's
+    real rules (the test above).
+  - The managers migration (`20261116060000`) did run in production: its
+    estimate and invoice rules match the migrations word for word.
 - **Earlier read-only API comparison (16 Nov), kept for the record:**
   - **Webhooks (Apr 21) never ran:** `webhook_subscriptions` still exists and
     `webhook_deliveries` has its old columns. No company uses webhooks yet.
