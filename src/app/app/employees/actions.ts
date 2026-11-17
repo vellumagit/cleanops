@@ -1093,7 +1093,21 @@ export async function forceDeleteEmployeeAction(
   // it, so a "user not found" response is the expected normal case.
   // Any unexpected error is logged but doesn't block the membership
   // delete — orphan cleanup is the whole point of this action.
+  // ...unless the same login also belongs to ANOTHER company. Deleting it
+  // cascades through profiles to every membership it has, so one company's
+  // owner could remove a person from a company they have nothing to do with.
+  // Then only this company's membership goes (below) and the login stays.
+  // Same guard generateRecoveryLinkAction has had all along.
+  let loginUsedElsewhere = false;
   if (target.profile_id) {
+    const { count: elsewhere } = (await admin
+      .from("memberships")
+      .select("id", { count: "exact", head: true })
+      .eq("profile_id", target.profile_id)
+      .neq("organization_id", membership.organization_id)) as unknown as { count: number | null };
+    loginUsedElsewhere = (elsewhere ?? 0) > 0;
+  }
+  if (target.profile_id && !loginUsedElsewhere) {
     try {
       const { error: authErr } = await admin.auth.admin.deleteUser(
         target.profile_id,

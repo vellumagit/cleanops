@@ -692,8 +692,7 @@ describe.skipIf(!hasPostgrest)("removing someone", () => {
     expect((await auditFor(stuck.membershipId)).map((a) => a.after === null && a.action)).toEqual(["delete"]);
   });
 
-  // FIX-LATER: forceDeleteEmployeeAction deletes the person's whole login, which cascades to their membership in every other company
-  it.fails("force remove never reaches the same person's membership in another company", async () => {
+  it("force remove never reaches the same person's membership in another company", async () => {
     const c = await company();
     const other = await company();
     // Bea cleans for both companies with one login.

@@ -8,6 +8,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import {
   buildGoogleOAuthUrl,
   cleanupOrgCalendarEvents,
+  forgetCalendarConnection,
 } from "@/lib/google-calendar";
 import { issueGcalOAuthState } from "@/lib/gcal-oauth-state";
 
@@ -67,6 +68,7 @@ export async function disconnectGoogleCalendarAction() {
     // every cleaner's own calendar connection (membership_id set), silently,
     // leaving their events stranded.
     .is("membership_id" as never, null);
+  forgetCalendarConnection({ organizationId: membership.organization_id });
 
   revalidatePath("/app/settings/integrations");
 }

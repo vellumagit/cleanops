@@ -637,16 +637,14 @@ describe.skipIf(!hasPostgrest)("import clients from a CSV", { timeout: 240_000 }
     expect(await inOrg(c.org)).toHaveLength(2);
   });
 
-  // FIX-LATER: the duplicate check compares against existing clients only, so a person listed twice in one file is created twice.
-  it.fails("a person listed twice in the same file becomes one client", async () => {
+  it("a person listed twice in the same file becomes one client", async () => {
     const c = await company();
     const text = "name,email\nAnn Lee,ann.lee@example.com\nBo Chan,bo@example.com\nAnn Lee,ann.lee@example.com\n";
     const res = await as(c.owner, () => importClientsAction(csv(text)));
     expect((await inOrg(c.org)).filter((r) => r.name === "Ann Lee"), JSON.stringify(res)).toHaveLength(1);
   });
 
-  // FIX-LATER: the duplicate check reads existing clients with .limit(5000), but the API stops at 1,000 rows, so a company past 1,000 clients gets duplicates on re-import.
-  it.fails("re-importing a 1,200-client list adds nobody: the duplicate check sees past the API's 1,000-row cap", async () => {
+  it("re-importing a 1,200-client list adds nobody: the duplicate check sees past the API's 1,000-row cap", async () => {
     const c = await company();
     const tag = Date.now();
     await api.sql(
@@ -669,8 +667,7 @@ describe.skipIf(!hasPostgrest)("import clients from a CSV", { timeout: 240_000 }
     expect(await api.sql("select 1 from public.clients where organization_id = $1", [c.org])).toHaveLength(1500);
   });
 
-  // FIX-LATER: importClientsAction never calls guardClientCreate, so a workspace in its first week imports past the 200-new-clients-a-day limit every other door enforces.
-  it.fails("a workspace in its first week can't import past its 200-new-clients-a-day limit", async () => {
+  it("a workspace in its first week can't import past its 200-new-clients-a-day limit", async () => {
     const c = await company({ ageDays: 1 });
     const rows = Array.from({ length: 250 }, (_, i) => `New Org Client ${i + 1},noc${i + 1}.${Date.now()}@example.com`);
     const res = await as(c.owner, () => importClientsAction(csv(`name,email\n${rows.join("\n")}\n`)));

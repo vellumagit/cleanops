@@ -290,6 +290,19 @@ function cacheConn(key: string, conn: ResolvedConnection): ResolvedConnection {
 }
 
 /**
+ * Forget the cached connection for a company's calendar or one person's.
+ * Call it whenever that connection's tokens or status change (connect,
+ * switch account, disconnect). Without it, switching Google accounts cleaned
+ * up the old calendar (which cached the old token), then pushed every job
+ * straight back onto the OLD calendar with it, leaving the new one empty;
+ * and a just-disconnected calendar kept receiving events for 30 seconds.
+ */
+export function forgetCalendarConnection(who: { organizationId?: string; membershipId?: string }): void {
+  if (who.organizationId) _tokenCache.delete(`org:${who.organizationId}`);
+  if (who.membershipId) _tokenCache.delete(`mem:${who.membershipId}`);
+}
+
+/**
  * Get an active org-level Google Calendar connection. Returns null if
  * there isn't one.
  *

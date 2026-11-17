@@ -417,8 +417,7 @@ describe.skipIf(!hasPostgrest)("Google Calendar for the company (Settings)", { t
     expect(decryptSecret(rows[0].access_token_ciphertext!)).toBe(newToken);
   });
 
-  // FIX-LATER: getConnection caches a company's token for 30s; the switch-account callback reads it during cleanup, then re-pushes every job with the OLD token, so the old calendar gets them back and the new one stays empty
-  it.fails("reconnecting with a different Google account moves the company's jobs to the new calendar", async () => {
+  it("reconnecting with a different Google account moves the company's jobs to the new calendar", async () => {
     const c = await company();
     const oldToken = uniq("tok-a");
     await connected(c.org, "google_calendar", oldToken, { email: "old@example.com" });
@@ -554,8 +553,7 @@ describe.skipIf(!hasPostgrest)("a cleaner's own Google Calendar (Field → Profi
     expect(decryptSecret(annas[0].access_token_ciphertext!)).toBe(annaToken);
   });
 
-  // FIX-LATER: getMemberConnection's 30s token cache: switching her calendar to another Google account re-pushes her jobs with the OLD token, onto the calendar she just left
-  it.fails("switching her calendar to another Google account puts her jobs on the new one", async () => {
+  it("switching her calendar to another Google account puts her jobs on the new one", async () => {
     const c = await company();
     const oldToken = uniq("tok-anna-old");
     await connected(c.org, "google_calendar", oldToken, { member: c.anna, email: "anna.old@example.com" });

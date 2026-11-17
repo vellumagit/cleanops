@@ -211,7 +211,7 @@ export async function updateChecklistTemplateAction(
     data: { applies_to_service_type_id: string | null } | null;
   };
 
-  const { error: upErr } = (await supabase
+  const { data: updatedTemplate, error: upErr } = (await supabase
     .from("checklist_templates")
     .update({
       name,
@@ -223,8 +223,19 @@ export async function updateChecklistTemplateAction(
     .eq(
       "organization_id",
       membership.organization_id,
-    )) as unknown as { error: { message: string } | null };
+    )
+    .select("id")) as unknown as {
+    data: Array<{ id: string }> | null;
+    error: { message: string } | null;
+  };
   if (upErr) return { ok: false, error: upErr.message };
+  // No row: the template is gone, or it's another company's. Stop HERE. The
+  // item writes below go by template id alone, so carrying on put this
+  // company's items into someone else's template, which their next job
+  // then copied.
+  if (!updatedTemplate?.length) {
+    return { ok: false, error: "Template not found. Nothing was saved." };
+  }
 
   // Wipe + recreate items. Fine for small lists and simplifies reorder.
   await (supabase
@@ -322,6 +333,26 @@ export async function attachTemplateToBookingAction(
     return { ok: false, error: "Missing template or booking id." };
   }
 
+  // Both ids arrive from a browser. The booking was never checked, so a
+  // template's items could be written onto another company's job, where
+  // its cleaners would see them.
+  const [{ data: ownTemplate }, { data: ownBooking }] = (await Promise.all([
+    supabase
+      .from("checklist_templates")
+      .select("id")
+      .eq("id", template_id)
+      .eq("organization_id", membership.organization_id)
+      .maybeSingle(),
+    supabase
+      .from("bookings")
+      .select("id")
+      .eq("id", booking_id)
+      .eq("organization_id", membership.organization_id)
+      .maybeSingle(),
+  ])) as unknown as [{ data: { id: string } | null }, { data: { id: string } | null }];
+  if (!ownTemplate) return { ok: false, error: "Template not found." };
+  if (!ownBooking) return { ok: false, error: "Job not found." };
+
   const { data: items } = (await supabase
     .from("checklist_template_items")
     .select("ordinal, title, phase, is_required, kind")
@@ -407,14 +438,20 @@ export async function assignChecklistToClientAction(
     .maybeSingle()) as unknown as { data: { id: string } | null };
   if (!ownTemplate) return { ok: false, error: "Template not found." };
 
-  const { error } = (await supabase
+  const { data: assigned, error } = (await supabase
     .from("clients")
     .update({ default_checklist_template_id: template_id } as never)
     .eq("id", client_id)
-    .eq("organization_id", membership.organization_id)) as unknown as {
+    .eq("organization_id", membership.organization_id)
+    .select("id")) as unknown as {
+    data: Array<{ id: string }> | null;
     error: { message: string } | null;
   };
   if (error) return { ok: false, error: error.message };
+  // No row: not this company's client. Stop before the backfill, which
+  // runs as the service role and would copy this company's items onto the
+  // other company's upcoming jobs.
+  if (!assigned?.length) return { ok: false, error: "Client not found." };
 
   // Backfill upcoming bookings that don't already have a checklist.
   // Admin client — see the service backfill call for why.
@@ -444,15 +481,20 @@ export async function unassignChecklistFromClientAction(
   const client_id = String(formData.get("client_id") ?? "").trim();
   if (!client_id) return { ok: false, error: "Missing client." };
 
-  const { error } = (await supabase
+  const { data: unassigned, error } = (await supabase
     .from("clients")
     .update({ default_checklist_template_id: null } as never)
     .eq("id", client_id)
     .eq("organization_id", membership.organization_id)
-    .eq("default_checklist_template_id" as never, template_id as never)) as unknown as {
+    .eq("default_checklist_template_id" as never, template_id as never)
+    .select("id")) as unknown as {
+    data: Array<{ id: string }> | null;
     error: { message: string } | null;
   };
   if (error) return { ok: false, error: error.message };
+  if (!unassigned?.length) {
+    return { ok: false, error: "Nothing changed: this client doesn't have that checklist." };
+  }
 
   // Assigning backfills the client's upcoming bookings; unassigning takes
   // them back — only theirs, and only jobs that haven't started.
@@ -517,13 +559,16 @@ export async function removeChecklistItemAction(
   const booking_id = String(formData.get("booking_id") ?? "").trim();
   if (!id) return { ok: false, error: "Missing item id." };
 
-  const { error } = (await supabase
+  const { data: removed, error } = (await supabase
     .from("booking_checklist_items")
     .delete()
-    .eq("id", id)) as unknown as {
+    .eq("id", id)
+    .select("id")) as unknown as {
+    data: Array<{ id: string }> | null;
     error: { message: string } | null;
   };
   if (error) return { ok: false, error: error.message };
+  if (!removed?.length) return { ok: false, error: "That item wasn't removed. It may already be gone." };
 
   if (booking_id) {
     revalidatePath(`/app/bookings/${booking_id}`);

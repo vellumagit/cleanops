@@ -298,8 +298,7 @@ describe.skipIf(!hasPostgrest)("the Sync to QuickBooks button", { timeout: 120_0
     expect(await as(c.owner, () => invoices.syncInvoiceToQuickBooksAction({}, idForm("")))).toEqual({ error: "Missing invoice id." });
   });
 
-  // FIX-LATER: syncInvoiceToQuickBooksAction never checks the invoice is the caller's company's; pushInvoiceToQuickBooks reads it with the service key and books it into ITS company's QuickBooks
-  it.fails("another company's invoice id books nothing into their QuickBooks", async () => {
+  it("another company's invoice id books nothing into their QuickBooks", async () => {
     const mine = await company("Mine");
     const theirs = await company("Theirs");
     await connect(mine, "quickbooks");
@@ -312,8 +311,7 @@ describe.skipIf(!hasPostgrest)("the Sync to QuickBooks button", { timeout: 120_0
     expect(res.ok).toBeUndefined();
   });
 
-  // FIX-LATER: neither push checks voided_at/status; the button is hidden on a void invoice and the nightly job skips them, but the action itself books a voided invoice as revenue
-  it.fails("a voided invoice is not booked into QuickBooks", async () => {
+  it("a voided invoice is not booked into QuickBooks", async () => {
     const c = await company();
     const realm = await connect(c, "quickbooks");
     const id = await invoice(c, { status: "void", voided: true });
@@ -322,8 +320,7 @@ describe.skipIf(!hasPostgrest)("the Sync to QuickBooks button", { timeout: 120_0
     expect(res.error).toBeTruthy();
   });
 
-  // FIX-LATER: the sync buttons check role only; a manager whose "invoicing" capability is off (pages bounce her) can still book invoices into QuickBooks/Sage — the capability migration says server actions gate on it
-  it.fails("a manager with invoicing switched off can't push an invoice into the books", async () => {
+  it("a manager with invoicing switched off can't push an invoice into the books", async () => {
     const c = await company();
     const realm = await connect(c, "quickbooks");
     const id = await invoice(c);
@@ -369,8 +366,7 @@ describe.skipIf(!hasPostgrest)("the Sync to Sage button", { timeout: 120_000 }, 
     });
   });
 
-  // FIX-LATER: syncInvoiceToSageAction never checks the invoice is the caller's company's; pushInvoiceToSage books any invoice id into its own company's Sage
-  it.fails("another company's invoice id books nothing into their Sage", async () => {
+  it("another company's invoice id books nothing into their Sage", async () => {
     const mine = await company("Mine");
     const theirs = await company("Theirs");
     await connect(mine, "sage");
@@ -382,8 +378,7 @@ describe.skipIf(!hasPostgrest)("the Sync to Sage button", { timeout: 120_000 }, 
     expect(res.ok).toBeUndefined();
   });
 
-  // FIX-LATER: same as QuickBooks: a voided invoice is booked into Sage by the action
-  it.fails("a voided invoice is not booked into Sage", async () => {
+  it("a voided invoice is not booked into Sage", async () => {
     const c = await company();
     const token = await connect(c, "sage");
     const id = await invoice(c, { status: "void", voided: true });

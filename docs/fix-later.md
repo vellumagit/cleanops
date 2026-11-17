@@ -21,6 +21,16 @@ Faults marked **Security** should go first.
   (#52, #56); a recurring invoice must be for one of the company's own
   clients, and one that fails no longer stops the night's run (#5, #6).
   Each fault's test is now a normal test.
+- **17 Nov, second group:** both unsubscribe links work (the rebooking one,
+  #29, and the weekly product email's, which had the same mistake);
+  force-remove keeps a login that another company also uses (#74);
+  checklists can't be assigned, edited or attached across companies, and
+  say when nothing changed (#31, #32, #37, #43, #44); the QuickBooks and
+  Sage sync buttons take only the company's own, non-void invoices and
+  respect the Invoices switch (#21, #24, #25); client import respects the
+  daily cap and the disposable-address screen, and no longer duplicates
+  past 1,000 clients or within one file (#30, #35, #45); switching Google
+  accounts sends jobs to the new calendar (#23).
 - **17 Nov:** the production catch-up (see the next section).
 
 ## Waiting on you
@@ -165,11 +175,11 @@ Faults marked **Security** should go first.
 | # | Sev | What's wrong | Where | Shown by |
 |---|---|---|---|---|
 | 20 | FIXED 17 Nov (was High, Security) | Google Calendar connect uses the person's membership id as its OAuth state, not a one-time secret. Anyone who knows an owner's id (a teammate, an ex-employee) can connect that company's calendar to their own Google account and receive every job (client names, addresses, notes); the same works against a cleaner's personal calendar. Fix: `issueOAuthState`/`consumeOAuthState`, as QuickBooks and Sage do. | `settings/integrations/google-calendar-actions.ts` ~30, `field/profile/actions.ts` ~124, `api/integrations/google-calendar/callback/route.ts` | `integrations-oauth` (3 tests: forged state cookie, callback never started, teammate takeover) |
-| 21 | High, Security | "Sync to QuickBooks/Sage" doesn't check the invoice belongs to the caller's company: any office person can book another company's invoice (even a draft) into that company's books, and the error leaks its client name. | `invoices/actions.ts` ~1139, ~1175; `lib/quickbooks.ts` ~574, `lib/sage.ts` ~806 | `integrations-sync` "another company's invoice id books nothing into their QuickBooks / Sage" |
+| 21 | FIXED 17 Nov (was High, Security) | "Sync to QuickBooks/Sage" doesn't check the invoice belongs to the caller's company: any office person can book another company's invoice (even a draft) into that company's books, and the error leaks its client name. | `invoices/actions.ts` ~1139, ~1175; `lib/quickbooks.ts` ~574, `lib/sage.ts` ~806 | `integrations-sync` "another company's invoice id books nothing into their QuickBooks / Sage" |
 | 22 | FIXED 17 Nov (was Med) | The company's Google Disconnect also switches off every cleaner's own calendar connection. Fix: `.is("membership_id", null)`. | `google-calendar-actions.ts` ~57–62 | `integrations-oauth` "the company's Disconnect leaves each cleaner's own calendar connected" |
-| 23 | Med | After switching Google accounts, a 30-second token cache pushes the jobs back onto the old calendar; the new one stays empty. | `lib/google-calendar.ts` ~274–290 | "reconnecting with a different Google account moves the company's jobs…" (+ cleaner version) |
-| 24 | Med | A voided invoice can be booked into QuickBooks/Sage as revenue (from a stale page). | `lib/quickbooks.ts` ~611, `lib/sage.ts` ~847 | "a voided invoice is not booked into QuickBooks / Sage" |
-| 25 | Low | Sync buttons ignore a manager's Invoices switch (other invoice actions don't check it either). | `invoices/actions.ts` ~1139, ~1175 | "a manager with invoicing switched off can't push an invoice into the books" |
+| 23 | FIXED 17 Nov (was Med) | After switching Google accounts, a 30-second token cache pushes the jobs back onto the old calendar; the new one stays empty. | `lib/google-calendar.ts` ~274–290 | "reconnecting with a different Google account moves the company's jobs…" (+ cleaner version) |
+| 24 | FIXED 17 Nov (was Med) | A voided invoice can be booked into QuickBooks/Sage as revenue (from a stale page). | `lib/quickbooks.ts` ~611, `lib/sage.ts` ~847 | "a voided invoice is not booked into QuickBooks / Sage" |
+| 25 | FIXED 17 Nov (was Low) | Sync buttons ignore a manager's Invoices switch (other invoice actions don't check it either). | `invoices/actions.ts` ~1139, ~1175 | "a manager with invoicing switched off can't push an invoice into the books" |
 | 26 | Med | Admin repair tool gcal-force-resync finds no company calendar once any cleaner has connected their own; with only cleaners connected, it wipes a cleaner's calendar. | `api/admin/gcal-force-resync/route.ts` ~44–60 | `integrations-gcal-admin` (2 tests) |
 | 27 | Med | gcal-force-resync deletes another company's live events on a shared calendar. | same, ~139–167 | "…the other company's live events stay" |
 | 28 | Low | gcal-force-resync never finishes past 40 events. | same, ~150 | "with more than 40 jobs, running it again…" |
@@ -183,23 +193,23 @@ touch no one yet.
 
 | # | Sev | What's wrong | Where | Shown by |
 |---|---|---|---|---|
-| 29 | High, Legal | The unsubscribe link in rebooking emails does nothing: `if (rl)` is always true, so POST returns before unsubscribing and GET always answers 429. This is the CASL / one-click unsubscribe link. Live: one Svit client was ever nudged (April). Fix: `if (!rl.allowed)`. | `api/u/m/[token]/route.ts` ~64, ~75 | `clients-review-crons` "the unsubscribe link in the email stops the next one" |
-| 30 | High | Client import skips the daily new-client cap and the disposable-email check (the abuse route from 11 Sep). A new workspace imported 250 where the cap is 200. | `clients/import/actions.ts` ~238 | `clients-records` "a workspace in its first week can't import past its 200-new-clients-a-day limit" |
-| 31 | High | Assigning a checklist with another company's client id reports ok, and the service-role backfill copies this company's items onto that company's upcoming jobs. | `checklists/actions.ts` ~410–424 | `clients-checklists-contracts` "a client id from another company can't be given this company's checklist" |
-| 32 | High | Editing another company's checklist template id inserts items into it, and their next job copies them. | `checklists/actions.ts` ~214–251 | "editing another company's template id changes nothing there and says so" |
+| 29 | FIXED 17 Nov (was High, Legal) | The unsubscribe link in rebooking emails does nothing: `if (rl)` is always true, so POST returns before unsubscribing and GET always answers 429. This is the CASL / one-click unsubscribe link. Live: one Svit client was ever nudged (April). Fix: `if (!rl.allowed)`. | `api/u/m/[token]/route.ts` ~64, ~75 | `clients-review-crons` "the unsubscribe link in the email stops the next one" |
+| 30 | FIXED 17 Nov (was High) | Client import skips the daily new-client cap and the disposable-email check (the abuse route from 11 Sep). A new workspace imported 250 where the cap is 200. | `clients/import/actions.ts` ~238 | `clients-records` "a workspace in its first week can't import past its 200-new-clients-a-day limit" |
+| 31 | FIXED 17 Nov (was High) | Assigning a checklist with another company's client id reports ok, and the service-role backfill copies this company's items onto that company's upcoming jobs. | `checklists/actions.ts` ~410–424 | `clients-checklists-contracts` "a client id from another company can't be given this company's checklist" |
+| 32 | FIXED 17 Nov (was High) | Editing another company's checklist template id inserts items into it, and their next job copies them. | `checklists/actions.ts` ~214–251 | "editing another company's template id changes nothing there and says so" |
 | 33 | Med | Booking review requests stall: the job reads the 200 oldest unasked jobs across all companies, and skipped ones (switched off, house default "none") are never stamped, so they hold the window. Svit's default "none" fills it. | `lib/automations.ts` ~1968–1986 | `clients-review-crons` "…reach a company switched on even when 200 older jobs elsewhere will never be asked" |
 | 34 | Med | The rebooking prompt only ever looks at the first 500 clients (no order, never advances). | `lib/automations.ts` ~1243 | "the rebooking prompt reaches a client past the first 500…" |
-| 35 | Med | Re-importing a list creates duplicates past 1,000 existing clients (the API's row cap). | `clients/import/actions.ts` ~211 | `clients-records` "re-importing a 1,200-client list adds nobody…" |
+| 35 | FIXED 17 Nov (was Med) | Re-importing a list creates duplicates past 1,000 existing clients (the API's row cap). | `clients/import/actions.ts` ~211 | `clients-records` "re-importing a 1,200-client list adds nobody…" |
 | 36 | Med | A retried photo "finish" deletes the file the first save recorded, leaving a broken photo. | `lib/client-media-actions.ts` ~159 | "finishing the same upload twice (a retry) keeps the file…" |
-| 37 | Med | A checklist template can be put on another company's job. | `checklists/actions.ts` ~325–372 | "a template can't be put on another company's job" |
+| 37 | FIXED 17 Nov (was Med) | A checklist template can be put on another company's job. | `checklists/actions.ts` ~325–372 | "a template can't be put on another company's job" |
 | 38 | Med | Deleting a contract leaves its document files in storage. | `contracts/actions.ts` ~129 | "deleting a contract takes its documents' files with it" |
 | 39 | Med | Contract documents can be attached to another company's contract. | `contracts/document-actions.ts` ~26–62 | "a document can't be attached to another company's contract" |
 | 40 | Low | Two signs submitted at once both sign: the second overwrites the first's evidence and the office is told twice. | `c/[token]/sign-actions.ts` ~131 | "two submits at the same moment sign it once" |
 | 41 | Low | A contract save that changed nothing looks saved. | `contracts/actions.ts` ~106 | "a contract save that changed nothing says so…" |
 | 42 | Low | A contract document whose record fails to save leaves its file behind. | `contracts/document-actions.ts` ~52 | "a document whose record can't be saved leaves no file behind" |
-| 43 | Low | Taking a checklist off a client that isn't ours reports success. | `checklists/actions.ts` ~447 | "taking a checklist off a client that isn't this company's says nothing changed" |
-| 44 | Low | Removing another company's checklist item reports ok. | `checklists/actions.ts` ~520 | "removing another company's checklist item says it wasn't removed" |
-| 45 | Low | A person listed twice in one CSV becomes two clients. | `clients/import/actions.ts` ~222 | "a person listed twice in the same file becomes one client" |
+| 43 | FIXED 17 Nov (was Low) | Taking a checklist off a client that isn't ours reports success. | `checklists/actions.ts` ~447 | "taking a checklist off a client that isn't this company's says nothing changed" |
+| 44 | FIXED 17 Nov (was Low) | Removing another company's checklist item reports ok. | `checklists/actions.ts` ~520 | "removing another company's checklist item says it wasn't removed" |
+| 45 | FIXED 17 Nov (was Low) | A person listed twice in one CSV becomes two clients. | `clients/import/actions.ts` ~222 | "a person listed twice in the same file becomes one client" |
 
 ### Payments, refunds, texting, email bounces
 
@@ -248,7 +258,7 @@ touch no one yet.
 
 | # | Sev | What's wrong | Where | Shown by |
 |---|---|---|---|---|
-| 74 | High | Force-removing an employee deletes their whole login, which removes them from every other company they belong to. Another action already guards this case. | `employees/actions.ts` ~1096–1107 | `people-account` "force remove never reaches the same person's membership in another company" |
+| 74 | FIXED 17 Nov (was High) | Force-removing an employee deletes their whole login, which removes them from every other company they belong to. Another action already guards this case. | `employees/actions.ts` ~1096–1107 | `people-account` "force remove never reaches the same person's membership in another company" |
 | 75 | Med | The efficiency bonus compares each cleaner's minutes with the one-person estimate: two cleaners who each worked their half of a divided job are both paid for "saving" time. Overpays every team job. | `bonuses/actions.ts` ~236–276 | `people-time` "two cleaners who each worked their half of a divided job saved nothing" |
 | 76 | Med | A review bonus is skipped if efficiency bonuses were computed first for the same period (the "already awarded" check ignores the type). | `bonuses/actions.ts` ~78–87 | "…gets her review bonus even when efficiency was computed first" |
 | 77 | Med | Computing efficiency bonuses fails past about 320 finished jobs in the window (one over-long request). | `bonuses/actions.ts` ~207–213 | "a company with 400 finished jobs in the window still gets its efficiency bonuses" |

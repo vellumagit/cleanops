@@ -129,6 +129,44 @@ export async function guardClientCreate(
   }
 }
 
+/**
+ * The same daily line as guardClientCreate, for a whole batch at once: the
+ * CSV import. It never asked, so a workspace could import past the limit
+ * every other door enforces (a 5 MB file holds tens of thousands of rows).
+ * Refuses the batch when it would cross the line, and says how many fit.
+ */
+export async function guardClientImport(orgId: string, adding: number): Promise<GuardResult> {
+  try {
+    const org = await orgFacts(orgId);
+    if (!org) return { ok: true };
+    if (org.suspendedAt) return { ok: false, error: SUSPENDED_MESSAGE };
+    const admin = createSupabaseAdminClient();
+    const since = new Date(Date.now() - 86_400_000).toISOString();
+    const { count } = (await admin
+      .from("clients")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", orgId)
+      .gte("created_at", since)) as unknown as { count: number | null };
+    const cap = org.isNew ? NEW_ORG_CLIENTS_PER_DAY : CLIENTS_PER_DAY;
+    const room = Math.max(0, cap - (count ?? 0));
+    if (adding > room) {
+      void evaluateAbuse(orgId).catch(() => {});
+      return {
+        ok: false,
+        error: `This file would add ${adding} clients, and this workspace can add ${room} more today (its limit is ${cap} a day). Import a smaller file, or ask Sollos support and we'll lift it for a real client list.`,
+      };
+    }
+    return { ok: true };
+  } catch (err) {
+    console.error("[abuse-guard] import guard threw, allowing:", err);
+    return { ok: true };
+  }
+}
+
+export function isThrowawayEmail(email: string): boolean {
+  return isDisposableEmail(email);
+}
+
 export const SUSPENDED_MESSAGE =
   "This workspace is suspended. Contact support@sollos3.com.";
 

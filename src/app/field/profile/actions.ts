@@ -172,6 +172,8 @@ export async function disconnectMyGoogleCalendarAction(): Promise<void> {
     .eq("membership_id" as never, membership.id)
     .eq("provider" as never, "google_calendar")
     .eq("status" as never, "active");
+  const { forgetCalendarConnection } = await import("@/lib/google-calendar");
+  forgetCalendarConnection({ membershipId: membership.id });
 
   revalidatePath("/field/profile");
 }

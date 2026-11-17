@@ -250,8 +250,7 @@ describe.skipIf(!hasPostgrest)("checklist templates", { timeout: 120_000 }, () =
     expect((await api.sql<{ name: string }>("select name from public.checklist_templates where id = $1", [tpl]))[0].name).toBe("Deep list");
   });
 
-  // FIX-LATER: updateChecklistTemplateAction never checks its update touched a row, then inserts items under whatever template id it was given; another company's template gets this company's items, which their jobs then copy.
-  it.fails("editing another company's template id changes nothing there and says so", async () => {
+  it("editing another company's template id changes nothing there and says so", async () => {
     const c = await company();
     const other = await company();
     const theirs = await template(other, "Their list", ["Their task"]);
@@ -319,8 +318,7 @@ describe.skipIf(!hasPostgrest)("checklists on jobs and clients", { timeout: 120_
     expect(await itemsOn(b)).toHaveLength(3);
   });
 
-  // FIX-LATER: attachTemplateToBookingAction never checks the booking is this company's; its rows land on another company's job.
-  it.fails("a template can't be put on another company's job", async () => {
+  it("a template can't be put on another company's job", async () => {
     const c = await company();
     const other = await company();
     const tpl = await template(c, "Mine", ["My task"]);
@@ -385,8 +383,7 @@ describe.skipIf(!hasPostgrest)("checklists on jobs and clients", { timeout: 120_
     expect((await api.sql<{ t: string | null }>("select default_checklist_template_id as t from public.clients where id = $1", [client]))[0].t).toBe(otherTpl);
   });
 
-  // FIX-LATER: assignChecklistToClientAction treats an update that matched no client as done, then runs the service-role backfill for that client id, copying this company's items onto another company's jobs.
-  it.fails("a client id from another company can't be given this company's checklist", async () => {
+  it("a client id from another company can't be given this company's checklist", async () => {
     const c = await company();
     const other = await company();
     const tpl = await template(c, "Mine", ["My task"]);
@@ -397,8 +394,7 @@ describe.skipIf(!hasPostgrest)("checklists on jobs and clients", { timeout: 120_
     expect((res as { ok: boolean }).ok).toBe(false);
   });
 
-  // FIX-LATER: unassignChecklistFromClientAction reports success when its update matched no client (another company's id, or a default that already changed).
-  it.fails("taking a checklist off a client that isn't this company's says nothing changed", async () => {
+  it("taking a checklist off a client that isn't this company's says nothing changed", async () => {
     const c = await company();
     const other = await company();
     const theirTpl = await template(other, "Theirs", ["Their task"]);
@@ -424,8 +420,7 @@ describe.skipIf(!hasPostgrest)("checklists on jobs and clients", { timeout: 120_
     expect(await itemsOn(b)).toEqual(["Keep me"]);
   });
 
-  // FIX-LATER: removeChecklistItemAction reports ok for a delete that matched no row (another company's item, or one already gone).
-  it.fails("removing another company's checklist item says it wasn't removed", async () => {
+  it("removing another company's checklist item says it wasn't removed", async () => {
     const c = await company();
     const other = await company();
     const theirJob = await job(other, await addClient(api.sql, other.org, "Their Client"), 24);

@@ -1,5 +1,7 @@
 "use server";
 
+import { can } from "@/lib/auth";
+
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
@@ -1128,6 +1130,40 @@ export type SyncSageState = {
   sageInvoiceId?: string;
 };
 
+/**
+ * Who may push which invoice into the books. The two sync buttons checked the
+ * role and nothing else, then handed the id to a pusher that reads with the
+ * service key and books the invoice into ITS OWN company's QuickBooks or
+ * Sage. So an office person at one company could book another company's
+ * invoice (a draft, even) into that company's books, and a voided invoice
+ * could be booked as revenue from a stale page. Returns the refusal, or null.
+ */
+async function syncRefusal(
+  membership: Awaited<ReturnType<typeof getActionContext>>["membership"],
+  invoiceId: string,
+  books: "Sage" | "QuickBooks",
+): Promise<string | null> {
+  if (!["owner", "admin", "manager"].includes(membership.role)) {
+    return `Only owners, admins, or managers can push to ${books}.`;
+  }
+  if (!can(membership, "invoicing")) {
+    return "Invoices aren't part of your access.";
+  }
+  const { data: invoice } = (await createSupabaseAdminClient()
+    .from("invoices")
+    .select("id, status, voided_at")
+    .eq("id", invoiceId)
+    .eq("organization_id", membership.organization_id)
+    .maybeSingle()) as unknown as {
+    data: { id: string; status: string; voided_at: string | null } | null;
+  };
+  if (!invoice) return "Invoice not found.";
+  if (invoice.status === "void" || invoice.voided_at) {
+    return `This invoice is void, so it isn't sent to ${books}.`;
+  }
+  return null;
+}
+
 export async function syncInvoiceToSageAction(
   _prev: SyncSageState,
   formData: FormData,
@@ -1136,9 +1172,8 @@ export async function syncInvoiceToSageAction(
   if (!id) return { error: "Missing invoice id." };
 
   const { membership } = await getActionContext();
-  if (!["owner", "admin", "manager"].includes(membership.role)) {
-    return { error: "Only owners, admins, or managers can push to Sage." };
-  }
+  const refusal = await syncRefusal(membership, id, "Sage");
+  if (refusal) return { error: refusal };
 
   const result = await pushInvoiceToSage(id);
   if (!result.id) {
@@ -1172,9 +1207,8 @@ export async function syncInvoiceToQuickBooksAction(
   if (!id) return { error: "Missing invoice id." };
 
   const { membership } = await getActionContext();
-  if (!["owner", "admin", "manager"].includes(membership.role)) {
-    return { error: "Only owners, admins, or managers can push to QuickBooks." };
-  }
+  const refusal = await syncRefusal(membership, id, "QuickBooks");
+  if (refusal) return { error: refusal };
 
   const result = await pushInvoiceToQuickBooks(id);
   if (!result.id) {

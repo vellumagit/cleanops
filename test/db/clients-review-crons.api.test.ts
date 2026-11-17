@@ -327,8 +327,7 @@ describe.skipIf(!hasPostgrest)("rebooking prompt", { timeout: 180_000 }, () => {
     expect(mailTo(lapsed), "a month on, again").toHaveLength(1);
   });
 
-  // FIX-LATER: /api/u/m/[token] tests `if (rl)` on checkIpRateLimit's result object, which is always truthy: POST returns before unsubscribing and GET always answers 429.
-  it.fails("the unsubscribe link in the email stops the next one", async () => {
+  it("the unsubscribe link in the email stops the next one", async () => {
     const c = await company(ON);
     const p = await person(c, "Unsubscriber");
     await visit(c, p, 20 * DAY);

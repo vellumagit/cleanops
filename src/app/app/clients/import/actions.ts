@@ -1,6 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { allPages } from "@/lib/supabase/all-pages";
+import { guardClientImport, isThrowawayEmail } from "@/lib/abuse-guard";
 import { getActionContext } from "@/lib/actions";
 import { logAuditEvent } from "@/lib/audit";
 
@@ -163,6 +165,11 @@ export async function importClientsAction(
       errors.push(`Row ${r + 1}: skipped — invalid email "${email}"`);
       continue;
     }
+    // The same throwaway-address screen every other way of adding a client has.
+    if (email && isThrowawayEmail(email)) {
+      errors.push(`Row ${r + 1}: skipped — "${email}" is a disposable address`);
+      continue;
+    }
 
     const preferredRaw =
       idx.preferred_contact >= 0
@@ -207,21 +214,39 @@ export async function importClientsAction(
     };
   }
 
-  // Dedupe against existing clients by name + (email or phone)
-  const { data: existing } = await supabase
-    .from("clients")
-    .select("name, email, phone")
-    .limit(5000);
+  // Dedupe against existing clients by name + (email or phone). Read in
+  // pages: the API answers at most 1,000 rows whatever limit is asked for, so
+  // one read missed everyone past the first thousand and re-importing a big
+  // list duplicated them.
+  let existing: Array<{ name: string | null; email: string | null; phone: string | null }>;
+  try {
+    existing = await allPages<{ name: string | null; email: string | null; phone: string | null }>(
+      (from, to) =>
+        supabase
+          .from("clients")
+          .select("name, email, phone")
+          .eq("organization_id", membership.organization_id)
+          .order("id", { ascending: true })
+          .range(from, to),
+      "import: existing clients",
+    );
+  } catch {
+    return { ok: false, error: "Couldn't read your existing clients to check for duplicates. Nothing was imported; try again." };
+  }
 
-  const existingKeys = new Set(
-    (existing ?? []).map((c) =>
+  const seenKeys = new Set(
+    existing.map((c) =>
       `${c.name?.toLowerCase()}|${c.email?.toLowerCase() ?? ""}|${c.phone ?? ""}`,
     ),
   );
 
+  // Each kept row joins the set, so a person listed twice in the same file
+  // becomes one client, not two.
   const toInsert = parsed.filter((p) => {
     const key = `${p.name.toLowerCase()}|${p.email?.toLowerCase() ?? ""}|${p.phone ?? ""}`;
-    return !existingKeys.has(key);
+    if (seenKeys.has(key)) return false;
+    seenKeys.add(key);
+    return true;
   });
 
   const skippedDuplicates = parsed.length - toInsert.length;
@@ -234,6 +259,9 @@ export async function importClientsAction(
       errors,
     };
   }
+
+  const gate = await guardClientImport(membership.organization_id, toInsert.length);
+  if (!gate.ok) return { ok: false, error: gate.error };
 
   const { error: insertErr } = await supabase.from("clients").insert(
     toInsert.map((p) => ({

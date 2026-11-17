@@ -10,6 +10,7 @@ import {
   cleanupMemberCalendarEvents,
   bulkSyncUpcomingBookings,
   bulkSyncMemberBookings,
+  forgetCalendarConnection,
 } from "@/lib/google-calendar";
 import { getEnv } from "@/lib/env";
 import { readGcalOAuthState } from "@/lib/gcal-oauth-state";
@@ -207,6 +208,7 @@ async function handleOrgCallback(
             : {}),
         })
         .eq("id", existingActive.id);
+      forgetCalendarConnection({ organizationId });
 
       return NextResponse.redirect(successRedirect);
     }
@@ -238,6 +240,9 @@ async function handleOrgCallback(
       // membership_id intentionally omitted (NULL = org-level)
     });
 
+    // The clean-up above cached the OLD account's token; drop it so the
+    // re-sync below goes to the calendar that was just connected.
+    forgetCalendarConnection({ organizationId });
     await bulkSyncUpcomingBookings(organizationId).catch(() => {});
 
     return NextResponse.redirect(successRedirect);
@@ -385,6 +390,9 @@ async function handleMemberCallback(
     // Push all upcoming assigned bookings to this member's calendar.
     // Log failures so we can debug "I connected but nothing showed up"
     // reports — historically these were swallowed and impossible to trace.
+    // Same as the company flow: never push with a token cached before the
+    // connection changed.
+    forgetCalendarConnection({ membershipId });
     try {
       await bulkSyncMemberBookings(membershipId);
     } catch (err) {

@@ -62,7 +62,10 @@ export async function POST(
 ) {
   const { token } = await params;
   const rl = await checkIpRateLimit("marketing-unsubscribe", 30, 60_000);
-  if (rl) return NextResponse.json({ ok: true });
+  // rl is always an object; the old `if (rl)` was always true, so the
+  // one-click unsubscribe returned before unsubscribing, and the page
+  // below always answered "too many requests".
+  if (!rl.allowed) return NextResponse.json({ ok: true });
   await unsubscribeMarketingByToken(token);
   return NextResponse.json({ ok: true });
 }
@@ -73,7 +76,7 @@ export async function GET(
 ) {
   const { token } = await params;
   const rl = await checkIpRateLimit("marketing-unsubscribe", 30, 60_000);
-  if (rl) {
+  if (!rl.allowed) {
     return new NextResponse("Too many requests. Try again shortly.", {
       status: 429,
       headers: { "Content-Type": "text/plain" },

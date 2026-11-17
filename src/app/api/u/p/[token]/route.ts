@@ -26,7 +26,9 @@ export async function POST(
   const { token } = await params;
   // Same cap as the other unsubscribe route — blocks token enumeration.
   const rl = await checkIpRateLimit("product-unsubscribe", 30, 60_000);
-  if (rl) return NextResponse.json({ ok: true });
+  // rl is always an object; the old `if (rl)` was always true, so this
+  // returned before unsubscribing anyone.
+  if (!rl.allowed) return NextResponse.json({ ok: true });
 
   await unsubscribeProductUpdatesByToken(token);
   return NextResponse.json({ ok: true });
@@ -38,7 +40,7 @@ export async function GET(
 ) {
   const { token } = await params;
   const rl = await checkIpRateLimit("product-unsubscribe", 30, 60_000);
-  if (rl) {
+  if (!rl.allowed) {
     return new NextResponse("Too many requests. Try again shortly.", {
       status: 429,
       headers: { "Content-Type": "text/plain" },
