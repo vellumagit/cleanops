@@ -223,16 +223,14 @@ describe.skipIf(!hasPostgrest)("training modules", () => {
     expect((await stepsOf(theirs)).map((s) => s.body)).toEqual(["Spray", "Wipe"]);
   });
 
-  // FIX-LATER: updateTrainingModuleAction has no role check and never checks that the update matched a row: a cleaner's save is answered with the success redirect
-  it.fails("a cleaner's edit is told no instead of being sent back to the list as saved", async () => {
+  it("a cleaner's edit is told no instead of being sent back to the list as saved", async () => {
     const c = await company();
     const id = await trainingModule(c);
     const res = await as(c.anna, () => training.updateTrainingModuleAction(id, {}, form({ title: "Anna's", audience_levels: ["employee"], step_0_body: "x" })));
     expect(res).toMatchObject({ error: expect.any(String) });
   });
 
-  // FIX-LATER: updateTrainingModuleAction re-inserts steps on whatever module id it was given, so an owner's save on another company's step-less module attaches steps to it
-  it.fails("an edit aimed at another company's module attaches nothing to it", async () => {
+  it("an edit aimed at another company's module attaches nothing to it", async () => {
     const c = await company();
     const other = await company();
     const theirs = await trainingModule(other, "Their draft", []);
@@ -259,8 +257,7 @@ describe.skipIf(!hasPostgrest)("training modules", () => {
     expect(await image()).toBeNull();
   });
 
-  // FIX-LATER: updateTrainingModuleAction replaces a step's photo with null when the new upload is refused (over 4 MB, wrong type), and still answers with the success redirect
-  it.fails("replacing a step's photo with one too big to keep leaves the old photo (or says no)", async () => {
+  it("replacing a step's photo with one too big to keep leaves the old photo (or says no)", async () => {
     const c = await company();
     const id = await trainingModule(c, "Photos", ["Before"]);
     const existing = "https://cdn.example.com/before.png?v=1";
@@ -291,8 +288,7 @@ describe.skipIf(!hasPostgrest)("training modules", () => {
     expect(await stepsOf(id)).toEqual([]);
   });
 
-  // FIX-LATER: deleteTrainingModuleAction has no role check and logs "delete" even when the delete matched nothing (a cleaner's press)
-  it.fails("the audit log doesn't record a cleaner deleting a module she couldn't delete", async () => {
+  it("the audit log doesn't record a cleaner deleting a module she couldn't delete", async () => {
     const c = await company();
     const id = await trainingModule(c);
     await as(c.anna, () => training.deleteTrainingModuleAction(form({ id })));
@@ -340,8 +336,7 @@ describe.skipIf(!hasPostgrest)("training modules", () => {
     expect(await api.sql("select 1 from public.training_assignments where module_id = $1", [theirs])).toHaveLength(0);
   });
 
-  // FIX-LATER: marking someone trained who had no assignment yet inserts it already completed, and the expiry trigger (supabase/migrations/20260420030000_employee_automations.sql:80) only fires on UPDATE of completed_at, so no certificate expiry is ever set or reminded
-  it.fails("marking a new hire trained on a module that expires dates her certificate even when she had no assignment yet", async () => {
+  it("marking a new hire trained on a module that expires dates her certificate even when she had no assignment yet", async () => {
     const c = await company();
     const id = await trainingModule(c);
     await api.sql("update public.training_modules set expires_after_days = 365 where id = $1", [id]);
@@ -587,8 +582,7 @@ describe.skipIf(!hasPostgrest)("hours on the timesheet", () => {
     expect(await as(c.olha, () => timesheets.fetchTimeEntryHistoryAction(id))).toHaveLength(1);
   });
 
-  // FIX-LATER: the timesheet actions never check the manager's "timesheets" capability (src/lib/capabilities.ts says capabilities gate server actions); only the page does
-  it.fails("a manager whose timesheets access is switched off can't delete shifts or record time off", async () => {
+  it("a manager whose timesheets access is switched off can't delete shifts or record time off", async () => {
     const c = await company();
     await api.sql(`update public.memberships set capabilities = '{"timesheets": false}'::jsonb where id = $1`, [c.olha.membershipId]);
     const id = await entry(c.org, c.anna, 2);
@@ -991,8 +985,7 @@ describe.skipIf(!hasPostgrest)("certification expiry reminders", () => {
     expect(outbox.email).toHaveLength(0);
   });
 
-  // FIX-LATER: sendCertificationExpiryReminders sends the 30-day reminder the day AFTER the 7-day one when a certificate is first seen inside 7 days (needs30d only checks its own stamp)
-  it.fails("a certificate first seen a week out is reminded once, not again the next morning as a '30-day' reminder", async () => {
+  it("a certificate first seen a week out is reminded once, not again the next morning as a '30-day' reminder", async () => {
     const { GET } = await import("@/app/api/cron/certification-expiry/route");
     const c = await certCompany("Cert Late Co");
     const late = await cert(c, c.anna, 5);

@@ -1834,7 +1834,25 @@ export async function sendOverdueReminders(): Promise<{
       ? `${siteUrl}/i/${inv.public_token}`
       : siteUrl;
 
-    // Send first, stamp second — if the send throws we'll retry tomorrow.
+    // Claim first, send second. The stamp is taken only if nobody else has
+    // taken it since this run read the invoice, so two runs at the same
+    // moment remind the client once (they used to both send, then both
+    // stamp). If nothing could be delivered the stamp is put back below, so
+    // the next run tries again.
+    const claimedAt = new Date().toISOString();
+    const claim = db
+      .from("invoices")
+      .update({ overdue_reminder_sent_at: claimedAt })
+      .eq("id", inv.id);
+    const { data: claimed } = (await (inv.overdue_reminder_sent_at === null
+      ? claim.is("overdue_reminder_sent_at", null)
+      : claim.lt("overdue_reminder_sent_at", sevenDaysAgo)
+    ).select("id")) as unknown as { data: Array<{ id: string }> | null };
+    if (!claimed?.length) {
+      skipped += 1;
+      continue;
+    }
+
     let emailOk = false;
     if (canEmail) {
       const template = invoiceOverdueReminderEmail({
@@ -1891,15 +1909,17 @@ export async function sendOverdueReminders(): Promise<{
     }
 
     if (emailOk || smsOk) {
-      await db
-        .from("invoices")
-        .update({ overdue_reminder_sent_at: new Date().toISOString() })
-        .eq("id", inv.id);
       sent += 1;
       console.log(
         `[auto] Overdue reminder sent for invoice ${inv.id} (${[emailOk && "email", smsOk && "sms"].filter(Boolean).join("+")})`,
       );
     } else {
+      // Nothing went out: give the claim back so it is tried next run.
+      await db
+        .from("invoices")
+        .update({ overdue_reminder_sent_at: inv.overdue_reminder_sent_at })
+        .eq("id", inv.id)
+        .eq("overdue_reminder_sent_at", claimedAt);
       skipped += 1;
     }
   }
@@ -6277,7 +6297,11 @@ export async function sendCertificationExpiryReminders(): Promise<{
 
     // Which reminder bucket? Priority: 7-day > 30-day.
     const needs7d = expiresAt <= in7d && !a.expiry_reminder_7d_sent_at;
-    const needs30d = !needs7d && !a.expiry_reminder_30d_sent_at;
+    // The 30-day reminder is for certificates still more than a week out.
+    // Without that, one first seen inside the last week got its 7-day
+    // reminder and then a "30-day" one the next morning.
+    const needs30d =
+      !needs7d && expiresAt > in7d && !a.expiry_reminder_30d_sent_at;
 
     if (!needs7d && !needs30d) continue;
 

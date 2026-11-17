@@ -27,7 +27,7 @@ import {
  */
 
 export type SquareRefundResult =
-  | { ok: true; refundedCents: number; full: boolean }
+  | { ok: true; refundedCents: number; full: boolean; invoiceId: string }
   | { ok: false; error: string };
 
 export async function issueSquareRefund(args: {
@@ -66,7 +66,14 @@ export async function issueSquareRefund(args: {
     return { ok: false, error: "This isn't a Square payment." };
   }
 
-  const accessToken = await getValidAccessToken(args.organizationId);
+  // A refresh that fails is an answer for the owner, not an error page.
+  let accessToken: string | null;
+  try {
+    accessToken = await getValidAccessToken(args.organizationId);
+  } catch (err) {
+    console.error("[square] token refresh failed before refund:", err);
+    accessToken = null;
+  }
   if (!accessToken) {
     return {
       ok: false,
@@ -122,6 +129,9 @@ export async function issueSquareRefund(args: {
       .digest("hex")
       .slice(0, 40);
 
+  const { getOrgCurrency } = await import("@/lib/org-currency");
+  const currency = String(await getOrgCurrency(args.organizationId)).toUpperCase();
+
   const res = await fetch(`${squareApiBase()}/v2/refunds`, {
     method: "POST",
     headers: {
@@ -132,7 +142,9 @@ export async function issueSquareRefund(args: {
     body: JSON.stringify({
       idempotency_key: idempotencyKey,
       payment_id: payment.provider_payment_id,
-      amount_money: { amount: refundCents, currency: "CAD" },
+      // The currency the client paid in. Square refuses a refund whose
+      // currency differs from the payment's; this was always CAD.
+      amount_money: { amount: refundCents, currency },
       reason: `Sollos refund by ${args.requestedBy}`,
     }),
   });
@@ -178,5 +190,5 @@ export async function issueSquareRefund(args: {
     );
   }
 
-  return { ok: true, refundedCents: refundCents, full };
+  return { ok: true, refundedCents: refundCents, full, invoiceId: payment.invoice_id };
 }

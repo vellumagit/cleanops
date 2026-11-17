@@ -494,8 +494,7 @@ describe.skipIf(!hasPostgrest)("invoice-overdue: past-due invoices are flipped a
     expect(outbox.sms).toHaveLength(0);
   });
 
-  // FIX-LATER: sendOverdueReminders sends first and stamps after, with no claim; two overlapping runs both remind the same client (auto-send claims first for exactly this)
-  it.fails("two runs at the same moment remind each client once", async () => {
+  it("two runs at the same moment remind each client once", async () => {
     const { GET } = await import("@/app/api/cron/invoice-overdue/route");
     const c = await company("Overdue Overlap", { settings: { invoice_overdue_reminder: { enabled: true } } });
     const k = await client(c.org);

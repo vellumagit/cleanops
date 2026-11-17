@@ -320,8 +320,7 @@ describe.skipIf(!hasPostgrest)("admin/changelog and product-changelog: written o
     }
   });
 
-  // FIX-LATER: recipients are one per owner membership, not per person, so an owner of two opted-in companies gets every edition twice
-  it.fails("an owner of two opted-in companies gets one copy", async () => {
+  it("an owner of two opted-in companies gets one copy", async () => {
     const { GET } = await import("@/app/api/cron/product-changelog/route");
     const first = await company("Changelog Twin A", { settings: { product_changelog_email: { enabled: true } } });
     const second = await company("Changelog Twin B", { settings: { product_changelog_email: { enabled: true } } });
@@ -375,8 +374,7 @@ describe.skipIf(!hasPostgrest)("trial-expiring: 3, 1 and 0 days before a trial e
     expect(outbox.mail).toHaveLength(0);
   });
 
-  // FIX-LATER: the self-managed path mails "trial ending, choose a plan" to orgs with billing_override (comp / free_forever)
-  it.fails("a comped workspace (billing_override) is not told its trial is ending", async () => {
+  it("a comped workspace (billing_override) is not told its trial is ending", async () => {
     const { GET } = await import("@/app/api/cron/trial-expiring/route");
     const comp = await trialOrg("Comped Org", 3);
     await api.sql("update public.organizations set billing_override = 'comp' where id = $1", [comp.org]);
@@ -384,8 +382,7 @@ describe.skipIf(!hasPostgrest)("trial-expiring: 3, 1 and 0 days before a trial e
     expect(await mailTo(comp.owner)).toHaveLength(0);
   });
 
-  // FIX-LATER: the self-managed path skips only Stripe-trialing orgs, so a paying (active) subscriber is told its trial ends
-  it.fails("a workspace that already subscribed (Stripe status active) is not told its trial is ending", async () => {
+  it("a workspace that already subscribed (Stripe status active) is not told its trial is ending", async () => {
     const { GET } = await import("@/app/api/cron/trial-expiring/route");
     const paying = await trialOrg("Paying Org", 1);
     await api.sql("insert into public.subscriptions (organization_id, status) values ($1, 'active')", [paying.org]);
@@ -393,8 +390,7 @@ describe.skipIf(!hasPostgrest)("trial-expiring: 3, 1 and 0 days before a trial e
     expect(await mailTo(paying.owner)).toHaveLength(0);
   });
 
-  // FIX-LATER: sendTrialReminders counts every attempt as sent, even when Resend refused it
-  it.fails("a reminder Resend refused is not counted as sent", async () => {
+  it("a reminder Resend refused is not counted as sent", async () => {
     const { GET } = await import("@/app/api/cron/trial-expiring/route");
     const bounce = await trialOrg("Bounce Org", 3);
     await api.sql("delete from public.memberships where id = $1", [bounce.admin.membershipId]);

@@ -39,7 +39,7 @@ import { getStripe, isStripeEnabled } from "@/lib/stripe";
  */
 
 export type RefundResult =
-  | { ok: true; refundedCents: number; full: boolean }
+  | { ok: true; refundedCents: number; full: boolean; invoiceId: string }
   | { ok: false; error: string };
 
 export async function issueStripeRefund(args: {
@@ -165,6 +165,7 @@ export async function issueStripeRefund(args: {
       ok: true,
       refundedCents: refund.amount ?? 0,
       full,
+      invoiceId: payment.invoice_id,
     };
   } catch (err) {
     // Stripe's messages are already human-shaped ("Charge ch_… has already

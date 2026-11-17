@@ -1,29 +1,47 @@
 /**
  * ONE-SHOT ADMIN TOOL — GCal force resync
  *
- * Wipes every Sollos-managed event from an org's Google Calendar (including
- * orphans that have no booking ID in the DB), clears all
- * google_calendar_event_id values, then re-pushes all upcoming bookings.
+ * Wipes every Sollos-managed event of THIS company from its company Google
+ * Calendar (including orphans that have no booking in the database), clears
+ * the event ids on its upcoming bookings, then pushes the upcoming bookings
+ * again.
  *
  * Use when a customer has doubled/tripled events from a historic bug.
  *
- * Auth: pass CRON_SECRET as the `secret` query param or as
- *       `Authorization: Bearer <CRON_SECRET>` header.
+ * It works in passes of 40 deletions. A pass that leaves events behind does
+ * NOT push anything: it says "run again". Only the pass that finishes the
+ * wipe pushes the jobs back. (It used to push every job after every pass, so
+ * with more than 40 events each run made new copies and it never finished.)
+ *
+ * Three things it must never do, all of which it did until 2026-11-18:
+ *   - take a cleaner's own calendar for the company's. Only the company
+ *     connection (membership_id IS NULL) is used; with none, it answers 404.
+ *   - give up because a cleaner has connected their own calendar as well.
+ *   - delete another company's live events from a calendar two companies
+ *     share. An event whose booking belongs to another company stays.
+ *
+ * Auth: `Authorization: Bearer <CRON_SECRET>` header.
  *
  * Usage:
- *   GET /api/admin/gcal-force-resync?org_id=<UUID>&secret=<CRON_SECRET>
+ *   GET /api/admin/gcal-force-resync?org_id=<UUID>
  *
- * Response: { deleted_from_gcal, nulled_booking_ids, synced, errors }
+ * Response: { ok, sollos_events_found, deleted_from_gcal, nulled_booking_ids,
+ *             synced, errors, remaining, hint }
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { bulkSyncUpcomingBookings } from "@/lib/google-calendar";
-import { decryptSecret, encryptSecret } from "@/lib/crypto";
+import {
+  bulkSyncUpcomingBookings,
+  deleteCalendarEvent,
+  listOrgManagedEvents,
+} from "@/lib/google-calendar";
 import { requireCronAuth } from "@/lib/cron-auth";
 
-const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
-const CALENDAR_API = "https://www.googleapis.com/calendar/v3";
+export const maxDuration = 60;
+
+/** Deletions per call. 40 x 150ms stays well inside the time limit. */
+const PASS_CAP = 40;
 
 export async function GET(request: NextRequest) {
   // ── Auth (header-only; query-param secret removed to keep it out of logs) ──
@@ -31,8 +49,6 @@ export async function GET(request: NextRequest) {
   if (unauthorized) return unauthorized;
 
   const url = new URL(request.url);
-
-  // ── Org ID ────────────────────────────────────────────────────────────────
   const orgId = url.searchParams.get("org_id");
   if (!orgId) {
     return NextResponse.json({ error: "Missing org_id" }, { status: 400 });
@@ -40,25 +56,17 @@ export async function GET(request: NextRequest) {
 
   const admin = createSupabaseAdminClient();
 
-  // ── Load connection ───────────────────────────────────────────────────────
-  const { data: conn } = await admin
+  // ── The COMPANY connection, never a cleaner's own ─────────────────────────
+  const { data: conn } = (await admin
     .from("integration_connections" as never)
-    .select(
-      "id, access_token_ciphertext, refresh_token_ciphertext, token_expires_at, metadata",
-    )
+    .select("id, access_token_ciphertext")
     .eq("organization_id" as never, orgId)
     .eq("provider" as never, "google_calendar")
     .eq("status" as never, "active")
-    .maybeSingle() as unknown as {
-    data: {
-      id: string;
-      access_token_ciphertext: string | null;
-      refresh_token_ciphertext: string | null;
-      token_expires_at: string | null;
-      metadata: Record<string, unknown>;
-    } | null;
+    .is("membership_id" as never, null)
+    .maybeSingle()) as unknown as {
+    data: { id: string; access_token_ciphertext: string | null } | null;
   };
-
   if (!conn || !conn.access_token_ciphertext) {
     return NextResponse.json(
       { error: "No active Google Calendar connection for this org" },
@@ -66,139 +74,105 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // ── Resolve access token (refresh if expired) ─────────────────────────────
-  let accessToken = decryptSecret(conn.access_token_ciphertext)!;
-  const isExpired =
-    conn.token_expires_at &&
-    new Date(conn.token_expires_at).getTime() < Date.now() + 60_000;
-
-  if (isExpired && conn.refresh_token_ciphertext) {
-    const env = {
-      clientId: process.env.GOOGLE_CALENDAR_CLIENT_ID!,
-      clientSecret: process.env.GOOGLE_CALENDAR_CLIENT_SECRET!,
-    };
-    const refreshToken = decryptSecret(conn.refresh_token_ciphertext)!;
-    const tokenRes = await fetch(GOOGLE_TOKEN_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        client_id: env.clientId,
-        client_secret: env.clientSecret,
-        refresh_token: refreshToken,
-        grant_type: "refresh_token",
-      }),
-    });
-    if (tokenRes.ok) {
-      const tokenData = await tokenRes.json();
-      accessToken = tokenData.access_token;
-      const expiresAt = new Date(Date.now() + tokenData.expires_in * 1000).toISOString();
-      await admin
-        .from("integration_connections" as never)
-        .update({
-          access_token_ciphertext: encryptSecret(accessToken),
-          token_expires_at: expiresAt,
-        } as never)
-        .eq("id" as never, conn.id);
-    }
-  }
-
-  const calendarId = (conn.metadata?.calendar_id as string) || "primary";
-
-  // ── List all upcoming events from Google Calendar ─────────────────────────
+  // ── Every Sollos event on the calendar, a year out ────────────────────────
   const timeMin = new Date().toISOString();
-  const timeMax = new Date(
-    Date.now() + 365 * 24 * 60 * 60 * 1000,
-  ).toISOString(); // 1 year out
-
-  const params = new URLSearchParams({
-    timeMin,
-    timeMax,
-    singleEvents: "true",
-    maxResults: "2500",
-    orderBy: "startTime",
-  });
-
-  const listRes = await fetch(
-    `${CALENDAR_API}/calendars/${encodeURIComponent(calendarId)}/events?${params}`,
-    { headers: { Authorization: `Bearer ${accessToken}` } },
-  );
-
-  if (!listRes.ok) {
-    const body = await listRes.text();
+  const timeMax = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
+  let managed: Array<{ id: string; bookingId: string | null }>;
+  try {
+    managed = await listOrgManagedEvents(orgId, timeMin, timeMax);
+  } catch (err) {
     return NextResponse.json(
-      { error: `Failed to list GCal events: ${listRes.status} ${body}` },
+      { error: `Failed to list GCal events: ${String(err)}` },
       { status: 500 },
     );
   }
 
-  const listData = await listRes.json();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const allEvents: any[] = listData.items ?? [];
+  // ── Leave another company's events alone ──────────────────────────────────
+  // Each event names its booking. One whose booking belongs to another
+  // company is theirs (a calendar two companies share), and stays.
+  const named = [...new Set(managed.map((e) => e.bookingId).filter((b): b is string => Boolean(b)))];
+  const elsewhere = new Set<string>();
+  for (let i = 0; i < named.length; i += 150) {
+    const { data: rows, error } = (await admin
+      .from("bookings")
+      .select("id")
+      .in("id", named.slice(i, i + 150))
+      .neq("organization_id", orgId)) as unknown as {
+      data: Array<{ id: string }> | null;
+      error: { message: string } | null;
+    };
+    // "Couldn't check" must never read as "nobody else's".
+    if (error) {
+      return NextResponse.json(
+        { error: `Checking event owners failed: ${error.message}` },
+        { status: 500 },
+      );
+    }
+    for (const r of rows ?? []) elsewhere.add(r.id);
+  }
+  const sollosEvents = managed.filter((e) => !e.bookingId || !elsewhere.has(e.bookingId));
 
-  // Find every event that was pushed by Sollos (contains our marker)
-  const sollosEvents = allEvents.filter((e) =>
-    (e.description ?? "").includes("Managed by Sollos"),
-  );
-
-  // ── Delete Sollos events from GCal ───────────────────────────────────────
-  // Sequential one-at-a-time with 150ms gaps = ~6 req/s = 400/min, safely
-  // under Google's 600/min rolling quota.
-  // Cap at 40 per call so we stay inside Vercel's 10s function timeout.
-  // Run the URL multiple times until sollos_events_found reaches 0.
+  // ── Delete this pass's share ──────────────────────────────────────────────
+  // Sequential with 150ms gaps = ~6 req/s, safely under Google's quota.
   let deleted_from_gcal = 0;
   const errors: string[] = [];
-  const toDelete = sollosEvents.slice(0, 40);
-
-  for (const e of toDelete) {
-    const delRes = await fetch(
-      `${CALENDAR_API}/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(e.id)}`,
-      {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${accessToken}` },
-      },
-    );
-    if (delRes.ok || delRes.status === 404 || delRes.status === 410) {
+  const removedIds: string[] = [];
+  for (const e of sollosEvents.slice(0, PASS_CAP)) {
+    const ok = await deleteCalendarEvent(orgId, e.id).catch(() => false);
+    if (ok) {
       deleted_from_gcal++;
+      removedIds.push(e.id);
     } else {
-      errors.push(`Failed to delete GCal event ${e.id}: ${delRes.status}`);
+      errors.push(`Failed to delete GCal event ${e.id}`);
     }
-    // 150ms gap between requests → ~6.7 req/s = 400/min
     await new Promise((r) => setTimeout(r, 150));
   }
+  const remaining = sollosEvents.length - deleted_from_gcal;
 
-  // ── Null all google_calendar_event_id on upcoming bookings ────────────────
-  const now = new Date().toISOString();
-  const { count: nulled_booking_ids } = await admin
-    .from("bookings")
-    .update({ google_calendar_event_id: null } as never)
-    .eq("organization_id" as never, orgId)
-    .gte("scheduled_at" as never, now)
-    .not("google_calendar_event_id" as never, "is" as never, null as never);
+  // The bookings whose events just went no longer have one.
+  let nulled_booking_ids = 0;
+  if (removedIds.length > 0) {
+    const { data: cleared } = (await admin
+      .from("bookings")
+      .update({ google_calendar_event_id: null } as never)
+      .eq("organization_id" as never, orgId)
+      .in("google_calendar_event_id" as never, removedIds as never)
+      .select("id")) as unknown as { data: Array<{ id: string }> | null };
+    nulled_booking_ids += cleared?.length ?? 0;
+  }
 
-  // ── Re-sync only if the wipe was clean ───────────────────────────────────
-  // If any deletes failed, don't re-sync — that would create new events on
-  // top of the ones we couldn't remove, making duplicates worse.
-  // Fix the errors (usually by waiting a minute and re-running) then re-run.
+  // ── Push the jobs back only once the wipe is complete ─────────────────────
+  // Pushing while events remain (failed deletes, or more than one pass's
+  // worth) would put new events on top of the ones still there.
   let synced = false;
-  if (errors.length === 0) {
+  if (errors.length === 0 && remaining === 0) {
+    const { data: cleared } = (await admin
+      .from("bookings")
+      .update({ google_calendar_event_id: null } as never)
+      .eq("organization_id" as never, orgId)
+      .gte("scheduled_at" as never, timeMin)
+      .not("google_calendar_event_id" as never, "is" as never, null as never)
+      .select("id")) as unknown as { data: Array<{ id: string }> | null };
+    nulled_booking_ids += cleared?.length ?? 0;
     await bulkSyncUpcomingBookings(orgId).catch((err) => {
       errors.push(`bulkSync error: ${String(err)}`);
     });
-    synced = true;
+    synced = errors.length === 0;
   }
 
   return NextResponse.json({
     ok: errors.length === 0,
     sollos_events_found: sollosEvents.length,
     deleted_from_gcal,
-    nulled_booking_ids: nulled_booking_ids ?? 0,
+    nulled_booking_ids,
     synced,
     errors,
-    remaining: sollosEvents.length - deleted_from_gcal,
-    hint: errors.length > 0
-      ? "Some deletes failed — wait 60s and run again. bulkSync was skipped to avoid new duplicates."
-      : sollosEvents.length > 40
-      ? `Processed first 40 of ${sollosEvents.length} — run again immediately to continue.`
-      : undefined,
+    remaining,
+    hint:
+      errors.length > 0
+        ? "Some deletes failed. Wait 60s and run again. Nothing was pushed, to avoid new duplicates."
+        : remaining > 0
+          ? `Removed ${deleted_from_gcal} of ${sollosEvents.length}. Run again to continue; the jobs are pushed back on the pass that finishes.`
+          : undefined,
   });
 }

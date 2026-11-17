@@ -9,6 +9,7 @@ import { extensionFor, isRealRasterImage } from "@/lib/file-sniff";
 
 type Result = { ok: true } | { ok: false; error: string };
 
+const OFFICE = ["owner", "admin", "manager"];
 const MAX_IMAGE_SIZE = 4 * 1024 * 1024; // 4 MB
 const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp"];
 
@@ -212,6 +213,11 @@ export async function updateTrainingModuleAction(
   formData: FormData,
 ): Promise<TrainingModuleState> {
   const { membership, supabase } = await getActionContext();
+  // The database refused a cleaner's edit silently; the action then
+  // answered with the "saved" redirect. Say no instead.
+  if (!OFFICE.includes(membership.role)) {
+    return { error: "Only the office can edit training modules." };
+  }
 
   const title = String(formData.get("title") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim();
@@ -228,7 +234,7 @@ export async function updateTrainingModuleAction(
   const steps = parseStepsFromFormData(formData);
 
   // Update the module
-  const { error: modErr } = await supabase
+  const { data: savedRows, error: modErr } = await supabase
     .from("training_modules")
     .update({
       title,
@@ -238,12 +244,21 @@ export async function updateTrainingModuleAction(
       audience_roles: audienceRoles,
     } as never)
     .eq("id", moduleId)
-    .eq("organization_id", membership.organization_id);
+    .eq("organization_id", membership.organization_id)
+    .select("id");
 
   if (modErr) return { error: modErr.message };
+  // Not this company's module, or gone: stop here. Carrying on re-inserted
+  // the posted steps under whatever module id was given, which attached
+  // them to another company's module when that one had no steps.
+  if (!savedRows?.length) return { error: "That module wasn't found. Nothing was saved." };
 
   // Delete existing steps and re-insert (simpler than diffing)
-  await supabase.from("training_steps").delete().eq("module_id", moduleId);
+  await supabase
+    .from("training_steps")
+    .delete()
+    .eq("module_id", moduleId)
+    .eq("organization_id", membership.organization_id);
 
   if (steps.length > 0) {
     const stepRows = await Promise.all(
@@ -254,12 +269,15 @@ export async function updateTrainingModuleAction(
           imageUrl = null;
         }
         if (step.imageFile) {
-          imageUrl = await uploadStepImage(
-            membership.organization_id,
-            moduleId,
-            idx,
-            step.imageFile,
-          );
+          // A refused upload (too big, wrong type) keeps the photo the step
+          // already had; it used to replace it with nothing.
+          imageUrl =
+            (await uploadStepImage(
+              membership.organization_id,
+              moduleId,
+              idx,
+              step.imageFile,
+            )) ?? imageUrl;
         }
 
         return {
@@ -307,18 +325,26 @@ export async function deleteTrainingModuleAction(formData: FormData) {
   if (!id) return;
 
   const { membership, supabase } = await getActionContext();
+  if (!OFFICE.includes(membership.role)) return;
 
   const { data: prev } = await supabase
     .from("training_modules")
     .select("title")
     .eq("id", id)
+    .eq("organization_id", membership.organization_id)
     .maybeSingle();
 
   // Steps cascade via FK on delete
-  const { error } = await supabase.from("training_modules").delete().eq("id", id).eq("organization_id", membership.organization_id);
+  const { data: removed, error } = await supabase
+    .from("training_modules")
+    .delete()
+    .eq("id", id)
+    .eq("organization_id", membership.organization_id)
+    .select("id");
   if (error) throw error;
 
-  await logAuditEvent({
+  // Log a deletion only when one happened.
+  if (removed?.length) await logAuditEvent({
     membership,
     action: "delete",
     entity: "training_module",
@@ -401,7 +427,7 @@ export async function setTrainingCompletionAction(
         organization_id: membership.organization_id,
         module_id,
         employee_id,
-        completed_at: completed ? nowIso : null,
+        completed_at: null,
       } as never)
       .select("id")
       .single()) as unknown as {
@@ -410,6 +436,16 @@ export async function setTrainingCompletionAction(
     };
     if (error || !inserted) {
       return { ok: false, error: error?.message ?? "Could not assign." };
+    }
+    // The certificate's expiry is dated by the database when completed_at is
+    // UPDATED. A row inserted already completed never got one, so someone
+    // marked trained with no assignment yet was never reminded to renew.
+    if (completed) {
+      const { error: doneErr } = await supabase
+        .from("training_assignments")
+        .update({ completed_at: nowIso } as never)
+        .eq("id", inserted.id);
+      if (doneErr) return { ok: false, error: doneErr.message };
     }
     await logAuditEvent({
       membership,

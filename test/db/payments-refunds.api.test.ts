@@ -411,8 +411,7 @@ describe.skipIf(!hasPostgrest)("refund a Square card payment", { timeout: 120_00
     expect((await paymentRow(mine.id)).refunded_cents).toBe(0);
   });
 
-  // FIX-LATER: issueSquareRefund always asks Square for a CAD refund; a USD company's Square payments are taken in USD (createInvoiceCheckoutLink uses the org currency), and Square refuses a refund whose currency doesn't match the payment.
-  it.fails("a US-dollar company's refund is asked for in US dollars, the currency the client paid in", async () => {
+  it("a US-dollar company's refund is asked for in US dollars, the currency the client paid in", async () => {
     const c = await company("Dollar Co");
     await api.sql("update public.organizations set currency_code = 'USD', timezone = 'America/New_York' where id = $1", [c.org]);
     await squareConnection(c, "sq-access-token-usd");
@@ -424,8 +423,7 @@ describe.skipIf(!hasPostgrest)("refund a Square card payment", { timeout: 120_00
     expect(squareFake.calls[0].body.amount_money).toEqual({ amount: 1000, currency: "USD" });
   });
 
-  // FIX-LATER: the same refreshed-token save as the payment link (connected_by = "" is not a uuid): getValidAccessToken throws out of issueSquareRefund, which has no catch, so the owner gets the error page and the company's Square connection is left switched off.
-  it.fails("a refund on a connection whose 30-day token has run out refreshes the token and is issued, not a crash", async () => {
+  it("a refund on a connection whose 30-day token has run out refreshes the token and is issued, not a crash", async () => {
     const c = await company("Stale Token Co");
     await squareConnection(c, "sq-access-token-stale", new Date(Date.now() - 86_400_000).toISOString());
     const inv = await invoice(c, 5000);
@@ -440,8 +438,7 @@ describe.skipIf(!hasPostgrest)("refund a Square card payment", { timeout: 120_00
 });
 
 describe.skipIf(!hasPostgrest)("whose invoice a refund is written against", { timeout: 120_000 }, () => {
-  // FIX-LATER: both refund actions log the refund against the invoice_id posted with the form, never checked against the payment's own invoice (updateInvoicePaymentAction refuses exactly this mismatch), so a crafted post files the refund under any invoice id and the real invoice's history never shows it.
-  it.fails("the audit entry names the payment's own invoice, not whichever invoice id came with the form", async () => {
+  it("the audit entry names the payment's own invoice, not whichever invoice id came with the form", async () => {
     const c = await company("Audit Co");
     const other = await company("Audit Other Co");
     const real = await invoice(c, 10000);

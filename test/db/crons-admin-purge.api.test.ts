@@ -208,8 +208,7 @@ describe.skipIf(!hasPostgrest)("purge-orgs: only orgs past their 30-day grace ar
     await api.sql("update public.organizations set deletion_scheduled_at = null where id = $1", [w.org]);
   });
 
-  // FIX-LATER: purgeOrgData's DELETE_ORDER names webhook_subscriptions, a table 20260421020000_webhooks_unification dropped; every purge errors on it and stops before the tombstone and login erasure
-  it.fails("a purge against the schema the migrations build finishes without errors and tombstones the org", async () => {
+  it("a purge against the schema the migrations build finishes without errors and tombstones the org", async () => {
     const { GET } = await import("@/app/api/cron/purge-orgs/route");
     const due = await workspace("Plain Purge", { scheduledDaysAgo: 31 });
     standIn.droppedWebhookTable = false;
@@ -264,8 +263,7 @@ describe.skipIf(!hasPostgrest)("purge-orgs: only orgs past their 30-day grace ar
     expect(again.body.purgedOrgIds).toEqual([]);
   });
 
-  // FIX-LATER: purgeOrgData deletes only its hard-coded table list and keeps the org row, so tables left off it (job_applicants, sms_messages, booking_prepayments, ai_conversations, api_keys, ...) keep the org's data forever
-  it.fails("leaves none of the org's personal data behind: job applicants, text messages, prepayments", async () => {
+  it("leaves none of the org's personal data behind: job applicants, text messages, prepayments", async () => {
     const { GET } = await import("@/app/api/cron/purge-orgs/route");
     const due = await workspace("Purge Leftovers", { scheduledDaysAgo: 31 });
     await api.sql(
@@ -291,8 +289,7 @@ describe.skipIf(!hasPostgrest)("purge-orgs: only orgs past their 30-day grace ar
     expect(left.filter((r) => r.n > 0)).toEqual([]);
   });
 
-  // FIX-LATER: purgeExpiredOrgs returns every due org in purgedOrgIds, including ones whose purge failed and were left unmarked
-  it.fails("an org whose purge failed is not reported as purged", async () => {
+  it("an org whose purge failed is not reported as purged", async () => {
     const { GET } = await import("@/app/api/cron/purge-orgs/route");
     const stuck = await workspace("Stuck Purge", { scheduledDaysAgo: 31 });
     // A table that refuses the delete for this org, as a real failure would.
@@ -320,9 +317,26 @@ describe.skipIf(!hasPostgrest)("purge-orgs: only orgs past their 30-day grace ar
   });
 });
 
+describe.skipIf(!hasPostgrest)("purge-orgs: the table list matches the database", () => {
+  it("names every table that carries organization_id, and no table that doesn't exist", async () => {
+    const { PURGE_TABLE_ORDER, PURGE_TABLES_MAYBE_GONE } = await import("@/lib/tenant-data");
+    const rows = await api.sql<{ t: string }>(
+      `select c.table_name as t from information_schema.columns c
+         join information_schema.tables t on t.table_schema = c.table_schema and t.table_name = c.table_name and t.table_type = 'BASE TABLE'
+        where c.table_schema = 'public' and c.column_name = 'organization_id'`,
+    );
+    const inDb = new Set(rows.map((r) => r.t));
+    // audit_log goes through purge_org_audit_log, not the list.
+    const forgotten = [...inDb].filter((t) => t !== "audit_log" && !PURGE_TABLE_ORDER.includes(t)).sort();
+    expect(forgotten, "tables with organization_id the purge would leave behind").toEqual([]);
+    const unknown = PURGE_TABLE_ORDER.filter((t) => !inDb.has(t) && !PURGE_TABLES_MAYBE_GONE.has(t));
+    expect(unknown, "tables on the purge list that don't exist").toEqual([]);
+    expect(new Set(PURGE_TABLE_ORDER).size).toBe(PURGE_TABLE_ORDER.length);
+  });
+});
+
 describe.skipIf(!hasPostgrest)("purge-orgs: a table too big for one delete statement", { timeout: 180_000 }, () => {
-  // FIX-LATER: deleteAllFor's statement-timeout fallback (57014 -> delete in batches) is dead inside a cron: the fail-closed guard rejects the await before deleteAllFor can read the error
-  it.fails("falls back to batched deletes when the one-statement delete times out, and finishes the purge", async () => {
+  it("falls back to batched deletes when the one-statement delete times out, and finishes the purge", async () => {
     const { GET } = await import("@/app/api/cron/purge-orgs/route");
     const big = await workspace("Big Purge", { scheduledDaysAgo: 31 });
     // The first delete statement on this org's clients is cancelled the way

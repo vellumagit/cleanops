@@ -252,8 +252,7 @@ describe.skipIf(!hasPostgrest)("ai-chat: the assistant, for active members only"
     expect(fake.support).toHaveLength(0);
   });
 
-  // FIX-LATER: ai-chat reads the membership with maybeSingle() on every active membership, so anyone active in two orgs gets "Not available"
-  it.fails("someone active in two companies can use the assistant", async () => {
+  it("someone active in two companies can use the assistant", async () => {
     const svit = await addOrg(api.sql, "Svit");
     const demo = await addOrg(api.sql, "Velluma Demo");
     const brian = await addMember(api.sql, svit, "owner", "Brian");
@@ -264,8 +263,7 @@ describe.skipIf(!hasPostgrest)("ai-chat: the assistant, for active members only"
     expect(fake.calls).toHaveLength(1);
   });
 
-  // FIX-LATER: ai-chat checks only for an active membership, not organizations.suspended_at; a suspended workspace keeps spending Sollos's Anthropic key
-  it.fails("a member of a suspended workspace is refused", async () => {
+  it("a member of a suspended workspace is refused", async () => {
     const org = await addOrg(api.sql, "Suspended Spam");
     const owner = await addMember(api.sql, org, "owner");
     await api.sql("update public.organizations set suspended_at = now(), suspend_reason = 'test' where id = $1", [org]);

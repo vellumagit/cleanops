@@ -81,23 +81,34 @@ export async function POST(request: NextRequest) {
 
   // Membership + feature-flag check
   const admin = createSupabaseAdminClient();
-  const { data: membership } = (await admin
+  // Every active membership, then the same choice the rest of the app
+  // makes: the company picked in the switcher, else the newest. Asking for
+  // exactly one row refused anyone active in two companies; and a suspended
+  // workspace is a closed door here too, or it keeps spending the
+  // assistant's key.
+  type ChatMembership = {
+    id: string;
+    organization_id: string;
+    role: string;
+    capabilities: unknown;
+    display_name: string | null;
+    profile: { full_name: string | null } | null;
+    organization: { suspended_at: string | null } | null;
+  };
+  const { data: memberships } = (await admin
     .from("memberships")
     .select(
-      "id, organization_id, role, capabilities, display_name, profile:profiles(full_name)",
+      "id, organization_id, role, capabilities, display_name, profile:profiles(full_name), organization:organizations!inner(suspended_at)",
     )
     .eq("profile_id", user.id)
     .eq("status", "active")
-    .maybeSingle()) as unknown as {
-    data: {
-      id: string;
-      organization_id: string;
-      role: string;
-      capabilities: unknown;
-      display_name: string | null;
-      profile: { full_name: string | null } | null;
-    } | null;
+    .order("created_at", { ascending: false })) as unknown as {
+    data: ChatMembership[] | null;
   };
+  const live = (memberships ?? []).filter((m) => !m.organization?.suspended_at);
+  const preferredOrgId = request.cookies.get("cleanops_active_org")?.value ?? null;
+  const membership =
+    live.find((m) => m.organization_id === preferredOrgId) ?? live[0] ?? null;
 
   if (!membership) {
     return Response.json({ error: "Not available" }, { status: 403 });

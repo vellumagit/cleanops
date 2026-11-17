@@ -374,8 +374,7 @@ describe.skipIf(!hasPostgrest)("Pay by card (Square) on the invoice page", { tim
     expect(squareFake.calls).toEqual([]);
   });
 
-  // FIX-LATER: getValidAccessToken saves a refreshed Square token with connected_by = "" (not a uuid); the insert fails after the old connection was already switched off, so Square disconnects itself on the first payment after the 30-day token runs out.
-  it.fails("a connection whose 30-day token has run out is refreshed and kept, and the client still gets a payment link", async () => {
+  it("a connection whose 30-day token has run out is refreshed and kept, and the client still gets a payment link", async () => {
     const c = await company("Stale Square Co");
     await squareConnection(c, { token: "sq-access-token-stale", expiresAt: new Date(Date.now() - 86_400_000).toISOString() });
     const inv = await invoice(c, 9000);

@@ -235,8 +235,7 @@ describe.skipIf(!hasPostgrest)("gcal-force-resync", { timeout: 120_000 }, () => 
     expect(res).toEqual({ status: 404, body: { error: "No active Google Calendar connection for this org" } });
   });
 
-  // FIX-LATER: gcal-force-resync deletes only the first 40 events (by start time) and then re-pushes every job, so with more than 40 the "run again" hint never ends and a doubled event past the 40th is never removed
-  it.fails("with more than 40 jobs, running it again as its hint says clears a doubled event late in the calendar", { timeout: 120_000 }, async () => {
+  it("with more than 40 jobs, running it again as its hint says clears a doubled event late in the calendar", { timeout: 120_000 }, async () => {
     const c = await company();
     const token = tok("tok-office");
     await connect(c.org, null, token);
@@ -260,8 +259,7 @@ describe.skipIf(!hasPostgrest)("gcal-force-resync", { timeout: 120_000 }, () => 
     expect(forLast, "one event for the last job").toHaveLength(1);
   });
 
-  // FIX-LATER: gcal-force-resync looks up the connection without membership_id IS NULL, so once any cleaner connects her own calendar the company's lookup finds two rows and the tool reports "no connection"
-  it.fails("still repairs the company calendar when a cleaner has connected her own", async () => {
+  it("still repairs the company calendar when a cleaner has connected her own", async () => {
     const c = await company();
     const token = tok("tok-office");
     await connect(c.org, null, token);
@@ -273,8 +271,7 @@ describe.skipIf(!hasPostgrest)("gcal-force-resync", { timeout: 120_000 }, () => 
     expect(res.body).toMatchObject({ ok: true, sollos_events_found: 1 });
   });
 
-  // FIX-LATER: same missing filter: with only a cleaner's own calendar connected, the tool takes HER connection for the company's and deletes every Sollos event on her personal calendar
-  it.fails("with only a cleaner's own calendar connected, it leaves her calendar alone", async () => {
+  it("with only a cleaner's own calendar connected, it leaves her calendar alone", async () => {
     const c = await company();
     const annaToken = tok("tok-anna");
     await connect(c.org, c.anna, annaToken);
@@ -285,8 +282,7 @@ describe.skipIf(!hasPostgrest)("gcal-force-resync", { timeout: 120_000 }, () => 
     expect(res.status).toBe(404);
   });
 
-  // FIX-LATER: gcal-force-resync deletes every "Managed by Sollos" event it lists, including another company's live events on a shared calendar (gcal-prune guards this case since 2026-11-09; this tool doesn't)
-  it.fails("on a calendar shared with another company, the other company's live events stay", async () => {
+  it("on a calendar shared with another company, the other company's live events stay", async () => {
     const c = await company();
     const other = await company("Other Co");
     const shared = tok("tok-shared");

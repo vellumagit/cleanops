@@ -442,15 +442,29 @@ export async function getValidAccessToken(
 
   // Need to refresh.
   const fresh = await refreshAccessToken(conn.refreshToken);
-  await saveConnection({
-    organizationId,
-    membershipId: "", // kept NULL-ish via the schema; we don't know who triggered the refresh
-    merchantId: fresh.merchant_id,
-    accessToken: fresh.access_token,
-    refreshToken: fresh.refresh_token,
-    expiresAt: fresh.expires_at,
-    locationId: conn.locationId,
-  });
+  // Write the new tokens onto the connection that is already there. This
+  // used to go through saveConnection, which switches the old connection off
+  // and inserts a new one with connected_by = "" — not a valid id, so the
+  // insert failed AFTER the old one was off, and Square disconnected itself
+  // on the first payment or refund once the 30-day token ran out.
+  const admin = createSupabaseAdminClient();
+  const { data: kept, error } = await admin
+    .from("integration_connections")
+    .update({
+      access_token_ciphertext: encryptSecret(fresh.access_token),
+      refresh_token_ciphertext: encryptSecret(fresh.refresh_token),
+      token_expires_at: fresh.expires_at,
+      last_error: null,
+    })
+    .eq("organization_id", organizationId)
+    .eq("provider", "square")
+    .eq("status", "active")
+    .select("id");
+  if (error || !kept?.length) {
+    throw new Error(
+      `Failed to save refreshed Square token: ${error?.message ?? "connection not found"}`,
+    );
+  }
   return fresh.access_token;
 }
 

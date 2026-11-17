@@ -186,14 +186,18 @@ export async function archiveServiceTypeAction(id: string): Promise<void> {
   const membership = await requireMembership(["owner", "admin"]);
   const { supabase } = await getActionContext();
 
-  await supabase
+  const { data: changed } = (await supabase
     .from("service_types" as never)
     .update({
       is_active: false,
       archived_at: new Date().toISOString(),
     } as never)
     .eq("id" as never, id as never)
-    .eq("organization_id" as never, membership.organization_id as never);
+    .eq("organization_id" as never, membership.organization_id as never)
+    .select("id")) as unknown as { data: Array<{ id: string }> | null };
+
+  // Nothing archived (not this company's service, or gone): log nothing.
+  if (!changed?.length) return;
 
   await logAuditEvent({
     membership,
@@ -213,14 +217,18 @@ export async function unarchiveServiceTypeAction(id: string): Promise<void> {
   const membership = await requireMembership(["owner", "admin"]);
   const { supabase } = await getActionContext();
 
-  await supabase
+  const { data: changed } = (await supabase
     .from("service_types" as never)
     .update({
       is_active: true,
       archived_at: null,
     } as never)
     .eq("id" as never, id as never)
-    .eq("organization_id" as never, membership.organization_id as never);
+    .eq("organization_id" as never, membership.organization_id as never)
+    .select("id")) as unknown as { data: Array<{ id: string }> | null };
+
+  // Nothing restored (not this company's service, or gone): log nothing.
+  if (!changed?.length) return;
 
   await logAuditEvent({
     membership,

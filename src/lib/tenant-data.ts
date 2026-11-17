@@ -23,6 +23,7 @@
 import "server-only";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { allPages, type Page } from "@/lib/supabase/all-pages";
+import { allowDbErrors } from "@/lib/supabase/query-guard";
 import { releaseOrgNumber } from "@/lib/twilio-provision";
 
 /**
@@ -303,6 +304,138 @@ export async function cancelOrgDeletion(orgId: string): Promise<void> {
 // Hard purge — called by the cron
 // ---------------------------------------------------------------------------
 
+/**
+ * Every table that carries organization_id, in an order its foreign keys
+ * allow. The company row itself is kept as a tombstone, so nothing here goes
+ * by cascade from it: a table left off this list keeps the company's data
+ * forever. That happened to about thirty tables (job applicants, text
+ * messages, prepayments, client addresses, the assistant's conversations,
+ * API keys...) until 2026-11-18. test/db/crons-admin-purge compares this list
+ * with the schema, so a new table can't be forgotten again.
+ *
+ * audit_log is not here: its append-only trigger refuses a plain DELETE, so
+ * it goes through purge_org_audit_log.
+ */
+export const PURGE_TABLE_ORDER: readonly string[] = [
+  // Hiring (interviews reference applicants and documents)
+  "applicant_interviews",
+  "job_applicants",
+  "intake_forms",
+  "hiring_docs",
+  // Feedback
+  "feedback_replies",
+  "feedback_items",
+  // Requests, media and texts that point at bookings and clients
+  "client_job_requests",
+  "client_media",
+  "shift_change_requests",
+  "sms_messages",
+  // Booking-scoped children first (cascade on booking_id)
+  "booking_checklist_items",
+  "booking_assignees",
+  "job_photos",
+  // Conversation / messaging
+  "chat_messages",
+  "chat_thread_members",
+  "chat_threads",
+  "ai_conversations",
+  // Money + invoicing
+  "booking_prepayments",
+  "invoice_tips",
+  "invoice_payments",
+  "invoice_line_items",
+  "invoices",
+  "invoice_series",
+  "promo_redemptions",
+  "estimate_line_items",
+  "estimates",
+  "bonuses",
+  "bonus_rules",
+  "reviews",
+  "time_entries",
+  // Pay changes and add-ons (reference memberships)
+  "pay_addons",
+  "pay_rate_changes",
+  // Payroll (items reference runs)
+  "payroll_items",
+  "payroll_runs",
+  // Subcontractor pay (items hold memberships with ON DELETE RESTRICT)
+  "subcontractor_pay_items",
+  "subcontractor_pay_runs",
+  "subcontractor_bills",
+  "subcontractor_payouts",
+  "pto_requests",
+  "pto_balances",
+  // Inventory + training
+  "inventory_log",
+  "inventory_items",
+  "training_assignments",
+  "training_steps",
+  "training_modules",
+  // Checklists templates
+  "checklist_template_items",
+  "checklist_templates",
+  // Availability
+  "availability_overrides",
+  "availability_slots",
+  // Tasks + feed + contracts
+  "tasks",
+  "feed_posts",
+  "contract_documents",
+  "contracts",
+  // Booking requests + bookings + series
+  "booking_requests",
+  "bookings",
+  "booking_series",
+  "packages",
+  // After the bookings, series, checklists and contracts that point at them
+  "service_types",
+  "client_properties",
+  // Job offers
+  "job_offer_claims",
+  "job_offer_dispatches",
+  "job_offers",
+  "freelancer_contacts",
+  "network_contacts",
+  "client_documents",
+  "client_emails",
+  "clients",
+  // Misc per-org
+  "scheduler_views",
+  "notifications",
+  "push_subscriptions",
+  "webhook_deliveries",
+  "webhook_subscriptions",
+  "webhooks",
+  "integration_events",
+  "integration_connections",
+  "quickbooks_oauth_states",
+  "sage_oauth_states",
+  "square_oauth_states",
+  "stripe_oauth_states",
+  "api_keys",
+  "sms_registrations",
+  "org_email_counters",
+  "needs_you_state",
+  "refusal_log",
+  "invitations",
+  // Memberships last (other tables reference it)
+  "membership_documents",
+  "membership_admin_data",
+  "memberships",
+  "subscriptions",
+];
+
+/**
+ * Tables a later migration dropped that an older database may still have.
+ * For these, and only these, "no such table" means "nothing to delete".
+ * webhook_subscriptions was dropped by 20260421020000_webhooks_unification;
+ * while it sat on the list unguarded, every purge on a migrated database
+ * failed on it and stopped before the tombstone.
+ */
+export const PURGE_TABLES_MAYBE_GONE: ReadonlySet<string> = new Set(["webhook_subscriptions"]);
+const MISSING_TABLE_CODES = ["PGRST205", "42P01"];
+
 const DELETE_BATCH = 500;
 /** 500 x 400 = 200k rows per table, past which something is wrong. */
 const MAX_BATCH_PASSES = 400;
@@ -335,14 +468,25 @@ async function deleteAllFor(
   table: string,
   orgId: string,
 ): Promise<number> {
-  const { count, error } = (await db
-    .from(table as never)
-    .delete({ count: "exact" })
-    .eq("organization_id" as never, orgId as never)) as unknown as {
+  // allowDbErrors: inside the cron every failed query rejects before the
+  // caller can read it, which made the batching below unreachable there.
+  const { count, error } = (await allowDbErrors(
+    ["57014", ...MISSING_TABLE_CODES],
+    db
+      .from(table as never)
+      .delete({ count: "exact" })
+      .eq("organization_id" as never, orgId as never),
+  )) as unknown as {
     count: number | null;
     error: { code?: string; message: string } | null;
   };
   if (!error) return count ?? 0;
+  if (
+    PURGE_TABLES_MAYBE_GONE.has(table) &&
+    MISSING_TABLE_CODES.includes(error.code ?? "")
+  ) {
+    return 0;
+  }
   if (!isStatementTimeout(error)) throw new Error(error.message);
 
   let removed = 0;
@@ -514,81 +658,6 @@ export async function purgeOrgData(
   //
   // audit_log is NOT here: the append-only trigger refuses a plain DELETE, so
   // it goes through purge_org_audit_log above.
-  const DELETE_ORDER: readonly string[] = [
-    // Booking-scoped children first (cascade on booking_id)
-    "booking_checklist_items",
-    "booking_assignees",
-    "job_photos",
-    // Conversation / messaging
-    "chat_messages",
-    "chat_thread_members",
-    "chat_threads",
-    // Money + invoicing
-    "invoice_payments",
-    "invoice_line_items",
-    "invoices",
-    "invoice_series",
-    "promo_redemptions",
-    "estimate_line_items",
-    "estimates",
-    "bonuses",
-    "bonus_rules",
-    "reviews",
-    "time_entries",
-    // Pay changes and add-ons (reference memberships)
-    "pay_addons",
-    "pay_rate_changes",
-    // Payroll (items reference runs)
-    "payroll_items",
-    "payroll_runs",
-    "pto_requests",
-    "pto_balances",
-    // Inventory + training
-    "inventory_log",
-    "inventory_items",
-    "training_assignments",
-    "training_steps",
-    "training_modules",
-    // Checklists templates
-    "checklist_template_items",
-    "checklist_templates",
-    // Availability
-    "availability_overrides",
-    "availability_slots",
-    // Tasks + feed + contracts
-    "tasks",
-    "feed_posts",
-    "contract_documents",
-    "contracts",
-    // Booking requests + bookings + series
-    "booking_requests",
-    "bookings",
-    "booking_series",
-    "packages",
-    // Job offers
-    "job_offer_claims",
-    "job_offer_dispatches",
-    "job_offers",
-    "freelancer_contacts",
-    "network_contacts",
-    "client_documents",
-    "client_emails",
-    "clients",
-    // Misc per-org
-    "scheduler_views",
-    "notifications",
-    "push_subscriptions",
-    "webhook_deliveries",
-    "webhook_subscriptions",
-    "webhooks",
-    "integration_events",
-    "integration_connections",
-    "invitations",
-    // Memberships last (other tables reference it)
-    "membership_admin_data",
-    "memberships",
-    "subscriptions",
-  ];
 
   // audit_log first. Its rows hold the payload of everything this org ever
   // did — for a client create that is {name, email} — so they are a second
@@ -627,7 +696,7 @@ export async function purgeOrgData(
     errors.push(`audit_log: ${message}`);
   }
 
-  for (const tableName of DELETE_ORDER) {
+  for (const tableName of PURGE_TABLE_ORDER) {
     try {
       tableCounts[tableName] = await deleteAllFor(db, tableName, orgId);
     } catch (err) {
@@ -822,9 +891,12 @@ export async function purgeOrgData(
 /**
  * Find every org whose 30-day grace window has elapsed and purge them.
  * Returns the list of purged org ids + per-org counts for the cron log.
+ * purgedOrgIds holds only the ones that finished; a purge that hit an error
+ * leaves its company unmarked for the next run and is named in failedOrgIds.
  */
 export async function purgeExpiredOrgs(): Promise<{
   purgedOrgIds: string[];
+  failedOrgIds: string[];
   results: Record<string, Awaited<ReturnType<typeof purgeOrgData>>>;
 }> {
   const db = createSupabaseAdminClient();
@@ -842,13 +914,18 @@ export async function purgeExpiredOrgs(): Promise<{
   const orgIds = (due ?? []).map((r) => (r as { id: string }).id);
   const results: Record<string, Awaited<ReturnType<typeof purgeOrgData>>> = {};
 
+  const purgedOrgIds: string[] = [];
+  const failedOrgIds: string[] = [];
   for (const orgId of orgIds) {
     try {
       results[orgId] = await purgeOrgData(orgId);
+      if (results[orgId].errors.length === 0) purgedOrgIds.push(orgId);
+      else failedOrgIds.push(orgId);
     } catch (err) {
       console.error(`[tenant-purge] org ${orgId} failed:`, err);
+      failedOrgIds.push(orgId);
     }
   }
 
-  return { purgedOrgIds: orgIds, results };
+  return { purgedOrgIds, failedOrgIds, results };
 }

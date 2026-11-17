@@ -215,8 +215,21 @@ export async function sendProductChangelog(options?: {
   const recipients: Recipient[] = [];
   let skipped = 0;
 
+  // One copy per PERSON. Recipients were one per owner membership, so the
+  // owner of two opted-in companies got every edition twice; and someone who
+  // unsubscribed under one company still got it through the other.
+  const unsubscribedPeople = new Set(
+    (memberRows ?? [])
+      .filter((m) => m.product_updates_unsubscribed_at && m.profile_id)
+      .map((m) => m.profile_id as string),
+  );
+  const alreadyAddressed = new Set<string>();
+
   for (const m of memberRows ?? []) {
-    if (m.product_updates_unsubscribed_at) {
+    if (
+      m.product_updates_unsubscribed_at ||
+      (m.profile_id && unsubscribedPeople.has(m.profile_id))
+    ) {
       skipped += 1;
       continue;
     }
@@ -225,6 +238,12 @@ export async function sendProductChangelog(options?: {
       skipped += 1;
       continue;
     }
+    const addressKey = email.trim().toLowerCase();
+    if (alreadyAddressed.has(addressKey)) {
+      skipped += 1;
+      continue;
+    }
+    alreadyAddressed.add(addressKey);
 
     // Mint the one-click unsubscribe token lazily — most members never need one.
     let token = m.product_updates_unsub_token;

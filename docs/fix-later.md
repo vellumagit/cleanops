@@ -10,45 +10,17 @@ Severity: **High** = money, privacy or another company's data at risk;
 **Med** = wrong result someone will notice; **Low** = wording, edge cases.
 Faults marked **Security** should go first.
 
-## Where we stopped (night of 17 Nov) and what's left for the morning
+## What's left (17 Nov, after the sixth group)
 
-Five groups of fixes are done (see "Fixed so far"). 76 of the 106 known-fault
-tests are now normal tests; 30 remain, in the groups below. The fifth group
-was committed after its full run; check `git log` and `git status` first
-thing: if the last commit isn't "Fifth group off the pile", it still needs
-committing and pushing.
+103 of the 106 known-fault tests are now normal tests. Three remain, and each
+needs a small database addition (one migration for all three):
 
-**Left to fix, in the order I'd take them:**
-
-1. **Purge of deleted companies (#62–#65, 4 tests).** Personal data left
-   behind in about 17 tables; the list names a dropped table; the
-   batched-delete fallback can't run in the cron; a failed purge is reported
-   as done. No company is due for purge, so nothing is leaking today.
-2. **Training (#78, #79, #85, 5 tests).** No role check on edit or delete;
-   an edit can attach steps to another company's module; a refused photo
-   wipes the old one; marking a new hire trained sets no certificate expiry
-   (needs a small migration: the trigger must also run on insert).
-3. **Admin calendar repair tool (#26–#28, 4 tests).** gcal-force-resync
-   finds no company calendar once a cleaner has connected their own, can
-   wipe a cleaner's calendar, deletes another company's events on a shared
-   calendar, and never finishes past 40 events. Svit has 8 cleaners
-   connected, so don't run that tool until this is fixed.
-4. **Square (#46, #47, #49, 3 tests + 1).** Token refresh disconnects the
-   account after 30 days; refunds always ask in CAD; the refund audit entry
-   trusts the posted invoice id. Nobody uses Square yet.
-5. **Trials, changelog, assistant (#69–#73, 5 tests).** The assistant
-   refuses anyone in two companies (you) and still works for a suspended
-   workspace; comped and paying workspaces get "trial ending" emails;
-   refused reminders are counted as sent; owners of two companies get the
-   changelog twice.
-6. **Small ones (5 tests).** Two overdue-reminder runs at once both remind
-   (#68); timesheet actions ignore the manager's Timesheets switch (#86); a
-   certificate gets a 7-day then a "30-day" reminder (#83); archiving a
-   service that isn't ours logs it (#19); the sender verification link
-   never expires (#18, needs a column for when it was issued).
-7. **Needs a small migration each:** "mark all read" clears announcements
-   for everyone (#54, needs a per-person read table); recurring invoices on
-   the 31st drift to the 28th (#10, needs an anchor-day column).
+1. "Mark all read" clears a team announcement for everyone (#54; needs a
+   per-person read table).
+2. Recurring invoices on the 31st drift to the 28th (#10; needs an
+   anchor-day column).
+3. The sender verification link never expires (#18; needs a column for when
+   it was issued).
 
 **Not tests, still open:**
 - Same-name website visitors are filed under an existing client (#1, the
@@ -59,6 +31,9 @@ committing and pushing.
   two test-suite items (#88, #91).
 - The April webhooks migration never ran in production, and the leftover
   `membership_admin_notes` table.
+- The data export (Settings, "download my data") lists the same tables the
+  purge used to: about thirty tables, client addresses among them, are not
+  in the download. Found 17 Nov while fixing the purge; not fixed.
 - Your two decisions (service rename; series extension when the cleaner is
   busy) and the "Questions" section at the bottom.
 - Things to check in real use: cleaners starting jobs and Olha editing
@@ -122,6 +97,26 @@ committing and pushing.
   saves say when they reached nothing, a manager sees a shift's history, an
   admin can finish setup, and sign-in sends a cleaner straight to /field
   (#80, #81, #82, #84, #87).
+- **17 Nov, sixth group:** the purge of deleted companies now clears every
+  table that carries the company's id (about thirty were left behind), no
+  longer trips on the dropped webhook table, batches a delete that times
+  out, and reports a failed purge as failed; a test compares its table list
+  with the database so a new table can't be forgotten (#62–#65). Training:
+  only the office can edit or delete a module, an edit aimed at another
+  company's module changes nothing, a refused photo keeps the old one, and
+  marking a new hire trained dates the certificate (#78, #79, #85; no
+  migration was needed in the end). The admin calendar repair tool uses only
+  the company calendar, leaves another company's events alone, and finishes
+  past 40 events (#26–#28). Square: the 30-day token refresh keeps the
+  connection, refunds are asked for in the company's currency, and both
+  refund buttons log against the payment's own invoice (#46, #47, #49). The
+  assistant works for someone in two companies and refuses a suspended
+  workspace; comped and paying workspaces get no "trial ending" email;
+  refused reminders aren't counted as sent; the changelog goes once per
+  person (#69–#73). Two overdue runs at once remind once (#68); timesheet
+  and time-off actions respect the manager's Timesheets switch (#86); a
+  certificate first seen inside a week gets one reminder (#83); archiving a
+  service that isn't ours logs nothing (#19).
 - **17 Nov:** the production catch-up (see the next section).
 
 ## Waiting on you
@@ -267,7 +262,7 @@ committing and pushing.
 | 16 | FIXED 17 Nov (was Med) | Company deletion compares the typed name with a name the page sent, then schedules whichever company is active: an owner of two companies with a stale tab can schedule the wrong one (30-day grace applies). | `settings/data/actions.ts` ~20–32 | `settings-actions` "the name typed must be the name of the company being deleted" |
 | 17 | FIXED 17 Nov (was Med) | A sender-email save refused by the daily limit still replaces and unverifies the sender, killing the link already emailed. | `settings/email/actions.ts` ~83–109 | "a save refused by the daily limit leaves the verified sender as it was" |
 | 18 | Low | The sender verification link never expires, though its email says 24 hours. | `api/verify-sender/route.ts` | "the link stops working after the 24 hours its email promises" |
-| 19 | Low | Archiving or unarchiving a service that isn't ours still writes an audit entry. | `settings/services/actions.ts` ~185–233 | "archiving a service that isn't ours leaves no 'archived' entry…" |
+| 19 | FIXED 17 Nov (was Low) | Archiving or unarchiving a service that isn't ours still writes an audit entry. | `settings/services/actions.ts` ~185–233 | "archiving a service that isn't ours leaves no 'archived' entry…" |
 
 ### Integrations (Google Calendar, QuickBooks, Sage)
 
@@ -279,9 +274,9 @@ committing and pushing.
 | 23 | FIXED 17 Nov (was Med) | After switching Google accounts, a 30-second token cache pushes the jobs back onto the old calendar; the new one stays empty. | `lib/google-calendar.ts` ~274–290 | "reconnecting with a different Google account moves the company's jobs…" (+ cleaner version) |
 | 24 | FIXED 17 Nov (was Med) | A voided invoice can be booked into QuickBooks/Sage as revenue (from a stale page). | `lib/quickbooks.ts` ~611, `lib/sage.ts` ~847 | "a voided invoice is not booked into QuickBooks / Sage" |
 | 25 | FIXED 17 Nov (was Low) | Sync buttons ignore a manager's Invoices switch (other invoice actions don't check it either). | `invoices/actions.ts` ~1139, ~1175 | "a manager with invoicing switched off can't push an invoice into the books" |
-| 26 | Med | Admin repair tool gcal-force-resync finds no company calendar once any cleaner has connected their own; with only cleaners connected, it wipes a cleaner's calendar. | `api/admin/gcal-force-resync/route.ts` ~44–60 | `integrations-gcal-admin` (2 tests) |
-| 27 | Med | gcal-force-resync deletes another company's live events on a shared calendar. | same, ~139–167 | "…the other company's live events stay" |
-| 28 | Low | gcal-force-resync never finishes past 40 events. | same, ~150 | "with more than 40 jobs, running it again…" |
+| 26 | FIXED 17 Nov (was Med) | Admin repair tool gcal-force-resync finds no company calendar once any cleaner has connected their own; with only cleaners connected, it wipes a cleaner's calendar. | `api/admin/gcal-force-resync/route.ts` ~44–60 | `integrations-gcal-admin` (2 tests) |
+| 27 | FIXED 17 Nov (was Med) | gcal-force-resync deletes another company's live events on a shared calendar. | same, ~139–167 | "…the other company's live events stay" |
+| 28 | FIXED 17 Nov (was Low) | gcal-force-resync never finishes past 40 events. | same, ~150 | "with more than 40 jobs, running it again…" |
 
 Live exposure (production, read-only, 16 Nov): the only connected
 integration anywhere is Svit's Google Calendar, company plus 8 cleaners'
@@ -314,10 +309,10 @@ touch no one yet.
 
 | # | Sev | What's wrong | Where | Shown by |
 |---|---|---|---|---|
-| 46 | High (nobody on Square yet) | Square disconnects itself when its 30-day token runs out: the refresh saves `connected_by: ""`, the insert fails, and the old row was already retired. Clients' Pay button fails; refunds crash. | `lib/square.ts` ~447, ~352–369 | `payments-public` + `payments-refunds` (token run out) |
-| 47 | Med (nobody on Square yet) | Square refunds are always requested in CAD; a USD company's refunds fail. | `lib/square-refunds.ts` ~135 | `payments-refunds` "a US-dollar company's refund is asked for in US dollars…" |
+| 46 | FIXED 17 Nov (was High (nobody on Square yet)) | Square disconnects itself when its 30-day token runs out: the refresh saves `connected_by: ""`, the insert fails, and the old row was already retired. Clients' Pay button fails; refunds crash. | `lib/square.ts` ~447, ~352–369 | `payments-public` + `payments-refunds` (token run out) |
+| 47 | FIXED 17 Nov (was Med (nobody on Square yet)) | Square refunds are always requested in CAD; a USD company's refunds fail. | `lib/square-refunds.ts` ~135 | `payments-refunds` "a US-dollar company's refund is asked for in US dollars…" |
 | 48 | FIXED 17 Nov (was Med) | A bounce or complaint naming several addresses only blocks the first, though the reply says all; the app keeps emailing the rest. | `api/webhooks/resend/route.ts` ~166, `lib/email-suppression.ts` ~86 | `payments-public` "a bounce that names two addresses puts both on the list…" |
-| 49 | Low | The refund audit entry uses the invoice id posted with the form, not the payment's own invoice. | `invoices/actions.ts` ~689, ~741 | `payments-refunds` "the audit entry names the payment's own invoice…" |
+| 49 | FIXED 17 Nov (was Low) | The refund audit entry uses the invoice id posted with the form, not the payment's own invoice. | `invoices/actions.ts` ~689, ~741 | `payments-refunds` "the audit entry names the payment's own invoice…" |
 | 50 | FIXED 17 Nov (was Low) | A cleared SMS cap field saves as $0 ("Cap saved."), silently stopping every text past the included allotment. | `settings/sms/actions.ts` ~166 | `payments-sms` "a cleared cap field is refused, not saved as $0…" |
 
 ### Office tools, tasks, team chat, reviews, on-call pool
@@ -340,18 +335,18 @@ touch no one yet.
 
 | # | Sev | What's wrong | Where | Shown by |
 |---|---|---|---|---|
-| 62 | High | Purging a deleted company leaves its personal data in about 17 tables the purge doesn't list (job applicants with résumés, text messages, prepayments, AI conversations, API keys, intake forms…): the company row is kept as a tombstone, so database cascades never fire. Right-to-erasure. Fix: add them, plus a test comparing the list with the real tables. | `lib/tenant-data.ts` ~517–591 | `crons-admin-purge` "leaves none of the org's personal data behind…" |
-| 63 | High (not live: see drift) | The purge list still names `webhook_subscriptions`, which the migrations dropped, so against the migrated schema every purge stops before the tombstone and before erasing members' logins, and `admin/purge-org` always answers not-ok. Production still has the table (drift), and no company is due for purge. | `lib/tenant-data.ts` ~582 | "a purge against the schema the migrations build finishes without errors…" |
-| 64 | Med | The purge's batched-delete fallback (for a big company that times out) can't run inside the cron: the fail-closed guard throws first, so a large company can never be purged. | `lib/tenant-data.ts` ~338–346 | "falls back to batched deletes when the one-statement delete times out…" |
-| 65 | Low | A purge that failed is still reported as purged, hiding it from the morning check. | `lib/tenant-data.ts` ~842–853 | "an org whose purge failed is not reported as purged" |
+| 62 | FIXED 17 Nov (was High) | Purging a deleted company leaves its personal data in about 17 tables the purge doesn't list (job applicants with résumés, text messages, prepayments, AI conversations, API keys, intake forms…): the company row is kept as a tombstone, so database cascades never fire. Right-to-erasure. Fix: add them, plus a test comparing the list with the real tables. | `lib/tenant-data.ts` ~517–591 | `crons-admin-purge` "leaves none of the org's personal data behind…" |
+| 63 | FIXED 17 Nov (was High (not live: see drift)) | The purge list still names `webhook_subscriptions`, which the migrations dropped, so against the migrated schema every purge stops before the tombstone and before erasing members' logins, and `admin/purge-org` always answers not-ok. Production still has the table (drift), and no company is due for purge. | `lib/tenant-data.ts` ~582 | "a purge against the schema the migrations build finishes without errors…" |
+| 64 | FIXED 17 Nov (was Med) | The purge's batched-delete fallback (for a big company that times out) can't run inside the cron: the fail-closed guard throws first, so a large company can never be purged. | `lib/tenant-data.ts` ~338–346 | "falls back to batched deletes when the one-statement delete times out…" |
+| 65 | FIXED 17 Nov (was Low) | A purge that failed is still reported as purged, hiding it from the morning check. | `lib/tenant-data.ts` ~842–853 | "an org whose purge failed is not reported as purged" |
 | 66 | FIXED 17 Nov (was Med) | A scheduled invoice that took a part prepayment is never auto-sent: the payment makes it part-paid, and auto-send only looks at drafts. The client never gets the bill for the balance (Svit's prepay flow). | `lib/invoice-send.ts` ~511, ~618 | `crons-invoice-email` "a scheduled draft that took a part prepayment is still sent to the client" |
 | 67 | FIXED 17 Nov (was Med) | Auto-send skips a client with no email and never tells the owner, though the code promises an alert; the morning digest had listed it as going out. | `lib/invoice-send.ts` ~590–599 | "a client with no email: the draft is skipped and the owner is told…" |
-| 68 | Low | Two overdue-reminder runs at once both remind the same client (sends, then stamps). | `lib/automations.ts` ~1823–1884 | "two runs at the same moment remind each client once" |
-| 69 | Med | The in-app assistant refuses anyone active in two companies (you, for one: Svit plus the Velluma demo). | `api/ai-chat/route.ts` ~84–104 | `crons-assistant` "someone active in two companies can use the assistant" |
-| 70 | Low | A suspended workspace can still use the assistant (Sollos's Anthropic key). | same | "a member of a suspended workspace is refused" |
-| 71 | Low | Comped workspaces (billing override) are emailed that their trial is ending; paying subscribers can be too. | `api/cron/trial-expiring/route.ts` ~128, ~172–187 | `crons-digests-trials` (2 tests) |
-| 72 | Low | Trial reminders the email service refused are counted as sent. | same, ~85–91 | "a reminder Resend refused is not counted as sent" |
-| 73 | Low | An owner of two opted-in companies gets the weekly changelog twice. | `lib/product-changelog.ts` ~175–249 | "an owner of two opted-in companies gets one copy" |
+| 68 | FIXED 17 Nov (was Low) | Two overdue-reminder runs at once both remind the same client (sends, then stamps). | `lib/automations.ts` ~1823–1884 | "two runs at the same moment remind each client once" |
+| 69 | FIXED 17 Nov (was Med) | The in-app assistant refuses anyone active in two companies (you, for one: Svit plus the Velluma demo). | `api/ai-chat/route.ts` ~84–104 | `crons-assistant` "someone active in two companies can use the assistant" |
+| 70 | FIXED 17 Nov (was Low) | A suspended workspace can still use the assistant (Sollos's Anthropic key). | same | "a member of a suspended workspace is refused" |
+| 71 | FIXED 17 Nov (was Low) | Comped workspaces (billing override) are emailed that their trial is ending; paying subscribers can be too. | `api/cron/trial-expiring/route.ts` ~128, ~172–187 | `crons-digests-trials` (2 tests) |
+| 72 | FIXED 17 Nov (was Low) | Trial reminders the email service refused are counted as sent. | same, ~85–91 | "a reminder Resend refused is not counted as sent" |
+| 73 | FIXED 17 Nov (was Low) | An owner of two opted-in companies gets the weekly changelog twice. | `lib/product-changelog.ts` ~175–249 | "an owner of two opted-in companies gets one copy" |
 
 ### People: employees, hiring, training, time, bonuses, sign-in
 
@@ -361,15 +356,15 @@ touch no one yet.
 | 75 | FIXED 17 Nov (was Med) | The efficiency bonus compares each cleaner's minutes with the one-person estimate: two cleaners who each worked their half of a divided job are both paid for "saving" time. Overpays every team job. | `bonuses/actions.ts` ~236–276 | `people-time` "two cleaners who each worked their half of a divided job saved nothing" |
 | 76 | FIXED 17 Nov (was Med) | A review bonus is skipped if efficiency bonuses were computed first for the same period (the "already awarded" check ignores the type). | `bonuses/actions.ts` ~78–87 | "…gets her review bonus even when efficiency was computed first" |
 | 77 | FIXED 17 Nov (was Med) | Computing efficiency bonuses fails past about 320 finished jobs in the window (one over-long request). | `bonuses/actions.ts` ~207–213 | "a company with 400 finished jobs in the window still gets its efficiency bonuses" |
-| 78 | Med | Marking a new hire trained on an expiring module (WHMIS, first aid) sets no certificate expiry, so no reminder ever comes; the expiry trigger runs on update only. | `training/actions.ts` ~398, migration `20260420030000` ~80 | `people-hiring` "marking a new hire trained … dates her certificate…" |
-| 79 | Med | Replacing a training step's photo with one that's refused wipes the old photo and says saved. | `training/actions.ts` ~251–262 | "replacing a step's photo with one too big to keep leaves the old photo (or says no)" |
+| 78 | FIXED 17 Nov (was Med) | Marking a new hire trained on an expiring module (WHMIS, first aid) sets no certificate expiry, so no reminder ever comes; the expiry trigger runs on update only. | `training/actions.ts` ~398, migration `20260420030000` ~80 | `people-hiring` "marking a new hire trained … dates her certificate…" |
+| 79 | FIXED 17 Nov (was Med) | Replacing a training step's photo with one that's refused wipes the old photo and says saved. | `training/actions.ts` ~251–262 | "replacing a step's photo with one too big to keep leaves the old photo (or says no)" |
 | 80 | FIXED 17 Nov (was Low) | A manager (Olha) opening a shift's history sees "no entries": the audit log is read through rules that only let owners and admins see it. | `timesheets/actions.ts` ~101–111 | `people-time` "a manager opening a shift's history sees its edits…" |
 | 81 | FIXED 17 Nov (was Low) | An admin pressing "finish setup" saves nothing and is sent on as done. | `setup/actions.ts` ~12–21 | `people-account` "an admin finishing setup really finishes it" |
 | 82 | FIXED 17 Nov (was Low) | Sign-in sends a cleaner to /app first (reads the whole company's memberships), and /app bounces them to /field. | `(marketing)/login/actions.ts` ~135–147 | "lands a cleaner on /field" |
-| 83 | Low | A certificate first seen inside 7 days gets the 7-day reminder, then a "30-day" one the next morning. | `lib/automations.ts` ~6230 | "a certificate first seen a week out is reminded once…" |
+| 83 | FIXED 17 Nov (was Low) | A certificate first seen inside 7 days gets the 7-day reminder, then a "30-day" one the next morning. | `lib/automations.ts` ~6230 | "a certificate first seen a week out is reminded once…" |
 | 84 | FIXED 17 Nov (was Low) | Bonuses: a second "mark paid" re-stamps the paid date; marking, editing or deleting another company's bonus answers ok (and logs). | `bonuses/actions.ts` ~360–641 | `people-time` (3 tests) |
-| 85 | Low | Training: no role check on edit or delete (a cleaner is told "saved"), a delete that didn't happen is logged, and an edit aimed at another company's module can attach steps to it. | `training/actions.ts` ~209–327 | `people-hiring` (3 tests) |
-| 86 | Low | Timesheet manager actions ignore a manager's Timesheets switch. | `timesheets/actions.ts` | "a manager whose timesheets access is switched off can't…" |
+| 85 | FIXED 17 Nov (was Low) | Training: no role check on edit or delete (a cleaner is told "saved"), a delete that didn't happen is logged, and an edit aimed at another company's module can attach steps to it. | `training/actions.ts` ~209–327 | `people-hiring` (3 tests) |
+| 86 | FIXED 17 Nov (was Low) | Timesheet manager actions ignore a manager's Timesheets switch. | `timesheets/actions.ts` | "a manager whose timesheets access is switched off can't…" |
 | 87 | FIXED 17 Nov (was Low) | Applicant status and notes, and hiring-document edits, answer ok when they reached nothing; a hiring-doc delete that didn't happen is logged. | `applicants/actions.ts` ~119–153, `hiring/actions.ts` ~53–106 | `people-hiring` (3 tests) |
 
 ### Size (load suite on a real server, 16 Nov)

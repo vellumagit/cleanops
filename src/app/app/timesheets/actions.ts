@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { getActionContext } from "@/lib/actions";
+import { can } from "@/lib/auth";
 import { notifyManagersOfUnavailability } from "@/lib/unavailability-notice";
 import { logAuditEvent } from "@/lib/audit";
 import { syncJob } from "@/lib/job-sync";
@@ -12,6 +13,19 @@ import { localInputToUtcIso } from "@/lib/validators/common";
 import { periodHref } from "@/lib/pay-period";
 import { endsAfterStart, preserveWithinMinute } from "@/lib/time-entry-edit";
 import { encryptField } from "@/lib/field-encryption";
+
+/**
+ * Office staff who may run timesheets and time off. Owners and admins
+ * always; a manager only while their "Timesheets & time off" switch is on.
+ * Only the page checked the switch, so a manager with it off could still
+ * delete shifts and record time off by posting to these actions.
+ */
+function runsTimesheets(
+  membership: Awaited<ReturnType<typeof getActionContext>>["membership"],
+): boolean {
+  if (!["owner", "admin", "manager"].includes(membership.role)) return false;
+  return membership.role !== "manager" || can(membership, "timesheets");
+}
 
 type Result =
   | { ok: true }
@@ -98,7 +112,7 @@ export async function fetchTimeEntryHistoryAction(
 ): Promise<TimeEntryHistoryRow[]> {
   if (!entryId) return [];
   const { membership, supabase } = await getActionContext();
-  if (!["owner", "admin", "manager"].includes(membership.role)) return [];
+  if (!runsTimesheets(membership)) return [];
 
   // Read with the service key, scoped to this company below. The audit
   // log's own rule shows it to owners and admins only, so a manager, who is
@@ -231,7 +245,7 @@ export async function createPtoRequestAction(
   formData: FormData,
 ): Promise<Result> {
   const { membership, supabase } = await getActionContext();
-  if (!["owner", "admin", "manager"].includes(membership.role)) {
+  if (!runsTimesheets(membership)) {
     return { ok: false, error: "Not authorized." };
   }
 
@@ -406,7 +420,7 @@ export async function updatePtoStatusAction(
   formData: FormData,
 ): Promise<Result> {
   const { membership, supabase } = await getActionContext();
-  if (!["owner", "admin", "manager"].includes(membership.role)) {
+  if (!runsTimesheets(membership)) {
     return { ok: false, error: "Not authorized." };
   }
 
@@ -530,7 +544,7 @@ export async function updatePtoRequestAction(
   formData: FormData,
 ): Promise<Result> {
   const { membership, supabase } = await getActionContext();
-  if (!["owner", "admin", "manager"].includes(membership.role)) {
+  if (!runsTimesheets(membership)) {
     return { ok: false, error: "Not authorized." };
   }
 
@@ -980,7 +994,7 @@ export async function createManualTimeEntryAction(
   formData: FormData,
 ): Promise<Result> {
   const { membership, supabase } = await getActionContext();
-  if (!["owner", "admin", "manager"].includes(membership.role)) {
+  if (!runsTimesheets(membership)) {
     return { ok: false, error: "Not authorized." };
   }
 
@@ -1144,7 +1158,7 @@ export async function updateTimeEntryAction(
   formData: FormData,
 ): Promise<Result> {
   const { membership, supabase } = await getActionContext();
-  if (!["owner", "admin", "manager"].includes(membership.role)) {
+  if (!runsTimesheets(membership)) {
     return { ok: false, error: "Not authorized." };
   }
 
@@ -1372,7 +1386,7 @@ export async function deletePtoRequestAction(
   formData: FormData,
 ): Promise<Result> {
   const { membership, supabase } = await getActionContext();
-  if (!["owner", "admin", "manager"].includes(membership.role)) {
+  if (!runsTimesheets(membership)) {
     return { ok: false, error: "Not authorized." };
   }
 
@@ -1529,7 +1543,7 @@ export async function attachEntryToBookingAction(
   formData: FormData,
 ): Promise<Result> {
   const { membership, supabase } = await getActionContext();
-  if (!["owner", "admin", "manager"].includes(membership.role)) {
+  if (!runsTimesheets(membership)) {
     return { ok: false, error: "Not authorized." };
   }
   const id = String(formData.get("id") ?? "");
@@ -1652,7 +1666,7 @@ export async function bulkDeleteTimeEntriesAction(
   formData: FormData,
 ): Promise<Result & { deleted?: number }> {
   const { membership, supabase } = await getActionContext();
-  if (!["owner", "admin", "manager"].includes(membership.role)) {
+  if (!runsTimesheets(membership)) {
     return { ok: false, error: "Not authorized." };
   }
 
@@ -1738,7 +1752,7 @@ export async function closeOpenShiftAction(
   formData: FormData,
 ): Promise<Result> {
   const { membership, supabase } = await getActionContext();
-  if (!["owner", "admin", "manager"].includes(membership.role)) {
+  if (!runsTimesheets(membership)) {
     return { ok: false, error: "Not authorized." };
   }
 
@@ -1879,7 +1893,7 @@ export async function deleteTimeEntryAction(
   formData: FormData,
 ): Promise<Result> {
   const { membership, supabase } = await getActionContext();
-  if (!["owner", "admin", "manager"].includes(membership.role)) {
+  if (!runsTimesheets(membership)) {
     return { ok: false, error: "Not authorized." };
   }
 
@@ -1954,7 +1968,7 @@ export async function confirmTimeEntryAction(
   if (!id) return { ok: false, error: "Missing entry." };
 
   const { membership, supabase } = await getActionContext();
-  if (!["owner", "admin", "manager"].includes(membership.role)) {
+  if (!runsTimesheets(membership)) {
     return { ok: false, error: "Not authorized." };
   }
 

@@ -716,7 +716,8 @@ export async function refundSquarePaymentAction(
     membership,
     action: "update",
     entity: "invoice",
-    entity_id: invoiceId,
+    // The payment's own invoice, not the id that came with the form.
+    entity_id: result.invoiceId,
     after: {
       refund_issued_cents: result.refundedCents,
       full_refund: result.full,
@@ -725,7 +726,7 @@ export async function refundSquarePaymentAction(
     },
   });
 
-  revalidatePath(`/app/invoices/${invoiceId}`);
+  revalidatePath(`/app/invoices/${result.invoiceId}`);
   revalidatePath("/app/invoices");
   return { ok: true };
 }
@@ -766,7 +767,8 @@ export async function refundStripePaymentAction(
     membership,
     action: "update",
     entity: "invoice",
-    entity_id: invoiceId,
+    // The payment's own invoice, not the id that came with the form.
+    entity_id: result.invoiceId,
     after: {
       refund_issued_cents: result.refundedCents,
       full_refund: result.full,
@@ -774,7 +776,7 @@ export async function refundStripePaymentAction(
     },
   });
 
-  revalidatePath(`/app/invoices/${invoiceId}`);
+  revalidatePath(`/app/invoices/${result.invoiceId}`);
   revalidatePath("/app/invoices");
   revalidatePath("/app/payroll");
   return { ok: true };

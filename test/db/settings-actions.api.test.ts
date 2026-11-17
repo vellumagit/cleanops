@@ -283,8 +283,7 @@ describe.skipIf(!hasPostgrest)("Settings → Services", { timeout: 90_000 }, () 
     expect((await serviceRow(other.org, "Their window wash")).is_active).toBe(false);
   });
 
-  // FIX-LATER: archive/unarchiveServiceTypeAction write the audit row without checking the update matched anything, so a press on an id that isn't ours logs "archive" for nothing.
-  it.fails("archiving a service that isn't ours leaves no 'archived' entry in our audit log", async () => {
+  it("archiving a service that isn't ours leaves no 'archived' entry in our audit log", async () => {
     const c = await company();
     const other = await company();
     await as(other.owner, () => services.createServiceTypeAction({}, serviceForm({ name: "Not yours" })));

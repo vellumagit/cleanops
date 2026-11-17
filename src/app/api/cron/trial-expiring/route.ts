@@ -82,13 +82,14 @@ async function sendTrialReminders(
       brandColor,
     });
 
-    await sendEmail({
+    // Count what went out, not what was tried.
+    const delivered = await sendEmail({
       to: userData.email,
       toName: profile?.full_name ?? undefined,
       ...template,
     });
 
-    sent++;
+    if (delivered) sent++;
   }
 
   return sent;
@@ -171,8 +172,18 @@ async function cronGet(request: Request) {
 
     const { data: selfOrgsRaw } = await admin
       .from("organizations")
-      .select("id, name, brand_color, trial_started_at, trial_reminder_key" as never)
+      .select("id, name, brand_color, trial_started_at, trial_reminder_key, billing_override" as never)
       .not("trial_started_at", "is", null);
+
+    // Companies that already pay (or owe): their old trial clock means
+    // nothing, and "your trial is ending, choose a plan" is wrong to send.
+    const { data: paidRaw } = await admin
+      .from("subscriptions")
+      .select("organization_id")
+      .in("status", ["active", "past_due"]);
+    const subscribedOrgIds = new Set(
+      ((paidRaw ?? []) as Array<{ organization_id: string }>).map((r) => r.organization_id),
+    );
 
     const selfOrgs = selfOrgsRaw as Array<{
       id: string;
@@ -180,11 +191,15 @@ async function cronGet(request: Request) {
       brand_color: string | null;
       trial_started_at: string;
       trial_reminder_key: string | null;
+      billing_override: string | null;
     }> | null;
 
     for (const org of selfOrgs ?? []) {
       // Skip if Stripe is already handling this org's trial.
       if (stripeTrialingOrgIds.has(org.id)) continue;
+      // Comped (free forever, promo) or already subscribed: no trial to end.
+      if (org.billing_override) continue;
+      if (subscribedOrgIds.has(org.id)) continue;
 
       const trialEndMs =
         new Date(org.trial_started_at).getTime() +
