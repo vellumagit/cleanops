@@ -185,7 +185,7 @@ export function RecurringInvoiceForm({ clients, mode, id, defaults }: Props) {
           name="line_items"
           rows={4}
           defaultValue={v.line_items ?? defaults?.line_items ?? ""}
-          placeholder='[{"description":"Office cleaning retainer","quantity":1,"unit_cents":50000}]'
+          placeholder='[{"label":"Office cleaning retainer","quantity":1,"unit_price_cents":50000}]'
           className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-xs font-mono"
         />
         <p className="mt-1 text-xs text-muted-foreground">

@@ -107,6 +107,26 @@ export async function POST(request: NextRequest) {
 
   const admin = createSupabaseAdminClient();
 
+  // ── The PDF, checked FIRST (private bucket; lib/estimate-pdf-storage) ──
+  // Before the client or the estimate is created: a bad PDF used to answer
+  // 400 after both had been saved, so a caller retrying (the website form
+  // does) left a duplicate estimate and lead behind each time.
+  let pdfBytes: Blob | null = null;
+
+  // Option 1: PDF file uploaded via multipart
+  if (pdfFile && pdfFile.size > 0) {
+    const problem = await uploadedPdfProblem(pdfFile);
+    if (problem) return NextResponse.json({ error: problem }, { status: 400 });
+    pdfBytes = pdfFile;
+  }
+
+  // Option 2: PDF URL provided — download and store
+  if (!pdfBytes && body.pdf_url && typeof body.pdf_url === "string") {
+    const fetched = await fetchPdfFromUrl(body.pdf_url);
+    if (fetched.error !== null) return NextResponse.json({ error: fetched.error }, { status: 400 });
+    pdfBytes = fetched.blob;
+  }
+
   // ── Resolve client_id ─────────────────────────────────────
   let clientId = body.client_id as string | undefined;
 
@@ -190,22 +210,6 @@ export async function POST(request: NextRequest) {
     created_at: string;
   };
 
-  // ── Handle PDF attachment (private bucket; lib/estimate-pdf-storage) ──
-  let pdfBytes: Blob | null = null;
-
-  // Option 1: PDF file uploaded via multipart
-  if (pdfFile && pdfFile.size > 0) {
-    const problem = await uploadedPdfProblem(pdfFile);
-    if (problem) return NextResponse.json({ error: problem }, { status: 400 });
-    pdfBytes = pdfFile;
-  }
-
-  // Option 2: PDF URL provided — download and store
-  if (!pdfBytes && body.pdf_url && typeof body.pdf_url === "string") {
-    const fetched = await fetchPdfFromUrl(body.pdf_url);
-    if (fetched.error !== null) return NextResponse.json({ error: fetched.error }, { status: 400 });
-    pdfBytes = fetched.blob;
-  }
 
   if (pdfBytes) {
     const stored = await storeEstimatePdf(admin, auth.organizationId, data.id, pdfBytes);

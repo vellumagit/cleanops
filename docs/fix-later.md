@@ -40,6 +40,18 @@ Faults marked **Security** should go first.
   the rebooking prompt look at every eligible job and client (#33, #34); a
   cleaner can't take over a task (#53: code check live with the push, the
   database rule needs migration `20261117010000`).
+- **17 Nov, fourth group:** recurring invoices: the picked date is that
+  date in the company's calendar, the due date counts from the company's
+  day, lines written like the old example bill correctly (and the example
+  is fixed), managers need the Invoices switch, and a save that saved
+  nothing says so (#7, #8, #9, #11, #12; #10 month-end drift still open, it
+  needs an anchor-day column); company deletion compares the typed name with
+  the real company's (#16); a sender-email save refused by the daily limit
+  changes nothing (#17); a cleared SMS cap is refused (#50); every address
+  on a bounce is blocked (#48); public API: invoice.paid fires once, a bad
+  PDF saves nothing, missing or malformed ids answer 404 (#13, #14, #15);
+  `_` and `%` in a website visitor's email or name no longer match other
+  clients (part of #1).
 - **17 Nov:** the production catch-up (see the next section).
 
 ## Waiting on you
@@ -152,7 +164,7 @@ Faults marked **Security** should go first.
 
 | # | Sev | What's wrong | Where | Shown by |
 |---|---|---|---|---|
-| 1 | Med | A new person who shares a name with an existing client but has a different email is filed under that client: their email and phone are saved nowhere, and "Send estimate" would email the quote to the other person. The email match also uses `ilike`, so `_` in an address is a wildcard (`m_underwood@` lands on `m.underwood@`). Fix: match by name only when one side has no email; compare emails exactly. | `src/lib/find-or-create-client.ts` | `settings-api-v1` "a visitor whose email only looks like an existing client's gets a lead of their own" |
+| 1 | Med (the `_` wildcard part FIXED 17 Nov; the same-name rule is still open) | A new person who shares a name with an existing client but has a different email is filed under that client: their email and phone are saved nowhere, and "Send estimate" would email the quote to the other person. The email match also uses `ilike`, so `_` in an address is a wildcard (`m_underwood@` lands on `m.underwood@`). Fix: match by name only when one side has no email; compare emails exactly. | `src/lib/find-or-create-client.ts` | `settings-api-v1` "a visitor whose email only looks like an existing client's gets a lead of their own" |
 | 2 | Low | Booking create, edit and skip start the Google Calendar sync without waiting; the redirect can end the function first. The nightly reconcile repairs misses. Fix: wrap in `after()`. | `src/app/app/bookings/actions.ts` (`syncMemberCalendarEvents(...).catch`) | — |
 | 3 | Low | An estimate the expiry job marks expired still shows "Valid until …" on the client's page (reads `expires_at`, not status). Svit has auto-expire off. | `src/app/e/[token]/page.tsx` | — |
 | 4 | Low | Saving an archived estimate shows the raw database message instead of plain words. | `src/app/app/estimates/actions.ts` | — |
@@ -163,27 +175,27 @@ Faults marked **Security** should go first.
 |---|---|---|---|---|
 | 5 | FIXED 17 Nov (was High) | A recurring invoice can be set up for another company's client: the action doesn't check the client, and `invoice_series` lacks the client-company guard `invoices` has. | `settings/recurring-invoices/actions.ts` create + update | `settings-recurring-invoices` "never makes a series for another company's client" |
 | 6 | FIXED 17 Nov (was High) | One recurring invoice that fails to save stops the whole nightly run: its period is skipped silently, and every company later in the run gets no invoice that night. Fix: catch per series and give the period back. | `src/lib/automations/billing.ts` ~715–745 | "…gives its period back and doesn't stop other companies' invoices" |
-| 7 | Med | The form's line-item example uses `description`/`unit_cents`; the job reads `label`/`unit_price_cents`. Lines written like the example bill at $0 under a correct total. | `recurring-invoices/form.tsx` placeholder vs `billing.ts` ~768–790 | "…bills lines that add up to the invoice" |
-| 8 | Med | Recurring-invoice buttons ignore a manager's Invoices switch. | `recurring-invoices/actions.ts`, `page.tsx` | "a manager with Invoices & estimates switched off can't make a standing invoice" |
-| 9 | Med | The first-run date is saved as UTC midnight, a day early in Alberta: the list shows Nov 30 for Dec 1. | `recurring-invoices/actions.ts` ~89, ~163 | "the first invoice date … is that date in the company's own calendar" |
+| 7 | FIXED 17 Nov (was Med) | The form's line-item example uses `description`/`unit_cents`; the job reads `label`/`unit_price_cents`. Lines written like the example bill at $0 under a correct total. | `recurring-invoices/form.tsx` placeholder vs `billing.ts` ~768–790 | "…bills lines that add up to the invoice" |
+| 8 | FIXED 17 Nov (was Med) | Recurring-invoice buttons ignore a manager's Invoices switch. | `recurring-invoices/actions.ts`, `page.tsx` | "a manager with Invoices & estimates switched off can't make a standing invoice" |
+| 9 | FIXED 17 Nov (was Med) | The first-run date is saved as UTC midnight, a day early in Alberta: the list shows Nov 30 for Dec 1. | `recurring-invoices/actions.ts` ~89, ~163 | "the first invoice date … is that date in the company's own calendar" |
 | 10 | Low | Month-end series drift to the 28th after February, though the code says it prevents that. | `billing.ts` ~622–652 | "…stays on the last day after a short month" |
-| 11 | Low | Due date counts from UTC's day, not the company's (hidden for Alberta by the run time). | `billing.ts` ~613–616 | "counts the due date from the company's day…" |
-| 12 | Low | A save that matched no series reports success. | `recurring-invoices/actions.ts` ~155–184 | "a save that matched no series says so…" |
+| 11 | FIXED 17 Nov (was Low) | Due date counts from UTC's day, not the company's (hidden for Alberta by the run time). | `billing.ts` ~613–616 | "counts the due date from the company's day…" |
+| 12 | FIXED 17 Nov (was Low) | A save that matched no series reports success. | `recurring-invoices/actions.ts` ~155–184 | "a save that matched no series says so…" |
 
 ### Public API (API keys)
 
 | # | Sev | What's wrong | Where | Shown by |
 |---|---|---|---|---|
-| 13 | Med | The `invoice.paid` webhook re-fires on every later edit of a paid invoice (double bookkeeping in connected tools). | `api/v1/invoices/[id]/route.ts` ~100–126 | `settings-api-v1` "invoice.paid goes out once…" |
-| 14 | Med | A bad PDF answers 400, but the estimate (and a new lead) is already saved, so retries duplicate. | `api/v1/estimates/route.ts` ~165–208 | "a PDF that isn't one is refused before the estimate is made…" |
-| 15 | Low | Editing another company's or a missing invoice/estimate answers 500, not 404; a malformed id crashes the route. Nothing is changed. | `api/v1/*/[id]/route.ts` | "…answers 404, not a server error"; "a malformed id answers 404…" |
+| 13 | FIXED 17 Nov (was Med) | The `invoice.paid` webhook re-fires on every later edit of a paid invoice (double bookkeeping in connected tools). | `api/v1/invoices/[id]/route.ts` ~100–126 | `settings-api-v1` "invoice.paid goes out once…" |
+| 14 | FIXED 17 Nov (was Med) | A bad PDF answers 400, but the estimate (and a new lead) is already saved, so retries duplicate. | `api/v1/estimates/route.ts` ~165–208 | "a PDF that isn't one is refused before the estimate is made…" |
+| 15 | FIXED 17 Nov (was Low) | Editing another company's or a missing invoice/estimate answers 500, not 404; a malformed id crashes the route. Nothing is changed. | `api/v1/*/[id]/route.ts` | "…answers 404, not a server error"; "a malformed id answers 404…" |
 
 ### Other settings
 
 | # | Sev | What's wrong | Where | Shown by |
 |---|---|---|---|---|
-| 16 | Med | Company deletion compares the typed name with a name the page sent, then schedules whichever company is active: an owner of two companies with a stale tab can schedule the wrong one (30-day grace applies). | `settings/data/actions.ts` ~20–32 | `settings-actions` "the name typed must be the name of the company being deleted" |
-| 17 | Med | A sender-email save refused by the daily limit still replaces and unverifies the sender, killing the link already emailed. | `settings/email/actions.ts` ~83–109 | "a save refused by the daily limit leaves the verified sender as it was" |
+| 16 | FIXED 17 Nov (was Med) | Company deletion compares the typed name with a name the page sent, then schedules whichever company is active: an owner of two companies with a stale tab can schedule the wrong one (30-day grace applies). | `settings/data/actions.ts` ~20–32 | `settings-actions` "the name typed must be the name of the company being deleted" |
+| 17 | FIXED 17 Nov (was Med) | A sender-email save refused by the daily limit still replaces and unverifies the sender, killing the link already emailed. | `settings/email/actions.ts` ~83–109 | "a save refused by the daily limit leaves the verified sender as it was" |
 | 18 | Low | The sender verification link never expires, though its email says 24 hours. | `api/verify-sender/route.ts` | "the link stops working after the 24 hours its email promises" |
 | 19 | Low | Archiving or unarchiving a service that isn't ours still writes an audit entry. | `settings/services/actions.ts` ~185–233 | "archiving a service that isn't ours leaves no 'archived' entry…" |
 
@@ -234,9 +246,9 @@ touch no one yet.
 |---|---|---|---|---|
 | 46 | High (nobody on Square yet) | Square disconnects itself when its 30-day token runs out: the refresh saves `connected_by: ""`, the insert fails, and the old row was already retired. Clients' Pay button fails; refunds crash. | `lib/square.ts` ~447, ~352–369 | `payments-public` + `payments-refunds` (token run out) |
 | 47 | Med (nobody on Square yet) | Square refunds are always requested in CAD; a USD company's refunds fail. | `lib/square-refunds.ts` ~135 | `payments-refunds` "a US-dollar company's refund is asked for in US dollars…" |
-| 48 | Med | A bounce or complaint naming several addresses only blocks the first, though the reply says all; the app keeps emailing the rest. | `api/webhooks/resend/route.ts` ~166, `lib/email-suppression.ts` ~86 | `payments-public` "a bounce that names two addresses puts both on the list…" |
+| 48 | FIXED 17 Nov (was Med) | A bounce or complaint naming several addresses only blocks the first, though the reply says all; the app keeps emailing the rest. | `api/webhooks/resend/route.ts` ~166, `lib/email-suppression.ts` ~86 | `payments-public` "a bounce that names two addresses puts both on the list…" |
 | 49 | Low | The refund audit entry uses the invoice id posted with the form, not the payment's own invoice. | `invoices/actions.ts` ~689, ~741 | `payments-refunds` "the audit entry names the payment's own invoice…" |
-| 50 | Low | A cleared SMS cap field saves as $0 ("Cap saved."), silently stopping every text past the included allotment. | `settings/sms/actions.ts` ~166 | `payments-sms` "a cleared cap field is refused, not saved as $0…" |
+| 50 | FIXED 17 Nov (was Low) | A cleared SMS cap field saves as $0 ("Cap saved."), silently stopping every text past the included allotment. | `settings/sms/actions.ts` ~166 | `payments-sms` "a cleared cap field is refused, not saved as $0…" |
 
 ### Office tools, tasks, team chat, reviews, on-call pool
 

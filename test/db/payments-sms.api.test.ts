@@ -316,8 +316,7 @@ describe.skipIf(!hasPostgrest)("the monthly overage cap", { timeout: 120_000 }, 
     expect((await orgSms(other.org)).sms_overage_cap_cents, "another company's cap is untouched").toBe(1234);
   });
 
-  // FIX-LATER: saveCapAction reads a blank field as Number("") = 0 and saves a $0 cap ("Cap saved."), and a $0 cap makes sendSms skip every text past the included allotment (src/lib/sms.ts, "skipped_cap").
-  it.fails("a cleared cap field is refused, not saved as $0, which would stop every text past the allotment", async () => {
+  it("a cleared cap field is refused, not saved as $0, which would stop every text past the allotment", async () => {
     const c = await company("CA");
     await api.sql("update public.organizations set sms_overage_cap_cents = 5000 where id = $1", [c.org]);
     for (const blank of ["", "   "]) {

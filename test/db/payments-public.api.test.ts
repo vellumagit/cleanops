@@ -551,8 +551,7 @@ describe.skipIf(!hasPostgrest)("Resend's bounce and complaint webhook", { timeou
     expect(await suppressed(fine)).toEqual([]);
   });
 
-  // FIX-LATER: every address in one event gets the same provider_event_id (the email id), so the unique index refuses the second address, addEmailSuppression reads the 23505 as "already done", and the route reports it suppressed when it wasn't.
-  it.fails("a bounce that names two addresses puts both on the list, as the reply says it did", async () => {
+  it("a bounce that names two addresses puts both on the list, as the reply says it did", async () => {
     const a = `first${++seq}@example.com`;
     const b = `second${seq}@example.com`;
     const body = event("email.bounced", [a, b]);

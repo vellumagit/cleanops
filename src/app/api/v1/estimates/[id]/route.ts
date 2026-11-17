@@ -23,6 +23,7 @@ export async function GET(request: NextRequest, { params }: Params) {
   if (!auth.ok) return auth.response;
 
   const { id } = await params;
+  if (!UUID.test(id)) return NextResponse.json({ error: "Estimate not found" }, { status: 404 });
   const admin = createSupabaseAdminClient();
   const { data, error } = await admin
     .from("estimates")
@@ -58,6 +59,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   if (!auth.ok) return auth.response;
 
   const { id } = await params;
+  if (!UUID.test(id)) return NextResponse.json({ error: "Estimate not found" }, { status: 404 });
   let body: Record<string, unknown>;
   try {
     body = await request.json();
@@ -145,9 +147,11 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     .eq("id", id)
     .eq("organization_id", auth.organizationId)
     .select("id, client_id, service_description, status, total_cents, notes, pdf_url, updated_at")
-    .single();
+    .maybeSingle();
 
   if (error) return apiServerError("estimates/:id", error);
+  // No row: not this company's estimate, or gone. 404, not a server error.
+  if (!data) return NextResponse.json({ error: "Estimate not found" }, { status: 404 });
 
   // pdf_url is a private reference; callers and webhooks get a link that expires.
   const row = data as unknown as { pdf_url: string | null };

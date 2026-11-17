@@ -163,7 +163,11 @@ export async function POST(request: NextRequest) {
     const result = await addEmailSuppression({
       email,
       reason,
-      providerEventId: eventId,
+      // One id per ADDRESS. The event id alone is unique-indexed, so the
+      // second address on the same bounce hit that index, was read as
+      // "already handled", and stayed off the list while the reply said
+      // every address was suppressed.
+      providerEventId: eventId ? `${eventId}:${email.trim().toLowerCase()}` : eventId,
       eventPayload: event,
     });
     if (result.ok) suppressed += 1;

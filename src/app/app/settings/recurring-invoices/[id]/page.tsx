@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { zonedYmd } from "@/lib/wall-clock";
+import { getOrgTimezone } from "@/lib/org-timezone";
 import { notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
@@ -29,7 +31,7 @@ export default async function EditRecurringInvoicePage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  await requireMembership(["owner", "admin", "manager"]);
+  const membership = await requireMembership(["owner", "admin", "manager"]);
   const { id } = await params;
   const supabase = await createSupabaseServerClient();
 
@@ -54,7 +56,8 @@ export default async function EditRecurringInvoicePage({
     cadence: series.cadence,
     amount_dollars: (series.amount_cents / 100).toFixed(2),
     due_days: series.due_days,
-    next_run_at: series.next_run_at.slice(0, 10),
+    // In the company's calendar, the same one the save reads it in.
+    next_run_at: zonedYmd(new Date(series.next_run_at), await getOrgTimezone(membership.organization_id)),
     notes: series.notes ?? "",
     line_items:
       Array.isArray(series.line_items) && series.line_items.length > 0

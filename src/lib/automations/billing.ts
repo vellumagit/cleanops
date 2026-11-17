@@ -610,9 +610,14 @@ export async function autoGenerateRecurringInvoices(): Promise<{
       continue;
     }
 
+    // Due date: the company's day the invoice is made, plus due_days. Taken
+    // from UTC's day, a run in the company's evening counted from tomorrow.
     const issuedAt = new Date();
+    const { getOrgTimezone: seriesTz } = await import("@/lib/org-timezone");
+    const { zonedYmd: seriesYmd } = await import("@/lib/wall-clock");
+    const issuedDay = seriesYmd(issuedAt, await seriesTz(series.organization_id));
     const dueDate = new Date(
-      issuedAt.getTime() + series.due_days * 24 * 60 * 60 * 1000,
+      new Date(`${issuedDay}T00:00:00Z`).getTime() + series.due_days * 24 * 60 * 60 * 1000,
     );
 
     // Compute the next run date based on cadence. Month adds are CLAMPED to
@@ -787,10 +792,15 @@ export async function autoGenerateRecurringInvoices(): Promise<{
         .map((it, i) => ({
           organization_id: series.organization_id,
           invoice_id: inserted.id,
+          // "description" and "unit_cents" are what this form's own example
+          // showed for months; series written that way billed their lines
+          // at $0 under a correct total. Read both spellings.
           label:
             typeof it.label === "string" && it.label.trim()
               ? it.label.trim().slice(0, 300)
-              : series.name,
+              : typeof it.description === "string" && it.description.trim()
+                ? it.description.trim().slice(0, 300)
+                : series.name,
           quantity:
             typeof it.quantity === "number" && it.quantity > 0
               ? it.quantity
@@ -798,7 +808,9 @@ export async function autoGenerateRecurringInvoices(): Promise<{
           unit_price_cents:
             typeof it.unit_price_cents === "number" && it.unit_price_cents >= 0
               ? Math.round(it.unit_price_cents)
-              : 0,
+              : typeof it.unit_cents === "number" && it.unit_cents >= 0
+                ? Math.round(it.unit_cents)
+                : 0,
           sort_order: i,
         }));
 

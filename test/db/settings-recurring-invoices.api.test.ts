@@ -261,8 +261,7 @@ describe.skipIf(!hasPostgrest)("the recurring invoice form", { timeout: 90_000 }
     expect(res).toMatchObject({ errors: expect.any(Object) });
   });
 
-  // FIX-LATER: recurring-invoice actions don't check the manager's "invoicing" capability; a manager with Invoices switched off can still make standing invoices.
-  it.fails("a manager with Invoices & estimates switched off can't make a standing invoice", async () => {
+  it("a manager with Invoices & estimates switched off can't make a standing invoice", async () => {
     const c = await company();
     const client = await addClient(api.sql, c.org, "Narrowed Client");
     await api.sql(`update public.memberships set capabilities = '{"invoicing": false}'::jsonb where id = $1`, [c.olha.membershipId]);
@@ -271,8 +270,7 @@ describe.skipIf(!hasPostgrest)("the recurring invoice form", { timeout: 90_000 }
     expect(res).toMatchObject({ errors: { _form: expect.any(String) } });
   });
 
-  // FIX-LATER: the picked date is saved as UTC midnight (new Date("2026-12-01")), which is 6 pm the day before in the company's timezone; the list then shows "Next run: Nov 30".
-  it.fails("the first invoice date the office picks is that date in the company's own calendar", async () => {
+  it("the first invoice date the office picks is that date in the company's own calendar", async () => {
     const c = await company();
     const client = await addClient(api.sql, c.org, "Calendar Client");
     await as(c.owner, () => series.createRecurringInvoiceAction({}, seriesForm(client, { next_run_at: "2026-12-01" })));
@@ -306,8 +304,7 @@ describe.skipIf(!hasPostgrest)("the recurring invoice form", { timeout: 90_000 }
     expect((await seriesRow(id)).name).toBe("Quarterly deep clean");
   });
 
-  // FIX-LATER: updateRecurringInvoiceAction doesn't chain .select(); a save that matched no row (gone, or another company's id) redirects as if saved.
-  it.fails("a save that matched no series says so instead of going back to the list as if saved", async () => {
+  it("a save that matched no series says so instead of going back to the list as if saved", async () => {
     const c = await company();
     const other = await company();
     const client = await addClient(api.sql, c.org, "Gone Client");
@@ -442,8 +439,7 @@ describe.skipIf(!hasPostgrest)("the nightly recurring invoice job", { timeout: 1
     expect(held[0].body).toContain("Cycle retainer");
   });
 
-  // FIX-LATER: the form's placeholder shows {"description","unit_cents"} but the job reads {"label","unit_price_cents"}; following the example bills $0 lines on a full-price invoice.
-  it.fails("a series written the way the form's example shows bills lines that add up to the invoice", async () => {
+  it("a series written the way the form's example shows bills lines that add up to the invoice", async () => {
     const c = await company();
     const client = await addClient(api.sql, c.org, "Example Client");
     const example = '[{"description":"Office cleaning retainer","quantity":1,"unit_cents":50000}]';
@@ -473,8 +469,7 @@ describe.skipIf(!hasPostgrest)("the nightly recurring invoice job", { timeout: 1
     expect(next.getUTCDate(), `next run ${next.toISOString()}`).toBe(lastDay);
   });
 
-  // FIX-LATER: due_date is taken from the UTC date of the run, not the company's day; after 6 pm in Regina (or every run for companies west of UTC-6:30) it's a day late.
-  it.fails("counts the due date from the company's day the invoice was made, not UTC's", async () => {
+  it("counts the due date from the company's day the invoice was made, not UTC's", async () => {
     const c = await company();
     const client = await addClient(api.sql, c.org, "Late Run Client");
     // Due at midnight Dec 1 in Regina; the job runs at 10 pm Dec 1 Regina time.

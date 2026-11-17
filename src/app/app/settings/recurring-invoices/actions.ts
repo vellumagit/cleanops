@@ -3,6 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getActionContext } from "@/lib/actions";
+import { can } from "@/lib/auth";
+import { getOrgTimezone } from "@/lib/org-timezone";
+import { localInputToUtcIso } from "@/lib/validators/common";
 import { z } from "zod";
 
 const CADENCES = ["weekly", "biweekly", "monthly", "quarterly"] as const;
@@ -23,6 +26,24 @@ export type RecurringInvoiceState = {
   errors?: Partial<Record<string, string>>;
   values?: Record<string, string>;
 };
+
+/**
+ * The date the office picked ("2026-12-01"), as the start of that day in the
+ * COMPANY's timezone. `new Date("2026-12-01")` is UTC midnight, which is
+ * 6 pm on Nov 30 in Alberta: the list then showed "Next run: Nov 30" for a
+ * series set to start Dec 1. A full timestamp passes through unchanged.
+ */
+async function firstRunInstant(picked: string, organizationId: string): Promise<string> {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(picked)) {
+    return localInputToUtcIso(`${picked}T00:00`, await getOrgTimezone(organizationId));
+  }
+  return new Date(picked).toISOString();
+}
+
+/** Managers need the Invoices switch, like every other invoice action. */
+function mayManageStanding(membership: Awaited<ReturnType<typeof getActionContext>>["membership"]): boolean {
+  return ["owner", "admin", "manager"].includes(membership.role) && can(membership, "invoicing");
+}
 
 function readForm(formData: FormData) {
   return {
@@ -66,6 +87,9 @@ export async function createRecurringInvoiceAction(
   const { membership, supabase } = await getActionContext();
   if (!["owner", "admin", "manager"].includes(membership.role)) {
     return { errors: { _form: "Not authorized." } };
+  }
+  if (!mayManageStanding(membership)) {
+    return { errors: { _form: "Recurring invoices aren't part of your access." } };
   }
 
   const raw = readForm(formData);
@@ -113,7 +137,7 @@ export async function createRecurringInvoiceAction(
       cadence: parsed.data.cadence,
       amount_cents: parsed.data.amount_cents,
       due_days: parsed.data.due_days,
-      next_run_at: new Date(parsed.data.next_run_at).toISOString(),
+      next_run_at: await firstRunInstant(parsed.data.next_run_at, membership.organization_id),
       notes: parsed.data.notes,
       line_items: lineItems,
       active: true,
@@ -139,6 +163,9 @@ export async function updateRecurringInvoiceAction(
   const { membership, supabase } = await getActionContext();
   if (!["owner", "admin", "manager"].includes(membership.role)) {
     return { errors: { _form: "Not authorized." } };
+  }
+  if (!mayManageStanding(membership)) {
+    return { errors: { _form: "Recurring invoices aren't part of your access." } };
   }
 
   const raw = readForm(formData);
@@ -188,7 +215,7 @@ export async function updateRecurringInvoiceAction(
     };
   }
 
-  const { error } = await (supabase
+  const { data: saved, error } = await (supabase
     .from("invoice_series" as never)
     .update({
       client_id: parsed.data.client_id,
@@ -196,7 +223,7 @@ export async function updateRecurringInvoiceAction(
       cadence: parsed.data.cadence,
       amount_cents: parsed.data.amount_cents,
       due_days: parsed.data.due_days,
-      next_run_at: new Date(parsed.data.next_run_at).toISOString(),
+      next_run_at: await firstRunInstant(parsed.data.next_run_at, membership.organization_id),
       notes: parsed.data.notes,
       line_items: lineItems,
     } as never)
@@ -204,11 +231,25 @@ export async function updateRecurringInvoiceAction(
     .eq(
       "organization_id" as never,
       membership.organization_id as never,
-    ) as unknown as Promise<{ error: { message: string } | null }>);
+    )
+    .select("id") as unknown as Promise<{
+    data: Array<{ id: string }> | null;
+    error: { message: string } | null;
+  }>);
 
   if (error) {
     return {
       errors: { _form: error.message },
+      values: Object.fromEntries(
+        Object.entries(raw).map(([k, v]) => [k, String(v ?? "")]),
+      ),
+    };
+  }
+  // No row: the series is gone, or it isn't this company's. Say so instead
+  // of going back to the list as if it had saved.
+  if (!saved?.length) {
+    return {
+      errors: { _form: "This recurring invoice wasn't saved. It may have been deleted." },
       values: Object.fromEntries(
         Object.entries(raw).map(([k, v]) => [k, String(v ?? "")]),
       ),
@@ -222,7 +263,7 @@ export async function updateRecurringInvoiceAction(
 
 export async function toggleRecurringInvoiceAction(formData: FormData) {
   const { membership, supabase } = await getActionContext();
-  if (!["owner", "admin", "manager"].includes(membership.role)) return;
+  if (!mayManageStanding(membership)) return;
 
   const id = String(formData.get("id") ?? "");
   const active = String(formData.get("active") ?? "") === "true";

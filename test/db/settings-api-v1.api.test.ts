@@ -334,8 +334,7 @@ describe.skipIf(!hasPostgrest)("the public API: invoices", { timeout: 90_000 }, 
     expect(await invoiceRow(theirs)).toMatchObject({ amount_cents: 10000, status: "draft" });
   });
 
-  // FIX-LATER: PATCH /api/v1/invoices/:id on an id that isn't this company's ends in .single() with no row and answers 500 "Something went wrong on our side" instead of 404.
-  it.fails("an edit to an invoice that isn't this company's answers 404, not a server error", async () => {
+  it("an edit to an invoice that isn't this company's answers 404, not a server error", async () => {
     const c = await company();
     const other = await company();
     const raw = await keyFor(c);
@@ -378,8 +377,7 @@ describe.skipIf(!hasPostgrest)("Settings → Webhooks, heard through the API", {
     expect(await delivered(paused.id)).toEqual([]);
   });
 
-  // FIX-LATER: PATCH /api/v1/invoices/:id fires invoice.paid whenever the row reads paid afterwards, so every later edit of a paid invoice re-announces the payment (the transition check at line 101 is a no-op).
-  it.fails("invoice.paid goes out once, when the invoice becomes paid, not again on a later edit", async () => {
+  it("invoice.paid goes out once, when the invoice becomes paid, not again on a later edit", async () => {
     const c = await company();
     const raw = await keyFor(c);
     await as(c.owner, () =>
@@ -473,8 +471,7 @@ describe.skipIf(!hasPostgrest)("the public API: estimates", { timeout: 90_000 },
     expect(outbound, "nothing was fetched").toEqual([]);
   });
 
-  // FIX-LATER: POST /api/v1/estimates inserts the estimate before checking the PDF; a 400 for a bad PDF (or a refused pdf_url) leaves the estimate behind, so the website's retry makes a duplicate.
-  it.fails("a PDF that isn't one is refused before the estimate is made, so a retry makes one estimate", async () => {
+  it("a PDF that isn't one is refused before the estimate is made, so a retry makes one estimate", async () => {
     const c = await company();
     const raw = await keyFor(c);
     const client = await addClient(api.sql, c.org, "Retry Client");
@@ -518,8 +515,7 @@ describe.skipIf(!hasPostgrest)("the public API: estimates", { timeout: 90_000 },
     expect(api.storage.has(theirKey), "their PDF is still there").toBe(true);
   });
 
-  // FIX-LATER: findOrCreateClient matches email and name with ilike and no escaping, so "_" and "%" are wildcards: m_underwood@ lands on the existing m.underwood@ client.
-  it.fails("a visitor whose email only looks like an existing client's gets a lead of their own", async () => {
+  it("a visitor whose email only looks like an existing client's gets a lead of their own", async () => {
     const c = await company();
     const raw = await keyFor(c);
     const margaret = await addClient(api.sql, c.org, "Margaret Underwood");
@@ -532,8 +528,7 @@ describe.skipIf(!hasPostgrest)("the public API: estimates", { timeout: 90_000 },
     expect(res.data.client_id, "the estimate isn't filed under Margaret").not.toBe(margaret);
   });
 
-  // FIX-LATER: a malformed id makes the id lookup fail (22P02); in the API's fail-closed scope that throws out of the route as an unhandled 500 instead of answering 404.
-  it.fails("a malformed id answers 404 rather than crashing the route", async () => {
+  it("a malformed id answers 404 rather than crashing the route", async () => {
     const c = await company();
     const raw = await keyFor(c);
     const res = await estimateRoute.GET(call(raw, "/api/v1/estimates/not-a-uuid"), ctx("not-a-uuid")).catch((e: unknown) => e);
@@ -541,8 +536,7 @@ describe.skipIf(!hasPostgrest)("the public API: estimates", { timeout: 90_000 },
     expect((res as Response).status).toBe(404);
   });
 
-  // FIX-LATER: PATCH /api/v1/estimates/:id on an id that isn't this company's answers 500 "Something went wrong on our side" instead of 404 (same .single() no-row path).
-  it.fails("an edit to an estimate that isn't this company's answers 404, not a server error", async () => {
+  it("an edit to an estimate that isn't this company's answers 404, not a server error", async () => {
     const c = await company();
     const other = await company();
     const raw = await keyFor(c);

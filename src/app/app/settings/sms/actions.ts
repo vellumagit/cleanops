@@ -163,7 +163,9 @@ export async function saveCapAction(
   if (permErr) return { errors: { _form: permErr } };
 
   const raw = String(formData.get("cap_dollars") ?? "").trim();
-  const dollars = Number(raw);
+  // Number("") is 0, and a $0 cap silently stops every text past the
+  // included allotment. A cleared field is a mistake, not "zero".
+  const dollars = raw === "" ? NaN : Number(raw);
   if (!Number.isFinite(dollars) || dollars < 0 || dollars > 100000) {
     return { errors: { cap: "Enter a dollar amount between 0 and 100,000." } };
   }

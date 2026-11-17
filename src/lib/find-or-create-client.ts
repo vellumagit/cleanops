@@ -61,6 +61,15 @@ async function maybeReopen(
     .eq("id", row.id) as unknown as Promise<unknown>);
 }
 
+/**
+ * ilike is used for a case-insensitive EXACT match, but "_" and "%" in the
+ * value are wildcards to it: m_underwood@x.com matched m.underwood@x.com and
+ * the inquiry was filed under a different person. Escape them.
+ */
+function exactIlike(value: string): string {
+  return value.replace(/[\\%_]/g, (c) => `\\${c}`);
+}
+
 export async function findOrCreateClient(
   admin: SupabaseClient,
   organizationId: string,
@@ -75,7 +84,7 @@ export async function findOrCreateClient(
       .from("clients")
       .select("id, lifecycle")
       .eq("organization_id", organizationId)
-      .ilike("email", input.email)
+      .ilike("email", exactIlike(input.email))
       .maybeSingle()) as unknown as {
       data: { id: string; lifecycle: string | null } | null;
     };
@@ -91,7 +100,7 @@ export async function findOrCreateClient(
     .from("clients")
     .select("id, lifecycle")
     .eq("organization_id", organizationId)
-    .ilike("name", input.name)
+    .ilike("name", exactIlike(input.name))
     .maybeSingle()) as unknown as {
     data: { id: string; lifecycle: string | null } | null;
   };

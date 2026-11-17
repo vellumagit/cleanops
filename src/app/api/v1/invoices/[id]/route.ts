@@ -7,6 +7,10 @@ import { findCrossOrgRef } from "@/lib/api/org-scope";
 
 type Params = { params: Promise<{ id: string }> };
 
+// A malformed id can't match anything. Asked of the database it raises
+// 22P02, which the fail-closed API scope turns into an unhandled 500.
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * GET /api/v1/invoices/:id
  */
@@ -15,6 +19,7 @@ export async function GET(request: NextRequest, { params }: Params) {
   if (!auth.ok) return auth.response;
 
   const { id } = await params;
+  if (!UUID.test(id)) return NextResponse.json({ error: "Invoice not found" }, { status: 404 });
   const admin = createSupabaseAdminClient();
   const { data, error } = await admin
     .from("invoices")
@@ -42,6 +47,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   if (!auth.ok) return auth.response;
 
   const { id } = await params;
+  if (!UUID.test(id)) return NextResponse.json({ error: "Invoice not found" }, { status: 404 });
   let body: Record<string, unknown>;
   try {
     body = await request.json();
@@ -78,16 +84,19 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     if (refusal) return NextResponse.json({ error: refusal }, { status: 409 });
   }
 
+  // The invoice as it stands, read once: it must be this company's (404, not
+  // the 500 a no-row update used to become), and "was it already paid?"
+  // decides which webhook goes out below.
+  const { data: prev } = await preAdmin
+    .from("invoices")
+    .select("sent_at, paid_at, status")
+    .eq("id", id)
+    .eq("organization_id", auth.organizationId)
+    .maybeSingle();
+  if (!prev) return NextResponse.json({ error: "Invoice not found" }, { status: 404 });
+
   // Handle timestamp logic for status changes
   if (updates.status) {
-    const admin2 = createSupabaseAdminClient();
-    const { data: prev } = await admin2
-      .from("invoices")
-      .select("sent_at, paid_at, status")
-      .eq("id", id)
-      .eq("organization_id", auth.organizationId)
-      .maybeSingle();
-
     const now = new Date().toISOString();
     const st = updates.status as string;
     if (st === "sent" || st === "paid" || st === "overdue") {
@@ -95,11 +104,6 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     }
     if (st === "paid") {
       updates.paid_at = prev?.paid_at ?? now;
-    }
-
-    // Fire specific webhook for paid transition
-    if (st === "paid" && prev?.status !== "paid") {
-      // Will fire after the update below
     }
   }
 
@@ -118,8 +122,10 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
   if (error) return apiServerError("invoices/:id", error);
 
-  // Determine which webhook to fire
-  if ((data.status as string) === "paid") {
+  // invoice.paid goes out when the invoice BECOMES paid, once. It used to
+  // fire whenever the row read "paid" afterwards, so every later edit of a
+  // paid invoice announced the payment again to whatever was listening.
+  if ((data.status as string) === "paid" && (prev.status as string) !== "paid") {
     dispatchWebhookEvent(auth.organizationId, "invoice.paid", data).catch(() => {});
   } else {
     dispatchWebhookEvent(auth.organizationId, "invoice.updated", data).catch(() => {});

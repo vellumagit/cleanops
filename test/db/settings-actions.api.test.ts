@@ -464,8 +464,7 @@ describe.skipIf(!hasPostgrest)("Settings → Sender email and its verification l
     expect(await orgRow(c.org)).toMatchObject({ sender_email: null, sender_email_verified_at: null, sender_email_token: null });
   });
 
-  // FIX-LATER: saveSenderEmailAction writes the new address and token before the daily rate-limit check, so a refused save still replaces (and unverifies) the sender and kills the link already sent.
-  it.fails("a save refused by the daily limit leaves the verified sender as it was", async () => {
+  it("a save refused by the daily limit leaves the verified sender as it was", async () => {
     const c = await company();
     for (let i = 0; i < 5; i++) {
       expect(await as(c.owner, () => email.saveSenderEmailAction({}, form({ sender_email: "office@svit.example.com" })))).toEqual({ success: true });
@@ -516,8 +515,7 @@ describe.skipIf(!hasPostgrest)("Settings → Data: the danger zone", { timeout: 
     expect((await orgRow(c.org)).deletion_scheduled_at).toBeNull();
   });
 
-  // FIX-LATER: scheduleOrgDeletionAction compares the typed name with a hidden form field, not the company's real name, and deletes whichever company is active now; an owner of two companies with a stale tab schedules the wrong one.
-  it.fails("the name typed must be the name of the company being deleted", async () => {
+  it("the name typed must be the name of the company being deleted", async () => {
     const a = await company();
     const b = await company();
     // Svitlana owns both. The danger zone was opened for A; she has since

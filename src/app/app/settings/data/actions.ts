@@ -21,7 +21,18 @@ export async function scheduleOrgDeletionAction(
   // Require the user to type the exact org name as a sanity check — same
   // pattern as GitHub / Stripe destructive actions.
   const typed = String(formData.get("confirm_name") ?? "").trim();
-  const expected = String(formData.get("expected_name") ?? "").trim();
+  // The name to match is the REAL name of the company about to be scheduled,
+  // read here. It used to be a name the page sent along (expected_name): an
+  // owner of two companies who had switched company in another tab typed the
+  // first one's name, matched the first one's hidden field, and scheduled
+  // the second.
+  const { createSupabaseAdminClient } = await import("@/lib/supabase/admin");
+  const { data: org } = (await createSupabaseAdminClient()
+    .from("organizations")
+    .select("name")
+    .eq("id", membership.organization_id)
+    .maybeSingle()) as unknown as { data: { name: string } | null };
+  const expected = (org?.name ?? "").trim();
 
   if (!typed || !expected || typed !== expected) {
     return {
