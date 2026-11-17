@@ -160,14 +160,22 @@ export async function togglePinPostAction(
 
   const { supabase } = await getActionContext();
 
-  const { error } = await (supabase
+  const { data: pinnedRows, error } = await (supabase
     .from("feed_posts" as never)
     .update({ pinned } as never)
-    .eq("id" as never, postId as never) as unknown as Promise<{
+    .eq("id" as never, postId as never)
+    .select("id") as unknown as Promise<{
+    data: Array<{ id: string }> | null;
     error: { message: string } | null;
   }>);
 
   if (error) return { ok: false, error: error.message };
+  // The database lets only the author, an owner or an admin change a post.
+  // Anyone else (a manager sees the button) matched nothing and was told
+  // "Pinned" all the same.
+  if (!pinnedRows?.length) {
+    return { ok: false, error: "Only the person who posted this, an owner or an admin can pin it." };
+  }
 
   revalidatePath("/app/feed");
   revalidatePath("/field/feed");

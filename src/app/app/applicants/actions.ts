@@ -116,7 +116,7 @@ export async function setApplicantStatusAction(
   if (!["owner", "admin"].includes(membership.role)) {
     return { ok: false, error: "Not allowed" };
   }
-  const { error } = (await supabase
+  const { data: statusRows, error } = (await supabase
     .from("job_applicants" as never)
     .update({
       status,
@@ -124,10 +124,13 @@ export async function setApplicantStatusAction(
       reviewed_at: new Date().toISOString(),
     } as never)
     .eq("id" as never, id as never)
-    .eq("organization_id" as never, membership.organization_id as never)) as unknown as {
+    .eq("organization_id" as never, membership.organization_id as never)
+    .select("id")) as unknown as {
+    data: Array<{ id: string }> | null;
     error: { message: string } | null;
   };
   if (error) return { ok: false, error: error.message };
+  if (!statusRows?.length) return { ok: false, error: "Applicant not found." };
   revalidatePath("/app/applicants", "page");
   revalidatePath(`/app/applicants/${id}`, "page");
   return { ok: true };
@@ -143,14 +146,17 @@ export async function saveApplicantNotesAction(
   if (!["owner", "admin"].includes(membership.role)) {
     return { ok: false, error: "Not allowed" };
   }
-  const { error } = (await supabase
+  const { data: noteRows, error } = (await supabase
     .from("job_applicants" as never)
     .update({ notes: notes.trim() || null } as never)
     .eq("id" as never, id as never)
-    .eq("organization_id" as never, membership.organization_id as never)) as unknown as {
+    .eq("organization_id" as never, membership.organization_id as never)
+    .select("id")) as unknown as {
+    data: Array<{ id: string }> | null;
     error: { message: string } | null;
   };
   if (error) return { ok: false, error: error.message };
+  if (!noteRows?.length) return { ok: false, error: "Applicant not found." };
   revalidatePath(`/app/applicants/${id}`, "page");
   return { ok: true };
 }

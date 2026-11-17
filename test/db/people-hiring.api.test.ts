@@ -252,8 +252,7 @@ describe.skipIf(!hasPostgrest)("applicants", () => {
     expect(await applicantRow(theirs)).toEqual({ status: "new", notes: "their notes", reviewed_by: null });
   });
 
-  // FIX-LATER: setApplicantStatusAction and saveApplicantNotesAction answer ok to an update that matched no row (another company's id)
-  it.fails("a status or note save that reached no applicant says so instead of ok", async () => {
+  it("a status or note save that reached no applicant says so instead of ok", async () => {
     const c = await company();
     const other = await company();
     const theirs = await applicant(other);
@@ -551,8 +550,7 @@ describe.skipIf(!hasPostgrest)("the hiring library", () => {
     expect(await docRow(mine)).toBeUndefined();
   });
 
-  // FIX-LATER: saveHiringDocAction answers "saved" (and logs an update) when the edit matched no row, e.g. another company's doc id
-  it.fails("an edit that reached no document says so instead of saved", async () => {
+  it("an edit that reached no document says so instead of saved", async () => {
     const c = await company();
     const other = await company();
     const theirs = await hiringDoc(other, "procedure", ["Their step"]);
@@ -560,8 +558,7 @@ describe.skipIf(!hasPostgrest)("the hiring library", () => {
     expect(res).toMatchObject({ error: expect.any(String) });
   });
 
-  // FIX-LATER: deleteHiringDocAction writes a "delete" audit row even when nothing was deleted (another company's doc id)
-  it.fails("the audit log doesn't record a delete that didn't happen", async () => {
+  it("the audit log doesn't record a delete that didn't happen", async () => {
     const c = await company();
     const other = await company();
     const theirs = await hiringDoc(other, "procedure", ["Their step"]);

@@ -42,6 +42,15 @@ function readContactForm(formData: FormData) {
   };
 }
 
+/**
+ * A manager needs the on-call pool switched on, here as on the page and in
+ * createJobOfferAction. The list's own buttons skipped the check.
+ */
+function poolIsOff(membership: Awaited<ReturnType<typeof getActionContext>>["membership"]): boolean {
+  return membership.role === "manager" && !can(membership, "subcontractors");
+}
+const POOL_OFF_MESSAGE = "The on-call pool isn't part of your access.";
+
 export async function createFreelancerContactAction(
   _prev: FreelancerContactFormState,
   formData: FormData,
@@ -51,6 +60,7 @@ export async function createFreelancerContactAction(
   if (!parsed.ok) return { errors: parsed.errors, values: raw };
 
   const { membership, supabase } = await getActionContext();
+  if (poolIsOff(membership)) return { errors: { _form: POOL_OFF_MESSAGE }, values: raw };
 
   const { data: inserted, error } = await supabase
     .from("freelancer_contacts")
@@ -98,6 +108,7 @@ export async function updateFreelancerContactAction(
   if (!parsed.ok) return { errors: parsed.errors, values: raw };
 
   const { membership, supabase } = await getActionContext();
+  if (poolIsOff(membership)) return { errors: { _form: POOL_OFF_MESSAGE }, values: raw };
 
   const { data: previous } = await supabase
     .from("freelancer_contacts")
@@ -105,7 +116,7 @@ export async function updateFreelancerContactAction(
     .eq("id", id)
     .maybeSingle();
 
-  const { error } = await supabase
+  const { data: savedRows, error } = await supabase
     .from("freelancer_contacts")
     .update({
       full_name: parsed.data.full_name,
@@ -114,9 +125,15 @@ export async function updateFreelancerContactAction(
       notes: parsed.data.notes ?? null,
       active: parsed.data.active,
     })
-    .eq("id", id);
+    .eq("id", id)
+    .eq("organization_id", membership.organization_id)
+    .select("id");
 
   if (error) return { errors: { _form: error.message }, values: raw };
+  // Nothing changed: say so, and don't log an update that never happened.
+  if (!savedRows?.length) {
+    return { errors: { _form: "This contact wasn't saved. It may have been deleted, or your access doesn't allow changing it." }, values: raw };
+  }
 
   await logAuditEvent({
     membership,
@@ -143,6 +160,7 @@ export async function deleteFreelancerContactAction(formData: FormData) {
   const id = String(formData.get("id") ?? "");
   if (!id) return;
   const { membership, supabase } = await getActionContext();
+  if (poolIsOff(membership)) return;
 
   const { data: previous } = await supabase
     .from("freelancer_contacts")
@@ -150,14 +168,17 @@ export async function deleteFreelancerContactAction(formData: FormData) {
     .eq("id", id)
     .maybeSingle();
 
-  const { error } = await supabase
+  const { data: removed, error } = await supabase
     .from("freelancer_contacts")
     .delete()
     .eq("id", id)
-    .eq("organization_id", membership.organization_id);
+    .eq("organization_id", membership.organization_id)
+    .select("id");
   if (error) throw error;
 
-  await logAuditEvent({
+  // Log a deletion only when one happened (a cleaner's press removes
+  // nothing, and used to leave "deleted" in the history all the same).
+  if (removed?.length) await logAuditEvent({
     membership,
     action: "delete",
     entity: FREELANCER_ENTITY,
@@ -535,6 +556,7 @@ export async function cancelJobOfferAction(formData: FormData) {
   if (!id) return;
 
   const { membership, supabase } = await getActionContext();
+  if (poolIsOff(membership)) return;
 
   const { data: previous } = await supabase
     .from("job_offers")

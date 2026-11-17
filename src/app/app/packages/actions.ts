@@ -60,7 +60,7 @@ export async function updatePackageAction(
   if (!parsed.ok) return { errors: parsed.errors, values: raw };
 
   const { membership, supabase } = await getActionContext();
-  const { error } = await supabase
+  const { data: savedRows, error } = await supabase
     .from("packages")
     .update({
       name: parsed.data.name,
@@ -71,9 +71,13 @@ export async function updatePackageAction(
       included: parsed.data.included,
     })
     .eq("id", id)
-    .eq("organization_id", membership.organization_id);
+    .eq("organization_id", membership.organization_id)
+    .select("id");
 
   if (error) return { errors: { _form: error.message }, values: raw };
+  if (!savedRows?.length) {
+    return { errors: { _form: "This package wasn't saved. It may have been deleted, or your access doesn't allow changing it." }, values: raw };
+  }
   revalidatePath("/app/packages");
   revalidatePath(`/app/packages/${id}/edit`);
   revalidatePath("/app");

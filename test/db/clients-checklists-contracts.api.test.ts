@@ -523,8 +523,7 @@ describe.skipIf(!hasPostgrest)("contracts", { timeout: 120_000 }, () => {
     ).toMatch(/^No services configured/);
   });
 
-  // FIX-LATER: updateContractAction never checks its update touched a row, so a save refused by RLS (a cleaner) or aimed at another company's contract returns to the list as if saved.
-  it.fails("a contract save that changed nothing says so instead of returning to the list as saved", async () => {
+  it("a contract save that changed nothing says so instead of returning to the list as saved", async () => {
     const c = await company();
     const other = await company();
     const theirs = await contract(other, await addClient(api.sql, other.org, "Their Client"));
@@ -548,8 +547,7 @@ describe.skipIf(!hasPostgrest)("contracts", { timeout: 120_000 }, () => {
     expect(await api.sql("select 1 from public.contracts where id = $1", [id])).toHaveLength(0);
   });
 
-  // FIX-LATER: deleteContractAction deletes the row (documents cascade) but never removes the documents' files from the contract-docs bucket.
-  it.fails("deleting a contract takes its documents' files with it", async () => {
+  it("deleting a contract takes its documents' files with it", async () => {
     const c = await company();
     const id = await contract(c, await addClient(api.sql, c.org, "Docs Client"));
     await as(c.owner, () => contractDocs.uploadContractDocumentAction(form({ contract_id: id, file: new File(["%PDF-1.4"], "signed.pdf", { type: "application/pdf" }) })));
@@ -590,8 +588,7 @@ describe.skipIf(!hasPostgrest)("contracts", { timeout: 120_000 }, () => {
     expect(api.storage.has(`contract-docs/${doc.path}`)).toBe(false);
   });
 
-  // FIX-LATER: uploadContractDocumentAction never checks the contract is this company's; the file and a row pointing at another company's contract are saved.
-  it.fails("a document can't be attached to another company's contract", async () => {
+  it("a document can't be attached to another company's contract", async () => {
     const c = await company();
     const other = await company();
     const theirs = await contract(other, await addClient(api.sql, other.org, "Their Client"));
@@ -601,8 +598,7 @@ describe.skipIf(!hasPostgrest)("contracts", { timeout: 120_000 }, () => {
     expect(api.storage.size).toBe(before);
   });
 
-  // FIX-LATER: uploadContractDocumentAction ignores a failed contract_documents insert, so the uploaded file is left in storage with no row (here: a contract id that doesn't exist).
-  it.fails("a document whose record can't be saved leaves no file behind", async () => {
+  it("a document whose record can't be saved leaves no file behind", async () => {
     const c = await company();
     const before = api.storage.size;
     await as(c.owner, () =>
@@ -735,8 +731,7 @@ describe.skipIf(!hasPostgrest)("sending a contract and signing it", { timeout: 1
     expect((await contractRow(id)).sign_status).toBe("sent");
   });
 
-  // FIX-LATER: signContractAction's update has no "not yet signed" guard, so two submits at once both sign: the second overwrites the first's name, time and IP, and the office is told twice.
-  it.fails("two submits at the same moment sign it once", async () => {
+  it("two submits at the same moment sign it once", async () => {
     const c = await company();
     const id = await contract(c, (await withEmail(c, "Double Click")).id, { public_token: "doubleclicktok01", sign_status: "sent" });
     await Promise.all([

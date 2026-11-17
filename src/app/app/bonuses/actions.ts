@@ -394,7 +394,9 @@ export async function markBonusPaidAction(
     .maybeSingle()) as unknown as {
     data: { payroll_run_id: string | null } | null;
   };
-  if (row?.payroll_run_id) {
+  // Not this company's bonus, or gone: say so (this answered ok).
+  if (!row) return { ok: false, error: "Bonus not found." };
+  if (row.payroll_run_id) {
     return {
       ok: false,
       error:
@@ -402,11 +404,14 @@ export async function markBonusPaidAction(
     };
   }
 
+  // Only a bonus not yet paid: a second press must keep the date it was
+  // first paid, not move it to today.
   const { error } = await supabase
     .from("bonuses")
     .update({ status: "paid", paid_at: new Date().toISOString() })
     .eq("id", id)
-    .eq("organization_id", membership.organization_id);
+    .eq("organization_id", membership.organization_id)
+    .neq("status", "paid");
 
   if (error) return { ok: false, error: error.message };
 
@@ -571,6 +576,8 @@ export async function updateBonusAction(formData: FormData): Promise<Result> {
   // changing the run -- two numbers for the same money, and whichever a
   // person checks second looks wrong. Paid bonuses are harder still: that's
   // a record of money that already moved.
+  // Not this company's bonus, or gone: say so, and log nothing below.
+  if (!before) return { ok: false, error: "Bonus not found." };
   const lock = before as {
     status?: string | null;
     payroll_run_id?: string | null;
@@ -633,6 +640,8 @@ export async function deleteBonusAction(formData: FormData): Promise<Result> {
     .eq("organization_id", membership.organization_id)
     .maybeSingle();
 
+  // Not this company's bonus, or gone: say so, and log nothing below.
+  if (!before) return { ok: false, error: "Bonus not found." };
   // Deleting is the harsher version of editing -- same freeze, same reasons.
   const lock = before as {
     status?: string | null;

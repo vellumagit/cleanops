@@ -241,8 +241,7 @@ describe.skipIf(!hasPostgrest)("reviews", () => {
     expect(await api.sql("select 1 from public.reviews where client_id = $1", [client])).toHaveLength(1);
   });
 
-  // FIX-LATER: createReviewAction looks the tagged cleaner up in profiles by her membership id, so the owner's notice never names her
-  it.fails("the owner's notice names the cleaner the review is for", async () => {
+  it("the owner's notice names the cleaner the review is for", async () => {
     const c = await company();
     const client = await addClient(api.sql, c.org, "Patricia Poohkay");
     await as(c.olha, () =>
@@ -277,8 +276,7 @@ describe.skipIf(!hasPostgrest)("reviews", () => {
     expect(await reviewRow(theirs)).toEqual({ rating: 5, comment: "Wonderful" });
   });
 
-  // FIX-LATER: updateReviewAction doesn't ask what it changed; a save that matched no review answers { ok: true }
-  it.fails("a correction that changed no review says so", async () => {
+  it("a correction that changed no review says so", async () => {
     const c = await company();
     const other = await company("Other Co");
     const theirs = await review(other, 5, "Wonderful");
@@ -421,8 +419,7 @@ describe.skipIf(!hasPostgrest)("packages", () => {
     expect(await pkgRow(made.id)).toBeUndefined();
   });
 
-  // FIX-LATER: updatePackageAction treats an update that matched no package as saved (redirects to the list)
-  it.fails("a save that changed no package says so", async () => {
+  it("a save that changed no package says so", async () => {
     const c = await company();
     const other = await company("Other Co");
     const theirs = await pkg(other, "Their standard");
@@ -483,8 +480,7 @@ describe.skipIf(!hasPostgrest)("inventory", () => {
     ).toEqual([{ min_role: "manager", recipient_membership_id: null }]);
   });
 
-  // FIX-LATER: updateInventoryAction treats an update that matched no item as saved (redirects to the list)
-  it.fails("a save that changed no item says so", async () => {
+  it("a save that changed no item says so", async () => {
     const c = await company();
     const other = await company("Other Co");
     const theirs = await item(other, "Their vacuum");
@@ -538,8 +534,7 @@ describe.skipIf(!hasPostgrest)("the network list", () => {
     expect([history[0], history.at(-1)]).toEqual(["create", "delete"]);
   });
 
-  // FIX-LATER: updateNetworkContactAction treats an update that matched no contact as saved, and logs an "update" that never happened
-  it.fails("a save that changed no contact says so, and logs nothing", async () => {
+  it("a save that changed no contact says so, and logs nothing", async () => {
     const c = await company();
     const other = await company("Other Co");
     const theirs = await contact(other, "Their supplier");
@@ -601,8 +596,7 @@ describe.skipIf(!hasPostgrest)("the on-call list", () => {
     expect(made?.phone).toBe("+17802711971");
   });
 
-  // FIX-LATER: the on-call list's create/update/delete don't check the "subcontractors" capability that the page and createJobOfferAction require
-  it.fails("a manager without the on-call pool can't add, change or remove contacts", async () => {
+  it("a manager without the on-call pool can't add, change or remove contacts", async () => {
     const c = await company();
     const kept = await bench(c, "Kept Bench");
     await narrow(c.olha, { subcontractors: false });
@@ -614,8 +608,7 @@ describe.skipIf(!hasPostgrest)("the on-call list", () => {
     expect(formErrors(added)?._form ?? formErrors(added)?.full_name).toBeTruthy();
   });
 
-  // FIX-LATER: updateFreelancerContactAction treats an update that matched no contact as saved, and logs an "update" for it
-  it.fails("a save that changed no contact says so", async () => {
+  it("a save that changed no contact says so", async () => {
     const c = await company();
     const other = await company("Other Co");
     const theirs = await bench(other, "Their bench");
@@ -625,8 +618,7 @@ describe.skipIf(!hasPostgrest)("the on-call list", () => {
     expect(formErrors(res)?._form).toBeTruthy();
   });
 
-  // FIX-LATER: deleteFreelancerContactAction writes a "delete" audit row whether or not anything was deleted
-  it.fails("a delete that removed nothing leaves no 'deleted' in the history", async () => {
+  it("a delete that removed nothing leaves no 'deleted' in the history", async () => {
     const c = await company();
     const mine = await bench(c, "My bench");
     await as(c.anna, () => freelancers.deleteFreelancerContactAction(form({ id: mine })));
@@ -775,8 +767,7 @@ describe.skipIf(!hasPostgrest)("shift offers", () => {
     expect(await claimOfferAction("not-a-real-token-at-all")).toEqual({ ok: false, reason: "invalid" });
   });
 
-  // FIX-LATER: cancelJobOfferAction doesn't check the "subcontractors" capability (createJobOfferAction does)
-  it.fails("a manager without the on-call pool can't cancel an offer", async () => {
+  it("a manager without the on-call pool can't cancel an offer", async () => {
     const s = await setup();
     const { offer } = await openOffer(s);
     await narrow(s.c.olha, { subcontractors: false });

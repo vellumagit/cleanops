@@ -50,7 +50,7 @@ export async function saveHiringDocAction(
 
   const admin = createSupabaseAdminClient();
   if (id) {
-    const { error } = await admin
+    const { data: editedRows, error } = (await admin
       .from("hiring_docs" as never)
       .update({
         title,
@@ -58,8 +58,11 @@ export async function saveHiringDocAction(
         notes: notes || null,
       } as never)
       .eq("id" as never, id as never)
-      .eq("organization_id" as never, membership.organization_id as never);
+      .eq("organization_id" as never, membership.organization_id as never)
+      .select("id")) as unknown as { data: Array<{ id: string }> | null; error: { message: string } | null };
     if (error) return { error: error.message };
+    // Nothing changed: say so, and don't log an update that never happened.
+    if (!editedRows?.length) return { error: "That document wasn't found. Nothing was saved." };
   } else {
     const { error } = await admin.from("hiring_docs" as never).insert({
       organization_id: membership.organization_id,
@@ -91,13 +94,15 @@ export async function deleteHiringDocAction(formData: FormData): Promise<void> {
   if (!id) return;
 
   const admin = createSupabaseAdminClient();
-  await admin
+  const { data: removedRows } = (await admin
     .from("hiring_docs" as never)
     .delete()
     .eq("id" as never, id as never)
-    .eq("organization_id" as never, membership.organization_id as never);
+    .eq("organization_id" as never, membership.organization_id as never)
+    .select("id")) as unknown as { data: Array<{ id: string }> | null };
 
-  await logAuditEvent({
+  // Log a deletion only when one happened.
+  if (removedRows?.length) await logAuditEvent({
     membership,
     action: "delete",
     entity: "settings",

@@ -73,7 +73,7 @@ export async function updateNetworkContactAction(
   const { membership, supabase } = await getActionContext();
 
   // Explicit org filter on top of RLS — the standing multi-org rule.
-  const { error } = (await supabase
+  const { data: savedRows, error } = (await supabase
     .from("network_contacts" as never)
     .update({
       name: parsed.data.name,
@@ -87,8 +87,16 @@ export async function updateNetworkContactAction(
     .eq(
       "organization_id" as never,
       membership.organization_id as never,
-    )) as unknown as { error: { message: string } | null };
+    )
+    .select("id")) as unknown as {
+    data: Array<{ id: string }> | null;
+    error: { message: string } | null;
+  };
   if (error) return { errors: { _form: error.message }, values: raw };
+  // Nothing changed: say so, and don't log an update that never happened.
+  if (!savedRows?.length) {
+    return { errors: { _form: "This contact wasn't saved. It may have been deleted, or your access doesn't allow changing it." }, values: raw };
+  }
 
   await logAuditEvent({
     membership,

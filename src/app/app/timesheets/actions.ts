@@ -100,7 +100,11 @@ export async function fetchTimeEntryHistoryAction(
   const { membership, supabase } = await getActionContext();
   if (!["owner", "admin", "manager"].includes(membership.role)) return [];
 
-  const { data } = (await supabase
+  // Read with the service key, scoped to this company below. The audit
+  // log's own rule shows it to owners and admins only, so a manager, who is
+  // allowed in here, got "no entries" on a shift that had been edited.
+  const { createSupabaseAdminClient: historyAdmin } = await import("@/lib/supabase/admin");
+  const { data } = (await historyAdmin()
     .from("audit_log")
     .select(
       `id, created_at, action, before, after, actor_id`,

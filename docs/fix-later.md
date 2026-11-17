@@ -10,6 +10,64 @@ Severity: **High** = money, privacy or another company's data at risk;
 **Med** = wrong result someone will notice; **Low** = wording, edge cases.
 Faults marked **Security** should go first.
 
+## Where we stopped (night of 17 Nov) and what's left for the morning
+
+Five groups of fixes are done (see "Fixed so far"). 76 of the 106 known-fault
+tests are now normal tests; 30 remain, in the groups below. The fifth group
+was committed after its full run; check `git log` and `git status` first
+thing: if the last commit isn't "Fifth group off the pile", it still needs
+committing and pushing.
+
+**Left to fix, in the order I'd take them:**
+
+1. **Purge of deleted companies (#62–#65, 4 tests).** Personal data left
+   behind in about 17 tables; the list names a dropped table; the
+   batched-delete fallback can't run in the cron; a failed purge is reported
+   as done. No company is due for purge, so nothing is leaking today.
+2. **Training (#78, #79, #85, 5 tests).** No role check on edit or delete;
+   an edit can attach steps to another company's module; a refused photo
+   wipes the old one; marking a new hire trained sets no certificate expiry
+   (needs a small migration: the trigger must also run on insert).
+3. **Admin calendar repair tool (#26–#28, 4 tests).** gcal-force-resync
+   finds no company calendar once a cleaner has connected their own, can
+   wipe a cleaner's calendar, deletes another company's events on a shared
+   calendar, and never finishes past 40 events. Svit has 8 cleaners
+   connected, so don't run that tool until this is fixed.
+4. **Square (#46, #47, #49, 3 tests + 1).** Token refresh disconnects the
+   account after 30 days; refunds always ask in CAD; the refund audit entry
+   trusts the posted invoice id. Nobody uses Square yet.
+5. **Trials, changelog, assistant (#69–#73, 5 tests).** The assistant
+   refuses anyone in two companies (you) and still works for a suspended
+   workspace; comped and paying workspaces get "trial ending" emails;
+   refused reminders are counted as sent; owners of two companies get the
+   changelog twice.
+6. **Small ones (5 tests).** Two overdue-reminder runs at once both remind
+   (#68); timesheet actions ignore the manager's Timesheets switch (#86); a
+   certificate gets a 7-day then a "30-day" reminder (#83); archiving a
+   service that isn't ours logs it (#19); the sender verification link
+   never expires (#18, needs a column for when it was issued).
+7. **Needs a small migration each:** "mark all read" clears announcements
+   for everyone (#54, needs a per-person read table); recurring invoices on
+   the 31st drift to the 28th (#10, needs an anchor-day column).
+
+**Not tests, still open:**
+- Same-name website visitors are filed under an existing client (#1, the
+  rule itself; your call).
+- Booking saves don't wait for the calendar sync (#2); the expired-estimate
+  banner (#3); the raw message on an archived estimate (#4); the Reports
+  page totals past 1,000 rows (#89) and the other large-size reads (#90);
+  two test-suite items (#88, #91).
+- The April webhooks migration never ran in production, and the leftover
+  `membership_admin_notes` table.
+- Your two decisions (service rename; series extension when the cleaner is
+  busy) and the "Questions" section at the bottom.
+- Things to check in real use: cleaners starting jobs and Olha editing
+  bookings under the restored rules (17 Nov catch-up); tasks whose times
+  were shifted before the fix need correcting by hand; efficiency bonuses
+  already paid on team jobs may have been too generous.
+- The computer: it lost power under test load on 17 Nov. Full runs now use
+  4 workers. Worth getting the cooling or power supply looked at.
+
 ## Fixed so far
 
 - **17 Nov, first six:** Google Calendar connect now uses a sealed one-time
@@ -52,6 +110,18 @@ Faults marked **Security** should go first.
   PDF saves nothing, missing or malformed ids answer 404 (#13, #14, #15);
   `_` and `%` in a website visitor's email or name no longer match other
   clients (part of #1).
+- **17 Nov, fifth group:** contracts: deleting one removes its documents'
+  files, a document can't be attached to another company's contract or left
+  behind when its record fails, two signs at once sign it once, and a save
+  that saved nothing says so (#38–#42); office lists: reviews, packages,
+  inventory, network and on-call contacts say when nothing changed and log
+  nothing false, the on-call buttons respect the manager switch, pinning
+  someone else's post is refused in words, and the new-review notice names
+  the cleaner (#57–#61); people: bonuses answer "not found" for another
+  company's and keep the first paid date, applicant and hiring-document
+  saves say when they reached nothing, a manager sees a shift's history, an
+  admin can finish setup, and sign-in sends a cleaner straight to /field
+  (#80, #81, #82, #84, #87).
 - **17 Nov:** the production catch-up (see the next section).
 
 ## Waiting on you
@@ -231,11 +301,11 @@ touch no one yet.
 | 35 | FIXED 17 Nov (was Med) | Re-importing a list creates duplicates past 1,000 existing clients (the API's row cap). | `clients/import/actions.ts` ~211 | `clients-records` "re-importing a 1,200-client list adds nobody…" |
 | 36 | FIXED 17 Nov (was Med) | A retried photo "finish" deletes the file the first save recorded, leaving a broken photo. | `lib/client-media-actions.ts` ~159 | "finishing the same upload twice (a retry) keeps the file…" |
 | 37 | FIXED 17 Nov (was Med) | A checklist template can be put on another company's job. | `checklists/actions.ts` ~325–372 | "a template can't be put on another company's job" |
-| 38 | Med | Deleting a contract leaves its document files in storage. | `contracts/actions.ts` ~129 | "deleting a contract takes its documents' files with it" |
-| 39 | Med | Contract documents can be attached to another company's contract. | `contracts/document-actions.ts` ~26–62 | "a document can't be attached to another company's contract" |
-| 40 | Low | Two signs submitted at once both sign: the second overwrites the first's evidence and the office is told twice. | `c/[token]/sign-actions.ts` ~131 | "two submits at the same moment sign it once" |
-| 41 | Low | A contract save that changed nothing looks saved. | `contracts/actions.ts` ~106 | "a contract save that changed nothing says so…" |
-| 42 | Low | A contract document whose record fails to save leaves its file behind. | `contracts/document-actions.ts` ~52 | "a document whose record can't be saved leaves no file behind" |
+| 38 | FIXED 17 Nov (was Med) | Deleting a contract leaves its document files in storage. | `contracts/actions.ts` ~129 | "deleting a contract takes its documents' files with it" |
+| 39 | FIXED 17 Nov (was Med) | Contract documents can be attached to another company's contract. | `contracts/document-actions.ts` ~26–62 | "a document can't be attached to another company's contract" |
+| 40 | FIXED 17 Nov (was Low) | Two signs submitted at once both sign: the second overwrites the first's evidence and the office is told twice. | `c/[token]/sign-actions.ts` ~131 | "two submits at the same moment sign it once" |
+| 41 | FIXED 17 Nov (was Low) | A contract save that changed nothing looks saved. | `contracts/actions.ts` ~106 | "a contract save that changed nothing says so…" |
+| 42 | FIXED 17 Nov (was Low) | A contract document whose record fails to save leaves its file behind. | `contracts/document-actions.ts` ~52 | "a document whose record can't be saved leaves no file behind" |
 | 43 | FIXED 17 Nov (was Low) | Taking a checklist off a client that isn't ours reports success. | `checklists/actions.ts` ~447 | "taking a checklist off a client that isn't this company's says nothing changed" |
 | 44 | FIXED 17 Nov (was Low) | Removing another company's checklist item reports ok. | `checklists/actions.ts` ~520 | "removing another company's checklist item says it wasn't removed" |
 | 45 | FIXED 17 Nov (was Low) | A person listed twice in one CSV becomes two clients. | `clients/import/actions.ts` ~222 | "a person listed twice in the same file becomes one client" |
@@ -260,11 +330,11 @@ touch no one yet.
 | 54 | Med | One person's "mark all read" clears the team announcement for everyone (an org-wide notice is one row), though the code promises it doesn't. | `notifications/actions.ts` ~26–36, `lib/notify.ts` ~236 | "the owner marking everything read leaves the team announcement unread for the manager" |
 | 55 | FIXED 17 Nov (was Med) | An on-call contact's phone typed without +1 ("780 271 1971") is saved as `+7802711971`, a Russian number, so shift-offer texts go astray. `lib/phone.ts` fixed this elsewhere. | `lib/validators/freelancer.ts` ~13–20 | `ops-office-lists` "a local ten-digit number is saved as the North American number it is" |
 | 56 | FIXED 17 Nov (was Low) | Editing a task whose reminder already went sends it again. | `tasks/actions.ts` ~142 | "editing a task whose reminder already went doesn't send it again" |
-| 57 | Low | Managers with the on-call pool switched off can still add, change and remove contacts, and cancel offers. | `freelancers/actions.ts` | "a manager without the on-call pool can't…" (2 tests) |
-| 58 | Low | Deleting an on-call contact logs a deletion that didn't happen (e.g. a cleaner's press). | `freelancers/actions.ts` ~153 | "a delete that removed nothing leaves no 'deleted' in the history" |
-| 59 | Low | A manager pinning someone else's post is told "Pinned", but nothing changes (the database allows only the author or owner/admin). | `lib/feed-actions.ts` ~163 | "a manager pinning someone else's post either pins it or is told she can't" |
-| 60 | Low | The owner's new-review notice never names the cleaner (looks up a profile by a membership id). | `reviews/actions.ts` ~50 | "the owner's notice names the cleaner the review is for" |
-| 61 | Low | Saves that matched nothing still report success: review corrections, packages, inventory, network contacts (plus a false "update" audit entry), on-call contacts. | `reviews` ~115, `packages` ~63, `inventory` ~56, `network` ~76, `freelancers` ~108 | `ops-office-lists` "a save that changed no … says so" (5 tests) |
+| 57 | FIXED 17 Nov (was Low) | Managers with the on-call pool switched off can still add, change and remove contacts, and cancel offers. | `freelancers/actions.ts` | "a manager without the on-call pool can't…" (2 tests) |
+| 58 | FIXED 17 Nov (was Low) | Deleting an on-call contact logs a deletion that didn't happen (e.g. a cleaner's press). | `freelancers/actions.ts` ~153 | "a delete that removed nothing leaves no 'deleted' in the history" |
+| 59 | FIXED 17 Nov (was Low) | A manager pinning someone else's post is told "Pinned", but nothing changes (the database allows only the author or owner/admin). | `lib/feed-actions.ts` ~163 | "a manager pinning someone else's post either pins it or is told she can't" |
+| 60 | FIXED 17 Nov (was Low) | The owner's new-review notice never names the cleaner (looks up a profile by a membership id). | `reviews/actions.ts` ~50 | "the owner's notice names the cleaner the review is for" |
+| 61 | FIXED 17 Nov (was Low) | Saves that matched nothing still report success: review corrections, packages, inventory, network contacts (plus a false "update" audit entry), on-call contacts. | `reviews` ~115, `packages` ~63, `inventory` ~56, `network` ~76, `freelancers` ~108 | `ops-office-lists` "a save that changed no … says so" (5 tests) |
 
 ### Invoice emails, trials, company purge, assistant
 
@@ -293,14 +363,14 @@ touch no one yet.
 | 77 | FIXED 17 Nov (was Med) | Computing efficiency bonuses fails past about 320 finished jobs in the window (one over-long request). | `bonuses/actions.ts` ~207–213 | "a company with 400 finished jobs in the window still gets its efficiency bonuses" |
 | 78 | Med | Marking a new hire trained on an expiring module (WHMIS, first aid) sets no certificate expiry, so no reminder ever comes; the expiry trigger runs on update only. | `training/actions.ts` ~398, migration `20260420030000` ~80 | `people-hiring` "marking a new hire trained … dates her certificate…" |
 | 79 | Med | Replacing a training step's photo with one that's refused wipes the old photo and says saved. | `training/actions.ts` ~251–262 | "replacing a step's photo with one too big to keep leaves the old photo (or says no)" |
-| 80 | Low | A manager (Olha) opening a shift's history sees "no entries": the audit log is read through rules that only let owners and admins see it. | `timesheets/actions.ts` ~101–111 | `people-time` "a manager opening a shift's history sees its edits…" |
-| 81 | Low | An admin pressing "finish setup" saves nothing and is sent on as done. | `setup/actions.ts` ~12–21 | `people-account` "an admin finishing setup really finishes it" |
-| 82 | Low | Sign-in sends a cleaner to /app first (reads the whole company's memberships), and /app bounces them to /field. | `(marketing)/login/actions.ts` ~135–147 | "lands a cleaner on /field" |
+| 80 | FIXED 17 Nov (was Low) | A manager (Olha) opening a shift's history sees "no entries": the audit log is read through rules that only let owners and admins see it. | `timesheets/actions.ts` ~101–111 | `people-time` "a manager opening a shift's history sees its edits…" |
+| 81 | FIXED 17 Nov (was Low) | An admin pressing "finish setup" saves nothing and is sent on as done. | `setup/actions.ts` ~12–21 | `people-account` "an admin finishing setup really finishes it" |
+| 82 | FIXED 17 Nov (was Low) | Sign-in sends a cleaner to /app first (reads the whole company's memberships), and /app bounces them to /field. | `(marketing)/login/actions.ts` ~135–147 | "lands a cleaner on /field" |
 | 83 | Low | A certificate first seen inside 7 days gets the 7-day reminder, then a "30-day" one the next morning. | `lib/automations.ts` ~6230 | "a certificate first seen a week out is reminded once…" |
-| 84 | Low | Bonuses: a second "mark paid" re-stamps the paid date; marking, editing or deleting another company's bonus answers ok (and logs). | `bonuses/actions.ts` ~360–641 | `people-time` (3 tests) |
+| 84 | FIXED 17 Nov (was Low) | Bonuses: a second "mark paid" re-stamps the paid date; marking, editing or deleting another company's bonus answers ok (and logs). | `bonuses/actions.ts` ~360–641 | `people-time` (3 tests) |
 | 85 | Low | Training: no role check on edit or delete (a cleaner is told "saved"), a delete that didn't happen is logged, and an edit aimed at another company's module can attach steps to it. | `training/actions.ts` ~209–327 | `people-hiring` (3 tests) |
 | 86 | Low | Timesheet manager actions ignore a manager's Timesheets switch. | `timesheets/actions.ts` | "a manager whose timesheets access is switched off can't…" |
-| 87 | Low | Applicant status and notes, and hiring-document edits, answer ok when they reached nothing; a hiring-doc delete that didn't happen is logged. | `applicants/actions.ts` ~119–153, `hiring/actions.ts` ~53–106 | `people-hiring` (3 tests) |
+| 87 | FIXED 17 Nov (was Low) | Applicant status and notes, and hiring-document edits, answer ok when they reached nothing; a hiring-doc delete that didn't happen is logged. | `applicants/actions.ts` ~119–153, `hiring/actions.ts` ~53–106 | `people-hiring` (3 tests) |
 
 ### Size (load suite on a real server, 16 Nov)
 

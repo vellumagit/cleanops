@@ -132,10 +132,14 @@ export async function loginAction(
   // Otherwise, look up the user's role and redirect accordingly.
   // Prefer the highest-privilege membership so an owner who is also
   // listed as an employee in another org still lands on the dashboard.
+  // THEIR memberships. Without the profile filter this read everyone in the
+  // company the person can see, so the owner's role sent a cleaner to /app
+  // (which then bounced them to /field).
   const { data: memberships } = await supabase
     .from("memberships")
     .select("role")
     .eq("status", "active")
+    .eq("profile_id", signInData.user?.id ?? "")
     .order("created_at", { ascending: false })
     .limit(10);
 

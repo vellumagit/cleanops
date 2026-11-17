@@ -53,7 +53,7 @@ export async function updateInventoryAction(
   if (!parsed.ok) return { errors: parsed.errors, values: raw };
 
   const { membership, supabase } = await getActionContext();
-  const { error } = await supabase
+  const { data: savedRows, error } = await supabase
     .from("inventory_items")
     .update({
       name: parsed.data.name,
@@ -64,9 +64,13 @@ export async function updateInventoryAction(
       notes: parsed.data.notes ?? null,
     })
     .eq("id", id)
-    .eq("organization_id", membership.organization_id);
+    .eq("organization_id", membership.organization_id)
+    .select("id");
 
   if (error) return { errors: { _form: error.message }, values: raw };
+  if (!savedRows?.length) {
+    return { errors: { _form: "This item wasn't saved. It may have been deleted, or your access doesn't allow changing it." }, values: raw };
+  }
   revalidatePath("/app/inventory");
   revalidatePath(`/app/inventory/${id}/edit`);
   redirect("/app/inventory");

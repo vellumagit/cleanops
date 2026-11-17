@@ -239,8 +239,7 @@ describe.skipIf(!hasPostgrest)("signing in", () => {
     });
   });
 
-  // FIX-LATER: loginAction reads every active membership the cleaner can see (her whole company, by RLS) instead of her own, finds the owner's role and sends her to /app; only /app's own guard bounces her on to /field
-  it.fails("lands a cleaner on /field", async () => {
+  it("lands a cleaner on /field", async () => {
     const c = await company();
     const cleaner = await withPassword(c.anna);
     expect(await signedOut(() => login.loginAction({}, form(cleaner)))).toEqual({ redirected: "/field" });
@@ -477,8 +476,7 @@ describe.skipIf(!hasPostgrest)("finishing setup", () => {
     expect(audit.map((a) => a.after)).toEqual([{ onboarding_completed: true }]);
   });
 
-  // FIX-LATER: completeOnboardingAction lets admins in, but organizations can only be updated by owners (RLS), so an admin's press changes nothing and still redirects as done
-  it.fails("an admin finishing setup really finishes it", async () => {
+  it("an admin finishing setup really finishes it", async () => {
     const c = await company();
     expect(await as(c.admin, () => setup.completeOnboardingAction())).toEqual({ redirected: "/app" });
     expect(await completedAt(c.org)).toBe(true);

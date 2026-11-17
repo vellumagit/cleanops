@@ -103,7 +103,7 @@ export async function updateContractAction(
   // UPDATE so re-categorizing a service in Settings → Services can't
   // silently rewrite the contract's historical enum bucket. The FK
   // + denormalized label still propagate.
-  const { error } = await supabase
+  const { data: savedRows, error } = await supabase
     .from("contracts")
     .update({
       client_id: parsed.data.client_id,
@@ -117,9 +117,18 @@ export async function updateContractAction(
       status: parsed.data.status,
     } as never)
     .eq("id", id)
-    .eq("organization_id", membership.organization_id);
+    .eq("organization_id", membership.organization_id)
+    .select("id");
 
   if (error) return { errors: { _form: error.message }, values: raw };
+  // No row: the contract is gone, isn't this company's, or this person may
+  // not change it. Say so instead of returning to the list as if saved.
+  if (!savedRows?.length) {
+    return {
+      errors: { _form: "This contract wasn't saved. It may have been deleted, or your access doesn't allow changing it." },
+      values: raw,
+    };
+  }
   revalidatePath("/app/contracts");
   revalidatePath(`/app/contracts/${id}/edit`);
   revalidatePath("/app");
@@ -130,8 +139,33 @@ export async function deleteContractAction(formData: FormData) {
   const id = String(formData.get("id") ?? "");
   if (!id) return;
   const { membership, supabase } = await getActionContext();
-  const { error } = await supabase.from("contracts").delete().eq("id", id).eq("organization_id", membership.organization_id);
+
+  // The documents' rows go with the contract (cascade), but their FILES
+  // don't: note where they are first, and remove them once the contract has
+  // really gone. They used to stay in storage for good: client paperwork
+  // with nothing pointing at it.
+  const { createSupabaseAdminClient } = await import("@/lib/supabase/admin");
+  const admin = createSupabaseAdminClient();
+  const { data: docs } = (await admin
+    .from("contract_documents" as never)
+    .select("storage_path")
+    .eq("contract_id" as never, id as never)
+    .eq("organization_id" as never, membership.organization_id as never)) as unknown as {
+    data: Array<{ storage_path: string | null }> | null;
+  };
+
+  const { data: deleted, error } = await supabase
+    .from("contracts")
+    .delete()
+    .eq("id", id)
+    .eq("organization_id", membership.organization_id)
+    .select("id");
   if (error) throw error;
+
+  const paths = (docs ?? []).map((d) => d.storage_path).filter((x): x is string => Boolean(x));
+  if (deleted?.length && paths.length > 0) {
+    await admin.storage.from("contract-docs").remove(paths).catch(() => {});
+  }
   revalidatePath("/app/contracts");
   redirect("/app/contracts");
 }

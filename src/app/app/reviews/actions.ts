@@ -48,12 +48,16 @@ export async function createReviewAction(
     .maybeSingle();
   let employeeName: string | null = null;
   if (parsed.data.employee_id) {
-    const { data: emp } = await supabase
-      .from("profiles")
-      .select("full_name")
+    // employee_id is a MEMBERSHIP id. This looked it up in profiles, found
+    // nobody, and the owner's notice never said who the review was for.
+    const { data: emp } = (await supabase
+      .from("memberships")
+      .select("display_name, profile:profiles ( full_name )")
       .eq("id", parsed.data.employee_id)
-      .maybeSingle();
-    employeeName = emp?.full_name ?? null;
+      .maybeSingle()) as unknown as {
+      data: { display_name: string | null; profile: { full_name: string | null } | null } | null;
+    };
+    employeeName = emp?.display_name?.trim() || emp?.profile?.full_name?.trim() || null;
   }
 
   notifyReviewSubmitted(membership.organization_id, {
@@ -112,13 +116,15 @@ export async function updateReviewAction(
   // service-role admin client — the action-level role check above is the
   // authoritative gate — plus an explicit organization_id filter.
   const admin = createSupabaseAdminClient();
-  const { error } = await admin
+  const { data: corrected, error } = await admin
     .from("reviews")
     .update({ rating, comment: comment || null })
     .eq("id", id)
-    .eq("organization_id", membership.organization_id);
+    .eq("organization_id", membership.organization_id)
+    .select("id");
 
   if (error) return { ok: false, error: error.message };
+  if (!corrected?.length) return { ok: false, error: "That review wasn't found. Nothing was changed." };
 
   revalidatePath("/app/reviews");
   return { ok: true };

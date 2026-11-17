@@ -128,7 +128,10 @@ export async function signContractAction(
     null;
   const userAgent = h.get("user-agent");
 
-  const { error: updateErr } = await admin
+  // Only a contract that isn't signed yet. Two submits at the same moment
+  // (a double tap) used to both land: the second overwrote the first's name,
+  // time, IP and drawing, and the office was told twice.
+  const { data: signedRows, error: updateErr } = await admin
     .from("contracts")
     .update({
       sign_status: "signed",
@@ -138,7 +141,9 @@ export async function signContractAction(
       signer_user_agent: userAgent?.slice(0, 500) ?? null,
       signer_signature_data_url: signatureDataUrl,
     } as never)
-    .eq("id", contract.id);
+    .eq("id", contract.id)
+    .or("sign_status.is.null,sign_status.neq.signed")
+    .select("id");
 
   if (updateErr) {
     console.error("[contract-sign] update failed:", updateErr.message);
@@ -147,6 +152,10 @@ export async function signContractAction(
         "Couldn't record your signature. Try again — if it persists, contact the sender.",
     };
   }
+
+  // Someone else's submit signed it a moment ago: it IS signed, so the
+  // signer sees success, and the first submit's evidence and notice stand.
+  if (!signedRows?.length) return { ok: true };
 
   // A signature is a business event, not a database whisper — reviews and
   // payments notify; until now the owner discovered signatures by opening

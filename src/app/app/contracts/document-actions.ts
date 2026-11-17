@@ -37,6 +37,16 @@ export async function uploadContractDocumentAction(
 
   const admin = createSupabaseAdminClient();
 
+  // The contract id arrives from a browser. It was never checked, so a file
+  // (and a row) could be saved against another company's contract.
+  const { data: ownContract } = (await admin
+    .from("contracts")
+    .select("id")
+    .eq("id", contractId)
+    .eq("organization_id", membership.organization_id)
+    .maybeSingle()) as unknown as { data: { id: string } | null };
+  if (!ownContract) return;
+
   const arrayBuffer = await file.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
 
@@ -49,17 +59,29 @@ export async function uploadContractDocumentAction(
 
   if (uploadError) return;
 
-  await (admin
-    .from("contract_documents" as never)
-    .insert({
-      organization_id: membership.organization_id,
-      contract_id: contractId,
-      name: file.name,
-      storage_path: storagePath,
-      file_size: file.size,
-      mime_type: file.type,
-      uploaded_by: membership.id,
-    } as never) as unknown as Promise<unknown>);
+  // If the record can't be saved, the file must not stay behind with
+  // nothing pointing at it.
+  let recorded = false;
+  try {
+    const { error: insertError } = (await (admin
+      .from("contract_documents" as never)
+      .insert({
+        organization_id: membership.organization_id,
+        contract_id: contractId,
+        name: file.name,
+        storage_path: storagePath,
+        file_size: file.size,
+        mime_type: file.type,
+        uploaded_by: membership.id,
+      } as never) as unknown as Promise<{ error: { message: string } | null }>));
+    recorded = !insertError;
+  } catch {
+    recorded = false;
+  }
+  if (!recorded) {
+    await admin.storage.from(BUCKET).remove([storagePath]).catch(() => {});
+    return;
+  }
 
   revalidatePath(`/app/contracts/${contractId}/edit`, "page");
 }

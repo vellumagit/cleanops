@@ -577,8 +577,7 @@ describe.skipIf(!hasPostgrest)("hours on the timesheet", () => {
     expect(await as(other.owner, () => timesheets.fetchTimeEntryHistoryAction(id))).toEqual([]);
   });
 
-  // FIX-LATER: fetchTimeEntryHistoryAction lets managers in but reads audit_log as them, which RLS keeps to owners/admins: a manager is told "No audit entries for this row yet"
-  it.fails("a manager opening a shift's history sees its edits, not an empty history", async () => {
+  it("a manager opening a shift's history sees its edits, not an empty history", async () => {
     const c = await company();
     const id = await entry(c.org, c.anna, 2);
     await api.sql(
@@ -812,8 +811,7 @@ describe.skipIf(!hasPostgrest)("bonuses", () => {
     });
   });
 
-  // FIX-LATER: markBonusPaidAction re-stamps paid_at on a bonus that is already paid; the date the money moved is overwritten by the second press
-  it.fails("a second 'mark paid' keeps the date it was first paid", async () => {
+  it("a second 'mark paid' keeps the date it was first paid", async () => {
     const c = await company();
     const id = await bonus(c, c.anna);
     await as(c.owner, () => bonuses.markBonusPaidAction(id));
@@ -824,8 +822,7 @@ describe.skipIf(!hasPostgrest)("bonuses", () => {
     expect(after).toBe(first);
   });
 
-  // FIX-LATER: markBonusPaidAction answers ok when its update matched no row (another company's bonus id)
-  it.fails("marking another company's bonus paid is answered 'not found', not ok", async () => {
+  it("marking another company's bonus paid is answered 'not found', not ok", async () => {
     const c = await company();
     const other = await company();
     const theirs = await bonus(other, other.anna);
@@ -862,8 +859,7 @@ describe.skipIf(!hasPostgrest)("bonuses", () => {
     expect([await amountOf(paid), await amountOf(held)]).toEqual([10000, 10000]);
   });
 
-  // FIX-LATER: updateBonusAction and deleteBonusAction answer ok (and write an audit row) when the write matched no row, e.g. another company's bonus id
-  it.fails("editing or deleting another company's bonus is answered 'not found', and logs nothing", async () => {
+  it("editing or deleting another company's bonus is answered 'not found', and logs nothing", async () => {
     const c = await company();
     const other = await company();
     const theirs = await bonus(other, other.anna);

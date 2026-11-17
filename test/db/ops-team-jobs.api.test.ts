@@ -276,8 +276,7 @@ describe.skipIf(!hasPostgrest)("the team feed", () => {
     expect(await pinned(byOwner), "a cleaner, or another company, can't pin it").toBe(false);
   });
 
-  // FIX-LATER: managers see "Pin to top" on every post, but feed_posts' update policy only admits the author or an owner/admin; togglePinPostAction answers ok without asking what changed
-  it.fails("a manager pinning someone else's post either pins it or is told she can't", async () => {
+  it("a manager pinning someone else's post either pins it or is told she can't", async () => {
     const c = await company();
     const byOwner = await post(c, c.owner, "Holiday hours");
     const res = await as(c.olha, () => feed.togglePinPostAction(form({ post_id: byOwner, pinned: "true" })));
