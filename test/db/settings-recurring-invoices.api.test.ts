@@ -455,8 +455,7 @@ describe.skipIf(!hasPostgrest)("the nightly recurring invoice job", { timeout: 1
     expect(sum, "the lines add up to what the invoice charges").toBe(inv.amount_cents);
   });
 
-  // FIX-LATER: addMonthsClamped clamps from the last run date, not the series' anchor day: a series on the 31st bills on the 28th forever after February.
-  it.fails("a series on the last day of the month stays on the last day after a short month", async () => {
+  it("a series on the last day of the month stays on the last day after a short month", async () => {
     const c = await company();
     const client = await addClient(api.sql, c.org, "Month End Client");
     const id = await standing(c, client, { next_run_at: "2026-01-31T06:00:00Z" });

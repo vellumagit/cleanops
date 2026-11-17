@@ -579,7 +579,7 @@ export async function autoGenerateRecurringInvoices(): Promise<{
     .select(
       `
       id, organization_id, client_id, name, cadence,
-      amount_cents, line_items, notes, next_run_at, due_days
+      amount_cents, line_items, notes, next_run_at, due_days, anchor_day
     `,
     )
     .eq("active", true)
@@ -624,6 +624,15 @@ export async function autoGenerateRecurringInvoices(): Promise<{
     // the target month's last day — naive setUTCMonth on Jan 31 lands on
     // "Feb 31" = Mar 3, permanently drifting the series off its anchor day
     // and skipping a whole billing month (audit P6).
+    //
+    // The day aimed for is the series' ANCHOR day, not the last run's day:
+    // clamping from the last run turned the 31st into the 28th in February
+    // and left it on the 28th for good. A series with no anchor yet (made
+    // before the column existed, or by hand) takes today's day as its anchor
+    // and keeps it, below.
+    const current = new Date(series.next_run_at);
+    const anchorDay =
+      (series as { anchor_day?: number | null }).anchor_day ?? current.getUTCDate();
     const addMonthsClamped = (from: Date, months: number): Date => {
       const y = from.getUTCFullYear();
       const m = from.getUTCMonth() + months;
@@ -632,14 +641,13 @@ export async function autoGenerateRecurringInvoices(): Promise<{
         Date.UTC(
           y,
           m,
-          Math.min(from.getUTCDate(), lastDayOfTarget),
+          Math.min(anchorDay, lastDayOfTarget),
           from.getUTCHours(),
           from.getUTCMinutes(),
           from.getUTCSeconds(),
         ),
       );
     };
-    const current = new Date(series.next_run_at);
     let next = new Date(current);
     switch (series.cadence) {
       case "weekly":
@@ -664,7 +672,7 @@ export async function autoGenerateRecurringInvoices(): Promise<{
     // meant a crash in between re-generated the invoice on the next tick.
     const { data: claimed } = (await db
       .from("invoice_series")
-      .update({ next_run_at: next.toISOString() })
+      .update({ next_run_at: next.toISOString(), anchor_day: anchorDay } as never)
       .eq("id", series.id)
       .eq("next_run_at", series.next_run_at)
       .select("id")) as unknown as { data: Array<{ id: string }> | null };

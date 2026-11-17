@@ -480,11 +480,33 @@ describe.skipIf(!hasPostgrest)("the bell", () => {
     for (const id of [s.beas, s.office, s.money, s.theirs]) expect(await isRead(id), id).toBe(false);
   });
 
-  // FIX-LATER: an org-wide notice is ONE row with one read_at (notify.ts), so "mark all read" stomps everyone's unread state for it, against the action's own comment
-  it.fails("the owner marking everything read leaves the team announcement unread for the manager", async () => {
+  it("the owner marking everything read leaves the team announcement unread for the manager", async () => {
     const s = await setup();
     await as(s.c.owner, () => bell.markAllNotificationsReadAction());
     expect(await isRead(s.everyone)).toBe(false);
+  });
+
+  it("the bell's count is each person's own: the owner's goes to zero, the manager's doesn't move", async () => {
+    const s = await setup();
+    const unread = async (who: Member) =>
+      (
+        await api.sql<{ n: number }>(
+          "select (public.app_shell_counts($1, $2, now(), now(), now())->>'unread_notifications')::int as n",
+          [s.c.org, who.membershipId],
+        )
+      )[0].n;
+    // Three team notices; none addressed to the owner or the manager.
+    expect(await unread(s.c.owner)).toBe(3);
+    expect(await unread(s.c.olha)).toBe(3);
+    await as(s.c.owner, () => bell.markAllNotificationsReadAction());
+    expect(await unread(s.c.owner)).toBe(0);
+    expect(await unread(s.c.olha)).toBe(3);
+    // One press by the manager reads that one notice, for the manager only.
+    await as(s.c.olha, () => bell.markNotificationReadAction(s.everyone));
+    expect(await unread(s.c.olha)).toBe(2);
+    // Pressing it again changes nothing and doesn't fail.
+    await as(s.c.olha, () => bell.markNotificationReadAction(s.everyone));
+    expect(await unread(s.c.olha)).toBe(2);
   });
 });
 

@@ -128,6 +128,7 @@ export async function createRecurringInvoiceAction(
     };
   }
 
+  const firstRun = await firstRunInstant(parsed.data.next_run_at, membership.organization_id);
   const { error } = await (supabase
     .from("invoice_series" as never)
     .insert({
@@ -137,7 +138,9 @@ export async function createRecurringInvoiceAction(
       cadence: parsed.data.cadence,
       amount_cents: parsed.data.amount_cents,
       due_days: parsed.data.due_days,
-      next_run_at: await firstRunInstant(parsed.data.next_run_at, membership.organization_id),
+      next_run_at: firstRun,
+      // The day of the month this series bills on; later runs aim for it.
+      anchor_day: new Date(firstRun).getUTCDate(),
       notes: parsed.data.notes,
       line_items: lineItems,
       active: true,
@@ -215,6 +218,7 @@ export async function updateRecurringInvoiceAction(
     };
   }
 
+  const firstRun = await firstRunInstant(parsed.data.next_run_at, membership.organization_id);
   const { data: saved, error } = await (supabase
     .from("invoice_series" as never)
     .update({
@@ -223,7 +227,9 @@ export async function updateRecurringInvoiceAction(
       cadence: parsed.data.cadence,
       amount_cents: parsed.data.amount_cents,
       due_days: parsed.data.due_days,
-      next_run_at: await firstRunInstant(parsed.data.next_run_at, membership.organization_id),
+      next_run_at: firstRun,
+      // The day of the month this series bills on; later runs aim for it.
+      anchor_day: new Date(firstRun).getUTCDate(),
       notes: parsed.data.notes,
       line_items: lineItems,
     } as never)

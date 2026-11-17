@@ -43,7 +43,13 @@ export async function GET(req: NextRequest) {
     sender_email_token: string | null;
   } | null;
 
-  if (!orgRow || orgRow.sender_email_token !== token) {
+  // "Expires in 24 hours", the email says. The issue time is the part of
+  // the token before the dot; a link without one predates expiry and is
+  // refused the same way (the owner presses Save again for a fresh link).
+  const issuedMs = token.includes(".") ? parseInt(token.split(".")[0], 36) : NaN;
+  const expired = !Number.isFinite(issuedMs) || Date.now() - issuedMs > 24 * 60 * 60 * 1000;
+
+  if (!orgRow || orgRow.sender_email_token !== token || expired) {
     return NextResponse.redirect(
       `${siteUrl}/app/settings/email?verified=invalid`,
     );

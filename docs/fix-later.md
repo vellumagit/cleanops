@@ -10,17 +10,14 @@ Severity: **High** = money, privacy or another company's data at risk;
 **Med** = wrong result someone will notice; **Low** = wording, edge cases.
 Faults marked **Security** should go first.
 
-## What's left (17 Nov, after the sixth group)
+## What's left (17 Nov, after the seventh group)
 
-103 of the 106 known-fault tests are now normal tests. Three remain, and each
-needs a small database addition (one migration for all three):
+All 106 known-fault tests are now normal tests. Nothing in the suite is
+marked as an expected failure.
 
-1. "Mark all read" clears a team announcement for everyone (#54; needs a
-   per-person read table).
-2. Recurring invoices on the 31st drift to the 28th (#10; needs an
-   anchor-day column).
-3. The sender verification link never expires (#18; needs a column for when
-   it was issued).
+One thing to do by hand: a recurring invoice that had ALREADY drifted from
+the 31st to the 28th keeps the 28th (the new column takes the day it bills
+on today). Open it and pick its date again to put it back.
 
 **Not tests, still open:**
 - Same-name website visitors are filed under an existing client (#1, the
@@ -117,6 +114,15 @@ needs a small database addition (one migration for all three):
   and time-off actions respect the manager's Timesheets switch (#86); a
   certificate first seen inside a week gets one reminder (#83); archiving a
   service that isn't ours logs nothing (#19).
+- **17 Nov, seventh group (the last known-fault tests):** a team
+  announcement is read per person, so "mark all read" and a single press
+  clear it only for whoever pressed (#54; new table notification_reads, and
+  the bell's count reads it); recurring invoices aim for the series' anchor
+  day, so the 31st comes back after February (#10; new column
+  invoice_series.anchor_day); the sender verification link expires after
+  the 24 hours its email promises (#18; the issue time rides in the link,
+  no database change). Migration:
+  20261117020000_notification_reads_and_anchor_day.sql.
 - **17 Nov:** the production catch-up (see the next section).
 
 ## Waiting on you
@@ -243,7 +249,7 @@ needs a small database addition (one migration for all three):
 | 7 | FIXED 17 Nov (was Med) | The form's line-item example uses `description`/`unit_cents`; the job reads `label`/`unit_price_cents`. Lines written like the example bill at $0 under a correct total. | `recurring-invoices/form.tsx` placeholder vs `billing.ts` ~768–790 | "…bills lines that add up to the invoice" |
 | 8 | FIXED 17 Nov (was Med) | Recurring-invoice buttons ignore a manager's Invoices switch. | `recurring-invoices/actions.ts`, `page.tsx` | "a manager with Invoices & estimates switched off can't make a standing invoice" |
 | 9 | FIXED 17 Nov (was Med) | The first-run date is saved as UTC midnight, a day early in Alberta: the list shows Nov 30 for Dec 1. | `recurring-invoices/actions.ts` ~89, ~163 | "the first invoice date … is that date in the company's own calendar" |
-| 10 | Low | Month-end series drift to the 28th after February, though the code says it prevents that. | `billing.ts` ~622–652 | "…stays on the last day after a short month" |
+| 10 | FIXED 17 Nov (was Low) | Month-end series drift to the 28th after February, though the code says it prevents that. | `billing.ts` ~622–652 | "…stays on the last day after a short month" |
 | 11 | FIXED 17 Nov (was Low) | Due date counts from UTC's day, not the company's (hidden for Alberta by the run time). | `billing.ts` ~613–616 | "counts the due date from the company's day…" |
 | 12 | FIXED 17 Nov (was Low) | A save that matched no series reports success. | `recurring-invoices/actions.ts` ~155–184 | "a save that matched no series says so…" |
 
@@ -261,7 +267,7 @@ needs a small database addition (one migration for all three):
 |---|---|---|---|---|
 | 16 | FIXED 17 Nov (was Med) | Company deletion compares the typed name with a name the page sent, then schedules whichever company is active: an owner of two companies with a stale tab can schedule the wrong one (30-day grace applies). | `settings/data/actions.ts` ~20–32 | `settings-actions` "the name typed must be the name of the company being deleted" |
 | 17 | FIXED 17 Nov (was Med) | A sender-email save refused by the daily limit still replaces and unverifies the sender, killing the link already emailed. | `settings/email/actions.ts` ~83–109 | "a save refused by the daily limit leaves the verified sender as it was" |
-| 18 | Low | The sender verification link never expires, though its email says 24 hours. | `api/verify-sender/route.ts` | "the link stops working after the 24 hours its email promises" |
+| 18 | FIXED 17 Nov (was Low) | The sender verification link never expires, though its email says 24 hours. | `api/verify-sender/route.ts` | "the link stops working after the 24 hours its email promises" |
 | 19 | FIXED 17 Nov (was Low) | Archiving or unarchiving a service that isn't ours still writes an audit entry. | `settings/services/actions.ts` ~185–233 | "archiving a service that isn't ours leaves no 'archived' entry…" |
 
 ### Integrations (Google Calendar, QuickBooks, Sage)
@@ -322,7 +328,7 @@ touch no one yet.
 | 51 | FIXED 17 Nov (was Med, Privacy) | Deactivated cleaners still get team chat pushes (#general and announcements, with the message preview): pushes go to every thread member whatever their status, and deactivation never removes them. Svit has deactivated cleaners (Olga, for one). | `lib/chat-actions.ts` ~217–262 | `ops-team-jobs` "doesn't buzz the phone of a cleaner who has been deactivated" |
 | 52 | FIXED 17 Nov (was Med) | Saving a task moves its due and reminder times 6 hours earlier: the form's time is stored as UTC, so 9:00 AM becomes 3 AM Alberta, and every save shifts it again. | `tasks/actions.ts` ~139, `lib/validators/tasks.ts` | `ops-team-jobs` "opening a task and saving it unchanged keeps its due time and reminder" |
 | 53 | FIXED 17 Nov (was Med) | A cleaner can take over any task by assigning it to themselves: the task update policy admits any member, and the action has no role check. | `tasks/actions.ts` ~122–145, migration `20260514010000_tasks.sql` ~92 | "a cleaner can't take over a task that isn't hers" |
-| 54 | Med | One person's "mark all read" clears the team announcement for everyone (an org-wide notice is one row), though the code promises it doesn't. | `notifications/actions.ts` ~26–36, `lib/notify.ts` ~236 | "the owner marking everything read leaves the team announcement unread for the manager" |
+| 54 | FIXED 17 Nov (was Med) | One person's "mark all read" clears the team announcement for everyone (an org-wide notice is one row), though the code promises it doesn't. | `notifications/actions.ts` ~26–36, `lib/notify.ts` ~236 | "the owner marking everything read leaves the team announcement unread for the manager" |
 | 55 | FIXED 17 Nov (was Med) | An on-call contact's phone typed without +1 ("780 271 1971") is saved as `+7802711971`, a Russian number, so shift-offer texts go astray. `lib/phone.ts` fixed this elsewhere. | `lib/validators/freelancer.ts` ~13–20 | `ops-office-lists` "a local ten-digit number is saved as the North American number it is" |
 | 56 | FIXED 17 Nov (was Low) | Editing a task whose reminder already went sends it again. | `tasks/actions.ts` ~142 | "editing a task whose reminder already went doesn't send it again" |
 | 57 | FIXED 17 Nov (was Low) | Managers with the on-call pool switched off can still add, change and remove contacts, and cancel offers. | `freelancers/actions.ts` | "a manager without the on-call pool can't…" (2 tests) |

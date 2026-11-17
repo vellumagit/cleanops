@@ -89,7 +89,9 @@ export async function saveSenderEmailAction(
   }
 
   // Generate verification token
-  const token = crypto.randomBytes(32).toString("base64url");
+  // The time it was issued rides in front of the random part, so the link
+  // can expire after the 24 hours its email promises (see verify-sender).
+  const token = `${Date.now().toString(36)}.${crypto.randomBytes(32).toString("base64url")}`;
 
   const admin = createSupabaseAdminClient();
   await admin

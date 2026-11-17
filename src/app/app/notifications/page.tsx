@@ -13,7 +13,7 @@ export default async function NotificationsPage() {
 
   const { data: notifications } = (await supabase
     .from("notifications" as never)
-    .select("id, type, title, body, href, read_at, created_at")
+    .select("id, type, title, body, href, read_at, created_at, recipient_membership_id")
     .eq("organization_id", membership.organization_id)
     .or(
       `recipient_membership_id.is.null,recipient_membership_id.eq.${membership.id}`,
@@ -28,8 +28,36 @@ export default async function NotificationsPage() {
       href: string | null;
       read_at: string | null;
       created_at: string;
+      recipient_membership_id: string | null;
     }> | null;
   };
+
+  // A team notice is read for THIS person when they have a row in
+  // notification_reads (see notifications/actions.ts). Its own read_at only
+  // counts for ones marked read before reads were kept per person.
+  const teamIds = (notifications ?? [])
+    .filter((n) => n.recipient_membership_id === null && !n.read_at)
+    .map((n) => n.id);
+  const myReads = new Map<string, string>();
+  if (teamIds.length > 0) {
+    const { data: reads } = (await supabase
+      .from("notification_reads" as never)
+      .select("notification_id, read_at")
+      .eq("membership_id", membership.id)
+      .in("notification_id", teamIds)) as unknown as {
+      data: Array<{ notification_id: string; read_at: string }> | null;
+    };
+    for (const r of reads ?? []) myReads.set(r.notification_id, r.read_at);
+  }
+  const shown = (notifications ?? []).map((n) => ({
+    id: n.id,
+    type: n.type,
+    title: n.title,
+    body: n.body,
+    href: n.href,
+    created_at: n.created_at,
+    read_at: n.read_at ?? myReads.get(n.id) ?? null,
+  }));
 
   const canManage = membership.role === "owner" || membership.role === "admin";
 
@@ -62,7 +90,7 @@ export default async function NotificationsPage() {
           .
         </p>
       )}
-      <NotificationList notifications={notifications ?? []} />
+      <NotificationList notifications={shown} />
     </PageShell>
   );
 }

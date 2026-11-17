@@ -402,6 +402,7 @@ export const PURGE_TABLE_ORDER: readonly string[] = [
   "clients",
   // Misc per-org
   "scheduler_views",
+  "notification_reads",
   "notifications",
   "push_subscriptions",
   "webhook_deliveries",

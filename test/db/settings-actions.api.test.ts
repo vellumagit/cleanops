@@ -420,7 +420,7 @@ describe.skipIf(!hasPostgrest)("Settings → Sender email and its verification l
     expect(res).toEqual({ success: true });
     const saved = await orgRow(c.org);
     expect(saved).toMatchObject({ sender_email: "office@svit-clean.example.com", sender_email_verified_at: null });
-    expect(saved.sender_email_token).toMatch(/^[A-Za-z0-9_-]{40,}$/);
+    expect(saved.sender_email_token).toMatch(/^[a-z0-9]+.[A-Za-z0-9_-]{40,}$/);
     expect(outbox.email.map((m) => m.to)).toEqual(["office@svit-clean.example.com"]);
     expect(outbox.email[0].subject).toBe(`Verify your sender email for ${c.name}`);
     expect(outbox.email[0].text).toContain(`${SITE}/api/verify-sender?token=${saved.sender_email_token}&org=${c.org}`);
@@ -476,8 +476,7 @@ describe.skipIf(!hasPostgrest)("Settings → Sender email and its verification l
     expect(await orgRow(c.org)).toMatchObject({ sender_email: "office@svit.example.com", sender_email_verified_at: expect.any(String) });
   });
 
-  // FIX-LATER: the verification email says "Expires in 24 hours" but /api/verify-sender never checks the token's age (nothing records when it was issued).
-  it.fails("the link stops working after the 24 hours its email promises", async () => {
+  it("the link stops working after the 24 hours its email promises", async () => {
     const c = await company();
     await as(c.owner, () => email.saveSenderEmailAction({}, form({ sender_email: "late@svit.example.com" })));
     expect(outbox.email[0].text).toContain("Expires in 24 hours");
