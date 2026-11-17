@@ -20,13 +20,26 @@ Faults marked **Security** should go first.
   clients' billing day to blank after the Nov 15 monthly run. It may already
   be done.
 
-- **The live database has drifted from the migrations.** Migration
-  `20260421020000_webhooks_unification.sql` never ran in production:
-  `webhook_subscriptions` still exists and `webhook_deliveries` has its old
-  columns (`subscription_id`, no `webhook_id`). No company has a webhook set
-  up, so nothing breaks today, but webhook delivery would fail, and other
-  migrations may be missing too. Worth a full schema comparison (Supabase's
-  schema diff) before trusting the tests to stand for production.
+- **The live database has drifted from the migrations. Run
+  `docs/production-drift-check.sql` in the Supabase SQL editor** (read-only;
+  returns only the differences) and paste me the result. What the read-only
+  API comparison found on 16 Nov:
+  - **Webhooks (Apr 21) never ran:** `webhook_subscriptions` still exists and
+    `webhook_deliveries` has its old columns. No company uses webhooks yet.
+  - **Four functions the migrations create aren't there:** `is_service_role`
+    (Sep 13 insider guards), `report_job_profitability` and
+    `report_cleaner_scorecard` (Sep 14 profitability reports), and
+    `is_booking_crew` (Oct 7, managers' and crew's booking edits). A November
+    function is found, so the API's list is current. If those migrations
+    really never ran, production lacks the insider guards (a cleaner limited
+    to status and notes; the client must belong to the company) and the
+    October booking-edit rules, and the profitability reports can't load.
+    The API can't show triggers or rules, which is what the SQL check is for.
+  - **Leftovers:** a `membership_admin_notes` table (2 rows of employee notes)
+    exists only in production; `memberships.address` still exists there,
+    though empty (0 of 59 filled), so no home addresses are exposed.
+  - Tables and columns otherwise match (100 in production, 98 from the
+    migrations; the two extra are the leftovers above).
 
 ## Decisions for you
 
@@ -179,10 +192,22 @@ touch no one yet.
 | 86 | Low | Timesheet manager actions ignore a manager's Timesheets switch. | `timesheets/actions.ts` | "a manager whose timesheets access is switched off can't…" |
 | 87 | Low | Applicant status and notes, and hiring-document edits, answer ok when they reached nothing; a hiring-doc delete that didn't happen is logged. | `applicants/actions.ts` ~119–153, `hiring/actions.ts` ~53–106 | `people-hiring` (3 tests) |
 
+### Size (load suite on a real server, 16 Nov)
+
+The load suite passed 15 of 17: every race test (two people at once on
+payments, crews, claims, pay periods, auto-send) and the ten-times-Svit run of
+the nightly jobs. The two failures are below.
+
+| # | Sev | What's wrong | Where | Shown by |
+|---|---|---|---|---|
+| 89 | Med (not at Svit's size yet) | The Reports page reads its totals in one go, so past 1,000 rows they are silently short: invoices created in the period (already at twice Svit's size), paid invoices and the period's bookings (at ten times). Svit has 343 invoices in total today. Fix: add up in the database (one RPC) or read in pages. | `src/app/app/reports/page.tsx` | `test/load/pages.load.test.ts` and `cutoff.load.test.ts` (new cut-off reads) |
+| 90 | Low (at ten times Svit) | Already-known cut-off reads at ten times Svit's size: the scheduling board's week (the one to fix first: it would leave jobs off without saying), the calendar's three months and client picker, the dashboard's week. Listed in `KNOWN_CUT_OFF`; the list may only shrink. | `test/load/pages.load.test.ts` ~226 | `KNOWN_CUT_OFF` |
+
 ### Test suite
 
 | # | Sev | What's wrong | Where |
 |---|---|---|---|
+| 91 | Low | The cut-off load test runs the morning check, which is wired to Svit's company id; that company doesn't exist in the test database, so the check answers 500 and the test fails. Not an app fault: give the test a company with that id, or pass one in. | `test/load/cutoff.load.test.ts`, `lib/morning-check.ts` ~118 |
 | 88 | Low | `test/db/invoice-auto-send.api.test.ts` doesn't set `NEXT_PUBLIC_SITE_URL` or stub fetch, so its PDF step may call `https://sollos3.com/api/i/<test token>/pdf` for real (production answers 404). Tests should never reach production. | `test/db/invoice-auto-send.api.test.ts`, `lib/invoice-send.ts` ~105, ~178 |
 
 ## Questions (possible faults, not yet decided)
