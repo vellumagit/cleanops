@@ -256,6 +256,34 @@ describe.skipIf(!hasPostgrest)("Edit invoice", { timeout: 120_000 }, () => {
     expect(await stamp(takenOff)).toBeNull();
   });
 
+  it("a manager's edit lands too, the lines and the total together", async () => {
+    // Managers lost UPDATE on invoices in the May archive migration (and got
+    // it back in 20261116060000). Until then the lines below were rewritten,
+    // the invoice update matched nothing, and she was told it "could not be
+    // found" while its lines no longer added up to its total.
+    const { updateInvoiceAction } = await import("@/app/app/invoices/actions");
+    const c = await company(false);
+    const olha = await addMember(api.sql, c.org, "manager", "Olha");
+    const job = await visit(c, inHours(-50), { status: "completed" });
+    const inv = await invoiceWithJobs(c, [job]);
+
+    const res = await as(olha, () =>
+      updateInvoiceAction(
+        inv.id,
+        {},
+        invoiceForm(c, [{ db_id: inv.lineIds[0], booking_id: job, label: "Clean 1", quantity: "1", unit_price_dollars: "180.00" }]),
+      ),
+    );
+    expect(res, api.log()).toEqual({ redirected: `/app/invoices/${inv.id}` });
+    const [row] = await api.sql<{ amount_cents: number; line_cents: number }>(
+      `select amount_cents,
+              (select sum(quantity * unit_price_cents)::int from public.invoice_line_items where invoice_id = $1) as line_cents
+         from public.invoices where id = $1`,
+      [inv.id],
+    );
+    expect(row).toEqual({ amount_cents: 18000, line_cents: 18000 });
+  });
+
   it("an edit never undoes money received: raising a paid invoice leaves it part-paid", async () => {
     const { updateInvoiceAction } = await import("@/app/app/invoices/actions");
     const c = await company(false);

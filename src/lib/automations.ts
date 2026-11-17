@@ -3124,16 +3124,23 @@ export async function sendEstimateToClient(
     // on still-null so two admins clicking Send simultaneously can't each mint
     // a token with last-write-wins — the loser's email would carry a dead /e/
     // link. Zero rows back = someone else won; re-read and use theirs.
+    // A successful send gives the link 30 more days (the update after the
+    // send below), so that is the date the email must promise. It used to
+    // print the link's OLD expiry: an estimate whose link was minted weeks
+    // earlier by "Download PDF", or a re-send, told the client it had
+    // already expired, or soon would, on a link that had a month left.
+    const freshExpiry = new Date(
+      Date.now() + 30 * 24 * 60 * 60 * 1000,
+    ).toISOString();
     let publicToken = estimate.public_token;
-    let expiresAt = estimate.expires_at;
+    const expiresAt = freshExpiry;
     if (!publicToken) {
       publicToken = generateClaimToken();
-      expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
       const { data: minted } = (await db
         .from("estimates")
         .update({
           public_token: publicToken,
-          expires_at: expiresAt,
+          expires_at: freshExpiry,
         })
         .eq("id", estimateId)
         .is("public_token", null)
@@ -3141,16 +3148,12 @@ export async function sendEstimateToClient(
       if (!minted || minted.length === 0) {
         const { data: winner } = (await db
           .from("estimates")
-          .select("public_token, expires_at")
+          .select("public_token")
           .eq("id", estimateId)
           .maybeSingle()) as unknown as {
-          data: {
-            public_token: string | null;
-            expires_at: string | null;
-          } | null;
+          data: { public_token: string | null } | null;
         };
         publicToken = winner?.public_token ?? publicToken;
-        expiresAt = winner?.expires_at ?? expiresAt;
       }
     }
 
@@ -3254,9 +3257,7 @@ export async function sendEstimateToClient(
           // previously sent_at was bumped but expires_at wasn't, so the
           // "view before it expires" email could link to a page already
           // showing "expired" (audit G5).
-          expires_at: new Date(
-            Date.now() + 30 * 24 * 60 * 60 * 1000,
-          ).toISOString(),
+          expires_at: freshExpiry,
           // Bump to "sent" for draft estimates. Don't downgrade
           // approved/declined if the admin re-sends.
           ...(estimate.status === "draft" ? { status: "sent" } : {}),

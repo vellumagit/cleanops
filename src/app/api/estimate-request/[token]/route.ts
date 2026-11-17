@@ -3,7 +3,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { enterFailClosed } from "@/lib/supabase/query-guard";
 import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
 import { findOrCreateClient } from "@/lib/find-or-create-client";
-import { newLeadPatch, type LeadSource } from "@/lib/lead-pipeline";
+import type { LeadSource } from "@/lib/lead-pipeline";
 import { sendEmail, getOrgSender, withinOrgEmailCap } from "@/lib/email";
 import { quoteRange } from "@/lib/estimate-quote";
 import { checkRateLimit } from "@/lib/rate-limit";
@@ -145,6 +145,8 @@ export async function POST(
   const totalCents = price.totalCents;
 
   // ── 1. The lead ─────────────────────────────────────────────────────────
+  const source: LeadSource =
+    hearAboutUs.toLowerCase() === "referral" ? "referral" : "web_form";
   const clientId = await findOrCreateClient(
     admin,
     orgId,
@@ -154,7 +156,7 @@ export async function POST(
       phone: phone || undefined,
       address: [address, city].filter(Boolean).join(", ") || undefined,
     },
-    { createAs: "lead" },
+    { createAs: "lead", leadSource: source },
   );
   if (!clientId) {
     console.error("[estimate-request] could not resolve client for", fullName);
@@ -183,27 +185,27 @@ export async function POST(
   ].filter(Boolean) as string[];
   const detailBlock = detailLines.join("\n");
 
-  // Lead fields — but never demote an existing ACTIVE client back to lead.
-  // A regular client price-shopping the website is still a client.
+  // The request goes on their note and nothing else changes. Lifecycle and
+  // stage were settled by findOrCreateClient: a new person is created as a
+  // new lead, a lost lead comes back as "contacted", and anyone else keeps
+  // where they are. This used to stamp every non-client "new" with source
+  // "web_form", so a lead already quoted by phone fell back to the start.
   const { data: existing } = (await admin
     .from("clients")
-    .select("lifecycle, lead_note")
+    .select("lead_note")
     .eq("id", clientId)
     .maybeSingle()) as unknown as {
-    data: { lifecycle: string | null; lead_note: string | null } | null;
+    data: { lead_note: string | null } | null;
   };
-  const source: LeadSource =
-    hearAboutUs.toLowerCase() === "referral" ? "referral" : "web_form";
-  const patch: Record<string, unknown> = {
-    lead_note: [existing?.lead_note, detailBlock]
-      .filter(Boolean)
-      .join("\n---\n")
-      .slice(0, 4000),
-  };
-  if (existing?.lifecycle !== "client") {
-    Object.assign(patch, newLeadPatch(source));
-  }
-  await admin.from("clients").update(patch).eq("id", clientId);
+  await admin
+    .from("clients")
+    .update({
+      lead_note: [existing?.lead_note, detailBlock]
+        .filter(Boolean)
+        .join("\n---\n")
+        .slice(0, 4000),
+    } as never)
+    .eq("id", clientId);
 
   // ── 2. The estimate — carrying everything the calculator computed ───────
   const { data: estimate, error: estErr } = (await admin

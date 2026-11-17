@@ -122,6 +122,10 @@ export function EstimateForm({
             <option value="sent">Sent</option>
             <option value="approved">Approved</option>
             <option value="declined">Declined</option>
+            {/* The expiry cron writes this status. Without the option, an
+                expired estimate opened here showed as Draft, and saving it
+                quietly made it one. */}
+            <option value="expired">Expired</option>
           </FormSelect>
         </FormField>
 

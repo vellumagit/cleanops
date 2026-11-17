@@ -203,14 +203,19 @@ export async function updateLeadAction(
   _prev: LeadFormState,
   formData: FormData,
 ): Promise<LeadFormState> {
-  const { membership, supabase } = await getActionContext();
-  if (!["owner", "admin", "manager"].includes(membership.role)) {
-    return { error: "Not authorized." };
-  }
+  // The same gate as every other lead button: role AND the clients
+  // capability. This one checked the role only, so a manager whose client
+  // access had been switched off could still rewrite leads from the dialog.
+  const g = await guard();
+  if (!g.ok) return { error: g.error };
+  const { membership, supabase } = g.ctx;
   const id = String(formData.get("id") ?? "");
   const name = String(formData.get("name") ?? "").trim().slice(0, 200);
   if (!id || !name) return { error: "A name is required." };
-  const phone = String(formData.get("phone") ?? "").trim().slice(0, 40) || null;
+  const typedPhone = String(formData.get("phone") ?? "").trim().slice(0, 40);
+  // Normalized like addLeadAction, so an edited number is one the SMS layer
+  // can use when the lead converts.
+  const phone = typedPhone ? normalizePhone(typedPhone) : null;
   const email = String(formData.get("email") ?? "").trim().slice(0, 320) || null;
   const address =
     String(formData.get("address") ?? "").trim().slice(0, 300) || null;
@@ -241,11 +246,18 @@ export async function markLeadLostAction(formData: FormData): Promise<void> {
   const id = String(formData.get("id") ?? "").trim();
   if (!id) return;
 
-  await (supabase
+  // Only a lead in this company can be lost, and only a lead that WAS lost
+  // gets the audit line and the inbox sweep. Both used to run whatever the
+  // update matched, and the sweep runs as the service role: pressed on a
+  // real client (or any id at all, another company's included) it closed
+  // that person's open requests and logged a "lost" that never happened.
+  const { data: lost } = (await supabase
     .from("clients")
     .update(lostPatch() as never)
     .eq("id", id)
-    .eq("lifecycle" as never, "lead" as never) as unknown as Promise<unknown>);
+    .eq("lifecycle" as never, "lead" as never)
+    .select("id")) as unknown as { data: Array<{ id: string }> | null };
+  if (!lost?.length) return;
 
   await logAuditEvent({
     membership,
@@ -256,10 +268,8 @@ export async function markLeadLostAction(formData: FormData): Promise<void> {
   });
 
   // Lost is also an answer — their open requests leave the inbox with them.
-  {
-    const { resolveOpenClientRequests } = await import("@/lib/lead-conversion");
-    await resolveOpenClientRequests(String(formData.get("id") ?? ""));
-  }
+  const { resolveOpenClientRequests } = await import("@/lib/lead-conversion");
+  await resolveOpenClientRequests(id);
 
   revalidatePath("/app/leads");
 }
@@ -273,11 +283,14 @@ export async function reopenLeadAction(formData: FormData): Promise<void> {
   const id = String(formData.get("id") ?? "").trim();
   if (!id) return;
 
-  await (supabase
+  const { data: reopened } = (await supabase
     .from("clients")
     .update({ lifecycle: "lead", lead_stage: "contacted" } as never)
     .eq("id", id)
-    .eq("lifecycle" as never, "lost" as never) as unknown as Promise<unknown>);
+    .eq("lifecycle" as never, "lost" as never)
+    .select("id")) as unknown as { data: Array<{ id: string }> | null };
+  // Nothing reopened (not lost, or not ours): nothing to log.
+  if (!reopened?.length) return;
 
   await logAuditEvent({
     membership,

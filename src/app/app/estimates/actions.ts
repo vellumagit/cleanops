@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
 import { can } from "@/lib/auth";
 import { EstimateSchema } from "@/lib/validators/estimates";
@@ -37,7 +38,11 @@ function maybeStamp(status: string, prev?: { sent_at?: string | null; decided_at
     sent_at:
       status === "sent" || status === "approved" || status === "declined"
         ? prev?.sent_at ?? now
-        : null,
+        : // Expired means it was sent and nobody answered; re-saving one must
+          // not forget when it went out (the expiry cron counts from it).
+          status === "expired"
+          ? prev?.sent_at ?? null
+          : null,
     decided_at:
       status === "approved" || status === "declined"
         ? prev?.decided_at ?? now
@@ -48,7 +53,20 @@ function maybeStamp(status: string, prev?: { sent_at?: string | null; decided_at
 const ALLOWED_TYPES = ["application/pdf"];
 
 /**
- * Store an uploaded PDF in the private estimate-pdfs bucket
+ * What's wrong with an uploaded PDF, or null. Checked BEFORE anything is
+ * written: a create that saved the estimate and then refused the file sent
+ * the person back to a form that, pressed again, made a second estimate.
+ */
+async function pdfProblem(file: File): Promise<string | null> {
+  if (!ALLOWED_TYPES.includes(file.type)) return "Only PDF files are allowed.";
+  if (file.size > ESTIMATE_PDF_MAX_BYTES) return "PDF must be under 10 MB.";
+  // The label is the browser's word; the bytes are the file's.
+  if (!(await isRealPdf(file))) return "That file isn't a PDF.";
+  return null;
+}
+
+/**
+ * Store an already-checked PDF in the private estimate-pdfs bucket
  * (lib/estimate-pdf-storage.ts). Returns the reference to save as pdf_url,
  * not a link: links are signed per viewer and expire.
  */
@@ -57,16 +75,6 @@ async function uploadEstimatePdf(
   estimateId: string,
   file: File,
 ): Promise<{ url: string | null; error: string | null }> {
-  if (!ALLOWED_TYPES.includes(file.type)) {
-    return { url: null, error: "Only PDF files are allowed." };
-  }
-  if (file.size > ESTIMATE_PDF_MAX_BYTES) {
-    return { url: null, error: "PDF must be under 10 MB." };
-  }
-  // The label is the browser's word; the bytes are the file's.
-  if (!(await isRealPdf(file))) {
-    return { url: null, error: "That file isn't a PDF." };
-  }
   const { ref, error } = await storeEstimatePdf(createSupabaseAdminClient(), orgId, estimateId, file);
   return { url: ref, error };
 }
@@ -104,6 +112,13 @@ export async function createEstimateAction(
     return { errors: { _form: "Your subscription has expired. Subscribe to create new estimates." }, values: raw };
   }
 
+  const pdfFile = formData.get("pdf") as File | null;
+  const newPdf = pdfFile && pdfFile.size > 0 ? pdfFile : null;
+  if (newPdf) {
+    const problem = await pdfProblem(newPdf);
+    if (problem) return { errors: { pdf: problem }, values: raw };
+  }
+
   const stamps = maybeStamp(parsed.data.status);
   const { data: estimate, error } = await supabase
     .from("estimates")
@@ -122,22 +137,28 @@ export async function createEstimateAction(
 
   if (error) return { errors: { _form: error.message }, values: raw };
 
-  // Handle PDF upload
-  const pdfFile = formData.get("pdf") as File | null;
-  if (pdfFile && pdfFile.size > 0) {
+  if (newPdf) {
     const upload = await uploadEstimatePdf(
       membership.organization_id,
       estimate.id,
-      pdfFile,
+      newPdf,
     );
-    if (upload.error) {
-      return { errors: { pdf: upload.error }, values: raw };
+    if (upload.error || !upload.url) {
+      // Storage failed after the row was made. Take the row back out, so the
+      // form's error is the whole story and pressing Save again doesn't
+      // leave two estimates behind.
+      await supabase.from("estimates").delete().eq("id", estimate.id);
+      return { errors: { pdf: upload.error ?? "The PDF could not be stored. Try again." }, values: raw };
     }
-    if (upload.url) {
-      await supabase
-        .from("estimates" as never)
-        .update({ pdf_url: upload.url } as never)
-        .eq("id", estimate.id);
+    const { data: linked } = (await supabase
+      .from("estimates" as never)
+      .update({ pdf_url: upload.url } as never)
+      .eq("id", estimate.id)
+      .select("id")) as unknown as { data: Array<{ id: string }> | null };
+    if (!linked?.length) {
+      await removeEstimatePdf(membership.organization_id, estimate.id);
+      await supabase.from("estimates").delete().eq("id", estimate.id);
+      return { errors: { pdf: "The PDF could not be attached. Try again." }, values: raw };
     }
   }
 
@@ -167,30 +188,22 @@ export async function updateEstimateAction(
   // Pull previous timestamps so we don't overwrite an earlier sent_at.
   const { data: prev } = await supabase
     .from("estimates")
-    .select("sent_at, decided_at")
+    .select("sent_at, decided_at, status")
     .eq("id", id)
     .maybeSingle();
 
   const stamps = maybeStamp(parsed.data.status, prev ?? undefined);
 
-  // Handle PDF changes
+  // PDF changes are checked now but made only once the row has saved. They
+  // used to happen first: a save that then wrote nothing had already
+  // replaced or deleted the stored file under an estimate still pointing
+  // at it.
   const removePdf = formData.get("remove_pdf") === "1";
   const pdfFile = formData.get("pdf") as File | null;
-  let pdfUrl: string | null | undefined = undefined; // undefined = no change
-
-  if (removePdf) {
-    await removeEstimatePdf(membership.organization_id, id);
-    pdfUrl = null;
-  } else if (pdfFile && pdfFile.size > 0) {
-    const upload = await uploadEstimatePdf(
-      membership.organization_id,
-      id,
-      pdfFile,
-    );
-    if (upload.error) {
-      return { errors: { pdf: upload.error }, values: raw };
-    }
-    pdfUrl = upload.url;
+  const newPdf = !removePdf && pdfFile && pdfFile.size > 0 ? pdfFile : null;
+  if (newPdf) {
+    const problem = await pdfProblem(newPdf);
+    if (problem) return { errors: { pdf: problem }, values: raw };
   }
 
   const updatePayload: Record<string, unknown> = {
@@ -201,24 +214,56 @@ export async function updateEstimateAction(
     total_cents: parsed.data.total_cents,
     sent_at: stamps.sent_at,
     decided_at: stamps.decided_at,
+    ...(removePdf ? { pdf_url: null } : {}),
   };
-
-  if (pdfUrl !== undefined) {
-    updatePayload.pdf_url = pdfUrl;
-  }
 
   // Use the user's scoped client so RLS is enforced — never bypass it for
   // regular CRUD mutations (admin client is only for storage and webhooks).
-  const { error } = await supabase
+  // .select() so a save that matched nothing says so: Postgres reports a
+  // zero-row update as success, and this form used to redirect as if saved.
+  const { data: saved, error } = (await supabase
     .from("estimates" as never)
     .update(updatePayload as never)
-    .eq("id", id);
+    .eq("id", id)
+    .select("id")) as unknown as {
+    data: Array<{ id: string }> | null;
+    error: { message: string } | null;
+  };
 
   if (error) return { errors: { _form: error.message }, values: raw };
+  if (!saved?.length) {
+    return {
+      errors: {
+        _form:
+          "This estimate wasn't saved. It may have been deleted or archived, or your access doesn't allow changing it. Reload the page and check it.",
+      },
+      values: raw,
+    };
+  }
 
-  // If the estimate was just approved, auto-create a pending booking
-  if (parsed.data.status === "approved") {
-    autoBookingOnEstimateApproval(id).catch(() => {});
+  if (removePdf) {
+    await removeEstimatePdf(membership.organization_id, id);
+  } else if (newPdf) {
+    const upload = await uploadEstimatePdf(membership.organization_id, id, newPdf);
+    if (upload.error || !upload.url) {
+      return {
+        errors: { pdf: `Your other changes were saved. ${upload.error ?? "The PDF could not be stored. Try again."}` },
+        values: raw,
+      };
+    }
+    await supabase
+      .from("estimates" as never)
+      .update({ pdf_url: upload.url } as never)
+      .eq("id", id);
+  }
+
+  // Just approved: book the placeholder visit. Only on the change TO
+  // approved, so tidying an approved estimate's notes doesn't bring back a
+  // placeholder the office already deleted. In after(), not fired and
+  // forgotten: the redirect ends the response, and Vercel can freeze the
+  // function with the booking half-made.
+  if (parsed.data.status === "approved" && prev?.status !== "approved") {
+    after(() => autoBookingOnEstimateApproval(id));
   }
 
   revalidatePath("/app/estimates");
@@ -359,11 +404,19 @@ export async function deleteEstimateAction(formData: FormData) {
     return;
   }
 
-  // Clean up PDF from storage
-  await removeEstimatePdf(membership.organization_id, id).catch(() => {});
-
-  const { error } = await supabase.from("estimates").delete().eq("id", id);
+  // Row first, file second: the file goes only once the estimate has.
+  const { data: deleted, error } = (await supabase
+    .from("estimates")
+    .delete()
+    .eq("id", id)
+    .select("id")) as unknown as {
+    data: Array<{ id: string }> | null;
+    error: { message: string } | null;
+  };
   if (error) throw error;
+  if (deleted?.length) {
+    await removeEstimatePdf(membership.organization_id, id).catch(() => {});
+  }
   revalidatePath("/app/estimates");
   redirect("/app/estimates");
 }

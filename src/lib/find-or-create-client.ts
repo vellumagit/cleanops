@@ -11,7 +11,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { dispatchWebhookEvent } from "@/lib/webhooks";
-import { newLeadPatch } from "@/lib/lead-pipeline";
+import { newLeadPatch, type LeadSource } from "@/lib/lead-pipeline";
 
 type ClientInput = {
   name: string;
@@ -32,6 +32,12 @@ type Options = {
    * way is what put 19 non-customers in her client list.
    */
   createAs?: "client" | "lead";
+  /**
+   * Where a NEWLY created lead came from (default "web_form"). Only ever
+   * written on create: a matched record keeps the source it already has, the
+   * same way it keeps its lifecycle.
+   */
+  leadSource?: LeadSource;
 };
 
 /**
@@ -115,7 +121,7 @@ export async function findOrCreateClient(
       preferred_contact: input.email ? "email" : "phone",
       // Absent when createAs is "client", so the column keeps its 'client'
       // default and the two other callers behave exactly as before.
-      ...(asLead ? newLeadPatch("web_form") : {}),
+      ...(asLead ? newLeadPatch(options.leadSource ?? "web_form") : {}),
     } as never)
     .select("id")
     .single();

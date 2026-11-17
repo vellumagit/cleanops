@@ -3,7 +3,6 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { enterFailClosed } from "@/lib/supabase/query-guard";
 import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
 import { findOrCreateClient } from "@/lib/find-or-create-client";
-import { newLeadPatch, type LeadSource } from "@/lib/lead-pipeline";
 import { sendEmail, getOrgSender, withinOrgEmailCap } from "@/lib/email";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { escapeHtml as e } from "@/lib/support-mail";
@@ -150,24 +149,26 @@ export async function POST(
   ].filter(Boolean) as string[];
   const detailBlock = detailLines.join("\n");
 
+  // The message goes on their note and nothing else changes: lifecycle and
+  // stage were settled by findOrCreateClient (new person → new lead, lost →
+  // back as "contacted", anyone else keeps their place). See the same block
+  // in estimate-request.
   const { data: existing } = (await admin
     .from("clients")
-    .select("lifecycle, lead_note")
+    .select("lead_note")
     .eq("id", clientId)
     .maybeSingle()) as unknown as {
-    data: { lifecycle: string | null; lead_note: string | null } | null;
+    data: { lead_note: string | null } | null;
   };
-  const source: LeadSource = "web_form";
-  const patch: Record<string, unknown> = {
-    lead_note: [existing?.lead_note, detailBlock]
-      .filter(Boolean)
-      .join("\n---\n")
-      .slice(0, 4000),
-  };
-  if (existing?.lifecycle !== "client") {
-    Object.assign(patch, newLeadPatch(source));
-  }
-  await admin.from("clients").update(patch).eq("id", clientId);
+  await admin
+    .from("clients")
+    .update({
+      lead_note: [existing?.lead_note, detailBlock]
+        .filter(Boolean)
+        .join("\n---\n")
+        .slice(0, 4000),
+    } as never)
+    .eq("id", clientId);
 
   // Also a REQUEST — same inbox as portal asks, auto-resolved when the
   // lead converts or goes lost.
