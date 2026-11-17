@@ -20,6 +20,7 @@ Faults marked **Security** should go first.
   clients' billing day to blank after the Nov 15 monthly run. It may already
   be done.
 
+- **DONE 17 Nov: the catch-up migration (`20261116070000`) was run in production, and the drift check afterwards returned only the expected leftovers (regexp_* and rls_auto_enable functions, membership_admin_notes, the webhook rules). The member-wide edit rules are gone and the September and October guards are in place. Still open from this item: the April webhooks migration, and the leftover `membership_admin_notes` table. The history below is kept for the record.**
 - **Production drift, confirmed by `docs/production-drift-check.sql` (run 16
   Nov). Fix this first: it is a live security gap, and until it's fixed the
   tests describe a stricter database than the one Svit is on.**
