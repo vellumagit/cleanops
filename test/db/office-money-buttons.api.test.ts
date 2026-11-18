@@ -225,10 +225,41 @@ describe.skipIf(!hasPostgrest)("delete a client", { timeout: 120_000 }, () => {
       return f;
     };
 
-    const refused = (await as(c.owner, () => deleteClientAction(form(c.client)))) as { redirected: string };
-    expect(refused.redirected.startsWith(`/app/clients/${c.client}/edit?delete_error=`)).toBe(true);
-    expect(decodeURIComponent(refused.redirected)).toContain("1 booking");
+    // Refused in place: the answer comes back to the page (no redirect, so
+    // the page doesn't reload at the top), naming each record with a link.
+    type Refusal = { ok: false; error: string; blockers: Array<{ kind: string; count: number; how: string; items: Array<{ id: string; label: string; href: string }> }> };
+    const refused = (await as(c.owner, () => deleteClientAction(form(c.client)))) as Refusal;
+    expect(refused.ok).toBe(false);
+    expect(refused.error).toContain("1 booking");
+    expect(refused.error).toContain("Archive");
+    const bookings = refused.blockers.find((b) => b.kind === "booking")!;
+    expect(bookings.count).toBe(1);
+    expect(bookings.items).toHaveLength(1);
+    expect(bookings.items[0].href).toBe(`/app/bookings/${bookings.items[0].id}`);
     expect(await api.sql("select 1 from public.clients where id = $1", [c.client])).toHaveLength(1);
+
+    // A test client whose only record is a paid invoice: told the invoice is
+    // in the way, that it has a payment on it, and what to do in order.
+    const paidUp = await addClient(api.sql, c.org, "Paid Test");
+    const [invoice] = await api.sql<{ id: string }>(
+      "insert into public.invoices (organization_id, client_id, status, amount_cents, due_date) values ($1, $2, 'sent', 5000, current_date) returning id",
+      [c.org, paidUp],
+    );
+    await api.sql(
+      "insert into public.invoice_payments (organization_id, invoice_id, amount_cents, method, received_at) values ($1, $2, 5000, 'cash', now())",
+      [c.org, invoice.id],
+    );
+    const paidRefusal = (await as(c.owner, () => deleteClientAction(form(paidUp)))) as Refusal;
+    expect(paidRefusal.ok).toBe(false);
+    expect(paidRefusal.blockers.map((b) => b.kind)).toEqual(["invoice"]);
+    expect(paidRefusal.blockers[0].items[0]).toMatchObject({ id: invoice.id, href: `/app/invoices/${invoice.id}` });
+    expect(paidRefusal.blockers[0].items[0].label).toContain("has a payment recorded");
+    expect(paidRefusal.blockers[0].how).toMatch(/delete the payment first/);
+    // With the payment and then the invoice gone, the delete goes through.
+    await api.sql("delete from public.invoice_payments where invoice_id = $1", [invoice.id]);
+    await api.sql("delete from public.invoices where id = $1", [invoice.id]);
+    expect(await as(c.owner, () => deleteClientAction(form(paidUp)))).toEqual({ redirected: "/app/clients" });
+    expect(await api.sql("select 1 from public.clients where id = $1", [paidUp])).toHaveLength(0);
 
     expect(await as(c.owner, () => deleteClientAction(form(junk)))).toEqual({ redirected: "/app/clients" });
     expect(await api.sql("select 1 from public.clients where id = $1", [junk])).toHaveLength(0);

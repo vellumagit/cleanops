@@ -6,6 +6,7 @@ import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { moveUpcomingVisitsToAddress, type AddressFollowResult } from "@/lib/address-follow";
 import { resyncBookingCalendarsPaced } from "@/lib/booking-calendar-sync";
+import { getOrgTimezone } from "@/lib/org-timezone";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
 import { canCreateData } from "@/lib/subscription";
 import { logAuditEvent } from "@/lib/audit";
@@ -580,7 +581,32 @@ export async function unarchiveClientAction(
   return { ok: true, cancelledBookings: 0, pausedSeries: 0 };
 }
 
-export async function deleteClientAction(formData: FormData) {
+/** One record standing in the way of deleting a client, with where to open it. */
+export type ClientDeleteBlocker = {
+  kind: "booking" | "invoice" | "estimate" | "contract";
+  /** How many of this kind there are in all (only the first few are listed). */
+  count: number;
+  /** What to do about this kind, in order. */
+  how: string;
+  items: Array<{ id: string; label: string; href: string }>;
+};
+
+export type DeleteClientResult = {
+  ok: false;
+  error: string;
+  blockers: ClientDeleteBlocker[];
+};
+
+/**
+ * Delete a client. On success it redirects to the client list. When records
+ * stand in the way it RETURNS what they are, so the page can say so right
+ * beside the button: it used to redirect back to the edit page with the
+ * message in the address, which reloaded the page at the top and left the
+ * explanation at the bottom where nobody was looking.
+ */
+export async function deleteClientAction(
+  formData: FormData,
+): Promise<DeleteClientResult | void> {
   const id = String(formData.get("id") ?? "");
   if (!id) return;
   const { membership, supabase } = await getActionContext();
@@ -627,16 +653,96 @@ export async function deleteClientAction(formData: FormData) {
     ctr.count ? plural(ctr.count, "contract") : null,
   ].filter(Boolean);
   if (holds.length > 0) {
-    // Refuse ON SCREEN. This used to throw, and a thrown server action
-    // renders the generic "Something went wrong" page with the message
-    // swallowed — Brian got an error ID instead of the sentence written
-    // for him. Same lesson as the booking delete: the rule may stand,
-    // but it has to say its own name where the person is standing.
-    redirect(
-      `/app/clients/${id}/edit?delete_error=${encodeURIComponent(
-        `This client has ${holds.join(", ")} on record, and those records keep the books whole. If this is a junk or duplicate entry, delete those records first (estimates delete from the Estimates page); if it's a real client you're done with, archive them instead — the Archive button at the bottom of their page cancels their upcoming work and keeps the history.`,
-      )}`,
-    );
+    // Name the records and link to them. "Delete those records first" left
+    // the owner to work out which records, where they are, and in what order
+    // (an invoice with a payment on it won't delete until the payment goes).
+    const LIST = 5;
+    const tz = await getOrgTimezone(membership.organization_id);
+    const day = (iso: string) =>
+      new Intl.DateTimeFormat("en-US", { timeZone: tz, month: "short", day: "numeric", year: "numeric" }).format(new Date(iso));
+    const money = (cents: number | null) => `$${((cents ?? 0) / 100).toFixed(2)}`;
+    const blockers: ClientDeleteBlocker[] = [];
+
+    if (bk.count) {
+      const { data } = (await supabase
+        .from("bookings")
+        .select("id, scheduled_at, status")
+        .eq("client_id", id)
+        .order("scheduled_at", { ascending: false })
+        .limit(LIST)) as unknown as { data: Array<{ id: string; scheduled_at: string; status: string }> | null };
+      blockers.push({
+        kind: "booking",
+        count: bk.count,
+        how: "Open each booking and delete it. A booking that has been invoiced is released when its invoice is deleted.",
+        items: (data ?? []).map((b) => ({
+          id: b.id,
+          label: `${day(b.scheduled_at)} (${b.status.replace(/_/g, " ")})`,
+          href: `/app/bookings/${b.id}`,
+        })),
+      });
+    }
+    if (inv.count) {
+      const { data } = (await supabase
+        .from("invoices")
+        .select("id, number, status, amount_cents, payments:invoice_payments ( id )")
+        .eq("client_id", id)
+        .order("created_at", { ascending: false })
+        .limit(LIST)) as unknown as {
+        data: Array<{ id: string; number: string | null; status: string; amount_cents: number | null; payments: Array<{ id: string }> | null }> | null;
+      };
+      blockers.push({
+        kind: "invoice",
+        count: inv.count,
+        how: "Open each invoice. If a payment is recorded on it, delete the payment first; then delete the invoice. Voiding is not enough: a void invoice is still a record.",
+        items: (data ?? []).map((i) => ({
+          id: i.id,
+          label: `${i.number ?? i.id.slice(0, 8).toUpperCase()}, ${money(i.amount_cents)}, ${i.status.replace(/_/g, " ")}${(i.payments?.length ?? 0) > 0 ? ", has a payment recorded" : ""}`,
+          href: `/app/invoices/${i.id}`,
+        })),
+      });
+    }
+    if (est.count) {
+      const { data } = (await supabase
+        .from("estimates")
+        .select("id, status, total_cents, created_at")
+        .eq("client_id", id)
+        .order("created_at", { ascending: false })
+        .limit(LIST)) as unknown as { data: Array<{ id: string; status: string; total_cents: number | null; created_at: string }> | null };
+      blockers.push({
+        kind: "estimate",
+        count: est.count,
+        how: "Open each estimate and delete it.",
+        items: (data ?? []).map((e) => ({
+          id: e.id,
+          label: `${day(e.created_at)}, ${money(e.total_cents)}, ${e.status}`,
+          href: `/app/estimates/${e.id}`,
+        })),
+      });
+    }
+    if (ctr.count) {
+      const { data } = (await supabase
+        .from("contracts")
+        .select("id, status, start_date")
+        .eq("client_id", id)
+        .order("created_at", { ascending: false })
+        .limit(LIST)) as unknown as { data: Array<{ id: string; status: string; start_date: string | null }> | null };
+      blockers.push({
+        kind: "contract",
+        count: ctr.count,
+        how: "Open each contract and delete it.",
+        items: (data ?? []).map((c) => ({
+          id: c.id,
+          label: `${c.start_date ? `from ${c.start_date}, ` : ""}${c.status}`,
+          href: `/app/contracts/${c.id}/edit`,
+        })),
+      });
+    }
+
+    return {
+      ok: false,
+      error: `This client can't be deleted yet: they have ${holds.join(", ")} on record. Archive them to take them out of your lists and keep the records, or remove the records below and then delete.`,
+      blockers,
+    };
   }
 
   const { error } = await supabase

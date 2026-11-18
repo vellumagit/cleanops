@@ -12,14 +12,11 @@ export const metadata = { title: "Edit client" };
 
 export default async function EditClientPage({
   params,
-  searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ delete_error?: string }>;
 }) {
   const membership = await requireMembership(["owner", "admin", "manager"]);
   const { id } = await params;
-  const { delete_error } = await searchParams;
   const supabase = await createSupabaseServerClient();
 
   const [clientResult, cleaners, referralClients] = await Promise.all([
@@ -129,16 +126,13 @@ export default async function EditClientPage({
             Danger zone
           </h2>
           <p className="mt-1 text-xs text-muted-foreground">
-            Deleting this client will fail if they have bookings, estimates,
-            contracts, or invoices attached. Cancel those records first.
+            Deleting removes this client for good, and only works when they
+            have no bookings, invoices, estimates or contracts. For a client
+            you are simply done with, archive them instead: it keeps the
+            records and takes them out of your lists.
           </p>
           <div className="mt-4">
-            {delete_error && (
-              <p className="mb-3 rounded-md border border-amber-300/60 bg-amber-50/60 px-3 py-2 text-xs font-medium text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
-                {delete_error}
-              </p>
-            )}
-            <DeleteClientForm id={client.id} />
+            <DeleteClientForm id={client.id} name={client.name} />
           </div>
         </div>
       </div>
