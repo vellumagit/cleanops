@@ -69,19 +69,27 @@ describe("effectiveFrom", () => {
   const from = (ymd: string) => effectiveFrom(ymd, "2026-11-15", midnight, now);
 
   it("blank is from now, and touches nothing already worked", () => {
-    expect(from("")).toEqual({ at: now, backdated: false });
+    expect(from("")).toEqual({ at: now, backdated: false, scheduled: false });
   });
 
   it("a date is that day's midnight in the company's zone", () => {
-    expect(from("2026-11-01")).toEqual({ at: new Date("2026-11-01T06:00:00Z"), backdated: true });
+    expect(from("2026-11-01")).toEqual({ at: new Date("2026-11-01T06:00:00Z"), backdated: true, scheduled: false });
   });
 
   it("today counts as a date: shifts worked earlier today are covered", () => {
     expect(from("2026-11-15")).toMatchObject({ backdated: true });
   });
 
-  it("refuses the future, more than a year back, and nonsense", () => {
-    expect(from("2026-11-16")).toHaveProperty("error");
+  it("a future date is scheduled, not refused, up to a year ahead", () => {
+    expect(from("2026-11-16")).toMatchObject({ scheduled: true, backdated: false });
+    expect(from("2026-12-01")).toMatchObject({ scheduled: true, backdated: false });
+    expect(from("2027-12-01")).toHaveProperty("error");
+    // Now, and a past date, are not scheduled.
+    expect(from("")).toMatchObject({ scheduled: false });
+    expect(from("2026-11-10")).toMatchObject({ scheduled: false, backdated: true });
+  });
+
+  it("refuses more than a year back, and nonsense", () => {
     expect(from("2025-11-01")).toHaveProperty("error");
     expect(from("yesterday")).toHaveProperty("error");
     expect(from("2026-13-45")).toHaveProperty("error");

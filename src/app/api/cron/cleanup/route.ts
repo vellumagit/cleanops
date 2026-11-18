@@ -43,6 +43,17 @@ async function cronGet(request: Request) {
 
   const results: Record<string, number | string> = {};
 
+  // Scheduled pay rate changes whose day has come. (Someone who clocks in
+  // gets theirs applied at that moment; this covers everyone else.) Its own
+  // try: a problem here must not stop the cleanup, and is named in the result.
+  try {
+    const { applyDueRateChanges } = await import("@/lib/pay-rate-change");
+    results.scheduled_rate_changes_applied = await applyDueRateChanges(admin, { now });
+  } catch (err) {
+    console.error("[cron/cleanup] scheduled rate changes failed:", err);
+    results.scheduled_rate_changes_error = err instanceof Error ? err.message : String(err);
+  }
+
   try {
     // 1a. Delete read notifications older than 90 days.
     const { count: notifReadCount, error: notifReadErr } = await admin

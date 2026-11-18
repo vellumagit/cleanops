@@ -80,6 +80,15 @@ export async function clockInAction(
   // client here — scoped explicitly to THIS employee's own row in
   // their own org so the bypass doesn't leak anyone else's data.
   const admin = createSupabaseAdminClient();
+  // A raise scheduled for today (or earlier) takes effect first, so this
+  // shift is frozen at the new rate.
+  {
+    const { applyDueRateChangesQuietly } = await import("@/lib/pay-rate-change");
+    await applyDueRateChangesQuietly(admin, {
+      organizationId: membership.organization_id,
+      membershipId: membership.id,
+    });
+  }
   const { data: rateRow } = (await admin
     .from("memberships")
     .select("pay_rate_cents, engagement")

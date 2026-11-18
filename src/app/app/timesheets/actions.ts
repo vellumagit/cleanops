@@ -1061,6 +1061,14 @@ export async function createManualTimeEntryAction(
     "@/lib/supabase/admin"
   );
   const rateAdmin = createAdminForRate();
+  // A raise scheduled for today (or earlier) takes effect first.
+  {
+    const { applyDueRateChangesQuietly } = await import("@/lib/pay-rate-change");
+    await applyDueRateChangesQuietly(rateAdmin, {
+      organizationId: membership.organization_id,
+      membershipId: parsed.employee_id,
+    });
+  }
   const { data: manualRateRow } = (await rateAdmin
     .from("memberships")
     .select("pay_rate_cents, engagement")

@@ -12,7 +12,7 @@ import { allowDbErrors } from "@/lib/supabase/query-guard";
 import { readWorkHistory, workHistoryRefusal } from "@/lib/member-history";
 import { InvitationSchema } from "@/lib/validators/invitations";
 import { checkCleanerSeat, cleanerLimitMessage } from "@/lib/plan-limits";
-import { applyRateChange, effectiveFrom, rateChangeNotice } from "@/lib/pay-rate-change";
+import { applyRateChange, effectiveFrom, rateChangeNotice, scheduleRateChange } from "@/lib/pay-rate-change";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { zonedMidnightUtc, zonedYmd } from "@/lib/wall-clock";
 import { memberDisplayName } from "@/lib/member-display";
@@ -518,7 +518,7 @@ export async function updateMemberAction(
   const oldRate = (before.pay_rate_cents as number | null) ?? null;
   const newRate = formData.has("pay_rate") ? (parsed.data.pay_rate ?? null) : oldRate;
   const rateChanged = newRate !== oldRate;
-  let rateStart: { at: Date; backdated: boolean } | null = null;
+  let rateStart: { at: Date; backdated: boolean; scheduled: boolean } | null = null;
   if (rateChanged) {
     if (oldRate != null && newRate != null && newRate < oldRate && formData.get("pay_rate_lower_ok") !== "1") {
       return {
@@ -541,7 +541,11 @@ export async function updateMemberAction(
     );
     if ("error" in start) return { errors: { pay_rate: start.error } };
     rateStart = start;
+    // A change for a future day leaves today's rate alone: it is saved as a
+    // scheduled change below and takes effect on its day.
+    if (start.scheduled) delete updatePayload.pay_rate_cents;
   }
+  const rateScheduled = Boolean(rateStart?.scheduled);
   if (parsed.data.display_name && parsed.data.display_name.length > 0) {
     updatePayload.display_name = parsed.data.display_name;
   }
@@ -598,7 +602,9 @@ export async function updateMemberAction(
 
   if (
     Object.keys(updatePayload).length === 0 &&
-    Object.keys(adminDataPayload).length === 0
+    Object.keys(adminDataPayload).length === 0 &&
+    // Scheduling a raise is a change even when nothing else on the form is.
+    !rateScheduled
   ) {
     return { errors: { _form: "Nothing to update." } };
   }
@@ -639,7 +645,34 @@ export async function updateMemberAction(
   // The rate is saved. What follows from it: unpaid shifts from the start
   // date take the new rate, and the change goes in the history.
   let rateNotice: string | null = null;
-  if (rateChanged && rateStart) {
+  if (rateChanged && rateStart && rateStart.scheduled) {
+    try {
+      await scheduleRateChange(admin, {
+        organizationId: membership.organization_id,
+        membershipId: memberId,
+        oldRateCents: oldRate,
+        newRateCents: newRate,
+        from: rateStart.at,
+        changedBy: membership.id,
+      });
+      const day = new Intl.DateTimeFormat("en-US", {
+        timeZone: await getOrgTimezone(membership.organization_id),
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      }).format(rateStart.at);
+      const fmt = (c: number | null) => (c == null ? "no rate" : `$${(c / 100).toFixed(2)}/hr`);
+      rateNotice = `Scheduled: the rate changes from ${fmt(oldRate)} to ${fmt(newRate)} on ${day}. Shifts before then stay at ${fmt(oldRate)}.`;
+    } catch (err) {
+      console.error("[updateMember] scheduled rate not saved:", err);
+      return {
+        errors: {
+          pay_rate:
+            "The scheduled rate could not be saved, so the rate is unchanged. Try again; if it keeps happening, tell support.",
+        },
+      };
+    }
+  } else if (rateChanged && rateStart) {
     try {
       const plan = await applyRateChange(admin, {
         organizationId: membership.organization_id,
@@ -1335,4 +1368,42 @@ export async function generateRecoveryLinkAction(
     // so the admin knows how urgent the hand-off is.
     expires_in_minutes: 60,
   };
+}
+
+/**
+ * Cancel a pay rate change that is scheduled and has not taken effect yet.
+ * Owners and admins only. A change already applied is history and stays.
+ */
+export async function cancelScheduledRateAction(
+  changeId: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { membership } = await getActionContext();
+  if (!["owner", "admin"].includes(membership.role)) {
+    return { ok: false, error: "Only owners and admins can change pay rates." };
+  }
+  const admin = createSupabaseAdminClient();
+  const { data, error } = (await admin
+    .from("pay_rate_changes" as never)
+    .delete()
+    .eq("id" as never, changeId as never)
+    .eq("organization_id" as never, membership.organization_id as never)
+    .eq("scheduled" as never, true as never)
+    .is("applied_at" as never, null as never)
+    .select("id, membership_id, new_rate_cents")) as unknown as {
+    data: Array<{ id: string; membership_id: string; new_rate_cents: number | null }> | null;
+    error: { message: string } | null;
+  };
+  if (error) return { ok: false, error: error.message };
+  if (!data?.length) {
+    return { ok: false, error: "That change has already taken effect, or was already cancelled." };
+  }
+  await logAuditEvent({
+    membership,
+    action: "update",
+    entity: "membership",
+    entity_id: data[0].membership_id,
+    after: { scheduled_rate_cancelled: data[0].new_rate_cents },
+  });
+  revalidatePath(`/app/employees/${data[0].membership_id}`);
+  return { ok: true };
 }

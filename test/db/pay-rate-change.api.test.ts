@@ -182,10 +182,10 @@ describe.skipIf(!hasPostgrest)("a pay rate change that starts on a date", () => 
     expect((await history(c))[0]).toMatchObject({ old_rate_cents: null, new_rate_cents: 2000, shifts_repriced: 1 });
   });
 
-  it("a future date, or 'from a date' with no date, is refused and nothing is written", async () => {
+  it("'from a date' with no date, or a date more than a year ahead, is refused and nothing is written", async () => {
     const c = await company();
-    const future = await save(c, { pay_rate: "18", pay_rate_from_mode: "date", pay_rate_from: ymd(-3) });
-    expect(future.errors?.pay_rate).toContain("can't be in the future");
+    const tooFar = await save(c, { pay_rate: "18", pay_rate_from_mode: "date", pay_rate_from: ymd(-400) });
+    expect(tooFar.errors?.pay_rate).toContain("more than a year ahead");
     const blank = await save(c, { pay_rate: "18", pay_rate_from_mode: "date", pay_rate_from: "" });
     expect(blank.errors?.pay_rate).toContain("Pick the date");
     expect(await rateOf(c)).toBe(1700);
@@ -222,5 +222,124 @@ describe.skipIf(!hasPostgrest)("a pay rate change that starts on a date", () => 
     });
     const body = await res.json();
     expect(Array.isArray(body) ? body : []).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A raise planned for a future date
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!hasPostgrest)("a pay rate change scheduled for a future date", () => {
+  const waiting = (c: Company) =>
+    api.sql<{ id: string; old: number | null; new: number | null; from: string; applied: boolean; repriced: number }>(
+      `select id, old_rate_cents as old, new_rate_cents as new, effective_from::date::text as from, applied_at is not null as applied, shifts_repriced as repriced
+         from public.pay_rate_changes where membership_id = $1 and scheduled order by created_at`,
+      [c.vira.membershipId],
+    );
+  /** Run the scheduled-change applier as if the clock read `at`. */
+  async function applyAsOf(at: Date, who?: Company) {
+    const { applyDueRateChanges } = await import("@/lib/pay-rate-change");
+    const { createSupabaseAdminClient } = await import("@/lib/supabase/admin");
+    return applyDueRateChanges(createSupabaseAdminClient(), { now: at, ...(who ? { membershipId: who.vira.membershipId } : {}) });
+  }
+
+  it("saved for a day ahead: today's rate and shifts stay as they are, and the change waits", async () => {
+    const c = await company();
+    const worked = await shift(c, 2);
+    const res = await save(c, { pay_rate: "18.00", pay_rate_from_mode: "date", pay_rate_from: ymd(-10) });
+    expect(res.done, JSON.stringify(res) + api.log().slice(-300)).toBe(true);
+    expect(res.notice).toContain("Scheduled");
+    expect(res.notice).toContain("$17.00/hr to $18.00/hr");
+    expect(await rateOf(c), "the rate does not change today").toBe(1700);
+    expect(await frozen(worked)).toBe(1700);
+    expect(await waiting(c)).toEqual([expect.objectContaining({ old: 1700, new: 1800, from: ymd(-10), applied: false })]);
+  });
+
+  it("before its day it is left alone; on its day the rate changes, once, and a shift worked that day takes the new rate", async () => {
+    const c = await company();
+    await save(c, { pay_rate: "18.00", pay_rate_from_mode: "date", pay_rate_from: ymd(-10) });
+    const theDay = new Date(`${ymd(-10)}T00:00:00Z`);
+
+    // (Scoped to her: other tests in this file leave changes waiting too.)
+    expect(await applyAsOf(new Date(theDay.getTime() - 60_000), c), "a minute before midnight").toBe(0);
+    expect(await rateOf(c)).toBe(1700);
+
+    // A shift recorded on the day before anything applied the raise (clocked
+    // in at the old rate): applying the raise moves it to the new one.
+    const [early] = await api.sql<{ id: string }>(
+      `insert into public.time_entries (organization_id, employee_id, clock_in_at, clock_out_at, pay_rate_cents_snapshot)
+       values ($1, $2, $3::timestamptz, $4::timestamptz, 1700) returning id`,
+      [c.org, c.vira.membershipId, new Date(theDay.getTime() + 8 * 3_600_000).toISOString(), new Date(theDay.getTime() + 11 * 3_600_000).toISOString()],
+    );
+    const before = await shift(c, 3);
+
+    const at = new Date(theDay.getTime() + 12 * 3_600_000);
+    // Two callers at the same moment (a clock-in and the nightly job).
+    const [a, b] = await Promise.all([applyAsOf(at, c), applyAsOf(at, c)]);
+    expect(a + b, "applied once").toBe(1);
+    expect(await rateOf(c)).toBe(1800);
+    expect(await frozen(early.id), "the shift worked on the day").toBe(1800);
+    expect(await frozen(before), "a shift from before the day").toBe(1700);
+    expect(await waiting(c)).toEqual([expect.objectContaining({ applied: true, old: 1700, new: 1800, repriced: 1 })]);
+
+    // Nothing left to apply.
+    expect(await applyAsOf(new Date(at.getTime() + DAY), c)).toBe(0);
+    expect(await rateOf(c)).toBe(1800);
+  });
+
+  it("a second scheduled change replaces the first; cancelling leaves the rate as it is; an applied one can't be cancelled", async () => {
+    const c = await company();
+    await save(c, { pay_rate: "18.00", pay_rate_from_mode: "date", pay_rate_from: ymd(-10) });
+    await save(c, { pay_rate: "19.00", pay_rate_from_mode: "date", pay_rate_from: ymd(-20) });
+    const rows = await waiting(c);
+    expect(rows.map((r) => [r.new, r.from])).toEqual([[1900, ymd(-20)]]);
+
+    const cancel = async (id: string, who: Member = c.owner) => {
+      request.cookies = api.sessionCookies(who.userId);
+      try {
+        return await employees.cancelScheduledRateAction(id);
+      } finally {
+        await settle();
+      }
+    };
+    // A cleaner can't cancel her own raise's schedule; another company's owner can't reach it.
+    expect(await cancel(rows[0].id, c.vira)).toMatchObject({ ok: false });
+    const other = await company();
+    expect(await cancel(rows[0].id, other.owner)).toMatchObject({ ok: false });
+    expect(await waiting(c)).toHaveLength(1);
+
+    expect(await cancel(rows[0].id)).toEqual({ ok: true });
+    expect(await waiting(c)).toEqual([]);
+    expect(await rateOf(c)).toBe(1700);
+    expect(await applyAsOf(new Date(Date.now() + 30 * DAY), c)).toBe(0);
+    expect(await rateOf(c)).toBe(1700);
+
+    // Once applied it is history, and Cancel says so.
+    await save(c, { pay_rate: "18.00", pay_rate_from_mode: "date", pay_rate_from: ymd(-5) });
+    const [again] = await waiting(c);
+    await applyAsOf(new Date(Date.now() + 6 * DAY), c);
+    expect(await cancel(again.id)).toMatchObject({ ok: false, error: expect.stringContaining("already taken effect") });
+    expect(await rateOf(c)).toBe(1800);
+  });
+
+  it("a scheduled cut still has to be ticked on purpose", async () => {
+    const c = await company();
+    const refused = await save(c, { pay_rate: "16.00", pay_rate_from_mode: "date", pay_rate_from: ymd(-10) });
+    expect(refused.errors?.pay_rate).toContain("lowers the rate");
+    expect(await waiting(c)).toEqual([]);
+    const ok = await save(c, { pay_rate: "16.00", pay_rate_from_mode: "date", pay_rate_from: ymd(-10), pay_rate_lower_ok: "1" });
+    expect(ok.done).toBe(true);
+    expect(await rateOf(c)).toBe(1700);
+    expect((await waiting(c)).map((r) => r.new)).toEqual([1600]);
+  });
+
+  it("changes already on record are never treated as waiting", async () => {
+    const c = await company();
+    await save(c, { pay_rate: "18.00", pay_rate_from_mode: "now", pay_rate_from: "" });
+    // Lower the rate behind the history's back: if the old row were applied
+    // again, the rate would jump back to 18.
+    await api.sql("update public.memberships set pay_rate_cents = 1750 where id = $1", [c.vira.membershipId]);
+    expect(await applyAsOf(new Date(Date.now() + 30 * DAY), c)).toBe(0);
+    expect(await rateOf(c)).toBe(1750);
   });
 });

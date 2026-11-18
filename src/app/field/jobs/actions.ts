@@ -187,6 +187,15 @@ export async function startJobAction(
   // longer SELECT-able via end-user JWT. Use admin client scoped
   // strictly to this employee's own row in their own org.
   const adminForRate = createSupabaseAdminClient();
+  // A raise scheduled for today (or earlier) takes effect first, so this
+  // shift is frozen at the new rate.
+  {
+    const { applyDueRateChangesQuietly } = await import("@/lib/pay-rate-change");
+    await applyDueRateChangesQuietly(adminForRate, {
+      organizationId: membership.organization_id,
+      membershipId: membership.id,
+    });
+  }
   const { data: rateRow } = (await adminForRate
     .from("memberships")
     .select("pay_rate_cents, engagement")

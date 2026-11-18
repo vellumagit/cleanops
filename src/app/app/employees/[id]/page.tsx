@@ -26,6 +26,7 @@ import { getOrgTimezone } from "@/lib/org-timezone";
 import { loadAttendanceRecord } from "@/lib/attendance-record";
 import { listPayInvoices } from "@/lib/pay-invoice-list";
 import { PayInvoiceTable } from "@/components/pay-invoice-table";
+import { CancelScheduledRateButton } from "./cancel-scheduled-rate-button";
 import { getOrgCurrency } from "@/lib/org-currency";
 
 export const metadata = { title: "Employee file" };
@@ -225,13 +226,15 @@ export default async function EmployeeFilePage({
     shifts_on_runs: number;
     owed_cents: number;
     created_at: string;
+    scheduled: boolean | null;
+    applied_at: string | null;
     changer: { display_name: string | null; profile: { full_name: string | null } | null } | null;
   };
   const rateHistoryPromise = (
     admin
       .from("pay_rate_changes" as never)
       .select(
-        "id, old_rate_cents, new_rate_cents, effective_from, shifts_repriced, shifts_on_runs, owed_cents, created_at, changer:memberships!pay_rate_changes_changed_by_fkey ( display_name, profile:profiles ( full_name ) )" as never,
+        "id, old_rate_cents, new_rate_cents, effective_from, shifts_repriced, shifts_on_runs, owed_cents, created_at, scheduled, applied_at, changer:memberships!pay_rate_changes_changed_by_fkey ( display_name, profile:profiles ( full_name ) )" as never,
       )
       .eq("membership_id" as never, id as never)
       .eq("organization_id" as never, viewer.organization_id as never)
@@ -799,14 +802,22 @@ export default async function EmployeeFilePage({
                   cents == null ? "no rate" : `${formatCurrencyCents(cents)}/hr`;
                 const lowered =
                   c.old_rate_cents != null && c.new_rate_cents != null && c.new_rate_cents < c.old_rate_cents;
+                // Saved ahead of its day and not yet in effect.
+                const waiting = c.scheduled === true && c.applied_at == null;
                 return (
-                  <li key={c.id} className="px-4 py-3">
+                  <li key={c.id} className={cn("px-4 py-3", waiting && "bg-blue-50/60 dark:bg-blue-950/20")}>
                     <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
                       <span className={cn("font-medium", lowered && "text-amber-700 dark:text-amber-300")}>
+                        {waiting && (
+                          <span className="mr-2 rounded bg-blue-100 px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-blue-900 dark:bg-blue-900/40 dark:text-blue-100">
+                            Scheduled
+                          </span>
+                        )}
                         {rate(c.old_rate_cents)} to {rate(c.new_rate_cents)}
                       </span>
-                      <span className="text-xs text-muted-foreground">
-                        from {formatDate(c.effective_from, tz)}
+                      <span className="flex items-center gap-3 text-xs text-muted-foreground">
+                        {waiting ? "starts" : "from"} {formatDate(c.effective_from, tz)}
+                        {waiting && <CancelScheduledRateButton changeId={c.id} />}
                       </span>
                     </div>
                     <p className="mt-0.5 text-xs text-muted-foreground">

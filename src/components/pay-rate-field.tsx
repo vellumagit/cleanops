@@ -10,7 +10,8 @@ import { Label } from "@/components/ui/label";
  * A shift freezes the rate at clock-in, so a new rate used to reach only
  * shifts worked after the save (src/lib/pay-rate-change.ts). Once the number
  * in the box differs from the saved one this asks when it starts: from now,
- * or from a date, in which case unpaid shifts from that date are re-priced.
+ * or from a date. A past date re-prices unpaid shifts from that date; a
+ * future date schedules the change for that day.
  * A lower rate has to be ticked on purpose: on 2026-10-24 someone's rate
  * went from $18 to $17 with nothing asking, and three weeks of shifts were
  * worked at it before anyone noticed.
@@ -61,6 +62,9 @@ export function PayRateField({
             <input
               type="radio"
               className="mt-1"
+              // Named (and so grouped) so the browser keeps the two in step
+              // with each other; the value posted is the hidden field below.
+              name={`${id}-rate-start`}
               checked={mode === "now"}
               onChange={() => setMode("now")}
             />
@@ -75,13 +79,15 @@ export function PayRateField({
             <input
               type="radio"
               className="mt-1"
+              name={`${id}-rate-start`}
               checked={mode === "date"}
               onChange={() => setMode("date")}
             />
             <span>
               From a date
               <span className="block text-xs text-muted-foreground">
-                Unpaid shifts from that day on are re-priced. Shifts already on a pay run are not changed.
+                A past date re-prices unpaid shifts from that day (shifts already on a pay run are not changed). A
+                future date schedules the change: the rate stays as it is until that day.
               </span>
             </span>
           </label>
@@ -94,8 +100,8 @@ export function PayRateField({
               className="w-auto"
             />
           )}
-          {/* The server decides what "today" is, in the company's time zone,
-              and refuses a future date. */}
+          {/* The server decides what "today" is, in the company's time zone:
+              a later date is scheduled, an earlier one is backdated. */}
           <input type="hidden" name="pay_rate_from_mode" value={mode} />
           <input type="hidden" name="pay_rate_from" value={mode === "date" ? from : ""} />
 
