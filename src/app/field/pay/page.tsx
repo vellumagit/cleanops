@@ -225,6 +225,8 @@ export default async function FieldPayPage() {
 
   type Statement = {
     id: string;
+    /** Which pay system it came from: decides the invoice link. */
+    kind: "employee" | "contractor";
     periodStart: string;
     periodEnd: string;
     hours: number;
@@ -239,6 +241,7 @@ export default async function FieldPayPage() {
       .filter((i) => i.run)
       .map((i) => ({
         id: i.id,
+        kind: "employee" as const,
         periodStart: i.run!.period_start,
         periodEnd: i.run!.period_end,
         hours: Number(i.hours_worked),
@@ -252,6 +255,7 @@ export default async function FieldPayPage() {
       .filter((i) => i.run)
       .map((i) => ({
         id: i.id,
+        kind: "contractor" as const,
         periodStart: i.run!.period_start,
         periodEnd: i.run!.period_end,
         hours: i.minutes / 60,
@@ -421,6 +425,16 @@ export default async function FieldPayPage() {
                   )}
                 </div>
               </div>
+              {/* Her own copy for her records: this period as an invoice,
+                  every shift listed. */}
+              <a
+                href={`/api/pay-invoice/${s.kind}/${s.id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-3 inline-flex min-h-11 items-center text-sm font-medium underline underline-offset-2"
+              >
+                Download invoice (PDF)
+              </a>
             </li>
           ))}
         </ul>

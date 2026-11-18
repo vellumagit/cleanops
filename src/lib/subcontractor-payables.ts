@@ -716,6 +716,8 @@ export type PayRunSummary = {
   paidAt: string | null;
   createdAt: string;
   items: Array<{
+    /** The statement line's own id: what its invoice PDF is addressed by. */
+    id: string;
     membershipId: string;
     payeeName: string;
     minutes: number;
@@ -739,7 +741,7 @@ export async function getSubcontractorRuns(
   const { data } = (await admin
     .from("subcontractor_pay_runs" as never)
     .select(
-      "id, period_start, period_end, status, total_cents, paid_at, created_at, items:subcontractor_pay_items ( membership_id, payee_name, minutes, entry_count, total_cents, sage_purchase_invoice_id, sage_payment_id )" as never,
+      "id, period_start, period_end, status, total_cents, paid_at, created_at, items:subcontractor_pay_items ( id, membership_id, payee_name, minutes, entry_count, total_cents, sage_purchase_invoice_id, sage_payment_id )" as never,
     )
     .eq("organization_id" as never, organizationId as never)
     .order("period_start" as never, { ascending: false } as never)
@@ -753,6 +755,7 @@ export async function getSubcontractorRuns(
       paid_at: string | null;
       created_at: string;
       items: Array<{
+        id: string;
         membership_id: string;
         payee_name: string;
         minutes: number;
@@ -773,6 +776,7 @@ export async function getSubcontractorRuns(
     createdAt: r.created_at,
     items: (r.items ?? [])
       .map((i) => ({
+        id: i.id,
         membershipId: i.membership_id,
         payeeName: i.payee_name,
         sageBillId: i.sage_purchase_invoice_id ?? null,

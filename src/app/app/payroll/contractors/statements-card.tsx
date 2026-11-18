@@ -247,6 +247,18 @@ export function StatementsCard({
                       </span>
                     </span>
                     <span className="flex shrink-0 items-center gap-2">
+                      {/* This contractor's invoice for the period, every
+                          shift listed. */}
+                      <a
+                        href={`/api/pay-invoice/contractor/${item.id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title="Open this contractor's invoice for the period"
+                        className="inline-flex items-center gap-1 text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                      >
+                        <FileText className="h-3 w-3" />
+                        Invoice
+                      </a>
                       {item.sageBillUrl && (
                         <a
                           href={item.sageBillUrl}

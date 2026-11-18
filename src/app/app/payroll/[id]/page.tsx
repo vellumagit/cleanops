@@ -161,6 +161,7 @@ export default async function PayrollRunDetailPage({
               <th className="px-4 py-3 text-right font-medium">Bonus</th>
               <th className="px-4 py-3 text-right font-medium">PTO</th>
               <th className="px-4 py-3 text-right font-medium">Total</th>
+              <th className="px-4 py-3 text-right font-medium">Invoice</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
@@ -181,6 +182,18 @@ export default async function PayrollRunDetailPage({
                 </td>
                 <td className="px-4 py-3 text-right font-mono font-semibold tabular-nums">
                   {formatCurrencyCents(i.total_cents, currency)}
+                </td>
+                <td className="px-4 py-3 text-right">
+                  {/* One person's pay for this period as an invoice PDF,
+                      every shift listed. Opens in a new tab. */}
+                  <a
+                    href={`/api/pay-invoice/employee/${i.id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs font-medium underline underline-offset-2 hover:text-foreground"
+                  >
+                    PDF
+                  </a>
                 </td>
               </tr>
             ))}
@@ -203,6 +216,7 @@ export default async function PayrollRunDetailPage({
               <td className="px-4 py-3 text-right font-mono font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
                 {formatCurrencyCents(totals.total, currency)}
               </td>
+              <td className="px-4 py-3" />
             </tr>
           </tfoot>
         </table>
