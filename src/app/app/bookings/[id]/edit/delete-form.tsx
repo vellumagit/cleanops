@@ -1,10 +1,12 @@
 "use client";
 
-import { useState } from "react";
-import { SubmitButton } from "@/components/submit-button";
+import { useEffect, useRef, useState, useTransition } from "react";
+import Link from "next/link";
+import { Button } from "@/components/ui/button";
 import {
   deleteBookingAction,
   skipBookingOccurrenceAction,
+  type BookingRemoveRefusal,
 } from "../../actions";
 
 export function DeleteBookingForm({
@@ -20,6 +22,8 @@ export function DeleteBookingForm({
   isPast: boolean;
 }) {
   const [cascade, setCascade] = useState(false);
+  const [pending, startTransition] = useTransition();
+  const [refusal, setRefusal] = useState<BookingRemoveRefusal | null>(null);
   const isRecurring = Boolean(seriesId);
   const occurrenceDate = new Date(scheduledAt).toLocaleDateString("en-US", {
     weekday: "short",
@@ -27,6 +31,49 @@ export function DeleteBookingForm({
     day: "numeric",
     year: "numeric",
   });
+
+  // A refusal is shown right here and brought into view. It used to come
+  // back as a redirect to this same page, which reloaded it at the top with
+  // the explanation down in the danger zone: the button seemed to do nothing.
+  const panel = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (refusal) panel.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [refusal]);
+
+  function fd() {
+    const f = new FormData();
+    f.set("id", id);
+    return f;
+  }
+
+  function remove() {
+    const msg = cascade
+      ? "Delete this booking and every FUTURE occurrence in the series? Past visits are kept. This cannot be undone."
+      : isPast
+        ? "Delete this PAST visit? It disappears from records and reports; hours logged on it stay in Timesheets. This cannot be undone."
+        : "Delete this booking? This cannot be undone.";
+    if (!window.confirm(msg)) return;
+    startTransition(async () => {
+      const f = fd();
+      f.set("cascade_series", String(cascade));
+      // On success the action redirects away and never returns.
+      const res = await deleteBookingAction(f);
+      if (res && !res.ok) setRefusal(res);
+    });
+  }
+
+  function skip() {
+    if (
+      !window.confirm(
+        `Skip ${occurrenceDate} and tell the recurring series not to regenerate this date? The series continues as normal after.`,
+      )
+    )
+      return;
+    startTransition(async () => {
+      const res = await skipBookingOccurrenceAction(fd());
+      if (res && !res.ok) setRefusal(res);
+    });
+  }
 
   // Past visits used to be flat-out undeletable — a wall, not a warning.
   // Brian's ruling: "I don't mind the recommendation, but it must be
@@ -44,21 +91,26 @@ export function DeleteBookingForm({
           that invoice is dealt with first.
         </div>
       )}
-      {/* Delete form */}
-      <form
-        action={deleteBookingAction}
-        onSubmit={(e) => {
-          const msg = cascade
-            ? "Delete this booking and every FUTURE occurrence in the series? Past visits are kept. This cannot be undone."
-            : isPast
-              ? "Delete this PAST visit? It disappears from records and reports; hours logged on it stay in Timesheets. This cannot be undone."
-              : "Delete this booking? This cannot be undone.";
-          if (!window.confirm(msg)) e.preventDefault();
-        }}
-      >
-        <input type="hidden" name="id" value={id} />
-        <input type="hidden" name="cascade_series" value={String(cascade)} />
 
+      {refusal && (
+        <div
+          ref={panel}
+          role="alert"
+          className="rounded-md border border-amber-300/60 bg-amber-50/60 px-3 py-3 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200"
+        >
+          <p className="font-semibold">{refusal.error}</p>
+          {refusal.link && (
+            <p className="mt-2">
+              <Link href={refusal.link.href} className="font-medium underline underline-offset-2">
+                {refusal.link.label}
+              </Link>
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Delete */}
+      <div>
         {isRecurring && (
           <label className="mb-3 flex items-start gap-2 text-xs text-muted-foreground">
             <input
@@ -74,36 +126,24 @@ export function DeleteBookingForm({
           </label>
         )}
 
-        <SubmitButton variant="destructive" pendingLabel="Deleting…">
-          {cascade ? "Delete this + future" : "Delete booking"}
-        </SubmitButton>
-      </form>
+        <Button type="button" variant="destructive" disabled={pending} onClick={remove}>
+          {pending ? "Working…" : cascade ? "Delete this + future" : "Delete booking"}
+        </Button>
+      </div>
 
       {/* Skip this occurrence — recurring only, alternative to delete */}
       {isRecurring && (
-        <form
-          action={skipBookingOccurrenceAction}
-          onSubmit={(e) => {
-            if (
-              !window.confirm(
-                `Skip ${occurrenceDate} and tell the recurring series not to regenerate this date? The series continues as normal after.`,
-              )
-            )
-              e.preventDefault();
-          }}
-          className="rounded-md border border-border bg-muted/30 p-3"
-        >
-          <input type="hidden" name="id" value={id} />
+        <div className="rounded-md border border-border bg-muted/30 p-3">
           <p className="mb-3 text-xs text-muted-foreground leading-relaxed">
             Or keep the series alive but skip just this one date — useful for
             holidays or a client being away. The date is added to the
             series&rsquo; skip list so the nightly cron won&rsquo;t regenerate
             it.
           </p>
-          <SubmitButton variant="outline" size="sm" pendingLabel="Skipping…">
+          <Button type="button" variant="outline" size="sm" disabled={pending} onClick={skip}>
             Skip {occurrenceDate} only
-          </SubmitButton>
-        </form>
+          </Button>
+        </div>
       )}
     </div>
   );

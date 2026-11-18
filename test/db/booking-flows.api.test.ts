@@ -168,8 +168,27 @@ describe.skipIf(!hasPostgrest)("changing the schedule, through the app's own act
     await api.sql("update public.bookings set billing_invoice_id = $2 where id = $1", [billed, inv.id]);
     const f2 = new FormData();
     f2.set("id", billed);
-    const res = await asOwner(c, () => bookings.deleteBookingAction(f2));
-    expect(String(res)).toMatch(/delete_error|bills this job/);
+    // Refused in place: the answer comes back to the page (no redirect, so
+    // it doesn't reload at the top), with the invoice to deal with first.
+    const res = (await asOwner(c, () => bookings.deleteBookingAction(f2))) as { ok: false; error: string; link?: { href: string; label: string } };
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/bills this job/);
+    expect(res.link?.href).toBe(`/app/invoices/${inv.id}`);
     expect(await jobRow(billed)).toBeTruthy();
+
+    // Skip is for upcoming dates: a past occurrence is refused in words, and stays.
+    const [oldSeries] = await api.sql<{ id: string }>(
+      `insert into public.booking_series (organization_id, client_id, pattern, start_time, starts_at, duration_minutes, service_type)
+       values ($1, $2, 'weekly', '09:00', current_date - 30, 120, 'standard') returning id`,
+      [c.org, c.client],
+    );
+    const past = await addBooking(api.sql, c.org, c.client, { scheduledAt: at(-5, "09:00"), status: "confirmed" });
+    await api.sql("update public.bookings set series_id = $2 where id = $1", [past, oldSeries.id]);
+    const f3 = new FormData();
+    f3.set("id", past);
+    const skipped = (await asOwner(c, () => bookings.skipBookingOccurrenceAction(f3))) as { ok: false; error: string };
+    expect(skipped.ok).toBe(false);
+    expect(skipped.error).toMatch(/already happened/);
+    expect(await jobRow(past)).toBeTruthy();
   });
 });

@@ -3495,7 +3495,22 @@ export async function setSeriesStatusAction(formData: FormData): Promise<{
   return { ok: true, changed, skipped, notReached, nextFrom, nextFromLabel };
 }
 
-export async function deleteBookingAction(formData: FormData) {
+/**
+ * A delete or skip that was refused, answered to the page so it can say so
+ * beside the button. These used to redirect back to the edit page with the
+ * message in the address, which reloaded the page at the top and left the
+ * explanation down in the danger zone.
+ */
+export type BookingRemoveRefusal = {
+  ok: false;
+  error: string;
+  /** The record to deal with first, when there is one. */
+  link?: { href: string; label: string };
+};
+
+export async function deleteBookingAction(
+  formData: FormData,
+): Promise<BookingRemoveRefusal | void> {
   const id = String(formData.get("id") ?? "");
   if (!id) return;
   const cascade = String(formData.get("cascade_series") ?? "") === "true";
@@ -3535,11 +3550,12 @@ export async function deleteBookingAction(formData: FormData) {
       // owner clicked delete, nothing happened, no explanation. The rule
       // stands (deleting a billed booking manufactures stripped links), but
       // a rule that won't say its own name is just a broken button.
-      redirect(
-        `/app/bookings/${id}/edit?delete_error=${encodeURIComponent(
-          `Invoice ${inv.number ?? inv.id.slice(0, 8)} (${inv.status}) bills this job. Void or delete that invoice first — then this booking can be deleted.`,
-        )}`,
-      );
+      const label = inv.number ?? inv.id.slice(0, 8);
+      return {
+        ok: false,
+        error: `Invoice ${label} (${inv.status}) bills this job. Void or delete that invoice first, then this booking can be deleted.`,
+        link: { href: `/app/invoices/${inv.id}`, label: `Open invoice ${label}` },
+      };
     }
   }
 
@@ -3695,7 +3711,9 @@ export async function deleteBookingAction(formData: FormData) {
  * extend cron will not regenerate this date; everything past it keeps
  * going as normal.
  */
-export async function skipBookingOccurrenceAction(formData: FormData) {
+export async function skipBookingOccurrenceAction(
+  formData: FormData,
+): Promise<BookingRemoveRefusal | void> {
   const id = String(formData.get("id") ?? "");
   if (!id) return;
   const { membership, supabase } = await getActionContext();
@@ -3720,12 +3738,11 @@ export async function skipBookingOccurrenceAction(formData: FormData) {
   if (booking.scheduled_at < new Date().toISOString()) {
     // Loud, not a silent bounce: skip is the wrong tool for a past date and
     // the refusal should say so — Delete works on past visits now.
-    redirect(
-      `/app/bookings/${id}/edit?delete_error=${encodeURIComponent(
-        "That visit already happened — skip is for upcoming dates (holidays, client away). To remove a past visit from the records, use Delete instead.",
-      )}`,
-      RedirectType.replace,
-    );
+    return {
+      ok: false,
+      error:
+        "That visit already happened. Skip is for upcoming dates (holidays, client away). To remove a past visit from the records, use Delete instead.",
+    };
   }
 
   // Key the skip on the occurrence's ORG-LOCAL calendar date — that's what
