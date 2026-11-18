@@ -142,6 +142,14 @@ async function main() {
     draftRun.id,
   ]);
 
+  // A bonus Anna has been awarded and not yet paid, so her Edit page shows
+  // the "if deactivated today, still owed" notice with something to settle.
+  await sql(
+    `insert into public.bonuses (organization_id, employee_id, period_start, period_end, amount_cents, reason, bonus_type, status)
+     values ($1, $2, (now() - interval '30 days')::date, now()::date, 12345, 'Spring referral bonus', 'manual', 'pending')`,
+    [org, anna.membershipId],
+  );
+
   // An integration that stopped working, so Settings -> Integrations has
   // something to say about it.
   await sql(

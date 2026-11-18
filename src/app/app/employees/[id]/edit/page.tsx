@@ -11,6 +11,7 @@ import {
   EmployeeEditForm,
   type EmployeeEditDefaults,
 } from "./employee-edit-form";
+import { SettleBonusButton } from "./settle-bonus-button";
 import { DeleteEmployeeForm } from "./delete-employee-form";
 import { ForceDeleteForm } from "./force-delete-form";
 import { RecoveryLinkCard } from "./recovery-link-card";
@@ -91,6 +92,29 @@ export default async function EditEmployeePage({
         })()
       : null;
 
+  // The pending bonuses themselves, so each can be settled right here. The
+  // same rows getFinalSettlement adds up: pending, and not already claimed
+  // by a pay run.
+  const { data: pendingBonuses } =
+    settlement && settlement.bonusCents > 0
+      ? ((await admin
+          .from("bonuses")
+          .select("id, amount_cents, reason, bonus_type, period_end")
+          .eq("organization_id", viewer.organization_id)
+          .eq("employee_id", member.id)
+          .eq("status", "pending")
+          .is("payroll_run_id", null)
+          .order("created_at", { ascending: true })) as unknown as {
+          data: Array<{
+            id: string;
+            amount_cents: number;
+            reason: string | null;
+            bonus_type: string | null;
+            period_end: string | null;
+          }> | null;
+        })
+      : { data: null };
+
   // Derive the display name the form should pre-fill:
   // If there's an admin override (display_name) use that; otherwise fall
   // back to their profile name. Shadow employees only have display_name.
@@ -139,27 +163,86 @@ export default async function EditEmployeePage({
             Rendered above the form so it's read before the status select is
             touched. Quiet when nothing is outstanding. */}
         {owed && settlement && (
-          <div className="rounded-lg border border-amber-300/60 bg-amber-50 px-4 py-3 text-xs text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-200">
+          <div className="rounded-lg border border-amber-300/60 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-200">
             <p className="font-semibold">
               If deactivated today, still owed:{" "}
               {formatCurrencyCents(settlement.totalCents)}
             </p>
-            <p className="mt-0.5 opacity-90">
-              {[
-                settlement.unpaidHoursCents > 0 &&
-                  `$${(settlement.unpaidHoursCents / 100).toFixed(2)} in unpaid hours (next run pays these)`,
-                settlement.bonusCents > 0 &&
-                  `$${(settlement.bonusCents / 100).toFixed(2)} in pending bonuses (no run will — resolve on Bonuses)`,
-                settlement.tipsCents > 0 &&
-                  `$${(settlement.tipsCents / 100).toFixed(2)} in tips owed (settle on Payroll)`,
-                settlement.ptoCount > 0 &&
-                  `${settlement.ptoHours}h of approved future time off (pay-or-void, not in the total)`,
-                settlement.flaggedCount > 0 &&
-                  `${settlement.flaggedCount} flagged shift${settlement.flaggedCount === 1 ? "" : "s"} awaiting review`,
-              ]
-                .filter(Boolean)
-                .join(" · ")}
+            <p className="mt-0.5 text-xs opacity-90">
+              Each line says where to settle it. You can deactivate first and
+              settle afterwards; nothing is lost either way.
             </p>
+            <ul className="mt-2 space-y-2 text-xs">
+              {settlement.unpaidHoursCents > 0 && (
+                <li className="flex flex-wrap items-center justify-between gap-2">
+                  <span>
+                    <span className="font-semibold">{formatCurrencyCents(settlement.unpaidHoursCents)}</span> in unpaid
+                    hours. The next pay run picks these up.
+                  </span>
+                  <Link href="/app/payroll" className="font-medium underline underline-offset-2">
+                    Open Payroll
+                  </Link>
+                </li>
+              )}
+              {(pendingBonuses ?? []).map((b) => (
+                <li key={b.id} className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="min-w-0">
+                    <span className="font-semibold">{formatCurrencyCents(b.amount_cents)}</span> pending bonus
+                    {b.reason ? `: ${b.reason}` : ""}
+                  </span>
+                  <span className="flex shrink-0 items-center gap-3">
+                    <Link href="/app/bonuses" className="font-medium underline underline-offset-2">
+                      Open Bonuses
+                    </Link>
+                    <SettleBonusButton id={b.id} />
+                  </span>
+                </li>
+              ))}
+              {settlement.tipsCents > 0 && (
+                <li className="flex flex-wrap items-center justify-between gap-2">
+                  <span>
+                    <span className="font-semibold">{formatCurrencyCents(settlement.tipsCents)}</span> in tips owed.
+                  </span>
+                  <Link href="/app/payroll" className="font-medium underline underline-offset-2">
+                    Settle on Payroll
+                  </Link>
+                </li>
+              )}
+              {settlement.inFlightRuns.map((r) => (
+                <li key={`${r.kind}-${r.runId}`} className="flex flex-wrap items-center justify-between gap-2">
+                  <span>
+                    <span className="font-semibold">{formatCurrencyCents(r.cents)}</span> in a{" "}
+                    {r.kind === "contractor" ? "contractor statement" : "pay run"} ({r.periodStart} to {r.periodEnd})
+                    that hasn&rsquo;t been marked paid.
+                  </span>
+                  <Link href={r.href} className="font-medium underline underline-offset-2">
+                    Open it
+                  </Link>
+                </li>
+              ))}
+              {settlement.ptoCount > 0 && (
+                <li className="flex flex-wrap items-center justify-between gap-2">
+                  <span>
+                    {settlement.ptoHours}h of approved future time off. Pay it or cancel it; it isn&rsquo;t in the
+                    total.
+                  </span>
+                  <Link href="/app/timesheets" className="font-medium underline underline-offset-2">
+                    Open Timesheets
+                  </Link>
+                </li>
+              )}
+              {settlement.flaggedCount > 0 && (
+                <li className="flex flex-wrap items-center justify-between gap-2">
+                  <span>
+                    {settlement.flaggedCount} flagged shift{settlement.flaggedCount === 1 ? "" : "s"} waiting for
+                    review.
+                  </span>
+                  <Link href="/app/timesheets" className="font-medium underline underline-offset-2">
+                    Open Timesheets
+                  </Link>
+                </li>
+              )}
+            </ul>
           </div>
         )}
         <div className="rounded-lg border border-border bg-card p-6">
