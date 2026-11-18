@@ -696,10 +696,19 @@ export default async function PayrollPage() {
             "what did that period cost" reads across, and clicking opens the
             period page that breaks both halves down. */}
         <div>
-          <h2 className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-muted-foreground">
-            <CheckCircle2 className="h-4 w-4" />
-            Pay periods
-          </h2>
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <h2 className="flex items-center gap-1.5 text-sm font-semibold text-muted-foreground">
+              <CheckCircle2 className="h-4 w-4" />
+              Pay periods
+            </h2>
+            {/* Every person's invoice for every period, with its PDF. */}
+            <Link
+              href="/app/payroll/invoices"
+              className="text-xs font-medium underline underline-offset-2 hover:text-foreground"
+            >
+              All pay invoices
+            </Link>
+          </div>
           {periodRows.length === 0 ? (
             <p className="rounded-lg border border-dashed border-border bg-muted/20 p-6 text-center text-xs text-muted-foreground">
               Prepared periods collect here — employees and contractors side

@@ -24,6 +24,9 @@ import { cn } from "@/lib/utils";
 import { DocumentsPanel, type EmployeeDocument } from "./documents-panel";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { loadAttendanceRecord } from "@/lib/attendance-record";
+import { listPayInvoices } from "@/lib/pay-invoice-list";
+import { PayInvoiceTable } from "@/components/pay-invoice-table";
+import { getOrgCurrency } from "@/lib/org-currency";
 
 export const metadata = { title: "Employee file" };
 
@@ -314,6 +317,12 @@ export default async function EmployeeFilePage({
       };
     })
     .sort((a, b) => a.title.localeCompare(b.title));
+
+  const [payInvoices, payCurrency, payTz] = await Promise.all([
+    listPayInvoices(viewer.organization_id, { membershipId: id }),
+    getOrgCurrency(viewer.organization_id),
+    getOrgTimezone(viewer.organization_id),
+  ]);
 
   return (
     <PageShell
@@ -754,6 +763,27 @@ export default async function EmployeeFilePage({
                 </ul>
               )}
             </>
+          )}
+        </div>
+
+        {/* Pay invoices: every period this person has been paid for, each
+            with its PDF. The same paper they see under My pay. */}
+        <div className="rounded-xl border border-border bg-card">
+          <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+            <h2 className="text-sm font-semibold">Pay invoices</h2>
+            <Link
+              href={`/app/payroll/invoices?person=${id}`}
+              className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+            >
+              All invoices
+            </Link>
+          </div>
+          {payInvoices.length === 0 ? (
+            <p className="px-4 py-6 text-sm text-muted-foreground">
+              None yet. One appears each time a pay period or a contractor statement includes them.
+            </p>
+          ) : (
+            <PayInvoiceTable rows={payInvoices} currency={payCurrency} showName={false} timezone={payTz} />
           )}
         </div>
 

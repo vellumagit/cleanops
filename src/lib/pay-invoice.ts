@@ -79,7 +79,7 @@ function dateOnlyLabel(ymd: string): string {
 }
 
 /** PAY-20261115-A1B2C3: period end plus the start of the item's own id. */
-function invoiceNumber(kind: PayInvoiceKind, periodEnd: string, itemId: string): string {
+export function payInvoiceNumber(kind: PayInvoiceKind, periodEnd: string, itemId: string): string {
   const tail = itemId.replace(/-/g, "").slice(0, 6).toUpperCase();
   return `${kind === "contractor" ? "SUB" : "PAY"}-${periodEnd.replace(/-/g, "")}-${tail}`;
 }
@@ -299,7 +299,7 @@ export async function loadPayInvoice(kind: PayInvoiceKind, itemId: string): Prom
       itemId: item.id,
       organizationId: item.organization_id,
       membershipId: item.employee_id,
-      number: invoiceNumber(kind, item.run.period_end, item.id),
+      number: payInvoiceNumber(kind, item.run.period_end, item.id),
       // The name the pay run itself recorded, so the invoice and the run agree.
       workerName: item.employee_name || member?.profile?.full_name || member?.display_name || "",
       workerEmail: member?.contact_email ?? null,
@@ -381,7 +381,7 @@ export async function loadPayInvoice(kind: PayInvoiceKind, itemId: string): Prom
     itemId: item.id,
     organizationId: item.organization_id,
     membershipId: item.membership_id,
-    number: invoiceNumber(kind, item.run.period_end, item.id),
+    number: payInvoiceNumber(kind, item.run.period_end, item.id),
     workerName: item.payee_name || member?.profile?.full_name || member?.display_name || "",
     workerEmail: member?.contact_email ?? null,
     companyName: company?.name ?? "",

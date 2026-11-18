@@ -297,3 +297,56 @@ describe.skipIf(!hasPostgrest)("a contractor's invoice", { timeout: 120_000 }, (
     expect((await open(c.owner, "employee", item.id)).status).toBe(404);
   });
 });
+
+describe.skipIf(!hasPostgrest)("the list of pay invoices", { timeout: 120_000 }, () => {
+  it("has one row per person per pay run, both pay systems, newest period first; one person's list is theirs alone; another company's is separate", async () => {
+    const { listPayInvoices } = await import("@/lib/pay-invoice-list");
+    const { generateSubcontractorRunAction } = await import("@/app/app/payroll/contractors/run-actions");
+    const { createPayrollRunForOrg } = await import("@/lib/payroll-run-create");
+    const c = await company("List Co");
+    const other = await company("Other List Co");
+
+    // Two employee pay periods (a monthly company: October, then November) and one contractor statement.
+    await shift(c, c.anna, "2026-10-06T09:00", 3, { rate: 2000 });
+    await shift(c, c.bea, "2026-10-07T09:00", 2, { rate: 1800 });
+    const october = await createPayrollRunForOrg({ organizationId: c.org, createdByMembershipId: c.owner.membershipId, periodStart: "2026-10-01", periodEnd: "2026-10-31" });
+    expect(october, api.log().slice(-400)).toMatchObject({ ok: true });
+    await shift(c, c.anna, "2026-11-03T09:00", 4, { rate: 2000 });
+    const november = await createPayrollRunForOrg({ organizationId: c.org, createdByMembershipId: c.owner.membershipId, periodStart: "2026-11-01", periodEnd: "2026-11-30" });
+    expect(november).toMatchObject({ ok: true });
+    if (!october.ok || !november.ok) return;
+    await api.sql("update public.payroll_runs set status = 'paid', paid_at = now() where id = $1", [october.id]);
+    await shift(c, c.vira, "2026-11-04T09:00", 3, { rate: 2500, engagement: "subcontractor" });
+    expect(await as(c.owner, () => generateSubcontractorRunAction(form({ period_start: "2026-11-01", period_end: "2026-11-15" })))).toMatchObject({ ok: true });
+    // Another company's pay run, which must never show up here.
+    await shift(other, other.anna, "2026-11-03T09:00", 5, { rate: 2000 });
+    expect(await createPayrollRunForOrg({ organizationId: other.org, createdByMembershipId: other.owner.membershipId, periodStart: "2026-11-01", periodEnd: "2026-11-30" })).toMatchObject({ ok: true });
+
+    const all = await listPayInvoices(c.org);
+    expect(all.map((r) => [r.periodStart, r.periodEnd, r.kind, r.membershipId, r.totalCents, r.status])).toEqual([
+      ["2026-11-01", "2026-11-30", "employee", c.anna.membershipId, 8000, "draft"],
+      ["2026-11-01", "2026-11-15", "contractor", c.vira.membershipId, 7500, "finalized"],
+      ["2026-10-01", "2026-10-31", "employee", c.anna.membershipId, 6000, "paid"],
+      ["2026-10-01", "2026-10-31", "employee", c.bea.membershipId, 3600, "paid"],
+    ]);
+    // Each row's number is the one printed on its PDF, and the PDF opens.
+    for (const r of all) {
+      expect(r.number).toMatch(r.kind === "employee" ? /^PAY-\d{8}-[0-9A-F]{6}$/ : /^SUB-\d{8}-[0-9A-F]{6}$/);
+      const pdf = await open(c.owner, r.kind, r.itemId);
+      expect(pdf.status, r.number).toBe(200);
+      expect(pdf.name).toContain(r.number);
+    }
+
+    // One person's record: theirs, every period, nobody else's.
+    const annas = await listPayInvoices(c.org, { membershipId: c.anna.membershipId });
+    expect(annas.map((r) => [r.periodEnd, r.totalCents])).toEqual([
+      ["2026-11-30", 8000],
+      ["2026-10-31", 6000],
+    ]);
+    // A manager's view: contractor invoices only.
+    expect((await listPayInvoices(c.org, { kinds: ["contractor"] })).map((r) => r.membershipId)).toEqual([c.vira.membershipId]);
+    // Another company's list has its own run and none of this one's.
+    const theirs = await listPayInvoices(other.org);
+    expect(theirs.map((r) => r.membershipId)).toEqual([other.anna.membershipId]);
+  });
+});
