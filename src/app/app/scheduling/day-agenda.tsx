@@ -182,7 +182,9 @@ export function DayAgenda({
         startMin,
         // Same floor the dispatch grid applies: a 15-minute job still gets
         // one full slot so it's readable and tappable.
-        endMin: startMin + Math.max(b.duration_minutes, SLOT_MINUTES),
+        // Stops at midnight: a visit that runs past it used to carry on
+        // below the last hour of the day, into blank space.
+        endMin: Math.min(startMin + Math.max(b.duration_minutes, SLOT_MINUTES), 24 * 60),
       };
     });
     const lanes = layoutLanes(items);
@@ -372,6 +374,7 @@ export function DayAgenda({
                     <div className="truncate text-[10px] leading-tight text-muted-foreground">
                       {formatTimeLabel(pos.startMin)} –{" "}
                       {formatTimeLabel(pos.startMin + b.duration_minutes)}
+                      {pos.startMin + b.duration_minutes > 24 * 60 && " next day"}
                       {assignees.length > 0 ? (
                         <> · {assignees.join(", ")}</>
                       ) : b.staffed ? (

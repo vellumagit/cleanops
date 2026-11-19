@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useReturnTo } from "@/components/return-to-field";
 import { useUrlSelection } from "@/components/use-url-selection";
 import { zonedParts } from "@/lib/wall-clock";
+import { placeAcrossDays } from "@/lib/calendar-placement";
 import { useUrlState } from "@/components/use-url-state";
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import {
@@ -744,9 +745,14 @@ function WeekView({
   //
   // Resolved once per event rather than per cell: the old filter ran date
   // math for all 168 cells against every event.
+  //
+  // A visit that runs past midnight is placed twice: the part before midnight
+  // on its own day, the rest at the top of the next (lib/calendar-placement).
   const placed = useMemo(
     () =>
-      events.map((ev) => ({ ev, ...zonedParts(new Date(ev.start), tz) })),
+      events.flatMap((ev) =>
+        placeAcrossDays(new Date(ev.start), new Date(ev.end), tz).map((part) => ({ ev, ...part })),
+      ),
     [events, tz],
   );
 
@@ -841,22 +847,19 @@ function WeekView({
                     <span className="pointer-events-none absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                       <Plus className="h-3.5 w-3.5 text-muted-foreground/50" />
                     </span>
-                    {cellEvents.map(({ ev, minute }) => {
-                      const evStart = new Date(ev.start);
-                      const evEnd = new Date(ev.end);
-                      const duration = Math.max(
-                        differenceInMinutes(evEnd, evStart),
-                        30,
-                      );
+                    {cellEvents.map(({ ev, minute, minutes, part }) => {
+                      // This day's share of the visit. A split block is
+                      // never padded past midnight.
+                      const duration = part === "whole" ? Math.max(minutes, 30) : minutes;
                       // Org-zone minute, same reason as the hour above. A
                       // half-hour zone (India, Newfoundland) made even this
                       // disagree with the caption.
                       const topOffset = (minute / 60) * ROW_PX;
-                      const height = Math.max((duration / 60) * ROW_PX, 20);
+                      const height = Math.max((duration / 60) * ROW_PX, part === "whole" ? 20 : 14);
 
                       return (
                         <button
-                          key={ev.id}
+                          key={`${ev.id}:${part}`}
                           onClick={(e) => {
                             e.stopPropagation();
                             onSelectEvent(ev);
@@ -871,10 +874,18 @@ function WeekView({
                             height: `${Math.min(height, ROW_PX * 4)}px`,
                             backgroundColor: ev.color,
                           }}
-                          title={ev.title}
+                          title={
+                            part === "whole"
+                              ? ev.title
+                              : `${ev.title} · ${fmtTimeInTz(ev.start, tz, "h:mm a")} to ${fmtTimeInTz(ev.end, tz, "h:mm a")} the next day`
+                          }
                         >
                           <span className="font-medium block truncate">
-                            {fmtTimeInTz(ev.start, tz, "h:mm")}
+                            {part === "end"
+                              ? `until ${fmtTimeInTz(ev.end, tz, "h:mm")}`
+                              : part === "start"
+                                ? `${fmtTimeInTz(ev.start, tz, "h:mm")} →`
+                                : fmtTimeInTz(ev.start, tz, "h:mm")}
                           </span>
                           <span className="block truncate opacity-90">
                             {ev.type === "google_calendar"
@@ -923,10 +934,15 @@ function DayView({
   // Toronto. The day bounds were wrong too — a late-evening job could fall on
   // the wrong date entirely for a viewer behind the org.
   const dayYmd = squareYmd(currentDate);
+  //
+  // A visit that began last night and runs past midnight shows here too, at
+  // the top of the day, for the part that falls on this date.
   const placed = useMemo(
     () =>
       events
-        .map((ev) => ({ ev, ...zonedParts(new Date(ev.start), tz) }))
+        .flatMap((ev) =>
+          placeAcrossDays(new Date(ev.start), new Date(ev.end), tz).map((part) => ({ ev, ...part })),
+        )
         .filter((p) => p.ymd === dayYmd),
     [events, tz, dayYmd],
   );
@@ -1009,19 +1025,14 @@ function DayView({
                   <span className="pointer-events-none absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                     <Plus className="h-3.5 w-3.5 text-muted-foreground/50" />
                   </span>
-                  {cellEvents.map(({ ev, minute }) => {
-                    const evStart = new Date(ev.start);
-                    const evEnd = new Date(ev.end);
-                    const duration = Math.max(
-                      differenceInMinutes(evEnd, evStart),
-                      30,
-                    );
+                  {cellEvents.map(({ ev, minute, minutes, part }) => {
+                    const duration = part === "whole" ? Math.max(minutes, 30) : minutes;
                     const topOffset = (minute / 60) * ROW_PX;
-                    const height = Math.max((duration / 60) * ROW_PX, 24);
+                    const height = Math.max((duration / 60) * ROW_PX, part === "whole" ? 24 : 16);
 
                     return (
                       <button
-                        key={ev.id}
+                        key={`${ev.id}:${part}`}
                         onClick={(e) => {
                           e.stopPropagation();
                           onSelectEvent(ev);
@@ -1038,10 +1049,13 @@ function DayView({
                         }}
                       >
                         <span className="font-semibold">
+                          {part === "end" && "From yesterday, "}
                           {fmtTimeInTz(ev.start, tz, "h:mm a")}
                           {(ev.type === "booking" ||
-                            ev.type === "google_calendar") &&
+                            ev.type === "google_calendar" ||
+                            part !== "whole") &&
                             ` – ${fmtTimeInTz(ev.end, tz, "h:mm a")}`}
+                          {part === "start" && " next day"}
                         </span>
                         <span className="ml-2 opacity-90">{ev.title}</span>
                       </button>

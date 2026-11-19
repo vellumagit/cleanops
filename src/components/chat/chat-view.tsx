@@ -21,6 +21,7 @@ import { cn } from "@/lib/utils";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { shrinkPhoto } from "@/lib/shrink-photo";
 import { useVisibleHeight } from "@/components/use-visible-height";
+import { mergeServerMessages } from "@/lib/chat-merge";
 import {
   CHAT_MEDIA_BUCKET,
   CHAT_PHOTO_MAX_BYTES,
@@ -211,22 +212,57 @@ export function ChatView({
   const resolveName = (m: UiMessage) =>
     m.sender_name ?? (dmOtherName || "Teammate");
 
-  // Reset to server state whenever the active thread changes. Photos picked
-  // for the old thread don't follow: their upload paths belong to it.
+  // Reset to server state when the active THREAD changes. Photos picked for
+  // the old thread don't follow: their upload paths belong to it.
+  //
+  // Not on every new `initialMessages`. Sending a message revalidates this
+  // page, so the server hands down a fresh list after each send; resetting
+  // to it rebuilt the whole conversation (every photo reloaded and flashed),
+  // dropped a second message still on its way, and threw away photos already
+  // picked for the next one. The same thread only ever GAINS messages here.
+  const shownThread = useRef<string | null>(null);
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setMessages(initialMessages);
-    setPending((prev) => {
-      prev.forEach((p) => URL.revokeObjectURL(p.previewUrl));
-      return [];
-    });
+    if (shownThread.current !== activeThreadId) {
+      shownThread.current = activeThreadId;
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setMessages(initialMessages);
+      setPending((prev) => {
+        prev.forEach((p) => URL.revokeObjectURL(p.previewUrl));
+        return [];
+      });
+      return;
+    }
+    setMessages((prev) => mergeServerMessages(prev, initialMessages));
   }, [initialMessages, activeThreadId]);
 
   // Keep pinned to the newest message.
+  const atBottom = useRef(true);
   useEffect(() => {
     const el = scrollerRef.current;
     if (el) el.scrollTop = el.scrollHeight;
+    atBottom.current = true;
   }, [messages]);
+
+  // Stay on the newest message when the list itself changes size: the
+  // on-screen keyboard opening takes half its height, which used to leave
+  // the last few messages hidden under the message box. Only when the
+  // reader was already at the bottom; someone reading back is left alone.
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const onScroll = () => {
+      atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+    };
+    const ro = new ResizeObserver(() => {
+      if (atBottom.current) el.scrollTop = el.scrollHeight;
+    });
+    el.addEventListener("scroll", onScroll, { passive: true });
+    ro.observe(el);
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      ro.disconnect();
+    };
+  }, [activeThreadId]);
 
   // Mark the open thread read (advances the unread watermark).
   useEffect(() => {
@@ -1000,14 +1036,11 @@ export function ChatView({
                       handleSend(e);
                     }
                   }}
-                  onFocus={(e) => {
-                    setTimeout(() => {
-                      e.target.scrollIntoView({
-                        behavior: "smooth",
-                        block: "center",
-                      });
-                    }, 300);
-                  }}
+                  // No scrollIntoView on focus. The pane is already sized to
+                  // what the keyboard leaves visible (useVisibleHeight), so
+                  // the box sits on the keyboard by itself; scrolling it to
+                  // the middle as well slid the page up and the height hook
+                  // slid it back, which showed as a jump on every tap.
                   placeholder={pending.length > 0 ? "Add a note (optional)…" : "Message…"}
                   rows={1}
                   className="flex max-h-32 min-h-10 flex-1 resize-none rounded-2xl border border-input bg-background px-4 py-2.5 text-base shadow-xs outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"

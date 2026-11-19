@@ -82,7 +82,17 @@ async function main() {
     durationMinutes: 120,
     status: "confirmed",
   });
-  for (const id of [today, done, next]) {
+  // Three days ago, 11:30 PM for two hours: a visit that runs past midnight,
+  // so the calendars have one to draw across two days. Half past, so it still
+  // crosses midnight on a machine whose time zone rules are an hour out.
+  const late = await addBooking(sql, org, client, { scheduledAt: ago(60 * 72), durationMinutes: 120, status: "completed" });
+  await sql(
+    `update public.bookings
+        set scheduled_at = (((now() at time zone 'America/Edmonton')::date - 3) + time '23:30') at time zone 'America/Edmonton'
+      where id = $1`,
+    [late],
+  );
+  for (const id of [today, done, next, late]) {
     await sql("update public.bookings set total_cents = 14000, address = '12 Test Street' where id = $1", [id]);
   }
   const crew = (job: string, who: { membershipId: string }, primary: boolean) =>
@@ -95,6 +105,8 @@ async function main() {
   await crew(today, bea, false);
   await crew(done, bea, true);
   await crew(next, anna, true);
+  await crew(late, bea, true);
+  await sql("update public.bookings set assigned_to = $2 where id = $1", [late, bea.membershipId]);
   await sql("update public.bookings set assigned_to = $2 where id = $1", [today, anna.membershipId]);
   await sql("update public.bookings set assigned_to = $2 where id = $1", [done, bea.membershipId]);
   await sql("update public.bookings set assigned_to = $2 where id = $1", [next, anna.membershipId]);
@@ -148,6 +160,16 @@ async function main() {
     `insert into public.bonuses (organization_id, employee_id, period_start, period_end, amount_cents, reason, bonus_type, status)
      values ($1, $2, (now() - interval '30 days')::date, now()::date, 12345, 'Spring referral bonus', 'manual', 'pending')`,
     [org, anna.membershipId],
+  );
+
+  // Two files on the client's record, one with a long name, so the Documents
+  // card has tiles to lay out. There is no stored file behind them here, so
+  // they show without a picture or an Open button.
+  await sql(
+    `insert into public.client_documents (organization_id, client_id, category, label, file_name, file_path, mime_type, size_bytes)
+     values ($1, $2, 'signed_invoice', 'INV-2026-0142 signed by Jordan at the kitchen table 14 Nov.pdf', 'inv-0142-signed.pdf', $3, 'application/pdf', 184320),
+            ($1, $2, 'other', 'IMG_20261114_093015_front_door_keypad.jpg', 'IMG_20261114_093015.jpg', $4, 'image/jpeg', 2411724)`,
+    [org, client, `${org}/${client}/seed-signed.pdf`, `${org}/${client}/seed-door.jpg`],
   );
 
   // An integration that stopped working, so Settings -> Integrations has

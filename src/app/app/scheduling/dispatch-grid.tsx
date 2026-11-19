@@ -38,6 +38,7 @@ import type { BookingWarning } from "@/app/app/bookings/booking-warnings";
 import { WarningDot, WarningProvider } from "./warning-dot";
 import { dragIdFor, readDragInfo } from "./drag-crew";
 import { dateKey, formatHourLabel, minutesOfDay, pad2 } from "./time-axis";
+import { minutesBeforeMidnight } from "@/lib/calendar-placement";
 
 /**
  * Dispatch view: single-day, time-of-day axis, employee columns.
@@ -576,10 +577,17 @@ function EmployeeColumn({
         // expected "this is a 9am job" to always show as 9am.
         const startMin = minutesOfDay(b.scheduled_at, tz);
         const top = (startMin / SLOT_MINUTES) * SLOT_PX;
-        const height = Math.max(
-          (b.duration_minutes / SLOT_MINUTES) * SLOT_PX,
-          SLOT_PX, // at least 1 slot so short jobs are clickable
-        );
+        // A visit that runs past midnight stops at the bottom of the day
+        // and says when it ends. It used to carry on into blank space below
+        // the last hour.
+        const onThisDay = minutesBeforeMidnight(startMin, b.duration_minutes);
+        const runsPastMidnight = onThisDay < b.duration_minutes;
+        const height = runsPastMidnight
+          ? (onThisDay / SLOT_MINUTES) * SLOT_PX
+          : Math.max(
+              (b.duration_minutes / SLOT_MINUTES) * SLOT_PX,
+              SLOT_PX, // at least 1 slot so short jobs are clickable
+            );
         return (
           <PositionedBooking
             key={b.id}
@@ -593,6 +601,7 @@ function EmployeeColumn({
             hasConflict={conflictIds.has(b.id)}
             onQuickView={onQuickView}
             splitCue={computeSplitCue(b, employee.id, nameById)}
+            endsNextDay={runsPastMidnight}
           />
         );
       })}
@@ -661,6 +670,7 @@ function PositionedBooking({
   hasConflict,
   onQuickView,
   splitCue,
+  endsNextDay = false,
   fromMember,
 }: {
   /** Whose column this copy of the card sits in. */
@@ -678,6 +688,8 @@ function PositionedBooking({
   onQuickView: (id: string) => void;
   /** Split-shift sequence cue for this lane's employee, or null. */
   splitCue?: SplitCue | null;
+  /** The visit runs past midnight; the card stops at the bottom of the day. */
+  endsNextDay?: boolean;
 }) {
   // One id per copy of the card, carrying its column — see drag-crew.ts.
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
@@ -737,6 +749,10 @@ function PositionedBooking({
               timeZone: tz,
             })}{" "}
             · {booking.duration_minutes}m
+            {endsNextDay &&
+              ` · ends ${new Date(
+                new Date(booking.scheduled_at).getTime() + booking.duration_minutes * 60_000,
+              ).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: tz })} next day`}
           </div>
           {height >= SLOT_PX * 2 && (
             <div className="mt-1 flex items-center gap-1 flex-wrap">
