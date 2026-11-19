@@ -208,7 +208,7 @@ export default async function PayPeriodPage({
       ? (admin
           .from("payroll_items" as never)
           .select(
-            "employee_name, hours_worked, regular_pay_cents, bonus_cents, pto_pay_cents, total_cents",
+            "employee_name, hours_worked, regular_pay_cents, bonus_cents, adjustment_cents, pto_pay_cents, total_cents",
           )
           .eq("payroll_run_id" as never, payrollRun.id as never)
           .order("total_cents" as never, {
@@ -219,6 +219,7 @@ export default async function PayPeriodPage({
             hours_worked: number;
             regular_pay_cents: number;
             bonus_cents: number;
+            adjustment_cents: number;
             pto_pay_cents: number;
             total_cents: number;
           }> | null;
@@ -410,6 +411,12 @@ export default async function PayPeriodPage({
                     {i.bonus_cents > 0 && (
                       <span className="tabular-nums">
                         +{formatCurrencyCents(i.bonus_cents, currency)} bonus
+                      </span>
+                    )}
+                    {(i.adjustment_cents ?? 0) !== 0 && (
+                      <span className="tabular-nums">
+                        {i.adjustment_cents < 0 ? "−" : "+"}
+                        {formatCurrencyCents(Math.abs(i.adjustment_cents), currency)} adjustment
                       </span>
                     )}
                     {i.pto_pay_cents > 0 && (

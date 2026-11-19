@@ -268,6 +268,42 @@ export async function loadPayInvoice(kind: PayInvoiceKind, itemId: string): Prom
     reconcile(bonusLines, item.bonus_cents);
     lines.push(...bonusLines);
 
+    // Corrections to earlier pay, each with the note the office wrote.
+    // Read on their own so a statement still opens on a database that
+    // doesn't have the table yet.
+    try {
+      const { data: adjustments } = (await db
+        .from("pay_adjustments" as never)
+        .select("amount_cents, reason, corrects_period_start, corrects_period_end" as never)
+        .eq("organization_id" as never, item.organization_id as never)
+        .eq("employee_id" as never, item.employee_id as never)
+        .eq("payroll_run_id" as never, item.run.id as never)
+        .order("created_at" as never, { ascending: true } as never)) as unknown as {
+        data: Array<{
+          amount_cents: number;
+          reason: string;
+          corrects_period_start: string | null;
+          corrects_period_end: string | null;
+        }> | null;
+      };
+      for (const a of adjustments ?? []) {
+        const period =
+          a.corrects_period_start && a.corrects_period_end
+            ? ` (for ${dateOnlyLabel(a.corrects_period_start)} to ${dateOnlyLabel(a.corrects_period_end)})`
+            : "";
+        lines.push({
+          date: "",
+          description: `Pay adjustment${period}`,
+          detail: a.reason,
+          hours: null,
+          rateCents: null,
+          amountCents: a.amount_cents ?? 0,
+        });
+      }
+    } catch (err) {
+      console.error("[pay-invoice] adjustments read failed:", err);
+    }
+
     if (item.pto_pay_cents !== 0 || Number(item.pto_hours) !== 0) {
       const { data: pto } = (await db
         .from("pto_requests")

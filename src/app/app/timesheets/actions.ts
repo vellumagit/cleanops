@@ -57,11 +57,21 @@ async function lockedEntryResult(
   if (entry.payroll_run_id) {
     const { data: run } = (await supabase
       .from("payroll_runs")
-      .select("period_start, period_end")
+      .select("period_start, period_end, status")
       .eq("id", entry.payroll_run_id)
       .maybeSingle()) as unknown as {
-      data: { period_start: string; period_end: string } | null;
+      data: { period_start: string; period_end: string; status: string } | null;
     };
+    // A PAID period can't be deleted, so "delete that pay period to unlock
+    // it" was advice the app then refused to follow. Say what is true and
+    // point at the way that exists: an adjustment on the next period.
+    if (run?.status === "paid") {
+      return {
+        ok: false,
+        error: `This entry was paid in the ${fmt(run.period_start)} – ${fmt(run.period_end)} pay period, which is locked: paid hours can't be changed. To put the money right, add a pay adjustment (plus or minus). It goes on the next pay period.`,
+        fix: { href: "/app/payroll#adjustments", label: "Add a pay adjustment" },
+      };
+    }
     return {
       ok: false,
       error: messages.payroll,

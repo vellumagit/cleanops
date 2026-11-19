@@ -14,6 +14,8 @@ import { formatCurrencyCents, formatDate } from "@/lib/format";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { paySystemFor } from "@/lib/engagement";
 import { StartRunCard } from "./start-run-card";
+import { PayAdjustmentsCard, type WaitingAdjustment } from "./pay-adjustments-card";
+import { memberDisplayName } from "@/lib/member-display";
 import { PreparePeriodButton } from "./prepare-period-button";
 import { CalendarClock } from "lucide-react";
 import { PAY_SCHEDULE_LABELS } from "@/lib/pay-schedule";
@@ -409,6 +411,52 @@ export default async function PayrollPage() {
         : `Not counted above: ~${formatCurrencyCents(olderCents, currency)} of unpaid employee time from before this period — use “Different dates” to reach back.`
       : null;
 
+  // Pay adjustments: who can be given one, and the ones still waiting for a
+  // pay period. Read on their own so the page opens on a database that
+  // doesn't have the table yet.
+  const { data: payEmployees } = (await admin
+    .from("memberships")
+    .select("id, display_name, profile:profiles ( full_name )")
+    .eq("organization_id", membership.organization_id)
+    .eq("status", "active")
+    .eq("engagement" as never, "employee" as never)) as unknown as {
+    data: Array<{ id: string; display_name: string | null; profile: { full_name: string | null } | null }> | null;
+  };
+  const adjustmentPeople = (payEmployees ?? [])
+    .map((m) => ({ id: m.id, name: memberDisplayName(m) }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  let waitingAdjustments: WaitingAdjustment[] = [];
+  try {
+    const { data: rows } = (await admin
+      .from("pay_adjustments" as never)
+      .select("id, employee_id, amount_cents, reason, corrects_period_start, corrects_period_end")
+      .eq("organization_id" as never, membership.organization_id as never)
+      .is("payroll_run_id" as never, null as never)
+      .order("created_at" as never, { ascending: true } as never)) as unknown as {
+      data: Array<{
+        id: string;
+        employee_id: string;
+        amount_cents: number;
+        reason: string;
+        corrects_period_start: string | null;
+        corrects_period_end: string | null;
+      }> | null;
+    };
+    const nameOf = new Map(adjustmentPeople.map((p) => [p.id, p.name]));
+    waitingAdjustments = (rows ?? []).map((r) => ({
+      id: r.id,
+      employeeName: nameOf.get(r.employee_id) ?? "Someone no longer active",
+      amountCents: r.amount_cents,
+      reason: r.reason,
+      corrects:
+        r.corrects_period_start && r.corrects_period_end
+          ? `${shortDate(r.corrects_period_start)} → ${shortDate(r.corrects_period_end)}`
+          : null,
+    }));
+  } catch (err) {
+    console.error("[payroll] could not read pay adjustments:", err);
+  }
+
   // Tips: money the business is holding that belongs to a specific person,
   // settled outside a payroll run — same shape of problem as contractor pay.
   const tipsOwed = await getTipsOwed(membership.organization_id);
@@ -690,6 +738,8 @@ export default async function PayrollPage() {
             </ul>
           </div>
         )}
+
+        <PayAdjustmentsCard employees={adjustmentPeople} waiting={waitingAdjustments} currency={currency} />
 
         {/* ── Pay periods: one table, both systems ─────────────────────
             Each row is a window; Employees and Contractors are columns, so

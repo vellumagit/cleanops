@@ -75,6 +75,7 @@ const TENANT_TABLES = [
   "notifications",
   "packages",
   "pay_addons",
+  "pay_adjustments",
   "pay_rate_changes",
   "payroll_items",
   "payroll_runs",
@@ -355,6 +356,7 @@ export const PURGE_TABLE_ORDER: readonly string[] = [
   "time_entries",
   // Pay changes and add-ons (reference memberships)
   "pay_addons",
+  "pay_adjustments",
   "pay_rate_changes",
   // Payroll (items reference runs)
   "payroll_items",

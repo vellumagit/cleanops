@@ -60,7 +60,7 @@ export default async function PayrollRunDetailPage({
   const { data: itemsRaw } = (await admin
     .from("payroll_items" as never)
     .select(
-      "id, employee_id, employee_name, hours_worked, regular_pay_cents, bonus_cents, pto_hours, pto_pay_cents, total_cents",
+      "id, employee_id, employee_name, hours_worked, regular_pay_cents, bonus_cents, adjustment_cents, pto_hours, pto_pay_cents, total_cents",
     )
     .eq("payroll_run_id" as never, id as never)
     .order(
@@ -74,6 +74,7 @@ export default async function PayrollRunDetailPage({
       hours_worked: number;
       regular_pay_cents: number;
       bonus_cents: number;
+      adjustment_cents: number;
       pto_hours: number;
       pto_pay_cents: number;
       total_cents: number;
@@ -82,6 +83,8 @@ export default async function PayrollRunDetailPage({
 
   const run = runRaw;
   const items = itemsRaw ?? [];
+  // The column only appears on a run that carries a correction.
+  const hasAdjustments = items.some((i) => (i.adjustment_cents ?? 0) !== 0);
 
   const totals = items.reduce(
     (acc, i) => ({
@@ -160,6 +163,7 @@ export default async function PayrollRunDetailPage({
               <th className="px-4 py-3 text-right font-medium">Regular</th>
               <th className="px-4 py-3 text-right font-medium">Bonus</th>
               <th className="px-4 py-3 text-right font-medium">PTO</th>
+              {hasAdjustments && <th className="px-4 py-3 text-right font-medium">Adjustment</th>}
               <th className="px-4 py-3 text-right font-medium">Total</th>
               <th className="px-4 py-3 text-right font-medium">Invoice</th>
             </tr>
@@ -180,6 +184,19 @@ export default async function PayrollRunDetailPage({
                 <td className="px-4 py-3 text-right font-mono tabular-nums text-muted-foreground">
                   {formatCurrencyCents(i.pto_pay_cents, currency)}
                 </td>
+                {hasAdjustments && (
+                  <td
+                    className={
+                      i.adjustment_cents < 0
+                        ? "px-4 py-3 text-right font-mono tabular-nums text-destructive"
+                        : "px-4 py-3 text-right font-mono tabular-nums text-muted-foreground"
+                    }
+                  >
+                    {i.adjustment_cents === 0
+                      ? "—"
+                      : `${i.adjustment_cents < 0 ? "−" : "+"}${formatCurrencyCents(Math.abs(i.adjustment_cents), currency)}`}
+                  </td>
+                )}
                 <td className="px-4 py-3 text-right font-mono font-semibold tabular-nums">
                   {formatCurrencyCents(i.total_cents, currency)}
                 </td>

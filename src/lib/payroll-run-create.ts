@@ -175,6 +175,18 @@ async function createPayrollRunForOrgImpl(opts: CreateRunOpts): Promise<CreateRu
       }>,
     ]);
 
+  // Pay adjustments waiting for a pay period: corrections to pay already
+  // paid, plus or minus (migration 20261119020000). Not window-scoped: an
+  // adjustment has no date of its own, it goes on whichever period is
+  // prepared next.
+  const { data: adjustments } = (await admin
+    .from("pay_adjustments" as never)
+    .select("id, employee_id, amount_cents")
+    .eq("organization_id" as never, organizationId as never)
+    .is("payroll_run_id" as never, null as never)) as unknown as {
+    data: Array<{ id: string; employee_id: string; amount_cents: number }> | null;
+  };
+
   if ((entries?.length ?? 0) >= ENTRY_CAP) {
     return {
       ok: false,
@@ -188,6 +200,8 @@ async function createPayrollRunForOrgImpl(opts: CreateRunOpts): Promise<CreateRu
     minutes: number;
     regularCents: number;
     bonusCents: number;
+    /** Signed: corrections to earlier pay. */
+    adjustmentCents: number;
     ptoHours: number;
     ptoCents: number;
     /** null = nobody ever set one. Not the same as zero: see lib/pay-rate.ts. */
@@ -198,6 +212,7 @@ async function createPayrollRunForOrgImpl(opts: CreateRunOpts): Promise<CreateRu
   const countedEntries: Array<{ id: string; employeeId: string }> = [];
   const countedBonuses: Array<{ id: string; employeeId: string }> = [];
   const countedPto: Array<{ id: string; employeeId: string }> = [];
+  const countedAdjustments: Array<{ id: string; employeeId: string }> = [];
 
   for (const emp of employees ?? []) {
     buckets.set(emp.id, {
@@ -206,6 +221,7 @@ async function createPayrollRunForOrgImpl(opts: CreateRunOpts): Promise<CreateRu
       minutes: 0,
       regularCents: 0,
       bonusCents: 0,
+      adjustmentCents: 0,
       ptoHours: 0,
       ptoCents: 0,
       payRateCents: emp.pay_rate_cents ?? null,
@@ -266,6 +282,7 @@ async function createPayrollRunForOrgImpl(opts: CreateRunOpts): Promise<CreateRu
           minutes: 0,
           regularCents: 0,
           bonusCents: 0,
+          adjustmentCents: 0,
           ptoHours: 0,
           ptoCents: 0,
           payRateCents: m.pay_rate_cents ?? null,
@@ -337,13 +354,36 @@ async function createPayrollRunForOrgImpl(opts: CreateRunOpts): Promise<CreateRu
     bucket.ptoCents += Math.round(h * bucket.payRateCents);
   }
 
+  // Adjustments go to active employees only, like bonuses. One for someone
+  // who isn't on this run (deactivated, or paid as a contractor) stays
+  // waiting rather than being dropped.
+  for (const a of adjustments ?? []) {
+    if (hoursOnly.has(a.employee_id)) continue;
+    const bucket = buckets.get(a.employee_id);
+    if (!bucket) continue;
+    countedAdjustments.push({ id: a.id, employeeId: a.employee_id });
+    bucket.adjustmentCents += a.amount_cents ?? 0;
+  }
+
   const items = [...buckets.entries()]
     .map(([employeeId, b]) => ({
       employeeId,
       ...b,
-      totalCents: b.regularCents + b.bonusCents + b.ptoCents,
+      totalCents: b.regularCents + b.bonusCents + b.ptoCents + b.adjustmentCents,
     }))
-    .filter((i) => i.minutes > 0 || i.bonusCents > 0 || i.ptoCents > 0);
+    .filter((i) => i.minutes > 0 || i.bonusCents > 0 || i.ptoCents > 0 || i.adjustmentCents !== 0);
+
+  // Taking back more than a person earned this period would be a pay line
+  // below zero. Refuse and say whose; the office lowers the adjustment (or
+  // splits it over two periods) and prepares again.
+  const underwater = items.filter((i) => i.totalCents < 0);
+  if (underwater.length > 0) {
+    const names = underwater.map((i) => i.employeeName).join(" and ");
+    return {
+      ok: false,
+      error: `The pay adjustments for ${names} take back more than they earned this period, which would leave their pay below zero. On Payroll, under Pay adjustments, make the amount smaller or remove it, then prepare again.`,
+    };
+  }
 
   const unpricedNote = unpricedSentence(unpriced);
   if (items.length === 0) {
@@ -393,6 +433,7 @@ async function createPayrollRunForOrgImpl(opts: CreateRunOpts): Promise<CreateRu
     hours_worked: Math.round((i.minutes / 60) * 100) / 100,
     regular_pay_cents: i.regularCents,
     bonus_cents: i.bonusCents,
+    adjustment_cents: i.adjustmentCents,
     pto_hours: i.ptoHours,
     pto_pay_cents: i.ptoCents,
     total_cents: i.totalCents,
@@ -421,9 +462,22 @@ async function createPayrollRunForOrgImpl(opts: CreateRunOpts): Promise<CreateRu
     .filter((c) => included.has(c.employeeId))
     .map((c) => c.id);
 
+  const stampAdjustmentIds = countedAdjustments
+    .filter((c) => included.has(c.employeeId))
+    .map((c) => c.id);
+
   const expectedClaims =
-    stampEntryIds.length + stampBonusIds.length + stampPtoIds.length;
+    stampEntryIds.length + stampBonusIds.length + stampPtoIds.length + stampAdjustmentIds.length;
   let claims = 0;
+  if (stampAdjustmentIds.length > 0) {
+    const { data: got } = (await admin
+      .from("pay_adjustments" as never)
+      .update({ payroll_run_id: run.id } as never)
+      .is("payroll_run_id" as never, null as never)
+      .in("id" as never, stampAdjustmentIds as never)
+      .select("id")) as unknown as { data: Array<{ id: string }> | null };
+    claims += got?.length ?? 0;
+  }
   if (stampEntryIds.length > 0) {
     const { data: got } = (await admin
       .from("time_entries")
@@ -466,6 +520,10 @@ async function createPayrollRunForOrgImpl(opts: CreateRunOpts): Promise<CreateRu
       .eq("payroll_run_id", run.id) as unknown as Promise<unknown>);
     await (admin
       .from("pto_requests")
+      .update({ payroll_run_id: null } as never)
+      .eq("payroll_run_id" as never, run.id as never) as unknown as Promise<unknown>);
+    await (admin
+      .from("pay_adjustments" as never)
       .update({ payroll_run_id: null } as never)
       .eq("payroll_run_id" as never, run.id as never) as unknown as Promise<unknown>);
     await admin.from("payroll_runs").delete().eq("id", run.id);

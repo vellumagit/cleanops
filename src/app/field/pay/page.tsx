@@ -169,7 +169,7 @@ export default async function FieldPayPage() {
     (admin
       .from("payroll_items")
       .select(
-        "id, hours_worked, regular_pay_cents, bonus_cents, pto_pay_cents, total_cents, run:payroll_runs!inner ( period_start, period_end, status, paid_at )",
+        "id, hours_worked, regular_pay_cents, bonus_cents, adjustment_cents, pto_pay_cents, total_cents, run:payroll_runs!inner ( period_start, period_end, status, paid_at )",
       )
       .eq("employee_id", membership.id)
       .eq("organization_id", membership.organization_id)
@@ -183,6 +183,7 @@ export default async function FieldPayPage() {
         hours_worked: number;
         regular_pay_cents: number;
         bonus_cents: number;
+        adjustment_cents: number;
         pto_pay_cents: number;
         total_cents: number;
         run: {
@@ -232,6 +233,7 @@ export default async function FieldPayPage() {
     hours: number;
     totalCents: number;
     extraCents: number; // bonuses + PTO on top of hourly (employee runs)
+    adjustmentCents: number; // a correction to earlier pay, plus or minus
     addonsCents: number; // travel, reimbursements (contractor statements)
     paid: boolean;
     paidAt: string | null;
@@ -247,6 +249,7 @@ export default async function FieldPayPage() {
         hours: Number(i.hours_worked),
         totalCents: i.total_cents,
         extraCents: i.bonus_cents + i.pto_pay_cents,
+        adjustmentCents: i.adjustment_cents ?? 0,
         addonsCents: 0,
         paid: i.run!.status === "paid",
         paidAt: i.run!.paid_at,
@@ -261,6 +264,7 @@ export default async function FieldPayPage() {
         hours: i.minutes / 60,
         totalCents: i.total_cents,
         extraCents: 0,
+        adjustmentCents: 0,
         addonsCents: i.addons_cents ?? 0,
         paid: i.run!.status === "paid",
         paidAt: i.run!.paid_at,
@@ -400,6 +404,9 @@ export default async function FieldPayPage() {
                       {`${s.hours.toFixed(1)}h`}
                       {s.extraCents > 0
                         ? ` · includes ${formatCurrencyCents(s.extraCents, currency)} bonus/PTO`
+                        : ""}
+                      {s.adjustmentCents !== 0
+                        ? ` · ${s.adjustmentCents < 0 ? "less" : "includes"} ${formatCurrencyCents(Math.abs(s.adjustmentCents), currency)} adjustment to earlier pay`
                         : ""}
                       {s.addonsCents > 0
                         ? ` · includes ${formatCurrencyCents(s.addonsCents, currency)} travel/reimbursements`
