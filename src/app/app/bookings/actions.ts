@@ -4027,6 +4027,8 @@ export async function generateInvoiceFromBookingAction(
 export type AssignCrewState = {
   error?: string;
   ok?: boolean;
+  /** Set with the "they're off that day" question; posted back as the yes. */
+  confirmTimeOff?: string;
 };
 
 export async function assignBookingCrewAction(
@@ -4104,6 +4106,28 @@ export async function assignBookingCrewAction(
   const previousAssigneeIds = new Set(
     (previousAssignees ?? []).map((assignee) => assignee.membership_id),
   );
+
+  // Someone newly put on this visit is off that day: ask once, as the
+  // booking form does (time-off-check.ts). This picker is where a visit was
+  // put on a cleaner's approved day off with nothing said (hand test, O9).
+  {
+    const tz = await getOrgTimezone(membership.organization_id);
+    const newcomers = [primaryId, ...additionalIds].filter(
+      (m): m is string => Boolean(m) && !previousAssigneeIds.has(m as string) && m !== existing.assigned_to,
+    );
+    const away = await awayCrewQuestion({
+      organizationId: membership.organization_id,
+      crewIds: newcomers,
+      ymd: wallClockForInstant(existing.scheduled_at, tz).slice(0, 10),
+      confirmed: String(formData.get("confirm_time_off") ?? ""),
+    });
+    if (away) {
+      return {
+        error: away.message.replace("Press Save again", "Press the button again"),
+        confirmTimeOff: away.key,
+      };
+    }
+  }
 
   const updateScope = String(formData.get("update_scope") ?? "this_only");
   const seriesId = String(formData.get("series_id") ?? "").trim();

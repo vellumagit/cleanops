@@ -15,6 +15,9 @@ import { sendOrgEmail } from "@/lib/email";
 type Result =
   | {
       ok: true;
+      /** The invite link, returned once so the office can copy it. Only the
+       *  invite action sets it; it is stored scrambled and can't be read back. */
+      claimUrl?: string;
     }
   | {
       ok: false;
@@ -125,8 +128,9 @@ This link expires in ${INVITE_TTL_DAYS} days.`,
   });
 
   revalidatePath(`/app/clients/${clientId}/edit`);
+  revalidatePath(`/app/clients/${clientId}`);
   revalidatePath("/app/clients");
-  return { ok: true };
+  return { ok: true, claimUrl };
 }
 
 /**

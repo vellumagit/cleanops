@@ -480,6 +480,34 @@ describe.skipIf(!hasPostgrest)("inventory", () => {
     ).toEqual([{ min_role: "manager", recipient_membership_id: null }]);
   });
 
+  it("low stock gives whoever looks after the item a task and tells them, once", async () => {
+    const c = await company();
+    await as(c.olha, () => inventory.createInventoryAction({}, invForm({ assigned_to: c.anna.membershipId })));
+    const [made] = await api.sql<{ id: string }>("select id from public.inventory_items where organization_id = $1", [c.org]);
+    const tasks = () =>
+      api.sql<{ title: string; assigned_to: string; notes: string; done: boolean }>(
+        "select title, assigned_to, notes, completed_at is not null as done from public.tasks where organization_id = $1 order by created_at",
+        [c.org],
+      );
+    expect(await tasks(), "10 in stock, level 4: nothing yet").toEqual([]);
+
+    await as(c.olha, () => inventory.updateInventoryAction(made.id, {}, invForm({ quantity: "3", assigned_to: c.anna.membershipId })));
+    expect(await tasks(), api.log()).toEqual([
+      { title: "Restock: Glass cleaner", assigned_to: c.anna.membershipId, notes: "Glass cleaner is down to 3 (low-stock level 4).", done: false },
+    ]);
+    const told = () =>
+      api.sql<{ r: string; href: string }>(
+        "select recipient_membership_id as r, href from public.notifications where organization_id = $1 and title = 'Low stock: a task for you'",
+        [c.org],
+      );
+    expect(await told()).toEqual([{ r: c.anna.membershipId, href: "/field/tasks" }]);
+
+    // Still low, counted down again: no second task, no second notice.
+    await as(c.olha, () => inventory.updateInventoryAction(made.id, {}, invForm({ quantity: "2", assigned_to: c.anna.membershipId })));
+    expect(await tasks()).toHaveLength(1);
+    expect(await told()).toHaveLength(1);
+  });
+
   it("a save that changed no item says so", async () => {
     const c = await company();
     const other = await company("Other Co");

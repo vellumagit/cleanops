@@ -147,6 +147,7 @@ export function AssignCrewDialog({
             value={seriesScheduledAt ?? ""}
           />
 
+          <input type="hidden" name="confirm_time_off" value={state.confirmTimeOff ?? ""} />
           <FormError message={state.error} />
 
           {!confirming ? (

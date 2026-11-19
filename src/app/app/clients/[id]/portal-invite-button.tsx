@@ -6,6 +6,7 @@ import { Mail, CheckCircle2, Clock } from "lucide-react";
 import { toast } from "sonner";
 import { buttonVariants } from "@/components/ui/button";
 import { invitePortalAction } from "../portal-actions";
+import { PortalLinkDialog } from "../portal-link-dialog";
 
 type Props = {
   clientId: string;
@@ -31,6 +32,8 @@ export function PortalInviteButton({
 }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
+  const [link, setLink] = useState<string | null>(null);
+  const linkDialog = <PortalLinkDialog link={link} email={clientEmail} onClose={() => setLink(null)} />;
   // Resolve "now" after mount so the expiry comparison doesn't call Date.now()
   // during render (impure → server/client hydration drift). Until mounted we
   // treat the invite as not-expired, matching the server render.
@@ -63,7 +66,8 @@ export function PortalInviteButton({
         toast.error(res.error);
         return;
       }
-      toast.success("Portal invite sent");
+      if (res.claimUrl) setLink(res.claimUrl);
+      else toast.success("Portal invite sent");
       router.refresh();
     });
   }
@@ -76,6 +80,8 @@ export function PortalInviteButton({
         new Date(portalInviteExpiresAt).getTime() < nowMs,
     );
     return (
+      <>
+      {linkDialog}
       <button
         type="button"
         onClick={invite}
@@ -90,11 +96,14 @@ export function PortalInviteButton({
         <Clock className="h-3.5 w-3.5 text-amber-500" />
         {pending ? "Sending…" : expired ? "Resend invite" : "Invite pending"}
       </button>
+      </>
     );
   }
 
   // No invite yet.
   return (
+    <>
+    {linkDialog}
     <button
       type="button"
       onClick={invite}
@@ -105,5 +114,6 @@ export function PortalInviteButton({
       <Mail className="h-3.5 w-3.5" />
       {pending ? "Sending…" : "Invite to portal"}
     </button>
+    </>
   );
 }

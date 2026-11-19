@@ -134,10 +134,13 @@ describe.skipIf(!hasPostgrest)("portal invite and setting up the login", { timeo
       error: "This client has no email on file. Add one first and try again.",
     });
 
-    expect(await asUser(c.owner.userId, () => invitePortalAction(form({ client_id: client }))), api.log().slice(-300)).toEqual({ ok: true });
+    const invited = (await asUser(c.owner.userId, () => invitePortalAction(form({ client_id: client })))) as { ok: boolean; claimUrl?: string };
+    expect(invited.ok, api.log().slice(-300)).toBe(true);
     const mail = outbox.email.find((e) => e.to === email);
     expect(mail).toBeDefined();
     const token = /\/client\/claim\/([A-Za-z0-9_-]+)/.exec(mail!.text ?? "")![1];
+    // The office is handed the same link the email carries, to copy.
+    expect(invited.claimUrl?.endsWith(`/client/claim/${token}`)).toBe(true);
     const [stored] = await api.sql<{ token: string; days: number }>(
       "select portal_invite_token as token, round(extract(epoch from portal_invite_expires_at - now()) / 86400)::int as days from public.clients where id = $1",
       [client],

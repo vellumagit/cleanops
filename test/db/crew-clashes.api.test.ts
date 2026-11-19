@@ -601,3 +601,37 @@ describe.skipIf(!hasPostgrest)("booking someone on their day off asks first", ()
     expect((again as { errors?: unknown }).errors, JSON.stringify(again)).toBeUndefined();
   });
 });
+
+describe.skipIf(!hasPostgrest)("the quick crew picker asks about a day off too", () => {
+  it("putting someone on a visit on their approved day off asks once, then goes through", async () => {
+    const c = await company();
+    const john = await addMember(api.sql, c.org, "employee", "John");
+    const when = at(40);
+    await api.sql(
+      "insert into public.pto_requests (organization_id, employee_id, start_date, end_date, status) values ($1, $2, $3, $3, 'approved')",
+      [c.org, john.membershipId, when.slice(0, 10)],
+    );
+    const visit = await job(c, "Day Off Client", when, 120, []);
+
+    const press = async (confirm = "") => {
+      request.cookies = api.sessionCookies(c.manager.userId);
+      try {
+        const form = new FormData();
+        form.set("id", visit);
+        form.set("primary_id", john.membershipId);
+        if (confirm) form.set("confirm_time_off", confirm);
+        return await bookings.assignBookingCrewAction({}, form);
+      } finally {
+        await settle();
+      }
+    };
+    const asked = await press();
+    expect(asked.error, api.log()).toContain("is off on");
+    expect(asked.confirmTimeOff).toBe(`${when.slice(0, 10)}:${john.membershipId}`);
+    expect(await crewOf(visit)).toEqual([]);
+
+    const saved = await press(asked.confirmTimeOff);
+    expect(saved.error, api.log()).toBeUndefined();
+    expect(await crewOf(visit)).toEqual([john.membershipId]);
+  });
+});

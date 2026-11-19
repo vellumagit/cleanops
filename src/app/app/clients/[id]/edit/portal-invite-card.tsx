@@ -1,6 +1,7 @@
 "use client";
 
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
+import { PortalLinkDialog } from "../../portal-link-dialog";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { CheckCircle2, Clock, Mail, UserCheck } from "lucide-react";
@@ -34,6 +35,7 @@ export function PortalInviteCard({
 }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
+  const [link, setLink] = useState<string | null>(null);
 
   function invite() {
     if (!clientEmail) {
@@ -48,13 +50,15 @@ export function PortalInviteCard({
         toast.error(res.error);
         return;
       }
-      toast.success("Invite sent");
+      if (res.claimUrl) setLink(res.claimUrl);
+      else toast.success("Invite sent");
       router.refresh();
     });
   }
 
   return (
     <div className="rounded-lg border border-border bg-card p-6">
+      <PortalLinkDialog link={link} email={clientEmail} onClose={() => setLink(null)} />
       <div className="mb-3 flex items-center gap-2">
         <UserCheck className="h-4 w-4 text-muted-foreground" />
         <h2 className="text-sm font-semibold">Client portal</h2>
@@ -72,7 +76,7 @@ export function PortalInviteCard({
               {portalAcceptedAt
                 ? new Date(portalAcceptedAt).toLocaleDateString()
                 : "—"}
-              . They can log in at /client/login with {clientEmail ?? "their email"}.
+              . They sign in at sollos3.com/client/login with {clientEmail ?? "their email"}.
             </p>
           </div>
         </div>
@@ -104,16 +108,17 @@ export function PortalInviteCard({
               className="mt-2"
             >
               <Mail className="h-3.5 w-3.5" />
-              {pending ? "Sending…" : "Resend invite"}
+              {pending ? "Sending…" : "Resend invite and show link"}
             </Button>
           </div>
         </div>
       ) : (
         <div>
           <p className="mb-3 text-xs text-muted-foreground">
-            Let this client log in at /client/login to see their upcoming
-            jobs, past service history, and outstanding invoices in one
-            place.
+            Give this client their own sign-in to see upcoming visits, past
+            visits and invoices, and to ask for a visit. Inviting emails them
+            a link and shows it to you to copy; they pick a password, then
+            sign in at sollos3.com/client/login.
           </p>
           <Button
             type="button"

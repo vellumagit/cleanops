@@ -253,6 +253,15 @@ export function EmployeeEditForm({
             {/* Tells the save that this form owns the decision, so an
                 unticked box is stored as "off" rather than read as absent. */}
             <input type="hidden" name="capabilities_present" value="1" />
+            {/* Asked for twice in the hand test: a manager can't open
+                Employees or Settings, and nothing here said why or what to
+                do about it. */}
+            <p className="border-t border-border pt-3 text-xs text-muted-foreground">
+              A manager never sees Employees, Payroll, Reports or Settings,
+              whatever is ticked here. Someone who should manage the team or
+              change settings needs the <strong>Admin</strong> role: change
+              Role above to Admin.
+            </p>
           </fieldset>
         )}
         {canChangeRole && (role === "owner" || role === "admin") && (

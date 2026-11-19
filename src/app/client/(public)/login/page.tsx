@@ -93,6 +93,16 @@ export default async function ClientLoginPage({
           <ClientLoginForm next={next} />
         )}
         <p className="mt-4 text-center text-[11px] text-muted-foreground">
+          Work for the cleaning company?{" "}
+          <Link
+            href="/login"
+            className="text-primary underline-offset-2 transition-opacity hover:underline active:underline active:opacity-70"
+          >
+            Staff sign-in
+          </Link>
+          .
+        </p>
+        <p className="mt-1 text-center text-[11px] text-muted-foreground">
           Don&rsquo;t have an account?{" "}
           <Link
             href="/"

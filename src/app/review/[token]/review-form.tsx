@@ -1,5 +1,6 @@
 "use client";
 
+import { brandButtonColors } from "@/lib/readable-on";
 import { useState } from "react";
 import { useActionState } from "react";
 import { Button } from "@/components/ui/button";
@@ -152,7 +153,7 @@ export function ReviewForm({
         type="submit"
         disabled={isPending || rating === 0}
         className="w-full"
-        style={{ backgroundColor: brandColor }}
+        style={brandButtonColors(brandColor)}
       >
         {isPending ? "Submitting…" : "Submit Review"}
       </Button>

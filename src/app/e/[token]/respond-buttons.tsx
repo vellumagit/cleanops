@@ -3,6 +3,7 @@
 import { useActionState, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { respondToEstimateAction, type RespondToEstimateState } from "./actions";
+import { brandButtonColors } from "@/lib/readable-on";
 
 const initial: RespondToEstimateState = {};
 
@@ -91,8 +92,10 @@ export function RespondButtons({
               name="decision"
               value="approve"
               disabled={pending}
-              style={{ backgroundColor: brandColor, borderColor: brandColor }}
-              className="rounded-md border px-5 py-2 text-sm font-semibold text-white disabled:opacity-60"
+              // Text colour chosen against the brand colour: white text on a
+              // white or pale brand colour was a blank rectangle.
+              style={brandButtonColors(brandColor)}
+              className="rounded-md border px-5 py-2 text-sm font-semibold disabled:opacity-60"
             >
               {pending ? "Sending…" : "Approve estimate"}
             </button>

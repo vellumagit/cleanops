@@ -188,6 +188,18 @@ export default async function LoginPage({
             Create a workspace
           </Link>
         </p>
+        {/* Clients have their own door. Nothing here said so, and a client
+            who signed in on this page with a staff login landed in the
+            office. */}
+        <p className="mt-2 text-center text-sm text-muted-foreground">
+          A client of a cleaning company?{" "}
+          <Link
+            href="/client/login"
+            className="font-medium text-foreground underline-offset-4 hover:underline"
+          >
+            Client sign-in
+          </Link>
+        </p>
       </div>
     </main>
   );
