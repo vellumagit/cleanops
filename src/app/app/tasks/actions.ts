@@ -5,6 +5,41 @@ import { redirect } from "next/navigation";
 import { getActionContext, parseForm, type ActionState } from "@/lib/actions";
 import { TaskSchema } from "@/lib/validators/tasks";
 import { addDays, addWeeks, addMonths, addYears } from "date-fns";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { notify } from "@/lib/notify";
+
+/**
+ * Tell someone a task is now theirs. Nothing did: a task assigned to a
+ * cleaner sat on the office's list and the cleaner never heard of it. Not
+ * sent when someone assigns a task to themselves. Best-effort.
+ */
+async function tellAssignee(input: {
+  organizationId: string;
+  assigneeId: string | null | undefined;
+  actorId: string;
+  title: string;
+}): Promise<void> {
+  if (!input.assigneeId || input.assigneeId === input.actorId) return;
+  try {
+    const { data: who } = (await createSupabaseAdminClient()
+      .from("memberships")
+      .select("role")
+      .eq("id", input.assigneeId)
+      .eq("organization_id", input.organizationId)
+      .maybeSingle()) as unknown as { data: { role: string } | null };
+    if (!who) return;
+    await notify({
+      organizationId: input.organizationId,
+      audience: "membership",
+      membershipId: input.assigneeId,
+      title: "New task for you",
+      body: input.title,
+      href: who.role === "employee" ? "/field/tasks" : "/app/tasks",
+    });
+  } catch (err) {
+    console.error("[tasks] assignee notice failed:", err);
+  }
+}
 
 type Field = keyof typeof TaskSchema.shape;
 export type TaskFormState = ActionState<Field & string>;
@@ -25,7 +60,7 @@ function readFormValues(formData: FormData) {
  * Returns the new task id or null if non-recurring.
  */
 async function spawnNextOccurrence(
-  supabase: Awaited<ReturnType<typeof import("@/lib/supabase/server").createSupabaseServerClient>>,
+  supabase: Pick<Awaited<ReturnType<typeof import("@/lib/supabase/server").createSupabaseServerClient>>, "from">,
   task: {
     id: string;
     organization_id: string;
@@ -130,6 +165,12 @@ export async function createTaskAction(
   if (error) {
     return { errors: { _form: "Failed to create task. Please try again." } };
   }
+  await tellAssignee({
+    organizationId: membership.organization_id,
+    assigneeId: parsed.data.assigned_to,
+    actorId: membership.id,
+    title: parsed.data.title,
+  });
 
   revalidatePath("/app/tasks");
   redirect("/app/tasks");
@@ -163,9 +204,9 @@ export async function updateTaskAction(
   // reminded_at on every save sent an old reminder again after any edit.
   const { data: before } = (await supabase
     .from("tasks")
-    .select("remind_at")
+    .select("remind_at, assigned_to")
     .eq("id", id)
-    .maybeSingle()) as unknown as { data: { remind_at: string | null } | null };
+    .maybeSingle()) as unknown as { data: { remind_at: string | null; assigned_to: string | null } | null };
   const sameReminder =
     (before?.remind_at ? new Date(before.remind_at).getTime() : null) ===
     (remindAt ? new Date(remindAt).getTime() : null);
@@ -191,6 +232,15 @@ export async function updateTaskAction(
   }
   if (!saved?.length) {
     return { errors: { _form: "This task wasn't saved. It may have been deleted, or it isn't yours to change." } };
+  }
+  // Only when it changes hands: an edit to the title is not news.
+  if ((parsed.data.assigned_to ?? null) !== (before?.assigned_to ?? null)) {
+    await tellAssignee({
+      organizationId: membership.organization_id,
+      assigneeId: parsed.data.assigned_to,
+      actorId: membership.id,
+      title: parsed.data.title,
+    });
   }
 
   revalidatePath("/app/tasks");
@@ -228,19 +278,29 @@ export async function completeTaskAction(
     return { errors: { _form: "Task not found." } };
   }
 
-  const { error } = await supabase
+  // .select() so a tick the database refused (someone else's task, for a
+  // cleaner) says so. It used to come back as done with nothing changed.
+  const { data: ticked, error } = (await supabase
     .from("tasks")
     .update({ completed_at: new Date().toISOString() })
-    .eq("id", id);
+    .eq("id", id)
+    .is("completed_at", null)
+    .select("id")) as unknown as { data: Array<{ id: string }> | null; error: { message: string } | null };
 
   if (error) {
     return { errors: { _form: "Failed to complete task." } };
   }
+  if (!ticked?.length) {
+    return { errors: { _form: "That task isn't yours to tick off, or it was already done." } };
+  }
 
-  // Spawn next occurrence for recurring tasks.
-  await spawnNextOccurrence(supabase, task).catch(() => {});
+  // Spawn next occurrence for recurring tasks. With the service client: the
+  // person ticking has just been proved allowed to, and a cleaner's own
+  // sign-in may not create tasks, so their repeating task never came back.
+  await spawnNextOccurrence(createSupabaseAdminClient(), task).catch(() => {});
 
   revalidatePath("/app/tasks");
+  revalidatePath("/field/tasks");
   return {};
 }
 
@@ -255,16 +315,21 @@ export async function reopenTaskAction(
 ): Promise<TaskFormState> {
   const { supabase } = await getActionContext();
 
-  const { error } = await supabase
+  const { data: reopened, error } = (await supabase
     .from("tasks")
     .update({ completed_at: null })
-    .eq("id", id);
+    .eq("id", id)
+    .select("id")) as unknown as { data: Array<{ id: string }> | null; error: { message: string } | null };
 
   if (error) {
     return { errors: { _form: "Failed to reopen task." } };
   }
+  if (!reopened?.length) {
+    return { errors: { _form: "That task isn't yours to change." } };
+  }
 
   revalidatePath("/app/tasks");
+  revalidatePath("/field/tasks");
   return {};
 }
 

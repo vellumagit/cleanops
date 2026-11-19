@@ -688,6 +688,13 @@ export function BookingForm({
       <div ref={formErrorRef}>
         <FormError message={state.errors?._form} />
       </div>
+      {/* Set by a save that came back asking "they're off that day, book
+          anyway?". Posting it back is the yes. */}
+      <input
+        type="hidden"
+        name="confirm_time_off"
+        value={(v as { confirm_time_off?: string }).confirm_time_off ?? ""}
+      />
 
       {/* Hidden scope + series fields for recurring edits */}
       {isEditingSeries && (

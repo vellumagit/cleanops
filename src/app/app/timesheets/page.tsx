@@ -149,8 +149,12 @@ export default async function TimesheetsPage({
   const bookingsWindowFrom = new Date(
     nowMs - 90 * 24 * 60 * 60 * 1000,
   ).toISOString();
-  const bookingsWindowTo = new Date(
-    nowMs + 90 * 24 * 60 * 60 * 1000,
+  // Up to the end of today: hours can't be logged against a visit that
+  // hasn't happened, and the next 90 days used to sit on top of the list.
+  const bookingsWindowTo = zonedDayStartUtc(
+    zonedMidnightUtc(todayYmd, orgTz),
+    orgTz,
+    1,
   ).toISOString();
 
   // Fetch time entries with booking + employee details
@@ -297,7 +301,7 @@ export default async function TimesheetsPage({
         )
         .eq("organization_id", membership.organization_id)
         .gte("scheduled_at", bookingsWindowFrom)
-        .lte("scheduled_at", bookingsWindowTo)
+        .lt("scheduled_at", bookingsWindowTo)
         .order("scheduled_at", { ascending: false })
         .limit(500),
     ]);

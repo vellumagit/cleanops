@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { FormField, FormError } from "@/components/form-field";
+import { shrinkPhoto, SERVER_ACTION_UPLOAD_LIMIT } from "@/lib/shrink-photo";
 import {
   createTrainingModuleAction,
   updateTrainingModuleAction,
@@ -210,9 +211,27 @@ export function ModuleForm({
     });
   }
 
+  // Every photo travels inside the one save request, and the host refuses a
+  // request over 4.5 MB before our code runs: the page then showed a bare
+  // "Something went wrong" and nothing was saved. Each photo is shrunk when
+  // picked (StepEditor); this stops a save whose photos are still too big
+  // together and says so.
+  const [sizeError, setSizeError] = useState<string | null>(null);
+  function checkSize(e: React.FormEvent<HTMLFormElement>) {
+    const total = steps.reduce((sum, s) => sum + (s.imageFile?.size ?? 0), 0);
+    if (total > SERVER_ACTION_UPLOAD_LIMIT) {
+      e.preventDefault();
+      setSizeError(
+        "These photos are too large to save in one go. Save with one or two of them, then edit the module and add the rest.",
+      );
+      return;
+    }
+    setSizeError(null);
+  }
+
   return (
-    <form action={formAction} className="mx-auto max-w-3xl space-y-6">
-      <FormError message={state.error} />
+    <form action={formAction} onSubmit={checkSize} className="mx-auto max-w-3xl space-y-6">
+      <FormError message={sizeError ?? state.error} />
 
       {/* Module info */}
       <div className="rounded-lg border border-border bg-card p-5 space-y-4">
@@ -415,6 +434,7 @@ function StepEditor({
   onRemoveImage: () => void;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
+  const [photoError, setPhotoError] = useState<string | null>(null);
 
   return (
     <div className="rounded-lg border border-border bg-card overflow-hidden">
@@ -553,11 +573,47 @@ function StepEditor({
               name={`step_${index}_image`}
               accept="image/png,image/jpeg,image/webp"
               className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) onImageChange(file);
+              onChange={async (e) => {
+                const input = e.currentTarget;
+                const picked = input.files?.[0];
+                if (!picked) return;
+                setPhotoError(null);
+                // A phone photo is 4 to 8 MB; shrink it before it goes in
+                // the form. The shrunk file replaces the picked one in the
+                // input itself, since the input is what the form sends.
+                const file = await shrinkPhoto(picked);
+                if (file.size > SERVER_ACTION_UPLOAD_LIMIT) {
+                  input.value = "";
+                  setPhotoError(
+                    "That photo is too large (over 4 MB) and couldn't be made smaller here. Nothing was changed. Try a smaller photo or a screenshot of it.",
+                  );
+                  return;
+                }
+                if (file !== picked) {
+                  try {
+                    const dt = new DataTransfer();
+                    dt.items.add(file);
+                    input.files = dt.files;
+                  } catch {
+                    // A browser without DataTransfer keeps the original,
+                    // which is under the limit or the check above refused it.
+                    if (picked.size > SERVER_ACTION_UPLOAD_LIMIT) {
+                      input.value = "";
+                      setPhotoError("That photo is too large (over 4 MB). Nothing was changed.");
+                      return;
+                    }
+                    onImageChange(picked);
+                    return;
+                  }
+                }
+                onImageChange(file);
               }}
             />
+            {photoError && (
+              <p role="alert" className="mt-2 text-xs text-destructive">
+                {photoError}
+              </p>
+            )}
           </div>
         </div>
       </div>

@@ -18,7 +18,6 @@ import {
   deleteTaskAction,
   type TaskFormState,
 } from "./actions";
-import { format, isToday, isTomorrow, isPast } from "date-fns";
 
 export type TaskRowData = {
   id: string;
@@ -29,17 +28,12 @@ export type TaskRowData = {
   recurrence: string | null;
   completed_at: string | null;
   assigned_member: string | null; // display name
+  /** Worked out on the server, on the company's clock (lib/task-due). This
+   *  row used to format the times itself in the device's zone: a task saved
+   *  for 7:24 read 6:24 on a computer with out-of-date time zone rules. */
+  due: { label: string; urgent: boolean; bucket: "overdue" | "today" | "upcoming" } | null;
+  remind_label: string | null;
 };
-
-function formatDue(iso: string): { label: string; urgent: boolean } {
-  const d = new Date(iso);
-  if (isPast(d) && !isToday(d)) {
-    return { label: `Overdue · ${format(d, "MMM d")}`, urgent: true };
-  }
-  if (isToday(d)) return { label: `Today · ${format(d, "h:mm a")}`, urgent: false };
-  if (isTomorrow(d)) return { label: `Tomorrow · ${format(d, "h:mm a")}`, urgent: false };
-  return { label: format(d, "MMM d, yyyy · h:mm a"), urgent: false };
-}
 
 const RECURRENCE_LABELS: Record<string, string> = {
   daily: "Daily",
@@ -116,7 +110,7 @@ export function TaskRow({
   canManage: boolean;
 }) {
   const done = !!task.completed_at;
-  const due = task.due_at ? formatDue(task.due_at) : null;
+  const due = task.due;
 
   return (
     <div
@@ -163,10 +157,10 @@ export function TaskRow({
             </span>
           )}
 
-          {task.remind_at && !done && (
+          {task.remind_label && !done && (
             <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
               <Bell className="h-3 w-3" />
-              {format(new Date(task.remind_at), "MMM d, h:mm a")}
+              {task.remind_label}
             </span>
           )}
 

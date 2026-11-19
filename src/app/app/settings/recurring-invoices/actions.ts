@@ -7,6 +7,8 @@ import { can } from "@/lib/auth";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { localInputToUtcIso } from "@/lib/validators/common";
 import { z } from "zod";
+import { estimateLinesTotalCents, parseEstimateLines } from "@/lib/estimate-lines";
+import { parseTaxRate } from "@/lib/invoice-tax";
 
 const CADENCES = ["weekly", "biweekly", "monthly", "quarterly"] as const;
 type Cadence = (typeof CADENCES)[number];
@@ -56,7 +58,46 @@ function readForm(formData: FormData) {
     due_days: Number(formData.get("due_days") ?? 14),
     next_run_at: String(formData.get("next_run_at") ?? ""),
     notes: String(formData.get("notes") ?? "").trim() || null,
-    line_items: String(formData.get("line_items") ?? "").trim(),
+    // The rows from the lines editor (it was a box of JSON to type into).
+    line_items: String(formData.get("line_items_json") ?? "").trim(),
+  };
+}
+
+/**
+ * The form's rows and tax option, as the series stores them.
+ *
+ * With rows, the series' amount IS their sum: a typed amount that disagreed
+ * with its own lines would bill a total its invoice can't add up to. With
+ * none, the typed amount stands and the generator writes one line for it.
+ * The amount is before tax; the generator adds the tax to each invoice.
+ */
+function readLinesAndTax(
+  formData: FormData,
+  rawLines: string,
+  typedAmountCents: number,
+):
+  | { ok: true; lineItems: Array<{ label: string; quantity: number; unit_price_cents: number }>; amountCents: number; taxRateBps: number | null; taxLabel: string | null }
+  | { ok: false; errors: Record<string, string> } {
+  const { lines, error } = parseEstimateLines(rawLines);
+  if (error) return { ok: false, errors: { line_items: error } };
+
+  // The rate field only exists in the form while "Charge tax" is ticked.
+  let taxRateBps: number | null = null;
+  let taxLabel: string | null = null;
+  if (formData.has("tax_rate_percent")) {
+    taxRateBps = parseTaxRate(String(formData.get("tax_rate_percent") ?? ""));
+    if (!taxRateBps || taxRateBps <= 0) {
+      return { ok: false, errors: { tax_rate_percent: "Type a tax rate (5 for 5%), or untick Charge tax." } };
+    }
+    taxLabel = String(formData.get("tax_label") ?? "").trim().slice(0, 40) || null;
+  }
+
+  return {
+    ok: true,
+    lineItems: lines.map((l) => ({ label: l.label, quantity: l.quantity, unit_price_cents: l.unit_price_cents })),
+    amountCents: lines.length > 0 ? estimateLinesTotalCents(lines) : typedAmountCents,
+    taxRateBps,
+    taxLabel,
   };
 }
 
@@ -103,23 +144,11 @@ export async function createRecurringInvoiceAction(
     return { errors, values: Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, String(v ?? "")])) };
   }
 
-  let lineItems: unknown = [];
-  if (parsed.data.line_items) {
-    try {
-      lineItems = JSON.parse(parsed.data.line_items);
-      if (!Array.isArray(lineItems)) {
-        return {
-          errors: { line_items: "Line items must be a JSON array" },
-          values: Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, String(v ?? "")])),
-        };
-      }
-    } catch {
-      return {
-        errors: { line_items: "Line items is not valid JSON" },
-        values: Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, String(v ?? "")])),
-      };
-    }
+  const read = readLinesAndTax(formData, parsed.data.line_items ?? "", parsed.data.amount_cents);
+  if (!read.ok) {
+    return { errors: read.errors, values: Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, String(v ?? "")])) };
   }
+  const lineItems = read.lineItems;
 
   if (!(await isOwnClient(supabase, membership.organization_id, parsed.data.client_id))) {
     return {
@@ -136,7 +165,9 @@ export async function createRecurringInvoiceAction(
       client_id: parsed.data.client_id,
       name: parsed.data.name,
       cadence: parsed.data.cadence,
-      amount_cents: parsed.data.amount_cents,
+      amount_cents: read.amountCents,
+      tax_rate_bps: read.taxRateBps,
+      tax_label: read.taxLabel,
       due_days: parsed.data.due_days,
       next_run_at: firstRun,
       // The day of the month this series bills on; later runs aim for it.
@@ -187,27 +218,11 @@ export async function updateRecurringInvoiceAction(
     };
   }
 
-  let lineItems: unknown = [];
-  if (parsed.data.line_items) {
-    try {
-      lineItems = JSON.parse(parsed.data.line_items);
-      if (!Array.isArray(lineItems)) {
-        return {
-          errors: { line_items: "Line items must be a JSON array" },
-          values: Object.fromEntries(
-            Object.entries(raw).map(([k, v]) => [k, String(v ?? "")]),
-          ),
-        };
-      }
-    } catch {
-      return {
-        errors: { line_items: "Line items is not valid JSON" },
-        values: Object.fromEntries(
-          Object.entries(raw).map(([k, v]) => [k, String(v ?? "")]),
-        ),
-      };
-    }
+  const read = readLinesAndTax(formData, parsed.data.line_items ?? "", parsed.data.amount_cents);
+  if (!read.ok) {
+    return { errors: read.errors, values: Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, String(v ?? "")])) };
   }
+  const lineItems = read.lineItems;
 
   if (!(await isOwnClient(supabase, membership.organization_id, parsed.data.client_id))) {
     return {
@@ -225,7 +240,9 @@ export async function updateRecurringInvoiceAction(
       client_id: parsed.data.client_id,
       name: parsed.data.name,
       cadence: parsed.data.cadence,
-      amount_cents: parsed.data.amount_cents,
+      amount_cents: read.amountCents,
+      tax_rate_bps: read.taxRateBps,
+      tax_label: read.taxLabel,
       due_days: parsed.data.due_days,
       next_run_at: firstRun,
       // The day of the month this series bills on; later runs aim for it.

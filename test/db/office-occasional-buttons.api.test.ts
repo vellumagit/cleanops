@@ -96,6 +96,98 @@ async function company(): Promise<Company> {
 
 // ---------------------------------------------------------------------------
 
+describe.skipIf(!hasPostgrest)("a task given to a cleaner", { timeout: 120_000 }, () => {
+  const form = (fields: Record<string, string>) => {
+    const f = new FormData();
+    for (const [k, v] of Object.entries(fields)) f.set(k, v);
+    return f;
+  };
+
+  it("the cleaner is told, ticks it off, and a weekly one comes back; someone else's task is refused", async () => {
+    const { createTaskAction, completeTaskAction, reopenTaskAction } = await import("@/app/app/tasks/actions");
+    const c = await company();
+    const bea = await addMember(api.sql, c.org, "employee", "Bea");
+    const due = new Date(Date.now() + 2 * 86_400_000);
+    due.setUTCSeconds(0, 0);
+
+    await as(c.owner, () =>
+      createTaskAction({}, form({ title: "Restock the van", notes: "", assigned_to: c.anna.membershipId, due_at: due.toISOString(), recurrence: "weekly" })),
+    );
+    const [task] = await api.sql<{ id: string }>("select id from public.tasks where organization_id = $1", [c.org]);
+    const notices = await api.sql<{ r: string; title: string; body: string; href: string }>(
+      "select recipient_membership_id as r, title, body, href from public.notifications where organization_id = $1 and title = 'New task for you'",
+      [c.org],
+    );
+    expect(notices, api.log()).toEqual([{ r: c.anna.membershipId, title: "New task for you", body: "Restock the van", href: "/field/tasks" }]);
+
+    // Bea is not on it: her tick changes nothing and says so.
+    const refused = (await as(bea, () => completeTaskAction(task.id, {}, new FormData()))) as { errors?: Record<string, string> };
+    expect(refused.errors?._form).toBe("That task isn't yours to tick off, or it was already done.");
+    expect((await api.sql<{ done: boolean }>("select completed_at is not null as done from public.tasks where id = $1", [task.id]))[0].done).toBe(false);
+    const refusedReopen = (await as(bea, () => reopenTaskAction(task.id, {}, new FormData()))) as { errors?: Record<string, string> };
+    expect(refusedReopen.errors?._form).toBe("That task isn't yours to change.");
+
+    // Anna ticks her own. A cleaner may not create tasks herself, and the
+    // weekly one still comes back, still hers.
+    expect(await as(c.anna, () => completeTaskAction(task.id, {}, new FormData()))).toEqual({});
+    const rows = await api.sql<{ id: string; done: boolean; assigned_to: string | null; due_at: string }>(
+      "select id, completed_at is not null as done, assigned_to, due_at::text from public.tasks where organization_id = $1 order by created_at",
+      [c.org],
+    );
+    expect(rows.find((r) => r.id === task.id)?.done).toBe(true);
+    const next = rows.find((r) => r.id !== task.id);
+    expect(next, "the weekly task comes back").toMatchObject({ done: false, assigned_to: c.anna.membershipId });
+    expect(new Date(next!.due_at).getTime() - due.getTime()).toBe(7 * 86_400_000);
+  });
+
+  it("nobody is told when a task is given to oneself, or when an edit leaves it with the same person", async () => {
+    const { createTaskAction, updateTaskAction } = await import("@/app/app/tasks/actions");
+    const c = await company();
+    await as(c.owner, () => createTaskAction({}, form({ title: "Call the supplier", notes: "", assigned_to: c.owner.membershipId })));
+    await as(c.owner, () => createTaskAction({}, form({ title: "Wash the mops", notes: "", assigned_to: c.anna.membershipId })));
+    const [mops] = await api.sql<{ id: string }>("select id from public.tasks where organization_id = $1 and title = 'Wash the mops'", [c.org]);
+    await as(c.owner, () => updateTaskAction(mops.id, {}, form({ title: "Wash the mops and buckets", notes: "", assigned_to: c.anna.membershipId })));
+    const told = await api.sql<{ r: string }>(
+      "select recipient_membership_id as r from public.notifications where organization_id = $1 and title = 'New task for you'",
+      [c.org],
+    );
+    expect(told, "once, for Anna, when it was first given to her").toEqual([{ r: c.anna.membershipId }]);
+  });
+});
+
+describe.skipIf(!hasPostgrest)("an applicant added by hand", { timeout: 120_000 }, () => {
+  it("the owner adds one; a manager and a cleaner can't; a bad email is refused", async () => {
+    const { addApplicantAction } = await import("@/app/app/applicants/actions");
+    const c = await company();
+    const f = (fields: Record<string, string>) => {
+      const fd = new FormData();
+      for (const [k, v] of Object.entries(fields)) fd.set(k, v);
+      return fd;
+    };
+    const made = (await as(c.owner, () =>
+      addApplicantAction({}, f({ name: "  Dana Walk-in ", email: "dana@example.test", phone: "780 555 0100", position: "Cleaner", notes: "Referred by Anna" })),
+    )) as { addedId?: string; errors?: unknown };
+    expect(made.errors, api.log()).toBeUndefined();
+    const rows = await api.sql<{ id: string; name: string; email: string; phone: string; position: string; notes: string; status: string; source: string }>(
+      "select id, name, email, phone, position, notes, status, raw->>'source' as source from public.job_applicants where organization_id = $1",
+      [c.org],
+    );
+    expect(rows).toEqual([
+      { id: made.addedId, name: "Dana Walk-in", email: "dana@example.test", phone: "780 555 0100", position: "Cleaner", notes: "Referred by Anna", status: "new", source: "added_by_hand" },
+    ]);
+
+    expect(((await as(c.owner, () => addApplicantAction({}, f({ name: "" })))) as { errors?: Record<string, string> }).errors?.name).toBe("Type their name.");
+    expect(((await as(c.owner, () => addApplicantAction({}, f({ name: "X", email: "not-an-email" })))) as { errors?: Record<string, string> }).errors?.email).toBe(
+      "That doesn't look like an email address.",
+    );
+    for (const who of [c.manager, c.anna]) {
+      const no = (await as(who, () => addApplicantAction({}, f({ name: "Sneaked in" })))) as { errors?: Record<string, string> };
+      expect(no.errors?._form).toBe("Only an owner or admin can add applicants.");
+    }
+    expect(await api.sql("select 1 from public.job_applicants where organization_id = $1", [c.org])).toHaveLength(1);
+  });
+});
+
 describe.skipIf(!hasPostgrest)("tasks", { timeout: 120_000 }, () => {
   it("made, done (a weekly one comes back a week later), reopened and deleted; a cleaner can't make one", async () => {
     const { createTaskAction, completeTaskAction, reopenTaskAction, deleteTaskAction } = await import("@/app/app/tasks/actions");

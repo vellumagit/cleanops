@@ -36,11 +36,18 @@ export function useVisibleHeight(): void {
     // phone changes the width, which starts the measure again.
     let tallest = vv.height;
     let widthThen = vv.width;
+    // What --app-vh was last set to. The visible height arrives in fractions
+    // of a pixel and wobbles by one while a browser toolbar settles; writing
+    // every wobble re-laid the whole pane each time, which showed as the
+    // chat trembling in place (hand test, 2026-11-18). A change under 2px is
+    // not a keyboard or a toolbar, so it is left alone.
+    let written: number | null = null;
 
-    const apply = () => {
+    const apply = (movedOnly: boolean) => {
       if (Math.abs(vv.scale - 1) > 0.01) {
         root.style.removeProperty("--app-vh");
         delete root.dataset.keyboard;
+        written = null;
         return;
       }
       if (Math.abs(vv.width - widthThen) > 1) {
@@ -48,23 +55,49 @@ export function useVisibleHeight(): void {
         tallest = vv.height;
       }
       tallest = Math.max(tallest, vv.height);
-      root.style.setProperty("--app-vh", `${Math.round(vv.height)}px`);
+      const height = Math.round(vv.height);
+      if (written === null || Math.abs(height - written) >= 2) {
+        written = height;
+        root.style.setProperty("--app-vh", `${height}px`);
+      }
       // The keyboard is up when far less is visible than the screen shows
       // without it. The fill-screen rules use this to give the page heading,
       // banners and the tab bar's reserved space back to the pane
       // (globals.css): at 350px visible they left a chat next to nothing.
-      if (tallest - vv.height > KEYBOARD_MIN_PX) root.dataset.keyboard = "open";
+      const keyboardOpen = tallest - vv.height > KEYBOARD_MIN_PX;
+      if (keyboardOpen) root.dataset.keyboard = "open";
       else delete root.dataset.keyboard;
-      // The browser may already have slid the page to reach the caret.
-      if (window.scrollY !== 0) window.scrollTo(0, 0);
+      // The browser may already have slid the page to reach the caret: put
+      // it back. When the viewport only MOVED (a scroll event) and there is
+      // no keyboard, leave it: that is a finger dragging the page, the
+      // browser springs it back by itself, and snapping it to the top on
+      // every event of the drag fought the browser the whole way.
+      if (window.scrollY !== 0 && (keyboardOpen || !movedOnly)) window.scrollTo(0, 0);
     };
 
-    apply();
-    vv.addEventListener("resize", apply);
-    vv.addEventListener("scroll", apply);
+    // One pass per frame however many events arrive in it.
+    let frame = 0;
+    let sawResize = false;
+    const schedule = (resized: boolean) => {
+      sawResize = sawResize || resized;
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        const movedOnly = !sawResize;
+        sawResize = false;
+        apply(movedOnly);
+      });
+    };
+    const onResize = () => schedule(true);
+    const onScroll = () => schedule(false);
+
+    apply(false);
+    vv.addEventListener("resize", onResize);
+    vv.addEventListener("scroll", onScroll);
     return () => {
-      vv.removeEventListener("resize", apply);
-      vv.removeEventListener("scroll", apply);
+      if (frame) cancelAnimationFrame(frame);
+      vv.removeEventListener("resize", onResize);
+      vv.removeEventListener("scroll", onScroll);
       root.style.removeProperty("--app-vh");
       delete root.dataset.keyboard;
     };

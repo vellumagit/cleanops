@@ -134,11 +134,16 @@ function dateNeedle(iso: string | null, tz: string): string {
 export function InvoicesTable({
   rows,
   canEdit,
+  canOpen,
   currency,
   tz,
 }: {
   rows: InvoiceRow[];
+  /** Owner or admin: may tick rows and void them. */
   canEdit: boolean;
+  /** Anyone who reached this page may open an invoice. A manager with the
+   *  Invoices switch could see the list and click nothing in it. */
+  canOpen: boolean;
   currency: CurrencyCode;
   /** Org IANA timezone — every date on this table renders in it. */
   tz: string;
@@ -398,7 +403,7 @@ export function InvoicesTable({
         getRowId={(r) => r.id}
         searchPlaceholder="Search client, invoice #, date, status, amount…"
         onRowClick={
-          canEdit
+          canOpen
             ? (r) => router.push(withReturn(`/app/invoices/${r.id}`))
             : undefined
         }

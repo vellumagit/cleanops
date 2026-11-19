@@ -175,3 +175,56 @@ export async function deleteApplicantAction(formData: FormData): Promise<void> {
   revalidatePath("/app/applicants", "page");
   redirect("/app/applicants");
 }
+
+export type AddApplicantState = {
+  errors?: Partial<Record<"name" | "email" | "_form", string>>;
+  /** Set once the applicant exists; the dialog opens their page. */
+  addedId?: string;
+};
+
+/**
+ * Add an applicant by hand: someone who phoned, walked in or was referred.
+ * The only way onto the list used to be the hiring form on the company's
+ * website. Owner/admin only, like the rest of this page (and RLS).
+ */
+export async function addApplicantAction(
+  _prev: AddApplicantState,
+  formData: FormData,
+): Promise<AddApplicantState> {
+  const { membership, supabase } = await getActionContext();
+  if (!["owner", "admin"].includes(membership.role)) {
+    return { errors: { _form: "Only an owner or admin can add applicants." } };
+  }
+  const text = (key: string, max: number) =>
+    String(formData.get(key) ?? "").trim().slice(0, max) || null;
+  const name = text("name", 200);
+  const email = text("email", 200);
+  if (!name) return { errors: { name: "Type their name." } };
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return { errors: { email: "That doesn't look like an email address." } };
+  }
+
+  const { data, error } = (await supabase
+    .from("job_applicants" as never)
+    .insert({
+      organization_id: membership.organization_id,
+      name,
+      email,
+      phone: text("phone", 40),
+      position: text("position", 200),
+      notes: text("notes", 4000),
+      status: "new",
+      // Where it came from, for anyone reading the record later.
+      raw: { source: "added_by_hand", added_by: membership.id },
+    } as never)
+    .select("id")
+    .single()) as unknown as {
+    data: { id: string } | null;
+    error: { message: string } | null;
+  };
+  if (error || !data) {
+    return { errors: { _form: error?.message ?? "The applicant wasn't added. Try again." } };
+  }
+  revalidatePath("/app/applicants", "page");
+  return { addedId: data.id };
+}

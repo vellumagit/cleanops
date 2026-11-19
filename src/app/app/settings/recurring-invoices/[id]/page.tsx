@@ -11,6 +11,8 @@ import {
   RecurringInvoiceForm,
   type RecurringInvoiceFormDefaults,
 } from "../form";
+import { getOrgCurrency } from "@/lib/org-currency";
+import { formatTaxRate } from "@/lib/invoice-tax";
 
 export const metadata = { title: "Edit recurring invoice" };
 
@@ -50,6 +52,39 @@ export default async function EditRecurringInvoicePage({
 
   if (!series) notFound();
 
+  // Tax, read on its own so the page still opens on a database that doesn't
+  // have the tax columns yet.
+  type TaxRow = { tax_rate_bps: number | null; tax_label: string | null };
+  const tax: TaxRow | null = await (async () => {
+    try {
+      const res = (await supabase
+        .from("invoice_series" as never)
+        .select("tax_rate_bps, tax_label")
+        .eq("id" as never, id as never)
+        .maybeSingle()) as unknown as { data: TaxRow | null };
+      return res.data;
+    } catch {
+      return null;
+    }
+  })();
+  const currency = await getOrgCurrency(membership.organization_id);
+
+  // Saved lines, in either spelling the old JSON box accepted.
+  const savedLines = (Array.isArray(series.line_items) ? series.line_items : [])
+    .filter((it): it is Record<string, unknown> => Boolean(it) && typeof it === "object")
+    .map((it, i) => ({
+      label: String(it.label ?? it.description ?? "").trim(),
+      quantity: typeof it.quantity === "number" && it.quantity > 0 ? it.quantity : 1,
+      unit_price_cents:
+        typeof it.unit_price_cents === "number"
+          ? Math.round(it.unit_price_cents)
+          : typeof it.unit_cents === "number"
+            ? Math.round(it.unit_cents)
+            : 0,
+      sort_order: i,
+    }))
+    .filter((l) => l.label !== "");
+
   const defaults: RecurringInvoiceFormDefaults = {
     client_id: series.client_id,
     name: series.name,
@@ -59,10 +94,9 @@ export default async function EditRecurringInvoicePage({
     // In the company's calendar, the same one the save reads it in.
     next_run_at: zonedYmd(new Date(series.next_run_at), await getOrgTimezone(membership.organization_id)),
     notes: series.notes ?? "",
-    line_items:
-      Array.isArray(series.line_items) && series.line_items.length > 0
-        ? JSON.stringify(series.line_items, null, 2)
-        : "",
+    lines: savedLines,
+    tax_rate_percent: formatTaxRate(tax?.tax_rate_bps).replace("%", ""),
+    tax_label: tax?.tax_label ?? "",
   };
 
   return (
@@ -82,6 +116,7 @@ export default async function EditRecurringInvoicePage({
       <div className="max-w-2xl">
         <RecurringInvoiceForm
           mode="edit"
+          currency={currency}
           id={series.id}
           clients={(clients ?? []).map((c) => ({ id: c.id, name: c.name }))}
           defaults={defaults}

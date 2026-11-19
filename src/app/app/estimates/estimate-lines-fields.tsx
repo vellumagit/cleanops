@@ -29,12 +29,26 @@ export function EstimateLinesFields({
   totalDollars,
   currency,
   error,
+  intro = "One row for each thing you are quoting. The client sees these rows and the total on the estimate and its PDF.",
+  totalName = "total_cents",
+  totalWord = "Total",
+  taxRateBps = null,
+  taxLabel = "Tax",
 }: {
   existing: ExistingEstimateLine[];
   /** The saved total, for an estimate that has no lines. */
   totalDollars: string;
   currency: "CAD" | "USD";
   error?: string;
+  /** The line under "Line items". */
+  intro?: string;
+  /** The field the sum (or the typed amount) is posted as, in dollars. */
+  totalName?: string;
+  /** What the sum is called: "Total", or "Amount before tax". */
+  totalWord?: string;
+  /** When set, the tax and the total with tax are shown under the sum. */
+  taxRateBps?: number | null;
+  taxLabel?: string;
 }) {
   const [rows, setRows] = useState<Row[]>(() =>
     existing.length === 0
@@ -57,6 +71,9 @@ export function EstimateLinesFields({
     0,
   );
 
+  const beforeTaxCents = hasLines ? linesCents : Math.round(num(typedTotal) * 100);
+  const taxCents = taxRateBps && taxRateBps > 0 ? Math.round((beforeTaxCents * taxRateBps) / 10000) : null;
+
   const update = (key: string, field: "label" | "quantity" | "price", value: string) =>
     setRows((prev) => prev.map((r) => (r.key === key ? { ...r, [field]: value } : r)));
   const remove = (key: string) =>
@@ -77,10 +94,7 @@ export function EstimateLinesFields({
 
       <div>
         <p className="text-sm font-medium">Line items</p>
-        <p className="mt-0.5 text-xs text-muted-foreground">
-          One row for each thing you are quoting. The client sees these rows
-          and the total on the estimate and its PDF.
-        </p>
+        <p className="mt-0.5 text-xs text-muted-foreground">{intro}</p>
       </div>
 
       <div className="space-y-2">
@@ -146,8 +160,8 @@ export function EstimateLinesFields({
 
         {hasLines ? (
           <div className="text-right">
-            <input type="hidden" name="total_cents" value={(linesCents / 100).toFixed(2)} />
-            <span className="text-xs text-muted-foreground">Total ({currency}): </span>
+            <input type="hidden" name={totalName} value={(linesCents / 100).toFixed(2)} />
+            <span className="text-xs text-muted-foreground">{totalWord} ({currency}): </span>
             <span className="font-mono text-base font-semibold tabular-nums" data-testid="estimate-total">
               {formatCurrencyCents(linesCents, currency)}
             </span>
@@ -155,11 +169,11 @@ export function EstimateLinesFields({
         ) : (
           <label className="block text-right">
             <span className="block text-xs text-muted-foreground">
-              Total ({currency}), if you aren&rsquo;t listing lines
+              {totalWord} ({currency}), if you aren&rsquo;t listing lines
             </span>
             <Input
-              id="total_cents"
-              name="total_cents"
+              id={totalName}
+              name={totalName}
               inputMode="decimal"
               required
               value={typedTotal}
@@ -170,6 +184,20 @@ export function EstimateLinesFields({
           </label>
         )}
       </div>
+      {taxCents != null && (
+        <div className="space-y-0.5 text-right text-sm" data-testid="lines-tax">
+          <p className="text-muted-foreground">
+            {taxLabel || "Tax"}:{" "}
+            <span className="font-mono tabular-nums">{formatCurrencyCents(taxCents, currency)}</span>
+          </p>
+          <p className="font-semibold">
+            Each invoice:{" "}
+            <span className="font-mono tabular-nums" data-testid="lines-total-with-tax">
+              {formatCurrencyCents(beforeTaxCents + taxCents, currency)}
+            </span>
+          </p>
+        </div>
+      )}
       {error && <p className="text-xs text-destructive">{error}</p>}
     </div>
   );

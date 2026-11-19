@@ -6,7 +6,8 @@ import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
 import { TaskRow, type TaskRowData } from "./task-row";
 import { memberDisplayName } from "@/lib/member-display";
-import { isPast, isToday } from "date-fns";
+import { getOrgTimezone } from "@/lib/org-timezone";
+import { describeDue, describeReminder } from "@/lib/task-due";
 
 export const metadata = { title: "Tasks" };
 
@@ -42,14 +43,13 @@ function groupTasks(tasks: TaskRowData[]): {
       completed.push(t);
       continue;
     }
-    if (!t.due_at) {
+    if (!t.due) {
       noDue.push(t);
       continue;
     }
-    const d = new Date(t.due_at);
-    if (isPast(d) && !isToday(d)) {
+    if (t.due.bucket === "overdue") {
       overdue.push(t);
-    } else if (isToday(d)) {
+    } else if (t.due.bucket === "today") {
       today.push(t);
     } else {
       upcoming.push(t);
@@ -179,7 +179,11 @@ export default async function TasksPage() {
     assigned: t.assigned_to ? memberMap.get(t.assigned_to) ?? null : null,
   }));
 
+  const tz = await getOrgTimezone(membership.organization_id);
+  const now = new Date();
   const rows: TaskRowData[] = (data ?? []).map((t) => ({
+    due: t.due_at ? describeDue(t.due_at, tz, now) : null,
+    remind_label: t.remind_at ? describeReminder(t.remind_at, tz) : null,
     id: t.id,
     title: t.title,
     notes: t.notes,

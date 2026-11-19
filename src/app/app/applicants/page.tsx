@@ -3,6 +3,7 @@ import { Inbox, Mail, Phone, Briefcase } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
+import { AddApplicantDialog } from "./add-applicant-dialog";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { getOrgTimezone } from "@/lib/org-timezone";
@@ -65,7 +66,8 @@ export default async function ApplicantsPage({
   return (
     <PageShell
       title="Applicants"
-      description="Job applications submitted through your hiring form."
+      description="People applying to work for you: from your hiring form, or added by hand."
+      actions={<AddApplicantDialog />}
     >
       {/* Pipeline filter */}
       <div className="mb-5 flex flex-wrap gap-2">
@@ -101,8 +103,8 @@ export default async function ApplicantsPage({
           <Inbox className="h-6 w-6 text-muted-foreground" />
           <p className="text-sm font-medium">No applicants here yet</p>
           <p className="max-w-sm text-xs text-muted-foreground">
-            Connect your hiring form to the intake webhook in Settings →
-            Intake forms, and submissions will land here automatically.
+            Add one by hand with the button above, or connect your hiring
+            form in Settings → Intake forms and submissions land here.
           </p>
           <Link
             href="/app/settings/intake-forms"

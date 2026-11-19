@@ -829,6 +829,39 @@ export async function autoGenerateRecurringInvoices(): Promise<{
       continue;
     }
 
+    // Tax, when the series charges it. Read and applied on its own, after
+    // the lines: a database that doesn't have the tax columns yet throws
+    // here, is caught, and the invoice stands untaxed as every recurring
+    // invoice did before 2026-11-19, instead of the whole run failing.
+    try {
+      const { data: taxRow } = (await db
+        .from("invoice_series")
+        .select("tax_rate_bps, tax_label")
+        .eq("id", series.id)
+        .maybeSingle()) as unknown as {
+        data: { tax_rate_bps: number | null; tax_label: string | null } | null;
+      };
+      const rateBps = taxRow?.tax_rate_bps ?? null;
+      if (rateBps && rateBps > 0) {
+        const taxAmountCents = Math.round((series.amount_cents * rateBps) / 10000);
+        const { error: taxErr } = await db
+          .from("invoices")
+          .update({
+            amount_cents: series.amount_cents + taxAmountCents,
+            tax_rate_bps: rateBps,
+            tax_amount_cents: taxAmountCents,
+            tax_label: taxRow?.tax_label ?? null,
+          })
+          .eq("id", inserted.id);
+        if (taxErr) throw new Error(taxErr.message);
+      }
+    } catch (taxErr) {
+      console.error(
+        `[auto] recurring invoice ${inserted.id}: tax step failed (invoice still created, untaxed):`,
+        taxErr,
+      );
+    }
+
     // Link the generated invoice back to the series (claim already advanced
     // next_run_at above).
     await db

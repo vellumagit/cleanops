@@ -125,7 +125,7 @@ export default async function EstimatesPage({
           </Link>
         </div>
       )}
-      <EstimatesTable tz={tz} rows={rows} canEdit={canEdit && !showArchived} />
+      <EstimatesTable tz={tz} rows={rows} canOpen={!showArchived} />
     </PageShell>
   );
 }

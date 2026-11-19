@@ -473,3 +473,131 @@ describe.skipIf(!hasPostgrest)("double-booking: the refusal names who, which job
     for (const v of visits) expect(await crewOf(v.id)).toEqual([vira.membershipId]);
   });
 });
+
+describe.skipIf(!hasPostgrest)("booking someone on their day off asks first", () => {
+  /** A company in UTC, a client and a service, and the booking form for them. */
+  async function setUp() {
+    const c = await company();
+    const [client] = await api.sql<{ id: string }>(
+      "insert into public.clients (organization_id, name) values ($1, 'Away Day Client') returning id",
+      [c.org],
+    );
+    const [service] = await api.sql<{ id: string }>(
+      "insert into public.service_types (organization_id, name) values ($1, 'Standard clean') returning id",
+      [c.org],
+    );
+    const formFor = (when: string, crew: Member[], extra: Record<string, string> = {}) => {
+      const form = new FormData();
+      form.set("client_id", client.id);
+      form.set("assigned_to", crew[0]?.membershipId ?? "");
+      for (const m of crew.slice(1)) form.append("additional_assignees", m.membershipId);
+      form.set("scheduled_at", when.slice(0, 16));
+      form.set("duration_minutes", "120");
+      form.set("service_type", "standard");
+      form.set("service_type_id", service.id);
+      form.set("service_type_label", "Standard clean");
+      form.set("status", "confirmed");
+      form.set("total_cents", "100");
+      for (const [k, v] of Object.entries(extra)) form.set(k, v);
+      return form;
+    };
+    const press = async <T,>(work: () => Promise<T>): Promise<T | { redirected: string }> => {
+      request.cookies = api.sessionCookies(c.manager.userId);
+      try {
+        return await work();
+      } catch (err) {
+        const m = /^redirected to (.*)$/.exec(err instanceof Error ? err.message : "");
+        if (m) return { redirected: m[1] };
+        throw err;
+      } finally {
+        await settle();
+      }
+    };
+    const count = async () => (await api.sql("select 1 from public.bookings where client_id = $1", [client.id])).length;
+    return { c, client: client.id, formFor, press, count };
+  }
+  const offOn = (c: Company, who: Member, day: string) =>
+    api.sql(
+      "insert into public.pto_requests (organization_id, employee_id, start_date, end_date, status) values ($1, $2, $3, $3, 'approved')",
+      [c.org, who.membershipId, day.slice(0, 10)],
+    );
+
+  it("a new visit: the first save names them and saves nothing, the second goes through", async () => {
+    const { c, formFor, press, count } = await setUp();
+    const john = await addMember(api.sql, c.org, "employee", "John");
+    await api.sql("update public.memberships set display_name = 'John Away' where id = $1", [john.membershipId]);
+    const when = at(30);
+    await offOn(c, john, when);
+
+    const asked = (await press(() => bookings.createBookingAction({}, formFor(when, [john])))) as {
+      errors?: Record<string, string>;
+      values?: Record<string, string>;
+    };
+    expect(asked.errors?._form, api.log()).toContain("John Away is off on");
+    expect(asked.errors?._form).toContain("Press Save again to book them anyway");
+    expect(asked.values?.confirm_time_off).toBe(`${when.slice(0, 10)}:${john.membershipId}`);
+    expect(await count()).toBe(0);
+
+    const saved = await press(() =>
+      bookings.createBookingAction({}, formFor(when, [john], { confirm_time_off: asked.values!.confirm_time_off })),
+    );
+    expect(saved, api.log()).toMatchObject({ redirected: expect.any(String) });
+    expect(await count()).toBe(1);
+  });
+
+  it("a yes for one day is not a yes for another, and a pending request doesn't ask at all", async () => {
+    const { c, formFor, press, count } = await setUp();
+    const john = await addMember(api.sql, c.org, "employee", "John");
+    const first = at(31);
+    const second = at(32);
+    await offOn(c, john, first);
+    await offOn(c, john, second);
+    const stale = `${first.slice(0, 10)}:${john.membershipId}`;
+    const asked = (await press(() => bookings.createBookingAction({}, formFor(second, [john], { confirm_time_off: stale })))) as {
+      errors?: Record<string, string>;
+    };
+    expect(asked.errors?._form).toContain("is off on");
+    expect(await count()).toBe(0);
+
+    const vira = await addMember(api.sql, c.org, "employee", "Vira");
+    await api.sql(
+      "insert into public.pto_requests (organization_id, employee_id, start_date, end_date, status) values ($1, $2, $3, $3, 'pending')",
+      [c.org, vira.membershipId, at(33).slice(0, 10)],
+    );
+    expect(await press(() => bookings.createBookingAction({}, formFor(at(33), [vira]))), api.log()).toMatchObject({
+      redirected: expect.any(String),
+    });
+  });
+
+  it("editing: adding someone who is off asks; saving the same crew on the same day again does not", async () => {
+    const { c, client, formFor, press } = await setUp();
+    const olha = await addMember(api.sql, c.org, "employee", "Olha");
+    const john = await addMember(api.sql, c.org, "employee", "John");
+    const when = at(34);
+    await offOn(c, john, when);
+    const id = await addBooking(api.sql, c.org, client, { scheduledAt: when, durationMinutes: 120 });
+    await api.sql(
+      "insert into public.booking_assignees (organization_id, booking_id, membership_id, is_primary) values ($1, $2, $3, true)",
+      [c.org, id, olha.membershipId],
+    );
+    await api.sql("update public.bookings set assigned_to = $2 where id = $1", [id, olha.membershipId]);
+
+    const asked = (await press(() => bookings.updateBookingAction(id, {}, formFor(when, [olha, john])))) as {
+      errors?: Record<string, string>;
+      values?: Record<string, string>;
+    };
+    expect(asked.errors?._form, api.log()).toContain("is off on");
+    expect(await crewOf(id)).toEqual([olha.membershipId]);
+
+    const saved = await press(() =>
+      bookings.updateBookingAction(id, {}, formFor(when, [olha, john], { confirm_time_off: asked.values!.confirm_time_off })),
+    );
+    expect((saved as { errors?: unknown }).errors, JSON.stringify(saved) + api.log()).toBeUndefined();
+    expect((await crewOf(id)).sort()).toEqual([olha.membershipId, john.membershipId].sort());
+
+    // John is on it now by the office's choice: a later edit of the same
+    // visit, same day, same people, is not asked about him again.
+    const again = await press(() => bookings.updateBookingAction(id, {}, formFor(when, [olha, john], { notes: "Use the side door" })));
+    expect((again as { errors?: unknown }).errors, JSON.stringify(again)).toBeUndefined();
+  });
+});

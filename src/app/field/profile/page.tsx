@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   ChevronRight,
   GraduationCap,
+  ListChecks,
   MapPin,
   RefreshCw,
   Shield,
@@ -102,6 +103,14 @@ export default async function FieldProfilePage() {
   const isManagerPlus = ["owner", "admin", "manager"].includes(membership.role);
 
   const admin = createSupabaseAdminClient();
+  // Open tasks the office has given this person, for the My tasks row.
+  const { count: openTasks } = (await admin
+    .from("tasks")
+    .select("id", { count: "exact", head: true })
+    .eq("organization_id", membership.organization_id)
+    .eq("assigned_to", membership.id)
+    .is("completed_at", null)) as unknown as { count: number | null };
+
   const [{ count: pendingPto }, { data: gcalConn }] = await Promise.all([
     // Pending time-off count — surfaces on the Time off row so an open
     // request is visible without opening the page.
@@ -197,6 +206,13 @@ export default async function FieldProfilePage() {
               ? `${pendingPto} pending`
               : null
           }
+        />
+        <NavRow
+          href="/field/tasks"
+          icon={ListChecks}
+          title="My tasks"
+          hint="Things the office has asked you to do"
+          badge={openTasks ? `${openTasks} to do` : null}
         />
         <NavRow
           href="/field/training"

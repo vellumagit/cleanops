@@ -206,6 +206,7 @@ export default async function InvoicesPage({
         tz={orgTz}
         rows={rows}
         canEdit={canEdit && !showArchived}
+        canOpen={!showArchived}
         currency={currency}
       />
     </PageShell>

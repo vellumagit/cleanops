@@ -1,4 +1,7 @@
+import Link from "next/link";
+import { ChevronRight, ListChecks } from "lucide-react";
 import { requireMembership } from "@/lib/auth";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { FieldHeader } from "@/components/field-shell";
 import { fetchMyFieldJobs, localDate, isStarted } from "./data";
 import { JobCard } from "./job-card";
@@ -14,6 +17,17 @@ export default async function FieldTodayPage() {
   const membership = await requireMembership();
   const { jobs, tz } = await fetchMyFieldJobs(membership);
   const todayStr = localDate(new Date().toISOString(), tz);
+
+  // Tasks the office has given this person and that aren't done. Shown as
+  // one line at the top of Today, the screen a cleaner actually opens; a
+  // row on the Profile tab alone would be found by nobody.
+  const supabase = await createSupabaseServerClient();
+  const { count: openTasks } = (await supabase
+    .from("tasks")
+    .select("id", { count: "exact", head: true })
+    .eq("organization_id", membership.organization_id)
+    .eq("assigned_to", membership.id)
+    .is("completed_at", null)) as unknown as { count: number | null };
 
   const todayJobs = jobs.filter((j) => {
     const d = localDate(j.effective_scheduled_at, tz);
@@ -48,6 +62,20 @@ export default async function FieldTodayPage() {
   return (
     <>
       <FieldHeader title="Today" description="Your active jobs for today." />
+
+      {openTasks ? (
+        <Link
+          href="/field/tasks"
+          data-testid="my-tasks-link"
+          className="mb-5 flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3.5 transition-colors active:bg-muted"
+        >
+          <ListChecks className="h-5 w-5 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1 text-[15px] font-medium">
+            {openTasks === 1 ? "1 task from the office" : `${openTasks} tasks from the office`}
+          </span>
+          <ChevronRight className="h-5 w-5 shrink-0 text-muted-foreground" />
+        </Link>
+      ) : null}
 
       {todayJobs.length === 0 ? (
         <div className="rounded-xl border border-dashed border-border bg-card px-5 py-14 text-center text-base text-muted-foreground">

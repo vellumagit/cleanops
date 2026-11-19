@@ -126,9 +126,13 @@ const seriesForm = (client: string, over: Record<string, string> = {}) =>
     due_days: "14",
     next_run_at: "2026-12-01",
     notes: "",
-    line_items: "",
+    line_items_json: "",
     ...over,
   });
+
+/** Rows as the lines editor posts them: description, quantity, price each in dollars. */
+const rowsJson = (rows: Array<[string, string, string]>) =>
+  JSON.stringify(rows.map(([label, quantity, unit_price_dollars]) => ({ label, quantity, unit_price_dollars })));
 
 type SeriesRow = {
   id: string;
@@ -230,16 +234,20 @@ describe.skipIf(!hasPostgrest)("the recurring invoice form", { timeout: 90_000 }
   it("refuses a form it can't bill from, and keeps what was typed", async () => {
     const c = await company();
     const client = await addClient(api.sql, c.org, "Typo Client");
-    const bad = (await as(c.owner, () => series.createRecurringInvoiceAction({}, seriesForm(client, { line_items: "[{oops" })))) as {
+    // A row with a description and no price: refused by name, in words.
+    const bad = (await as(c.owner, () =>
+      series.createRecurringInvoiceAction({}, seriesForm(client, { line_items_json: rowsJson([["Office clean", "1", ""]]) })),
+    )) as {
       errors?: Record<string, string>;
       values?: Record<string, string>;
     };
-    expect(bad.errors?.line_items).toBe("Line items is not valid JSON");
+    expect(bad.errors?.line_items).toBe('"Office clean" has no price. Type one, or 0 if it is included.');
     expect(bad.values?.name).toBe("Monthly retainer");
-    const notArray = (await as(c.owner, () => series.createRecurringInvoiceAction({}, seriesForm(client, { line_items: '{"label":"x"}' })))) as {
-      errors?: Record<string, string>;
-    };
-    expect(notArray.errors?.line_items).toBe("Line items must be a JSON array");
+    // Charge tax ticked with no rate typed.
+    const noRate = (await as(c.owner, () =>
+      series.createRecurringInvoiceAction({}, seriesForm(client, { tax_rate_percent: "", tax_label: "GST" })),
+    )) as { errors?: Record<string, string> };
+    expect(noRate.errors?.tax_rate_percent).toBe("Type a tax rate (5 for 5%), or untick Charge tax.");
     const noClient = (await as(c.owner, () => series.createRecurringInvoiceAction({}, seriesForm("")))) as { errors?: Record<string, string> };
     expect(noClient.errors?.client_id).toBe("Pick a client");
     const noDate = (await as(c.owner, () => series.createRecurringInvoiceAction({}, seriesForm(client, { next_run_at: "" })))) as {
@@ -247,6 +255,48 @@ describe.skipIf(!hasPostgrest)("the recurring invoice form", { timeout: 90_000 }
     };
     expect(noDate.errors?.next_run_at).toBe("Pick a start date");
     expect(await seriesRows(c.org)).toEqual([]);
+  });
+
+  it("rows typed on the form are the series' lines, and its amount is their sum; tax is saved beside it", async () => {
+    const c = await company();
+    const client = await addClient(api.sql, c.org, "Rows Client");
+    const res = await as(c.owner, () =>
+      series.createRecurringInvoiceAction(
+        {},
+        seriesForm(client, {
+          // The amount field is ignored once there are rows.
+          amount_dollars: "1.00",
+          line_items_json: rowsJson([
+            ["Office clean", "4", "100"],
+            ["Supplies", "", "45.50"],
+            ["", "1", ""],
+          ]),
+          tax_rate_percent: "5",
+          tax_label: "GST",
+        }),
+      ),
+    );
+    expect(res, api.log()).toEqual({ redirected: "/app/settings/recurring-invoices" });
+    const [made] = await api.sql<{ id: string; amount_cents: number; line_items: unknown; tax_rate_bps: number | null; tax_label: string | null }>(
+      "select id, amount_cents, line_items, tax_rate_bps, tax_label from public.invoice_series where organization_id = $1",
+      [c.org],
+    );
+    expect(made.amount_cents).toBe(44550);
+    expect(made.line_items).toEqual([
+      { label: "Office clean", quantity: 4, unit_price_cents: 10000 },
+      { label: "Supplies", quantity: 1, unit_price_cents: 4550 },
+    ]);
+    expect(made).toMatchObject({ tax_rate_bps: 500, tax_label: "GST" });
+
+    // Edited with the tax box unticked (its fields are not posted): tax comes off.
+    await as(c.owner, () =>
+      series.updateRecurringInvoiceAction(made.id, {}, seriesForm(client, { line_items_json: rowsJson([["Office clean", "4", "100"]]) })),
+    );
+    const [after] = await api.sql<{ amount_cents: number; tax_rate_bps: number | null; tax_label: string | null }>(
+      "select amount_cents, tax_rate_bps, tax_label from public.invoice_series where id = $1",
+      [made.id],
+    );
+    expect(after).toEqual({ amount_cents: 40000, tax_rate_bps: null, tax_label: null });
   });
 
   it("never makes a series for another company's client", async () => {
@@ -419,6 +469,24 @@ describe.skipIf(!hasPostgrest)("the nightly recurring invoice job", { timeout: 1
     expect(await invoicesFor(client), "the second run doesn't bill the period again").toHaveLength(1);
   });
 
+  it("a series that charges tax bills its amount plus the tax, and says what the tax is", async () => {
+    const c = await company();
+    const client = await addClient(api.sql, c.org, "Taxed Client");
+    await standing(c, client, {
+      amount_cents: 40000,
+      line_items: [{ label: "Office clean", quantity: 4, unit_price_cents: 10000 }],
+      tax_rate_bps: 500,
+      tax_label: "GST",
+    });
+    expect((await runCron()).status).toBe(200);
+    const [inv] = await api.sql<{ id: string; amount_cents: number; tax_rate_bps: number | null; tax_amount_cents: number | null; tax_label: string | null }>(
+      "select id, amount_cents, tax_rate_bps, tax_amount_cents, tax_label from public.invoices where client_id = $1",
+      [client],
+    );
+    expect(inv, api.log()).toMatchObject({ amount_cents: 42000, tax_rate_bps: 500, tax_amount_cents: 2000, tax_label: "GST" });
+    expect(await linesFor(inv.id)).toEqual([{ label: "Office clean", quantity: expect.stringMatching(/^4(\.0+)?$/), unit_price_cents: 10000 }]);
+  });
+
   it("a series with no lines bills one line for the full amount", async () => {
     const c = await company();
     const client = await addClient(api.sql, c.org, "Plain Client");
@@ -466,14 +534,16 @@ describe.skipIf(!hasPostgrest)("the nightly recurring invoice job", { timeout: 1
     expect(held[0].body).toContain("Cycle retainer");
   });
 
-  it("a series written the way the form's example shows bills lines that add up to the invoice", async () => {
+  it("a series saved in the old JSON box's spelling still bills lines that add up to the invoice", async () => {
+    // The form was a box of JSON until 2026-11-19 and its own example used
+    // "description" and "unit_cents". Series saved that way are still in the
+    // table; the form can no longer write one, so this puts one there.
     const c = await company();
     const client = await addClient(api.sql, c.org, "Example Client");
-    const example = '[{"description":"Office cleaning retainer","quantity":1,"unit_cents":50000}]';
-    const made = await as(c.owner, () =>
-      series.createRecurringInvoiceAction({}, seriesForm(client, { amount_dollars: "500", next_run_at: "2026-11-01", line_items: example })),
-    );
-    expect(made).toEqual({ redirected: "/app/settings/recurring-invoices" });
+    await standing(c, client, {
+      amount_cents: 50000,
+      line_items: [{ description: "Office cleaning retainer", quantity: 1, unit_cents: 50000 }],
+    });
     await runCron();
     const [inv] = await invoicesFor(client);
     const lines = await linesFor(inv.id);

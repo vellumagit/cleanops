@@ -1,6 +1,11 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
+import {
+  EstimateLinesFields,
+  type ExistingEstimateLine,
+} from "@/app/app/estimates/estimate-lines-fields";
+import { parseTaxRate } from "@/lib/invoice-tax";
 import { Input } from "@/components/ui/input";
 import { DateInput } from "@/components/when-preview";
 import { Label } from "@/components/ui/label";
@@ -19,7 +24,11 @@ export type RecurringInvoiceFormDefaults = {
   due_days: number;
   next_run_at: string; // yyyy-mm-dd
   notes: string;
-  line_items: string; // JSON string
+  /** The saved lines, in the shape the lines editor reads. */
+  lines: ExistingEstimateLine[];
+  /** "5" for 5%. Empty = no tax. */
+  tax_rate_percent: string;
+  tax_label: string;
 };
 
 type Props = {
@@ -28,9 +37,12 @@ type Props = {
   /** Required in edit mode */
   id?: string;
   defaults?: RecurringInvoiceFormDefaults;
+  currency: "CAD" | "USD";
+  /** The company's own tax setting, to start a NEW series from. */
+  orgTax?: { ratePercent: string; label: string };
 };
 
-export function RecurringInvoiceForm({ clients, mode, id, defaults }: Props) {
+export function RecurringInvoiceForm({ clients, mode, id, defaults, currency, orgTax }: Props) {
   const boundAction =
     mode === "edit" && id
       ? updateRecurringInvoiceAction.bind(null, id)
@@ -42,6 +54,15 @@ export function RecurringInvoiceForm({ clients, mode, id, defaults }: Props) {
   );
 
   const v = state.values ?? {};
+
+  // Tax: a new series starts from the company's own setting; an existing one
+  // shows what it was saved with.
+  const startRate = mode === "edit" ? (defaults?.tax_rate_percent ?? "") : (orgTax?.ratePercent ?? "");
+  const startLabel = mode === "edit" ? (defaults?.tax_label ?? "") : (orgTax?.label ?? "");
+  const [taxOn, setTaxOn] = useState(startRate !== "");
+  const [taxRate, setTaxRate] = useState(startRate);
+  const [taxLabel, setTaxLabel] = useState(startLabel);
+  const shownRateBps = taxOn ? parseTaxRate(taxRate) : null;
 
   // Default start for new series = tomorrow.
   const tomorrow = new Date();
@@ -89,9 +110,9 @@ export function RecurringInvoiceForm({ clients, mode, id, defaults }: Props) {
         )}
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div>
         <div>
-          <Label htmlFor="cadence">Cadence</Label>
+          <Label htmlFor="cadence">How often</Label>
           <select
             id="cadence"
             name="cadence"
@@ -105,23 +126,67 @@ export function RecurringInvoiceForm({ clients, mode, id, defaults }: Props) {
           </select>
         </div>
 
-        <div>
-          <Label htmlFor="amount_dollars">Amount</Label>
-          <Input
-            id="amount_dollars"
-            name="amount_dollars"
-            type="number"
-            step="0.01"
-            min="0"
-            required
-            placeholder="500.00"
-            defaultValue={v.amount_dollars ?? defaults?.amount_dollars ?? ""}
-            className="mt-1"
-          />
-          {state.errors?.amount_cents && (
-            <p className="mt-1 text-xs text-red-700">
-              {state.errors.amount_cents}
+      </div>
+
+      {/* What each invoice bills: rows, like a one-off invoice. This was a
+          box to type JSON into. */}
+      <div className="rounded-lg border border-border p-4">
+        <EstimateLinesFields
+          existing={defaults?.lines ?? []}
+          totalDollars={v.amount_dollars ?? defaults?.amount_dollars ?? ""}
+          currency={currency}
+          error={state.errors?.line_items ?? state.errors?.amount_cents}
+          intro="One row for each thing this invoice bills. Every invoice it generates carries these rows."
+          totalName="amount_dollars"
+          totalWord={taxOn ? "Amount before tax" : "Amount"}
+          taxRateBps={shownRateBps}
+          taxLabel={taxLabel}
+        />
+
+        <div className="mt-4 border-t border-border pt-4">
+          <label className="flex items-center gap-2 text-sm font-medium">
+            <input
+              type="checkbox"
+              checked={taxOn}
+              onChange={(e) => setTaxOn(e.target.checked)}
+              className="h-4 w-4 rounded border-input"
+            />
+            Charge tax on these invoices
+          </label>
+          {taxOn ? (
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <div>
+                <Label htmlFor="tax_rate_percent">Rate (%)</Label>
+                <Input
+                  id="tax_rate_percent"
+                  name="tax_rate_percent"
+                  inputMode="decimal"
+                  placeholder="5"
+                  value={taxRate}
+                  onChange={(e) => setTaxRate(e.target.value)}
+                  className="mt-1"
+                />
+              </div>
+              <div>
+                <Label htmlFor="tax_label">Called</Label>
+                <Input
+                  id="tax_label"
+                  name="tax_label"
+                  placeholder="GST"
+                  maxLength={40}
+                  value={taxLabel}
+                  onChange={(e) => setTaxLabel(e.target.value)}
+                  className="mt-1"
+                />
+              </div>
+            </div>
+          ) : (
+            <p className="mt-1 text-xs text-muted-foreground">
+              Off: each invoice is for the amount above and nothing more.
             </p>
+          )}
+          {state.errors?.tax_rate_percent && (
+            <p className="mt-1 text-xs text-red-700">{state.errors.tax_rate_percent}</p>
           )}
         </div>
       </div>
@@ -141,7 +206,7 @@ export function RecurringInvoiceForm({ clients, mode, id, defaults }: Props) {
           <p className="mt-1 text-xs text-muted-foreground">
             {mode === "edit"
               ? "Changing this shifts when the next invoice will be generated. The cadence still applies from here."
-              : "The cron will generate the first invoice on (or just after) this date."}
+              : "The first invoice is made on this date, overnight."}
           </p>
           {state.errors?.next_run_at && (
             <p className="mt-1 text-xs text-red-700">
@@ -176,26 +241,6 @@ export function RecurringInvoiceForm({ clients, mode, id, defaults }: Props) {
           placeholder="Notes that will appear on every generated invoice."
           className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
         />
-      </div>
-
-      <div>
-        <Label htmlFor="line_items">Line items (JSON, optional)</Label>
-        <textarea
-          id="line_items"
-          name="line_items"
-          rows={4}
-          defaultValue={v.line_items ?? defaults?.line_items ?? ""}
-          placeholder='[{"label":"Office cleaning retainer","quantity":1,"unit_price_cents":50000}]'
-          className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-xs font-mono"
-        />
-        <p className="mt-1 text-xs text-muted-foreground">
-          If omitted, the invoice will have no line items — just the total amount. Leave blank if you prefer to add line items manually on each generated invoice.
-        </p>
-        {state.errors?.line_items && (
-          <p className="mt-1 text-xs text-red-700">
-            {state.errors.line_items}
-          </p>
-        )}
       </div>
 
       {state.errors?._form && (

@@ -24,11 +24,13 @@ export type EstimateRow = {
 
 export function EstimatesTable({
   rows,
-  canEdit,
+  canOpen,
   tz,
 }: {
   rows: EstimateRow[];
-  canEdit: boolean;
+  /** Anyone who reached this page may open an estimate: the page already
+   *  requires the Invoices switch, and the edit page checks it again. */
+  canOpen: boolean;
   /** Org IANA timezone — every date on this table renders in it. */
   tz: string;
 }) {
@@ -113,7 +115,7 @@ export function EstimatesTable({
       getRowId={(r) => r.id}
       searchPlaceholder="Search by client or service…"
       onRowClick={
-        canEdit ? (r) => router.push(`/app/estimates/${r.id}/edit`) : undefined
+        canOpen ? (r) => router.push(`/app/estimates/${r.id}/edit`) : undefined
       }
       emptyState={{
         title: "No estimates yet",

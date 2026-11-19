@@ -59,8 +59,9 @@ import { canCreateData } from "@/lib/subscription";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { localInputToUtcIso } from "@/lib/validators/common";
 import { zonedYmd } from "@/lib/wall-clock";
-import { wallClockColumns } from "@/lib/scheduled-local";
+import { wallClockColumns, wallClockForInstant } from "@/lib/scheduled-local";
 import { runtimeKnowsZone } from "@/lib/tz-probe";
+import { awayCrewQuestion } from "./time-off-check";
 import { resolveSeriesMove } from "@/lib/series-move";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { allowDbErrors } from "@/lib/supabase/query-guard";
@@ -190,6 +191,29 @@ function readAdditionalAssignees(formData: FormData): string[] {
     .getAll("additional_assignees")
     .map((v) => String(v))
     .filter((v) => v.length > 0);
+}
+
+/**
+ * Everyone the form is putting on the visit: the lead, the extra crew, and
+ * whoever holds a split-shift segment. Read loosely, for the day-off
+ * question only; the save validates the segments properly further down.
+ */
+function postedCrewIds(formData: FormData, primary: string | null | undefined): string[] {
+  const ids = new Set<string>();
+  if (primary) ids.add(primary);
+  for (const id of readAdditionalAssignees(formData)) ids.add(id);
+  try {
+    const splits = JSON.parse(String(formData.get("splits") ?? "[]"));
+    if (Array.isArray(splits)) {
+      for (const seg of splits) {
+        const who = seg && typeof seg === "object" ? (seg as { assigned_to?: unknown }).assigned_to : null;
+        if (typeof who === "string" && who) ids.add(who);
+      }
+    }
+  } catch {
+    // Unreadable segments are refused by the save itself.
+  }
+  return [...ids];
 }
 
 type SplitSegmentInput = {
@@ -890,6 +914,20 @@ export async function createBookingAction(
   {
     const err = futureStatusError(parsed.data.scheduled_at, parsed.data.status);
     if (err) return { errors: { status: err }, values: raw };
+  }
+
+  // Someone on the crew is off that day (approved time off, or a day they
+  // marked unavailable): ask once before saving. See time-off-check.ts.
+  if (!["cancelled", "completed"].includes(parsed.data.status)) {
+    const away = await awayCrewQuestion({
+      organizationId: membership.organization_id,
+      crewIds: postedCrewIds(formData, parsed.data.assigned_to),
+      ymd: raw.scheduled_at.slice(0, 10),
+      confirmed: String(formData.get("confirm_time_off") ?? ""),
+    });
+    if (away) {
+      return { errors: { _form: away.message }, values: { ...raw, confirm_time_off: away.key } };
+    }
   }
 
   // Past dates are allowed — owners regularly need to back-fill historical
@@ -1799,6 +1837,36 @@ export async function updateBookingAction(
       };
     }
 
+  }
+
+  // Someone on the crew is off that day: ask once before saving, as the
+  // create form does. Only about what this save changes: a person newly put
+  // on the visit, or everyone when the visit moves to another day. Editing
+  // the notes of a visit the office already chose to book must not ask again.
+  if (!["cancelled", "completed"].includes(parsed.data.status)) {
+    const newDay = raw.scheduled_at.slice(0, 10);
+    const oldDay = existing?.scheduled_at
+      ? wallClockForInstant(existing.scheduled_at, orgTz).slice(0, 10)
+      : null;
+    let crewToAsk = postedCrewIds(formData, parsed.data.assigned_to);
+    if (oldDay === newDay) {
+      const { data: onItNow } = (await supabase
+        .from("booking_assignees")
+        .select("membership_id")
+        .eq("booking_id", id)) as unknown as { data: Array<{ membership_id: string }> | null };
+      const already = new Set((onItNow ?? []).map((r) => r.membership_id));
+      if (existing?.assigned_to) already.add(existing.assigned_to);
+      crewToAsk = crewToAsk.filter((m) => !already.has(m));
+    }
+    const away = await awayCrewQuestion({
+      organizationId: membership.organization_id,
+      crewIds: crewToAsk,
+      ymd: newDay,
+      confirmed: String(formData.get("confirm_time_off") ?? ""),
+    });
+    if (away) {
+      return { errors: { _form: away.message }, values: { ...raw, confirm_time_off: away.key } };
+    }
   }
 
   // A completed job an invoice bills doesn't leave completed, move, or change
