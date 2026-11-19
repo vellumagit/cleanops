@@ -76,6 +76,15 @@ export async function renderEstimatePdf(opts: {
   };
   if (!est) throw new Error(`estimate not found for token`);
 
+  const { data: lineRows } = (await admin
+    .from("estimate_line_items")
+    .select("label, quantity, unit_price_cents, sort_order")
+    .eq("estimate_id", est.id)
+    .order("sort_order")) as unknown as {
+    data: Array<{ label: string; quantity: number; unit_price_cents: number }> | null;
+  };
+  const lines = (lineRows ?? []).map((l) => ({ ...l, quantity: Number(l.quantity) }));
+
   const [{ data: org }, currency] = await Promise.all([
     admin
       .from("organizations")
@@ -207,18 +216,46 @@ export async function renderEstimatePdf(opts: {
   // -- Service --------------------------------------------------------------
   hline(1, brand);
   y -= 16;
-  text("SERVICE", M, 8, bold, muted);
-  y -= 14;
-  for (const line of wrap(
-    est.service_description || "Cleaning service",
-    11,
-    BODY_MAX,
-  )) {
-    ensureRoom(110);
-    text(line, M, 11, font, ink);
-    y -= 15;
+  // With lines, the summary is optional: the lines say what the work is.
+  const summary = est.service_description || (lines.length ? "" : "Cleaning service");
+  if (summary) {
+    text("SERVICE", M, 8, bold, muted);
+    y -= 14;
+    for (const line of wrap(summary, 11, BODY_MAX)) {
+      ensureRoom(110);
+      text(line, M, 11, font, ink);
+      y -= 15;
+    }
+    y -= 6;
   }
-  y -= 6;
+
+  // -- Line items -----------------------------------------------------------
+  if (lines.length) {
+    const QTY_R = 400;
+    const PRICE_R = 480;
+    ensureRoom(150);
+    text("DESCRIPTION", M, 8, bold, muted);
+    textR("QTY", QTY_R, 8, bold, muted);
+    textR("PRICE", PRICE_R, 8, bold, muted);
+    textR("AMOUNT", RIGHT, 8, bold, muted);
+    y -= 6;
+    hline();
+    y -= 14;
+    for (const l of lines) {
+      const wrapped = wrap(l.label, 10, QTY_R - 50 - M);
+      ensureRoom(110 + wrapped.length * 13);
+      const qty = Number.isInteger(l.quantity) ? String(l.quantity) : l.quantity.toFixed(2);
+      textR(qty, QTY_R, 10, font, ink);
+      textR(formatCurrencyCents(l.unit_price_cents, currency), PRICE_R, 10, font, ink);
+      textR(formatCurrencyCents(Math.round(l.quantity * l.unit_price_cents), currency), RIGHT, 10, font, ink);
+      for (const w of wrapped) {
+        text(w, M, 10, font, ink);
+        y -= 13;
+      }
+      y -= 3;
+    }
+    y -= 6;
+  }
 
   // -- Details (the lead's story: property, add-ons, schedule) --------------
   if (est.notes) {

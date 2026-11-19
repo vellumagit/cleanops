@@ -18,6 +18,7 @@ import {
   storeEstimatePdf,
 } from "@/lib/estimate-pdf-storage";
 import { canCreateData } from "@/lib/subscription";
+import { estimateLinesTotalCents, parseEstimateLines, type EstimateLine } from "@/lib/estimate-lines";
 
 type Field = keyof typeof EstimateSchema.shape;
 export type EstimateFormState = ActionState<Field | "pdf">;
@@ -30,6 +31,30 @@ function readFormValues(formData: FormData) {
     status: String(formData.get("status") ?? "draft"),
     total_cents: String(formData.get("total_cents") ?? ""),
   };
+}
+
+/**
+ * The form's lines. `present` is false for a caller that sent no lines field
+ * at all, which must leave an estimate's lines alone rather than read as
+ * "delete them". With lines, the total is their sum, whatever was typed.
+ */
+function readLines(formData: FormData, raw: { total_cents: string }) {
+  if (!formData.has("line_items_json")) return { present: false, lines: [] as EstimateLine[] };
+  const parsed = parseEstimateLines(formData.get("line_items_json"));
+  if (parsed.error) return { present: true, lines: [] as EstimateLine[], error: parsed.error };
+  if (parsed.lines.length > 0) raw.total_cents = (estimateLinesTotalCents(parsed.lines) / 100).toFixed(2);
+  return { present: true, lines: parsed.lines };
+}
+
+function lineRows(orgId: string, estimateId: string, lines: EstimateLine[]) {
+  return lines.map((l) => ({
+    organization_id: orgId,
+    estimate_id: estimateId,
+    label: l.label,
+    quantity: l.quantity,
+    unit_price_cents: l.unit_price_cents,
+    sort_order: l.sort_order,
+  }));
 }
 
 function maybeStamp(status: string, prev?: { sent_at?: string | null; decided_at?: string | null }) {
@@ -91,6 +116,8 @@ export async function createEstimateAction(
   formData: FormData,
 ): Promise<EstimateFormState> {
   const raw = readFormValues(formData);
+  const lineInput = readLines(formData, raw);
+  if (lineInput.error) return { errors: { total_cents: lineInput.error }, values: raw };
   const parsed = parseForm(EstimateSchema, raw);
   if (!parsed.ok) return { errors: parsed.errors, values: raw };
 
@@ -137,6 +164,19 @@ export async function createEstimateAction(
 
   if (error) return { errors: { _form: error.message }, values: raw };
 
+  if (lineInput.lines.length > 0) {
+    const { data: made, error: lineErr } = (await supabase
+      .from("estimate_line_items")
+      .insert(lineRows(membership.organization_id, estimate.id, lineInput.lines) as never)
+      .select("id")) as unknown as { data: Array<{ id: string }> | null; error: { message: string } | null };
+    if (lineErr || (made?.length ?? 0) !== lineInput.lines.length) {
+      // Lines and estimate are one thing to the person saving: an estimate
+      // whose total has no lines behind it is worse than none.
+      await supabase.from("estimates").delete().eq("id", estimate.id);
+      return { errors: { total_cents: "The line items couldn't be saved, so the estimate wasn't made. Try again." }, values: raw };
+    }
+  }
+
   if (newPdf) {
     const upload = await uploadEstimatePdf(
       membership.organization_id,
@@ -164,7 +204,9 @@ export async function createEstimateAction(
 
   revalidatePath("/app/estimates");
   revalidatePath("/app");
-  redirect("/app/estimates");
+  // To the estimate itself: that page is where it is sent, downloaded and
+  // shared from, which is what comes next.
+  redirect(`/app/estimates/${estimate.id}/edit`);
 }
 
 export async function updateEstimateAction(
@@ -173,6 +215,8 @@ export async function updateEstimateAction(
   formData: FormData,
 ): Promise<EstimateFormState> {
   const raw = readFormValues(formData);
+  const lineInput = readLines(formData, raw);
+  if (lineInput.error) return { errors: { total_cents: lineInput.error }, values: raw };
   const parsed = parseForm(EstimateSchema, raw);
   if (!parsed.ok) return { errors: parsed.errors, values: raw };
 
@@ -239,6 +283,30 @@ export async function updateEstimateAction(
       },
       values: raw,
     };
+  }
+
+  // The lines, once the estimate itself has saved. New rows go in before
+  // the old ones come out, so a failure leaves the old lines standing rather
+  // than an estimate with a total and nothing behind it.
+  if (lineInput.present) {
+    let keep: string[] = [];
+    if (lineInput.lines.length > 0) {
+      const { data: made, error: lineErr } = (await supabase
+        .from("estimate_line_items")
+        .insert(lineRows(membership.organization_id, id, lineInput.lines) as never)
+        .select("id")) as unknown as { data: Array<{ id: string }> | null; error: { message: string } | null };
+      if (lineErr || (made?.length ?? 0) !== lineInput.lines.length) {
+        if (made?.length) await supabase.from("estimate_line_items").delete().in("id", made.map((m) => m.id));
+        return {
+          errors: { total_cents: "Your other changes were saved, but the line items were not. Try saving again." },
+          values: raw,
+        };
+      }
+      keep = (made ?? []).map((m) => m.id);
+    }
+    let stale = supabase.from("estimate_line_items").delete().eq("estimate_id", id);
+    if (keep.length) stale = stale.not("id", "in", `(${keep.join(",")})`);
+    await stale;
   }
 
   if (removePdf) {

@@ -210,7 +210,7 @@ function SelfEditDialog({
           <DialogTitle>Change time-off request</DialogTitle>
         </DialogHeader>
         <form action={onSubmit} className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 min-[480px]:grid-cols-2">
             <div>
               <label
                 htmlFor="self-pto-start"

@@ -16,6 +16,7 @@ import { requireMembership } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { PageShell } from "@/components/page-shell";
 import { StatusBadge, type StatusTone } from "@/components/status-badge";
+import { isRestricted, parseCapabilities } from "@/lib/capabilities";
 import { isSubcontractor } from "@/lib/engagement";
 import { buttonVariants } from "@/components/ui/button";
 import { memberDisplayName } from "@/lib/member-display";
@@ -67,7 +68,7 @@ export default async function EmployeeFilePage({
   const { data: member } = (await admin
     .from("memberships")
     .select(
-      "id, organization_id, profile_id, role, engagement, status, pay_rate_cents, display_name, contact_email, contact_phone, created_at, deactivated_at, profile:profiles(full_name, phone)",
+      "id, organization_id, profile_id, role, engagement, status, pay_rate_cents, capabilities, display_name, contact_email, contact_phone, created_at, deactivated_at, profile:profiles(full_name, phone)",
     )
     .eq("id", id)
     .eq("organization_id", viewer.organization_id)
@@ -84,6 +85,7 @@ export default async function EmployeeFilePage({
       contact_phone: string | null;
       created_at: string;
       deactivated_at: string | null;
+      capabilities: unknown;
       profile: { full_name: string | null; phone: string | null } | null;
     } | null;
   };
@@ -371,6 +373,9 @@ export default async function EmployeeFilePage({
                 <StatusBadge tone={roleTone(member.role)}>
                   {humanizeEnum(member.role)}
                 </StatusBadge>
+                {isRestricted(member.role, parseCapabilities(member.capabilities)) && (
+                  <StatusBadge tone="amber">Limited access</StatusBadge>
+                )}
                 {isSubcontractor(member.engagement) && (
                   <StatusBadge tone="neutral">Subcontractor</StatusBadge>
                 )}

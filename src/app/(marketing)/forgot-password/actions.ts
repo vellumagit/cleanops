@@ -3,6 +3,8 @@
 import { z } from "zod";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { enterFailClosed } from "@/lib/supabase/query-guard";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { sendEmail } from "@/lib/email";
 import {
   checkIpRateLimit,
   checkEmailRateLimit,
@@ -32,6 +34,49 @@ function isSupabaseRateLimitError(message: string): boolean {
     m.includes("too many requests") ||
     m.includes("429")
   );
+}
+
+/**
+ * Send a reset link that works in whatever browser opens it.
+ *
+ * The built-in reset email is tied to the browser that asked for it. Someone
+ * who asks from the installed app on a phone gets a link that opens in
+ * Safari, which never asked, so it was refused ("opened in a different
+ * browser"). This link carries its own one-time token instead, the same kind
+ * the office's "recovery link" for an employee uses.
+ *
+ * Returns false when it could not be sent (no such login, email not set up,
+ * address suppressed); the caller then falls back to the built-in email, so
+ * this can only add a working path, not remove one.
+ */
+async function sendPortableResetLink(email: string, siteUrl: string): Promise<boolean> {
+  try {
+    const admin = createSupabaseAdminClient();
+    const { data, error } = await admin.auth.admin.generateLink({ type: "recovery", email });
+    const hashed = data?.properties?.hashed_token;
+    if (error || !hashed) return false;
+    const url = `${siteUrl}/auth/callback?token_hash=${encodeURIComponent(hashed)}&type=recovery&next=/reset-password`;
+    return await sendEmail({
+      to: email,
+      subject: "Reset your Sollos password",
+      text:
+        `Someone asked to reset the password for this Sollos login.\n\n` +
+        `Open this link to choose a new password:\n${url}\n\n` +
+        `The link works once and expires. It can be opened in any browser. ` +
+        `If you use the Sollos app on your phone, set the new password, then sign in to the app with it.\n\n` +
+        `If you didn't ask for this, ignore this email. Your password has not changed.`,
+      html:
+        `<div style="font-family:system-ui,-apple-system,Segoe UI,sans-serif;font-size:15px;line-height:1.5;color:#111;max-width:520px">` +
+        `<p>Someone asked to reset the password for this Sollos login.</p>` +
+        `<p><a href="${url}" style="display:inline-block;background:#111;color:#fff;text-decoration:none;padding:10px 18px;border-radius:6px;font-weight:600">Choose a new password</a></p>` +
+        `<p style="color:#555;font-size:13px">The link works once and expires. It can be opened in any browser. If you use the Sollos app on your phone, set the new password, then sign in to the app with it.</p>` +
+        `<p style="color:#555;font-size:13px">If you didn't ask for this, ignore this email. Your password has not changed.</p>` +
+        `</div>`,
+    });
+  } catch (err) {
+    console.error("[auth] portable reset link failed:", err instanceof Error ? err.message : err);
+    return false;
+  }
 }
 
 export async function forgotPasswordAction(
@@ -91,6 +136,10 @@ export async function forgotPasswordAction(
   const supabase = await createSupabaseServerClient();
   const siteUrl =
     process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
+
+  if (await sendPortableResetLink(parsed.data.email, siteUrl)) {
+    return { sent: true, email: parsed.data.email };
+  }
 
   const { error } = await supabase.auth.resetPasswordForEmail(
     parsed.data.email,

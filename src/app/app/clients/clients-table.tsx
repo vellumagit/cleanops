@@ -32,18 +32,28 @@ export function ClientsTable({
   // Reserved for row-level edit affordances; currently unused.
   canEdit: _canEdit,
   orgContactDefault = "email",
+  showBalance = true,
 }: {
   rows: ClientRow[];
   canEdit: boolean;
   /** The org's house default — shown for clients that follow it. */
   orgContactDefault?: string;
+  /** False for a manager whose Invoices & estimates access is off: what a
+   *  client owes is the money side, which that switch covers. */
+  showBalance?: boolean;
 }) {
   const router = useRouter();
   const columns: DataTableColumn<ClientRow>[] = [
     {
       key: "name",
       header: "Name",
-      render: (r) => <span className="font-medium">{r.name}</span>,
+      // A long name with no spaces (a company name run together, an email
+      // typed as a name) used to push the whole table sideways.
+      render: (r) => (
+        <span className="block max-w-[22rem] font-medium [overflow-wrap:anywhere]">
+          {r.name}
+        </span>
+      ),
       searchValue: (r) => r.name,
     },
     {
@@ -111,13 +121,17 @@ export function ClientsTable({
         );
       },
     },
-    {
-      key: "balance",
-      header: "Balance",
-      headerClassName: "text-right",
-      className: "text-right tabular-nums font-medium",
-      render: (r) => formatCurrencyCents(r.balance_cents),
-    },
+    ...(showBalance
+      ? [
+          {
+            key: "balance",
+            header: "Balance",
+            headerClassName: "text-right",
+            className: "text-right tabular-nums font-medium",
+            render: (r: ClientRow) => formatCurrencyCents(r.balance_cents),
+          } satisfies DataTableColumn<ClientRow>,
+        ]
+      : []),
     {
       key: "actions",
       header: "",

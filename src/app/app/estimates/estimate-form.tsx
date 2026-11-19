@@ -2,7 +2,6 @@
 
 import { useActionState, useRef, useState } from "react";
 import Link from "next/link";
-import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { buttonVariants } from "@/components/ui/button";
 import { Button } from "@/components/ui/button";
@@ -14,6 +13,7 @@ import {
   updateEstimateAction,
   type EstimateFormState,
 } from "./actions";
+import { EstimateLinesFields, type ExistingEstimateLine } from "./estimate-lines-fields";
 
 const empty: EstimateFormState = {};
 
@@ -24,6 +24,7 @@ type Defaults = {
   status?: string;
   total_dollars?: string;
   pdf_url?: string | null;
+  lines?: ExistingEstimateLine[];
 };
 
 export function EstimateForm({
@@ -90,10 +91,10 @@ export function EstimateForm({
       </FormField>
 
       <FormField
-        label="Service description"
+        label="Summary"
         htmlFor="service_description"
         error={state.errors?.service_description}
-        hint="Short summary of what's being quoted"
+        hint="Optional. A sentence or two above the line items: what the job is, or anything the lines don't say."
       >
         <Textarea
           id="service_description"
@@ -105,13 +106,22 @@ export function EstimateForm({
         />
       </FormField>
 
+      <div className="rounded-lg border border-border p-4">
+        <EstimateLinesFields
+          existing={defaults?.lines ?? []}
+          totalDollars={v.total_cents ?? defaults?.total_dollars ?? ""}
+          currency={currency}
+          error={state.errors?.total_cents}
+        />
+      </div>
+
       <div className="grid gap-5 sm:grid-cols-2">
         <FormField
           label="Status"
           htmlFor="status"
           required
           error={state.errors?.status}
-          hint="Sent / decided dates auto-stamp on transition"
+          hint="Changes to Sent when you email it, and to Approved or Declined when the client answers from their link."
         >
           <FormSelect
             id="status"
@@ -127,21 +137,6 @@ export function EstimateForm({
                 quietly made it one. */}
             <option value="expired">Expired</option>
           </FormSelect>
-        </FormField>
-
-        <FormField
-          label={`Total (${currency})`}
-          htmlFor="total_cents"
-          required
-          error={state.errors?.total_cents}
-        >
-          <Input
-            id="total_cents"
-            name="total_cents"
-            inputMode="decimal"
-            required
-            defaultValue={v.total_cents ?? defaults?.total_dollars ?? ""}
-          />
         </FormField>
       </div>
 

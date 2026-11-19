@@ -1,6 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { Link2, Loader2 } from "lucide-react";
+import { ensureEstimatePublicTokenAction } from "../../actions";
 import Link from "next/link";
 import { Copy, Check, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
@@ -40,7 +43,7 @@ export function PublicLinkActions({ url }: { url: string }) {
         className={buttonVariants({ variant: "default", size: "sm" })}
       >
         <ExternalLink className="h-4 w-4" />
-        View public link / Save as PDF
+        View client page
       </Link>
       <button
         type="button"
@@ -60,5 +63,36 @@ export function PublicLinkActions({ url }: { url: string }) {
         )}
       </button>
     </div>
+  );
+}
+
+/**
+ * For an estimate that has no client link yet (never sent, never
+ * downloaded): make one, so the link can be copied and shared without
+ * emailing the estimate or opening its PDF first.
+ */
+export function CreatePublicLinkButton({ estimateId }: { estimateId: string }) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  return (
+    <button
+      type="button"
+      disabled={pending}
+      onClick={() =>
+        start(async () => {
+          const result = await ensureEstimatePublicTokenAction(estimateId);
+          if (!result.ok) {
+            toast.error(result.error);
+            return;
+          }
+          toast.success("Client link created. It is valid for 30 days.");
+          router.refresh();
+        })
+      }
+      className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+    >
+      {pending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Link2 className="h-3.5 w-3.5" />}
+      {pending ? "Creating…" : "Create client link"}
+    </button>
   );
 }

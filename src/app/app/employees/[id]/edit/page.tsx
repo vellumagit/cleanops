@@ -12,6 +12,7 @@ import {
   type EmployeeEditDefaults,
 } from "./employee-edit-form";
 import { SettleBonusButton } from "./settle-bonus-button";
+import { parseCapabilities } from "@/lib/capabilities";
 import { DeleteEmployeeForm } from "./delete-employee-form";
 import { ForceDeleteForm } from "./force-delete-form";
 import { RecoveryLinkCard } from "./recovery-link-card";
@@ -33,12 +34,13 @@ export default async function EditEmployeePage({
   const { data: member, error } = (await admin
     .from("memberships")
     .select(
-      "id, organization_id, profile_id, role, engagement, status, pay_rate_cents, display_name, contact_email, contact_phone, profile:profiles(full_name, phone)",
+      "id, organization_id, profile_id, role, engagement, status, pay_rate_cents, capabilities, display_name, contact_email, contact_phone, profile:profiles(full_name, phone)",
     )
     .eq("id", id)
     .eq("organization_id", viewer.organization_id)
     .maybeSingle()) as unknown as {
     data: {
+      capabilities: unknown;
       id: string;
       organization_id: string;
       profile_id: string | null;
@@ -136,6 +138,7 @@ export default async function EditEmployeePage({
     status: member.status,
     exit_reason: adminData?.exit_reason ?? null,
     is_shadow: member.profile_id === null,
+    capabilities: parseCapabilities(member.capabilities),
   };
 
   const owed =

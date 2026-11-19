@@ -172,6 +172,47 @@ export async function createInvoiceAction(
     };
   }
 
+  // Created with line items: write them now and take the totals from them,
+  // the same reconcile the edit form uses. If the lines can't be saved the
+  // invoice is taken back out, so the form's error is the whole story and
+  // pressing Create again doesn't leave an empty draft behind.
+  let createdTotalCents = tax.totalCents;
+  let createdTaxCents = tax.taxAmountCents;
+  if (formData.get("totals_managed_elsewhere") === "1" && formData.get("line_items_json") != null) {
+    const { reconcileInvoiceLineItems } = await import("@/lib/invoice-line-items");
+    const result = await reconcileInvoiceLineItems(
+      supabase,
+      { id: inserted.id, organization_id: membership.organization_id, tax_rate_bps: null, tax_label: null },
+      formData,
+    );
+    let problem = result.ok ? null : result.error;
+    if (result.ok) {
+      const { data: priced, error: priceErr } = (await supabase
+        .from("invoices")
+        .update({
+          amount_cents: result.totalCents,
+          tax_rate_bps: result.taxRateBps,
+          tax_amount_cents: result.taxAmountCents,
+          tax_label: result.taxLabel,
+        } as never)
+        .eq("id", inserted.id)
+        .select("id")) as unknown as { data: Array<{ id: string }> | null; error: { message: string } | null };
+      if (priceErr || !priced?.length) problem = "The invoice's total couldn't be saved. Try again.";
+      else {
+        createdTotalCents = result.totalCents;
+        createdTaxCents = result.taxAmountCents;
+      }
+    }
+    if (problem) {
+      await createSupabaseAdminClient()
+        .from("invoices")
+        .delete()
+        .eq("id", inserted.id)
+        .eq("organization_id", membership.organization_id);
+      return { errors: { _form: problem }, values: raw };
+    }
+  }
+
   // Stamp the booking as billed. Without this, a biweekly/monthly client's
   // booking manually invoiced here was invoiced AGAIN by the consolidated
   // billing-cycle cron, which only skips bookings with billing_invoice_id set
@@ -198,8 +239,8 @@ export async function createInvoiceAction(
     entity_id: inserted.id,
     after: {
       status: parsed.data.status,
-      amount_cents: tax.totalCents,
-      tax_amount_cents: tax.taxAmountCents,
+      amount_cents: createdTotalCents,
+      tax_amount_cents: createdTaxCents,
       client_id: parsed.data.client_id,
     },
   });
@@ -213,7 +254,9 @@ export async function createInvoiceAction(
 
   revalidatePath("/app/invoices");
   revalidatePath("/app");
-  redirectAfterSetup(formData, `/app/invoices/${inserted.id}/edit`);
+  // To the invoice itself, where it is sent and paid from. It used to land
+  // on the edit form again, which read as "did that save?".
+  redirectAfterSetup(formData, `/app/invoices/${inserted.id}`);
 }
 
 export async function updateInvoiceAction(

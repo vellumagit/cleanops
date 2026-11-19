@@ -12,7 +12,7 @@ import { centsToDollarString } from "@/lib/validators/common";
 import { EstimateForm } from "../../estimate-form";
 import { DeleteEstimateForm } from "./delete-form";
 import { SendEstimateForm } from "./send-form";
-import { PublicLinkActions } from "./public-link-actions";
+import { CreatePublicLinkButton, PublicLinkActions } from "./public-link-actions";
 import { DownloadPdfButton } from "./download-pdf-button";
 
 export const metadata = { title: "Edit estimate" };
@@ -73,6 +73,14 @@ export default async function EditEstimatePage({
 
   if (error) throw error;
   if (!estimate) notFound();
+
+  const { data: lines } = (await supabase
+    .from("estimate_line_items")
+    .select("label, quantity, unit_price_cents, sort_order")
+    .eq("estimate_id", id)
+    .order("sort_order")) as unknown as {
+    data: Array<{ label: string; quantity: number; unit_price_cents: number; sort_order: number }> | null;
+  };
 
   // The attached PDF is private; RLS just let this person read the estimate,
   // so hand them a link that expires (lib/estimate-pdf-storage.ts).
@@ -155,7 +163,7 @@ export default async function EditEstimatePage({
 
         <div className="rounded-lg border border-border bg-card p-6">
           <EstimateForm
-            key={estimate.status}
+            key={`${estimate.status}:${estimate.total_cents}:${(lines ?? []).length}`}
             mode="edit"
             id={estimate.id}
             currency={currency}
@@ -167,6 +175,7 @@ export default async function EditEstimatePage({
               status: estimate.status,
               total_dollars: centsToDollarString(estimate.total_cents),
               pdf_url: pdfLink,
+              lines: (lines ?? []).map((l) => ({ ...l, quantity: Number(l.quantity) })),
             }}
           />
         </div>
@@ -180,16 +189,20 @@ export default async function EditEstimatePage({
             Share &amp; PDF
           </h2>
           <p className="mt-1 text-xs text-muted-foreground">
-            Download a branded PDF copy or grab the link to the public
-            customer-facing version. The PDF is the same layout your
-            customer sees when they open the link.
+            Download a branded PDF copy, or copy the link to the page your
+            client sees. They can approve or decline the estimate from that
+            page, and you are told when they do.
           </p>
           <div className="mt-4 flex flex-wrap items-center gap-2">
             <DownloadPdfButton
               estimateId={estimate.id}
               initialToken={estimate.public_token}
             />
-            {publicUrl && <PublicLinkActions url={publicUrl} />}
+            {publicUrl ? (
+              <PublicLinkActions url={publicUrl} />
+            ) : (
+              <CreatePublicLinkButton estimateId={estimate.id} />
+            )}
           </div>
         </div>
 

@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { FileText, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { ensureEstimatePublicTokenAction } from "../../actions";
 
@@ -33,6 +34,7 @@ export function DownloadPdfButton({
 }) {
   const [pending, startTransition] = useTransition();
   const [token, setToken] = useState<string | null>(initialToken);
+  const router = useRouter();
 
   const handleClick = () => {
     // Fast path: token already present, just open the PDF URL.
@@ -45,7 +47,13 @@ export function DownloadPdfButton({
     // window.open inside an async callback after the user gesture
     // (popup blockers), so we open a blank tab synchronously and
     // navigate it once the token is ready.
-    const newTab = window.open("about:blank", "_blank", "noopener,noreferrer");
+    //
+    // No "noopener" in the features here: with it, window.open returns null
+    // even when the tab opened, so the code below took the "popup blocked"
+    // path, left that blank tab behind and replaced THIS window with the
+    // PDF. The opener link is cut by hand instead.
+    const newTab = window.open("about:blank", "_blank");
+    if (newTab) newTab.opener = null;
 
     startTransition(async () => {
       const result = await ensureEstimatePublicTokenAction(estimateId);
@@ -58,9 +66,12 @@ export function DownloadPdfButton({
       if (newTab) {
         newTab.location.href = `/api/e/${result.token}/pdf`;
       } else {
-        // Popup was blocked — fall back to same-tab navigation.
-        window.location.href = `/api/e/${result.token}/pdf`;
+        // The browser blocked the new tab. Stay on this page and say so,
+        // rather than replacing the estimate being worked on.
+        toast.message("Your browser blocked the new tab. Press Download PDF again.");
       }
+      // The estimate now has its link: show View and Copy link beside this.
+      router.refresh();
     });
   };
 

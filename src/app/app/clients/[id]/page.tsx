@@ -214,7 +214,10 @@ export default async function ClientDetailPage({
     address: string | null;
     property_id: string | null;
   }>;
-  const invoices = invoicesResult.data ?? [];
+  // A manager whose "Invoices & estimates" access is off can read the client,
+  // not the money: no balance, no invoice list, no invoice or estimate counts.
+  const seesMoney = can(membership, "invoicing");
+  const invoices = seesMoney ? invoicesResult.data ?? [] : [];
   const estimates = estimatesResult.data ?? [];
   const reviews = reviewsResult.data ?? [];
 
@@ -576,6 +579,7 @@ export default async function ClientDetailPage({
             </div>
 
             <div className="flex shrink-0 flex-col items-end gap-2 text-right">
+              {seesMoney && (
               <div>
                 <p className="text-xs text-muted-foreground">Balance owing</p>
                 <p
@@ -588,6 +592,7 @@ export default async function ClientDetailPage({
                   {formatCurrencyCents(client.balance_cents, currency)}
                 </p>
               </div>
+              )}
               <StatusBadge tone="neutral">
                 Prefers {humanizeEnum(client.preferred_contact)}
               </StatusBadge>
@@ -673,7 +678,9 @@ export default async function ClientDetailPage({
               icon: Star,
               href: undefined,
             },
-          ].map(({ label, value, icon: Icon, href }) => {
+          ]
+            .filter((t) => seesMoney || (t.label !== "Invoices" && t.label !== "Estimates"))
+            .map(({ label, value, icon: Icon, href }) => {
             const inner = (
               <>
                 <Icon className="h-4 w-4 text-muted-foreground" />
@@ -776,6 +783,7 @@ export default async function ClientDetailPage({
           </Section>
 
           {/* ── Invoices ── */}
+          {seesMoney && (
           <Section
             title="Recent invoices"
             emptyText="No invoices yet."
@@ -823,6 +831,7 @@ export default async function ClientDetailPage({
               </Link>
             ))}
           </Section>
+          )}
 
           {/* ── Home photos & videos ── */}
           <ClientMediaCard clientId={id} items={homeMedia} canManage={canEdit} />

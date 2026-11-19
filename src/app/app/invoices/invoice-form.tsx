@@ -354,7 +354,12 @@ export function InvoiceForm({
   // (removing them all would orphan the billed-job links); an invoice
   // without any can switch to items before saving — one-way per save.
   const hasSavedItems = lineItems.length > 0;
-  const [useItems, setUseItems] = useState<boolean>(hasSavedItems);
+  // A new invoice starts as line items, which is how invoices are written.
+  // The exception is one arriving with its amount already worked out (billing
+  // a job): that amount is the starting point, so it opens as a single amount.
+  const [useItems, setUseItems] = useState<boolean>(
+    hasSavedItems || (mode === "create" && !defaults?.subtotal_dollars),
+  );
 
   const [clientId, setClientId] = useState<string>(
     v.client_id ?? defaults?.client_id ?? "",
@@ -479,7 +484,7 @@ export function InvoiceForm({
         />
       </FormField>
 
-      {mode === "edit" && useItems ? (
+      {useItems ? (
         <>
           {statusField}
           {/* Line items own the money. Carry the saved subtotal so
@@ -505,8 +510,8 @@ export function InvoiceForm({
             </div>
             <LineItemsFields
               existing={lineItems}
-              taxRateBps={itemsTaxRateBps}
-              taxLabel={itemsTaxLabel}
+              taxRateBps={mode === "create" ? parseTaxRate(initialTaxRate) : itemsTaxRateBps}
+              taxLabel={mode === "create" ? initialTaxLabel : itemsTaxLabel}
             />
           </div>
         </>
@@ -628,7 +633,7 @@ export function InvoiceForm({
         )}
           </div>
 
-          {mode === "edit" && (
+          {(
             <button
               type="button"
               onClick={() => setUseItems(true)}

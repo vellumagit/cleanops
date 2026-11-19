@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Plus, Upload } from "lucide-react";
-import { requireMembership, requireCapability } from "@/lib/auth";
+import { requireMembership, requireCapability, can } from "@/lib/auth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { PageShell } from "@/components/page-shell";
 import { buttonVariants } from "@/components/ui/button";
@@ -74,7 +74,8 @@ export default async function ClientsPage({
 
   // contact_preference/sms_opted_in aren't in the generated types yet — cast
   // (same convention as the other new columns).
-  const rows = (data ?? []) as unknown as ClientRow[];
+  const seesMoney = can(membership, "invoicing");
+  const rows = ((data ?? []) as unknown as ClientRow[]).map((r) => (seesMoney ? r : { ...r, balance_cents: 0 }));
   const orgContactDefault = await contactDefaultPromise;
 
   return (
@@ -132,7 +133,8 @@ export default async function ClientsPage({
         rows={rows}
         canEdit={canEdit && !showArchived}
         orgContactDefault={orgContactDefault}
-      />
+        showBalance={can(membership, "invoicing")}
+        />
     </PageShell>
   );
 }

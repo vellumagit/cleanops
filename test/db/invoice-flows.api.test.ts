@@ -231,3 +231,46 @@ describe.skipIf(!hasPostgrest)("an invoice's life, through the app's own actions
     expect(after.status, "a paid invoice was voided").toBe("paid");
   });
 });
+
+describe.skipIf(!hasPostgrest)("a new invoice written as line items", () => {
+  const lineForm = (c: Company, rows: Array<[string, string, string]>, taxPercent = "") => {
+    const form = new FormData();
+    form.set("client_id", c.client);
+    form.set("status", "draft");
+    form.set("subtotal_cents", "0");
+    form.set("tax_rate_bps", "");
+    form.set("tax_label", "");
+    form.set("totals_managed_elsewhere", "1");
+    form.set("due_date", new Date(Date.now() + 14 * 86_400_000).toISOString().slice(0, 10));
+    form.set(
+      "line_items_json",
+      JSON.stringify(rows.map(([label, quantity, unit_price_dollars], i) => ({ db_id: null, sort_order: i, booking_id: null, label, quantity, unit_price_dollars }))),
+    );
+    form.set("items_tax_rate_percent", taxPercent);
+    form.set("items_tax_label", taxPercent ? "GST" : "");
+    return form;
+  };
+  const invoicesOf = (c: Company) =>
+    api.sql<{ id: string; amount_cents: number; tax_amount_cents: number | null }>(
+      "select id, amount_cents, tax_amount_cents from public.invoices where organization_id = $1",
+      [c.org],
+    );
+
+  it("saves the lines with it, totals them with tax, and lands on the invoice rather than back on the form", async () => {
+    const c = await company();
+    const res = await asOwner(c, () => invoices.createInvoiceAction({}, lineForm(c, [["Deep clean", "1", "60"], ["Windows", "2", "20"]], "5")));
+    const [inv] = await invoicesOf(c);
+    expect(inv, JSON.stringify(res).slice(0, 300)).toBeTruthy();
+    expect(res).toBe(`redirected to /app/invoices/${inv.id}`);
+    expect(inv).toMatchObject({ amount_cents: 10500, tax_amount_cents: 500 });
+    const lines = await api.sql<{ label: string }>("select label from public.invoice_line_items where invoice_id = $1 order by sort_order", [inv.id]);
+    expect(lines.map((l) => l.label)).toEqual(["Deep clean", "Windows"]);
+  });
+
+  it("lines that can't be saved leave no empty invoice behind", async () => {
+    const c = await company();
+    const res = await asOwner(c, () => invoices.createInvoiceAction({}, lineForm(c, [["", "1", "60"]])));
+    expect(JSON.stringify(res)).toMatch(/errors/);
+    expect(await invoicesOf(c)).toHaveLength(0);
+  });
+});

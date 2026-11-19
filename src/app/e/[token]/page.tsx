@@ -8,6 +8,7 @@ import { getOrgTimezone } from "@/lib/org-timezone";
 import { formatCurrencyCents } from "@/lib/format";
 import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
 import { RateLimitedPage } from "@/components/rate-limited-page";
+import { RespondButtons } from "./respond-buttons";
 
 export const metadata: Metadata = {
   title: "Estimate",
@@ -71,6 +72,15 @@ export default async function PublicEstimatePage({
 
   if (!estimate) notFound();
 
+  const { data: lineRows } = (await admin
+    .from("estimate_line_items")
+    .select("label, quantity, unit_price_cents, sort_order")
+    .eq("estimate_id", estimate.id)
+    .order("sort_order")) as unknown as {
+    data: Array<{ label: string; quantity: number; unit_price_cents: number }> | null;
+  };
+  const lines = (lineRows ?? []).map((l) => ({ ...l, quantity: Number(l.quantity) }));
+
   // Holding this estimate's link is the permission to read its PDF; the
   // file itself is private, so the link to it is signed and expires.
   const pdfLink = await estimatePdfLink(admin, estimate.pdf_url);
@@ -88,6 +98,9 @@ export default async function PublicEstimatePage({
     ? // eslint-disable-next-line react-hooks/purity
       new Date(estimate.expires_at).getTime() < Date.now()
     : false;
+
+  // The client can answer once: while it is waiting on them and still valid.
+  const canAnswer = !isExpired && (estimate.status === "sent" || estimate.status === "draft");
 
   return (
     <main className="min-h-screen bg-[#fafafa] py-10 px-4">
@@ -170,6 +183,41 @@ export default async function PublicEstimatePage({
             </section>
           )}
 
+          {/* Line items */}
+          {lines.length > 0 && (
+            <section className="mt-8">
+              <p className="sollos-label mb-2">What&rsquo;s included</p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                      <th className="py-2 pr-3 font-medium">Description</th>
+                      <th className="py-2 px-3 text-right font-medium">Qty</th>
+                      <th className="py-2 px-3 text-right font-medium">Price</th>
+                      <th className="py-2 pl-3 text-right font-medium">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lines.map((l, i) => (
+                      <tr key={i} className="border-b border-border/60 align-top">
+                        <td className="py-2 pr-3 text-foreground [overflow-wrap:anywhere]">{l.label}</td>
+                        <td className="py-2 px-3 text-right tabular-nums">
+                          {Number.isInteger(l.quantity) ? l.quantity : l.quantity.toFixed(2)}
+                        </td>
+                        <td className="whitespace-nowrap py-2 px-3 text-right tabular-nums">
+                          {formatCurrencyCents(l.unit_price_cents, currency)}
+                        </td>
+                        <td className="whitespace-nowrap py-2 pl-3 text-right tabular-nums">
+                          {formatCurrencyCents(Math.round(l.quantity * l.unit_price_cents), currency)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
           {/* Total */}
           <section className="mt-8 rounded-lg border border-border bg-muted/30 p-5">
             <div className="flex items-baseline justify-between">
@@ -218,16 +266,25 @@ export default async function PublicEstimatePage({
             </section>
           )}
 
-          {/* CTA */}
-          <section className="mt-8 rounded-lg border border-dashed border-border p-5 text-center">
-            <p className="text-sm text-foreground font-medium">
-              Ready to proceed, or have questions?
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Reply to the email that brought you here and {orgName} will be in
-              touch. They&rsquo;ll confirm and schedule your service.
-            </p>
-          </section>
+          {/* Answer it. Hidden on print so the PDF of this page stays a quote. */}
+          {canAnswer ? (
+            <RespondButtons token={token} orgName={orgName} brandColor={brandColor} />
+          ) : (
+            <section className="print:hidden mt-8 rounded-lg border border-dashed border-border p-5 text-center">
+              <p className="text-sm font-medium text-foreground">
+                {estimate.status === "approved"
+                  ? "Thank you. Your approval has been sent."
+                  : estimate.status === "declined"
+                    ? "Changed your mind?"
+                    : "Have questions?"}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {estimate.status === "approved"
+                  ? `${orgName} will be in touch to confirm and schedule your service.`
+                  : `Reply to the email that brought you here and ${orgName} will be in touch.`}
+              </p>
+            </section>
+          )}
         </div>
 
         {/* Footer — hidden on print. The org's brand is at the top of

@@ -50,6 +50,8 @@ vi.mock("@/lib/estimate-pdf", () => ({
 
 const leads = await import("@/app/app/leads/actions");
 const estimates = await import("@/app/app/estimates/actions");
+const respond = await import("@/app/e/[token]/actions");
+const employees = await import("@/app/app/employees/actions");
 const { GET: followupCron } = await import("@/app/api/cron/estimate-followup/route");
 const { GET: expireCron } = await import("@/app/api/cron/expire-estimates/route");
 const { GET: staleCron } = await import("@/app/api/cron/stale-estimates/route");
@@ -188,6 +190,13 @@ const estimateRow = async (id: string) =>
 const daysAgo = (d: number) => new Date(Date.now() - d * 86_400_000).toISOString();
 const pdf = () => new File([Buffer.from("%PDF-1.4\n% a real one\n")], "quote.pdf", { type: "application/pdf" });
 const notPdf = () => new File([Buffer.from("hello, I am a text file")], "quote.pdf", { type: "application/pdf" });
+const linesJson = (rows: Array<[string, string, string]>) =>
+  JSON.stringify(rows.map(([label, quantity, unit_price_dollars]) => ({ label, quantity, unit_price_dollars })));
+const linesOf = (id: string) =>
+  api.sql<{ label: string; quantity: string; unit_price_cents: number }>(
+    "select label, quantity::text as quantity, unit_price_cents from public.estimate_line_items where estimate_id = $1 order by sort_order",
+    [id],
+  );
 const estimateForm = (client: string, over: Record<string, string | File> = {}) =>
   form({ client_id: client, service_description: "Deep clean, 3 bed", notes: "", status: "draft", total_cents: "289.50", ...over });
 
@@ -293,8 +302,9 @@ describe.skipIf(!hasPostgrest)("an estimate", () => {
     const c = await company();
     const client = await person(c, "Estimate Client", "contacted");
     const res = await as(c.owner, () => estimates.createEstimateAction({}, estimateForm(client, { pdf: pdf() })));
-    expect(res, api.log()).toEqual({ redirected: "/app/estimates" });
     const [made] = await api.sql<{ id: string }>("select id from public.estimates where client_id = $1", [client]);
+    // Lands on the estimate itself, where it is sent and shared from.
+    expect(res, api.log()).toEqual({ redirected: `/app/estimates/${made.id}/edit` });
     const row = await estimateRow(made.id);
     expect(row).toMatchObject({ status: "draft", total_cents: 28950, sent_at: null, pdf_url: `storage:estimate-pdfs/${c.org}/estimates/${made.id}.pdf` });
     expect(api.storage.has(`estimate-pdfs/${c.org}/estimates/${made.id}.pdf`)).toBe(true);
@@ -314,7 +324,9 @@ describe.skipIf(!hasPostgrest)("an estimate", () => {
     expect((first as { errors?: Record<string, string> }).errors?.pdf).toBe("That file isn't a PDF.");
     expect(await api.sql("select 1 from public.estimates where client_id = $1", [client]), "nothing left behind").toHaveLength(0);
 
-    expect(await as(c.owner, () => estimates.createEstimateAction({}, estimateForm(client, { pdf: pdf() })))).toEqual({ redirected: "/app/estimates" });
+    expect(await as(c.owner, () => estimates.createEstimateAction({}, estimateForm(client, { pdf: pdf() })))).toEqual({
+      redirected: expect.stringMatching(/^\/app\/estimates\/[0-9a-f-]+\/edit$/),
+    });
     expect(await api.sql("select 1 from public.estimates where client_id = $1", [client])).toHaveLength(1);
   });
 
@@ -468,6 +480,154 @@ describe.skipIf(!hasPostgrest)("an estimate", () => {
   });
 });
 
+describe.skipIf(!hasPostgrest)("an estimate's line items", () => {
+  it("the total is the sum of the lines, whatever was typed, and a blank row is ignored", async () => {
+    const c = await company();
+    const client = await person(c, "Lines Client", null);
+    const res = await as(c.owner, () =>
+      estimates.createEstimateAction(
+        {},
+        estimateForm(client, {
+          total_cents: "1.00",
+          line_items_json: linesJson([
+            ["Labour", "3", "40"],
+            ["Supplies", "1", "25.50"],
+            ["", "1", ""],
+          ]),
+        }),
+      ),
+    );
+    const [made] = await api.sql<{ id: string }>("select id from public.estimates where client_id = $1", [client]);
+    expect(res, api.log()).toEqual({ redirected: `/app/estimates/${made.id}/edit` });
+    expect((await estimateRow(made.id)).total_cents).toBe(14550);
+    expect(await linesOf(made.id)).toEqual([
+      { label: "Labour", quantity: "3.00", unit_price_cents: 4000 },
+      { label: "Supplies", quantity: "1.00", unit_price_cents: 2550 },
+    ]);
+  });
+
+  it("a save replaces the lines; removing them all goes back to a typed total", async () => {
+    const c = await company();
+    const client = await person(c, "Edit Lines Client", null);
+    const id = await estimate(c, client);
+    await as(c.olha, () =>
+      estimates.updateEstimateAction(id, {}, estimateForm(client, { line_items_json: linesJson([["Deep clean", "1", "200"], ["Oven", "2", "30"]]) })),
+    );
+    expect((await estimateRow(id)).total_cents).toBe(26000);
+    expect((await linesOf(id)).map((l) => l.label)).toEqual(["Deep clean", "Oven"]);
+
+    await as(c.owner, () =>
+      estimates.updateEstimateAction(id, {}, estimateForm(client, { line_items_json: linesJson([["Deep clean", "1", "210"]]) })),
+    );
+    expect((await estimateRow(id)).total_cents).toBe(21000);
+    expect(await linesOf(id), "no leftovers from the save before").toHaveLength(1);
+
+    await as(c.owner, () => estimates.updateEstimateAction(id, {}, estimateForm(client, { total_cents: "99", line_items_json: linesJson([["", "1", ""]]) })));
+    expect((await estimateRow(id)).total_cents).toBe(9900);
+    expect(await linesOf(id)).toHaveLength(0);
+  });
+
+  it("a caller that sends no lines field leaves the lines alone", async () => {
+    const c = await company();
+    const client = await person(c, "No Field Client", null);
+    const id = await estimate(c, client);
+    await as(c.owner, () => estimates.updateEstimateAction(id, {}, estimateForm(client, { line_items_json: linesJson([["Kept", "1", "50"]]) })));
+    await as(c.owner, () => estimates.updateEstimateAction(id, {}, estimateForm(client, { notes: "just a note", total_cents: "50" })));
+    expect((await linesOf(id)).map((l) => l.label)).toEqual(["Kept"]);
+  });
+
+  it("a line with no price, or no description, is refused by name and nothing is saved", async () => {
+    const c = await company();
+    const client = await person(c, "Bad Lines Client", null);
+    const errs = (r: unknown) => (r as { errors?: Record<string, string> }).errors;
+    const noPrice = await as(c.owner, () => estimates.createEstimateAction({}, estimateForm(client, { line_items_json: linesJson([["Windows", "1", ""]]) })));
+    expect(errs(noPrice)?.total_cents).toContain('"Windows" has no price');
+    const noLabel = await as(c.owner, () => estimates.createEstimateAction({}, estimateForm(client, { line_items_json: linesJson([["", "1", "40"]]) })));
+    expect(errs(noLabel)?.total_cents).toContain("no description");
+    expect(await api.sql("select 1 from public.estimates where client_id = $1", [client])).toHaveLength(0);
+  });
+
+  it("a cleaner can't write lines onto an estimate, and another company can't either", async () => {
+    const c = await company();
+    const other = await company();
+    const client = await person(c, "Guarded Client", null);
+    const id = await estimate(c, client);
+    const press = (m: Member) => as(m, () => estimates.updateEstimateAction(id, {}, estimateForm(client, { line_items_json: linesJson([["Sneaky", "1", "1"]]) })));
+    expect((await press(c.anna) as { errors?: Record<string, string> }).errors?._form).toBeTruthy();
+    expect((await press(other.owner) as { errors?: Record<string, string> }).errors?._form).toBeTruthy();
+    expect(await linesOf(id)).toHaveLength(0);
+    expect((await estimateRow(id)).total_cents).toBe(25000);
+  });
+});
+
+describe.skipIf(!hasPostgrest)("the client's answer from the estimate link", () => {
+  const answer = async (token: string, decision: string) => {
+    request.cookies = [];
+    try {
+      return await respond.respondToEstimateAction({}, form({ token, decision }));
+    } finally {
+      await settle();
+    }
+  };
+  const sent = async (c: Co, client: string, over: Record<string, unknown> = {}) => {
+    const token = `tok${++seq}abcdefghijkl`;
+    const id = await estimate(c, client, { status: "sent", sent_at: daysAgo(1), public_token: token, expires_at: new Date(Date.now() + 86_400_000).toISOString(), ...over });
+    return { id, token };
+  };
+  const notices = (c: Co) =>
+    api.sql<{ title: string; href: string | null }>("select title, href from public.notifications where organization_id = $1 order by created_at", [c.org]);
+
+  it("approve marks it approved once, tells the office once, and books the placeholder visit", async () => {
+    const c = await company();
+    const client = await person(c, "Approving Client", null);
+    const { id, token } = await sent(c, client);
+
+    const [a, b] = await Promise.all([answer(token, "approve"), answer(token, "approve")]);
+    expect([a, b], api.log().slice(-400)).toEqual([{ status: "approved" }, { status: "approved" }]);
+    const row = await estimateRow(id);
+    expect(row.status).toBe("approved");
+    expect(row.decided_at).toBeTruthy();
+    const told = (await notices(c)).filter((n) => n.title === "Estimate approved");
+    expect(new Set(told.map((n) => n.href))).toEqual(new Set([`/app/estimates/${id}/edit`]));
+    // One notice per office member (owner and manager), not two each.
+    expect(told.length).toBeLessThanOrEqual(2);
+    expect(await api.sql("select 1 from public.bookings where estimate_id = $1", [id]), "one placeholder visit").toHaveLength(1);
+
+    // Pressing again later changes nothing; declining now is refused.
+    expect(await answer(token, "approve")).toEqual({ status: "approved" });
+    expect((await answer(token, "decline")).error).toContain("already approved");
+    expect((await estimateRow(id)).status).toBe("approved");
+    expect(await api.sql("select 1 from public.bookings where estimate_id = $1", [id])).toHaveLength(1);
+  });
+
+  it("decline marks it declined, tells the office, and books nothing", async () => {
+    const c = await company();
+    const client = await person(c, "Declining Client", null);
+    const { id, token } = await sent(c, client);
+    expect(await answer(token, "decline")).toEqual({ status: "declined" });
+    expect((await estimateRow(id)).status).toBe("declined");
+    expect((await notices(c)).some((n) => n.title === "Estimate declined")).toBe(true);
+    expect(await api.sql("select 1 from public.bookings where estimate_id = $1", [id])).toHaveLength(0);
+    expect((await answer(token, "approve")).error).toContain("already declined");
+  });
+
+  it("an expired estimate, a wrong link and a made-up answer are refused and change nothing", async () => {
+    const c = await company();
+    const client = await person(c, "Late Client", null);
+    const past = await sent(c, client, { expires_at: daysAgo(1) });
+    expect((await answer(past.token, "approve")).error).toContain("expired");
+    const marked = await sent(c, client, { status: "expired" });
+    expect((await answer(marked.token, "approve")).error).toContain("expired");
+    expect((await answer("nosuchtoken12345", "approve")).error).toBeTruthy();
+    const live = await sent(c, client);
+    expect((await answer(live.token, "maybe")).error).toBeTruthy();
+    expect((await estimateRow(past.id)).status).toBe("sent");
+    expect((await estimateRow(marked.id)).status).toBe("expired");
+    expect((await estimateRow(live.id)).status).toBe("sent");
+    expect(await notices(c)).toHaveLength(0);
+  });
+});
+
 describe.skipIf(!hasPostgrest)("the daily estimate jobs", () => {
   it("follows up with the client at 7 days and again at 14, once each, and never after an answer", async () => {
     const c = await company();
@@ -530,5 +690,52 @@ describe.skipIf(!hasPostgrest)("the daily estimate jobs", () => {
 
     await cron(staleCron, "/api/cron/stale-estimates");
     expect(await alerts(), "not again the next day").toHaveLength(first.length);
+  });
+});
+
+describe.skipIf(!hasPostgrest)("a manager's access switches, saved from the employee edit page", () => {
+  const ALL = ["scheduling", "timesheets", "invoicing", "clients", "subcontractors"];
+  const saveAccess = (c: Co, by: Member, ticked: string[] | null, extra: Record<string, string> = {}) => {
+    const f = new FormData();
+    for (const [k, v] of Object.entries(extra)) f.set(k, v);
+    if (ticked) {
+      f.set("capabilities_present", "1");
+      for (const k of ticked) f.append("capabilities", k);
+    }
+    return as(by, () => employees.updateMemberAction(c.olha.membershipId, {}, f));
+  };
+  const stored = async (c: Co) =>
+    (await api.sql<{ c: Record<string, boolean> | null }>("select capabilities as c from public.memberships where id = $1", [c.olha.membershipId]))[0].c;
+  const tryEstimate = async (c: Co, client: string) =>
+    (await as(c.olha, () => estimates.createEstimateAction({}, estimateForm(client)))) as { errors?: Record<string, string>; redirected?: string };
+
+  it("unticking Invoices and estimates shuts that manager out of estimates; ticking it lets them back in", async () => {
+    const c = await company();
+    const client = await person(c, "Access Client", null);
+    expect((await tryEstimate(c, client)).redirected, "a manager nobody has limited").toBeTruthy();
+
+    const off = await saveAccess(c, c.owner, ALL.filter((k) => k !== "invoicing"));
+    expect((off as { errors?: unknown }).errors, api.log().slice(-300)).toBeUndefined();
+    expect(await stored(c)).toEqual({ scheduling: true, timesheets: true, invoicing: false, clients: true, subcontractors: true });
+    expect((await tryEstimate(c, client)).errors?._form).toBe("Estimates aren't part of your access.");
+
+    // A save from a form that doesn't carry the switches (a phone number
+    // changed elsewhere) must not read as "everything unticked" or "reset".
+    await saveAccess(c, c.owner, null, { contact_phone: "+15555550123" });
+    expect((await stored(c))?.invoicing).toBe(false);
+
+    await saveAccess(c, c.owner, ALL);
+    expect((await tryEstimate(c, client)).redirected).toBeTruthy();
+  });
+
+  it("a manager can't change their own switches, and a cleaner can't change anyone's", async () => {
+    const c = await company();
+    await saveAccess(c, c.owner, ["scheduling"]);
+    const before = await stored(c);
+    for (const who of [c.olha, c.anna]) {
+      const res = (await saveAccess(c, who, ALL)) as { errors?: Record<string, string> };
+      expect(res.errors?._form).toBeTruthy();
+    }
+    expect(await stored(c)).toEqual(before);
   });
 });
