@@ -241,7 +241,10 @@ describe.skipIf(!hasPostgrest)("double-booking: the refusal names who, which job
   // bookings". It goes through its own database function, and on the test
   // stack it was still answering with the bare sentence after the other
   // paths had been fixed. Found by trying it on screen, not by a test.
-  it("Assign, this and all future: free on the visit that is open, booked later, and the dates are named", async () => {
+  // Until 2026-11-19 this save was refused whole, with the dates named, and
+  // she filled every visit by hand. Now the cleaner goes on the visits she
+  // is free for, and the others are marked as needing cover.
+  it("Assign, this and all future: she goes on the visits she is free for, and the rest are marked Needs cover", async () => {
     const c = await company();
     const olha = await addMember(api.sql, c.org, "employee", "Olha");
     await api.sql("update public.memberships set display_name = 'Olha Musnytska' where id = $1", [olha.membershipId]);
@@ -278,13 +281,87 @@ describe.skipIf(!hasPostgrest)("double-booking: the refusal names who, which job
       await settle();
     }
 
-    expect(res.error).toContain("Olha Musnytska is already booked on 2 of these dates:");
-    expect(res.error).toContain("Nancy Whitson,");
-    expect(res.error).toContain("Emma Drebit,");
-    expect(res.error).toContain("Choose someone who is free on every date");
-    expect(res.error).not.toMatch(/A cleaner already has an overlapping booking/);
-    // All or nothing: not even the visit she is free on was changed.
-    for (const v of visits) expect(await crewOf(v.id)).toEqual([]);
+    expect(res.error, api.log()).toBeUndefined();
+    expect(res.ok).toBe(true);
+    expect(res.notice).toMatch(/^Olha Musnytska is on another job on 2 of the 4 visits \(.+, .+\) and was left off them\. Those 2 visits are marked "Needs cover": open each one and pick someone else\.$/);
+
+    const state = async (id: string) => {
+      const [b] = await api.sql<{ assigned_to: string | null; cover: Array<{ membership_id: string; other_booking_id: string }> | null }>(
+        "select assigned_to, cover_needed as cover from public.bookings where id = $1",
+        [id],
+      );
+      return { crew: await crewOf(id), lead: b.assigned_to, cover: (b.cover ?? []).map((c) => c.membership_id) };
+    };
+    expect(await state(visits[0].id)).toEqual({ crew: [olha.membershipId], lead: olha.membershipId, cover: [] });
+    expect(await state(visits[1].id)).toEqual({ crew: [], lead: null, cover: [olha.membershipId] });
+    expect(await state(visits[2].id)).toEqual({ crew: [olha.membershipId], lead: olha.membershipId, cover: [] });
+    expect(await state(visits[3].id)).toEqual({ crew: [], lead: null, cover: [olha.membershipId] });
+
+    // She is told about the visits she is on, and not the two she isn't.
+    const told = await api.sql<{ href: string }>(
+      "select href from public.notifications where organization_id = $1 and recipient_membership_id = $2",
+      [c.org, olha.membershipId],
+    );
+    for (const off of [visits[1].id, visits[3].id]) {
+      expect(told.some((n) => n.href?.includes(off)), "not told about a visit she was left off").toBe(false);
+    }
+
+    // Picking someone else for a marked visit answers it: the mark goes.
+    const vira = await addMember(api.sql, c.org, "employee", "Vira");
+    expect((await assign(c.manager, visits[1].id, vira)).error).toBeUndefined();
+    expect(await state(visits[1].id)).toEqual({ crew: [vira.membershipId], lead: vira.membershipId, cover: [] });
+    expect((await state(visits[3].id)).cover, "the other one still needs cover").toEqual([olha.membershipId]);
+  });
+
+  it("a crew of two on a series: the one with a clash comes off that visit, the other stays and leads it", async () => {
+    const c = await company();
+    const olha = await addMember(api.sql, c.org, "employee", "Olha");
+    const vira = await addMember(api.sql, c.org, "employee", "Vira");
+    const [client] = await api.sql<{ id: string }>(
+      "insert into public.clients (organization_id, name) values ($1, 'Stacie Moore') returning id",
+      [c.org],
+    );
+    const [series] = await api.sql<{ id: string }>(
+      `insert into public.booking_series (organization_id, client_id, pattern, start_time, starts_at, duration_minutes)
+       values ($1, $2, 'bi_weekly', '09:00', current_date, 180) returning id`,
+      [c.org, client.id],
+    );
+    const visits: Array<{ id: string; when: string }> = [];
+    for (let i = 0; i < 3; i++) {
+      const when = at(20 + i * 14);
+      const id = await addBooking(api.sql, c.org, client.id, { scheduledAt: when, durationMinutes: 180 });
+      await api.sql("update public.bookings set series_id = $2 where id = $1", [id, series.id]);
+      visits.push({ id, when });
+    }
+    // The lead, Olha, is busy on the second visit.
+    await job(c, "Nancy Whitson", at(20 + 14), 240, [olha]);
+
+    request.cookies = api.sessionCookies(c.manager.userId);
+    let res: Awaited<ReturnType<typeof bookings.assignBookingCrewAction>>;
+    try {
+      const form = new FormData();
+      form.set("id", visits[0].id);
+      form.set("primary_id", olha.membershipId);
+      form.append("additional_ids", vira.membershipId);
+      form.set("update_scope", "this_and_future");
+      form.set("series_id", series.id);
+      form.set("series_scheduled_at", visits[0].when);
+      res = await bookings.assignBookingCrewAction({}, form);
+    } finally {
+      await settle();
+    }
+    expect(res.error, api.log()).toBeUndefined();
+    expect(res.notice).toMatch(/^Olha \d+ is on another job on 1 of the 3 visits \(.+\) and was left off it\. That visit is marked "Needs cover"/);
+    const both = [olha.membershipId, vira.membershipId].sort();
+    expect((await crewOf(visits[0].id)).sort()).toEqual(both);
+    expect(await crewOf(visits[1].id)).toEqual([vira.membershipId]);
+    expect((await crewOf(visits[2].id)).sort()).toEqual(both);
+    const [second] = await api.sql<{ assigned_to: string; primary_ok: boolean }>(
+      `select b.assigned_to, exists (select 1 from public.booking_assignees ba where ba.booking_id = b.id and ba.membership_id = b.assigned_to and ba.is_primary) as primary_ok
+         from public.bookings b where b.id = $1`,
+      [visits[1].id],
+    );
+    expect(second).toEqual({ assigned_to: vira.membershipId, primary_ok: true });
   });
 
   it("bringing back a cancelled job whose cleaner has since been booked then names her and that job", async () => {

@@ -3843,7 +3843,11 @@ export async function autoExtendRecurringSeries(): Promise<number> {
               delete (bare as { splits?: unknown }).splits;
               const made = await upsertVisits([bare]);
               inserted.push(...made);
-              for (const b of made) unstaffedIds.add(b.id);
+              for (const b of made) {
+                unstaffedIds.add(b.id);
+                // The office sees why this one came with nobody on it.
+                if (row.assigned_to) await markNeedsCover(db, b.id, row.assigned_to);
+              }
               madeUnstaffed.push(`series ${s.id} ${row.scheduled_at}`);
             } catch (bareErr) {
               if (!isOverlapError(bareErr)) throw bareErr;
@@ -3929,6 +3933,7 @@ export async function autoExtendRecurringSeries(): Promise<number> {
             } catch (rowErr) {
               if (!isOverlapError(rowErr)) throw rowErr;
               overlapSkipped.push(`crew ${row.membership_id} on booking ${row.booking_id}`);
+              await markNeedsCover(db, row.booking_id, row.membership_id);
             }
           }
         }
@@ -3986,6 +3991,31 @@ export async function autoExtendRecurringSeries(): Promise<number> {
   } catch (err) {
     console.error("[auto] autoExtendRecurringSeries failed:", err);
     throw err;
+  }
+}
+
+/**
+ * Mark a visit as needing cover for someone the overlap guard kept off it
+ * (bookings.cover_needed, migration 20261119040000): the same mark a series'
+ * crew save leaves, so the visit shows "Needs cover" on the list, the
+ * schedule and the dashboard. Best-effort: the visit exists either way.
+ */
+async function markNeedsCover(db: ReturnType<typeof admin>, bookingId: string, membershipId: string): Promise<void> {
+  try {
+    const { data: row } = (await db
+      .from("bookings")
+      .select("cover_needed" as never)
+      .eq("id", bookingId)
+      .maybeSingle()) as unknown as { data: { cover_needed: Array<{ membership_id?: string }> | null } | null };
+    const list = Array.isArray(row?.cover_needed) ? row.cover_needed : [];
+    if (list.some((c) => c.membership_id === membershipId)) return;
+    const { error } = (await db
+      .from("bookings")
+      .update({ cover_needed: [...list, { membership_id: membershipId }] } as never)
+      .eq("id", bookingId)) as unknown as { error: { message: string } | null };
+    if (error) throw new Error(error.message);
+  } catch (err) {
+    console.error("[auto] could not mark a visit as needing cover:", err);
   }
 }
 

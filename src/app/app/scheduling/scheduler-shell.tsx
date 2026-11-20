@@ -285,6 +285,7 @@ export function SchedulerShell({
         divides_hours: b.dividesHours,
         // A comp clean is $0 on purpose — not a missing price.
         is_free: b.isFree,
+        needs_cover: b.needsCover,
         // `staffed` already encodes the shared rule (assignee OR crew OR a
         // claimed bench offer). Feed it through the slot booking-warnings
         // uses for bench cover so the two agree on what "unstaffed" means.

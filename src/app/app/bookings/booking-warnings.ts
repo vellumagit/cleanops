@@ -21,7 +21,8 @@ export type BookingWarningCode =
   | "stuck_in_progress"
   | "no_price"
   | "possible_duplicate"
-  | "on_day_off";
+  | "on_day_off"
+  | "needs_cover";
 
 export type BookingWarning = {
   code: BookingWarningCode;
@@ -60,6 +61,10 @@ export type WarnableBooking = {
   /** Deliberately free of charge. A $0 job is only a mistake when nobody
    *  meant it to be $0. */
   is_free?: boolean | null;
+  /** Set when a series' crew save left someone off this visit because they
+   *  had another job then (bookings.cover_needed): who, and which job, as a
+   *  sentence. Omitted by callers that don't load it. */
+  needs_cover?: string | null;
 };
 
 const HOUR = 3_600_000;
@@ -252,6 +257,17 @@ export function computeBookingWarnings(
     const staffed = isStaffed(b);
     const start = new Date(b.scheduled_at).getTime();
     const finished = endMs(b);
+
+    // A recurring series' crew was put on every visit they were free for;
+    // on this one, someone had another job. Stays until the crew is saved.
+    if (!TERMINAL.has(b.status) && b.needs_cover) {
+      add(b.id, {
+        code: "needs_cover",
+        label: "Needs cover",
+        detail: `${b.needs_cover}, so they were left off this visit when the series' crew was set. Open it and pick someone else.`,
+        severity: "high",
+      });
+    }
 
     if (!TERMINAL.has(b.status) && !staffed && finished < now - PAST_GRACE_MS) {
       add(b.id, {

@@ -99,9 +99,11 @@ export function AssignCrewDialog({
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [open, bookingId, initialPrimaryId, initialAdditionalIds]);
 
+  // Saved with something to know (a series save left someone off some
+  // visits): stay open and say it, rather than close on it.
   useEffect(() => {
-    if (state.ok) onOpenChange(false);
-  }, [state.ok, onOpenChange]);
+    if (state.ok && !state.notice) onOpenChange(false);
+  }, [state.ok, state.notice, onOpenChange]);
 
   // Who isn't free for this visit, asked each time the pop-up opens. Kept
   // with the booking it answers for. A failed check lists everyone and says
@@ -169,6 +171,22 @@ export function AssignCrewDialog({
           </DialogDescription>
         </DialogHeader>
 
+        {state.ok && state.notice ? (
+          <div className="space-y-4">
+            <p
+              role="status"
+              data-testid="cover-notice"
+              className="rounded-md border border-amber-400 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200"
+            >
+              <span className="font-semibold">Saved.</span> {state.notice}
+            </p>
+            <DialogFooter>
+              <Button type="button" size="sm" onClick={() => onOpenChange(false)}>
+                Done
+              </Button>
+            </DialogFooter>
+          </div>
+        ) : (
         <form action={action} className="space-y-4">
           <input type="hidden" name="id" value={bookingId} />
           <input type="hidden" name="primary_id" value={primaryId} />
@@ -379,6 +397,7 @@ export function AssignCrewDialog({
             </>
           )}
         </form>
+        )}
       </DialogContent>
     </Dialog>
   );

@@ -167,7 +167,10 @@ describe.skipIf(!hasPostgrest)("creating a recurring booking", () => {
     expect(new Set(rows.map((r) => r.date.slice(0, 7))).size).toBe(4);
   });
 
-  it("Anna is already booked on the third Tuesday: refused, that date named, nothing left behind", async () => {
+  // Until 2026-11-19 this was refused whole: "already booked", the date
+  // named, no series. Now the series is made, Anna is on every visit she is
+  // free for, and the third Tuesday is marked as needing cover.
+  it("Anna is already booked on the third Tuesday: the series is made, she is left off that one visit, and it is marked", async () => {
     const c = await company();
     const start = nextWeekday(2);
     const third = ymd(Date.parse(`${start}T12:00:00Z`) + 14 * DAY);
@@ -180,10 +183,40 @@ describe.skipIf(!hasPostgrest)("creating a recurring booking", () => {
     );
 
     const res = await create(c, { starts_at: start });
-    expect(res).toMatch(/already booked/);
-    expect(res).toMatch(/Sylvia Gillespie/);
-    expect(await visits(c)).toEqual([]);
-    expect(await seriesCount(c)).toBe(0);
+    expect(await seriesCount(c), api.log()).toBe(1);
+    const rows = await visits(c);
+    // Lands on the list with the banner for this series.
+    expect(res).toBe(`redirected to /app/bookings?cover=${rows[0].series}`);
+    expect(rows.length).toBeGreaterThanOrEqual(4);
+    for (const r of rows) {
+      expect(r.crew, r.date).toEqual(r.date === third ? [] : [c.anna.membershipId]);
+    }
+    const marked = await api.sql<{ date: string; lead: string | null; cover: Array<{ membership_id: string; other_booking_id: string }> }>(
+      `select to_char(scheduled_at at time zone 'America/Regina', 'YYYY-MM-DD') as date, assigned_to as lead, cover_needed as cover
+         from public.bookings where client_id = $1 and cover_needed is not null`,
+      [c.client],
+    );
+    expect(marked).toEqual([{ date: third, lead: null, cover: [{ membership_id: c.anna.membershipId, other_booking_id: busy }] }]);
+
+    // What the banner and the dashboard read.
+    const { loadCoverNeeded } = await import("@/lib/cover-needed");
+    const { coverReason, coverSummary } = await import("@/lib/cover-needed-text");
+    const cover = await loadCoverNeeded(c.org, { seriesId: rows[0].series! });
+    expect(cover).toHaveLength(1);
+    expect(cover[0].people[0]).toMatchObject({ membershipId: c.anna.membershipId, otherClient: expect.stringContaining("Sylvia Gillespie") });
+    expect(coverReason(cover[0], "America/Regina")).toMatch(/is on another job then \(Sylvia Gillespie \d+, 10:30 AM\)$/);
+    expect(coverSummary(cover, "America/Regina", rows.length)).toContain(`is on another job on 1 of the ${rows.length} visits`);
+    // Another company can't read it.
+    const other2 = await company();
+    expect(await loadCoverNeeded(other2.org, { seriesId: rows[0].series! })).toEqual([]);
+  });
+
+  it("a series with nobody on it, and one whose crew is free throughout, mark nothing", async () => {
+    const c = await company();
+    expect(await create(c, { assigned_to: "" }), api.log()).toBe("redirected to /app/bookings");
+    expect(await create(c, { start_time: "14:00" })).toBe("redirected to /app/bookings");
+    const rows = await api.sql<{ n: number }>("select count(*)::int as n from public.bookings where client_id = $1 and cover_needed is not null", [c.client]);
+    expect(rows[0].n).toBe(0);
   });
 
   it("custom weekly with no days picked, or an end before the start: refused, no empty series", async () => {

@@ -4,6 +4,9 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { memberDisplayName } from "@/lib/member-display";
 import { orgDividesCrewHours } from "@/lib/crew-hours";
 import { describeRecurrence } from "@/lib/recurrence";
+import { getOrgTimezone } from "@/lib/org-timezone";
+import { loadCoverNeeded } from "@/lib/cover-needed";
+import { coverReason } from "@/lib/cover-needed-text";
 
 export type SchedulerView = {
   id: string;
@@ -98,6 +101,9 @@ export type ScheduleBooking = {
   /** Deliberately free of charge — a comp clean is priced correctly at $0,
    *  and the board's "No price" warning must not fire on it. */
   isFree: boolean;
+  /** Who a series' crew save left off this visit and why, as a sentence;
+   *  null when nobody was. The board's "Needs cover" warning. */
+  needsCover: string | null;
   /** Human-readable recurrence rule when this booking belongs to a series,
    *  e.g. "Every 4 weeks at 3:00 PM". The quick view had series_id and showed
    *  nothing with it, so a repeating job looked identical to a one-off. */
@@ -401,6 +407,24 @@ export async function fetchScheduleWeek(
     }>,
   ]);
 
+  // Visits a series' crew save left someone off (lib/cover-needed.ts). Read
+  // on its own, so the board never depends on it.
+  const needsCoverBy = new Map<string, string>();
+  if (organizationId) {
+    try {
+      const [coverTz, coverVisits] = await Promise.all([
+        getOrgTimezone(organizationId),
+        loadCoverNeeded(organizationId, {
+          from: rangeStart.toISOString(),
+          ...(rangeEnd ? { to: rangeEnd.toISOString() } : {}),
+        }),
+      ]);
+      for (const v of coverVisits) needsCoverBy.set(v.bookingId, coverReason(v, coverTz));
+    } catch (err) {
+      console.error("[scheduling] could not read which visits need cover:", err);
+    }
+  }
+
   // Per-booking override; the org toggle is the fallback.
   const dividesByBooking = new Map<string, boolean>();
   const freeBookings = new Set<string>();
@@ -511,6 +535,7 @@ export async function fetchScheduleWeek(
       // resolveTeamDivision, which is the function everything else uses.
       dividesHours: dividesByBooking.get(b.id) === true ? true : orgDividesHours,
       isFree: freeBookings.has(b.id),
+      needsCover: needsCoverBy.get(b.id) ?? null,
       seriesLabel:
         seriesLabelById.get(
           (b as { series_id?: string | null }).series_id ?? "",

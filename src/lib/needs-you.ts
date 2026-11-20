@@ -10,6 +10,11 @@ import {
   type NeedsYouItem,
 } from "@/lib/needs-you-items";
 import { describeDelta, findSeriesDrift, type SeriesDrift } from "@/lib/series-drift";
+import { loadCoverNeeded } from "@/lib/cover-needed";
+import { coverReason, type CoverVisit } from "@/lib/cover-needed-text";
+
+/** How far ahead a visit that needs cover is worth a line on the dashboard. */
+const COVER_LOOKAHEAD_DAYS = 7;
 
 export type { NeedsYouItem, NeedsYouAction } from "@/lib/needs-you-items";
 
@@ -113,7 +118,9 @@ export async function collectNeedsYou(
   const byId = new Map<string, Row>();
   for (const r of [...(live ?? []), ...(unpriced ?? [])]) byId.set(r.id, r);
   const ids = [...byId.keys()];
-  if (ids.length === 0) return { items: [], tz };
+  // Nothing live in the window. A visit that needs cover later this week
+  // is still worth its line.
+  if (ids.length === 0) return { items: await needsCoverItems(organizationId, tz, now, new Map()), tz };
 
   type CrewRow = {
     booking_id: string;
@@ -236,10 +243,59 @@ export async function collectNeedsYou(
   const driftItems = drift
     .map((d) => seriesDriftItem(d, tz))
     .filter((it) => (snoozed.get(it.key) ?? 0) <= now);
-  // Drift sits with tomorrow's problems: before money, after anything live.
+  const coverItems = await needsCoverItems(organizationId, tz, now, snoozed);
+
+  // Cover and drift sit with tomorrow's problems: before money, after
+  // anything live.
   const money = items.filter((it) => it.kind === "needs_price");
   const rest = items.filter((it) => it.kind !== "needs_price");
-  return { items: [...rest, ...driftItems, ...money], tz };
+  return { items: [...rest, ...coverItems, ...driftItems, ...money], tz };
+}
+
+/**
+ * Visits in the coming week that a series' crew save left someone off
+ * (lib/cover-needed.ts). Never throws: the rest of the list must not depend
+ * on it.
+ */
+async function needsCoverItems(
+  organizationId: string,
+  tz: string,
+  now: number,
+  snoozed: Map<string, number>,
+): Promise<NeedsYouItem[]> {
+  try {
+    const cover = await loadCoverNeeded(organizationId, {
+      from: new Date(now).toISOString(),
+      to: new Date(now + COVER_LOOKAHEAD_DAYS * 86_400_000).toISOString(),
+      limit: 40,
+    });
+    return cover.map((v) => needsCoverItem(v, tz)).filter((it) => (snoozed.get(it.key) ?? 0) <= now);
+  } catch (err) {
+    console.error("[needs-you] could not read which visits need cover:", err);
+    return [];
+  }
+}
+
+function needsCoverItem(v: CoverVisit, tz: string): NeedsYouItem {
+  const when = new Date(v.scheduledAt).toLocaleString("en-US", {
+    timeZone: tz,
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  const href = `/app/bookings/${v.bookingId}`;
+  return {
+    key: `cover:${v.bookingId}`,
+    kind: "needs_cover",
+    title: `${v.clientName}, ${when}: needs cover`,
+    body: `${coverReason(v, tz)}, so they were left off this visit when the series' crew was set. Pick someone else.`,
+    href,
+    atMs: new Date(v.scheduledAt).getTime(),
+    alert: false,
+    actions: [{ kind: "link", label: "Open the visit", href }],
+  };
 }
 
 /**

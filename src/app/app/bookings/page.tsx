@@ -14,6 +14,8 @@ import { resolveFreelancerCoverageNames } from "@/lib/booking-coverage";
 import { selectInChunks } from "@/lib/supabase/chunked-in";
 import { jobStillOpen } from "@/lib/crew-eligibility";
 import { BookingsTable, type BookingRow } from "./bookings-table";
+import { loadCoverNeeded } from "@/lib/cover-needed";
+import { coverReason, coverSummary } from "@/lib/cover-needed-text";
 
 export const metadata = { title: "Bookings" };
 
@@ -23,7 +25,7 @@ const LIST_LIMIT = 1000;
 export default async function BookingsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ archived?: string; client?: string }>;
+  searchParams: Promise<{ archived?: string; client?: string; cover?: string }>;
 }) {
   const membership = await requireMembership();
   const canEdit = membership.role === "owner" || membership.role === "admin" || membership.role === "manager";
@@ -33,7 +35,7 @@ export default async function BookingsPage({
   // Same: the overlap warning needs to know whether a team job's hours split
   // across its crew, and that lives on the org rather than the booking.
   const dividesPromise = orgDividesCrewHours(membership.organization_id);
-  const { archived, client } = await searchParams;
+  const { archived, client, cover } = await searchParams;
   const showArchived = archived === "1";
   const clientFilter = client?.trim() || null;
 
@@ -291,6 +293,26 @@ export default async function BookingsPage({
     (data ?? []).map((b) => b.id),
   );
 
+  // Visits a series' crew save left someone off (another job at that
+  // time): the chip beside the row, and after such a save the banner that
+  // says who and which dates. Read on its own so the list never depends on
+  // it.
+  const needsCover = new Map<string, string>();
+  let coverBanner: string | null = null;
+  try {
+    for (const v of await loadCoverNeeded(membership.organization_id, { from: new Date().toISOString() })) {
+      needsCover.set(v.bookingId, coverReason(v, tz));
+    }
+    if (cover && /^[0-9a-f-]{36}$/i.test(cover)) {
+      coverBanner = coverSummary(
+        await loadCoverNeeded(membership.organization_id, { seriesId: cover, from: new Date().toISOString() }),
+        tz,
+      );
+    }
+  } catch (err) {
+    console.error("[bookings] could not read which visits need cover:", err);
+  }
+
   const rows: BookingRow[] = (data ?? []).map((b) => ({
     id: b.id,
     scheduled_at: b.scheduled_at,
@@ -306,6 +328,7 @@ export default async function BookingsPage({
     covered_by_name: coverageMap.get(b.id)?.join(", ") ?? null,
     assigned_to: b.assigned_to,
     inactive_crew_names: inactiveCrewOf(b.id, b.status),
+    needs_cover: needsCover.get(b.id) ?? null,
     additional_assignee_ids: additionalByBooking.get(b.id) ?? [],
     // Per-booking flag wins when set; otherwise the org default. Matches
     // resolveTeamDivision, which is what the rest of the app divides by.
@@ -408,6 +431,15 @@ export default async function BookingsPage({
         <p className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-800 dark:text-amber-300">
           Showing the latest {rows.length.toLocaleString()} of {total.toLocaleString()} bookings. The oldest
           aren&apos;t listed here: open a client to see all of theirs.
+        </p>
+      )}
+      {coverBanner && (
+        <p
+          role="status"
+          data-testid="cover-banner"
+          className="mb-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-900 dark:text-amber-200"
+        >
+          <span className="font-semibold">Series saved.</span> {coverBanner}
         </p>
       )}
       <BookingsTable

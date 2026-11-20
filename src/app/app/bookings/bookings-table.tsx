@@ -93,6 +93,9 @@ export type BookingRow = {
    *  job that is still to be done. Empty otherwise. Drives the warning sign
    *  beside the crew. */
   inactive_crew_names: string[];
+  /** Who a series' crew save left off this visit and why, as a sentence;
+   *  null when nobody was. Feeds the "Needs cover" chip. */
+  needs_cover: string | null;
   /** Non-primary crew membership ids on this booking, sourced from
    *  the booking_assignees junction. Pre-checked in the dialog. */
   additional_assignee_ids: string[];

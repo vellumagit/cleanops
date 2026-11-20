@@ -66,6 +66,8 @@ import { resolveSeriesMove } from "@/lib/series-move";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { allowDbErrors } from "@/lib/supabase/query-guard";
 import { redirectAfterSetup } from "@/lib/setup-return";
+import { leftOffByBooking, loadCoverNeeded } from "@/lib/cover-needed";
+import { coverSummary, type CoverVisit } from "@/lib/cover-needed-text";
 import { logAuditEvent } from "@/lib/audit";
 import { notify } from "@/lib/notify";
 import { formatDateTime } from "@/lib/format";
@@ -692,6 +694,10 @@ async function syncBookingAssigneesBulk(
   additionalIds: string[],
   splits: SplitSegmentInput[] = [],
   bookingPatch: Record<string, Json> = {},
+  /** skipClashes: a series' crew. Anyone with another job at the time of a
+   *  visit comes off that one visit, which is marked as needing cover,
+   *  instead of the whole save being refused (migration 20261119040000). */
+  opts: { skipClashes?: boolean } = {},
 ): Promise<string | null> {
   if (bookingIds.length === 0) return null;
 
@@ -802,7 +808,9 @@ async function syncBookingAssigneesBulk(
 
   const allRows: Row[] = bookingIds.flatMap(buildRowsForBooking);
   const { error: bulkErr } = await createSupabaseAdminClient().rpc(
-    "update_booking_assignments_v2",
+    (opts.skipClashes
+      ? "update_booking_assignments_skip_clashes"
+      : "update_booking_assignments_v2") as "update_booking_assignments_v2",
     {
       p_organization_id: organizationId,
       p_booking_ids: bookingIds,
@@ -1491,16 +1499,15 @@ export async function createRecurringBookingAction(
   }
 
   // 3. Insert all booking instances (recurringServiceExtras declared above)
-  // With more people on the crew, the lead goes on together with them in
-  // the crew save below, not on the visit row: see leadWithCrew in
-  // createBookingAction.
-  const leadJoinsWithCrew =
-    !!parsed.data.assigned_to &&
-    readAdditionalAssignees(formData).some((id) => id !== parsed.data.assigned_to);
+  // The visits go in with nobody on them, and the crew is put on in one
+  // save below. That save is the one that knows what to do when someone
+  // has another job on one of the dates: leave her off that visit and mark
+  // it, rather than refuse the whole series (which is what happened while
+  // the lead rode in on these rows).
   const bookingRows = occurrences.map((scheduled_at) => ({
     organization_id: membership.organization_id,
     client_id: parsed.data.client_id,
-    assigned_to: leadJoinsWithCrew ? null : (parsed.data.assigned_to ?? null),
+    assigned_to: null,
     scheduled_at,
     // The series' own words for this visit — its date at its start time.
     ...wallClockColumns(`${zonedYmd(new Date(scheduled_at), orgTz)}T${parsed.data.start_time}`, orgTz),
@@ -1573,6 +1580,8 @@ export async function createRecurringBookingAction(
   }
 
   // 4. Sync booking_assignees + Google Calendar for each occurrence
+  /** Visits where someone on the crew was left off for another job. */
+  let seriesCover: CoverVisit[] = [];
   if (insertedBookings && insertedBookings.length > 0) {
     const labels = await getBookingLabels(
       supabase,
@@ -1586,40 +1595,44 @@ export async function createRecurringBookingAction(
       ...additionalIds,
     ].filter(Boolean) as string[];
 
-    // Assignee rows are written inline (awaited) — the scheduler and field
-    // app need them present the moment the save returns.
-    for (const b of insertedBookings) {
-      // Write booking_assignees rows so the scheduler shows the booking
-      // in every assignee's lane, the field app surfaces it to additional
-      // crew, and quick-assign edits later work cleanly. Splits aren't
-      // supported on recurring bookings (UI hides them), so pass [].
-      const seriesCrewErr = await syncBookingAssignees(
+    // The crew, on every visit at once. Written before the save returns:
+    // the scheduler and the field app need the rows present. Splits aren't
+    // supported on recurring bookings (the form hides them), so pass [].
+    //
+    // Someone with another job on one of the dates is left off that visit
+    // and it is marked as needing cover; everyone else stays on it.
+    if (recurringAssignees.length > 0) {
+      const seriesCrewErr = await syncBookingAssigneesBulk(
         supabase,
         membership.organization_id,
-        b.id,
+        insertedBookings.map((b) => b.id),
         parsed.data.assigned_to ?? null,
         additionalIds,
         [],
-        leadJoinsWithCrew ? { assigned_to: parsed.data.assigned_to ?? null } : {},
+        { assigned_to: parsed.data.assigned_to ?? null },
+        { skipClashes: true },
       );
       if (seriesCrewErr) {
         const cleanupErrors = await cleanupFailedSeries();
-        // The crew save stops at the first visit it can't staff and names
-        // that one date. For a series, say all of them.
-        const clash = /already booked|overlapping booking/i.test(seriesCrewErr)
-          ? await explainSeriesClash()
-          : null;
-        const reason = clash ?? seriesCrewErr;
         return {
           errors: {
             _form: cleanupErrors.length
-              ? `${reason} Cleanup also failed: ${cleanupErrors.join("; ")}`
-              : reason,
+              ? `${seriesCrewErr} Cleanup also failed: ${cleanupErrors.join("; ")}`
+              : seriesCrewErr,
           },
           values: raw,
         };
       }
+      try {
+        seriesCover = await loadCoverNeeded(membership.organization_id, {
+          bookingIds: insertedBookings.map((b) => b.id),
+        });
+      } catch (err) {
+        // The series is saved either way; the marks are on the visits.
+        console.error("[bookings] could not read which visits need cover:", err);
+      }
     }
+    const leftOff = leftOffByBooking(seriesCover);
 
     // Calendar sync runs in after() so the save returns immediately while the
     // serverless runtime keeps the function alive until the Google Calendar
@@ -1640,7 +1653,9 @@ export async function createRecurringBookingAction(
           client_name: labels.clientName,
           employee_name: labels.employeeName,
         }).catch((err) => console.error("[gcal] recurring create:", err));
-        await syncMemberCalendarEvents(b.id, recurringAssignees, {
+        // Not onto the calendar of someone who was left off this visit.
+        const onThisVisit = recurringAssignees.filter((m) => !leftOff.get(b.id)?.has(m));
+        await syncMemberCalendarEvents(b.id, onThisVisit, {
           id: b.id,
           scheduled_at: b.scheduled_at,
           duration_minutes: parsed.data.duration_minutes,
@@ -1658,7 +1673,12 @@ export async function createRecurringBookingAction(
   // Recurring creation previously notified no one (audit B8), unlike
   // single-booking create.
   const firstOccurrence = insertedBookings?.[0];
-  if (parsed.data.assigned_to && firstOccurrence) {
+  const leadOffFirst =
+    !!firstOccurrence &&
+    seriesCover.some(
+      (v) => v.bookingId === firstOccurrence.id && v.people.some((x) => x.membershipId === parsed.data.assigned_to),
+    );
+  if (parsed.data.assigned_to && firstOccurrence && !leadOffFirst) {
     const { data: clientRow } = (await supabase
       .from("clients")
       .select("name")
@@ -1729,7 +1749,9 @@ export async function createRecurringBookingAction(
     return { values: { ...raw, _done: "1" } };
   }
 
-  redirectAfterSetup(formData, "/app/bookings");
+  // Saved. When someone was left off some visits, land on the list with
+  // the banner that says who and which dates.
+  redirectAfterSetup(formData, seriesCover.length > 0 ? `/app/bookings?cover=${series.id}` : "/app/bookings");
 }
 
 export async function updateBookingAction(
@@ -2702,8 +2724,10 @@ export async function updateBookingAction(
         return { errors: { _form: currentAssignees }, values: raw };
       }
 
+      // Clashes are skipped, not refused: someone with another job on one
+      // of the dates comes off that visit, and it is marked.
       const { data: updatedRows, error: seriesUpdateErr } = await admin.rpc(
-        "update_booking_series_with_assignees",
+        "update_booking_series_with_assignees_skip_clashes" as "update_booking_series_with_assignees",
         {
           p_organization_id: membership.organization_id,
           p_series_id: seriesId,
@@ -2922,6 +2946,20 @@ export async function updateBookingAction(
   revalidatePath(`/app/bookings/${id}/edit`);
   revalidatePath("/app");
   revalidatePath("/app/invoices");
+  // A series save that left someone off some visits: land on the list, with
+  // the banner that says who and which dates.
+  if (updateScope === "this_and_future" && seriesId) {
+    let needCover = 0;
+    try {
+      needCover = (
+        await loadCoverNeeded(membership.organization_id, { seriesId, from: new Date().toISOString(), limit: 1 })
+      ).length;
+    } catch (err) {
+      console.error("[bookings] could not read which visits need cover:", err);
+    }
+    if (needCover > 0) redirect(`/app/bookings?cover=${seriesId}`, RedirectType.replace);
+  }
+
   // Back to wherever the editor was opened from — the scheduler week, the
   // calendar month, the filtered list — instead of always the bookings list.
   // redirectBack replaces rather than pushes, so the consumed edit page does
@@ -4029,6 +4067,8 @@ export type AssignCrewState = {
   ok?: boolean;
   /** Set with the "they're off that day" question; posted back as the yes. */
   confirmTimeOff?: string;
+  /** Saved, with something to know: who was left off which visits. */
+  notice?: string;
 };
 
 export async function assignBookingCrewAction(
@@ -4137,6 +4177,9 @@ export async function assignBookingCrewAction(
   const updateSeries =
     updateScope === "this_and_future" && !!seriesId && !!seriesScheduledAt;
 
+  /** A series save: the visits where someone was left off for another job. */
+  let seriesCover: CoverVisit[] = [];
+  let seriesVisitCount = 0;
   if (updateSeries) {
     const currentAssignees = await syncBookingAssignees(
       supabase,
@@ -4154,7 +4197,7 @@ export async function assignBookingCrewAction(
 
     const { data: updatedRows, error: seriesUpdateErr } =
       await createSupabaseAdminClient().rpc(
-        "update_booking_series_with_assignees",
+        "update_booking_series_with_assignees_skip_clashes" as "update_booking_series_with_assignees",
         {
           p_organization_id: membership.organization_id,
           p_series_id: seriesId,
@@ -4192,6 +4235,12 @@ export async function assignBookingCrewAction(
     }
     const updatedSiblings = updatedRows ?? [];
     const siblingIds = updatedSiblings.map((sibling) => sibling.id);
+    try {
+      seriesCover = await loadCoverNeeded(membership.organization_id, { bookingIds: [id, ...siblingIds] });
+      seriesVisitCount = siblingIds.length + 1;
+    } catch (err) {
+      console.error("[bookings] could not read which visits need cover:", err);
+    }
     if (siblingIds.length > 0) {
       after(async () => {
         await resyncBookingCalendarsPaced(siblingIds);
@@ -4231,9 +4280,11 @@ export async function assignBookingCrewAction(
   // Update personal calendars for all newly assigned members (and remove
   // events for unassigned ones). Fire-and-forget.
   if (existing) {
-    const allAssignees = [primaryId, ...additionalIds].filter(
+    // Minus anyone a series save left off this visit for another job.
+    const offThisVisit = leftOffByBooking(seriesCover).get(id);
+    const allAssignees = ([primaryId, ...additionalIds].filter(
       Boolean,
-    ) as string[];
+    ) as string[]).filter((m) => !offThisVisit?.has(m));
     syncMemberCalendarEvents(id, allAssignees, {
       id,
       scheduled_at: existing.scheduled_at,
@@ -4314,7 +4365,8 @@ export async function assignBookingCrewAction(
   revalidatePath(`/app/bookings/${id}`);
   revalidatePath("/app/scheduling");
   revalidatePath("/app");
-  return { ok: true };
+  const notice = coverSummary(seriesCover, await getOrgTimezone(membership.organization_id), seriesVisitCount);
+  return notice ? { ok: true, notice } : { ok: true };
 }
 
 /**
