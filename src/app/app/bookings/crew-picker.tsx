@@ -21,6 +21,7 @@ import {
   type CrewState,
   type CrewWindow,
 } from "./crew-state";
+import type { CrewAvailability } from "./use-crew-availability";
 
 type Person = { id: string; label: string; hasAccommodations?: boolean };
 
@@ -111,6 +112,7 @@ export function CrewPicker({
   error,
   formerPeople = [],
   formerDropped = false,
+  availability,
 }: {
   people: Person[];
   /** On this job, but no longer active. `people` is active people only, so
@@ -132,7 +134,17 @@ export function CrewPicker({
   scheduledAtLocal: string;
   jobMinutes: number;
   error?: string;
+  /** Who isn't free for this visit (use-crew-availability). Left out, or
+   *  anything but "ready", and everyone is listed as before. */
+  availability?: CrewAvailability;
 }) {
+  const [showAway, setShowAway] = useState(false);
+  const away = availability?.status === "ready" ? availability.unavailable : {};
+  // Someone already on the crew is never hidden: they stay where they can
+  // be seen and taken off, marked with the reason.
+  const listed = people.filter((p) => !away[p.id] || state.crew.includes(p.id));
+  const hidden = people.filter((p) => away[p.id] && !state.crew.includes(p.id));
+  const pickedAway = people.filter((p) => away[p.id] && state.crew.includes(p.id));
   const fields = crewFormFields(
     allowTimes ? state : { ...state, timesOn: false },
     jobMinutes,
@@ -175,19 +187,23 @@ export function CrewPicker({
         ) : (
           <>
             <div id="crew" className="flex flex-wrap gap-2" role="group" aria-label="Crew">
-              {people.map((p) => {
+              {listed.map((p) => {
                 const on = state.crew.includes(p.id);
+                const notFree = on && !!away[p.id];
                 return (
                   <button
                     key={p.id}
                     type="button"
                     aria-pressed={on}
+                    title={notFree ? away[p.id].reason : undefined}
                     onClick={() => onChange((s) => toggleCrewMember(s, p.id))}
                     className={cn(
                       "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
-                      on
-                        ? "border-foreground bg-foreground text-background"
-                        : "border-border bg-background text-muted-foreground hover:border-foreground/50 hover:text-foreground",
+                      notFree
+                        ? "border-amber-500 bg-amber-100 text-amber-900 hover:bg-amber-200 dark:bg-amber-950/40 dark:text-amber-200"
+                        : on
+                          ? "border-foreground bg-foreground text-background"
+                          : "border-border bg-background text-muted-foreground hover:border-foreground/50 hover:text-foreground",
                     )}
                   >
                     {on ? "✓ " : ""}
@@ -222,6 +238,56 @@ export function CrewPicker({
                 its crew. Tap to take {formerOnCrew.length === 1 ? "it" : "them"}{" "}
                 off (hours already logged stay), then save.
               </p>
+            )}
+            {listed.length === 0 && formerOnCrew.length === 0 && (
+              <p className="text-xs text-muted-foreground">Nobody is free at that time.</p>
+            )}
+            {pickedAway.length > 0 && (
+              <ul className="mt-1.5 space-y-0.5 text-[11px] text-amber-800 dark:text-amber-300">
+                {pickedAway.map((p) => (
+                  <li key={p.id}>
+                    <span className="font-semibold">{p.label}</span> isn&rsquo;t free: {away[p.id].reason}.
+                  </li>
+                ))}
+              </ul>
+            )}
+            {availability?.status === "loading" && (
+              <p className="mt-1.5 text-[11px] text-muted-foreground">Checking who is free&hellip;</p>
+            )}
+            {availability?.status === "failed" && (
+              <p className="mt-1.5 text-[11px] text-destructive">
+                Couldn&rsquo;t check who is free, so everyone is listed. Look at the schedule before you save.
+              </p>
+            )}
+            {hidden.length > 0 && (
+              <div className="mt-2">
+                <button
+                  type="button"
+                  aria-expanded={showAway}
+                  onClick={() => setShowAway((v) => !v)}
+                  className="text-[11px] font-medium text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                >
+                  {showAway ? "Hide" : "Show"} {hidden.length} who {hidden.length === 1 ? "isn’t" : "aren’t"} free
+                  then
+                </button>
+                {showAway && (
+                  <ul className="mt-1.5 space-y-1" aria-label="Not free at that time">
+                    {hidden.map((p) => (
+                      <li key={p.id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                        <button
+                          type="button"
+                          aria-pressed={false}
+                          onClick={() => onChange((s) => toggleCrewMember(s, p.id))}
+                          className="rounded-full border border-dashed border-border bg-background px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-foreground/50 hover:text-foreground"
+                        >
+                          {p.label}
+                        </button>
+                        <span className="text-[11px] text-muted-foreground">{away[p.id].reason}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             )}
             <p className="mt-1.5 text-[11px] text-muted-foreground">
               {state.crew.length === 0

@@ -87,6 +87,10 @@ describe("changing a job's crew", () => {
       await visit(stack, owner.page, `/app/bookings/${other}`);
       await click(owner.page, "Change crew");
       await says(owner.page, "Assign cleaners");
+      // The pop-up says so before the save does: she is listed under "Not
+      // free at that time", with the job she is on.
+      await says(owner.page, /Not free at that time/i);
+      await says(owner.page, /Anna Cleaner\s+On another job then/);
       await click(owner.page, /Anna Cleaner/, { within: DIALOG });
       await click(owner.page, /Review & save/, { within: DIALOG });
       await click(owner.page, /Yes, assign 2 cleaners/, { within: DIALOG });

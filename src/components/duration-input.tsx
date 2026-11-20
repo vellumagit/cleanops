@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Input } from "@/components/ui/input";
 
 /**
@@ -15,6 +15,7 @@ export function DurationInput({
   defaultMinutes = 0,
   required = false,
   onUserInput,
+  onMinutesChange,
 }: {
   name: string;
   defaultMinutes?: number;
@@ -25,6 +26,11 @@ export function DurationInput({
    *  avoid clobbering the user's value. Not fired on the initial
    *  mount or on a key-driven remount. */
   onUserInput?: () => void;
+  /** The total, every time it changes, including on mount and on a
+   *  key-driven remount. For a parent that needs the live length (the
+   *  booking form asks who is free for it). Pass a stable function, such as
+   *  a state setter. */
+  onMinutesChange?: (minutes: number) => void;
 }) {
   const [hours, setHours] = useState<string>(
     defaultMinutes > 0 ? String(Math.floor(defaultMinutes / 60)) : "",
@@ -46,6 +52,9 @@ export function DurationInput({
   }
 
   const totalMinutes = h * 60 + m;
+  useEffect(() => {
+    onMinutesChange?.(totalMinutes);
+  }, [totalMinutes, onMinutesChange]);
 
   return (
     <div className="flex items-center gap-2">

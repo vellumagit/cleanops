@@ -1,6 +1,8 @@
 "use client";
 
-import { useActionState, useState, useEffect, useMemo } from "react";
+import { Fragment, useActionState, useState, useEffect, useMemo } from "react";
+import type { Unavailable } from "@/lib/crew-availability";
+import { getCrewAvailabilityForBookingAction } from "./crew-availability";
 import { Users, Check, Info, AlertTriangle } from "lucide-react";
 import {
   Dialog,
@@ -100,6 +102,40 @@ export function AssignCrewDialog({
   useEffect(() => {
     if (state.ok) onOpenChange(false);
   }, [state.ok, onOpenChange]);
+
+  // Who isn't free for this visit, asked each time the pop-up opens. Kept
+  // with the booking it answers for. A failed check lists everyone and says
+  // so; it never reads as "everyone is free".
+  const crewKey = [...selectedIds].sort().join(",");
+  const [freeCheck, setFreeCheck] = useState<{
+    bookingId: string;
+    unavailable: Record<string, Unavailable> | null;
+  } | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    (async () => {
+      let res: Awaited<ReturnType<typeof getCrewAvailabilityForBookingAction>>;
+      try {
+        res = await getCrewAvailabilityForBookingAction(bookingId, crewKey ? crewKey.split(",") : []);
+      } catch {
+        res = { ok: false };
+      }
+      if (!cancelled) setFreeCheck({ bookingId, unavailable: res.ok ? res.unavailable : null });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, bookingId, crewKey]);
+  const checked = freeCheck && freeCheck.bookingId === bookingId ? freeCheck : null;
+  const away: Record<string, Unavailable> = checked?.unavailable ?? {};
+  // Free people first; the rest underneath with the reason. Someone already
+  // ticked stays where they were, marked.
+  const freeFirst = [
+    ...employees.filter((e) => !away[e.id] || selectedIds.includes(e.id)),
+    ...employees.filter((e) => away[e.id] && !selectedIds.includes(e.id)),
+  ];
+  const firstAway = freeFirst.findIndex((e) => away[e.id] && !selectedIds.includes(e.id));
 
   function toggle(id: string) {
     setSelectedIds((prev) =>
@@ -202,16 +238,31 @@ export function AssignCrewDialog({
                   )}
                 </p>
                 <div className="max-h-64 space-y-1 overflow-y-auto">
-                  {employees.map((e) => {
+                  {open && !checked && (
+                    <p className="px-2 pb-1 text-[11px] text-muted-foreground">Checking who is free&hellip;</p>
+                  )}
+                  {checked && !checked.unavailable && (
+                    <p className="px-2 pb-1 text-[11px] text-destructive">
+                      Couldn&rsquo;t check who is free, so everyone is listed.
+                    </p>
+                  )}
+                  {freeFirst.map((e, index) => {
                     const selected = selectedIds.includes(e.id);
+                    const notFree = away[e.id];
                     return (
+                      <Fragment key={e.id}>
+                      {index === firstAway && (
+                        <p className="px-2 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                          Not free at that time
+                        </p>
+                      )}
                       <button
-                        key={e.id}
                         type="button"
                         onClick={() => toggle(e.id)}
                         className={cn(
-                          "flex w-full items-center gap-2 rounded px-2 py-2 text-left text-sm hover:bg-muted",
+                          "flex w-full flex-wrap items-center gap-2 rounded px-2 py-2 text-left text-sm hover:bg-muted",
                           selected && "bg-muted",
+                          notFree && !selected && "text-muted-foreground",
                         )}
                       >
                         <span
@@ -234,7 +285,18 @@ export function AssignCrewDialog({
                             Note
                           </span>
                         )}
+                        {notFree && (
+                          <span
+                            className={cn(
+                              "w-full pl-6 text-[11px]",
+                              selected ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground",
+                            )}
+                          >
+                            {notFree.reason}
+                          </span>
+                        )}
                       </button>
+                      </Fragment>
                     );
                   })}
                 </div>

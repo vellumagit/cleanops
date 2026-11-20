@@ -66,7 +66,17 @@ describe("booking a job", () => {
       await visit(stack, owner.page, "/app/bookings/new");
       await choose(owner.page, "#client_id", c.client);
       await setValue(owner.page, "#scheduled_at", localInput(when.toISOString()));
-      await click(owner.page, /Anna Cleaner/, { within: "#crew" });
+      // Since 2026-11-19 the picker lists who is free: Anna is working then,
+      // so she is tucked away with the reason, and Bea is still offered.
+      await says(owner.page, /Show 1 who isn.t free then/);
+      const offered = await owner.page.$eval("#crew", (el) => (el as HTMLElement).innerText);
+      expect(offered).toContain("Bea Cleaner");
+      expect(offered).not.toContain("Anna Cleaner");
+      await click(owner.page, /Show 1 who isn.t free then/);
+      await says(owner.page, /On another job then: .+, 10:00 AM/);
+      // The office can still pick her; she moves up, marked with why.
+      await click(owner.page, /Anna Cleaner/, { within: "[aria-label='Not free at that time']" });
+      await says(owner.page, /Anna Cleaner isn.t free: On another job then/);
       await click(owner.page, "Create booking");
       await says(owner.page, /already booked then/);
       await expectNoCrash(owner);

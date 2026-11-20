@@ -22,6 +22,7 @@ import { SubmitButton } from "@/components/submit-button";
 import { DurationInput } from "@/components/duration-input";
 import { DayGlanceField } from "./day-glance-field";
 import { CrewPicker } from "./crew-picker";
+import { useCrewAvailability } from "./use-crew-availability";
 import { initialCrewState, type CrewState } from "./crew-state";
 import { ReturnToField } from "@/components/return-to-field";
 import { AddressAutocomplete } from "@/components/address-autocomplete";
@@ -475,6 +476,18 @@ export function BookingForm({
         : 0),
   );
   const [durationKey, setDurationKey] = useState<number>(0);
+  // The length as it stands in the (uncontrolled) Duration field, reported
+  // by the field itself. Only used to ask who is free for this visit.
+  const [liveMinutes, setLiveMinutes] = useState<number>(durationSeed);
+  // Not for a recurring series: one answer can't speak for every visit.
+  const crewAvailability = useCrewAvailability({
+    enabled: !isRecurring,
+    scheduledAtLocal,
+    durationMinutes: liveMinutes,
+    excludeBookingId: id,
+    crewIds: crewState.crew,
+    dividesHours: divideHours,
+  });
   // Tracks whether the user has typed in the duration input themselves.
   // DurationInput is uncontrolled so the parent doesn't see its value;
   // we set this ref via the onUserInput callback. The service
@@ -640,6 +653,7 @@ export function BookingForm({
         onUserInput={() => {
           durationTouched.current = true;
         }}
+        onMinutesChange={setLiveMinutes}
       />
     </FormField>
   );
@@ -1123,6 +1137,7 @@ export function BookingForm({
         allowTimes={!isRecurring}
         scheduledAtLocal={scheduledAtLocal}
         jobMinutes={defaultMinutes}
+        availability={crewAvailability}
         error={state.errors?.assigned_to}
       />
 
