@@ -111,6 +111,7 @@ export async function submitBookingRequestAction(
     await notify({
       organizationId: client.organization_id,
       audience: "org-management",
+      topic: "clients",
       title: "New booking request",
       body: `${client.name} requested ${serviceType}${preferredDate ? ` — preferred ${preferredDate}` : ""}. Review and schedule it.`,
       href: "/app/bookings/requests",

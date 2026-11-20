@@ -116,6 +116,7 @@ export async function runPayrollAutodraft(): Promise<{
         await notify({
           organizationId: org.id,
           audience: "org-management",
+          topic: "money",
           title: "Pay period ready for review",
           body: [
             `${p.start} to ${p.end} — ${formatCurrencyCents(total, currency)} across employees and contractors. Nothing is paid until you finalize.`,
@@ -139,6 +140,7 @@ export async function runPayrollAutodraft(): Promise<{
           await notify({
             organizationId: org.id,
             audience: "org-management",
+            topic: "money",
             title: "Payroll is waiting on flagged shifts",
             body: [
               `${result.flagged} shift${result.flagged === 1 ? "" : "s"} need review before the ${p.start}–${p.end} period can be prepared.`,

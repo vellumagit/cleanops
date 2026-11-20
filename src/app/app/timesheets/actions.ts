@@ -775,6 +775,7 @@ export async function cancelSelfPtoRequestAction(
     };
     await notify({
       audience: "org-management",
+      topic: "time_off",
       organizationId: membership.organization_id,
       title: "Time off cancelled",
       body: `${me ? memberDisplayName(me) : "A team member"} cancelled their time off ${before.start_date}${
@@ -906,6 +907,7 @@ export async function updateSelfPtoRequestAction(
     };
     await notify({
       audience: "org-management",
+      topic: "time_off",
       organizationId: membership.organization_id,
       title: wasApproved
         ? "Changed time off needs re-approval"

@@ -343,6 +343,7 @@ export async function recordStripeInvoicePayment(
       await notify({
         organizationId: invoice.organization_id,
         audience: "org-admins",
+        topic: "money",
         type: "billing",
         title: "Payment on a voided invoice",
         body: `A client just paid $${(args.amountCents / 100).toFixed(2)} on ${
@@ -514,6 +515,7 @@ export async function recordProviderRefund(args: {
       await notify({
         organizationId: payment.organization_id,
         audience: "org-admins",
+        topic: "money",
         type: "billing",
         title: "Refund issued",
         body: `$${(deltaCents / 100).toFixed(2)} returned to the client on ${

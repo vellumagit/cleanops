@@ -258,6 +258,7 @@ ${orgPhone ? `<p style="margin:0 0 14px 0;font-size:14px;color:#4b5563;">If it's
     await notify({
       organizationId: orgId,
       audience: "org-admins",
+      topic: "clients",
       type: "general",
       title: "New website inquiry",
       body: `${name}${city ? ` (${city})` : ""}${

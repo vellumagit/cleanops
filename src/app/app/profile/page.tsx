@@ -35,6 +35,13 @@ export default async function YourProfilePage() {
       <YourProfileForm
         defaults={{ full_name: p?.full_name ?? "", phone: p?.phone ?? "" }}
       />
+      <p className="mt-8 max-w-lg rounded-lg border border-border bg-muted/30 px-4 py-3 text-xs text-muted-foreground">
+        <span className="font-medium text-foreground">Notifications.</span> Too many alerts on your phone?{" "}
+        <Link href="/app/notifications/choices" className="font-medium text-foreground underline underline-offset-2">
+          Choose what alerts you
+        </Link>
+        .
+      </p>
     </PageShell>
   );
 }

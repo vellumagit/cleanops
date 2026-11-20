@@ -308,6 +308,7 @@ export async function runJobWatch(): Promise<{
         await notify({
           organizationId: orgId,
           audience: "org-management",
+          topic: "clock",
           type: "job_no_clock_in",
           title:
             toFlag.length === 1
@@ -415,6 +416,7 @@ export async function autoCompletePastBookings(): Promise<{
         .join(", ");
       await notify({
         audience: "org-management",
+        topic: "schedule",
         organizationId: org.id,
         type: "general",
         title:
@@ -489,6 +491,7 @@ export async function autoCompletePastBookings(): Promise<{
         .join(", ");
       await notify({
         audience: "org-management",
+        topic: "schedule",
         organizationId: org.id,
         type: "unstaffed_past_booking",
         title:
@@ -574,6 +577,7 @@ export async function autoCompletePastBookings(): Promise<{
         .join(", ");
       await notify({
         audience: "org-management",
+        topic: "clock",
         organizationId: org.id,
         type: "general",
         title:

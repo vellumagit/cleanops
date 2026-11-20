@@ -180,3 +180,60 @@ describe("the office, on an invoice", () => {
     }
   });
 });
+
+/**
+ * 2026-11-19, asked for in person: each office person chooses which notices
+ * alert them. The page, its ticks, and that the choice is still there after
+ * a reload.
+ */
+describe("what alerts you", () => {
+  it("a manager turns Money down, saves, and finds it still quiet on coming back; a cleaner has no such page", async () => {
+    const c = await company(stack, "Alerts");
+    const muted = async () =>
+      (
+        await stack.api.sql<{ p: { muted_topics?: string[] } }>(
+          "select notification_prefs as p from public.memberships where id = $1",
+          [c.manager.membershipId],
+        )
+      )[0].p.muted_topics ?? null;
+
+    const manager = await openAs(stack, c.manager);
+    try {
+      // Found from the notifications page.
+      await visit(stack, manager.page, "/app/notifications");
+      await click(manager.page, "Choose what alerts you");
+      await says(manager.page, "What alerts you");
+      await says(manager.page, "You are alerted about everything.");
+
+      await click(manager.page, /^Money/, { selector: "label" });
+      await says(manager.page, /1 topic is quiet: no phone alert or email for it/);
+      await click(manager.page, "Save");
+      await expect.poll(muted, { timeout: 20_000 }).toEqual(["money"]);
+
+      await visit(stack, manager.page, "/app/notifications/choices");
+      await says(manager.page, /1 topic is quiet/);
+      const ticked = await manager.page.$$eval("input[name='alert']", (els) =>
+        els.filter((el) => (el as HTMLInputElement).checked).map((el) => (el as HTMLInputElement).value),
+      );
+      expect(ticked).toEqual(["schedule", "clock", "time_off", "clients", "team"]);
+      // Fits a phone: nothing pushed off the side.
+      await manager.page.setViewport({ width: 375, height: 800 });
+      const over = await manager.page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      expect(over, "no sideways scroll on a phone").toBeLessThanOrEqual(1);
+      await expectNoCrash(manager);
+    } finally {
+      await manager.close();
+    }
+
+    const anna = await openAs(stack, c.anna);
+    try {
+      // Sent away from it, to her own side of the app.
+      await anna.page.goto(`${stack.base}/app/notifications/choices`, { waitUntil: "domcontentloaded" }).catch(() => null);
+      await expect
+        .poll(() => new URL(anna.page.url()).pathname, { timeout: 20_000 })
+        .not.toBe("/app/notifications/choices");
+    } finally {
+      await anna.close();
+    }
+  });
+});

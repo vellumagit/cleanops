@@ -2,6 +2,7 @@ import "server-only";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { sendPushToMembership, sendPushToOrg } from "@/lib/push";
 import type { NotificationType } from "@/lib/notification-types";
+import { alertsFor, type OfficeTopic } from "@/lib/notification-topics";
 
 /**
  * The ONE way to send a notification (in-app row + web push).
@@ -38,6 +39,15 @@ type NotifyBase = {
   /** Notification `type` (defaults to "general"). Only values the
    *  notification_type enum accepts; see lib/notification-types.ts. */
   type?: NotificationType;
+  /**
+   * What this notice is about, for the office's own choices
+   * (lib/notification-topics.ts). Someone who has turned this topic down
+   * still gets the in-app row, and no phone alert or email. Leave it off
+   * for a notice that must always land: something is broken until a person
+   * acts. Only looked at for the people a role audience resolves to, and
+   * for a single person who is in the office; a cleaner has no choices.
+   */
+  topic?: OfficeTopic;
   /**
    * Channels. inApp and push are on by default; email is OPT-IN.
    *
@@ -185,6 +195,39 @@ async function emailRecipients(
       // the failure this whole email channel was added to fix.
       pauseExempt: true,
     });
+  }
+}
+
+/**
+ * Of these people, the ones a notice on this topic should still alert
+ * (phone and email). No topic: everyone. Only the office has choices, so a
+ * cleaner is always alerted. If the choices can't be read, everyone is
+ * alerted: an error here must never be the reason someone wasn't told.
+ */
+async function stillAlerted(
+  db: AdminDb,
+  recipientIds: string[],
+  topic: OfficeTopic | undefined,
+): Promise<string[]> {
+  if (!topic || recipientIds.length === 0) return recipientIds;
+  try {
+    const { data, error } = (await db
+      .from("memberships")
+      .select("id, role, notification_prefs" as never)
+      .in("id", recipientIds)) as unknown as {
+      data: Array<{ id: string; role: string; notification_prefs: unknown }> | null;
+      error: { message: string } | null;
+    };
+    if (error) throw new Error(error.message);
+    const quiet = new Set(
+      (data ?? [])
+        .filter((m) => ["owner", "admin", "manager"].includes(m.role) && !alertsFor(m.notification_prefs, topic))
+        .map((m) => m.id),
+    );
+    return recipientIds.filter((id) => !quiet.has(id));
+  } catch (err) {
+    console.error(`[notify] could not read notice choices (topic="${topic}"); alerting everyone:`, err);
+    return recipientIds;
   }
 }
 
@@ -337,12 +380,15 @@ export async function notify(input: NotifyInput): Promise<void> {
         }
       }
     }
+    // The bell has it. Whether it also buzzes a phone or sends an email is
+    // each office person's own choice, by topic.
+    const loud = await stillAlerted(db, recipientIds, input.topic);
     if (doPush) {
       await Promise.allSettled(
-        recipientIds.map((id) => sendPushToMembership(id, push)),
+        loud.map((id) => sendPushToMembership(id, push)),
       );
     }
-    if (doEmail) await emailRecipients(db, input, recipientIds, type);
+    if (doEmail) await emailRecipients(db, input, loud, type);
   } catch (err) {
     console.error("[notify] failed:", err);
   }

@@ -260,6 +260,7 @@ export async function recordInboundReply(
   await notify({
     organizationId,
     audience: "org-management",
+    topic: "clients",
     ...describeReply(sender, reply),
     channels: { inApp: true, push: true, email: emailed },
     ...(reply.messageSid ? { fact: `sms_reply:${reply.messageSid}` } : {}),

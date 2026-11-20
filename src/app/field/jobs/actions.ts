@@ -966,6 +966,7 @@ async function dropShift(
   after(async () => {
     await notify({
       audience: "org-management",
+      topic: "schedule",
       organizationId: booking.organization_id,
       title,
       body,

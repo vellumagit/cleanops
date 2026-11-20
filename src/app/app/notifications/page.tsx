@@ -60,6 +60,8 @@ export default async function NotificationsPage() {
   }));
 
   const canManage = membership.role === "owner" || membership.role === "admin";
+  // The office chooses what alerts each of them; cleaners don't.
+  const isOffice = canManage || membership.role === "manager";
 
   return (
     <PageShell
@@ -77,17 +79,29 @@ export default async function NotificationsPage() {
         ) : undefined
       }
     >
-      {canManage && (
+      {isOffice && (
         <p className="mb-4 rounded-lg border border-border bg-muted/30 px-4 py-2.5 text-xs text-muted-foreground">
-          Getting too many of these? Choose exactly which alerts and digests you
-          receive in{" "}
+          Getting too many of these on your phone?{" "}
           <Link
-            href="/app/settings/automations"
+            href="/app/notifications/choices"
             className="font-medium text-foreground underline underline-offset-2"
           >
-            Settings → Automations
+            Choose what alerts you
           </Link>
-          .
+          . Those are your own choices.
+          {canManage && (
+            <>
+              {" "}
+              What the company sends at all is in{" "}
+              <Link
+                href="/app/settings/automations"
+                className="font-medium text-foreground underline underline-offset-2"
+              >
+                Settings → Automations
+              </Link>
+              .
+            </>
+          )}
         </p>
       )}
       <NotificationList notifications={shown} />

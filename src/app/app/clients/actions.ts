@@ -91,6 +91,7 @@ async function notifyReferralThankYou(
     // null-recipient row was readable by any member via direct query.)
     await notify({
       audience: "org-admins",
+      topic: "clients",
       organizationId,
       title: `Say thank you to ${referrerName}!`,
       body: `${newClientName} was referred by ${referrerName}. A quick thank-you message goes a long way.`,

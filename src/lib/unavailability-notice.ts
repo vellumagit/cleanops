@@ -115,6 +115,7 @@ export async function notifyManagersOfUnavailability(input: {
 
     await notify({
       audience: "org-management",
+      topic: "time_off",
       organizationId: input.organizationId,
       excludeMembershipId: input.membershipId,
       title,

@@ -186,6 +186,7 @@ export async function signContractAction(
     await notify({
       organizationId: contract.organization_id,
       audience: "org-management",
+      topic: "clients",
       title: "Contract signed",
       body: `${typedName} signed the contract.`,
       href: "/app/contracts",

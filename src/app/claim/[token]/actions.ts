@@ -514,6 +514,7 @@ export async function claimOfferAction(token: string): Promise<ClaimResult> {
     await notify({
       organizationId: dispatch.organization_id,
       audience: "org-management",
+      topic: "schedule",
       type: "shift_claimed",
       title: "Shift claimed",
       body: `${freelancerName} claimed the ${svc} shift${when}.${swapLine}`,

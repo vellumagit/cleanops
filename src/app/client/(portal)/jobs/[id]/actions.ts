@@ -160,6 +160,7 @@ export async function leaveJobNoteAction(
     await notify({
       organizationId: booking.organization_id,
       audience: "org-management",
+      topic: "clients",
       type: "client_request",
       title: `New note from ${client.name}`,
       body: `"${excerpt}" — ${service} on ${when}.`,
@@ -275,6 +276,7 @@ export async function requestSkipAction(
     await notify({
       organizationId: booking.organization_id,
       audience: "org-management",
+      topic: "clients",
       type: "client_request",
       title: autoApplies
         ? `${client.name} skipped a visit`

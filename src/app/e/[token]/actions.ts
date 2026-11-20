@@ -98,6 +98,7 @@ export async function respondToEstimateAction(
     await notify({
       organizationId: estimate.organization_id,
       audience: "org-management",
+      topic: "clients",
       title: wanted === "approved" ? "Estimate approved" : "Estimate declined",
       body: `${who} ${wanted} their estimate from the link.`,
       href: `/app/estimates/${estimate.id}/edit`,

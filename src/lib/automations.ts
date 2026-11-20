@@ -11,6 +11,7 @@ import { resolveClientNotify } from "@/lib/notification-gate";
 import { sendPushToMembership, sendPushToOrgAdmins } from "@/lib/push";
 import { notify } from "@/lib/notify";
 import type { CurrencyCode } from "@/lib/format";
+import type { OfficeTopic } from "@/lib/notification-topics";
 import { highEnd, priceRangeLabel } from "@/lib/estimate-lines";
 import { MIN_CHASED_BALANCE_CENTS, owedPastDueFilter } from "@/lib/invoice-balance";
 import { localInputToUtcIso } from "@/lib/validators/common";
@@ -151,8 +152,10 @@ async function getOrgAdminRecipients(orgId: string): Promise<AdminRecipient[]> {
 async function notifyOrgAdmins(
   orgId: string,
   payload: { title: string; body: string; href: string },
+  /** For each admin's own notice choices (lib/notification-topics.ts). */
+  topic?: OfficeTopic,
 ): Promise<void> {
-  await notify({ audience: "org-admins", organizationId: orgId, ...payload });
+  await notify({ audience: "org-admins", organizationId: orgId, ...payload, ...(topic ? { topic } : {}) });
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -439,7 +442,7 @@ export async function autoBookingOnEstimateApproval(estimateId: string) {
       body: `A new pending ${humanize(serviceType).toLowerCase()} booking was auto-created. Set the date and assign a cleaner.${rangeNote}`,
       href: bookingHref,
     };
-    await notifyOrgAdmins(estimate.organization_id, notifPayload).catch(
+    await notifyOrgAdmins(estimate.organization_id, notifPayload, "clients").catch(
       () => {},
     );
 
@@ -3547,7 +3550,7 @@ export async function notifyReviewSubmitted(
       title,
       body,
       href: "/app/reviews",
-    }).catch(() => {});
+    }, "clients").catch(() => {});
     console.log(`[auto] Review notification sent for ${organizationId}`);
 
     // Email alert for low ratings (≤3★). Fires only when there's a real
@@ -4135,7 +4138,7 @@ export async function autoComputeReviewBonuses(): Promise<number> {
           title: "Bonuses computed",
           body: `${toCreate.length} new bonus${toCreate.length > 1 ? "es" : ""} awarded from recent reviews.`,
           href: "/app/bonuses",
-        }).catch(() => {});
+        }, "money").catch(() => {});
       }
     }
 
@@ -5933,6 +5936,7 @@ export async function sendShiftClockOutReminders(): Promise<{
         // org has no manager.
         await notify({
           audience: "org-management",
+          topic: "clock",
           organizationId: e.organization_id,
           type: "shift_auto_closed",
           fact: `shift_auto_closed:${e.id}`,
@@ -6592,6 +6596,7 @@ export async function autoVoidOldInvoices(): Promise<{ voided: number }> {
         .join(", ");
       await notify({
         audience: "org-admins",
+        topic: "money",
         organizationId: org.id,
         type: "general",
         title:
@@ -6900,6 +6905,7 @@ export async function chaseUnconfirmedShifts(): Promise<{
         await notify({
           organizationId: orgId,
           audience: "org-admins",
+          topic: "schedule",
           type: "shift_unconfirmed",
           title: `${who} hasn't confirmed ${day.toLowerCase() === "today" ? "today's" : `${day}'s`} ${time} at ${client}`,
           body: `The shift starts in under two hours and ${who} hasn't accepted it. Check with them, or reassign the job.`,

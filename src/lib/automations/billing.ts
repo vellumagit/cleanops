@@ -676,6 +676,7 @@ export async function autoGenerateRecurringInvoices(): Promise<{
       await notify({
         organizationId: series.organization_id,
         audience: "org-management",
+        topic: "money",
         title: "Standing invoice held — client is on a billing cycle",
         body: `${seriesClient.name ?? "A client"} has BOTH a ${seriesClient.billing_cadence} billing cycle and the standing invoice "${series.name}". The cycle already bills their jobs, so the standing invoice was NOT sent this period — keep one or the other.`,
         href: "/app/settings/recurring-invoices",
@@ -896,6 +897,7 @@ export async function autoGenerateRecurringInvoices(): Promise<{
         await notify({
           organizationId: series.organization_id,
           audience: "org-management",
+          topic: "money",
           title: "Standing invoice sent — unbilled jobs alongside it",
           body: `The standing invoice "${series.name}" went out while ${unbilledCount} completed job${unbilledCount === 1 ? "" : "s"} for the same client ${unbilledCount === 1 ? "sits" : "sit"} unbilled. If the standing amount covers them, link them on an invoice; if not, bill them separately — don't let them ride unnoticed.`,
           href: `/app/invoices/new?client_id=${series.client_id}`,

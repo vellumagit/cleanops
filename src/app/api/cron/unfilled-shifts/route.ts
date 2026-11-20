@@ -134,6 +134,7 @@ async function cronGet(request: Request) {
     await notify({
       organizationId: b.organization_id,
       audience: "org-management",
+      topic: "schedule",
       type: "unfilled_shift",
       title: "Unfilled shift in < 24h",
       body: `${b.service_type ?? "Cleaning"} for ${clientName} at ${when} has no one assigned.`,

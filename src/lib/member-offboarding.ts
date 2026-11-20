@@ -350,6 +350,7 @@ export async function sweepDeactivatedMember(
       await notify({
         organizationId,
         audience: "org-management",
+        topic: "team",
         title: `${memberName} was deactivated`,
         body: lines.join(" "),
         href:

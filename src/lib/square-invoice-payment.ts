@@ -155,6 +155,7 @@ export async function recordSquareInvoicePayment(args: {
       await notify({
         organizationId: invoice.organization_id,
         audience: "org-admins",
+        topic: "money",
         type: "billing",
         title: "Payment on a voided invoice",
         body: `A client just paid $${(args.totalCents / 100).toFixed(2)} on ${

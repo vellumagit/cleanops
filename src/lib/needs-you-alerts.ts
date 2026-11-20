@@ -81,6 +81,9 @@ export async function sendNeedsYouAlerts(opts: { now?: number } = {}): Promise<{
         const body = (it.body ?? "").trim();
         await notify({
           audience: "org-management",
+          // Someone not clocked in or over their hours is a clock matter;
+          // the rest (a no-show to decide on) is the schedule's.
+          topic: it.kind === "not_clocked_in" || it.kind === "over_hours" ? "clock" : "schedule",
           organizationId: org.id,
           type: "general",
           title: it.title,
@@ -129,6 +132,7 @@ export async function sendNeedsYouAlerts(opts: { now?: number } = {}): Promise<{
           if (tomorrow.length > 6) lines.push(`and ${tomorrow.length - 6} more`);
           await notify({
             audience: "org-management",
+            topic: "schedule",
             organizationId: org.id,
             type: "general",
             title:

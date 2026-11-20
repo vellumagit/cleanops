@@ -98,6 +98,7 @@ export async function createFeedbackAction(
   await notify({
     organizationId: membership.organization_id,
     audience: "org-admins",
+    topic: "team",
     excludeMembershipId: membership.id,
     type: "feedback",
     title: `${feedbackKindLabel(parsed.data.kind)}: ${parsed.data.title}`,
@@ -233,6 +234,7 @@ export async function replyFeedbackAction(
     await notify({
       organizationId: item.organization_id,
       audience: "org-admins",
+      topic: "team",
       excludeMembershipId: membership.id,
       type: "feedback",
       title: `Reply: ${item.title}`,

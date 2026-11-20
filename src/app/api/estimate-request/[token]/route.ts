@@ -339,6 +339,7 @@ ${cta}
     await notify({
       organizationId: orgId,
       audience: "org-admins",
+      topic: "clients",
       // "general" — the notification_type enum has no "lead" value, and an
       // invalid enum makes the insert vanish into a caught error. The title
       // carries the meaning; the enum just has to not reject the row.
