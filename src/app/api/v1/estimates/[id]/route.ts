@@ -140,6 +140,9 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   if (Object.keys(updates).length === 0) {
     return NextResponse.json({ error: "No valid fields to update" }, { status: 400 });
   }
+  // The API sets one price. An estimate that held a range (set in the app)
+  // now has that single price, not the new low end with the old high end.
+  if ("total_cents" in updates) (updates as Record<string, unknown>).total_high_cents = null;
 
   const { data, error } = await admin
     .from("estimates" as never)

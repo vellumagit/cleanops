@@ -32,7 +32,7 @@ export default async function EditEstimatePage({
       supabase
         .from("estimates")
         .select(
-          "id, client_id, service_description, notes, status, total_cents, pdf_url, client_email_sent_at, public_token",
+          "id, client_id, service_description, notes, status, total_cents, total_high_cents, pdf_url, client_email_sent_at, public_token",
         )
         .eq("id", id)
         .maybeSingle() as unknown as {
@@ -43,6 +43,7 @@ export default async function EditEstimatePage({
           notes: string | null;
           status: string;
           total_cents: number;
+          total_high_cents: number | null;
           pdf_url: string | null;
           client_email_sent_at: string | null;
           public_token: string | null;
@@ -76,10 +77,16 @@ export default async function EditEstimatePage({
 
   const { data: lines } = (await supabase
     .from("estimate_line_items")
-    .select("label, quantity, unit_price_cents, sort_order")
+    .select("label, quantity, unit_price_cents, unit_price_high_cents, sort_order")
     .eq("estimate_id", id)
     .order("sort_order")) as unknown as {
-    data: Array<{ label: string; quantity: number; unit_price_cents: number; sort_order: number }> | null;
+    data: Array<{
+      label: string;
+      quantity: number;
+      unit_price_cents: number;
+      unit_price_high_cents: number | null;
+      sort_order: number;
+    }> | null;
   };
 
   // The attached PDF is private; RLS just let this person read the estimate,
@@ -163,7 +170,7 @@ export default async function EditEstimatePage({
 
         <div className="rounded-lg border border-border bg-card p-6">
           <EstimateForm
-            key={`${estimate.status}:${estimate.total_cents}:${(lines ?? []).length}`}
+            key={`${estimate.status}:${estimate.total_cents}:${estimate.total_high_cents ?? ""}:${(lines ?? []).length}`}
             mode="edit"
             id={estimate.id}
             currency={currency}
@@ -174,6 +181,10 @@ export default async function EditEstimatePage({
               notes: estimate.notes,
               status: estimate.status,
               total_dollars: centsToDollarString(estimate.total_cents),
+              total_high_dollars:
+                estimate.total_high_cents != null && estimate.total_high_cents > estimate.total_cents
+                  ? centsToDollarString(estimate.total_high_cents)
+                  : "",
               pdf_url: pdfLink,
               lines: (lines ?? []).map((l) => ({ ...l, quantity: Number(l.quantity) })),
             }}

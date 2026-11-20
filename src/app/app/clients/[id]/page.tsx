@@ -33,6 +33,7 @@ import {
   humanizeEnum,
   formatDurationMinutes,
 } from "@/lib/format";
+import { priceRangeLabel } from "@/lib/estimate-lines";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { PortalInviteButton } from "./portal-invite-button";
 import { ClientNotificationsCard } from "./notifications-card";
@@ -156,7 +157,7 @@ export default async function ClientDetailPage({
 
     supabase
       .from("estimates")
-      .select("id, status, total_cents, service_description, created_at", {
+      .select("id, status, total_cents, total_high_cents, service_description, created_at", {
         count: "exact",
       })
       .eq("client_id", id)
@@ -166,6 +167,7 @@ export default async function ClientDetailPage({
         id: string;
         status: string;
         total_cents: number;
+        total_high_cents: number | null;
         service_description: string | null;
         created_at: string;
       }> | null;
@@ -869,7 +871,7 @@ export default async function ClientDetailPage({
                     {est.service_description ?? "Estimate"}
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    {formatCurrencyCents(est.total_cents, currency)} ·{" "}
+                    {priceRangeLabel(est.total_cents, est.total_high_cents, currency)} ·{" "}
                     {new Date(est.created_at).toLocaleDateString("en-US", {
                       month: "short",
                       day: "numeric",

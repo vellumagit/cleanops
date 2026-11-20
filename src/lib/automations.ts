@@ -11,6 +11,7 @@ import { resolveClientNotify } from "@/lib/notification-gate";
 import { sendPushToMembership, sendPushToOrgAdmins } from "@/lib/push";
 import { notify } from "@/lib/notify";
 import type { CurrencyCode } from "@/lib/format";
+import { highEnd, priceRangeLabel } from "@/lib/estimate-lines";
 import { MIN_CHASED_BALANCE_CENTS, owedPastDueFilter } from "@/lib/invoice-balance";
 import { localInputToUtcIso } from "@/lib/validators/common";
 import type { Database } from "@/lib/supabase/types";
@@ -414,11 +415,28 @@ export async function autoBookingOnEstimateApproval(estimateId: string) {
       ? `/app/bookings/${newBooking.id}`
       : "/app/bookings";
 
+    // An estimate with a price range: a booking holds one price, so it was
+    // given the low end, and the office is told to set the real one. Read on
+    // its own so the booking above never depends on it.
+    let rangeNote = "";
+    try {
+      const { data: rangeRow } = (await db
+        .from("estimates")
+        .select("total_high_cents" as never)
+        .eq("id", estimateId)
+        .maybeSingle()) as unknown as { data: { total_high_cents: number | null } | null };
+      if (highEnd(estimate.total_cents, rangeRow?.total_high_cents) != null) {
+        rangeNote = ` The estimate was a range (${priceRangeLabel(estimate.total_cents, rangeRow?.total_high_cents, undefined)}), so the booking is priced at the low end: set the final price.`;
+      }
+    } catch (err) {
+      console.error("[auto] could not read the estimate's range:", err);
+    }
+
     // Owner/admin-only — this is an ops task ("set the date, assign a cleaner")
     // and must not broadcast to cleaners.
     const notifPayload = {
       title: "Estimate approved — booking created",
-      body: `A new pending ${humanize(serviceType).toLowerCase()} booking was auto-created. Set the date and assign a cleaner.`,
+      body: `A new pending ${humanize(serviceType).toLowerCase()} booking was auto-created. Set the date and assign a cleaner.${rangeNote}`,
       href: bookingHref,
     };
     await notifyOrgAdmins(estimate.organization_id, notifPayload).catch(
@@ -1444,7 +1462,7 @@ export async function sendStaleEstimateFollowups(): Promise<{
   const { data: candidates } = (await db
     .from("estimates")
     .select(
-      `id, organization_id, client_id, total_cents, sent_at, public_token,
+      `id, organization_id, client_id, total_cents, total_high_cents, sent_at, public_token,
        client_followup_7d_sent_at, client_followup_14d_sent_at,
        client:clients ( name, email )`,
     )
@@ -1456,6 +1474,7 @@ export async function sendStaleEstimateFollowups(): Promise<{
       organization_id: string;
       client_id: string | null;
       total_cents: number;
+      total_high_cents: number | null;
       sent_at: string;
       public_token: string | null;
       client_followup_7d_sent_at: string | null;
@@ -1560,7 +1579,7 @@ export async function sendStaleEstimateFollowups(): Promise<{
     const template = estimateFollowupEmail({
       clientName: est.client.name ?? "there",
       orgName: org.name,
-      amountFormatted: formatCurrencyCents(est.total_cents, org.currency),
+      amountFormatted: priceRangeLabel(est.total_cents, est.total_high_cents, org.currency),
       publicUrl: `${siteUrl}/e/${est.public_token}`,
       stage,
       brandColor: org.brand_color ?? undefined,
@@ -3155,7 +3174,7 @@ export async function sendEstimateToClient(
       .from("estimates")
       .select(
         `
-        id, organization_id, client_id, service_description, total_cents,
+        id, organization_id, client_id, service_description, total_cents, total_high_cents,
         status, public_token, expires_at,
         client:clients ( name, email )
       `,
@@ -3172,6 +3191,7 @@ export async function sendEstimateToClient(
           client_id: string;
           service_description: string | null;
           total_cents: number;
+          total_high_cents: number | null;
           status: string;
           public_token: string | null;
           expires_at: string | null;
@@ -3260,7 +3280,7 @@ export async function sendEstimateToClient(
     const template = estimateSentEmail({
       clientName: estimate.client.name ?? "there",
       orgName,
-      amountFormatted: formatCurrencyCents(estimate.total_cents, currency),
+      amountFormatted: priceRangeLabel(estimate.total_cents, estimate.total_high_cents, currency),
       serviceDescription: estimate.service_description ?? "",
       publicUrl: `${siteUrl}/e/${publicToken}`,
       expiresOn,

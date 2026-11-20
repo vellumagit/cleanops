@@ -18,7 +18,13 @@ import {
   storeEstimatePdf,
 } from "@/lib/estimate-pdf-storage";
 import { canCreateData } from "@/lib/subscription";
-import { estimateLinesTotalCents, parseEstimateLines, type EstimateLine } from "@/lib/estimate-lines";
+import {
+  estimateLinesHighTotalCents,
+  estimateLinesTotalCents,
+  highEnd,
+  parseEstimateLines,
+  type EstimateLine,
+} from "@/lib/estimate-lines";
 
 type Field = keyof typeof EstimateSchema.shape;
 export type EstimateFormState = ActionState<Field | "pdf">;
@@ -40,10 +46,38 @@ function readFormValues(formData: FormData) {
  */
 function readLines(formData: FormData, raw: { total_cents: string }) {
   if (!formData.has("line_items_json")) return { present: false, lines: [] as EstimateLine[] };
-  const parsed = parseEstimateLines(formData.get("line_items_json"));
+  const range = formData.get("price_range") === "on";
+  const parsed = parseEstimateLines(formData.get("line_items_json"), { range });
   if (parsed.error) return { present: true, lines: [] as EstimateLine[], error: parsed.error };
   if (parsed.lines.length > 0) raw.total_cents = (estimateLinesTotalCents(parsed.lines) / 100).toFixed(2);
   return { present: true, lines: parsed.lines };
+}
+
+/**
+ * The top of the estimate's price range, or null for a fixed price.
+ *
+ * - `touch` is false for a caller that sent no lines field: it knows
+ *   nothing about ranges and must leave the saved one alone.
+ * - With lines, it is what the lines' high prices add up to.
+ * - With no lines, it is the typed "to" amount.
+ */
+function readHighTotal(
+  formData: FormData,
+  lineInput: { present: boolean; lines: EstimateLine[] },
+  lowCents: number,
+): { touch: boolean; cents: number | null; error?: string } {
+  if (!lineInput.present) return { touch: false, cents: null };
+  if (formData.get("price_range") !== "on") return { touch: true, cents: null };
+  if (lineInput.lines.length > 0) return { touch: true, cents: estimateLinesHighTotalCents(lineInput.lines) };
+  const text = String(formData.get("total_high_cents") ?? "").replace(/[$,\s]/g, "");
+  if (text === "") return { touch: true, cents: null };
+  const top = Number(text);
+  if (!Number.isFinite(top) || top < 0 || top > 100_000_000) {
+    return { touch: true, cents: null, error: "The high end of the range isn't a number." };
+  }
+  const cents = Math.round(top * 100);
+  if (cents < lowCents) return { touch: true, cents: null, error: "The high end of the range is below the low end." };
+  return { touch: true, cents: highEnd(lowCents, cents) };
 }
 
 function lineRows(orgId: string, estimateId: string, lines: EstimateLine[]) {
@@ -53,6 +87,7 @@ function lineRows(orgId: string, estimateId: string, lines: EstimateLine[]) {
     label: l.label,
     quantity: l.quantity,
     unit_price_cents: l.unit_price_cents,
+    unit_price_high_cents: l.unit_price_high_cents,
     sort_order: l.sort_order,
   }));
 }
@@ -146,8 +181,11 @@ export async function createEstimateAction(
     if (problem) return { errors: { pdf: problem }, values: raw };
   }
 
+  const high = readHighTotal(formData, lineInput, parsed.data.total_cents);
+  if (high.error) return { errors: { total_cents: high.error }, values: raw };
+
   const stamps = maybeStamp(parsed.data.status);
-  const { data: estimate, error } = await supabase
+  const { data: estimate, error } = (await supabase
     .from("estimates")
     .insert({
       organization_id: membership.organization_id,
@@ -156,11 +194,12 @@ export async function createEstimateAction(
       notes: parsed.data.notes ?? null,
       status: parsed.data.status,
       total_cents: parsed.data.total_cents,
+      total_high_cents: high.cents,
       sent_at: stamps.sent_at,
       decided_at: stamps.decided_at,
-    })
+    } as never)
     .select("id")
-    .single();
+    .single()) as unknown as { data: { id: string }; error: { message: string } | null };
 
   if (error) return { errors: { _form: error.message }, values: raw };
 
@@ -250,12 +289,16 @@ export async function updateEstimateAction(
     if (problem) return { errors: { pdf: problem }, values: raw };
   }
 
+  const high = readHighTotal(formData, lineInput, parsed.data.total_cents);
+  if (high.error) return { errors: { total_cents: high.error }, values: raw };
+
   const updatePayload: Record<string, unknown> = {
     client_id: parsed.data.client_id,
     service_description: parsed.data.service_description ?? null,
     notes: parsed.data.notes ?? null,
     status: parsed.data.status,
     total_cents: parsed.data.total_cents,
+    ...(high.touch ? { total_high_cents: high.cents } : {}),
     sent_at: stamps.sent_at,
     decided_at: stamps.decided_at,
     ...(removePdf ? { pdf_url: null } : {}),

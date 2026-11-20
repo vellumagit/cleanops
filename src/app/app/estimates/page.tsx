@@ -29,6 +29,7 @@ export default async function EstimatesPage({
         id,
         status,
         total_cents,
+        total_high_cents,
         created_at,
         sent_at,
         decided_at,
@@ -54,6 +55,7 @@ export default async function EstimatesPage({
       id: string;
       status: "draft" | "sent" | "approved" | "declined" | "expired";
       total_cents: number;
+      total_high_cents: number | null;
       created_at: string;
       sent_at: string | null;
       decided_at: string | null;
@@ -75,6 +77,7 @@ export default async function EstimatesPage({
     id: e.id,
     status: e.status,
     total_cents: e.total_cents,
+    total_high_cents: e.total_high_cents ?? null,
     created_at: e.created_at,
     sent_at: e.sent_at,
     decided_at: e.decided_at,

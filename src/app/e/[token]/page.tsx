@@ -6,6 +6,7 @@ import { estimatePdfLink } from "@/lib/estimate-pdf-storage";
 import { getOrgCurrency } from "@/lib/org-currency";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { formatCurrencyCents } from "@/lib/format";
+import { highEnd, priceRangeLabel } from "@/lib/estimate-lines";
 import { checkIpRateLimit } from "@/lib/rate-limit-helpers";
 import { RateLimitedPage } from "@/components/rate-limited-page";
 import { RespondButtons } from "./respond-buttons";
@@ -43,7 +44,7 @@ export default async function PublicEstimatePage({
     .from("estimates")
     .select(
       `
-        id, organization_id, service_description, notes, total_cents,
+        id, organization_id, service_description, notes, total_cents, total_high_cents,
         status, pdf_url, expires_at, sent_at,
         client:clients ( name, email ),
         organization:organizations ( name, brand_color, logo_url )
@@ -57,6 +58,7 @@ export default async function PublicEstimatePage({
       service_description: string | null;
       notes: string | null;
       total_cents: number;
+      total_high_cents: number | null;
       status: string;
       pdf_url: string | null;
       expires_at: string | null;
@@ -74,11 +76,13 @@ export default async function PublicEstimatePage({
 
   const { data: lineRows } = (await admin
     .from("estimate_line_items")
-    .select("label, quantity, unit_price_cents, sort_order")
+    .select("label, quantity, unit_price_cents, unit_price_high_cents, sort_order")
     .eq("estimate_id", estimate.id)
     .order("sort_order")) as unknown as {
-    data: Array<{ label: string; quantity: number; unit_price_cents: number }> | null;
+    data: Array<{ label: string; quantity: number; unit_price_cents: number; unit_price_high_cents: number | null }> | null;
   };
+  // A price range: the total, and any line, may run from a low to a high end.
+  const isRange = highEnd(estimate.total_cents, estimate.total_high_cents) != null;
   const lines = (lineRows ?? []).map((l) => ({ ...l, quantity: Number(l.quantity) }));
 
   // Holding this estimate's link is the permission to read its PDF; the
@@ -204,11 +208,15 @@ export default async function PublicEstimatePage({
                         <td className="py-2 px-3 text-right tabular-nums">
                           {Number.isInteger(l.quantity) ? l.quantity : l.quantity.toFixed(2)}
                         </td>
-                        <td className="whitespace-nowrap py-2 px-3 text-right tabular-nums">
-                          {formatCurrencyCents(l.unit_price_cents, currency)}
+                        <td className={isRange ? "py-2 px-3 text-right tabular-nums" : "whitespace-nowrap py-2 px-3 text-right tabular-nums"}>
+                          {priceRangeLabel(l.unit_price_cents, l.unit_price_high_cents, currency)}
                         </td>
-                        <td className="whitespace-nowrap py-2 pl-3 text-right tabular-nums">
-                          {formatCurrencyCents(Math.round(l.quantity * l.unit_price_cents), currency)}
+                        <td className={isRange ? "py-2 pl-3 text-right tabular-nums" : "whitespace-nowrap py-2 pl-3 text-right tabular-nums"}>
+                          {priceRangeLabel(
+                            Math.round(l.quantity * l.unit_price_cents),
+                            l.unit_price_high_cents == null ? null : Math.round(l.quantity * l.unit_price_high_cents),
+                            currency,
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -220,13 +228,14 @@ export default async function PublicEstimatePage({
 
           {/* Total */}
           <section className="mt-8 rounded-lg border border-border bg-muted/30 p-5">
-            <div className="flex items-baseline justify-between">
-              <p className="sollos-label">Total</p>
+            <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+              <p className="sollos-label">{isRange ? "Estimated total" : "Total"}</p>
               <p
-                className="text-3xl font-bold tracking-tight"
+                className={isRange ? "text-2xl font-bold tracking-tight tabular-nums" : "text-3xl font-bold tracking-tight"}
                 style={{ color: brandColor }}
+                data-testid="estimate-public-total"
               >
-                {formatCurrencyCents(estimate.total_cents, currency)}
+                {priceRangeLabel(estimate.total_cents, estimate.total_high_cents, currency)}
               </p>
             </div>
             {estimate.expires_at && !isExpired && (

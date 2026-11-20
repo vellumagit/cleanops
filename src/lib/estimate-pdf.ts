@@ -27,6 +27,7 @@ import {
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { formatCurrencyCents, type CurrencyCode } from "@/lib/format";
 import { getOrgCurrency } from "@/lib/org-currency";
+import { highEnd, priceRangeLabel } from "@/lib/estimate-lines";
 
 function hexToRgb(hex?: string | null): RGB {
   const h = (hex ?? "").replace(/^#/, "");
@@ -58,7 +59,7 @@ export async function renderEstimatePdf(opts: {
   const { data: est } = (await admin
     .from("estimates")
     .select(
-      "id, organization_id, status, total_cents, service_description, notes, created_at, expires_at, client:clients ( name, email )",
+      "id, organization_id, status, total_cents, total_high_cents, service_description, notes, created_at, expires_at, client:clients ( name, email )",
     )
     .eq("public_token" as never, opts.publicToken as never)
     .maybeSingle()) as unknown as {
@@ -67,6 +68,7 @@ export async function renderEstimatePdf(opts: {
       organization_id: string;
       status: string;
       total_cents: number;
+      total_high_cents: number | null;
       service_description: string | null;
       notes: string | null;
       created_at: string;
@@ -78,10 +80,10 @@ export async function renderEstimatePdf(opts: {
 
   const { data: lineRows } = (await admin
     .from("estimate_line_items")
-    .select("label, quantity, unit_price_cents, sort_order")
+    .select("label, quantity, unit_price_cents, unit_price_high_cents, sort_order")
     .eq("estimate_id", est.id)
     .order("sort_order")) as unknown as {
-    data: Array<{ label: string; quantity: number; unit_price_cents: number }> | null;
+    data: Array<{ label: string; quantity: number; unit_price_cents: number; unit_price_high_cents: number | null }> | null;
   };
   const lines = (lineRows ?? []).map((l) => ({ ...l, quantity: Number(l.quantity) }));
 
@@ -243,13 +245,23 @@ export async function renderEstimatePdf(opts: {
     y -= 14;
     for (const l of lines) {
       const wrapped = wrap(l.label, 10, QTY_R - 50 - M);
-      ensureRoom(110 + wrapped.length * 13);
+      // A ranged line takes two rows in the price columns: "$300.00 –" over
+      // "$400.00". Side by side it would run into the next column.
+      const high = highEnd(l.unit_price_cents, l.unit_price_high_cents);
+      const rows = Math.max(wrapped.length, high == null ? 1 : 2);
+      ensureRoom(110 + rows * 13);
       const qty = Number.isInteger(l.quantity) ? String(l.quantity) : l.quantity.toFixed(2);
-      textR(qty, QTY_R, 10, font, ink);
-      textR(formatCurrencyCents(l.unit_price_cents, currency), PRICE_R, 10, font, ink);
-      textR(formatCurrencyCents(Math.round(l.quantity * l.unit_price_cents), currency), RIGHT, 10, font, ink);
-      for (const w of wrapped) {
-        text(w, M, 10, font, ink);
+      for (let i = 0; i < rows; i++) {
+        if (i === 0) {
+          textR(qty, QTY_R, 10, font, ink);
+          const dash = high == null ? "" : " –";
+          textR(formatCurrencyCents(l.unit_price_cents, currency) + dash, PRICE_R, 10, font, ink);
+          textR(formatCurrencyCents(Math.round(l.quantity * l.unit_price_cents), currency) + dash, RIGHT, 10, font, ink);
+        } else if (i === 1 && high != null) {
+          textR(formatCurrencyCents(high, currency), PRICE_R, 10, font, ink);
+          textR(formatCurrencyCents(Math.round(l.quantity * high), currency), RIGHT, 10, font, ink);
+        }
+        if (wrapped[i]) text(wrapped[i], M, 10, font, ink);
         y -= 13;
       }
       y -= 3;
@@ -273,15 +285,18 @@ export async function renderEstimatePdf(opts: {
   // -- Total ----------------------------------------------------------------
   ensureRoom(130);
   y -= 4;
+  // A range is wider than one amount, so its label moves left to make room.
+  const totalText = priceRangeLabel(est.total_cents, est.total_high_cents, currency);
+  const totalLabelX = Math.min(400, RIGHT - bold.widthOfTextAtSize(totalText, 13) - 14 - bold.widthOfTextAtSize("Estimated total", 11));
   page.drawLine({
-    start: { x: 400, y: y + 5 },
+    start: { x: totalLabelX, y: y + 5 },
     end: { x: RIGHT, y: y + 5 },
     thickness: 0.5,
     color: ruleColor,
   });
   y -= 8;
-  text("Estimated total", 400, 11, bold, ink);
-  textR(formatCurrencyCents(est.total_cents, currency), RIGHT, 13, bold, brand);
+  text("Estimated total", totalLabelX, 11, bold, ink);
+  textR(totalText, RIGHT, 13, bold, brand);
   y -= 24;
   text(
     "This is an estimate, not an invoice - the final price is confirmed before any work begins.",

@@ -5,12 +5,15 @@ import { FileText } from "lucide-react";
 import { DataTable, type DataTableColumn } from "@/components/data-table";
 import { StatusBadge, estimateStatusTone } from "@/components/status-badge";
 import { ContactLine } from "@/components/contact-line";
-import { formatCurrencyCents, formatDate, humanizeEnum } from "@/lib/format";
+import { formatDate, humanizeEnum } from "@/lib/format";
+import { priceRangeLabel } from "@/lib/estimate-lines";
 
 export type EstimateRow = {
   id: string;
   status: "draft" | "sent" | "approved" | "declined" | "expired";
   total_cents: number;
+  /** The top of a price range, or null for a fixed price. */
+  total_high_cents: number | null;
   created_at: string;
   sent_at: string | null;
   decided_at: string | null;
@@ -104,7 +107,7 @@ export function EstimatesTable({
       header: "Total",
       headerClassName: "text-right",
       className: "text-right tabular-nums font-medium",
-      render: (r) => formatCurrencyCents(r.total_cents),
+      render: (r) => priceRangeLabel(r.total_cents, r.total_high_cents, undefined),
     },
   ];
 

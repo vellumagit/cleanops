@@ -560,6 +560,165 @@ describe.skipIf(!hasPostgrest)("an estimate's line items", () => {
   });
 });
 
+describe.skipIf(!hasPostgrest)("an estimate with a price range", () => {
+  // In person, 2026-11-19: a quote "between 300 and 400", as a tick on the
+  // estimate. The low end is the price that was always there; the high end
+  // is new, on each line and on the total.
+  const rangeLines = (rows: Array<[string, string, string, string]>) =>
+    JSON.stringify(
+      rows.map(([label, quantity, unit_price_dollars, unit_price_high_dollars]) => ({
+        label,
+        quantity,
+        unit_price_dollars,
+        unit_price_high_dollars,
+      })),
+    );
+  const saved = async (id: string) => {
+    const [e] = await api.sql<{ total_cents: number; total_high_cents: number | null }>(
+      "select total_cents, total_high_cents from public.estimates where id = $1",
+      [id],
+    );
+    const lines = await api.sql<{ label: string; low: number; high: number | null }>(
+      "select label, unit_price_cents as low, unit_price_high_cents as high from public.estimate_line_items where estimate_id = $1 order by sort_order",
+      [id],
+    );
+    return { ...e, lines };
+  };
+  const onlyEstimate = async (client: string) =>
+    (await api.sql<{ id: string }>("select id from public.estimates where client_id = $1", [client]))[0]?.id;
+
+  it("ticked: each line keeps a low and a high price, and the total is a range", async () => {
+    const c = await company();
+    const client = await person(c, "Range Client", null);
+    await as(c.owner, () =>
+      estimates.createEstimateAction(
+        {},
+        estimateForm(client, {
+          price_range: "on",
+          line_items_json: rangeLines([
+            ["Deep clean", "1", "300", "400"],
+            // No high price: a fixed line inside a ranged estimate.
+            ["Oven", "2", "30", ""],
+            // The same number twice is a fixed price, not a range.
+            ["Fridge", "1", "25", "25"],
+          ]),
+        }),
+      ),
+    );
+    const id = await onlyEstimate(client);
+    expect(await saved(id), api.log()).toEqual({
+      total_cents: 38500,
+      total_high_cents: 48500,
+      lines: [
+        { label: "Deep clean", low: 30000, high: 40000 },
+        { label: "Oven", low: 3000, high: null },
+        { label: "Fridge", low: 2500, high: null },
+      ],
+    });
+  });
+
+  it("not ticked: high prices that were typed are ignored, and the estimate is a fixed price", async () => {
+    const c = await company();
+    const client = await person(c, "Fixed Client", null);
+    await as(c.owner, () =>
+      estimates.createEstimateAction(
+        {},
+        estimateForm(client, { line_items_json: rangeLines([["Deep clean", "1", "300", "400"]]), total_high_cents: "999" }),
+      ),
+    );
+    expect(await saved(await onlyEstimate(client))).toEqual({
+      total_cents: 30000,
+      total_high_cents: null,
+      lines: [{ label: "Deep clean", low: 30000, high: null }],
+    });
+  });
+
+  it("a high price below the low one is refused by name, and nothing is saved", async () => {
+    const c = await company();
+    const client = await person(c, "Backwards Client", null);
+    const res = await as(c.owner, () =>
+      estimates.createEstimateAction(
+        {},
+        estimateForm(client, { price_range: "on", line_items_json: rangeLines([["Deep clean", "1", "400", "300"]]) }),
+      ),
+    );
+    expect(res).toMatchObject({ errors: { total_cents: '"Deep clean": the high price is below the low price.' } });
+    expect(await onlyEstimate(client)).toBeUndefined();
+  });
+
+  it("with no lines: a typed total and a typed high end", async () => {
+    const c = await company();
+    const client = await person(c, "Typed Client", null);
+    const none = rangeLines([["", "1", "", ""]]);
+    await as(c.owner, () =>
+      estimates.createEstimateAction({}, estimateForm(client, { price_range: "on", total_cents: "300", total_high_cents: "$400.00", line_items_json: none })),
+    );
+    const id = await onlyEstimate(client);
+    expect(await saved(id)).toEqual({ total_cents: 30000, total_high_cents: 40000, lines: [] });
+
+    const press = (over: Record<string, string>) =>
+      as(c.owner, () => estimates.updateEstimateAction(id, {}, estimateForm(client, { price_range: "on", total_cents: "300", line_items_json: none, ...over })));
+    expect(await press({ total_high_cents: "250" })).toMatchObject({ errors: { total_cents: "The high end of the range is below the low end." } });
+    expect(await press({ total_high_cents: "lots" })).toMatchObject({ errors: { total_cents: "The high end of the range isn't a number." } });
+    expect((await saved(id)).total_high_cents, "a refused save changed nothing").toBe(40000);
+    // The same number at both ends, or the high end left empty: a fixed price.
+    await press({ total_high_cents: "300" });
+    expect((await saved(id)).total_high_cents).toBeNull();
+  });
+
+  it("unticking takes the range off; a caller that sends no lines field leaves it alone", async () => {
+    const c = await company();
+    const client = await person(c, "Untick Client", null);
+    const id = await estimate(c, client);
+    const lines = rangeLines([["Deep clean", "1", "300", "400"]]);
+    await as(c.owner, () => estimates.updateEstimateAction(id, {}, estimateForm(client, { price_range: "on", line_items_json: lines })));
+    expect(await saved(id)).toMatchObject({ total_cents: 30000, total_high_cents: 40000 });
+
+    // Something that knows nothing about lines or ranges (a status change).
+    await as(c.owner, () => estimates.updateEstimateAction(id, {}, estimateForm(client, { total_cents: "300", notes: "Called them" })));
+    expect(await saved(id), "left alone").toMatchObject({ total_high_cents: 40000, lines: [{ label: "Deep clean", low: 30000, high: 40000 }] });
+
+    await as(c.owner, () => estimates.updateEstimateAction(id, {}, estimateForm(client, { line_items_json: lines })));
+    expect(await saved(id)).toEqual({ total_cents: 30000, total_high_cents: null, lines: [{ label: "Deep clean", low: 30000, high: null }] });
+  });
+
+  it("the client's email shows the range; approving books the visit at the low end and tells the office to set the price", async () => {
+    const c = await company();
+    const client = await person(c, "Range Approver", "quoted");
+    const [{ email }] = await api.sql<{ email: string }>("select email from public.clients where id = $1", [client]);
+    const id = await estimate(c, client);
+    await as(c.owner, () =>
+      estimates.updateEstimateAction(id, {}, estimateForm(client, { price_range: "on", line_items_json: rangeLines([["Deep clean", "1", "300", "400"]]) })),
+    );
+
+    expect(await as(c.owner, () => estimates.sendEstimateAction({}, form({ id })))).toEqual({ ok: true });
+    const [mail] = outbox.email.filter((m) => m.to === email);
+    expect(mail.html).toMatch(/\$300\.00 – \$400\.00/);
+
+    await as(c.owner, () =>
+      estimates.updateEstimateAction(id, {}, estimateForm(client, { status: "approved", price_range: "on", line_items_json: rangeLines([["Deep clean", "1", "300", "400"]]) })),
+    );
+    const visits = await api.sql<{ total_cents: number }>("select total_cents from public.bookings where estimate_id = $1", [id]);
+    expect(visits, api.log().slice(-600)).toEqual([{ total_cents: 30000 }]);
+    const told = await api.sql<{ body: string }>(
+      "select body from public.notifications where organization_id = $1 and title = 'Estimate approved — booking created'",
+      [c.org],
+    );
+    expect(told.length).toBeGreaterThan(0);
+    expect(told[0].body).toMatch(/The estimate was a range \(\$300\.00 – \$400\.00\), so the booking is priced at the low end: set the final price\./);
+
+    // A fixed-price estimate's notice says nothing about a range.
+    const other = await person(c, "Fixed Approver", "quoted");
+    const fixed = await estimate(c, other, { status: "sent", sent_at: daysAgo(1) });
+    await as(c.owner, () => estimates.updateEstimateAction(fixed, {}, estimateForm(other, { status: "approved" })));
+    const bodies = (await api.sql<{ body: string }>(
+      "select body from public.notifications where organization_id = $1 and title = 'Estimate approved — booking created' order by created_at",
+      [c.org],
+    )).map((n) => n.body);
+    expect(bodies.filter((b) => b.includes("range"))).toHaveLength(told.length);
+  });
+});
+
 describe.skipIf(!hasPostgrest)("the client's answer from the estimate link", () => {
   const answer = async (token: string, decision: string) => {
     request.cookies = [];

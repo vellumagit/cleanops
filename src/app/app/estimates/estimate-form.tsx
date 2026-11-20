@@ -23,6 +23,8 @@ type Defaults = {
   notes?: string | null;
   status?: string;
   total_dollars?: string;
+  /** The top of a price range, when the estimate has one. */
+  total_high_dollars?: string;
   pdf_url?: string | null;
   lines?: ExistingEstimateLine[];
 };
@@ -112,6 +114,8 @@ export function EstimateForm({
           totalDollars={v.total_cents ?? defaults?.total_dollars ?? ""}
           currency={currency}
           error={state.errors?.total_cents}
+          allowRange
+          totalHighDollars={defaults?.total_high_dollars ?? ""}
         />
       </div>
 
