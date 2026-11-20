@@ -719,6 +719,98 @@ describe.skipIf(!hasPostgrest)("an estimate with a price range", () => {
   });
 });
 
+describe.skipIf(!hasPostgrest)("an estimate for someone who isn't on the books yet", () => {
+  // In person, 2026-11-19: a new estimate doesn't always belong to a client;
+  // it can be for someone who isn't one yet. The form's "Someone new" adds
+  // them as a lead when the estimate is saved.
+  const people = (c: Co, name: string) =>
+    api.sql<{ id: string; lifecycle: string; lead_stage: string | null; lead_source: string | null; email: string | null; phone: string | null }>(
+      "select id, lifecycle, lead_stage, lead_source, email, phone from public.clients where organization_id = $1 and name = $2 order by created_at",
+      [c.org, name],
+    );
+  const estimatesFor = (client: string) => api.sql<{ id: string; total_cents: number }>("select id, total_cents from public.estimates where client_id = $1", [client]);
+  const newForm = (over: Record<string, string | File>) =>
+    form({ client_id: "", who: "new", service_description: "Deep clean", notes: "", status: "draft", total_cents: "300", ...over });
+
+  it("adds them as a lead and puts the estimate on their record", async () => {
+    const c = await company();
+    const res = await as(c.owner, () =>
+      estimates.createEstimateAction({}, newForm({ new_name: "Dana Whitfield", new_email: "dana@example.test", new_phone: "(780) 555-0142" })),
+    );
+    const [dana] = await people(c, "Dana Whitfield");
+    expect(dana, api.log()).toMatchObject({ lifecycle: "lead", lead_stage: "new", lead_source: "other", email: "dana@example.test" });
+    expect(dana.phone).toMatch(/7805550142$/);
+    const [made] = await estimatesFor(dana.id);
+    expect(res).toEqual({ redirected: `/app/estimates/${made.id}/edit` });
+    expect(made.total_cents).toBe(30000);
+    // A manager can too; just a name is enough.
+    await as(c.olha, () => estimates.createEstimateAction({}, newForm({ new_name: "Walk-in Wendy" })));
+    expect(await people(c, "Walk-in Wendy")).toHaveLength(1);
+  });
+
+  it("an email already on the books uses that person, and leaves a real client a client", async () => {
+    const c = await company();
+    const existing = await person(c, "Existing Erin", null, "erin@example.test");
+    await as(c.owner, () => estimates.createEstimateAction({}, newForm({ new_name: "Erin E.", new_email: "ERIN@example.test" })));
+    expect(await estimatesFor(existing)).toHaveLength(1);
+    expect(await people(c, "Erin E.")).toEqual([]);
+    const [{ lifecycle }] = await api.sql<{ lifecycle: string }>("select lifecycle from public.clients where id = $1", [existing]);
+    expect(lifecycle).toBe("client");
+  });
+
+  it("no name, or a bad email, is refused and nobody is added", async () => {
+    const c = await company();
+    const before = (await api.sql<{ n: number }>("select count(*)::int as n from public.clients where organization_id = $1", [c.org]))[0].n;
+    expect(await as(c.owner, () => estimates.createEstimateAction({}, newForm({ new_name: "  " })))).toMatchObject({
+      errors: { client_id: "Type the person's name." },
+    });
+    expect(await as(c.owner, () => estimates.createEstimateAction({}, newForm({ new_name: "Dana", new_email: "dana at home" })))).toMatchObject({
+      errors: { client_id: "That email address doesn't look right." },
+      values: { who: "new", new_name: "Dana" },
+    });
+    // A cleaner can't use it to add people.
+    expect(await as(c.anna, () => estimates.createEstimateAction({}, newForm({ new_name: "Sneaky" })))).toMatchObject({
+      errors: { _form: "Estimates aren't part of your access." },
+    });
+    const after = (await api.sql<{ n: number }>("select count(*)::int as n from public.clients where organization_id = $1", [c.org]))[0].n;
+    expect(after).toBe(before);
+  });
+
+  it("a save that fails after adding them takes them back out, so trying again makes one person", async () => {
+    const c = await company();
+    const bad = await as(c.owner, () => estimates.createEstimateAction({}, newForm({ new_name: "Retry Rita", pdf: notPdf() })));
+    expect(bad).toMatchObject({ errors: { pdf: expect.any(String) } });
+    expect(await people(c, "Retry Rita"), "refused before anyone was added").toEqual([]);
+
+    // The lines fail to save after the person and the estimate went in.
+    await api.sql(`
+      create or replace function public.test_refuse_lines() returns trigger language plpgsql as $f$
+      begin raise exception 'lines refused for the test'; end $f$`);
+    await api.sql(`
+      create trigger test_refuse_lines before insert on public.estimate_line_items
+        for each row execute function public.test_refuse_lines()`);
+    try {
+      const failed = await as(c.owner, () =>
+        estimates.createEstimateAction({}, newForm({ new_name: "Retry Rita", line_items_json: linesJson([["Deep clean", "1", "300"]]) })),
+      );
+      expect(failed).toMatchObject({ errors: { total_cents: expect.stringContaining("line items couldn't be saved") } });
+      expect(await people(c, "Retry Rita"), "taken back out").toEqual([]);
+    } finally {
+      await api.sql("drop trigger test_refuse_lines on public.estimate_line_items");
+      await api.sql("drop function public.test_refuse_lines()");
+    }
+    await as(c.owner, () => estimates.createEstimateAction({}, newForm({ new_name: "Retry Rita" })));
+    expect(await people(c, "Retry Rita")).toHaveLength(1);
+  });
+
+  it("without the tick the form is as before: a client must be picked", async () => {
+    const c = await company();
+    const res = await as(c.owner, () => estimates.createEstimateAction({}, form({ client_id: "", service_description: "x", notes: "", status: "draft", total_cents: "10", new_name: "Ignored" })));
+    expect(res).toMatchObject({ errors: { client_id: "Pick a client" } });
+    expect(await people(c, "Ignored")).toEqual([]);
+  });
+});
+
 describe.skipIf(!hasPostgrest)("the client's answer from the estimate link", () => {
   const answer = async (token: string, decision: string) => {
     request.cookies = [];

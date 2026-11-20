@@ -102,3 +102,47 @@ describe("an estimate with a price range", () => {
     }
   });
 });
+
+/**
+ * In person, 2026-11-19: an estimate isn't always for a client. "Someone
+ * new" on the form adds the person as a lead when the estimate is saved.
+ */
+describe("an estimate for someone who isn't on the books yet", () => {
+  it("type their name and email, save, and they are a lead with the estimate on their record", async () => {
+    const c = await company(stack, "NewPerson");
+    const owner = await openAs(stack, c.owner);
+    try {
+      await visit(stack, owner.page, "/app/estimates/new");
+      // The picker is what you get first, as before.
+      expect(await owner.page.$("#client_id")).not.toBeNull();
+      await click(owner.page, "Someone new");
+      await owner.page.waitForSelector("#new_name", { visible: true });
+      expect(await owner.page.$("#client_id"), "the picker steps aside").toBeNull();
+      await fill(owner.page, "#new_name", "Dana Whitfield");
+      await fill(owner.page, "#new_email", "dana.whitfield@example.test");
+      await fill(owner.page, "[aria-label='Line 1 description']", "Deep clean");
+      await fill(owner.page, "[aria-label='Line 1 price each']", "300");
+      await click(owner.page, "Create estimate");
+
+      const dana = async () =>
+        (
+          await stack.api.sql<{ id: string; lifecycle: string; estimates: number }>(
+            `select c.id, c.lifecycle, (select count(*)::int from public.estimates e where e.client_id = c.id) as estimates
+               from public.clients c where c.organization_id = $1 and c.name = 'Dana Whitfield'`,
+            [c.org],
+          )
+        )[0] ?? null;
+      await expect.poll(async () => (await dana())?.estimates ?? 0, { timeout: 20_000 }).toBe(1);
+      expect((await dana())?.lifecycle).toBe("lead");
+      await expectNoCrash(owner);
+
+      // She is on the Leads page, and the estimates list names her.
+      await visit(stack, owner.page, "/app/leads");
+      await says(owner.page, "Dana Whitfield");
+      await visit(stack, owner.page, "/app/estimates");
+      await says(owner.page, "Dana Whitfield");
+    } finally {
+      await owner.close();
+    }
+  });
+});

@@ -3,6 +3,7 @@
 import { useActionState, useRef, useState } from "react";
 import Link from "next/link";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import { buttonVariants } from "@/components/ui/button";
 import { Button } from "@/components/ui/button";
 import { FormError, FormField, FormSelect } from "@/components/form-field";
@@ -49,6 +50,12 @@ export function EstimateForm({
   const [state, formAction] = useActionState(action, empty);
   const v = state.values ?? {};
 
+  // "Someone new" is offered on a new estimate only; a saved estimate
+  // already belongs to someone.
+  const [who, setWho] = useState<"existing" | "new">(
+    mode === "create" && (v as Record<string, string | undefined>).who === "new" ? "new" : "existing",
+  );
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [pdfFileName, setPdfFileName] = useState<string | null>(null);
   const [removeFlag, setRemoveFlag] = useState(false);
@@ -71,26 +78,76 @@ export function EstimateForm({
     <form action={formAction} className="space-y-5">
       <FormError message={state.errors?._form} />
 
-      <FormField
-        label="Client"
-        htmlFor="client_id"
-        required
-        error={state.errors?.client_id}
-      >
-        <FormSelect
-          id="client_id"
-          name="client_id"
+      {/* Who it is for. A new estimate can be for someone who isn't on the
+          books yet: they are added as a lead when the estimate is saved. */}
+      {mode === "create" && (
+        <div className="space-y-2">
+          <input type="hidden" name="who" value={who} />
+          <div role="group" aria-label="Who is this estimate for?" className="inline-flex rounded-md border border-border p-0.5 text-xs font-medium">
+            {(
+              [
+                ["existing", "Someone on your books"],
+                ["new", "Someone new"],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                aria-pressed={who === key}
+                onClick={() => setWho(key)}
+                className={
+                  who === key
+                    ? "rounded bg-foreground px-3 py-1.5 text-background"
+                    : "rounded px-3 py-1.5 text-muted-foreground hover:text-foreground"
+                }
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {who === "new" ? (
+        <div className="space-y-4 rounded-lg border border-border p-4">
+          <FormField label="Their name" htmlFor="new_name" required error={state.errors?.client_id}>
+            <Input id="new_name" name="new_name" required maxLength={200} placeholder="e.g. Dana Whitfield" defaultValue={v.new_name ?? ""} />
+          </FormField>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <FormField label="Email" htmlFor="new_email" hint="Needed to send them the estimate.">
+              <Input id="new_email" name="new_email" type="email" inputMode="email" placeholder="name@example.com" defaultValue={v.new_email ?? ""} />
+            </FormField>
+            <FormField label="Phone" htmlFor="new_phone">
+              <Input id="new_phone" name="new_phone" type="tel" inputMode="tel" placeholder="(555) 123-4567" defaultValue={v.new_phone ?? ""} />
+            </FormField>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            They are added to your Leads, not your clients, and move to clients when you book them. If the email
+            matches someone already on your books, the estimate goes on that person&rsquo;s record.
+          </p>
+        </div>
+      ) : (
+        <FormField
+          label={mode === "create" ? "Client or lead" : "Client"}
+          htmlFor="client_id"
           required
-          defaultValue={v.client_id ?? defaults?.client_id ?? ""}
+          error={state.errors?.client_id}
         >
-          <option value="">Select a client…</option>
-          {clients.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.label}
-            </option>
-          ))}
-        </FormSelect>
-      </FormField>
+          <FormSelect
+            id="client_id"
+            name="client_id"
+            required
+            defaultValue={v.client_id ?? defaults?.client_id ?? ""}
+          >
+            <option value="">Select a client…</option>
+            {clients.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.label}
+              </option>
+            ))}
+          </FormSelect>
+        </FormField>
+      )}
 
       <FormField
         label="Summary"

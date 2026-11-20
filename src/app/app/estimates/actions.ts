@@ -18,6 +18,8 @@ import {
   storeEstimatePdf,
 } from "@/lib/estimate-pdf-storage";
 import { canCreateData } from "@/lib/subscription";
+import { findOrCreateClient } from "@/lib/find-or-create-client";
+import { normalizePhone } from "@/lib/phone";
 import {
   estimateLinesHighTotalCents,
   estimateLinesTotalCents,
@@ -110,6 +112,36 @@ function maybeStamp(status: string, prev?: { sent_at?: string | null; decided_at
   };
 }
 
+/**
+ * "Someone new" on the estimate form: a quote for a person who isn't on the
+ * books yet (asked for in person, 2026-11-19). They are added as a lead,
+ * the same as someone who asked through the website, and the estimate goes
+ * on that record.
+ */
+type NewPerson = { name: string; email: string | null; phone: string | null };
+
+/** Stands in for client_id while the form is checked; never saved. */
+const NEW_PERSON_PLACEHOLDER = "00000000-0000-4000-8000-000000000000";
+
+function readNewPerson(formData: FormData): { person: NewPerson | null; error?: string; values: Record<string, string> } {
+  const values = {
+    who: String(formData.get("who") ?? ""),
+    new_name: String(formData.get("new_name") ?? ""),
+    new_email: String(formData.get("new_email") ?? ""),
+    new_phone: String(formData.get("new_phone") ?? ""),
+  };
+  if (values.who !== "new") return { person: null, values };
+  const name = values.new_name.trim();
+  const email = values.new_email.trim();
+  const phone = values.new_phone.trim();
+  if (!name) return { person: null, values, error: "Type the person's name." };
+  if (name.length > 200) return { person: null, values, error: "That name is too long." };
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return { person: null, values, error: "That email address doesn't look right." };
+  }
+  return { person: { name, email: email || null, phone: phone ? normalizePhone(phone) : null }, values };
+}
+
 const ALLOWED_TYPES = ["application/pdf"];
 
 /**
@@ -150,10 +182,20 @@ export async function createEstimateAction(
   _prev: EstimateFormState,
   formData: FormData,
 ): Promise<EstimateFormState> {
-  const raw = readFormValues(formData);
+  const newPerson = readNewPerson(formData);
+  const raw: ReturnType<typeof readFormValues> & Record<string, string> = {
+    ...readFormValues(formData),
+    ...newPerson.values,
+  };
+  if (newPerson.error) return { errors: { client_id: newPerson.error }, values: raw };
   const lineInput = readLines(formData, raw);
   if (lineInput.error) return { errors: { total_cents: lineInput.error }, values: raw };
-  const parsed = parseForm(EstimateSchema, raw);
+  // For someone new there is no client yet; everything else is checked
+  // first, and they are added only once the estimate is about to be saved.
+  const parsed = parseForm(
+    EstimateSchema,
+    newPerson.person ? { ...raw, client_id: NEW_PERSON_PLACEHOLDER } : raw,
+  );
   if (!parsed.ok) return { errors: parsed.errors, values: raw };
 
   const { membership, supabase } = await getActionContext();
@@ -184,12 +226,56 @@ export async function createEstimateAction(
   const high = readHighTotal(formData, lineInput, parsed.data.total_cents);
   if (high.error) return { errors: { total_cents: high.error }, values: raw };
 
+  // Someone new: find them, or add them as a lead. An email that matches a
+  // person already on the books uses that person, so nobody is entered
+  // twice. `addedPersonId` is set only when this save created the record,
+  // so a save that fails further down can take it back out and pressing
+  // Save again doesn't leave two of them.
+  let clientId = parsed.data.client_id;
+  let addedPersonId: string | null = null;
+  if (newPerson.person) {
+    const admin = createSupabaseAdminClient();
+    const startedAt = Date.now();
+    const found = await findOrCreateClient(
+      admin,
+      membership.organization_id,
+      {
+        name: newPerson.person.name,
+        ...(newPerson.person.email ? { email: newPerson.person.email } : {}),
+        ...(newPerson.person.phone ? { phone: newPerson.person.phone } : {}),
+      },
+      { createAs: "lead", leadSource: "other" },
+    );
+    if (!found) {
+      return {
+        errors: { client_id: "That person couldn't be added, so the estimate wasn't made. Check the email address, or add them on the Leads page first." },
+        values: raw,
+      };
+    }
+    clientId = found;
+    const { data: row } = (await admin
+      .from("clients")
+      .select("created_at")
+      .eq("id", found)
+      .eq("organization_id", membership.organization_id)
+      .maybeSingle()) as unknown as { data: { created_at: string } | null };
+    if (row && new Date(row.created_at).getTime() >= startedAt - 2_000) addedPersonId = found;
+  }
+  const undoNewPerson = async () => {
+    if (!addedPersonId) return;
+    await createSupabaseAdminClient()
+      .from("clients")
+      .delete()
+      .eq("id", addedPersonId)
+      .eq("organization_id", membership.organization_id);
+  };
+
   const stamps = maybeStamp(parsed.data.status);
   const { data: estimate, error } = (await supabase
     .from("estimates")
     .insert({
       organization_id: membership.organization_id,
-      client_id: parsed.data.client_id,
+      client_id: clientId,
       service_description: parsed.data.service_description ?? null,
       notes: parsed.data.notes ?? null,
       status: parsed.data.status,
@@ -201,7 +287,10 @@ export async function createEstimateAction(
     .select("id")
     .single()) as unknown as { data: { id: string }; error: { message: string } | null };
 
-  if (error) return { errors: { _form: error.message }, values: raw };
+  if (error) {
+    await undoNewPerson();
+    return { errors: { _form: error.message }, values: raw };
+  }
 
   if (lineInput.lines.length > 0) {
     const { data: made, error: lineErr } = (await supabase
@@ -212,6 +301,7 @@ export async function createEstimateAction(
       // Lines and estimate are one thing to the person saving: an estimate
       // whose total has no lines behind it is worse than none.
       await supabase.from("estimates").delete().eq("id", estimate.id);
+      await undoNewPerson();
       return { errors: { total_cents: "The line items couldn't be saved, so the estimate wasn't made. Try again." }, values: raw };
     }
   }
@@ -227,6 +317,7 @@ export async function createEstimateAction(
       // form's error is the whole story and pressing Save again doesn't
       // leave two estimates behind.
       await supabase.from("estimates").delete().eq("id", estimate.id);
+      await undoNewPerson();
       return { errors: { pdf: upload.error ?? "The PDF could not be stored. Try again." }, values: raw };
     }
     const { data: linked } = (await supabase
@@ -237,6 +328,7 @@ export async function createEstimateAction(
     if (!linked?.length) {
       await removeEstimatePdf(membership.organization_id, estimate.id);
       await supabase.from("estimates").delete().eq("id", estimate.id);
+      await undoNewPerson();
       return { errors: { pdf: "The PDF could not be attached. Try again." }, values: raw };
     }
   }
