@@ -19,6 +19,7 @@ export async function createIntakeFormAction(formData: FormData): Promise<void> 
     "job_application",
     "estimate_request",
     "contact",
+    "social_lead",
   ]);
   const type = ALLOWED_TYPES.has(rawType) ? rawType : "job_application";
   const { membership, supabase } = await getActionContext();

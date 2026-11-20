@@ -27,6 +27,9 @@ type IntakeForm = {
 
 const TYPE_LABEL: Record<string, string> = {
   job_application: "Job application → Applicants",
+  estimate_request: "Estimate calculator → Leads + draft estimate",
+  contact: "Contact form → Leads",
+  social_lead: "Social & chat (ManyChat, GoHighLevel) → Leads",
 };
 
 export default async function IntakeFormsPage() {
@@ -45,7 +48,7 @@ export default async function IntakeFormsPage() {
   return (
     <PageShell
       title="Intake forms"
-      description="Point any external form (your website, Typeform, Jotform, Zapier…) at one of these URLs and submissions land in Sollos automatically."
+      description="Point any external form or chat tool (your website, Typeform, ManyChat, GoHighLevel, Zapier…) at one of these URLs and submissions land in Sollos automatically."
     >
       <div className="space-y-4">
         <SatelliteAutomations title="Lead alerts" items={INTAKE_AUTOMATIONS} />
@@ -146,6 +149,7 @@ export default async function IntakeFormsPage() {
                 <option value="job_application">Job application</option>
                 <option value="estimate_request">Estimate calculator</option>
                 <option value="contact">Contact form</option>
+                <option value="social_lead">Social &amp; chat (ManyChat, GoHighLevel)</option>
               </select>
             </div>
             <Button type="submit">
@@ -212,6 +216,40 @@ export default async function IntakeFormsPage() {
             <li><code>notes</code> / <code>message</code></li>
             <li><code>page_url</code>, <code>referrer</code></li>
             <li><code>website</code> (honeypot — keep empty)</li>
+          </ul>
+
+          <h2 className="mb-2 mt-6 text-sm font-semibold">
+            Social &amp; chat — ManyChat, GoHighLevel, Zapier
+          </h2>
+          <p className="mb-3 text-xs text-muted-foreground">
+            For leads that start in an Instagram or Facebook DM, a lead ad, or
+            a chat flow. One submission creates a lead (source Instagram,
+            Facebook, TikTok, WhatsApp, or Social / chat) and a request, and
+            alerts you. The person is <strong>not</strong> emailed — your chat
+            tool is already talking to them. Only a name, handle, email or
+            phone is required. ManyChat&apos;s &ldquo;full contact
+            data&rdquo; and GoHighLevel&apos;s standard webhook payload both
+            work as they are.
+          </p>
+          <ul className="grid gap-1.5 text-xs sm:grid-cols-2">
+            <li><code>name</code> / <code>full_name</code> / <code>first_name</code> + <code>last_name</code></li>
+            <li><code>email</code>, <code>phone</code> (or <code>whatsapp_phone</code>)</li>
+            <li><code>ig_username</code> / <code>username</code></li>
+            <li><code>message</code> / <code>notes</code> / <code>last_input_text</code></li>
+            <li><code>channel</code> — e.g. <code>instagram</code>, <code>facebook</code></li>
+            <li><code>city</code> / <code>address</code></li>
+          </ul>
+          <ul className="mt-3 list-disc space-y-1 pl-4 text-xs text-muted-foreground">
+            <li>
+              <strong>ManyChat:</strong> in your flow add an Action →
+              External Request, method POST, paste the URL, and under Body
+              add &ldquo;Full Contact Data&rdquo; (or your own JSON).
+            </li>
+            <li>
+              <strong>GoHighLevel:</strong> in a workflow add the Webhook
+              action and paste the URL. Add a <code>channel</code> custom
+              value if the trigger knows the network.
+            </li>
           </ul>
         </div>
       </div>

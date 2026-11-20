@@ -138,6 +138,12 @@ export async function POST(
     );
     return estimatePost(req, { params: Promise.resolve({ token }) });
   }
+  if (form.type === "social_lead") {
+    const { POST: socialPost } = await import(
+      "../../social-lead/[token]/route"
+    );
+    return socialPost(req, { params: Promise.resolve({ token }) });
+  }
 
   const body = await parseBody(req);
 

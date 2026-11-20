@@ -42,7 +42,26 @@ type Options = {
    * same way it keeps its lifecycle.
    */
   leadSource?: LeadSource;
+  /**
+   * Also recognise someone by phone (last ten digits) when no email matched.
+   * Chat tools often hand over a phone and no email — ManyChat rarely has an
+   * Instagram user's email at all.
+   */
+  matchPhone?: boolean;
+  /**
+   * Whether a bare NAME match may attach this inquiry to an existing record
+   * (default true). Social leads pass false: "Sarah" from an Instagram DM
+   * with no email or phone is not evidence she's the Sarah already on the
+   * books, and a wrong merge hides a lead inside someone else's record where
+   * nobody looks. A duplicate is visible and tidied by hand; a merge isn't.
+   */
+  matchName?: boolean;
 };
+
+/** Last ten digits — the same key the inbound-SMS matcher uses. */
+function phoneDigits(raw: string | null | undefined): string {
+  return (raw ?? "").replace(/\D/g, "").slice(-10);
+}
 
 /**
  * Someone we'd written off has asked again.
@@ -99,42 +118,81 @@ export async function findOrCreateClient(
     }
   }
 
+  // 1b. Try phone match (opt-in). Narrow in the database by the last four
+  // digits — stored phones are formatted every which way, but those four
+  // almost always sit together — then compare the last ten exactly. Fewer
+  // than ten digits is too little to call two people the same.
+  const digits = phoneDigits(input.phone);
+  if (options.matchPhone && digits.length === 10) {
+    const { data: phoneRows } = (await admin
+      .from("clients")
+      .select("id, lifecycle, email, phone")
+      .eq("organization_id", organizationId)
+      .ilike("phone", `%${digits.slice(-4)}%`)
+      .order("created_at", { ascending: true })
+      .limit(50)) as unknown as {
+      data: Array<{
+        id: string;
+        lifecycle: string | null;
+        email: string | null;
+        phone: string | null;
+      }> | null;
+    };
+    // Same phone but a DIFFERENT email on file is a different person sharing
+    // a line (a couple, an office) — the email rule above already decided.
+    const byPhone = (phoneRows ?? []).find(
+      (r) => phoneDigits(r.phone) === digits && !(input.email && r.email),
+    );
+    if (byPhone) {
+      await maybeReopen(admin, byPhone, asLead);
+      if (!byPhone.email && input.email) {
+        await (admin
+          .from("clients")
+          .update({ email: input.email } as never)
+          .eq("id", byPhone.id) as unknown as Promise<unknown>);
+      }
+      return byPhone.id;
+    }
+  }
+
   // 2. Try name match. With an email in hand (and no record holding it,
   // or step 1 would have returned), only a record with NO email can be the
   // same person. Oldest first, one row: two records sharing a name must not
   // make this read fail.
-  let nameQuery = admin
-    .from("clients")
-    .select("id, lifecycle, email, phone")
-    .eq("organization_id", organizationId)
-    .ilike("name", exactIlike(input.name));
-  if (input.email) nameQuery = nameQuery.is("email", null);
-  const { data: nameRows } = (await nameQuery
-    .order("created_at", { ascending: true })
-    .limit(1)) as unknown as {
-    data: Array<{
-      id: string;
-      lifecycle: string | null;
-      email: string | null;
-      phone: string | null;
-    }> | null;
-  };
-  const byName = nameRows?.[0] ?? null;
+  if (options.matchName !== false) {
+    let nameQuery = admin
+      .from("clients")
+      .select("id, lifecycle, email, phone")
+      .eq("organization_id", organizationId)
+      .ilike("name", exactIlike(input.name));
+    if (input.email) nameQuery = nameQuery.is("email", null);
+    const { data: nameRows } = (await nameQuery
+      .order("created_at", { ascending: true })
+      .limit(1)) as unknown as {
+      data: Array<{
+        id: string;
+        lifecycle: string | null;
+        email: string | null;
+        phone: string | null;
+      }> | null;
+    };
+    const byName = nameRows?.[0] ?? null;
 
-  if (byName) {
-    await maybeReopen(admin, byName, asLead);
-    // The record had no email (or no phone) and this inquiry brings one:
-    // keep it, so the office can reach the person the way they asked.
-    const fill: Record<string, string> = {};
-    if (!byName.email && input.email) fill.email = input.email;
-    if (!byName.phone && input.phone) fill.phone = input.phone;
-    if (Object.keys(fill).length > 0) {
-      await (admin
-        .from("clients")
-        .update(fill as never)
-        .eq("id", byName.id) as unknown as Promise<unknown>);
+    if (byName) {
+      await maybeReopen(admin, byName, asLead);
+      // The record had no email (or no phone) and this inquiry brings one:
+      // keep it, so the office can reach the person the way they asked.
+      const fill: Record<string, string> = {};
+      if (!byName.email && input.email) fill.email = input.email;
+      if (!byName.phone && input.phone) fill.phone = input.phone;
+      if (Object.keys(fill).length > 0) {
+        await (admin
+          .from("clients")
+          .update(fill as never)
+          .eq("id", byName.id) as unknown as Promise<unknown>);
+      }
+      return byName.id;
     }
-    return byName.id;
   }
 
   // 3. Create new client — same door rules as the form and the API.

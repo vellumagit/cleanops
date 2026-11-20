@@ -9,7 +9,17 @@
 
 export type Lifecycle = "lead" | "client" | "lost";
 export type LeadStage = "new" | "contacted" | "quoted";
-export type LeadSource = "web_form" | "phone" | "email" | "referral" | "other";
+export type LeadSource =
+  | "web_form"
+  | "phone"
+  | "email"
+  | "referral"
+  | "instagram"
+  | "facebook"
+  | "tiktok"
+  | "whatsapp"
+  | "social"
+  | "other";
 
 /**
  * What an existing row is when nobody said otherwise.
@@ -38,6 +48,12 @@ export const LEAD_SOURCES: ReadonlyArray<{
   { key: "email", label: "Email" },
   { key: "web_form", label: "Website form" },
   { key: "referral", label: "Referral" },
+  { key: "instagram", label: "Instagram" },
+  { key: "facebook", label: "Facebook" },
+  { key: "tiktok", label: "TikTok" },
+  { key: "whatsapp", label: "WhatsApp" },
+  // A chat tool that didn't say which network the person came from.
+  { key: "social", label: "Social / chat" },
   { key: "other", label: "Other" },
 ];
 

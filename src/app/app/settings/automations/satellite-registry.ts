@@ -39,7 +39,7 @@ export const INTAKE_AUTOMATIONS: SatelliteAutomation[] = [
     key: "lead_alert_email",
     title: "Email me when a lead comes in",
     description:
-      "Every owner and admin, plus your organization's contact email (Settings → Organization), gets the website inquiry or estimate request with the person's name, phone, email and what they asked. On by default and not paused by the master switch — a missed lead costs more than a stray email.",
+      "Every owner and admin, plus your organization's contact email (Settings → Organization), gets the website inquiry, estimate request or social/chat lead with the person's name, phone, email and what they asked. On by default and not paused by the master switch — a missed lead costs more than a stray email.",
     trigger: "Website form → Sollos",
     defaultOn: true,
     ignoresMaster: true,

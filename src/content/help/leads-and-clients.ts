@@ -16,13 +16,14 @@ Owners, admins, and managers with **Client records** access can use the Leads pa
 
 - **You add them.** The quick-add form at the top of the page. Only **Name** is required, so you can add someone mid-call.
 - **Your website sends them.** Your estimate calculator and contact form create leads automatically (see [Website forms](help:website-forms)).
+- **Your chat tool sends them.** ManyChat, GoHighLevel and similar tools can pass on leads from Instagram, Facebook, TikTok or WhatsApp, filed under that network (see [Website forms](help:website-forms#leads-from-instagram-facebook-and-chat-tools)).
 - **They come back.** If someone you marked lost fills in your website form again, they come back as a lead in the **Contacted** stage.
 
 ## Adding a lead by hand
 
 1. Go to [Leads](/app/leads).
 2. Type their **Name**. **Phone** is optional.
-3. Pick where they **Came from**: Phone (the default), Email, Website form, Referral, or Other.
+3. Pick where they **Came from**: Phone (the default), Email, Website form, Referral, Instagram, Facebook, TikTok, WhatsApp, Social / chat, or Other.
 4. Optionally add their **Email** and **What do they want?** (for example "3 bed, biweekly, asked about Thursdays").
 5. Press **Add**. The form clears so you can add the next person.
 

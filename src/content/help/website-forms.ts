@@ -3,10 +3,10 @@ import type { HelpArticle } from "./types";
 export const article: HelpArticle = {
   slug: "website-forms",
   title: "Website forms",
-  blurb: "Connecting your website's estimate calculator and contact form to Sollos, and where each submission lands.",
+  blurb: "Connecting your website's estimate calculator and contact form, or a chat tool like ManyChat or GoHighLevel, to Sollos, and where each submission lands.",
   section: "Website & portal",
   paths: [],
-  keywords: ["embed", "quote form", "contact form", "website", "intake", "web form", "lead form", "calculator"],
+  keywords: ["embed", "quote form", "contact form", "website", "intake", "web form", "lead form", "calculator", "manychat", "gohighlevel", "go high level", "ghl", "instagram", "facebook", "social media", "dm", "lead ads", "chatbot"],
   body: `
 Your website's estimate calculator and contact form can send submissions straight to Sollos, with no other service in between. Each submission becomes a lead you can work, a request in your inbox, and an alert to you.
 
@@ -82,6 +82,27 @@ To stop a form flooding you:
 ## The inquiry closes itself
 
 An inquiry stays open on Requests until the person stops being a question mark. When you convert their lead, mark it lost, or book them, their open inquiries close automatically.
+
+## Leads from Instagram, Facebook and chat tools
+
+If your leads start in an Instagram or Facebook DM, a Facebook lead ad, or a chat flow, a tool like ManyChat or GoHighLevel can pass them to Sollos.
+
+1. Go to [Settings → Intake forms](/app/settings/intake-forms), create a form, and pick the type **Social & chat (ManyChat, GoHighLevel)**.
+2. Copy its **Webhook URL (POST here)**.
+3. In **ManyChat**: in your flow, add an Action, choose **External Request**, set the method to POST, paste the URL, and add **Full Contact Data** as the body.
+4. In **GoHighLevel**: in a workflow, add the **Webhook** action and paste the URL. If the workflow's trigger knows the network (say, a Facebook lead form), add a custom value named channel set to facebook.
+
+What one message does:
+
+- Creates a **lead**, with the network as its source: **Instagram**, **Facebook**, **TikTok**, **WhatsApp**, or **Social / chat** when the tool doesn't say. The message, their handle and the chat tool's contact id go on the lead's note.
+- Puts an open inquiry on [Requests](/app/bookings/requests), notifies owners and admins in the app, and sends the lead alert email and text, the same as the contact form.
+- Does **not** email the person. Your chat tool is already talking to them.
+
+It matches people a little differently from the website forms: by email, then by phone number. It never matches on a name alone, because a first name from a DM isn't enough to know it's the same person. If someone writes in twice with no email or phone, you'll see two leads; tidy them up by hand.
+
+There's no spam trap on this type, and its limits are per form: 30 messages a minute and 300 an hour.
+
+You can also pick **Instagram**, **Facebook**, **TikTok** or **WhatsApp** as the source when you add a lead by hand on [Leads](/app/leads).
 
 ## Common questions
 

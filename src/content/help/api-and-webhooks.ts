@@ -6,7 +6,7 @@ export const article: HelpArticle = {
   blurb: "Connecting Zapier, Make.com, n8n or your own website: API keys, outbound webhooks, and inbound form URLs — written to hand to your web person.",
   section: "Settings & connections",
   paths: ["/app/settings/api-keys", "/app/settings/webhooks", "/app/settings/intake-forms"],
-  keywords: ["api", "api key", "token", "zapier", "make.com", "integromat", "n8n", "webhook", "developer", "rest", "json", "typeform", "jotform", "form url", "intake url", "endpoint"],
+  keywords: ["api", "api key", "token", "zapier", "make.com", "integromat", "n8n", "webhook", "developer", "rest", "json", "typeform", "jotform", "form url", "intake url", "endpoint", "manychat", "gohighlevel", "ghl"],
   body: `
 Three settings pages let other software talk to Sollos. You don't need to be technical to set them up — create the key or URL here, then hand it (and this page) to whoever looks after your website or automations.
 
@@ -86,6 +86,7 @@ Under **New intake form**, give it a **Name**, choose a **Type**, and press **Cr
 - **Job application** — submissions become applicants under **Applicants**.
 - **Estimate calculator** — one submission creates a lead, a draft estimate and a request, emails the person a confirmation, and notifies you.
 - **Contact form** — one submission creates a lead and a request, confirms to the sender, and notifies you.
+- **Social & chat (ManyChat, GoHighLevel)** — one submission creates a lead with its network as the source and a request, and notifies you. The person is not emailed. See [Website forms](help:website-forms#leads-from-instagram-facebook-and-chat-tools).
 
 Each form then shows its **Webhook URL (POST here)** with a copy button, plus:
 
@@ -102,6 +103,7 @@ Send a POST to the URL — JSON or form-encoded (multipart works for the estimat
 - **Job application** — \`name\` or \`full_name\`, \`email\`, \`phone\`, \`position\` or \`role\`, \`experience\`, \`availability\`, \`message\` or \`cover_letter\`, \`resume_url\` or \`resume\`. Nothing is required, but send at least a name or email.
 - **Estimate calculator** — \`fullName\` or \`name\` (the only required field), \`email\`, \`phone\`, \`address\`, \`city\`, \`bedrooms\`, \`bathrooms\`, \`kitchens\`, \`pets\`, \`oven\`, \`fridge\`, \`windows\`, \`blinds\`, \`carpets\`, \`schedule\`, \`cleaningDate\`, \`priceInitialHigh\`, \`priceRecurringHigh\`, \`travelFee\`, \`hearAboutUs\`, \`notes\`.
 - **Contact form** — \`name\` or \`fullName\`, \`email\`, \`phone\`, \`city\`, \`urgency\`, \`notes\` or \`message\`, \`page_url\`, \`referrer\`. Include a hidden, empty \`website\` field: bots that fill it in are silently dropped. Add \`?redirect=https://…\` to the URL to send a plain HTML form to your thank-you page afterwards.
+- **Social & chat** — \`name\`, \`full_name\` or \`first_name\` + \`last_name\`; \`email\`; \`phone\` or \`whatsapp_phone\`; \`ig_username\` or \`username\`; \`message\`, \`notes\` or \`last_input_text\`; \`channel\` (instagram, facebook, tiktok, whatsapp); \`city\` or \`address\`. Fields inside a \`customData\` or \`custom_fields\` object are read too, so ManyChat's Full Contact Data and GoHighLevel's webhook payload work unchanged. Only one of name, handle, email or phone is required. The response is \`{ "ok": true, "lead_id": "…" }\`. Limits are per form (30 a minute, 300 an hour), not per sender address.
 
 Forms can post straight from a visitor's browser. Each visitor's address is limited to 60 submissions a minute.
 

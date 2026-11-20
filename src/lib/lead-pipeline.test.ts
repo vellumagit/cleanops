@@ -93,6 +93,15 @@ describe("sources", () => {
     expect(sourceLabel("web_form")).toBe("Website form");
     expect(sourceLabel("phone")).toBe("Phone");
     expect(sourceLabel("referral")).toBe("Referral");
+    expect(sourceLabel("instagram")).toBe("Instagram");
+    expect(sourceLabel("tiktok")).toBe("TikTok");
+    expect(sourceLabel("whatsapp")).toBe("WhatsApp");
+    expect(sourceLabel("social")).toBe("Social / chat");
+  });
+
+  it("a social source typed in by hand is kept, not flattened to other", () => {
+    const r = parseQuickAdd({ name: "Sam", source: "instagram" });
+    expect(r.ok && r.value.lead_source).toBe("instagram");
   });
 });
 
@@ -157,7 +166,7 @@ describe("parseQuickAdd", () => {
   });
 
   it("falls back to other on an unrecognized source rather than refusing", () => {
-    const r = parseQuickAdd({ name: "Sam", source: "tiktok" });
+    const r = parseQuickAdd({ name: "Sam", source: "myspace" });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.value.lead_source).toBe("other");
