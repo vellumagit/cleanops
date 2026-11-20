@@ -1,131 +1,167 @@
-import { body as gettingAround } from "./getting-around";
-import { body as leadsAndClients } from "./leads-and-clients";
-import { body as bookings } from "./bookings";
-import { body as checklists } from "./checklists";
-import { body as invoicing } from "./invoicing";
-import { body as timesheetsAndPayroll } from "./timesheets-and-payroll";
-import { body as reports } from "./reports";
-import { body as websiteForms } from "./website-forms";
-import { body as clientPortal } from "./client-portal";
-import { body as automations } from "./automations";
-import { body as hiring } from "./hiring";
-import { body as feedback } from "./feedback";
+import { HELP_SECTIONS, type HelpArticle } from "./types";
+import { createHelpSearch } from "./search";
+import { routePatternToRegExp } from "./site-map";
+
+// Start here
+import { article as gettingAround } from "./getting-around";
+import { article as firstSteps } from "./first-steps";
+import { article as dashboard } from "./dashboard";
+import { article as rolesAndPermissions } from "./roles-and-permissions";
+import { article as notifications } from "./notifications";
+import { article as assistant } from "./assistant";
+import { article as feedback } from "./feedback";
+// Scheduling & jobs
+import { article as bookings } from "./bookings";
+import { article as recurringSeries } from "./recurring-series";
+import { article as schedulingBoard } from "./scheduling-board";
+import { article as requests } from "./requests";
+import { article as shiftOffers } from "./shift-offers";
+import { article as checklists } from "./checklists";
+import { article as tasks } from "./tasks";
+import { article as inventory } from "./inventory";
+// Clients & sales
+import { article as leadsAndClients } from "./leads-and-clients";
+import { article as clients } from "./clients";
+import { article as estimates } from "./estimates";
+import { article as contracts } from "./contracts";
+import { article as packages } from "./packages";
+import { article as network } from "./network";
+import { article as reviews } from "./reviews";
+// Your team
+import { article as employees } from "./employees";
+import { article as onCallPool } from "./on-call-pool";
+import { article as hiring } from "./hiring";
+import { article as training } from "./training";
+import { article as bonuses } from "./bonuses";
+import { article as teamComms } from "./team-comms";
+// The field app
+import { article as fieldApp } from "./field-app";
+import { article as fieldTimeAndPay } from "./field-time-and-pay";
+import { article as availabilityAndTimeOff } from "./availability-and-time-off";
+// Money
+import { article as invoicing } from "./invoicing";
+import { article as billingCycles } from "./billing-cycles";
+import { article as gettingPaid } from "./getting-paid";
+import { article as timesheetsAndPayroll } from "./timesheets-and-payroll";
+import { article as contractorPay } from "./contractor-pay";
+import { article as reports } from "./reports";
+// Website & portal
+import { article as websiteForms } from "./website-forms";
+import { article as clientPortal } from "./client-portal";
+// Settings & connections
+import { article as companySettings } from "./company-settings";
+import { article as texting } from "./texting";
+import { article as automations } from "./automations";
+import { article as integrations } from "./integrations";
+import { article as apiAndWebhooks } from "./api-and-webhooks";
+import { article as accountAndSecurity } from "./account-and-security";
 
 /**
- * The in-app Help library. Plain typed modules, on purpose:
+ * The Sollos manual. Plain typed modules, on purpose:
  *
  * - No database, no editor, no CMS. Articles are code, reviewed like code.
  * - They deploy WITH the feature they describe, so a doc can never describe
  *   a version of the app that isn't the one running. The working rule that
  *   keeps this true: a change to how something works and the edit to its
  *   help page travel in the same commit.
+ * - The same text feeds three readers: /app/help (signed in), /help (public,
+ *   for search engines and the curious), and the assistant's prompt.
+ * - help-content.test.ts holds every article to the pages that exist: paths
+ *   claimed, links written, guides cross-referenced.
  *
  * Owner-authored content (how THIS org cleans a kitchen) does not belong
  * here — that's Training. Micro-tricks belong in Settings → Tips.
+ *
+ * Order matters: within a section, articles render in the order listed.
  */
 
-export type HelpArticle = {
-  slug: string;
-  title: string;
-  blurb: string;
-  section: string;
-  body: string;
-};
-
-export const HELP_SECTIONS = [
-  "Start here",
-  "Day to day",
-  "Money",
-  "Website & portal",
-] as const;
+export { HELP_SECTIONS };
+export type { HelpArticle };
 
 export const HELP_ARTICLES: HelpArticle[] = [
-  {
-    slug: "getting-around",
-    title: "Getting around Sollos",
-    blurb: "The three surfaces, the sidebar, badges, and where to find the fast paths.",
-    section: "Start here",
-    body: gettingAround,
-  },
-  {
-    slug: "feedback",
-    title: "Feedback",
-    blurb: "Reporting a bug, asking a question, and how to tell whose turn it is.",
-    section: "Start here",
-    body: feedback,
-  },
-  {
-    slug: "bookings",
-    title: "Bookings",
-    blurb: "Creating and pricing visits, recurring schedules, crew arriving at different times, skips and deletes.",
-    section: "Day to day",
-    body: bookings,
-  },
-  {
-    slug: "checklists",
-    title: "Checklists",
-    blurb: "Attach by service, by client, or by hand — and what happens when you revoke one.",
-    section: "Day to day",
-    body: checklists,
-  },
-  {
-    slug: "leads-and-clients",
-    title: "Leads & clients",
-    blurb: "The lifecycle from inquiry to client, and everything that converts automatically.",
-    section: "Day to day",
-    body: leadsAndClients,
-  },
-  {
-    slug: "automations",
-    title: "Automations",
-    blurb: "The fixed set of switches, who actually receives what, and the cadence knobs.",
-    section: "Day to day",
-    body: automations,
-  },
-  {
-    slug: "hiring",
-    title: "Hiring",
-    blurb: "Applicants, interview questionnaires, hiring procedures — and where training takes over.",
-    section: "Day to day",
-    body: hiring,
-  },
-  {
-    slug: "invoicing",
-    title: "Invoicing",
-    blurb: "Per-visit invoices, batch billing, the draft→sent→paid lifecycle, finding things fast.",
-    section: "Money",
-    body: invoicing,
-  },
-  {
-    slug: "timesheets-and-payroll",
-    title: "Timesheets & payroll",
-    blurb: "Hours to paid: rates, review, payroll runs, contractor statements, and the CSV warning.",
-    section: "Money",
-    body: timesheetsAndPayroll,
-  },
-  {
-    slug: "reports",
-    title: "Reports",
-    blurb: "What came in, what each job actually made, and how each cleaner is doing.",
-    section: "Money",
-    body: reports,
-  },
-  {
-    slug: "website-forms",
-    title: "Website forms",
-    blurb: "Estimate and contact forms posting straight into leads, requests, and your inbox.",
-    section: "Website & portal",
-    body: websiteForms,
-  },
-  {
-    slug: "client-portal",
-    title: "The client portal",
-    blurb: "What clients can do themselves — and how phoned-in requests use the same rails.",
-    section: "Website & portal",
-    body: clientPortal,
-  },
-];
+  gettingAround,
+  firstSteps,
+  dashboard,
+  rolesAndPermissions,
+  notifications,
+  assistant,
+  feedback,
+
+  bookings,
+  recurringSeries,
+  schedulingBoard,
+  requests,
+  shiftOffers,
+  checklists,
+  tasks,
+  inventory,
+
+  leadsAndClients,
+  clients,
+  estimates,
+  contracts,
+  packages,
+  network,
+  reviews,
+
+  employees,
+  onCallPool,
+  hiring,
+  training,
+  bonuses,
+  teamComms,
+
+  fieldApp,
+  fieldTimeAndPay,
+  availabilityAndTimeOff,
+
+  invoicing,
+  billingCycles,
+  gettingPaid,
+  timesheetsAndPayroll,
+  contractorPay,
+  reports,
+
+  websiteForms,
+  clientPortal,
+
+  companySettings,
+  texting,
+  automations,
+  integrations,
+  apiAndWebhooks,
+  accountAndSecurity,
+].sort(
+  (a, b) => HELP_SECTIONS.indexOf(a.section) - HELP_SECTIONS.indexOf(b.section),
+);
 
 export function getHelpArticle(slug: string): HelpArticle | undefined {
   return HELP_ARTICLES.find((a) => a.slug === slug);
+}
+
+/** Just enough of each guide for the browser — the assistant panel uses it to
+ *  check the links it shows and to offer the guide for the current page,
+ *  without shipping the manual's text to every page load. */
+export type HelpGuideRef = Pick<HelpArticle, "slug" | "title" | "paths">;
+export const HELP_GUIDE_INDEX: HelpGuideRef[] = HELP_ARTICLES.map(
+  ({ slug, title, paths }) => ({ slug, title, paths }),
+);
+
+/** Search across every guide, section by section (see ./search). */
+export const searchHelp = createHelpSearch(HELP_ARTICLES);
+
+/** The guide that is THE guide for the page at this URL, if one claims it.
+ *  An exact static claim beats a dynamic one, so /app/bookings/series finds
+ *  Recurring series rather than a booking. */
+export function helpForUrl(url: string): HelpArticle | undefined {
+  const clean = url.split(/[?#]/)[0].replace(/\/+$/, "") || "/";
+  let dynamicHit: HelpArticle | undefined;
+  for (const a of HELP_ARTICLES) {
+    for (const p of a.paths) {
+      if (!routePatternToRegExp(p).test(clean)) continue;
+      if (!p.includes("[")) return a;
+      dynamicHit ??= a;
+    }
+  }
+  return dynamicHit;
 }

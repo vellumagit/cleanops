@@ -15,6 +15,7 @@ import { SetupReturnBanner } from "@/components/setup-return-banner";
 import { PwaInstallBanner } from "@/components/pwa-install-banner";
 import { QuickActions } from "@/components/quick-actions";
 import { AIWidget } from "@/components/ai-assistant/ai-widget";
+import { HELP_GUIDE_INDEX } from "@/content/help";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { buildTzProbe } from "@/lib/tz-probe";
 import { StaleTimezoneBanner } from "@/components/stale-timezone-banner";
@@ -227,7 +228,7 @@ export default async function AppLayout({
           capabilities={membership.capabilities}
           hasAssistant
         />
-        <AIWidget />
+        <AIWidget guides={HELP_GUIDE_INDEX} />
       </div>
     </BrandProvider>
   );

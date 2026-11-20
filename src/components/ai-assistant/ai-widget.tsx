@@ -3,9 +3,12 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Sparkles, X, Send, Loader2, Flag } from "lucide-react";
+import { Sparkles, X, Send, Loader2, Flag, BookOpen, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { OPEN_ASSISTANT_EVENT } from "@/components/top-bar-actions";
+import { ASK_ASSISTANT_EVENT } from "@/components/help/ask-assistant-button";
+import { findSitePage, routePatternToRegExp } from "@/content/help/site-map";
+import type { HelpGuideRef } from "@/content/help";
 
 type Message = {
   role: "user" | "assistant";
@@ -15,11 +18,29 @@ type Message = {
 const WELCOME: Message = {
   role: "assistant",
   content:
-    "Hi! I'm your Sollos assistant. Ask me how to use any feature. If something's actually broken, use Report a problem below — that reaches the team and you'll get a reply. What can I help you with?",
+    "Hi! I'm your Sollos assistant. I've read the whole manual, so ask me how something works or where to find it. If something's actually broken, use Report a problem below — that reaches the team and you'll get a reply.",
 };
 
-export function AIWidget() {
+/** A refusal the server explained (rate limit, too long, unavailable). */
+class AssistantRefusal extends Error {}
+
+/** The guide that covers this page, if one claims it (static claims first,
+ *  the same rule as helpForUrl on the server). */
+function guideForPath(guides: HelpGuideRef[], path: string): HelpGuideRef | undefined {
+  let dynamicHit: HelpGuideRef | undefined;
+  for (const g of guides) {
+    for (const p of g.paths) {
+      if (!routePatternToRegExp(p).test(path)) continue;
+      if (!p.includes("[")) return g;
+      dynamicHit ??= g;
+    }
+  }
+  return dynamicHit;
+}
+
+export function AIWidget({ guides = [] }: { guides?: HelpGuideRef[] }) {
   const pathname = usePathname();
+  const pageGuide = guideForPath(guides, pathname);
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([WELCOME]);
   const [input, setInput] = useState("");
@@ -38,6 +59,24 @@ export function AIWidget() {
     const toggle = () => setOpen((v) => !v);
     window.addEventListener(OPEN_ASSISTANT_EVENT, toggle);
     return () => window.removeEventListener(OPEN_ASSISTANT_EVENT, toggle);
+  }, []);
+
+  // Help's "Ask the assistant" buttons open the panel with the question
+  // typed in (not sent — the person may want to add to it).
+  useEffect(() => {
+    const ask = (e: Event) => {
+      const q = (e as CustomEvent<{ question?: string }>).detail?.question ?? "";
+      setOpen(true);
+      if (q) setInput(q);
+      setTimeout(() => {
+        const el = inputRef.current;
+        if (!el) return;
+        el.focus();
+        el.setSelectionRange(el.value.length, el.value.length);
+      }, 60);
+    };
+    window.addEventListener(ASK_ASSISTANT_EVENT, ask);
+    return () => window.removeEventListener(ASK_ASSISTANT_EVENT, ask);
   }, []);
 
   // Focus input when opened
@@ -72,6 +111,14 @@ export function AIWidget() {
       });
 
       if (!res.ok || !res.body) {
+        // The server explains itself in plain words (slow down, start a
+        // fresh conversation, not available right now); pass that on rather
+        // than a generic apology that leaves the person guessing.
+        const reason = await res
+          .json()
+          .then((j: { error?: unknown }) => (typeof j.error === "string" ? j.error : null))
+          .catch(() => null);
+        if (reason) throw new AssistantRefusal(reason);
         throw new Error("Request failed");
       }
 
@@ -90,12 +137,15 @@ export function AIWidget() {
           return next;
         });
       }
-    } catch {
+    } catch (err) {
+      // Only the server's own words; a dropped connection's raw message
+      // ("network error") means nothing to anyone.
+      const reason = err instanceof AssistantRefusal ? err.message : null;
       setMessages((prev) => {
         const next = [...prev];
         next[next.length - 1] = {
           role: "assistant",
-          content: "Sorry, something went wrong. Please try again.",
+          content: reason ?? "Sorry, something went wrong. Please try again.",
         };
         return next;
       });
@@ -172,7 +222,12 @@ export function AIWidget() {
                       <span className="inline-block h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground [animation-delay:300ms]" />
                     </span>
                   ) : (
-                    <MessageContent content={msg.content} />
+                    <MessageContent
+                      content={msg.content}
+                      guides={guides}
+                      done={!(loading && i === messages.length - 1)}
+                      onNavigate={() => setOpen(false)}
+                    />
                   )}
                 </div>
               </div>
@@ -182,6 +237,18 @@ export function AIWidget() {
 
           {/* Input */}
           <div className="border-t border-border p-3">
+            {pageGuide && (
+              <Link
+                href={`/app/help/${pageGuide.slug}`}
+                onClick={() => setOpen(false)}
+                className="mb-2 flex items-center gap-1.5 rounded-lg bg-muted/50 px-2.5 py-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                <BookOpen className="h-3 w-3 shrink-0" />
+                <span className="truncate">
+                  Guide for this page: <span className="font-medium">{pageGuide.title}</span>
+                </span>
+              </Link>
+            )}
             <div className="flex items-end gap-2 rounded-xl border border-border bg-muted/30 px-3 py-2">
               <textarea
                 ref={inputRef}
@@ -245,18 +312,109 @@ export function AIWidget() {
   );
 }
 
-// Render assistant messages with basic markdown-like formatting
-function MessageContent({ content }: { content: string }) {
-  // Split on newlines and render simple bold (**text**)
+/**
+ * Is this an address a person can actually open? The assistant is told to
+ * link only pages from the site map, but a model can still slip — and a
+ * confident link to a page that doesn't exist is exactly the failure that
+ * started this. So every link is checked here before it becomes clickable.
+ * Only fixed addresses count: the assistant never knows a record's id, so
+ * "/app/bookings/123" is invented by definition.
+ */
+function checkAppUrl(url: string, guides: HelpGuideRef[]): boolean {
+  const path = url.split(/[?#]/)[0].replace(/\/+$/, "");
+  const help = path.match(/^\/app\/help\/([a-z0-9-]+)$/);
+  if (help) return guides.length === 0 || guides.some((g) => g.slug === help[1]);
+  // A match that only fits a [param] route is a made-up record address.
+  const page = findSitePage(path || "/");
+  return Boolean(page && !page.path.includes("["));
+}
+
+// Links, bold, and bare in-app paths, in one pass.
+const TOKEN =
+  /(\[[^\]]+\]\([^)\s]+\))|(\*\*[^*]+\*\*)|((?<![\w/.])\/(?:app|field|client)(?:\/[A-Za-z0-9_\-[\]]+)*(?:#[a-z0-9-]+)?)/g;
+
+// Render assistant messages: **bold**, [links](/app/...), bare /app/... paths.
+function MessageContent({
+  content,
+  guides,
+  done,
+  onNavigate,
+}: {
+  content: string;
+  guides: HelpGuideRef[];
+  done: boolean;
+  onNavigate: () => void;
+}) {
+  const nodes: React.ReactNode[] = [];
+  let invented = false;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  TOKEN.lastIndex = 0;
+  while ((m = TOKEN.exec(content))) {
+    if (m.index > last) nodes.push(content.slice(last, m.index));
+    const key = m.index;
+    if (m[2]) {
+      nodes.push(<strong key={key}>{m[2].slice(2, -2)}</strong>);
+    } else {
+      let text: string;
+      let href: string;
+      if (m[1]) {
+        const lm = m[1].match(/^\[([^\]]+)\]\(([^)\s]+)\)$/)!;
+        text = lm[1];
+        href = lm[2];
+      } else {
+        text = m[3];
+        href = m[3];
+      }
+      const internal = href.startsWith("/");
+      const ok = internal && checkAppUrl(href, guides);
+      if (ok) {
+        nodes.push(
+          <Link
+            key={key}
+            href={href}
+            onClick={onNavigate}
+            className="font-medium text-primary underline underline-offset-2"
+          >
+            {text}
+          </Link>,
+        );
+      } else {
+        // External links and addresses that don't exist stay plain text.
+        // Mid-stream a path is often half-written, so only judge it once
+        // the answer is complete.
+        if (internal && done) invented = true;
+        nodes.push(
+          <span
+            key={key}
+            className={cn(internal && done && "text-muted-foreground line-through decoration-amber-500/70")}
+            title={internal && done ? "This page doesn't exist in Sollos" : undefined}
+          >
+            {text}
+          </span>,
+        );
+      }
+    }
+    last = m.index + m[0].length;
+  }
+  if (last < content.length) nodes.push(content.slice(last));
+
   return (
-    <span className="whitespace-pre-wrap">
-      {content.split(/(\*\*[^*]+\*\*)/g).map((part, i) =>
-        part.startsWith("**") && part.endsWith("**") ? (
-          <strong key={i}>{part.slice(2, -2)}</strong>
-        ) : (
-          part
-        ),
+    <>
+      <span className="whitespace-pre-wrap">{nodes}</span>
+      {invented && (
+        <span className="mt-2 flex items-start gap-1.5 rounded-md bg-amber-50 px-2 py-1.5 text-[11px] leading-4 text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+          <AlertTriangle className="mt-px h-3 w-3 shrink-0" />
+          <span>
+            A page named here doesn&apos;t exist in Sollos, so this answer may be
+            wrong about where to go.{" "}
+            <Link href="/app/help" onClick={onNavigate} className="underline underline-offset-2">
+              Search Help
+            </Link>{" "}
+            instead.
+          </span>
+        </span>
       )}
-    </span>
+    </>
   );
 }

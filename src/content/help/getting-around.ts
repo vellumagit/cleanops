@@ -1,49 +1,131 @@
-export const body = `
+import type { HelpArticle } from "./types";
+
+export const article: HelpArticle = {
+  slug: "getting-around",
+  title: "Getting around Sollos",
+  blurb: "The three surfaces, the sidebar and badges, the phone layout, quick actions, and Tips & shortcuts.",
+  section: "Start here",
+  paths: ["/app/settings/tips"],
+  keywords: ["navigation", "menu", "sidebar", "layout", "home", "start", "shortcuts", "tips", "command palette", "ctrl k", "install", "home screen", "sign out", "log out", "switch company"],
+  body: `
 Sollos has three surfaces, and knowing who lives where explains most of the layout:
 
-- **The office** (where you are now) — owners, admins, and managers run the business here: bookings, clients, money, people.
-- **The field app** — cleaners see their jobs, clock in and out, tick checklists, and upload photos at \`/field\`.
-- **The client portal** — clients see their upcoming visits, leave notes, and make requests at \`/client\`.
+- **The office** (where you are now) — owners, admins, and managers run the business here: bookings, clients, money, people. Someone with the Employee role who opens an office link is sent to the field app instead.
+- **The field app** — cleaners see their jobs, clock in and out, tick checklists, upload photos, and chat. If you also clean, **Switch to Field View** at the bottom of the sidebar (**Field view** in the phone's More sheet) opens it for your own account. See [The field app](help:field-app).
+- **The client portal** — clients see their visits and make requests. Clients sign in there; they are never members of your team. See [The client portal](help:client-portal).
 
-All of it is one installable app: on a phone, the install banner (or the card in Settings) puts Sollos on the home screen, and the icon opens whichever surface the signed-in account belongs to — cleaners land in the field app, you land in the office. On a phone the office opens on the day's jobs and the needs-attention card first; the floating **+** button is the fast path to a new booking from anywhere.
+## Installing Sollos on a phone
 
-## The sidebar, in one pass
+Sollos installs to the home screen like an app, and one icon serves everyone: it opens the field app for cleaners, the office for owners, admins, and managers, the portal for clients, and the sign-in page if nobody is signed in.
 
-Work flows top to bottom: **Operations** (dashboard, scheduling, bookings, requests), **People** (leads, clients, employees), **Hiring** (applicants, the hiring library, training), **Money** (invoices, timesheets, payroll, reports — in the order money flows), **Comms** (feed, chat — DMs and #general, with photos: tap the camera to snap one or the gallery icon to pick a few, add words or not, and send). Notifications and Settings sit at the bottom.
+On a phone, the office shows an **Install Sollos** banner:
 
-The small numbers beside some entries are live counts — today's bookings, pending requests, overdue invoices. A badge is the app telling you something is waiting on a human; a clear sidebar is a clear conscience.
+- **Android** — tap **Install app**.
+- **iPhone in Safari** — tap the Share button, scroll down, and tap **Add to Home Screen**.
+- **iPhone in another browser** — the banner asks you to open the page in Safari first; Apple only allows installing from Safari.
+
+Dismiss the banner and it stays away for seven days. Owners and admins also have an install card at the top of **Settings**, which says **App installed** once it's on the home screen.
+
+## The sidebar
+
+On a computer the sidebar runs top to bottom in the order work flows:
+
+- **Overview** — Dashboard. See [The dashboard](help:dashboard).
+- **Operations** — Bookings, Calendar, Scheduling, Requests, Estimates, Contracts, Checklists, Tasks, Inventory.
+- **People** — Leads, Clients, Employees, On-call pool, Network, Reviews, Bonuses.
+- **Hiring** — Applicants, Hiring, Training.
+- **Money** — Invoices, Timesheets, Payroll, Reports.
+- **Comms** — Announce, Text replies, Feed, Chat.
+
+At the bottom: **Help**, **Feedback**, **Notifications**, and **Settings**, then **Switch to Field View**, then a card with your name and role and a small sign-out button.
+
+Not everyone sees every entry. Managers never see Employees, Applicants, Hiring, Payroll, Reports, or Settings, and an owner can switch off further areas for a particular manager — see [Roles and permissions](help:roles-and-permissions). **Feed** appears only when the team feed is switched on (**Settings → Automations**, *Show team feed*).
+
+The bell next to your company name opens Notifications; a red number on it is your unread count. Your logo and company name appear at the top once you've added a logo in **Settings → Branding** (until then it reads *Sollos 3*), and your brand colour tints the page you're on.
+
+## Badges
+
+The small numbers beside some entries are live counts — a badge is the app telling you something is waiting on a person:
+
+- **Bookings** — jobs scheduled today.
+- **Requests** — client requests waiting for an answer.
+- **Estimates** — estimates still pending.
+- **Invoices** — overdue invoices.
+- **Chat** — new messages.
+- **Reviews** — reviews in the last seven days.
+- **Tasks** — overdue tasks.
+- **Applicants** and **Leads** — new ones.
+
+"Today" always means today in your company's time zone. On a computer, hovering a badge shows what it counts (for example *3 today*).
 
 ## On a phone
 
-The office swaps the sidebar for an app layout: bottom tabs — **Today, Schedule, Bookings, Requests**, badges included — plus **More**, which holds everything else. Desk-shaped tools (payroll, reports, settings, the hiring library) sit collapsed under **Desktop tools** in that sheet: nothing is locked away, those pages still work on a phone — they just tell you they're easier at a desk.
+The office swaps the sidebar for an app layout.
 
-The **Schedule** tab on a phone opens on today as a single timeline: hours down the side, each job a block as tall as it is long ("10:30 AM – 2:30 PM" reads as four hours), jobs at the same time sitting side by side, a red line marking now. **Tap any empty time to book it** — before, after, or between jobs, the form opens pre-filled at that half-hour; assign whoever's available from there. Tap a block for details and status. The per-employee dispatch board with drag-to-reschedule is the same page on a bigger screen.
+- **The top bar** — your logo, then **+** (quick actions), the sparkle (the assistant), and the bell.
+- **The bottom tabs** — **Today** (the dashboard), **Schedule**, **Bookings**, **Requests**, and **More**. Schedule and Requests only appear for people who can use them.
+- **More** opens a sheet called *Everything else*: the phone-friendly pages grouped by section, plus Help, Feedback, and Notifications. Desk-shaped pages (Contracts, Checklists, Applicants, Hiring, Training, Payroll, Reports, Settings) sit collapsed under **Desktop tools**. Nothing is locked away — those pages work on a phone and just show a note that they're easier at a desk.
+- Counts for pages inside the sheet add up on the **More** tab, so a new chat message or overdue task still shows.
+- **Field view** and **Sign out** are at the bottom of the More sheet.
 
-## The dashboard
+The **Schedule** tab opens the day as a timeline you can tap to book — see [The scheduling board](help:scheduling-board).
 
-The top of the dashboard is today: jobs, revenue, who's working. Under it, **Needs you** lists every question the jobs are asking a person, most urgent first: a cleaner who hasn't started a job that should have, someone still clocked in long after the end, a job with no price, tomorrow's unconfirmed shifts, a recurring client whose visits no longer match their usual time. Each line has buttons that answer it right there (close the job, clock them out at the right time, call the cleaner) or a link to where the fix happens. **Snooze** hides one for a while. An empty list means nothing needs you.
+## Quick actions
 
-When something money-shaped needs fixing — a completed job with no price, a $0 draft invoice — a **Needs attention** card also appears with a link that lands exactly where the fix happens.
+Quick actions is a small menu for jumping straight to a form. Open it with the round **+** button at the bottom right on a computer, **Ctrl+K** (**⌘K** on a Mac), or the **+** in the phone's top bar. Type to filter — it matches words like "quote" or "bill" too — then use the arrow keys and Enter, or tap.
 
-**Feedback**, at the bottom of the sidebar (under **More** on a phone), sends a problem or a request straight to the Sollos team (see *Feedback*). Use it rather than a text message: it keeps a history and shows whose turn it is.
+It offers **New booking**, **New client**, **New estimate**, **New invoice**, **Open calendar**, **Clients**, **Scheduling / dispatch**, and **New task** — each only if you're allowed to open that page. **Esc** closes it.
 
-## Notifications on your phone
+There's no search box that covers the whole app; search lives on each list (clients, bookings, invoices).
 
-Sollos can buzz your phone for new jobs, chat messages, schedule changes, and the urgent items in Needs you (a cleaner who hasn't started, someone still on the clock long after the end). It has to be turned on once on each phone: tap **Turn on** on the blue banner, or go to **Profile → Push notifications** in the field app and tap it. Your phone then asks to allow notifications; say yes.
+On the **Chat** page the floating buttons and the phone's **+** and sparkle step aside so they don't cover the message box. **Ctrl+K** still works there on a computer.
 
-- **iPhone** — notifications only work from the Sollos icon on your home screen, not from a Safari tab. In Safari tap **Share**, then **Add to Home Screen**, open Sollos from the new icon, and turn them on there.
-- **Android** — if Sollos says notifications are blocked, they were refused once and the phone won't ask again. For the home-screen app: press and hold the Sollos icon, tap **App info**, then **Notifications**, and turn them on. In Chrome: tap the icon to the left of the web address, then **Permissions**, then **Notifications**, and choose **Allow**.
-- **No sound?** Sollos sends the notification; the phone decides whether it makes a sound. Check the phone's notification settings for Sollos (or Chrome) and make sure sound is on and Do Not Disturb is off.
+## The assistant
 
-Each phone is set up separately, so a new phone needs it turned on again.
+The sparkle (bottom right on a computer, top bar on a phone) opens the Sollos Assistant, which answers how-to questions from these guides. See [Asking the assistant](help:assistant).
 
-## Requests is an inbox
+## Help, and Tips & shortcuts
 
-The **Requests** page collects everything clients ask for: visit skips, booking requests from the portal, and inquiries from your website forms. Each one has buttons to act; acting on it clears it from the badge. Creating a booking from a request marks it scheduled automatically — the booking is the answer.
+**Help**, at the bottom of the sidebar, is this manual. It has its own search, and every guide ships with the app, so it describes the version you're using.
 
-## Speed
+**Settings → Tips & shortcuts** (under *Learn*) lists every fast path the app supports:
 
-There's a whole page of shortcuts — type-ahead in dropdowns, fast paths through forms — at **Settings → Tips & shortcuts**. Two minutes there pays for itself weekly.
+- **Type to jump** — in any dropdown, press a letter to jump to entries starting with it; press it again to cycle through them.
+- **Search knows invoice numbers** — typing 0127 in the invoices search finds INV-2026-0127.
+- **Bill several jobs on one invoice** — **New invoice**, pick the client, then *Bill them together* collects every unbilled job in a date range. See [Invoicing](help:invoicing).
+- **Batch amounts are editable** — fix a price in the batch before creating the invoice.
+- **Invoices arrive prefilled** — start one from a client's page and the client is filled in, plus the job and amount if they have exactly one unbilled job.
+- **Stray hours reattach in one tap** — a blue *Looks like…* chip on a timesheet row files off-job hours onto the job they overlap.
+- **Cleaners clock in with one tap** — the field clock shows today's jobs as buttons.
+- **Rows open records** — click anywhere on a row in most lists.
+- **Esc closes dialogs.**
+
+The same page has the **Inline tips** switch. When it's on (the default), small lightbulbs sit next to controls that have a trick worth knowing; tap one to read it. The switch is saved on this device only, so turning it off on your laptop leaves your phone alone.
+
+## Switching between companies
+
+If your sign-in belongs to more than one company, Sollos opens the one you joined most recently, and accepting an invitation to another company switches you to it. There is no menu for switching back and forth. The dashboard's greeting (*Welcome back to …*) tells you which company you're in.
+
+## Feedback
+
+**Feedback**, at the bottom of the sidebar (under **More** on a phone), sends a problem, an idea, or a question to the Sollos team and keeps the thread. See [Feedback](help:feedback).
 
 > If the app and this Help section ever disagree, the app changed first — these pages ship with the code, so tell us and the page gets fixed in the next deploy.
-`;
+
+## Common questions
+
+**Where do I sign out?** On a computer, the small arrow button on your name card at the bottom of the sidebar. On a phone, open **More** and tap **Sign out** at the bottom.
+
+**Why can't I see Payroll, Employees, or Settings?** Those are for owners and admins only. If you're a manager, the owner can change your role or your access — see [Roles and permissions](help:roles-and-permissions).
+
+**Why does the sidebar say "Sollos 3" instead of my company name?** The company name shows once you've uploaded a logo in **Settings → Branding**.
+
+**Where did the Feed go?** It only shows when *Show team feed* is on in **Settings → Automations**. When it's off, the feed is hidden for everyone, in the office and the field app.
+
+**How do I see what my cleaners see?** Tap **Switch to Field View** at the bottom of the sidebar (or **Field view** in the More sheet). It shows the field app for your own account — your own jobs and shifts.
+
+**Can I turn off the lightbulbs?** Yes — **Settings → Tips & shortcuts**, switch **Inline tips** off. It only affects the device you're on.
+
+**I belong to two companies. How do I switch?** There's no switcher. Sollos opens the company you joined most recently; accepting a new invitation moves you to that company.
+`,
+};

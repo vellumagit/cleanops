@@ -1,53 +1,205 @@
-export const body = `
-Automations are Sollos doing the remembering: confirmations, reminders, review asks, invoice sends, team alerts. There's a **fixed set** with on/off switches — no automation builder, no custom triggers, no editable email templates. You choose from the list; Sollos runs them on schedule.
+import type { HelpArticle } from "./types";
 
-## The switches
+export const article: HelpArticle = {
+  slug: "automations",
+  title: "Automations",
+  blurb: "Every switch: what it sends, to whom and when — plus the master switch, presets, who actually receives client messages, and the timing thresholds.",
+  section: "Settings & connections",
+  paths: ["/app/settings/automations", "/app/settings/thresholds"],
+  keywords: ["reminders", "automatic emails", "workflow", "auto", "master switch", "preset", "digest", "thresholds", "auto-complete", "auto-void", "auto-archive", "expire estimates", "overtime warning"],
+  body: `
+Automations are Sollos doing the remembering: confirmations, reminders, review asks, invoice drafts, team alerts, housekeeping. There's a **fixed set** of them, each with an on/off switch — no automation builder, no custom triggers, no editable email templates. You choose from the list; Sollos runs them on schedule.
 
-The client-journey switches live at **Settings → Client automations**; the machinery moved next to what it acts on — invoicing automations on **Settings → Invoicing**, the recurring-invoice switch on **Settings → Recurring invoices**, and payroll/timesheet automations (including the clock-out auto-cap thresholds) on **Settings → Payroll & timesheets**. One master switch on the Client automations page still governs all of them, wherever they live — flipping it off pauses everything, invoice auto-send included. Everything starts **off**. Two one-click presets get you going: **The essentials** (8 core automations) and **Full service** (19). Presets only ever turn things *on*; they never disable what you've chosen.
+**Everything starts off.** A new company sends nothing automatically until you turn on the master switch and the automations you want — so nobody gets emailed while you're still importing clients. The one exception is the email alert for new website leads (below). Automation settings are for **owners and admins**.
 
-The page has two permanent sections:
+The main page is **Settings → Client automations** (titled **Automations** at the top). The switches that act on invoices, payroll and website leads live next to what they act on — see [Switches on other settings pages](help:automations#switches-on-other-settings-pages).
 
-- **Client automations** — every message a client can receive, in the order of their journey: winning the work (estimate follow-ups, expiry), when a job is booked (confirmations, reschedule notices, crew assignment), the day before (24h reminder), job done & getting paid (review ask, overdue reminders, receipts), growing the business (Google review asks, rebooking nudges).
-- **Team alerts & housekeeping** — internal notifications and background bookkeeping that never reach a client: crew schedules, digests, training reminders, auto-complete and auto-archive timers. (Payroll, PTO, and invoicing machinery live on their own settings pages; the two website lead alerts live on Intake forms.)
+## The master switch
+
+The banner at the top of the page says **Automations are on** or **Automations are off**.
+
+- **Off** — nothing runs at all: no automated emails, texts, invoice drafts, reminders or housekeeping, wherever the switch lives. Invoice auto-send stops too, and drafts waiting to go out are held. Press **Turn automations on**.
+- **On** — only the automations you've switched on run. **Turn all off** is your one-click "stop everything".
+
+The master switch doesn't touch buttons you press yourself: sending an invoice or estimate, offering a shift, requesting SMS opt-in.
+
+## Presets
+
+Three starting points sit under the master switch. Presets only ever turn things **on** — they never switch off something you enabled — and each one also turns the master switch on.
+
+- **The essentials** (recommended) — booking confirmation, rescheduled and cancelled emails, the 24-hour reminder email, the push to an employee when they're assigned a job, auto-drafting an invoice when a job is completed, overdue invoice reminders, and the receipt on payment.
+- **Full service** — the essentials plus estimate follow-ups, internal review requests, Google review requests, rebooking prompts, the weekly and monthly operations digests, employee daily and weekly schedules, auto-complete past bookings, and the unassigned booking alert.
+- **I'll pick myself** — **Start empty** turns the master switch on and enables nothing; choose below.
+
+Inside **Team alerts & housekeeping** there's also **Turn all of these on**, which enables the internal set in one go — crew notifications and schedules, payroll and time-off emails, training reminders, review alerts, Stripe payout emails, digests, and the expire/archive/complete/recurring-invoice timers. None of them message a client. Auto-voiding invoices is deliberately left out; it changes money and deserves its own decision.
+
+## How the page is laid out
+
+Each switch wears a badge saying who it touches:
+
+- **Client message** — goes to your clients. Turning it on makes the message exist; the client's own settings decide who receives it.
+- **Team alert** — goes to you or your staff. Clients never see these.
+- **Background** — bookkeeping: drafts, status changes, archiving. Sends nothing to anyone.
+
+The grey tag beside each switch says when it fires. Where it shows a clock time, that time is in UTC, not your local time.
+
+The page has two sections, each split into stages of a job's life: **Client automations** (everything a client hears from you) and **Internal automations** (team alerts and background bookkeeping). Each stage shows how many of its switches are on. Press a switch to flip it between **Enabled** and **Disabled**.
 
 ## Who actually receives a client message
 
-Turning a toggle on never spams anyone by itself. Every client message passes a chain:
+Turning a switch on never spams anyone by itself. Every client message passes a chain:
 
-1. The **org toggle** turns the message type on.
-2. The **house default** (Default client notifications: email / text / both / none) sets the baseline.
-3. The **client's own setting** wins over the house default — follow it, customize per category (booking / billing / reviews), or do-not-contact.
-4. **Texts** additionally require the client's SMS opt-in (double opt-in; STOP always wins). No opt-in, no text — ever.
+1. The **switch** on this page turns the message type on (and the master switch must be on).
+2. **Default client notifications** — your house rule: **Email only**, **Text only**, **Email + text**, or **No notifications**.
+3. The **client's own settings** win over the house default. In the per-client manager under the client section (or on the client's page) you can set a client to follow the default, choose a channel per category — **Booking updates**, **Billing**, **Reviews & rebooking** — or mark them **Do not contact**. **Quick setup** offers **Everything**, **Essentials only**, **Nothing** and **Follow default**. Tick **Advanced automations** to mute individual messages for one client.
+4. **Texts** additionally need texting turned on and the client's SMS opt-in (they replied YES; STOP always wins). No opt-in, no text — ever. See [Texting (SMS)](help:texting).
 
-An org that wants nothing sent to unconfigured clients sets the house default to "No notifications" and opts clients in one by one.
+Review and rebooking messages are **email-only**: a client set to **Text** for that category gets nothing, and **Both** sends just the email. With **Text only** as your house default, review asks and rebooking nudges never reach clients who follow the default.
 
-**Texting in the US.** US carriers block business texts until the business is registered with them. A US business turns texting on from **Settings → SMS / Texting** by filling in the registration there once: legal name and EIN, business address, website, an owner or officer as the contact (with an email on the business's own domain), and where customers get help. Sollos submits it, checks on it every hour, and as soon as the carriers approve it buys a local number in the business's area code and turns texting on by itself. Approval usually takes one to three weeks, and the carriers charge a registration fee and a monthly fee. If they ask for changes, the page says what and the registration can be fixed and sent again. A business without a privacy policy or texting terms page can use the ones Sollos hosts for it. Canadian businesses don't register; **Enable SMS** gives them a number straight away.
+A company that wants nothing sent to unconfigured clients sets the house default to **No notifications** and switches clients on one by one.
+
+**Do not contact** means Sollos doesn't message that client. It doesn't stop their account working: their jobs still auto-complete and their invoices are still drafted.
+
+## Every switch on the Automations page
+
+### Client automations
+
+**Winning the work**
+
+- **Estimate follow-up** — emails the client a "still interested?" check-in 7 days after you sent an estimate that hasn't been approved or declined, and a "last chance" email at 14 days.
+
+**When a job is booked**
+
+- **Booking confirmation email** — to the client when a booking is created or confirmed for them.
+- **Booking confirmation text** — the same by text: service, date and a contact number.
+- **Booking rescheduled email** — to the client when a booking's time changes, showing the old and new slot.
+- **Booking rescheduled text** — the new time by text. For clients opted in to texts this replaces the email — one notice, not both.
+- **Booking cancelled email** — to the client when a booking is cancelled. (The assigned cleaner gets a push separately, so they don't turn up.)
+- **Booking cancelled text** — by text; replaces the email for opted-in clients.
+
+**The day before**
+
+- **24-hour booking reminder to client** — email roughly 24 hours before the visit with the service, time and address. Once per booking.
+- **24-hour booking reminder text** — sent alongside the email: the text gets noticed, the email carries the details.
+
+**Job done & getting paid**
+
+- **Overdue invoice reminder** — a polite reminder to the client every 7 days while an invoice is past due. Stops once it's paid.
+- **Receipt + review request on payment** — a receipt and a review link when an invoice is marked paid.
+
+**Growing the business**
+
+- **Internal review request** — emails a review link (hosted by Sollos) after a completed booking, at most as often as its cadence (below). These reviews feed the dashboard rating, per-employee scores and bonus rules.
+- **Google review request** — emails a link to your Google review page 48 hours after a client's *first* completed booking; if they haven't clicked, a reminder a week later, then monthly up to a cap. Stops the moment they click. Needs your Google Review link in **Settings → Branding**.
+- **Rebooking prompt** — a "ready for your next clean?" email 14 or more days after a completed job, only when the client has nothing booked, at most as often as its cadence.
+
+### Internal automations
+
+**Winning the work**
+
+- **Draft a booking when an estimate is approved** — creates a *pending*, unassigned placeholder booking (tomorrow, 9 AM) linked to the estimate, so scheduling can't be forgotten. You still pick the real date, time and cleaner. Nothing is sent to the client for it.
+- **Stale-estimate alert to you** — tells owners and admins (in the app, plus one push) when an estimate has sat in *Sent* for 7+ days with no decision.
+- **Auto-expire stale estimates** — flips estimates in *Sent* with no activity to *Expired*. The number of days is on Automation thresholds (default 30).
+
+**When a job is booked**
+
+- **Notify employee on booking assignment** — a push to the cleaner when a booking is assigned to them.
+- **Job assignment text to employee** — the same by text, from your texting number.
+- **Unassigned booking alert** — emails owners and admins when a booking within 24 hours still has no cleaner. Silent when everything is staffed.
+
+**Job done & getting paid**
+
+- **Shift still unconfirmed** — asks a cleaner to confirm a shift they haven't answered, the day before and again 2 hours before it starts; at the second nudge you're told too, so you can check or reassign.
+- **Nobody clocked in yet** — nudges the assigned cleaner 15 minutes after start time if nobody has clocked in. Goes to the crew, not to you.
+- **Job finished with no clock-in** — tells you 30 minutes after a job's expected end when someone was assigned but nobody clocked in at all, before auto-complete turns it into an invoice. Silent if your team doesn't use clock-in.
+- **Auto-complete past bookings** — marks bookings still *Pending* or *Confirmed* as *Completed* once they're far enough in the past (default 24 hours; set on Automation thresholds).
+
+**Team alerts & housekeeping**
+
+- **Job starting soon push to employee** — a push to the assigned cleaner shortly before the job starts.
+- **Employee daily schedule** — a morning email to each cleaner listing today's jobs: time, client, address, length and notes.
+- **Employee weekly schedule** — a Sunday preview of each cleaner's week ahead.
+- **Training assignment email** — to an employee when a training module is assigned, with a link to start.
+- **Certification expiry reminder** — to an employee 30 and 7 days before a completed certification expires.
+- **Notify admin on new review** — an in-app notification to owners and admins when a client leaves a review.
+- **Low review alert** — emails owners and admins the full text of any review of 3 stars or less.
+- **Weekly operations digest** — Monday email to owners and admins: last week's revenue, jobs completed and cancelled, average rating, overdue invoices, unassigned bookings ahead.
+- **Monthly operations digest** — on the 1st: last month's revenue, job counts, rating, top clients, top performer, new clients.
+- **Auto-archive old records** — hides finished bookings, invoices and estimates older than the archive threshold (default 2 years) from the default lists. Nothing is deleted.
+- **Show team feed** — shows the **Feed** in the office and field app. Off hides it.
+- **Sollos product updates** — a short email about what's new in Sollos, at most weekly and only when there's news. Each owner can unsubscribe from their own copy.
+
+## Switches on other settings pages
+
+These are the same kind of switch, governed by the same master switch — they just live where their subject lives. When the master switch is off, each of these pages shows a banner saying nothing below runs.
+
+**Settings → Invoicing**
+
+- **Auto-draft invoice on job complete** — creates a draft invoice when a booking is marked completed.
+- **Morning invoice review digest** — emails owners and admins each morning with yesterday's completed jobs and any invoices auto-sending later that day. Silent on quiet days.
+- **Auto-void long-overdue invoices** — off means Sollos never voids anything by itself. On, it voids unpaid invoices once they're past due by the threshold (default 1 year), logs each, emails owners and admins, and stops overdue reminders for them.
+- **Stripe payout notification** — emails owners when Stripe sends a payout to your bank, with the amount and arrival date.
+
+**Settings → Recurring invoices** — **Auto-generate recurring invoices** on the weekly, biweekly, monthly or quarterly schedules set up on that page. See [Billing cycles](help:billing-cycles).
+
+**Settings → Payroll & timesheets** — see [Timesheets & payroll](help:timesheets-and-payroll):
+
+- **Forgotten clock-out reminders** — reminds a cleaner still clocked in past the job's expected end, repeating at **Remind every**; at **Cap the shift & alert after**, the shift is capped, flagged for review and managers are notified, plus a text to the owner. Hours are never silently reduced — you confirm or correct the flagged shift.
+- **Overtime warning** — a Friday email to any employee within 20% of your overtime threshold.
+- **PTO request decision email** — to the employee when their time-off request is approved, declined or cancelled.
+- **Payroll paid receipt** — to each employee when a payroll run is marked paid.
+- **Divide team-job hours across the crew** — on a job with two or more cleaners, the field app shows each their share of the hours. Doesn't change the visit window, pay or the client's bill.
+
+**Settings → Intake forms** — see [Website forms](help:website-forms):
+
+- **Email me when a lead comes in** — every owner and admin, plus your contact email, get each website inquiry or estimate request. **On by default, and not paused by the master switch** — a missed lead costs more than a stray email.
+- **Text me when a lead comes in** — the same as a short text to owners' and admins' profile phones and your contact phone. Needs texting on; counts toward your included texts.
 
 ## Asking rarely: the cadence knobs
 
-Two automations have an **"At most"** cadence dropdown right beside their toggle, because asking too often is worse than not asking:
+Two automations have an **At most** dropdown beside their switch, because asking too often is worse than not asking:
 
-- **Internal review request** — after every clean (30-day minimum gap), 4× a year, 2× a year, or once a year, per client. A client who already left a review inside that window is never re-asked. Clients can always *volunteer* a review from their portal — every finished visit carries a link — so asking can be rare without reviews being rare.
-- **Rebooking nudge** — same options. It only ever targets clients with no future booking, 14+ days after their last clean, and never someone whose last visit was over 6 months ago.
+- **Internal review request** — **After every clean (30-day minimum gap)**, **4× a year**, **2× a year**, or **Once a year**, per client. A client who already left a review inside that window isn't asked again. Clients can always *volunteer* a review from their portal — every finished visit has a link — so asking can be rare without reviews being rare.
+- **Rebooking prompt** — **Monthly (30-day minimum gap)**, **4× a year**, **2× a year**, or **Once a year**. It only targets clients with no future booking, 14+ days after their last clean, and never someone whose last visit was more than 6 months ago.
 
-**Google review asks** are separate and even more restrained: one ask 48 hours after a client's *first* completed job, a reminder a week later, then monthly to a cap — and it stops the instant they click. Needs your Google review URL in Settings → Branding.
+**Google review requests** are separate and even more restrained: one ask after the first completed job, one reminder a week later, then monthly to a cap — and it stops the instant they click.
 
 ## Invoice auto-send lives elsewhere
 
-Auto-sending drafted invoices is configured at **Settings → Invoicing**, not here. When it's on you pick a **send time** and a **rhythm**, and the page states the result back to you in a sentence — *"Invoices go out every Friday at 5:00 PM."* Three rhythms:
+Auto-sending drafted invoices is set up at [Settings → Invoicing](/app/settings/invoicing), not here: a send time, and a rhythm (the day after the job, after a set number of hours, or one day each week). It covers per-job invoices; clients on a weekly, biweekly or monthly billing cycle keep their own schedule. Every draft still has hold and send-now escape hatches. It obeys the master switch. Details in [Billing cycles](help:billing-cycles).
 
-- **The day after the job** — the default, and what everyone had before.
-- **After a set number of hours** — 24, 48 or 72 hours of review, then the next time the clock reaches your send time.
-- **On one day each week** — everything drafted since the last send goes out together on your chosen day. A draft raised less than an hour before the deadline waits for the following week rather than slipping out unreviewed.
+## Automation thresholds
 
-This governs **per-job invoices — "everyone else"**. Clients you've put on a weekly, biweekly or monthly billing cycle keep their own schedule; the separate *"Also auto-send biweekly / monthly invoices"* switch is their opt-out.
+**Settings → Automation thresholds** (under **Team** on the Settings page) sets the timing for the housekeeping automations. Each timer only runs when its switch is on; **leaving a field blank turns that timer off** for your company even if the switch is on. Press **Save thresholds**.
 
-Every draft still has Hold and Send-now escape hatches, and the **Morning invoice review digest** toggle (here, under Job done & getting paid) emails you each morning what's going out later that day.
+- **Expire stale estimates after** (days) — how long an estimate can sit in *Sent* with no approval or decline before **Auto-expire stale estimates** flips it to *Expired*. Default 30.
+- **Void overdue invoices after** (days, minimum 30) — how far past due an unpaid invoice must be before **Auto-void long-overdue invoices** voids it. Default 365. The field says whether auto-void is currently on; while it's off, this number does nothing.
+- **Auto-complete past bookings after** (hours) — how long after its scheduled time a *Pending* or *Confirmed* booking waits before **Auto-complete past bookings** marks it *Completed*. Default 24.
+- **Auto-archive records older than** (days, minimum 180) — the age at which finished bookings, invoices and estimates drop out of the default lists. Default 730 (2 years).
+- **Overtime threshold** (hours / week) — the weekly hours the Friday **Overtime warning** measures against; employees within 20% of it get the email. Default 40. This one can't be blank.
 
 ## The fine print that keeps you safe
 
-- **Settings → Thresholds** holds the housekeeping timers (auto-expire, auto-void, auto-complete, auto-archive). A blank field disables that timer.
-- Marketing-style emails (rebooking nudges, Google asks) carry their own one-click unsubscribe — unsubscribing stops only those, never booking confirmations or invoices.
-- Manual **Send** buttons always work, automation settings or not. Same for shift-offer texts: owner-clicked is always allowed.
-- **Offer shift** on a booking texts a claim link to your own subcontractors (paid their usual rate) and the on-call pool (paid the flat amount on the offer) at once — first tap claims it.
-`;
+- Marketing-style emails (rebooking prompts, Google review asks) carry their own one-click unsubscribe. Unsubscribing stops only those — never booking confirmations or invoices.
+- Buttons you press yourself — sending an invoice or estimate, offering a shift ([Shift offers](help:shift-offers)), requesting SMS opt-in — work whatever the automation switches say.
+- A $0 invoice is never auto-sent.
+
+## Common questions
+
+**I turned on the booking confirmation but my client didn't get it. Why?** Check the master switch is on, then the client: their own settings may say **Do not contact** or have booking updates off, your house default may be **No notifications**, or they have no email on file. The per-client manager shows a warning when a choice can't be delivered.
+
+**How do I stop every automatic email at once?** Press **Turn all off** at the top of **Settings → Client automations**. Everything stops — including invoice auto-send — except the new-lead email alert, which has its own switch on **Settings → Intake forms**.
+
+**Does using a preset turn off what I already set up?** No. Presets only turn things on.
+
+**Can I edit the wording of the emails?** No. The messages are a fixed set; your logo, brand colour and business name are applied to them from **Settings → Branding**.
+
+**Why are the times on the page in UTC?** The tags show when each job runs on Sollos's clock. Emails that depend on "today" — like a cleaner's daily schedule — still use your company's time zone to decide which jobs to include.
+
+**My bookings keep turning to Completed by themselves. Why?** **Auto-complete past bookings** is on. It completes *Pending* or *Confirmed* bookings 24 hours (or your threshold) after their scheduled time. Turn it off, or blank the field on **Settings → Automation thresholds**.
+
+**How do I stop clients being asked for reviews so often?** Set the **At most** dropdown beside **Internal review request** to 4×, 2× or once a year.
+
+**Where's the switch for the morning invoice digest?** On **Settings → Invoicing**, with the other invoicing automations.
+`,
+};

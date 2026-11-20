@@ -1,44 +1,83 @@
-export const body = `
-Leads and clients are the same people at different moments — someone who *might* book, and someone who *has*. Sollos keeps them on one list under the hood but shows them on two pages, because you do different things to them.
+import type { HelpArticle } from "./types";
 
-## Leads
+export const article: HelpArticle = {
+  slug: "leads-and-clients",
+  title: "Leads",
+  blurb: "People who've asked but haven't booked: adding them, the New, Contacted and Quoted stages, and how they become clients.",
+  section: "Clients & sales",
+  paths: ["/app/leads"],
+  keywords: ["prospect", "inquiry", "pipeline", "lost lead", "follow up", "make client", "convert", "potential customer"],
+  body: `
+A lead is someone who has asked about your service but hasn't booked yet. The **Leads** page (sidebar → **People** → **Leads**) is the list of people waiting to hear back from you, grouped by how far along they are. Once someone books, they move to **Clients** on their own (see [Clients](help:clients)).
 
-A lead is a name and what they want. They arrive three ways:
+Owners, admins, and managers with **Client records** access can use the Leads page. Leads are client records that haven't booked yet, so the same access setting covers both.
 
-- **You type them in** — the quick-add row at the top of the Leads page: name, phone, email, and "what do they want?", always visible.
-- **Your website sends them** — the estimate calculator and contact form create leads automatically (see *Website forms*).
-- **They email or call** — you quick-add them during the call.
+## How leads arrive
 
-Editing a lead happens right on the Leads page — the **Edit** button opens a small dialog for their details and the note. Leads deliberately don't open the full client profile; they're not clients yet.
+- **You add them.** The quick-add form at the top of the page. Only **Name** is required, so you can add someone mid-call.
+- **Your website sends them.** Your estimate calculator and contact form create leads automatically (see [Website forms](help:website-forms)).
+- **They come back.** If someone you marked lost fills in your website form again, they come back as a lead in the **Contacted** stage.
+
+## Adding a lead by hand
+
+1. Go to [Leads](/app/leads).
+2. Type their **Name**. **Phone** is optional.
+3. Pick where they **Came from**: Phone (the default), Email, Website form, Referral, or Other.
+4. Optionally add their **Email** and **What do they want?** (for example "3 bed, biweekly, asked about Thursdays").
+5. Press **Add**. The form clears so you can add the next person.
+
+Phone numbers are saved in the same format as client numbers, so texting works for them after they become a client.
+
+## The stages
+
+Open leads are grouped by stage:
+
+- **New**: they asked and nobody has replied yet.
+- **Contacted**: you've spoken to them but haven't given a price.
+- **Quoted**: they have a price and you're waiting on them.
+
+Each lead row has stage buttons. Tap one to move the lead there. Stages can go backwards too, so if you quoted the wrong thing you can put a lead back on **Contacted**.
+
+One stage changes on its own: when you send a lead an estimate by email, a lead on **New** or **Contacted** moves to **Quoted**.
 
 ## Working a lead
 
-Every lead row has **Quote** and **Book** buttons. Quote opens a new estimate with the lead selected and their "what do they want?" note already in the description; sending any estimate moves the lead to **Quoted** automatically. Book opens a prefilled booking — and creating any booking for a lead converts them to a client on the spot.
+Every lead row has:
 
-## Becoming a client
+- **Edit**: opens a small window where you change their name, phone, email, address, and **What do they want?**. You edit leads on this page, not on a client profile, because they aren't clients yet.
+- **Quote**: opens a new estimate with the lead already picked. Whatever is in their **What do they want?** note becomes the estimate's summary. See [Estimates](help:estimates).
+- **Book**: opens a new booking with the lead already picked. Saving the booking makes them a client.
+- **Make client**: they said yes.
+- **Lost**: they went somewhere else.
 
-Two doors, both automatic in effect:
+## How a lead becomes a client
 
-1. **Make client** — they said yes; press it and they move to the Clients page with everything carried over.
-2. **Book them** — creating any booking for a lead converts them on the spot. Scheduling work *is* the yes, so nobody has to remember the button. This includes the automatic booking created when an estimate is approved.
+A lead becomes a client in any of these ways:
 
-Either way, any open website inquiries from them are resolved automatically — the Requests badge clears itself.
+1. You press **Make client**.
+2. You create a booking for them, one-off or recurring. In a cleaning business, booking someone is the yes, so you don't have to remember the button.
+3. An estimate is approved and your **Draft a booking when an estimate is approved** automation creates a booking for it (see [Estimates](help:estimates#when-the-client-answers)).
 
-## Clients
+Nothing is copied or lost when they convert. Their estimates, notes, and properties come with them, because a lead and a client are the same record. Their stage is cleared and they move from Leads to the Clients page.
 
-A client's profile is the long-term record: address, standing notes (buzzer codes, pets), billing preferences, properties if they have several places, and their booking history. **+Book** from a profile starts a booking with the client, their address, AND their usual job — service, length, and price from their last booking — already filled. **New estimate** and **New invoice** start prefilled the same way, completed jobs in the history have a one-tap **book again**, and the stat cards ("Bookings 12", "Invoices 3") open those pages filtered to just this client.
+> When a lead becomes a client or is marked lost, any open website inquiries from them on the [Requests](/app/bookings/requests) page are closed automatically. Their question has been answered either way.
 
-**Home photos & videos** on the profile keeps the pictures and videos of the home: what the client sent when they asked for a quote, where the key is, the state of the place before your first visit. Everyone on the team sees them on the client's jobs. See *Bookings → Photos*.
+## Lost leads
 
-**Email client** (top of the profile) writes to the client directly from Sollos: a subject, a message, and any of the files on their **Documents** card ticked as attachments — a countersigned invoice, a service agreement, a receipt — plus anything you add from your device (kept on the record by default). It goes to the email on their profile, on your letterhead with your logo and contact details, and replies land in your workspace's contact inbox. Every one shows up under **Sent emails** on the profile with what was attached and who sent it, so anyone in the office can see what the client was told. Automated mail (invoices, reminders, estimates) isn't in that list — it lives on the thing that sent it. Limits, so nobody can turn Sollos into a spam cannon: Email client unlocks a day after a workspace is created, sends at most five emails to one client per day, and every workspace has a daily cap on all outgoing email (50 in its first week, 500 after; Sollos support can raise it for a real business that needs more).
+**Lost** keeps the person but takes them off your working list. To see them, use the **Lost leads** link at the top of the page. Each lost lead has a **Reopen** button, which puts them back on the list in the **Contacted** stage. Use it when they call again.
 
-> Same email = same person. If a website form arrives with an email you already have, it updates that lead instead of creating a duplicate. Different emails create separate leads — merge by hand if you spot twins.
+## Common questions
 
-## When a client leaves
+**I booked a lead. Where did they go?** They're a client now. Creating any booking for a lead converts them, so look for them on the Clients page.
 
-**Archive them** — the button at the bottom of their profile, one move for everything: their open bookings are cancelled — everything upcoming, plus anything from the last two weeks still sitting unfinished, but never a job a live invoice already bills (assigned cleaners are notified and calendar events removed for the jobs that hadn't happened yet) — recurring schedules and standing invoices stop generating, their portal sign-in locks, and they disappear from every list, picker, and billing run. The confirm tells you exactly what it's about to cancel before you agree. What deliberately *stays*: their history, documents, and any **unpaid invoices** — archiving a client never archives a debt, so you can still chase and collect it. Archived clients live under the **Archived** toggle on the Clients page; **Restore** brings everything back (portal included) except the cancelled bookings and paused schedules — re-enable those on purpose if the client returns. Deleting is only for junk/duplicate entries with no history.
+**Why is a lead showing as Quoted when I never moved them?** Sending them an estimate by email moves a lead on New or Contacted to Quoted automatically.
 
-## Network
+**Someone filled in my website form twice. Do I have two leads?** Not if they used the same email address. The second submission updates the same lead and adds to their **What do they want?** note. If they used a different email, you'll have two separate records.
 
-**Network** (under People) is the rolodex for everyone who matters but isn't a client and never will be: realtors who send you move-out cleans, property managers, suppliers, referral partners. Name, category, company, tap-to-call phone, and notes ("how we met, what they refer, their terms"). Deliberately separate from clients — no bookings, invoices, or portal hang off these people — and from the on-call pool, which is for workers you offer shifts to. If a network contact ever books a cleaning, add them as a client like anyone else.
-`;
+**An existing client asked for a quote on my website. Are they a lead now?** No. A form submission from someone already on your books stays with their client record and never turns them back into a lead.
+
+**Can I delete a lead?** Not from the Leads page. Mark them **Lost** instead: they leave your working list and you keep the history in case they come back.
+
+**Why can't my manager see Leads?** Leads need the **Client records** access setting. If a manager has that switched off, they can't open Leads or Clients. See [Roles and permissions](help:roles-and-permissions).
+`,
+};

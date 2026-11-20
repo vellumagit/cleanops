@@ -1,46 +1,87 @@
-export const body = `
-Hiring has its own lane in the sidebar, and its three pages map to the three moments of bringing someone on:
+import type { HelpArticle } from "./types";
 
-- **Applicants** — where website applications land, with a pipeline: new → reviewing → interview → hired → rejected. Each applicant carries their submitted details, resume link, and your notes.
-- **Hiring** — the library you work FROM before the yes.
-- **Training** — what a new employee works THROUGH after it: modules you author, assigned to people, completed in the field app. Each section takes text, a reference image, and a **link** — paste a YouTube or Vimeo address and the video plays inside the step on the cleaner's phone; any other link (a supplier's data sheet, a Google Doc, a page on your site) opens in a new tab. The Training page answers both directions: per module (who's done it) and per employee (the **By employee** list — who's fully trained, what's outstanding). An employee's file shows the same rollup for just that person, including certification expiry dates.
+export const article: HelpArticle = {
+  slug: "hiring",
+  title: "Hiring",
+  blurb: "Getting applications in from your website, the applicant pipeline, interview questionnaires, hiring procedures, and the Hire button.",
+  section: "Your team",
+  paths: ["/app/hiring", "/app/applicants", "/app/applicants/[id]"],
+  keywords: ["recruit", "recruiting", "job application", "apply", "applicant", "interview", "candidate", "careers", "hiring form", "job posting", "onboarding"],
+  body: `
+Hiring has its own lane in the sidebar, with three pages that follow how you bring someone on:
+
+- **Applicants**: the people who applied, moving through a pipeline from New to Hired or Rejected.
+- **Hiring**: your library of interview questionnaires and hiring procedures. It's what you work *from* before you say yes.
+- **Training**: what a new person works *through* after you say yes. That has its own guide, [Training](help:training).
+
+Applicants and Hiring are for owners and admins only.
+
+## Getting applications in
+
+Sollos doesn't host a job application page of its own. Applications come from a form on your website (or Typeform, Jotform, Zapier and the like) that sends to a Sollos intake address:
+
+1. Go to [Settings → Intake forms](/app/settings/intake-forms).
+2. Create a new intake form and set its type to **Job application**.
+3. Copy its URL and set it as the address your website's application form submits to.
+
+Every submission lands on **Applicants** as **New**. Sollos picks up common field names for name, email, phone, the position applied for, experience, availability, a message or cover letter, and a resume link. Anything else the form sends is kept too, under **Other form fields** on the applicant's page, so nothing is lost. More on intake forms, including how to keep the address safe, is in [Website forms](help:website-forms).
+
+The number beside **Applicants** in the sidebar is how many are still New.
+
+To add someone who applied in person or by phone, click **Add applicant** on the Applicants page. Only the name is required; email, phone, **Applying for** and notes can be filled in as you learn them.
+
+## The applicant pipeline
+
+Every applicant sits in one stage: **New**, **Reviewing**, **Interview**, **Hired** or **Rejected**. The chips across the top of Applicants filter by stage and show how many are in each. Change a stage from the dropdown on each row, or with the **Stage** buttons on the applicant's page.
+
+An applicant's page shows everything they sent: contact details you can tap to email or call, a **Resume / link** button when they sent one, experience, availability, their message, and when it arrived. Alongside are **Internal notes**, which only your team sees (click **Save notes**), and **Delete applicant**. Delete removes them straight away, with no confirmation, so use the Rejected stage if you might want the record later.
 
 ## The hiring library
 
-Two kinds of documents, both edited the same dead-simple way (a title and one item per line):
+The **Hiring** page holds two kinds of documents, both written the same simple way: a title, then one item per line, plus optional notes.
 
-- **Interview questionnaires** — open one during the call and work down the list. Same questions for every candidate makes comparing them honest. To keep the answers, run the interview from the applicant's page (below).
-- **Hiring procedures** — the steps from yes to first shift: documents to collect (SIN, banking, signed contract), accounts to set up, pay rate to enter, training to assign. Written down once so hiring never depends on anyone's memory.
+- **Interview questionnaires**: the questions you ask, so every candidate gets the same interview and comparing them is fair. Create one with **New questionnaire**.
+- **Hiring procedures**: the steps from yes to first shift, like collecting documents, signing the contract, setting the pay rate and assigning training. Create one with **New procedure**.
 
-Each document expands in place to show its numbered items, and only owners and admins can edit the library.
+Click a document to expand its numbered list. Each has an **Edit** button and a trash button. The trash button deletes the document as soon as you click it.
 
-## Recording interview answers
+## Recording an interview
 
-On an applicant's page, pick a questionnaire and hit **Start** — the questions are copied onto the applicant with an answer box under each, plus a notes field for everything off-script. Type as they talk, **Save answers** when done. Because the questions are copied in, editing the library questionnaire later never rewrites an interview you already ran; and a second round (phone screen, then in-person) is just another Start. Answers live on the applicant and follow them to the hire decision.
+On an applicant's page, pick a questionnaire under **Run an interview** and click **Start**. The questions are copied onto the applicant with an answer box under each, plus a notes box for anything off-script. Type as they talk, then click **Save answers**.
 
-## The Hire button
+Because the questions are copied in, editing the questionnaire later never changes an interview you've already recorded. A second round, say a phone screen and then an in-person interview, is just another **Start** under **Another round**. **Delete interview** removes one; its answers can't be recovered.
 
-When an applicant gets the yes, open their page and hit **Hire** — one dialog, nothing retyped. Their name and email come straight from the application; you add the two things only you know: how they're paid (employee via payroll, or subcontractor via statements) and their hourly wage. That sends the team invite, and the moment they accept it their account exists with the wage already applied — the first payroll run prices them correctly from day one. The applicant is stamped **hired** automatically. If the invite email can't be delivered, the dialog hands you the invite link to send yourself.
+Starting an interview doesn't change the applicant's stage. Move them to **Interview** yourself if you want the pipeline to show it.
 
-## Onboarding training assigns itself
+## Hiring someone
 
-Any published Training module can be marked **"Assign to every new hire automatically"** (a checkbox on the module). Those modules land on a new member's training list the instant they join — whether they came through the applicant pipeline or a plain invite from Employees. The "assign the onboarding training" line in your hiring procedure becomes the system's job, not memory's.
+When you've said yes, open the applicant's page and click **Hire** (the button carries their first name). One dialog, with nothing to retype:
 
-Every module also says **who it's for** — Employees & contractors, Managers, Admins & owners, in any combination. Each level only ever gets its own modules: a new manager receives the manager onboarding, not the bathroom SOP, and the module's roster page lists only the people it applies to (plus anyone who already carries an assignment, so history never vanishes).
+1. **Name** and **Email** come from the application. Check the email, because that's where the invite goes.
+2. Choose **Paid as**: **Employee (payroll)** or **Subcontractor (statements)**.
+3. Enter their **Hourly wage**, or leave it blank and set it on their profile later.
+4. Click **Send invite & mark hired**.
 
-## People added without a login
+Sollos sends a team invitation and stamps the applicant **Hired**. The dialog shows the invite link either way, and if the email didn't go out it says why so you can send the link yourself. When they accept, their account is created with the wage and engagement already set. Any published training marked **Assign to every new hire automatically** lands on their list at the same moment.
 
-Someone can be added to the team manually (Employees → Add) with no account — they appear on schedules and timesheets but can't sign in. When they're ready for the field app, **send them an invitation using the same email on their record**: accepting it links the login to their existing record, so their hours and history come with them. It never creates a second person. If the invited address already has a Sollos login (someone who works for another business on Sollos, say), the invite page asks them to **sign in with that login** rather than set a new password — an invite is only ever attached to an account its owner has signed into.
+Hires from here always join as the Employee role, meaning field staff. To make someone a manager or admin, an owner changes their role afterwards under Employees. Accepting the invite, plan limits and everything after that is in [Employees & team members](help:employees).
 
-## When someone leaves
+Once an applicant is Hired or Rejected, the Hire button no longer appears. Their employee file later shows when they applied and when they were hired, matched by email.
 
-Set their status to **Disabled** on their edit page — nothing is deleted. Before you flip it, the edit page shows what deactivating would leave owed (unpaid hours, pending bonuses, tips, approved future time off); choosing Disabled also reveals an optional **reason for leaving**, saved admin-only on their file and cleared automatically on re-hire. On deactivation their sign-in stops working immediately, their upcoming jobs are unassigned (you're notified to re-cover them), an open clock is closed and flagged for review, and pending time-off requests are cancelled.
+## Common questions
 
-Afterwards their file shows an **Ending the employment** card — the whole checklist for closing someone out, with a link on every line. Money in two states: **in a run, not yet marked paid** (their line on each payroll run or contractor statement still waiting for *Mark as paid* — the run is listed, open it and mark it once the money has gone out) and **not yet in a run** (unpaid hours the next run picks up; **pending bonuses and already-approved future time off, which no run ever picks up** — pay or remove those yourself; tips to settle from Payroll). Flagged shifts still needing review are called out, and so are any **future jobs they're still the cleaner on** — deactivating removes them from upcoming jobs, but a job assigned afterwards by hand shows here until you reassign or cancel it. The card reads *Nothing open* only when every line is clear. The file also carries a lifecycle line — applied → hired → joined → deactivated — with the dates. They move to the Archived tab on Employees. Re-hiring someone who had a login is flipping their status back to Active on their edit page (a fresh invite to that email is blocked and will point you there); update their role or wage on the same page while you're in it. Someone who never had a login re-joins through an invitation, which links and reactivates their old record.
+**Where do I get a link for people to apply?** Sollos doesn't host an application page. Create a **Job application** intake form under **Settings → Intake forms** and point your website's application form at its URL. Submissions then land on Applicants.
 
-You can't deactivate yourself, and the only active owner can't be deactivated — promote someone first.
+**An application came through but some answers are missing.** Fields Sollos doesn't recognise by name aren't dropped. Open the applicant and expand **Other form fields** at the bottom.
 
-## The seam between hiring and training
+**I hired someone but they never got the email.** The Hire dialog shows the invite link after you hire. Copy it and text it to them. The invite also sits under **Pending invitations** on Employees, where you can copy it again or revoke it. Invite links expire after 14 days.
 
-The line is the yes. Before it: questionnaires and procedures (this page). After it: the Hire button handles account, wage, and training in one motion; anything beyond that (contracts, banking details) lives in your hiring procedure checklist. If you find yourself writing "how we clean a bathroom" here, it belongs in Training; if you're writing "ask about weekend availability", it belongs here.
-`;
+**Can I hire someone as a manager straight from Applicants?** No, hires from Applicants join as field staff. An owner can change their role under Employees once they've joined.
+
+**If I edit a questionnaire, do old interviews change?** No. Each interview keeps the questions exactly as they were asked.
+
+**Does a new application notify me?** Sollos doesn't send a notification for new applicants. The count beside **Applicants** in the sidebar shows how many are waiting as New.
+
+**I marked someone Hired with the stage buttons. Did that invite them?** No. Only the **Hire** button sends an invite. Changing the stage by hand just records where they are in your process.
+`,
+};

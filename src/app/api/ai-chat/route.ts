@@ -13,7 +13,8 @@ import { enterFailClosed } from "@/lib/supabase/query-guard";
 import Anthropic from "@anthropic-ai/sdk";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { HELP_ARTICLES } from "@/content/help";
+import { HELP_ARTICLES, helpForUrl } from "@/content/help";
+import { SITE_MAP, findSitePage, staticUrlFor } from "@/content/help/site-map";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { OPEN_INVOICE_FILTER } from "@/lib/invoice-balance";
 
@@ -24,9 +25,28 @@ import { OPEN_INVOICE_FILTER } from "@/lib/invoice-balance";
 // they describe, so building the prompt from them at request time means
 // every deploy re-teaches the assistant automatically. No update chore, no
 // interval, no drift.
+// Guide-to-guide links in the articles are written help:slug#section; the
+// assistant should hand users the real address, so they're rewritten here.
 const HELP_LIBRARY = HELP_ARTICLES.map(
-  (a) => `### ${a.title} — in the app at /app/help/${a.slug}\n${a.body.trim()}`,
+  (a) =>
+    `=== GUIDE: ${a.title} (${a.section}) — /app/help/${a.slug} ===\n${a.body
+      .trim()
+      .replace(/\(help:([a-z0-9-]+)(#[a-z0-9-]+)?\)/g, "(/app/help/$1$2)")}`,
 ).join("\n\n");
+
+// Every page that exists, from the same list the help tests hold against the
+// files on disk. Brian asked the assistant where something was and got a
+// confident path that didn't exist: with no list of real pages, a model
+// invents a plausible one. Now it has the list, and the rule below.
+const SITE_MAP_TEXT = SITE_MAP.filter(
+  (p) => p.area !== "public" || p.path.startsWith("/help"),
+)
+  .map((p) => {
+    const url = staticUrlFor(p.path);
+    const addr = url ?? "(no fixed address: one per record)";
+    return `- ${p.name}: ${p.where}. ${addr}${p.roles ? ` [${p.roles} only]` : ""}`;
+  })
+  .join("\n");
 
 // ─── System prompt ───────────────────────────────────────────────────────────
 const BASE_SYSTEM_PROMPT = `You are Sollos Assistant — a friendly, knowledgeable helper built into Sollos, a cleaning business management platform.
@@ -35,12 +55,20 @@ WHAT YOU DO:
 1. Answer questions about Sollos features: bookings, recurring series, clients, employees, subcontractors, invoices, estimates, scheduling, tasks, calendar, timesheets, payroll and pay rates, checklists, automations, reports, job photos, home photos and videos, chat, phone notifications, the dashboard's Needs you list, and the field app.
 2. Help the user understand their live business data using the context snapshot below.
 3. FLAG FEEDBACK: When the user says something is confusing, hard to find, slow, broken, or just not working as expected — ALWAYS start your reply with "🚩 Feedback noted:" followed by a one-sentence plain-English summary of the issue, then help them anyway. "Noted" passes a copy of the note to the Sollos team, but it is not a conversation with them: nobody will reply here, and this chat is not saved. If it matters enough to need an answer, say so and point them at the Report a problem button below the message box (or Feedback in the sidebar) — that one reaches the team and gives them a thread they can follow.
-4. POINT TO HELP: Sollos has a built-in Help section — the "Help" entry at the bottom of the sidebar, or /app/help. The full text of every guide is in the HELP LIBRARY below; answer from it, and when a guide covers the topic, end with a pointer like "Full guide: Help → Checklists." Never say Sollos has no help section.
+4. POINT TO HELP: Sollos has a built-in, searchable manual — the "Help" entry at the bottom of the sidebar (/app/help). The full text of every guide is in the HELP LIBRARY below; answer from it, and when a guide covers the topic, end with a link to it, e.g. "Full guide: [Checklists](/app/help/checklists)", or to the exact section: [Deleting and skipping](/app/help/bookings#deleting-and-skipping) (the part after # is the section heading in lowercase with dashes). Never say Sollos has no help section.
 
 HOW TO ANSWER:
 - Be concise. Cleaning business owners are busy — get to the point.
 - Use numbered steps for anything procedural.
 - If you genuinely don't know, say so. Never invent features.
+
+WHERE THINGS ARE — THE RULE THAT MATTERS MOST:
+- Describe a place the way the user finds it: the menu path from the SITE MAP below, e.g. "Settings → Business → Timezone" or "Bookings → Recurring". Quote button and field names exactly as the HELP LIBRARY writes them.
+- You may add a link, written as markdown [name](/address), ONLY when that exact address appears in the SITE MAP or is /app/help/<slug> for a guide in the HELP LIBRARY. Copy it character for character. Never build, guess, shorten or "tidy" an address, and never add query strings.
+- Pages marked "no fixed address" belong to one record (a booking, a client). Describe how to reach them ("Clients → click the client"); never write a URL for them.
+- If the SITE MAP and HELP LIBRARY don't say where something is, say "I'm not sure where that is in Sollos" — do NOT offer a likely-sounding location. A wrong place costs the user more than "I don't know".
+- Respect the role notes: if a page is for owners and admins only and the user is a manager, say so.
+- Don't claim to see the user's records, to change anything, or to have done anything. You can only read the guides and the live counts below.
 - If something sounds like a real bug (unexpected data, duplicates, things disappearing), say "This sounds like a real bug — please send it with the Report a problem button just below, so it gets a thread and someone answers you" and describe what to do in the meantime. NEVER claim you have already reported, flagged, escalated, or sent anything to a person: you cannot, and for months this assistant told users their bugs had been passed on when nothing was reading them.
 
 AUTOMATIONS — LOAD-BEARING FACTS (full detail is in the HELP LIBRARY's
@@ -60,6 +88,12 @@ STRICT RULE: if a question is about a feature or screen not described above,
 in the HELP LIBRARY, or visible in the context snapshot, do NOT guess at steps
 or invent UI. Say you're not certain how that part works and flag it with
 "🚩 Feedback noted:" so the team can improve the docs.
+
+SITE MAP (every page in Sollos: the office app under /app, the field app
+cleaners use under /field, and the client portal under /client. Format —
+name: how to get there. address [who can open it]):
+
+{SITE_MAP}
 
 HELP LIBRARY (the app's own guides — same content as /app/help, always
 current because it ships with each deploy):
@@ -204,9 +238,14 @@ export async function POST(request: NextRequest) {
   const userName =
     membership.display_name ?? membership.profile?.full_name ?? "there";
 
+  // Name the page and its guide, so "how does this page work?" has an
+  // anchor instead of a guess from the URL.
+  const herePage = findSitePage(currentPage);
+  const hereGuide = helpForUrl(currentPage);
   const orgContext = `LIVE CONTEXT (as of right now):
 - User's name: ${userName}
-- Current page in the app: ${currentPage}
+- User's role: ${membership.role}
+- Current page in the app: ${currentPage}${herePage ? ` — "${herePage.name}"` : ""}${hereGuide ? ` (its guide: ${hereGuide.title}, /app/help/${hereGuide.slug})` : ""}
 - Bookings this week (upcoming): ${bookingsWeek.count ?? "N/A"}
 - Total clients: ${allClients.count ?? "N/A"}
 ${canSeeMoney ? `- Invoices awaiting payment: ${unpaidInvoices.count ?? "N/A"}` : ""}
@@ -217,9 +256,9 @@ ${canSeeMoney ? `- Invoices awaiting payment: ${unpaidInvoices.count ?? "N/A"}` 
   // cache reads at a tenth of input. The per-request org snapshot rides
   // separately so it never busts that cache.
   const staticSystem = BASE_SYSTEM_PROMPT.replace(
-    "{HELP_LIBRARY}",
-    HELP_LIBRARY,
-  );
+    "{SITE_MAP}",
+    SITE_MAP_TEXT,
+  ).replace("{HELP_LIBRARY}", HELP_LIBRARY);
 
   // Stream from Claude
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -230,10 +269,14 @@ ${canSeeMoney ? `- Invoices awaiting payment: ${unpaidInvoices.count ?? "N/A"}` 
     async start(controller) {
       try {
         const anthropicStream = anthropic.messages.stream({
-          // Current fast/cheap Haiku. The old claude-3-5-haiku-20241022 was
-          // retired by Anthropic, which made every assistant request error.
-          model: "claude-haiku-4-5-20251001",
-          max_tokens: 1024,
+          // Current Haiku. Follows "only name pages from the list" better
+          // than 4.5 did, at about a tenth of the per-token price. It thinks
+          // before answering (adaptive, on by default) and thinking counts
+          // toward max_tokens, so the cap leaves room for it. Medium effort:
+          // a wrong location costs the user more than a second's wait.
+          model: "claude-haiku-5-5",
+          max_tokens: 8000,
+          output_config: { effort: "medium" },
           system: [
             {
               type: "text",

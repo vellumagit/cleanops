@@ -6,7 +6,9 @@ import {
   MarketingFooter,
   MarketingHeader,
 } from "@/components/marketing-chrome";
-import { HELP_ARTICLES, HELP_SECTIONS } from "@/content/help";
+import { HELP_ARTICLES, HELP_SECTIONS, searchHelp } from "@/content/help";
+import { HelpSearchBox } from "@/components/help/help-search-box";
+import { HelpSearchResults } from "@/components/help/help-search-results";
 import { breadcrumbJsonLd } from "@/lib/seo";
 
 /**
@@ -23,7 +25,14 @@ export const metadata = {
   alternates: { canonical: "/help" },
 };
 
-export default function PublicHelpPage() {
+export default async function PublicHelpPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string | string[] }>;
+}) {
+  const sp = await searchParams;
+  const query = (Array.isArray(sp.q) ? sp.q[0] : sp.q ?? "").slice(0, 200).trim();
+  const results = query ? searchHelp(query) : [];
   return (
     <main className="sollos-wash relative flex flex-1 flex-col">
       <JsonLd data={breadcrumbJsonLd([["Help", "/help"]])} />
@@ -46,7 +55,15 @@ export default function PublicHelpPage() {
       </section>
 
       <section className="relative z-10 mx-auto w-full max-w-3xl space-y-8 px-6 pb-16">
-        {HELP_SECTIONS.map((section) => {
+        <HelpSearchBox initialQuery={query} variant="public" />
+        {query ? (
+          <HelpSearchResults
+            query={query}
+            results={results}
+            helpBase="/help"
+            variant="public"
+          />
+        ) : HELP_SECTIONS.map((section) => {
           const articles = HELP_ARTICLES.filter((a) => a.section === section);
           if (articles.length === 0) return null;
           return (

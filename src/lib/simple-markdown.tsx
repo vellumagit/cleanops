@@ -18,16 +18,45 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
+/** A heading as a URL fragment: "Crew arriving at different times" →
+ *  "crew-arriving-at-different-times". Guides link to each other with
+ *  help:slug#fragment, and search results land on the matching section. */
+export function headingAnchor(text: string): string {
+  return text
+    .replace(/[*`_]/g, "")
+    .toLowerCase()
+    .replace(/&amp;|&/g, "and")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+export type MarkdownLinkMode = {
+  /** Where help:slug links point: "/app/help" signed in, "/help" public. */
+  helpBase: string;
+  /** Public pages can't open /app, /field or /client pages for a visitor, so
+   *  there those links render as plain bold text instead of dead ends. */
+  appLinks: boolean;
+};
+
+const DEFAULT_MODE: MarkdownLinkMode = { helpBase: "/app/help", appLinks: true };
+
 /** Inline spans: bold, italic, code, links. Input is already HTML-escaped. */
-function inline(s: string): string {
+function inline(s: string, mode: MarkdownLinkMode = DEFAULT_MODE): string {
   return s
     .replace(/`([^`]+)`/g, '<code class="hx-code">$1</code>')
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/\*([^*]+)\*/g, "<em>$1</em>")
-    .replace(
-      /\[([^\]]+)\]\(([^)\s]+)\)/g,
-      '<a href="$2" class="hx-link">$1</a>',
-    );
+    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_m, text: string, href: string) => {
+      if (href.startsWith("help:")) {
+        const [slug, frag] = href.slice(5).split("#");
+        const url = `${mode.helpBase}/${slug}${frag ? `#${frag}` : ""}`;
+        return `<a href="${url}" class="hx-link">${text}</a>`;
+      }
+      if (!mode.appLinks && /^\/(app|field|client)(\/|$)/.test(href)) {
+        return `<strong>${text}</strong>`;
+      }
+      return `<a href="${href}" class="hx-link">${text}</a>`;
+    });
 }
 
 type Block =
@@ -118,9 +147,25 @@ function parse(source: string): Block[] {
   return blocks;
 }
 
-export function SimpleMarkdown({ source }: { source: string }) {
+/** The article's ## headings, for an "On this page" list. */
+export function markdownOutline(source: string): { text: string; anchor: string }[] {
+  return parse(source)
+    .filter((b): b is { kind: "h2"; text: string } => b.kind === "h2")
+    .map((b) => ({
+      text: b.text.replace(/[*`]/g, ""),
+      anchor: headingAnchor(b.text),
+    }));
+}
+
+export function SimpleMarkdown({
+  source,
+  mode = DEFAULT_MODE,
+}: {
+  source: string;
+  mode?: MarkdownLinkMode;
+}) {
   const blocks = parse(source);
-  const html = (text: string) => ({ __html: inline(escapeHtml(text)) });
+  const html = (text: string) => ({ __html: inline(escapeHtml(text), mode) });
 
   return (
     <div className="hx-article">
@@ -130,7 +175,8 @@ export function SimpleMarkdown({ source }: { source: string }) {
             return (
               <h2
                 key={i}
-                className="mt-8 mb-3 text-lg font-semibold first:mt-0"
+                id={headingAnchor(b.text)}
+                className="mt-8 mb-3 scroll-mt-20 text-lg font-semibold first:mt-0"
                 dangerouslySetInnerHTML={html(b.text)}
               />
             );
@@ -138,7 +184,8 @@ export function SimpleMarkdown({ source }: { source: string }) {
             return (
               <h3
                 key={i}
-                className="mt-6 mb-2 text-sm font-semibold"
+                id={headingAnchor(b.text)}
+                className="mt-6 mb-2 scroll-mt-20 text-sm font-semibold"
                 dangerouslySetInnerHTML={html(b.text)}
               />
             );

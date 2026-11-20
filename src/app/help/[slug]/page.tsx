@@ -8,7 +8,7 @@ import {
   MarketingFooter,
   MarketingHeader,
 } from "@/components/marketing-chrome";
-import { SimpleMarkdown } from "@/lib/simple-markdown";
+import { SimpleMarkdown, markdownOutline } from "@/lib/simple-markdown";
 import { HELP_ARTICLES, getHelpArticle } from "@/content/help";
 import { breadcrumbJsonLd, SITE_URL } from "@/lib/seo";
 
@@ -98,8 +98,31 @@ export default async function PublicHelpArticlePage({
           {article.blurb}
         </p>
 
-        <div className="mt-8 rounded-xl border border-border bg-white/80 p-6 shadow-sm backdrop-blur-sm">
-          <SimpleMarkdown source={article.body} />
+        {(() => {
+          const outline = markdownOutline(article.body);
+          return outline.length > 2 ? (
+            <nav className="mt-6 rounded-xl border border-border bg-white/70 p-4 text-sm">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                On this page
+              </p>
+              <ul className="grid gap-1.5 sm:grid-cols-2">
+                {outline.map((h) => (
+                  <li key={h.anchor}>
+                    <a href={`#${h.anchor}`} className="text-muted-foreground hover:text-foreground">
+                      {h.text}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </nav>
+          ) : null;
+        })()}
+
+        <div className="mt-6 rounded-xl border border-border bg-white/80 p-6 shadow-sm backdrop-blur-sm">
+          <SimpleMarkdown
+            source={article.body}
+            mode={{ helpBase: "/help", appLinks: false }}
+          />
         </div>
 
         <nav className="mt-4 flex items-center justify-between gap-3 text-sm">
