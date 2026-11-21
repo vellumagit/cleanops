@@ -1,6 +1,7 @@
 import "server-only";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { resolveAutomationEnabled } from "@/lib/automation-defaults";
+import { prefetchedOrgSettings } from "@/lib/org-prefetch";
 
 /**
  * Does this org divide a team job's hours across its crew by default?
@@ -18,6 +19,11 @@ import { resolveAutomationEnabled } from "@/lib/automation-defaults";
 export async function orgDividesCrewHours(
   organizationId: string,
 ): Promise<boolean> {
+  // Already read with the membership in this render (org-prefetch.ts).
+  const primed = prefetchedOrgSettings(organizationId);
+  if (primed && primed.automation_settings !== undefined) {
+    return resolveAutomationEnabled(primed.automation_settings ?? null, "divide_crew_hours");
+  }
   try {
     const db = createSupabaseAdminClient();
     const { data } = (await db

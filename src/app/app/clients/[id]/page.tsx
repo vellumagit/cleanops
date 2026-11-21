@@ -65,10 +65,193 @@ export default async function ClientDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const membership = await requireMembership();
-  const tz = await getOrgTimezone(membership.organization_id);
   const { id } = await params;
   const supabase = await createSupabaseServerClient();
-  const currency = await getOrgCurrency(membership.organization_id);
+  const admin = createSupabaseAdminClient();
+  const adminDb = admin;
+  const seesMoney = can(membership, "invoicing");
+
+  // Every read below that needs only the client id starts here, beside the
+  // client itself. This page used to ask them one after another — the
+  // client, then the referrer, properties, the archive counts, unbilled
+  // work, the review link, the contact defaults, documents, home media,
+  // emails, the sender — thirteen database round trips end to end on the
+  // test stack (2026-11-21), each waiting on the last for no reason but
+  // the order they were written in. The client row is still checked first
+  // (notFound) before anything is shown; reads for a client in another org
+  // come back empty under RLS or the explicit org filters, as before.
+  //
+  // Properties + how many jobs each has, so archiving can say what it
+  // affects. Admin client because client_properties.access_notes holds door
+  // codes and this page is the one place they are meant to be edited; the
+  // read is org-scoped immediately below.
+  const propertiesPromise = Promise.all([
+    admin
+      .from("client_properties" as never)
+      .select("id, label, address, access_notes, notes")
+      .eq("client_id" as never, id as never)
+      .eq("organization_id" as never, membership.organization_id as never)
+      .is("archived_at" as never, null as never)
+      .order("label" as never) as unknown as Promise<{
+      data: Array<Omit<PropertyRow, "bookingCount">> | null;
+    }>,
+    // ALL of this client's property-linked bookings, one column — the
+    // archive confirm quotes these counts, and tallying them from the
+    // recent-10 list above told an owner a 200-job property had "0 jobs".
+    admin
+      .from("bookings")
+      .select("property_id")
+      .eq("client_id", id)
+      .not("property_id", "is", null) as unknown as Promise<{
+      data: Array<{ property_id: string | null }> | null;
+    }>,
+  ]);
+  // What the Archive button would sweep — counted here so the confirm can
+  // state consequences instead of asking for blind trust. Head counts only.
+  // Asked for every client, archived or not: an archived client's page
+  // ignores the answer (below), and waiting to learn which cost a trip.
+  const archiveSweepPromise = Promise.all([
+    // Same window the sweep uses, read from the same helper so the two
+    // can't drift. Slight overcount is possible — the sweep also spares
+    // billed jobs — and that's the safe direction for a confirm to err.
+    supabase
+      .from("bookings")
+      .select("id", { count: "exact", head: true })
+      .eq("client_id", id)
+      .gte("scheduled_at", archiveCancelWindowStartIso())
+      .in("status", ["pending", "confirmed"]),
+    supabase
+      .from("booking_series")
+      .select("id", { count: "exact", head: true })
+      .eq("client_id", id)
+      .eq("active" as never, true as never),
+  ]);
+  // How much of this client's finished work is still unbilled. Cheap enough to
+  // compute here, and it's what turns "New invoice" from a blank form into an
+  // answer — the count rides on the button so she knows what's outstanding
+  // BEFORE clicking, rather than having to hold it in her head.
+  const unbilledPromise = seesMoney
+    ? getUnbilledCompletedBookings(supabase, id).then((rows) => rows.length)
+    : Promise.resolve(0);
+  // Preconditions for Reset / Force-resend on the GBP review panel.
+  // The cron requires the client to have an email AND the org to
+  // have google_review_url set. If either is missing the cron
+  // silently skips and the owner is confused why no email goes out.
+  // We disable the buttons in the panel + show a hint so the cause
+  // is discoverable from the UI. The server action also refuses.
+  const orgGbpPromise = Promise.resolve(
+    supabase
+      .from("organizations")
+      .select("google_review_url")
+      .eq("id", membership.organization_id)
+      .maybeSingle(),
+  ) as unknown as Promise<{
+    data: { google_review_url: string | null } | null;
+  }>;
+  const notificationContextPromise = fetchOrgNotificationContext(membership.organization_id);
+  // Documents attached to this client's record (signed invoices etc.).
+  // Admin client + explicit org filter: the client row above already
+  // proved this client is in the caller's org, and the org filter keeps
+  // a multi-org account from ever crossing streams.
+  const docsPromise = (Promise.resolve(
+    adminDb
+      .from("client_documents" as never)
+      .select("id, category, label, file_name, size_bytes, file_path, created_at")
+      .eq("client_id" as never, id)
+      .eq("organization_id" as never, membership.organization_id as never)
+      .order(
+        "created_at" as never,
+        { ascending: false } as never,
+      ),
+  ) as unknown as Promise<{
+    data: Array<{
+      id: string;
+      category: string;
+      label: string;
+      file_name: string;
+      size_bytes: number | null;
+      file_path: string;
+      created_at: string;
+    }> | null;
+  }>).then(async ({ data: rawDocs }) =>
+    // Sign each file so the card can offer a (short-lived) download link.
+    Promise.all(
+      (rawDocs ?? []).map(async (d): Promise<ClientDocument> => {
+        const { data } = await adminDb.storage
+          .from("client-documents")
+          .createSignedUrl(d.file_path, 3600);
+        return {
+          id: d.id,
+          category: d.category,
+          label: d.label,
+          file_name: d.file_name,
+          size_bytes: d.size_bytes,
+          created_at: d.created_at,
+          url: data?.signedUrl ?? null,
+        };
+      }),
+    ),
+  );
+  const homeMediaPromise = fetchClientMedia(id);
+  // The sent folder: hand-written emails to this client. Same admin
+  // client + org filter as documents, newest first, capped so a chatty
+  // account doesn't make the profile scroll forever.
+  const emailsPromise = Promise.resolve(
+    adminDb
+      .from("client_emails" as never)
+      .select(
+        "id, subject, to_email, status, error, created_at, attachments, sender:memberships!client_emails_sent_by_fkey(display_name, profile:profiles(full_name))",
+      )
+      .eq("client_id" as never, id)
+      .eq("organization_id" as never, membership.organization_id as never)
+      .order("created_at" as never, { ascending: false } as never)
+      .limit(20),
+  ) as unknown as Promise<{
+    data: Array<{
+      id: string;
+      subject: string;
+      to_email: string;
+      status: "sent" | "failed";
+      error: string | null;
+      created_at: string;
+      attachments: Array<{ name: string }> | null;
+      sender: {
+        display_name: string | null;
+        profile: { full_name: string | null } | null;
+      } | null;
+    }> | null;
+  }>;
+  const canEdit =
+    membership.role === "owner" ||
+    membership.role === "admin" ||
+    membership.role === "manager";
+  // Where a reply to a hand-written email would land — shown in the
+  // compose dialog so nobody assumes an inbox that isn't wired. Asked
+  // whenever this person could compose; used only when the client has an
+  // email and isn't archived (canCompose, below).
+  const orgSenderPromise =
+    canEdit && can(membership, "clients")
+      ? getOrgSender(membership.organization_id)
+      : Promise.resolve(null);
+  // None of these may surface as an unhandled rejection if the page stops
+  // early (notFound, or a failed client read): each is awaited below.
+  for (const p of [
+    propertiesPromise,
+    archiveSweepPromise,
+    unbilledPromise,
+    orgGbpPromise,
+    notificationContextPromise,
+    docsPromise,
+    homeMediaPromise,
+    emailsPromise,
+    orgSenderPromise,
+  ] as Promise<unknown>[]) {
+    p.catch(() => {});
+  }
+  const [tz, currency] = await Promise.all([
+    getOrgTimezone(membership.organization_id),
+    getOrgCurrency(membership.organization_id),
+  ]);
 
   const [
     clientResult,
@@ -187,22 +370,41 @@ export default async function ClientDetailPage({
   if (error) throw error;
   if (!client) notFound();
 
-  // Fetch referrer name if this client was referred by someone
-  let referrerName: string | null = null;
-  let referrerId: string | null = null;
-  if (client.referred_by_client_id) {
-    const { data: referrer } = await (supabase
-      .from("clients")
-      .select("id, name")
-      .eq("id", client.referred_by_client_id)
-      .maybeSingle() as unknown as Promise<{
-      data: { id: string; name: string } | null;
-    }>);
-    if (referrer) {
-      referrerName = referrer.name;
-      referrerId = referrer.id;
-    }
-  }
+  // Fetch referrer name if this client was referred by someone. The one
+  // read that needs the client row; everything else was started above.
+  const [
+    { data: referrer },
+    [{ data: propertyData }, { data: propertyJobRows }],
+    sweepCounts,
+    unbilledCount,
+    { data: orgGbp },
+    { orgDefault: orgContactDefault, smsEnabled: orgSmsEnabled },
+    clientDocuments,
+    homeMedia,
+    { data: rawEmails },
+    orgSenderIfAny,
+  ] = await Promise.all([
+    client.referred_by_client_id
+      ? (supabase
+          .from("clients")
+          .select("id, name")
+          .eq("id", client.referred_by_client_id)
+          .maybeSingle() as unknown as Promise<{
+          data: { id: string; name: string } | null;
+        }>)
+      : Promise.resolve({ data: null as { id: string; name: string } | null }),
+    propertiesPromise,
+    archiveSweepPromise,
+    unbilledPromise,
+    orgGbpPromise,
+    notificationContextPromise,
+    docsPromise,
+    homeMediaPromise,
+    emailsPromise,
+    orgSenderPromise,
+  ]);
+  const referrerName: string | null = referrer?.name ?? null;
+  const referrerId: string | null = referrer?.id ?? null;
 
   // Cast: property_id postdates the generated types (migration
   // 20260810010000), and one unknown column turns the whole row type into
@@ -218,7 +420,6 @@ export default async function ClientDetailPage({
   }>;
   // A manager whose "Invoices & estimates" access is off can read the client,
   // not the money: no balance, no invoice list, no invoice or estimate counts.
-  const seesMoney = can(membership, "invoicing");
   const invoices = seesMoney ? invoicesResult.data ?? [] : [];
   const estimates = estimatesResult.data ?? [];
   const reviews = reviewsResult.data ?? [];
@@ -230,34 +431,6 @@ export default async function ClientDetailPage({
   const invoicesTotal = invoicesResult.count ?? invoices.length;
   const estimatesTotal = estimatesResult.count ?? estimates.length;
   const reviewsTotal = reviewsResult.count ?? reviews.length;
-
-  // Properties + how many jobs each has, so archiving can say what it
-  // affects. Admin client because client_properties.access_notes holds door
-  // codes and this page is the one place they are meant to be edited; the
-  // read is org-scoped immediately below.
-  const admin = createSupabaseAdminClient();
-  const [{ data: propertyData }, { data: propertyJobRows }] =
-    await Promise.all([
-      admin
-        .from("client_properties" as never)
-        .select("id, label, address, access_notes, notes")
-        .eq("client_id" as never, id as never)
-        .eq("organization_id" as never, membership.organization_id as never)
-        .is("archived_at" as never, null as never)
-        .order("label" as never) as unknown as Promise<{
-        data: Array<Omit<PropertyRow, "bookingCount">> | null;
-      }>,
-      // ALL of this client's property-linked bookings, one column — the
-      // archive confirm quotes these counts, and tallying them from the
-      // recent-10 list above told an owner a 200-job property had "0 jobs".
-      admin
-        .from("bookings")
-        .select("property_id")
-        .eq("client_id", id)
-        .not("property_id", "is", null) as unknown as Promise<{
-        data: Array<{ property_id: string | null }> | null;
-      }>,
-    ]);
 
   const jobsPerProperty = new Map<string, number>();
   for (const b of propertyJobRows ?? []) {
@@ -273,130 +446,15 @@ export default async function ClientDetailPage({
     bookingCount: jobsPerProperty.get(p.id) ?? 0,
   }));
 
-  const canEdit =
-    membership.role === "owner" ||
-    membership.role === "admin" ||
-    membership.role === "manager";
   const canArchive =
     membership.role === "owner" || membership.role === "admin";
   const isArchived = Boolean(client.archived_at);
 
-  // What the Archive button would sweep — counted here so the confirm can
-  // state consequences instead of asking for blind trust. Head counts only.
   const [futureBk, activeSeries] = isArchived
     ? [{ count: 0 }, { count: 0 }]
-    : await Promise.all([
-        // Same window the sweep uses, read from the same helper so the two
-        // can't drift. Slight overcount is possible — the sweep also spares
-        // billed jobs — and that's the safe direction for a confirm to err.
-        supabase
-          .from("bookings")
-          .select("id", { count: "exact", head: true })
-          .eq("client_id", id)
-          .gte("scheduled_at", archiveCancelWindowStartIso())
-          .in("status", ["pending", "confirmed"]),
-        supabase
-          .from("booking_series")
-          .select("id", { count: "exact", head: true })
-          .eq("client_id", id)
-          .eq("active" as never, true as never),
-      ]);
-
-  // How much of this client's finished work is still unbilled. Cheap enough to
-  // compute here, and it's what turns "New invoice" from a blank form into an
-  // answer — the count rides on the button so she knows what's outstanding
-  // BEFORE clicking, rather than having to hold it in her head.
-  const unbilledCount = can(membership, "invoicing")
-    ? (await getUnbilledCompletedBookings(supabase, id)).length
-    : 0;
-
-  // Preconditions for Reset / Force-resend on the GBP review panel.
-  // The cron requires the client to have an email AND the org to
-  // have google_review_url set. If either is missing the cron
-  // silently skips and the owner is confused why no email goes out.
-  // We disable the buttons in the panel + show a hint so the cause
-  // is discoverable from the UI. The server action also refuses.
-  const { data: orgGbp } = (await supabase
-    .from("organizations")
-    .select("google_review_url")
-    .eq("id", membership.organization_id)
-    .maybeSingle()) as unknown as {
-    data: { google_review_url: string | null } | null;
-  };
+    : sweepCounts;
   const gbpPreconditionsMet = !!client.email && !!orgGbp?.google_review_url;
 
-  const { orgDefault: orgContactDefault, smsEnabled: orgSmsEnabled } =
-    await fetchOrgNotificationContext(membership.organization_id);
-
-  // Documents attached to this client's record (signed invoices etc.).
-  // Admin client + explicit org filter: the client row above already
-  // proved this client is in the caller's org, and the org filter keeps
-  // a multi-org account from ever crossing streams.
-  const adminDb = createSupabaseAdminClient();
-  const { data: rawDocs } = (await adminDb
-    .from("client_documents" as never)
-    .select("id, category, label, file_name, size_bytes, file_path, created_at")
-    .eq("client_id" as never, id)
-    .eq("organization_id" as never, membership.organization_id as never)
-    .order(
-      "created_at" as never,
-      { ascending: false } as never,
-    )) as unknown as {
-    data: Array<{
-      id: string;
-      category: string;
-      label: string;
-      file_name: string;
-      size_bytes: number | null;
-      file_path: string;
-      created_at: string;
-    }> | null;
-  };
-  // Sign each file so the card can offer a (short-lived) download link.
-  const homeMedia = await fetchClientMedia(id);
-  const clientDocuments: ClientDocument[] = await Promise.all(
-    (rawDocs ?? []).map(async (d) => {
-      const { data } = await adminDb.storage
-        .from("client-documents")
-        .createSignedUrl(d.file_path, 3600);
-      return {
-        id: d.id,
-        category: d.category,
-        label: d.label,
-        file_name: d.file_name,
-        size_bytes: d.size_bytes,
-        created_at: d.created_at,
-        url: data?.signedUrl ?? null,
-      };
-    }),
-  );
-
-  // The sent folder: hand-written emails to this client. Same admin
-  // client + org filter as documents, newest first, capped so a chatty
-  // account doesn't make the profile scroll forever.
-  const { data: rawEmails } = (await adminDb
-    .from("client_emails" as never)
-    .select(
-      "id, subject, to_email, status, error, created_at, attachments, sender:memberships!client_emails_sent_by_fkey(display_name, profile:profiles(full_name))",
-    )
-    .eq("client_id" as never, id)
-    .eq("organization_id" as never, membership.organization_id as never)
-    .order("created_at" as never, { ascending: false } as never)
-    .limit(20)) as unknown as {
-    data: Array<{
-      id: string;
-      subject: string;
-      to_email: string;
-      status: "sent" | "failed";
-      error: string | null;
-      created_at: string;
-      attachments: Array<{ name: string }> | null;
-      sender: {
-        display_name: string | null;
-        profile: { full_name: string | null } | null;
-      } | null;
-    }> | null;
-  };
   const sentEmails: SentEmail[] = (rawEmails ?? []).map((e) => ({
     id: e.id,
     subject: e.subject,
@@ -410,7 +468,7 @@ export default async function ClientDetailPage({
   // Where a reply to a hand-written email would land — shown in the
   // compose dialog so nobody assumes an inbox that isn't wired.
   const canCompose = Boolean(canEdit && can(membership, "clients") && client.email && !isArchived);
-  const orgSender = canCompose ? await getOrgSender(membership.organization_id) : null;
+  const orgSender = canCompose ? orgSenderIfAny : null;
   const replyTo = orgSender?.replyTo ?? (orgSender && orgSender.from !== "noreply@sollos3.com" ? orgSender.from : null);
 
   return (

@@ -96,6 +96,68 @@ export default async function BookingsPage({
     }> | null;
   }>;
 
+  // Everything below that does not need the list starts NOW, beside it.
+  // This page used to ask its questions one at a time: the list, then a
+  // count, then the accommodation flags, the crews, the coverage, the cover
+  // warnings, the series count and the request count, each waiting for the
+  // one before. Measured on the test stack (2026-11-21): twelve database
+  // round trips end to end. Now: the list and these together, then one batch
+  // keyed on the list, then the one lookup that needs that batch.
+  //
+  // The total is counted whether or not the list comes back full: a head
+  // count is cheap, and Svit's list is at the limit (983 of 1,000 on
+  // 2026-11-16), so waiting to find out cost a round trip on every visit.
+  let counted = supabase
+    .from("bookings")
+    .select("id", { count: "exact", head: true })
+    .eq("organization_id", membership.organization_id);
+  if (clientFilter) counted = counted.eq("client_id", clientFilter);
+  counted = showArchived
+    ? counted.not("archived_at" as never, "is" as never, null as never)
+    : counted.is("archived_at" as never, null as never);
+  const totalPromise = Promise.resolve(counted);
+  const flaggedCrewPromise = employeesPromise.then(({ data: employeesData }) =>
+    getFlaggedCrewIds((employeesData ?? []).map((m) => m.id)),
+  );
+  // Count active series for this org
+  const seriesCountPromise = Promise.resolve(
+    supabase
+      .from("booking_series" as never)
+      .select("id", { count: "exact", head: true })
+      .eq("active" as never, true as never),
+  ) as unknown as Promise<{ count: number | null }>;
+  // Pending client-submitted booking requests from the portal — surface
+  // the count so the owner notices without having to navigate deeper.
+  const pendingRequestPromise = Promise.resolve(
+    supabase
+      .from("booking_requests" as never)
+      .select("id", { count: "exact", head: true })
+      .eq("status" as never, "pending" as never),
+  ) as unknown as Promise<{ count: number | null }>;
+  // Visits a series' crew save left someone off (another job at that
+  // time): the chip beside the row, and after such a save the banner that
+  // says who and which dates. Read on its own so the list never depends on
+  // it.
+  const coverPromise = (async () => {
+    const needsCover = new Map<string, string>();
+    let coverBanner: string | null = null;
+    try {
+      const fromIso = new Date().toISOString();
+      const [all, forSeries, tzForCover] = await Promise.all([
+        loadCoverNeeded(membership.organization_id, { from: fromIso }),
+        cover && /^[0-9a-f-]{36}$/i.test(cover)
+          ? loadCoverNeeded(membership.organization_id, { seriesId: cover, from: fromIso })
+          : Promise.resolve(null),
+        tzPromise,
+      ]);
+      for (const v of all) needsCover.set(v.bookingId, coverReason(v, tzForCover));
+      if (forSeries) coverBanner = coverSummary(forSeries, tzForCover);
+    } catch (err) {
+      console.error("[bookings] could not read which visits need cover:", err);
+    }
+    return { needsCover, coverBanner };
+  })();
+
   const { data, error } = await (query
     .order("scheduled_at", { ascending: false })
     .order("id", { ascending: false })
@@ -129,62 +191,90 @@ export default async function BookingsPage({
   // off without a word, and searching the table for one found nothing (Svit
   // reached 983 bookings on 2026-11-16). When the list is full, count what
   // there is and say so above the table.
-  let total: number | null = null;
-  if ((data ?? []).length >= LIST_LIMIT) {
-    let counted = supabase
-      .from("bookings")
-      .select("id", { count: "exact", head: true })
-      .eq("organization_id", membership.organization_id);
-    if (clientFilter) counted = counted.eq("client_id", clientFilter);
-    counted = showArchived
-      ? counted.not("archived_at" as never, "is" as never, null as never)
-      : counted.is("archived_at" as never, null as never);
-    const { count } = await counted;
-    total = count ?? null;
-  }
+  const bookingIds = (data ?? []).map((b) => b.id);
+  const seriesIds = [
+    ...new Set((data ?? []).map((b) => b.series_id).filter(Boolean)),
+  ] as string[];
+  type SeriesRow = {
+    id: string;
+    pattern: string;
+    custom_days: number[] | null;
+    start_time: string;
+    monthly_nth: number | null;
+    monthly_dow: number | null;
+  };
 
-  const tz = await tzPromise;
-  const orgDividesHours = await dividesPromise;
-  const { data: employeesData } = await employeesPromise;
-  const flaggedCrew = await getFlaggedCrewIds(
-    (employeesData ?? []).map((m) => m.id),
-  );
+  // One batch for everything keyed on the list (see the note above).
+  const [
+    { data: employeesData },
+    flaggedCrew,
+    { data: seriesRows },
+    { data: assigneesData },
+    coverageMap,
+    { count: totalCount },
+    tz,
+    orgDividesHours,
+  ] = await Promise.all([
+    employeesPromise,
+    flaggedCrewPromise,
+    // The repeat icon said "Recurring booking" and nothing else, so telling
+    // every-4-weeks from monthly-on-a-Saturday meant opening the edit form.
+    // One batch query for the series on this page turns the badge into the
+    // actual rule.
+    seriesIds.length
+      ? (Promise.resolve(
+          supabase
+            .from("booking_series" as never)
+            .select(
+              "id, pattern, custom_days, start_time, monthly_nth, monthly_dow",
+            )
+            .in("id" as never, seriesIds as never),
+        ) as unknown as Promise<{ data: SeriesRow[] | null }>)
+      : Promise.resolve({ data: [] as SeriesRow[] }),
+    // Junction rows for the bookings on this page — gives us each
+    // booking's full additional crew so the Assign dialog opens with the
+    // current selection pre-filled.
+    // Chunked: up to 1,000 ids in one `in` filter overflowed the request URL
+    // and the whole lookup failed, so every team job showed only its first
+    // cleaner. See lib/supabase/chunked-in.ts.
+    selectInChunks(bookingIds, (chunk) =>
+      supabase
+        .from("booking_assignees" as never)
+        .select(
+          "booking_id, membership_id, is_primary, split_start_offset_minutes, split_duration_minutes",
+        )
+        .in("booking_id" as never, chunk as never) as unknown as Promise<{
+        data: Array<{
+          booking_id: string;
+          membership_id: string;
+          is_primary: boolean;
+          split_start_offset_minutes: number | null;
+          split_duration_minutes: number | null;
+        }> | null;
+        error: { message: string } | null;
+      }>,
+    ),
+    // Subcontractor coverage — who claimed a shift offer on each booking. Read
+    // from the claims table, not job_offers.filled_*: a 1-of-N claim leaves the
+    // offer 'open' and a later claim overwrites the single filled pointer, so
+    // filtering on status='filled' hid real claimers. Shown alongside member
+    // assignment, not just as its fallback — a lead cleaner plus a bench
+    // freelancer is a real crew shape.
+    resolveFreelancerCoverageNames(bookingIds),
+    totalPromise,
+    tzPromise,
+    dividesPromise,
+  ]);
+  // The list stops at LIST_LIMIT; only then is the total worth saying.
+  const total: number | null =
+    (data ?? []).length >= LIST_LIMIT ? (totalCount ?? null) : null;
+
   const employees = (employeesData ?? []).map((m) => ({
     id: m.id,
     label: memberDisplayName(m) ?? "Unnamed",
     hasAccommodations: flaggedCrew.has(m.id),
   }));
 
-  // Junction rows for the bookings on this page — gives us each
-  // booking's full additional crew so the Assign dialog opens with the
-  // current selection pre-filled. Single batch query keyed on the
-  // bookings.id list keeps this cheap (one round trip, not N).
-  const bookingIds = (data ?? []).map((b) => b.id);
-
-  // The repeat icon said "Recurring booking" and nothing else, so telling
-  // every-4-weeks from monthly-on-a-Saturday meant opening the edit form.
-  // One batch query for the series on this page turns the badge into the
-  // actual rule.
-  const seriesIds = [
-    ...new Set((data ?? []).map((b) => b.series_id).filter(Boolean)),
-  ] as string[];
-  const { data: seriesRows } = seriesIds.length
-    ? ((await supabase
-        .from("booking_series" as never)
-        .select(
-          "id, pattern, custom_days, start_time, monthly_nth, monthly_dow",
-        )
-        .in("id" as never, seriesIds as never)) as unknown as {
-        data: Array<{
-          id: string;
-          pattern: string;
-          custom_days: number[] | null;
-          start_time: string;
-          monthly_nth: number | null;
-          monthly_dow: number | null;
-        }> | null;
-      })
-    : { data: [] };
   const seriesLabelById = new Map<string, string>();
   for (const s of seriesRows ?? []) {
     seriesLabelById.set(
@@ -198,26 +288,6 @@ export default async function BookingsPage({
       ),
     );
   }
-  // Chunked: up to 1,000 ids in one `in` filter overflowed the request URL
-  // and the whole lookup failed, so every team job showed only its first
-  // cleaner. See lib/supabase/chunked-in.ts.
-  const { data: assigneesData } = await selectInChunks(bookingIds, (chunk) =>
-    supabase
-      .from("booking_assignees" as never)
-      .select(
-        "booking_id, membership_id, is_primary, split_start_offset_minutes, split_duration_minutes",
-      )
-      .in("booking_id" as never, chunk as never) as unknown as Promise<{
-      data: Array<{
-        booking_id: string;
-        membership_id: string;
-        is_primary: boolean;
-        split_start_offset_minutes: number | null;
-        split_duration_minutes: number | null;
-      }> | null;
-      error: { message: string } | null;
-    }>,
-  );
   const additionalByBooking = new Map<string, string[]>();
   // Count split segments per booking (rows carrying split metadata). 2+
   // means the booking is a split shift — feeds the table's "Split" chip.
@@ -283,35 +353,8 @@ export default async function BookingsPage({
           .map((mid) => inactiveNames.get(mid) as string)
       : [];
 
-  // Subcontractor coverage — who claimed a shift offer on each booking. Read
-  // from the claims table, not job_offers.filled_*: a 1-of-N claim leaves the
-  // offer 'open' and a later claim overwrites the single filled pointer, so
-  // filtering on status='filled' hid real claimers. Shown alongside member
-  // assignment, not just as its fallback — a lead cleaner plus a bench
-  // freelancer is a real crew shape.
-  const coverageMap = await resolveFreelancerCoverageNames(
-    (data ?? []).map((b) => b.id),
-  );
-
-  // Visits a series' crew save left someone off (another job at that
-  // time): the chip beside the row, and after such a save the banner that
-  // says who and which dates. Read on its own so the list never depends on
-  // it.
-  const needsCover = new Map<string, string>();
-  let coverBanner: string | null = null;
-  try {
-    for (const v of await loadCoverNeeded(membership.organization_id, { from: new Date().toISOString() })) {
-      needsCover.set(v.bookingId, coverReason(v, tz));
-    }
-    if (cover && /^[0-9a-f-]{36}$/i.test(cover)) {
-      coverBanner = coverSummary(
-        await loadCoverNeeded(membership.organization_id, { seriesId: cover, from: new Date().toISOString() }),
-        tz,
-      );
-    }
-  } catch (err) {
-    console.error("[bookings] could not read which visits need cover:", err);
-  }
+  const [{ needsCover, coverBanner }, { count: seriesCount }, { count: pendingRequestCount }] =
+    await Promise.all([coverPromise, seriesCountPromise, pendingRequestPromise]);
 
   const rows: BookingRow[] = (data ?? []).map((b) => ({
     id: b.id,
@@ -350,23 +393,6 @@ export default async function BookingsPage({
     notes: b.notes ?? null,
     client_notes: b.client?.notes ?? null,
   }));
-
-  // Count active series for this org
-  const { count: seriesCount } = await (supabase
-    .from("booking_series" as never)
-    .select("id", { count: "exact", head: true })
-    .eq("active" as never, true as never) as unknown as Promise<{
-    count: number | null;
-  }>);
-
-  // Pending client-submitted booking requests from the portal — surface
-  // the count so the owner notices without having to navigate deeper.
-  const { count: pendingRequestCount } = await (supabase
-    .from("booking_requests" as never)
-    .select("id", { count: "exact", head: true })
-    .eq("status" as never, "pending" as never) as unknown as Promise<{
-    count: number | null;
-  }>);
 
   return (
     <PageShell

@@ -18,19 +18,19 @@ type RequestRow = {
   } | null;
 };
 
+export type CoveragePanelData = { reqs: RequestRow[]; unfilledCount: number };
+
 /**
- * "Needs coverage" panel for the top of the Scheduling page. Shows open
- * recurring-stop requests (cleaners asking off a standing client) plus a
- * count of upcoming shifts with no cleaner assigned (left behind by
- * declines/cancels). Renders nothing when everything's covered.
+ * The panel's reads, separate from the panel so the page can start them at
+ * its very top. As a child component the panel only began asking once the
+ * board's own data was in and the page had rendered — three more round
+ * trips in series at the end of every Scheduling load (test stack,
+ * 2026-11-21). The page now starts this beside its own reads and hands the
+ * promise down.
  */
-export async function CoveragePanel({
-  organizationId,
-  tz,
-}: {
-  organizationId: string;
-  tz: string;
-}) {
+export async function loadCoveragePanelData(
+  organizationId: string,
+): Promise<CoveragePanelData> {
   const supabase = await createSupabaseServerClient();
   const nowIso = new Date().toISOString();
   const { maybeUnstaffedFilter, resolveBookingCoverage } = await import("@/lib/booking-coverage");
@@ -70,6 +70,24 @@ export async function CoveragePanel({
   const unfilledCount = (openBookings ?? []).filter(
     (b) => !cov.get(b.id)?.staffed,
   ).length;
+  return { reqs, unfilledCount };
+}
+
+/**
+ * "Needs coverage" panel for the top of the Scheduling page. Shows open
+ * recurring-stop requests (cleaners asking off a standing client) plus a
+ * count of upcoming shifts with no cleaner assigned (left behind by
+ * declines/cancels). Renders nothing when everything's covered.
+ */
+export async function CoveragePanel({
+  data,
+  tz,
+}: {
+  /** loadCoveragePanelData(orgId), started by the page. */
+  data: Promise<CoveragePanelData>;
+  tz: string;
+}) {
+  const { reqs, unfilledCount } = await data;
   if (reqs.length === 0 && unfilledCount === 0) return null;
 
   return (

@@ -4,6 +4,7 @@ import { FieldShell } from "@/components/field-shell";
 import { BrandProvider } from "@/components/brand-provider";
 import { PushPrompt } from "@/components/push-prompt";
 import { RefusalRecorder } from "@/components/refusal-recorder";
+import { ShellMountedMark } from "@/components/boot-splash";
 import { isFeedVisible } from "@/lib/feed-visibility";
 import { getOrgTimezone } from "@/lib/org-timezone";
 import { buildTzProbe } from "@/lib/tz-probe";
@@ -81,6 +82,8 @@ export default async function FieldLayout({
         />
         {/* Keeps what the app says when it refuses something. Shows nothing. */}
         <RefusalRecorder />
+        {/* Lets the root loading.tsx tell a cold start from a click. */}
+        <ShellMountedMark />
         {children}
       </FieldShell>
     </BrandProvider>

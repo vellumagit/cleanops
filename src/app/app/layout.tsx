@@ -9,6 +9,7 @@ import { DesktopToolRibbon } from "@/components/desktop-tool-ribbon";
 import { BrandProvider } from "@/components/brand-provider";
 import { PushPrompt } from "@/components/push-prompt";
 import { RefusalRecorder } from "@/components/refusal-recorder";
+import { ShellMountedMark } from "@/components/boot-splash";
 import { TrialBanner } from "@/components/trial-banner";
 import { AutomationsOffBanner } from "@/components/automations-off-banner";
 import { SetupReturnBanner } from "@/components/setup-return-banner";
@@ -53,29 +54,9 @@ export default async function AppLayout({
   const membership = await requireMembership(["owner", "admin", "manager"]);
 
   const supabase = await createSupabaseServerClient();
-  // Independent org-scoped lookups — one round-trip instead of three
-  // sequential ones. This layout is the front door of every /app render;
-  // waterfalls here tax every single page.
-  const [subscriptionInfo, orgTz, feedEnabled] = await Promise.all([
-    getSubscriptionInfo(membership.organization_id),
-    getOrgTimezone(membership.organization_id),
-    isFeedVisible(membership.organization_id),
-  ]);
-
-  // Hard wall: an expired org (trial elapsed, or past-due grace run out) gets
-  // the subscribe screen INSTEAD of the app — the single chokepoint every
-  // /app route passes through. Only enforced when Stripe billing is actually
-  // live, so a non-Stripe environment can never accidentally lock everyone
-  // out. Overridden (free_forever/comp) and legacy orgs never reach here.
-  if (isStripeEnabled() && subscriptionInfo.gate === "expired") {
-    return (
-      <TrialEndedWall
-        info={subscriptionInfo}
-        role={membership.role}
-        orgName={membership.organization_name}
-      />
-    );
-  }
+  // The org's timezone came with the membership (src/lib/org-prefetch.ts),
+  // so this resolves without a trip; it only names "today" for the counts.
+  const orgTz = await getOrgTimezone(membership.organization_id);
 
   // Today's boundaries in the ORG'S timezone. The comment here always said
   // that; the code used FALLBACK_TZ — fine for one Edmonton tenant, wrong for
@@ -94,15 +75,38 @@ export default async function AppLayout({
   //
   // See supabase/migrations/20260903020000_app_shell_counts.sql. It runs
   // SECURITY INVOKER, so every count is still bound by the caller's own RLS.
+  //
+  // It runs BESIDE the subscription check, not after it (2026-11-21): the
+  // two used to be two levels of the layout's critical path. An expired org
+  // pays for counts it never shows, which is cheap and rare.
   // eslint-disable-next-line react-hooks/purity
   const nowMs = Date.now();
-  const { data: shell } = (await supabase.rpc("app_shell_counts" as never, {
-    p_org: membership.organization_id,
-    p_membership: membership.id,
-    p_today_start: todayStart.toISOString(),
-    p_today_end: todayEnd.toISOString(),
-    p_reviews_since: new Date(nowMs - 7 * 24 * 60 * 60 * 1000).toISOString(),
-  } as never)) as unknown as { data: ShellCounts | null };
+  const [subscriptionInfo, feedEnabled, { data: shell }] = await Promise.all([
+    getSubscriptionInfo(membership.organization_id),
+    isFeedVisible(membership.organization_id),
+    supabase.rpc("app_shell_counts" as never, {
+      p_org: membership.organization_id,
+      p_membership: membership.id,
+      p_today_start: todayStart.toISOString(),
+      p_today_end: todayEnd.toISOString(),
+      p_reviews_since: new Date(nowMs - 7 * 24 * 60 * 60 * 1000).toISOString(),
+    } as never) as unknown as Promise<{ data: ShellCounts | null }>,
+  ]);
+
+  // Hard wall: an expired org (trial elapsed, or past-due grace run out) gets
+  // the subscribe screen INSTEAD of the app — the single chokepoint every
+  // /app route passes through. Only enforced when Stripe billing is actually
+  // live, so a non-Stripe environment can never accidentally lock everyone
+  // out. Overridden (free_forever/comp) and legacy orgs never reach here.
+  if (isStripeEnabled() && subscriptionInfo.gate === "expired") {
+    return (
+      <TrialEndedWall
+        info={subscriptionInfo}
+        role={membership.role}
+        orgName={membership.organization_name}
+      />
+    );
+  }
 
   // A failed RPC must not blank the shell: fall back to zeroes, which render
   // as "no badges" rather than an error page over a nav decoration.
@@ -190,6 +194,8 @@ export default async function AppLayout({
         />
         {/* Keeps what the app says when it refuses something. Shows nothing. */}
         <RefusalRecorder />
+        {/* Lets the root loading.tsx tell a cold start from a click. */}
+        <ShellMountedMark />
         {/* Install prompt for admins on phones. The banner already self-hides
             when installed or dismissed; lg:hidden keeps desktops on the
             quieter Settings card instead. Mounting it here also registers

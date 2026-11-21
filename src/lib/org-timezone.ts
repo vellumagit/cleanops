@@ -2,6 +2,7 @@ import "server-only";
 import { cache } from "react";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { FALLBACK_TZ } from "@/lib/format";
+import { prefetchedOrgSettings } from "@/lib/org-prefetch";
 
 /**
  * Fetch the IANA timezone for an organization. Cached per-request via
@@ -16,6 +17,11 @@ import { FALLBACK_TZ } from "@/lib/format";
  */
 export const getOrgTimezone = cache(
   async (organizationId: string): Promise<string> => {
+    // Already read with the membership in this render (org-prefetch.ts).
+    const primed = prefetchedOrgSettings(organizationId);
+    if (primed && primed.timezone !== undefined) {
+      return primed.timezone && isValidIanaTz(primed.timezone) ? primed.timezone : FALLBACK_TZ;
+    }
     try {
       const admin = createSupabaseAdminClient();
       const { data } = (await admin

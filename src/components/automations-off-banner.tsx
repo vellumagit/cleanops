@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Zap } from "lucide-react";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { prefetchedOrgSettings } from "@/lib/org-prefetch";
 
 /**
  * Nudge shown while an org's automations master switch is off.
@@ -21,14 +22,18 @@ export async function AutomationsOffBanner({
 }) {
   if (!["owner", "admin"].includes(role)) return null;
 
-  const admin = createSupabaseAdminClient();
-  const { data } = (await admin
-    .from("organizations")
-    .select("automations_enabled")
-    .eq("id", organizationId)
-    .maybeSingle()) as unknown as {
-    data: { automations_enabled: boolean | null } | null;
-  };
+  // Usually read with the membership in this render (org-prefetch.ts).
+  const primed = prefetchedOrgSettings(organizationId);
+  const { data } =
+    primed && primed.automations_enabled !== undefined
+      ? { data: { automations_enabled: primed.automations_enabled } }
+      : ((await createSupabaseAdminClient()
+          .from("organizations")
+          .select("automations_enabled")
+          .eq("id", organizationId)
+          .maybeSingle()) as unknown as {
+          data: { automations_enabled: boolean | null } | null;
+        });
 
   // Absent column (migration not run yet) → don't nag.
   if (!data || data.automations_enabled !== false) return null;

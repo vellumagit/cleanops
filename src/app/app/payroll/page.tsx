@@ -62,19 +62,84 @@ function shortDate(ymd: string): string {
 export default async function PayrollPage() {
   const membership = await requireMembership(["owner", "admin"]);
   const admin = createSupabaseAdminClient();
+  // This page used to ask its questions one at a time — runs, then
+  // contractor statements, payables, the roster, the schedule, unpaid time,
+  // older unpaid time, who can get an adjustment, waiting adjustments, tips,
+  // rate gaps: seventeen database round trips end to end on the test stack
+  // (2026-11-21). Everything that needs only the org now starts here at
+  // once; the three reads that need the suggested pay period start together
+  // as soon as it is known.
+  const orgId = membership.organization_id;
+  const runsPromise = Promise.resolve(
+    admin
+      .from("payroll_runs" as never)
+      .select(
+        "id, period_start, period_end, status, total_cents, finalized_at, paid_at, created_at",
+      )
+      .eq("organization_id" as never, orgId as never)
+      .order("period_start" as never, { ascending: false } as never)
+      .limit(50),
+  );
+  const subRunsPromise = Promise.resolve(
+    admin
+      .from("subcontractor_pay_runs" as never)
+      .select("id, period_start, period_end, status, total_cents, paid_at")
+      .eq("organization_id" as never, orgId as never)
+      .order("period_start" as never, { ascending: false } as never)
+      .limit(50),
+  );
+  const payablesPromise = getSubcontractorPayables(orgId);
+  const rosterPromise = Promise.resolve(
+    admin
+      .from("memberships")
+      .select("id, engagement, pay_rate_cents")
+      .eq("organization_id", orgId)
+      .eq("status", "active"),
+  );
+  const schedulePromise = Promise.resolve(
+    admin
+      .from("organizations")
+      .select("pay_schedule, pay_anchor" as never)
+      .eq("id", orgId)
+      .maybeSingle(),
+  );
+  const payEmployeesPromise = Promise.resolve(
+    admin
+      .from("memberships")
+      .select("id, display_name, profile:profiles ( full_name )")
+      .eq("organization_id", orgId)
+      .eq("status", "active")
+      .eq("engagement" as never, "employee" as never),
+  );
+  // Read on their own so the page opens on a database that doesn't have the
+  // table yet (the try/catch where it is awaited, below).
+  const adjustmentRowsPromise = Promise.resolve(
+    admin
+      .from("pay_adjustments" as never)
+      .select("id, employee_id, amount_cents, reason, corrects_period_start, corrects_period_end")
+      .eq("organization_id" as never, orgId as never)
+      .is("payroll_run_id" as never, null as never)
+      .order("created_at" as never, { ascending: true } as never),
+  );
+  const tipsOwedPromise = getTipsOwed(orgId);
+  for (const pr of [
+    runsPromise,
+    subRunsPromise,
+    payablesPromise,
+    rosterPromise,
+    schedulePromise,
+    payEmployeesPromise,
+    adjustmentRowsPromise,
+    tipsOwedPromise,
+  ] as Promise<unknown>[]) {
+    pr.catch(() => {});
+  }
   const [tz, currency] = await Promise.all([
-    getOrgTimezone(membership.organization_id),
-    getOrgCurrency(membership.organization_id),
+    getOrgTimezone(orgId),
+    getOrgCurrency(orgId),
   ]);
 
-  const { data: rawRuns } = (await admin
-    .from("payroll_runs" as never)
-    .select(
-      "id, period_start, period_end, status, total_cents, finalized_at, paid_at, created_at",
-    )
-    .eq("organization_id" as never, membership.organization_id as never)
-    .order("period_start" as never, { ascending: false } as never)
-    .limit(50)) as unknown as {
+  const { data: rawRuns } = (await runsPromise) as unknown as {
     data: Array<{
       id: string;
       period_start: string;
@@ -93,12 +158,7 @@ export default async function PayrollPage() {
   const currentRun = inProgress[0] ?? null;
 
   // Contractor statements for the same table — one period, both systems.
-  const { data: rawSubRuns } = (await admin
-    .from("subcontractor_pay_runs" as never)
-    .select("id, period_start, period_end, status, total_cents, paid_at")
-    .eq("organization_id" as never, membership.organization_id as never)
-    .order("period_start" as never, { ascending: false } as never)
-    .limit(50)) as unknown as {
+  const { data: rawSubRuns } = (await subRunsPromise) as unknown as {
     data: Array<{
       id: string;
       period_start: string;
@@ -148,17 +208,13 @@ export default async function PayrollPage() {
   // and their tax treatment. Shown here because "what am I paying out this
   // period" is the question this page answers, and the answer was incomplete.
   const { rows: subRows, totalOutstandingCents: subOutstandingCents } =
-    await getSubcontractorPayables(membership.organization_id);
+    await payablesPromise;
   const subOwedCount = subRows.filter((r) => r.outstandingCents > 0).length;
 
   // Head-count per PAY SYSTEM, not per source — engagement is an accounting
   // fact; where someone was sourced (roster vs bench) changes nothing about
   // how they're paid.
-  const { data: rosterRows } = (await admin
-    .from("memberships")
-    .select("id, engagement, pay_rate_cents")
-    .eq("organization_id", membership.organization_id)
-    .eq("status", "active")) as unknown as {
+  const { data: rosterRows } = (await rosterPromise) as unknown as {
     data: Array<{
       id: string;
       engagement: string | null;
@@ -179,11 +235,7 @@ export default async function PayrollPage() {
   // periods follow the org's calendar: the last completed window, or the
   // in-progress one when that's already been run. Without a schedule, the
   // old heuristic: day after the last run ended, through today.
-  const { data: orgSchedule } = (await admin
-    .from("organizations")
-    .select("pay_schedule, pay_anchor" as never)
-    .eq("id", membership.organization_id)
-    .maybeSingle()) as unknown as {
+  const { data: orgSchedule } = (await schedulePromise) as unknown as {
     data: { pay_schedule: string | null; pay_anchor: string | null } | null;
   };
   const paySchedule = (orgSchedule?.pay_schedule ?? null) as PaySchedule | null;
@@ -219,6 +271,84 @@ export default async function PayrollPage() {
     tz,
     1,
   ).toISOString();
+  type UnpaidEntry = {
+    employee_id: string;
+    clock_in_at: string;
+    clock_out_at: string;
+    pay_rate_cents_snapshot: number | null;
+    engagement_snapshot: string | null;
+    needs_review: boolean | null;
+  };
+
+  // Previous periods still owing (used further down): which windows before
+  // the suggestion nothing covers yet. Worked out here so their time entries
+  // are read beside this window's, not after them.
+  const openBackWindows: Array<{ start: string; end: string }> = [];
+  if (paySchedule && roster.length > 0) {
+    let cursor = suggestedStart;
+    const covered = new Set(
+      [...runs, ...subStatementRuns].map(
+        (r) => `${r.period_start}_${r.period_end}`,
+      ),
+    );
+    for (let i = 0; i < 8; i++) {
+      const prev = periodContaining(
+        paySchedule,
+        payAnchor,
+        addDays(cursor, -1),
+      );
+      if (!covered.has(`${prev.start}_${prev.end}`)) openBackWindows.push(prev);
+      cursor = prev.start;
+    }
+  }
+  const [unstampedResult, oldEntriesResult, rateGaps] = await Promise.all([
+    roster.length > 0
+      ? (Promise.resolve(
+          admin
+            .from("time_entries")
+            .select("employee_id, clock_in_at, clock_out_at, pay_rate_cents_snapshot, engagement_snapshot, needs_review")
+            .in(
+              "employee_id",
+              roster.map((r) => r.id),
+            )
+            .is("payroll_run_id", null)
+            .is("subcontractor_run_id" as never, null as never)
+            .not("clock_out_at", "is", null)
+            .lt("clock_in_at", bucketToIso)
+            // PostgREST clamps to the project max_rows (1000) anyway — asking
+            // for more just pretends. The run machine refuses windows this big.
+            .limit(1000),
+        ) as unknown as Promise<{ data: UnpaidEntry[] | null }>)
+      : Promise.resolve({ data: null as UnpaidEntry[] | null }),
+    openBackWindows.length > 0
+      ? (Promise.resolve(
+          admin
+            .from("time_entries")
+            .select("employee_id, clock_in_at, clock_out_at, pay_rate_cents_snapshot, engagement_snapshot, needs_review")
+            .in(
+              "employee_id",
+              roster.map((r) => r.id),
+            )
+            .is("payroll_run_id", null)
+            .is("subcontractor_run_id" as never, null as never)
+            .not("clock_out_at", "is", null)
+            .gte(
+              "clock_in_at",
+              zonedMidnightUtc(openBackWindows[openBackWindows.length - 1].start, tz).toISOString(),
+            )
+            .lt("clock_in_at", zonedMidnightUtc(suggestedStart, tz).toISOString())
+            // Clamped to max_rows (1000) server-side regardless; estimates only.
+            .limit(1000),
+        ) as unknown as Promise<{ data: UnpaidEntry[] | null }>)
+      : Promise.resolve({ data: null as UnpaidEntry[] | null }),
+    // Said here because this is where a period gets prepared, and preparing is
+    // what makes a missing rate expensive to fix. See lib/pay-rate-gaps.ts.
+    loadRateGaps(admin, orgId, suggestedStart, suggestedEnd, tz).catch((err) => {
+      console.error("[payroll] could not check pay rates:", err);
+      return [];
+    }),
+  ]);
+
   const rateById = new Map(roster.map((r) => [r.id, r.pay_rate_cents]));
   const engagementById = new Map(roster.map((r) => [r.id, r.engagement]));
   let unpaidMinutes = 0;
@@ -227,31 +357,7 @@ export default async function PayrollPage() {
   let olderCents = 0;
   const unpaidPeople = new Set<string>();
   if (roster.length > 0) {
-    const { data: unstamped } = (await admin
-      .from("time_entries")
-      .select(
-        "employee_id, clock_in_at, clock_out_at, pay_rate_cents_snapshot, engagement_snapshot, needs_review",
-      )
-      .in(
-        "employee_id",
-        roster.map((r) => r.id),
-      )
-      .is("payroll_run_id", null)
-      .is("subcontractor_run_id" as never, null as never)
-      .not("clock_out_at", "is", null)
-      .lt("clock_in_at", bucketToIso)
-      // PostgREST clamps to the project max_rows (1000) anyway — asking
-      // for more just pretends. The run machine refuses windows this big.
-      .limit(1000)) as unknown as {
-      data: Array<{
-        employee_id: string;
-        clock_in_at: string;
-        clock_out_at: string;
-        pay_rate_cents_snapshot: number | null;
-        engagement_snapshot: string | null;
-        needs_review: boolean | null;
-      }> | null;
-    };
+    const unstamped = unstampedResult.data;
     for (const e of unstamped ?? []) {
       const engagement =
         e.engagement_snapshot ?? engagementById.get(e.employee_id) ?? null;
@@ -304,62 +410,19 @@ export default async function PayrollPage() {
     flagged: number;
   };
   const backPeriods: BackPeriod[] = [];
-  if (paySchedule && roster.length > 0) {
-    const windows: Array<{ start: string; end: string }> = [];
-    let cursor = suggestedStart;
-    for (let i = 0; i < 8; i++) {
-      const prev = periodContaining(
-        paySchedule,
-        payAnchor,
-        addDays(cursor, -1),
-      );
-      windows.push(prev);
-      cursor = prev.start;
-    }
-    const covered = new Set(
-      [...runs, ...subStatementRuns].map(
-        (r) => `${r.period_start}_${r.period_end}`,
-      ),
-    );
-    const open = windows.filter(
-      (w) => !covered.has(`${w.start}_${w.end}`),
-    );
-    if (open.length > 0) {
+  if (openBackWindows.length > 0) {
+    const open = openBackWindows;
+    {
       // Bounds and day-bucketing are ORG-LOCAL, matching the run machine —
       // sliced UTC dates put a 7pm Edmonton shift on the 15th into the
       // 16th's window, so estimates promised money Prepare wouldn't find.
-      const oldestStart = open[open.length - 1].start;
       const localYmd = new Intl.DateTimeFormat("en-CA", {
         timeZone: tz,
         year: "numeric",
         month: "2-digit",
         day: "2-digit",
       });
-      const { data: oldEntries } = (await admin
-        .from("time_entries")
-        .select(
-          "employee_id, clock_in_at, clock_out_at, pay_rate_cents_snapshot, engagement_snapshot, needs_review",
-        )
-        .in(
-          "employee_id",
-          roster.map((r) => r.id),
-        )
-        .is("payroll_run_id", null)
-        .is("subcontractor_run_id" as never, null as never)
-        .not("clock_out_at", "is", null)
-        .gte("clock_in_at", zonedMidnightUtc(oldestStart, tz).toISOString())
-        .lt("clock_in_at", zonedMidnightUtc(suggestedStart, tz).toISOString())
-        // Clamped to max_rows (1000) server-side regardless; estimates only.
-        .limit(1000)) as unknown as {
-        data: Array<{
-          employee_id: string;
-          clock_in_at: string;
-          clock_out_at: string;
-          pay_rate_cents_snapshot: number | null;
-          engagement_snapshot: string | null;
-          needs_review: boolean | null;
-        }> | null;
-      };
+      const oldEntries = oldEntriesResult.data;
       for (const w of open) {
         let empCents = 0;
         let subCents = 0;
@@ -414,12 +477,7 @@ export default async function PayrollPage() {
   // Pay adjustments: who can be given one, and the ones still waiting for a
   // pay period. Read on their own so the page opens on a database that
   // doesn't have the table yet.
-  const { data: payEmployees } = (await admin
-    .from("memberships")
-    .select("id, display_name, profile:profiles ( full_name )")
-    .eq("organization_id", membership.organization_id)
-    .eq("status", "active")
-    .eq("engagement" as never, "employee" as never)) as unknown as {
+  const { data: payEmployees } = (await payEmployeesPromise) as unknown as {
     data: Array<{ id: string; display_name: string | null; profile: { full_name: string | null } | null }> | null;
   };
   const adjustmentPeople = (payEmployees ?? [])
@@ -427,12 +485,7 @@ export default async function PayrollPage() {
     .sort((a, b) => a.name.localeCompare(b.name));
   let waitingAdjustments: WaitingAdjustment[] = [];
   try {
-    const { data: rows } = (await admin
-      .from("pay_adjustments" as never)
-      .select("id, employee_id, amount_cents, reason, corrects_period_start, corrects_period_end")
-      .eq("organization_id" as never, membership.organization_id as never)
-      .is("payroll_run_id" as never, null as never)
-      .order("created_at" as never, { ascending: true } as never)) as unknown as {
+    const { data: rows } = (await adjustmentRowsPromise) as unknown as {
       data: Array<{
         id: string;
         employee_id: string;
@@ -459,17 +512,9 @@ export default async function PayrollPage() {
 
   // Tips: money the business is holding that belongs to a specific person,
   // settled outside a payroll run — same shape of problem as contractor pay.
-  const tipsOwed = await getTipsOwed(membership.organization_id);
+  const tipsOwed = await tipsOwedPromise;
 
-  // Said here because this is where a period gets prepared, and preparing is
-  // what makes a missing rate expensive to fix. See lib/pay-rate-gaps.ts.
-  const rateGapWarning = describeRateGaps(
-    await loadRateGaps(admin, membership.organization_id, suggestedStart, suggestedEnd, tz).catch((err) => {
-      console.error("[payroll] could not check pay rates:", err);
-      return [];
-    }),
-    "before_prepare",
-  );
+  const rateGapWarning = describeRateGaps(rateGaps, "before_prepare");
 
   return (
     <PageShell

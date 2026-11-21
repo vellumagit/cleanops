@@ -266,6 +266,31 @@ export async function fetchScheduleWeek(
     ? shiftYmd(rangeDates.endYmdExclusive, -1)
     : formatYmdUtc(addDays(weekEnd, -1));
 
+  // Visits a series' crew save left someone off (lib/cover-needed.ts). Read
+  // on its own, so the board never depends on it — and started here, beside
+  // the week's batch, rather than after it: it needs nothing from it. The
+  // series rules and coverage below, which need the week's bookings, now
+  // run together instead of one after the other. (Measured on the test
+  // stack, 2026-11-21: three round trips off this board's critical path.)
+  const needsCoverPromise: Promise<Map<string, string>> = (async () => {
+    const needsCoverBy = new Map<string, string>();
+    if (organizationId) {
+      try {
+        const [coverTz, coverVisits] = await Promise.all([
+          getOrgTimezone(organizationId),
+          loadCoverNeeded(organizationId, {
+            from: rangeStart.toISOString(),
+            ...(rangeEnd ? { to: rangeEnd.toISOString() } : {}),
+          }),
+        ]);
+        for (const v of coverVisits) needsCoverBy.set(v.bookingId, coverReason(v, coverTz));
+      } catch (err) {
+        console.error("[scheduling] could not read which visits need cover:", err);
+      }
+    }
+    return needsCoverBy;
+  })();
+
   const [
     bookingsRes,
     membersRes,
@@ -407,23 +432,6 @@ export async function fetchScheduleWeek(
     }>,
   ]);
 
-  // Visits a series' crew save left someone off (lib/cover-needed.ts). Read
-  // on its own, so the board never depends on it.
-  const needsCoverBy = new Map<string, string>();
-  if (organizationId) {
-    try {
-      const [coverTz, coverVisits] = await Promise.all([
-        getOrgTimezone(organizationId),
-        loadCoverNeeded(organizationId, {
-          from: rangeStart.toISOString(),
-          ...(rangeEnd ? { to: rangeEnd.toISOString() } : {}),
-        }),
-      ]);
-      for (const v of coverVisits) needsCoverBy.set(v.bookingId, coverReason(v, coverTz));
-    } catch (err) {
-      console.error("[scheduling] could not read which visits need cover:", err);
-    }
-  }
 
   // Per-booking override; the org toggle is the fallback.
   const dividesByBooking = new Map<string, boolean>();
@@ -442,21 +450,33 @@ export async function fetchScheduleWeek(
     ),
   ] as string[];
   const seriesLabelById = new Map<string, string>();
-  if (schSeriesIds.length) {
-    const { data: rows } = (await supabase
-      .from("booking_series" as never)
-      .select("id, pattern, custom_days, start_time, monthly_nth, monthly_dow")
-      .in("id" as never, schSeriesIds as never)) as unknown as {
-      data: Array<{
-        id: string;
-        pattern: string;
-        custom_days: number[] | null;
-        start_time: string;
-        monthly_nth: number | null;
-        monthly_dow: number | null;
-      }> | null;
-    };
-    for (const r of rows ?? []) {
+  // The same coverage rule the banner uses, resolved once for the week. Without
+  // it the board and the banner directly above it disagreed about which jobs
+  // were unfilled. Read beside the series rules: both need only the bookings.
+  const { resolveBookingCoverage } = await import("@/lib/booking-coverage");
+  const [{ data: seriesRuleRows }, coverage, needsCoverBy] = await Promise.all([
+    schSeriesIds.length
+      ? (Promise.resolve(
+          supabase
+            .from("booking_series" as never)
+            .select("id, pattern, custom_days, start_time, monthly_nth, monthly_dow")
+            .in("id" as never, schSeriesIds as never),
+        ) as unknown as Promise<{
+          data: Array<{
+            id: string;
+            pattern: string;
+            custom_days: number[] | null;
+            start_time: string;
+            monthly_nth: number | null;
+            monthly_dow: number | null;
+          }> | null;
+        }>)
+      : Promise.resolve({ data: null }),
+    resolveBookingCoverage((bookingsRes.data ?? []).map((b) => b.id)),
+    needsCoverPromise,
+  ]);
+  {
+    for (const r of seriesRuleRows ?? []) {
       seriesLabelById.set(
         r.id,
         describeRecurrence(
@@ -496,13 +516,6 @@ export async function fetchScheduleWeek(
     }
   }
 
-  // The same coverage rule the banner uses, resolved once for the week. Without
-  // it the board and the banner directly above it disagreed about which jobs
-  // were unfilled.
-  const { resolveBookingCoverage } = await import("@/lib/booking-coverage");
-  const coverage = await resolveBookingCoverage(
-    (bookingsRes.data ?? []).map((b) => b.id),
-  );
 
   const bookings: ScheduleBooking[] = (bookingsRes.data ?? []).map((b) => {
     const extras = extraAssigneesByBooking.get(b.id) ?? [];

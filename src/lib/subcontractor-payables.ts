@@ -145,6 +145,16 @@ export async function getSubcontractorPayables(
   // On-call cleaners earn the agreed pay_cents per claimed shift. The
   // null-contact guard below is load-bearing: a roster subcontractor's claim
   // (membership_id set, contact_id null) is assignment, never flat pay.
+  // The roster-subcontractor read below needs nothing from this one; it
+  // starts now so the two cost one round trip, not two.
+  const subsPromise = Promise.resolve(
+    admin
+      .from("memberships")
+      .select("id, display_name, pay_rate_cents, profile:profiles ( full_name )")
+      .eq("organization_id", organizationId)
+      .eq("engagement" as never, "subcontractor" as never),
+  );
+  subsPromise.catch(() => {});
   const { data: claims } = (await admin
     .from("job_offer_claims" as never)
     .select(
@@ -184,11 +194,7 @@ export async function getSubcontractorPayables(
    * finalized run must never reappear here as still owed. That is the
    * double-pay case, and it is the reason this filter is not optional.
    */
-  const { data: subs } = (await admin
-    .from("memberships")
-    .select("id, display_name, pay_rate_cents, profile:profiles ( full_name )")
-    .eq("organization_id", organizationId)
-    .eq("engagement" as never, "subcontractor" as never)) as unknown as {
+  const { data: subs } = (await subsPromise) as unknown as {
     data: Array<{
       id: string;
       display_name: string | null;

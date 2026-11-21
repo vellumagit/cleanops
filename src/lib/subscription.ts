@@ -2,6 +2,7 @@ import "server-only";
 import { cache } from "react";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { isStripeEnabled } from "@/lib/stripe";
+import { prefetchedOrgSettings } from "@/lib/org-prefetch";
 
 export type SubscriptionGate =
   | "active"       // paid or trialing — full access
@@ -35,17 +36,44 @@ export const getSubscriptionInfo = cache(
   async (organizationId: string): Promise<SubscriptionInfo> => {
     const admin = createSupabaseAdminClient();
 
-    // 1. Check billing override first (free_forever / comp)
-    const { data: org } = await admin
-      .from("organizations")
-      .select("billing_override, trial_started_at")
-      .eq("id", organizationId)
-      .maybeSingle();
+    // Both reads start together. They used to run one after the other (the
+    // subscription only after the org said "no override"), a round trip in
+    // series in front of every /app page. An overridden org now reads one
+    // small row it doesn't need; everyone else waits for one trip, not two.
+    // The org half usually came with the membership (org-prefetch.ts).
+    const primed = prefetchedOrgSettings(organizationId);
+    const subPromise = Promise.resolve(
+      admin
+        .from("subscriptions")
+        .select(
+          "status, trial_ends_at, current_period_end, cancel_at_period_end",
+        )
+        .eq("organization_id", organizationId)
+        .maybeSingle(),
+    );
+    // Observed: the override path below returns without awaiting it.
+    subPromise.catch(() => {});
 
-    const orgRow = org as {
+    // 1. Check billing override first (free_forever / comp)
+    const orgRow: {
       billing_override: string | null;
       trial_started_at: string | null;
-    } | null;
+    } | null =
+      primed && primed.billing_override !== undefined && primed.trial_started_at !== undefined
+        ? {
+            billing_override: primed.billing_override ?? null,
+            trial_started_at: primed.trial_started_at ?? null,
+          }
+        : ((
+            await admin
+              .from("organizations")
+              .select("billing_override, trial_started_at")
+              .eq("id", organizationId)
+              .maybeSingle()
+          ).data as {
+            billing_override: string | null;
+            trial_started_at: string | null;
+          } | null);
 
     if (orgRow?.billing_override) {
       return {
@@ -58,13 +86,7 @@ export const getSubscriptionInfo = cache(
     }
 
     // 2. Check subscription status
-    const { data: sub } = await admin
-      .from("subscriptions")
-      .select(
-        "status, trial_ends_at, current_period_end, cancel_at_period_end",
-      )
-      .eq("organization_id", organizationId)
-      .maybeSingle();
+    const { data: sub } = await subPromise;
 
     if (!sub || !sub.status) {
       // No Stripe subscription yet. If trial_started_at is set, enforce the

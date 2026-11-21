@@ -27,6 +27,11 @@ import { cookies } from "next/headers";
 import { createSupabaseServerClient } from "./supabase/server";
 import type { Database } from "./supabase/types";
 import {
+  PREFETCHED_ORG_COLUMNS,
+  primeOrgSettings,
+  type PrefetchedOrgSettings,
+} from "./org-prefetch";
+import {
   hasCapability,
   parseCapabilities,
   type CapabilityKey,
@@ -105,14 +110,35 @@ export const getCurrentMembership = cache(
   const cookieStore = await cookies();
   const preferredOrgId = cookieStore.get(ACTIVE_ORG_COOKIE)?.value ?? null;
 
-  const { data, error } = await supabase
-    .from("memberships")
-    .select(
-      "id, organization_id, role, status, profile_id, capabilities, organizations!inner(name, suspended_at)" as never,
-    )
-    .eq("profile_id", userId)
-    .eq("status", "active")
-    .order("created_at", { ascending: false });
+  // The org's settings ride along (src/lib/org-prefetch.ts): the timezone,
+  // currency and switches every page reads next, without a second trip.
+  const membershipsFor = (orgColumns: string) =>
+    supabase
+      .from("memberships")
+      .select(
+        `id, organization_id, role, status, profile_id, capabilities, organizations!inner(name, suspended_at${orgColumns})` as never,
+      )
+      .eq("profile_id", userId)
+      .eq("status", "active")
+      .order("created_at", { ascending: false });
+
+  // The extra columns are an optimisation, never a reason to sign someone
+  // out: if that read fails, ask the way this always did. (try/catch too:
+  // the query guard rejects a failed read outside production and inside a
+  // server action, instead of returning it.)
+  let data: unknown[] | null = null;
+  let error: unknown = null;
+  try {
+    ({ data, error } = await membershipsFor(`, ${PREFETCHED_ORG_COLUMNS}`));
+  } catch (err) {
+    error = err;
+  }
+  let prefetched = true;
+  if (error) {
+    console.error("[auth] membership read with org settings failed, retrying without:", error);
+    prefetched = false;
+    ({ data, error } = await membershipsFor(""));
+  }
 
   if (error || !data || data.length === 0) return null;
 
@@ -126,10 +152,23 @@ export const getCurrentMembership = cache(
     status: MembershipStatus;
     profile_id: string | null;
     capabilities?: unknown;
-    organizations: { name: string; suspended_at?: string | null };
+    organizations: { name: string; suspended_at?: string | null } & PrefetchedOrgSettings;
   };
   const rows = data as unknown as Row[];
   const live = rows.filter((m) => !m.organizations?.suspended_at);
+  if (prefetched) {
+    for (const m of live) {
+      const o = m.organizations;
+      primeOrgSettings(m.organization_id, {
+        timezone: o.timezone ?? null,
+        currency_code: o.currency_code ?? null,
+        automation_settings: o.automation_settings ?? null,
+        billing_override: o.billing_override ?? null,
+        trial_started_at: o.trial_started_at ?? null,
+        automations_enabled: o.automations_enabled ?? null,
+      });
+    }
+  }
   if (live.length === 0) redirect("/suspended");
 
   const preferred = preferredOrgId
@@ -223,6 +262,18 @@ export async function requireActionMembership(
 async function requireMembershipInner(
   allowed?: MembershipRole[],
 ): Promise<CurrentMembership> {
+  // The MFA gate starts NOW, beside the membership read, and is awaited at
+  // the end, in the same place it always was. For anyone who has not
+  // cleared MFA in this session (everyone who never enrolled) it asks the
+  // Supabase Auth server, a network round trip; run after the membership
+  // query, that trip sat in series in front of every page and every server
+  // action. The checks below still decide in the old order: no membership
+  // and a wrong role redirect before the MFA answer is looked at.
+  const mfa = enforceMfa();
+  // Observed so a redirect we never get to await (no membership, wrong role)
+  // is not reported as an unhandled rejection. The awaited copy below still
+  // throws.
+  mfa.catch(() => {});
   const membership = await getCurrentMembership();
 
   if (!membership) {
@@ -254,7 +305,7 @@ async function requireMembershipInner(
   // for AAL — they haven't opted in, MFA is optional. The login action
   // also checks this so first-time enrollers can reach
   // /app/profile/security without a redirect loop.
-  await enforceMfa();
+  await mfa;
 
   return membership;
 }
@@ -339,6 +390,10 @@ const enforceMfa = cache(async function enforceMfa(): Promise<void> {
     // function fails open by design.
     const claims = await getCurrentClaims();
     if (claims?.aal === "aal2") return;
+    // Not signed in: nothing to gate, and requireMembership is about to send
+    // them to /login. Now that the gate starts beside the membership read it
+    // would otherwise ask the Auth server about a session that isn't there.
+    if (!claims) return;
 
     const supabase = await createSupabaseServerClient();
     const result = await supabase.auth.mfa.listFactors();

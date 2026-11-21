@@ -15,7 +15,7 @@ import {
   startOfWeek,
 } from "./data";
 import { SchedulerShell } from "./scheduler-shell";
-import { CoveragePanel } from "./coverage-panel";
+import { CoveragePanel, loadCoveragePanelData } from "./coverage-panel";
 import { zonedYmd, startOfWeekUtc, formatCalendarDate } from "@/lib/wall-clock";
 import { getOrgHolidays } from "@/lib/holidays";
 
@@ -83,6 +83,9 @@ export default async function SchedulingPage({
   // renders on one screen and not another for the same person is the role
   // drift this codebase keeps paying for.
   const canEditStatus = ["owner", "admin", "manager"].includes(membership.role);
+  // Started now, awaited by the panel when it renders (coverage-panel.tsx).
+  const coverageData = loadCoveragePanelData(membership.organization_id);
+  coverageData.catch(() => {});
   const tz = await getOrgTimezone(membership.organization_id);
   const { week, view: viewRaw } = await searchParams;
   const view = parseView(viewRaw);
@@ -298,7 +301,7 @@ export default async function SchedulingPage({
     >
       <div className="space-y-4">
         {canEdit || membership.role === "manager" ? (
-          <CoveragePanel organizationId={membership.organization_id} tz={tz} />
+          <CoveragePanel data={coverageData} tz={tz} />
         ) : null}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="text-sm font-medium text-muted-foreground">

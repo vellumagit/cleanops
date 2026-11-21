@@ -2,6 +2,7 @@ import "server-only";
 import { cache } from "react";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { CurrencyCode } from "@/lib/format";
+import { prefetchedOrgSettings } from "@/lib/org-prefetch";
 
 /**
  * Fetch the display currency for an organization. Cached per-request via
@@ -13,6 +14,11 @@ import type { CurrencyCode } from "@/lib/format";
  */
 export const getOrgCurrency = cache(
   async (organizationId: string): Promise<CurrencyCode> => {
+    // Already read with the membership in this render (org-prefetch.ts).
+    const primed = prefetchedOrgSettings(organizationId);
+    if (primed && primed.currency_code !== undefined) {
+      return primed.currency_code === "USD" ? "USD" : "CAD";
+    }
     try {
       const admin = createSupabaseAdminClient();
       const { data } = await admin

@@ -19,6 +19,7 @@
 import "server-only";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { resolveAutomationEnabled } from "@/lib/automation-defaults";
+import { prefetchedOrgSettings } from "@/lib/org-prefetch";
 
 /**
  * Returns true if the feed feature is enabled for the given org.
@@ -31,6 +32,11 @@ import { resolveAutomationEnabled } from "@/lib/automation-defaults";
  * no leakage.
  */
 export async function isFeedVisible(organizationId: string): Promise<boolean> {
+  // Already read with the membership in this render (org-prefetch.ts).
+  const primed = prefetchedOrgSettings(organizationId);
+  if (primed && primed.automation_settings !== undefined) {
+    return resolveAutomationEnabled(primed.automation_settings ?? null, "feed_visible");
+  }
   try {
     const admin = createSupabaseAdminClient();
     const { data } = (await admin
