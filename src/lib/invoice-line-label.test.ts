@@ -4,7 +4,7 @@ import { bookingLineLabel } from "./invoice-line-label";
 const EDM = "America/Edmonton";
 
 describe("bookingLineLabel", () => {
-  it("carries service, date, time range and address", () => {
+  it("carries service, date and address, and no time of day", () => {
     expect(
       bookingLineLabel({
         serviceLabel: "Standard clean",
@@ -14,8 +14,24 @@ describe("bookingLineLabel", () => {
         tz: EDM,
       }),
     ).toBe(
-      "Standard clean · Thu, Jul 30, 2026, 9:00 AM–3:00 PM · 4033 32 St NW",
+      "Standard clean · Thu, Jul 30, 2026 · 4033 32 St NW",
     );
+  });
+
+  // Svitlana, 2026-11-21: the booked length is one person's hours, so a
+  // ten-hour job three people did in an afternoon read "9:30 AM–7:30 PM".
+  it("never prints the booked hours, however long the job or whoever did it", () => {
+    for (const durationMinutes of [null, 0, 120, 600, 2880]) {
+      const label = bookingLineLabel({
+        serviceLabel: "Deep clean/Initial clean",
+        scheduledAt: "2026-11-05T16:30:00Z",
+        durationMinutes,
+        address: "12603 12 Ave",
+        tz: EDM,
+      });
+      expect(label).toBe("Deep clean/Initial clean · Thu, Nov 5, 2026 · 12603 12 Ave");
+      expect(label).not.toMatch(/d:dd|AM|PM/);
+    }
   });
 
   it("formats in the ORG timezone, not UTC", () => {
@@ -32,19 +48,16 @@ describe("bookingLineLabel", () => {
     expect(label).not.toContain("Jul 31");
   });
 
-  it("derives the end time across a DST transition", () => {
-    // 2026-11-01: Edmonton falls back at 02:00. A shift starting 01:00 MDT
-    // and running 3h ends at 03:00 MST — adding 3 to the wall clock would
-    // wrongly say 04:00.
+  it("a job that starts after midnight is on the day it starts", () => {
     expect(
       bookingLineLabel({
         serviceLabel: "Overnight",
-        scheduledAt: "2026-11-01T07:00:00Z",
+        scheduledAt: "2026-11-01T07:00:00Z", // 1:00 AM in Edmonton
         durationMinutes: 180,
         address: null,
         tz: EDM,
       }),
-    ).toContain("1:00 AM–3:00 AM");
+    ).toBe("Overnight · Sun, Nov 1, 2026");
   });
 
   it("omits the location rather than printing a placeholder", () => {
@@ -56,7 +69,7 @@ describe("bookingLineLabel", () => {
       tz: EDM,
     });
     expect(label).not.toContain("on site");
-    expect(label).toBe("Standard clean · Thu, Jul 30, 2026, 9:00 AM–10:00 AM");
+    expect(label).toBe("Standard clean · Thu, Jul 30, 2026");
   });
 
   it("falls back to the client's address when the booking has none", () => {
@@ -72,7 +85,7 @@ describe("bookingLineLabel", () => {
         tz: EDM,
       }),
     ).toBe(
-      "Standard clean · Thu, Jul 30, 2026, 9:00 AM–11:00 AM · 4033 32 St NW, Edmonton, AB",
+      "Standard clean · Thu, Jul 30, 2026 · 4033 32 St NW, Edmonton, AB",
     );
   });
 
@@ -89,7 +102,7 @@ describe("bookingLineLabel", () => {
     ).toContain("Unit 12, 500 Jasper Ave");
   });
 
-  it("shows a start time only when there is no duration", () => {
+  it("the date alone, with or without a duration", () => {
     expect(
       bookingLineLabel({
         serviceLabel: "Standard clean",
@@ -98,7 +111,7 @@ describe("bookingLineLabel", () => {
         address: null,
         tz: EDM,
       }),
-    ).toBe("Standard clean · Thu, Jul 30, 2026, 9:00 AM");
+    ).toBe("Standard clean · Thu, Jul 30, 2026");
   });
 
   it("degrades to the service alone rather than printing junk", () => {

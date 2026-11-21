@@ -13,6 +13,15 @@
  * Always formatted in the ORG's timezone. The billing-cycle cron previously
  * hardcoded UTC, which silently moved any late-afternoon Alberta job onto the
  * following day's date.
+ *
+ * The DATE, and no time of day (2026-11-21, Svitlana: "is it possible not to
+ * show hours worked / scheduled on the invoice? When a few people are working
+ * on that job, it's not accurate"). The line used to carry "9:30 AM–7:30 PM":
+ * the start plus the booked length. The booked length is the hours for ONE
+ * person, so a ten-hour job done by three people in an afternoon was billed
+ * to the client as a ten-hour visit. A money document can't carry a time
+ * range nobody worked, and the date alone already tells one visit from
+ * another. matchLineToJob (lib/billed-bookings.ts) reads only the date.
  */
 
 function fmt(
@@ -32,7 +41,6 @@ function fmt(
 export function bookingLineLabel({
   serviceLabel,
   scheduledAt,
-  durationMinutes,
   address,
   fallbackAddress,
   propertyLabel,
@@ -41,7 +49,8 @@ export function bookingLineLabel({
   /** service_type_label, or a humanized service_type. */
   serviceLabel: string;
   scheduledAt: string | null;
-  durationMinutes: number | null;
+  /** No longer printed: see the note above. Kept so callers needn't change. */
+  durationMinutes?: number | null;
   /** The booking's own address. */
   address: string | null;
   /**
@@ -72,30 +81,7 @@ export function bookingLineLabel({
       day: "numeric",
       year: "numeric",
     });
-    const start = fmt(scheduledAt!, tz, {
-      hour: "numeric",
-      minute: "2-digit",
-    });
-
-    // End time is derived, so a DST transition inside the job is handled by
-    // Intl rather than by adding hours to a wall-clock string.
-    let when = date ?? "";
-    if (start) {
-      const end =
-        durationMinutes && durationMinutes > 0
-          ? fmt(
-              new Date(startMs + durationMinutes * 60_000).toISOString(),
-              tz,
-              {
-                hour: "numeric",
-                minute: "2-digit",
-              },
-            )
-          : null;
-      when = when ? `${when}, ${start}` : start;
-      if (end) when += `–${end}`;
-    }
-    if (when) parts.push(when);
+    if (date) parts.push(date);
   }
 
   // Omitted entirely when absent — the old "on site" placeholder told a
