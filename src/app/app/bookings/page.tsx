@@ -7,6 +7,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { ArchivedToggle } from "@/components/archived-toggle";
 import { memberDisplayName } from "@/lib/member-display";
 import { getOrgTimezone } from "@/lib/org-timezone";
+import { zonedDayBoundsUtc } from "@/lib/wall-clock";
 import { orgDividesCrewHours } from "@/lib/crew-hours";
 import { describeRecurrence } from "@/lib/recurrence";
 import { getFlaggedCrewIds } from "@/lib/crew-accommodations";
@@ -19,13 +20,20 @@ import { coverReason, coverSummary } from "@/lib/cover-needed-text";
 
 export const metadata = { title: "Bookings" };
 
-/** How many bookings the list holds, newest first. The page says when there are more. */
+/** How many bookings the full list holds, newest first. The page says when there are more. */
 const LIST_LIMIT = 1000;
+/**
+ * How many visits the Upcoming list holds, soonest first. Upcoming is what
+ * opens by default, so it reads only from today on: the full list (Past,
+ * All) is fetched when someone asks for it. Svit froze on this page on
+ * 2026-11-21 with ~1,000 bookings sent and drawn on every visit.
+ */
+const UPCOMING_LIMIT = 500;
 
 export default async function BookingsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ archived?: string; client?: string; cover?: string }>;
+  searchParams: Promise<{ archived?: string; client?: string; cover?: string; tab?: string; q?: string }>;
 }) {
   const membership = await requireMembership();
   const canEdit = membership.role === "owner" || membership.role === "admin" || membership.role === "manager";
@@ -35,9 +43,17 @@ export default async function BookingsPage({
   // Same: the overlap warning needs to know whether a team job's hours split
   // across its crew, and that lives on the org rather than the booking.
   const dividesPromise = orgDividesCrewHours(membership.organization_id);
-  const { archived, client, cover } = await searchParams;
+  const { archived, client, cover, tab, q } = await searchParams;
   const showArchived = archived === "1";
   const clientFilter = client?.trim() || null;
+  // Which rows to send. "upcoming" (the default tab, and Today) sends from the
+  // start of today on; "all" sends the newest LIST_LIMIT of everything. A
+  // search, one client's list and the archive need everything to look in.
+  const scope: "upcoming" | "all" =
+    tab === "past" || tab === "all" || (q ?? "").trim() !== "" || clientFilter || showArchived
+      ? "all"
+      : "upcoming";
+  const todayStartIso = zonedDayBoundsUtc(new Date(), await tzPromise, 0).start.toISOString();
 
   let query = supabase
     .from("bookings")
@@ -116,6 +132,17 @@ export default async function BookingsPage({
     ? counted.not("archived_at" as never, "is" as never, null as never)
     : counted.is("archived_at" as never, null as never);
   const totalPromise = Promise.resolve(counted);
+  const pastCountPromise =
+    scope === "upcoming"
+      ? (Promise.resolve(
+          supabase
+            .from("bookings")
+            .select("id", { count: "exact", head: true })
+            .eq("organization_id", membership.organization_id)
+            .is("archived_at" as never, null as never)
+            .lt("scheduled_at", todayStartIso),
+        ) as unknown as Promise<{ count: number | null }>)
+      : Promise.resolve({ count: null as number | null });
   const flaggedCrewPromise = employeesPromise.then(({ data: employeesData }) =>
     getFlaggedCrewIds((employeesData ?? []).map((m) => m.id)),
   );
@@ -158,10 +185,16 @@ export default async function BookingsPage({
     return { needsCover, coverBanner };
   })();
 
-  const { data, error } = await (query
-    .order("scheduled_at", { ascending: false })
-    .order("id", { ascending: false })
-    .limit(LIST_LIMIT) as unknown as Promise<{
+  const { data, error } = await ((scope === "upcoming"
+    ? query
+        .gte("scheduled_at", todayStartIso)
+        .order("scheduled_at", { ascending: true })
+        .order("id", { ascending: true })
+        .limit(UPCOMING_LIMIT)
+    : query
+        .order("scheduled_at", { ascending: false })
+        .order("id", { ascending: false })
+        .limit(LIST_LIMIT)) as unknown as Promise<{
     data: Array<{
       id: string;
       scheduled_at: string;
@@ -265,9 +298,11 @@ export default async function BookingsPage({
     tzPromise,
     dividesPromise,
   ]);
-  // The list stops at LIST_LIMIT; only then is the total worth saying.
+  const { count: pastCount } = await pastCountPromise;
+  // The full list stops at LIST_LIMIT; only then is the total worth saying.
   const total: number | null =
-    (data ?? []).length >= LIST_LIMIT ? (totalCount ?? null) : null;
+    scope === "all" && (data ?? []).length >= LIST_LIMIT ? (totalCount ?? null) : null;
+  const upcomingCapped = scope === "upcoming" && (data ?? []).length >= UPCOMING_LIMIT;
 
   const employees = (employeesData ?? []).map((m) => ({
     id: m.id,
@@ -459,6 +494,11 @@ export default async function BookingsPage({
           aren&apos;t listed here: open a client to see all of theirs.
         </p>
       )}
+      {upcomingCapped && (
+        <p className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-800 dark:text-amber-300">
+          Showing the next {rows.length.toLocaleString()} upcoming visits. Later ones are on the All tab.
+        </p>
+      )}
       {coverBanner && (
         <p
           role="status"
@@ -473,6 +513,12 @@ export default async function BookingsPage({
         canEdit={canEdit && !showArchived}
         tz={tz}
         employees={employees}
+        scope={scope}
+        serverCounts={
+          scope === "upcoming"
+            ? { past: pastCount ?? 0, all: totalCount ?? rows.length }
+            : null
+        }
       />
     </PageShell>
   );

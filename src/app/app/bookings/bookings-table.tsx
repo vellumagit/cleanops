@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useReturnTo } from "@/components/return-to-field";
@@ -131,6 +131,18 @@ const TIME_TABS = [
 
 type TimeTab = (typeof TIME_TABS)[number]["key"];
 
+/**
+ * Rows drawn at a time. The list used to draw every row that matched the tab
+ * at once — several hundred rich rows on Upcoming, up to 1,000 on All — and
+ * on Svit's data that locked the tab (2026-11-21). Search, filters, counts
+ * and the double-booking warnings still work over every row loaded; only the
+ * drawing is paged.
+ */
+const PAGE_SIZE = 50;
+
+/** Tabs whose rows the "upcoming" scope does not carry: they fetch the full list. */
+const NEEDS_FULL_LIST: ReadonlySet<TimeTab> = new Set<TimeTab>(["past", "all"]);
+
 const STATUS_OPTIONS = [
   { key: "all", label: "All statuses" },
   { key: "pending", label: "Pending" },
@@ -180,13 +192,20 @@ export function BookingsTable({
   canEdit,
   tz,
   employees,
+  scope = "all",
+  serverCounts = null,
 }: {
   rows: BookingRow[];
   canEdit: boolean;
   tz: string;
   employees: AssignableEmployee[];
+  /** "upcoming": the server sent only today onward (page.tsx). "all": the full list. */
+  scope?: "upcoming" | "all";
+  /** Past/All totals when scope is "upcoming", for the tab badges. */
+  serverCounts?: { past: number; all: number } | null;
 }) {
   const router = useRouter();
+  const [loadingFullList, startFullList] = useTransition();
   // Carry the board/list state we are on, so Save and Cancel return here.
   const withReturn = useReturnTo();
   // Tab, search and the four filters live in the URL. They used to be plain
@@ -345,8 +364,41 @@ export function BookingsTable({
     for (const t of TIME_TABS) {
       counts[t.key] = rows.filter((r) => matchesTimeTab(r, t.key)).length;
     }
+    // Only today onward is loaded: Past and All are counted by the server.
+    if (scope === "upcoming" && serverCounts) {
+      counts.past = serverCounts.past;
+      counts.all = serverCounts.all;
+    }
     return counts;
-  }, [rows]);
+  }, [rows, scope, serverCounts]);
+
+  // How many of the matching rows are drawn. Keyed by what is being looked
+  // at, so a new tab, search or filter starts again from the first page.
+  const viewKey = [tab, query, statusFilter, serviceFilter, assigneeFilter, clientFilter].join("|");
+  const [drawn, setDrawn] = useState({ key: viewKey, count: PAGE_SIZE });
+  const drawnCount = drawn.key === viewKey ? drawn.count : PAGE_SIZE;
+  const visibleRows = filtered.slice(0, drawnCount);
+
+  /** Past and All need rows the upcoming scope didn't send: ask the server. */
+  function chooseTab(next: TimeTab) {
+    if (scope === "upcoming" && NEEDS_FULL_LIST.has(next)) {
+      const params = new URLSearchParams(window.location.search);
+      params.set("tab", next);
+      setTab(next);
+      startFullList(() => router.push(`/app/bookings?${params.toString()}`, { scroll: false }));
+      return;
+    }
+    setTab(next);
+  }
+
+  /** A search here only looks at what is loaded; this looks at everything. */
+  function searchEverything() {
+    const params = new URLSearchParams(window.location.search);
+    params.set("tab", "all");
+    params.set("q", query.trim());
+    setTab("all");
+    startFullList(() => router.push(`/app/bookings?${params.toString()}`, { scroll: false }));
+  }
 
   const activeFilterCount =
     (statusFilter !== "all" ? 1 : 0) +
@@ -365,12 +417,16 @@ export function BookingsTable({
   return (
     <div className="space-y-3">
       {/* ── Time tabs ──────────────────────────────────────────────────── */}
-      <div className="flex items-center gap-1 overflow-x-auto rounded-lg bg-muted p-1 w-fit">
+      {/* max-w-full: w-fit alone let four counted tabs run past a phone's
+          edge (10px at 375 wide), where the column's overflow-x-hidden cut
+          off "All"; capped, the strip's own overflow-x-auto scrolls it. */}
+      <div className="flex max-w-full items-center gap-1 overflow-x-auto rounded-lg bg-muted p-1 w-fit">
         {TIME_TABS.map((t) => (
           <button
             key={t.key}
             type="button"
-            onClick={() => setTab(t.key)}
+            onClick={() => chooseTab(t.key)}
+            disabled={loadingFullList}
             className={cn(
               "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium whitespace-nowrap transition-colors",
               tab === t.key
@@ -523,7 +579,14 @@ export function BookingsTable({
       )}
 
       {/* ── Results ────────────────────────────────────────────────────── */}
-      {rows.length === 0 ? (
+      {loadingFullList ? (
+        <div
+          aria-busy="true"
+          className="rounded-xl border border-dashed border-border bg-card px-5 py-14 text-center text-sm text-muted-foreground"
+        >
+          Loading all bookings…
+        </div>
+      ) : rows.length === 0 && (scope === "all" || (serverCounts?.all ?? 0) === 0) ? (
         <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-card px-6 py-16 text-center">
           <p className="text-sm font-medium text-foreground">No bookings yet</p>
           <p className="mt-1 text-xs text-muted-foreground">
@@ -533,7 +596,9 @@ export function BookingsTable({
       ) : filtered.length === 0 ? (
         <div className="rounded-xl border border-dashed border-border bg-card px-5 py-14 text-center">
           <p className="text-sm text-muted-foreground">
-            No bookings match your filters.
+            {scope === "upcoming" && !query.trim() && activeFilterCount === 0
+              ? "Nothing booked from today on."
+              : "No bookings match your filters."}
           </p>
           <button
             type="button"
@@ -542,7 +607,19 @@ export function BookingsTable({
           >
             Clear all filters
           </button>
-          {query.trim() && (
+          {query.trim() && scope === "upcoming" && (
+            <p className="mt-3 text-xs text-muted-foreground">
+              Only upcoming visits were searched.{" "}
+              <button
+                type="button"
+                onClick={searchEverything}
+                className="text-primary underline-offset-4 hover:underline"
+              >
+                Search all bookings
+              </button>
+            </p>
+          )}
+          {query.trim() && scope === "all" && (
             <p className="mt-3 text-xs text-muted-foreground">
               Older completed jobs may have been archived.{" "}
               <a
@@ -556,7 +633,7 @@ export function BookingsTable({
         </div>
       ) : view === "table" ? (
         <TableView
-          rows={filtered}
+          rows={visibleRows}
           warnings={warnings}
           canEdit={canEdit}
           router={router}
@@ -566,7 +643,7 @@ export function BookingsTable({
         />
       ) : (
         <CardsView
-          rows={filtered}
+          rows={visibleRows}
           warnings={warnings}
           canEdit={canEdit}
           router={router}
@@ -576,11 +653,32 @@ export function BookingsTable({
         />
       )}
 
-      {rows.length > 0 && (
-        <p className="text-xs text-muted-foreground">
-          Showing {filtered.length} of {rows.length} bookings
-          {query && ` matching "${query}"`}
-        </p>
+      {rows.length > 0 && !loadingFullList && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-muted-foreground">
+          <span>
+            Showing {visibleRows.length} of {filtered.length}
+            {scope === "upcoming" ? " upcoming" : ""} bookings
+            {query && ` matching "${query}"`}
+          </span>
+          {filtered.length > visibleRows.length && (
+            <button
+              type="button"
+              onClick={() => setDrawn({ key: viewKey, count: drawnCount + PAGE_SIZE })}
+              className="inline-flex h-7 items-center rounded-md border border-input px-2.5 font-medium text-foreground hover:bg-muted"
+            >
+              Show {Math.min(PAGE_SIZE, filtered.length - visibleRows.length)} more
+            </button>
+          )}
+          {scope === "upcoming" && query.trim() !== "" && filtered.length > 0 && (
+            <button
+              type="button"
+              onClick={searchEverything}
+              className="text-primary underline-offset-4 hover:underline"
+            >
+              Search all bookings
+            </button>
+          )}
+        </div>
       )}
     </div>
   );
