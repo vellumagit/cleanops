@@ -1,8 +1,10 @@
+import Image from "next/image";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { LANDING_PAGES } from "@/content/landing";
+import { MobileMenu } from "@/components/marketing/mobile-menu";
 
 /**
  * Header and footer for public pages that aren't the homepage — the same
@@ -10,48 +12,74 @@ import { LANDING_PAGES } from "@/content/landing";
  * help article from search sees the site they'd see from the front door.
  */
 
+const NAV_LINKS = [
+  { href: "/#features", label: "Features" },
+  { href: "/#field-app", label: "Field app" },
+  { href: "/pricing", label: "Pricing" },
+  { href: "/blog", label: "Blog" },
+];
+
+/**
+ * The one header for every public page: home, pricing, the landing pages,
+ * help and the blog. Sticky, and with a real menu at phone width (until
+ * 2026-11-21 a phone saw only "Sign in" and the trial button, with no way to
+ * reach pricing or the blog from the top of any page).
+ */
 export function MarketingHeader() {
   return (
-    <header className="relative z-10 mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-5">
-      <Link href="/" className="flex items-center gap-2">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src="/sollos-logo.png"
-          alt="Sollos 3"
-          className="h-8 w-8 shrink-0 rounded-lg"
-        />
-        <span className="text-base font-semibold tracking-tight">Sollos 3</span>
-      </Link>
-      <nav className="flex items-center gap-1">
-        <Link
-          href="/pricing"
-          className="hidden rounded-full px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:inline-flex"
-        >
-          Pricing
-        </Link>
-        <Link
-          href="/blog"
-          className="hidden rounded-full px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:inline-flex"
-        >
-          Blog
-        </Link>
-        <Link
-          href="/login"
-          className="rounded-full px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-        >
-          Sign in
-        </Link>
-        <Link
-          href="/signup"
-          className={cn(
-            buttonVariants({ size: "sm" }),
-            "rounded-full px-4 shadow-sm sollos-cta-glow",
-          )}
-        >
-          Start free trial
-        </Link>
-      </nav>
+    <header className="sticky top-0 z-40 w-full border-b border-zinc-200/70 bg-white/80 backdrop-blur-md supports-[backdrop-filter]:bg-white/70">
+      <div className="relative mx-auto flex h-16 w-full max-w-6xl items-center justify-between gap-4 px-4 sm:px-6">
+        <SollosMark />
+        <nav aria-label="Main" className="hidden items-center gap-1 md:flex">
+          {NAV_LINKS.map((l) => (
+            <Link
+              key={l.href}
+              href={l.href}
+              className="rounded-full px-3 py-1.5 text-sm text-zinc-600 transition-colors hover:bg-zinc-100 hover:text-zinc-900"
+            >
+              {l.label}
+            </Link>
+          ))}
+        </nav>
+        <div className="flex items-center gap-1">
+          <Link
+            href="/login"
+            className="hidden rounded-full px-3 py-1.5 text-sm text-zinc-600 transition-colors hover:bg-zinc-100 hover:text-zinc-900 sm:inline-flex"
+          >
+            Sign in
+          </Link>
+          <Link
+            href="/signup"
+            className={cn(buttonVariants({ size: "sm" }), "rounded-full px-4 shadow-sm")}
+          >
+            Start free trial
+          </Link>
+          <MobileMenu>
+            <nav aria-label="Main" className="flex flex-col">
+              {[...NAV_LINKS, { href: "/login", label: "Sign in" }].map((l) => (
+                <Link
+                  key={l.href}
+                  href={l.href}
+                  className="border-b border-zinc-100 py-3 text-[15px] font-medium text-zinc-800 last:border-0"
+                >
+                  {l.label}
+                </Link>
+              ))}
+            </nav>
+          </MobileMenu>
+        </div>
+      </div>
     </header>
+  );
+}
+
+/** Logo and name, linking home. next/image: the source PNG is 2000 px and 660 KB. */
+function SollosMark({ size = 32 }: { size?: number }) {
+  return (
+    <Link href="/" className="flex shrink-0 items-center gap-2">
+      <Image src="/sollos-logo.png" alt="" width={size} height={size} className="shrink-0 rounded-lg" />
+      <span className="text-base font-semibold tracking-tight text-zinc-900">Sollos 3</span>
+    </Link>
   );
 }
 
@@ -63,15 +91,11 @@ export function MarketingHeader() {
  */
 export function MarketingFooter() {
   return (
-    <footer className="relative z-10 border-t border-border bg-white/50 backdrop-blur-sm">
+    <footer className="relative z-10 border-t border-zinc-200 bg-white">
       <div className="mx-auto w-full max-w-6xl px-6 py-12">
         <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-5">
           <div className="sm:col-span-2 lg:col-span-1">
-            <Link href="/" className="flex items-center gap-2">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/sollos-logo.png" alt="Sollos 3" className="h-7 w-7 shrink-0 rounded-lg" />
-              <span className="text-sm font-semibold tracking-tight">Sollos 3</span>
-            </Link>
+            <SollosMark size={28} />
             <p className="mt-3 max-w-xs text-xs leading-relaxed text-muted-foreground">
               Operations software for cleaning companies. Bookings, scheduling, employees, invoicing, chat and field
               tools — all in one place.

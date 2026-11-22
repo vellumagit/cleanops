@@ -36,7 +36,8 @@ type PlanDef = {
 /**
  * Plan definitions — kept in sync with the marketing page (/) pricing
  * section so prospects see the same lineup before and after they sign
- * up. If you tweak features here, mirror the change in src/app/page.tsx.
+ * up. If you tweak features here, mirror the change in src/lib/seo.ts (PLANS,
+ * which the homepage cards and the JSON-LD read) and src/app/(marketing)/pricing.
  */
 const PLANS: PlanDef[] = [
   {

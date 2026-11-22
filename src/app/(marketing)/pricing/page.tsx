@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { MarketingFooter } from "@/components/marketing-chrome";
+import { MarketingFooter, MarketingHeader } from "@/components/marketing-chrome";
 import {
   ArrowRight,
   Check,
@@ -24,49 +24,7 @@ export default function PricingPage() {
       <JsonLd data={[softwareApplicationJsonLd(), faqPageJsonLd(FAQS)]} />
       <div className="sollos-dots absolute inset-0" aria-hidden />
 
-      {/* Nav */}
-      <header className="relative z-10 mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-5">
-        <Link href="/" className="flex items-center gap-2">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src="/sollos-logo.png"
-            alt="Sollos 3"
-            className="h-8 w-8 shrink-0 rounded-lg"
-          />
-          <span className="text-base font-semibold tracking-tight">
-            Sollos 3
-          </span>
-        </Link>
-        <nav className="flex items-center gap-1">
-          <Link
-            href="/"
-            className="rounded-full px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          >
-            Home
-          </Link>
-          <Link
-            href="/blog"
-            className="hidden rounded-full px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:inline-flex"
-          >
-            Blog
-          </Link>
-          <Link
-            href="/login"
-            className="rounded-full px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          >
-            Sign in
-          </Link>
-          <Link
-            href="/signup"
-            className={cn(
-              buttonVariants({ size: "sm" }),
-              "rounded-full px-4 shadow-sm sollos-cta-glow",
-            )}
-          >
-            Start free trial
-          </Link>
-        </nav>
-      </header>
+      <MarketingHeader />
 
       {/* Header */}
       <section className="relative z-10 mx-auto w-full max-w-3xl px-6 pt-16 pb-12 text-center">

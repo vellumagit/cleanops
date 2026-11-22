@@ -26,11 +26,16 @@ const APP_ID = `${SITE_URL}/#software`;
  */
 const PLAN_CURRENCY: "CAD" | "USD" | null = "USD";
 
-const PLANS = [
-  { name: "Starter", price: "59", description: "For solo owners and small crews. Up to 3 cleaners." },
-  { name: "Team", price: "119", description: "For crews that are growing. Up to 10 cleaners." },
-  { name: "Growth", price: "189", description: "For established cleaning operations. Up to 25 cleaners." },
-];
+/**
+ * The list prices, shared by the JSON-LD Offers below and the homepage's
+ * pricing cards, so the two can't drift apart. (The /pricing page still
+ * draws its own fuller table; change it with these.)
+ */
+export const PLANS = [
+  { name: "Starter", price: "59", tagline: "For solo owners and small crews.", cleaners: 3, texts: "300", description: "For solo owners and small crews. Up to 3 cleaners." },
+  { name: "Team", price: "119", tagline: "For crews that are growing.", cleaners: 10, texts: "750", description: "For crews that are growing. Up to 10 cleaners." },
+  { name: "Growth", price: "189", tagline: "For established cleaning operations.", cleaners: 25, texts: "1,500", description: "For established cleaning operations. Up to 25 cleaners." },
+] as const;
 
 export function organizationJsonLd() {
   return {
