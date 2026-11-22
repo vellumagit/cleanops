@@ -4,8 +4,9 @@ import { notFound } from "next/navigation";
 import { ChevronLeft } from "lucide-react";
 import { JsonLd } from "@/components/json-ld";
 import { HelpCta, MarketingFooter, MarketingHeader } from "@/components/marketing-chrome";
-import { getPublishedPost, sanitizeArticleHtml } from "@/lib/blog";
+import { getPublishedPost, postDescription, sanitizeArticleHtml } from "@/lib/blog";
 import { breadcrumbJsonLd, SITE_URL } from "@/lib/seo";
+import { LANDING_PAGES } from "@/content/landing";
 
 /**
  * One blog article (2026-11-13). Published from Holo by webhook, which
@@ -23,9 +24,12 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
   const post = await getPublishedPost(slug);
   if (!post) return {};
   const title = post.meta_title ?? post.title;
-  const description = post.meta_description ?? post.excerpt ?? undefined;
+  const description = postDescription(post) ?? undefined;
   return {
-    title,
+    // The layout appends " · Sollos 3" (11 characters). Past ~60 Google cuts
+    // the title off, so a long headline goes out without the suffix rather
+    // than losing its own last words.
+    title: title.length > 49 ? { absolute: title } : title,
     description,
     alternates: { canonical: `/blog/${post.slug}` },
     openGraph: {
@@ -58,7 +62,7 @@ export default async function BlogPostPage({ params }: { params: Promise<{ slug:
             "@context": "https://schema.org",
             "@type": "BlogPosting",
             headline: post.title,
-            description: post.meta_description ?? post.excerpt ?? undefined,
+            description: postDescription(post) ?? undefined,
             datePublished: post.published_at,
             dateModified: post.updated_at,
             url: `${SITE_URL}/blog/${post.slug}`,
@@ -91,7 +95,7 @@ export default async function BlogPostPage({ params }: { params: Promise<{ slug:
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={post.featured_image_url}
-            alt={post.featured_image_alt ?? ""}
+            alt={post.featured_image_alt || post.title}
             className="mt-8 aspect-[16/9] w-full rounded-xl border border-border object-cover"
           />
         )}
@@ -100,6 +104,22 @@ export default async function BlogPostPage({ params }: { params: Promise<{ slug:
           className="blog-article mt-8 rounded-xl border border-border bg-white/80 p-6 shadow-sm backdrop-blur-sm sm:p-8"
           dangerouslySetInnerHTML={{ __html: html }}
         />
+
+        {/* Every post links into the product pages. Articles arrive from Holo
+            without links back to the site, so without this a post that ranks
+            passes nothing on to the pages meant to win the search. */}
+        <nav aria-label="Sollos for your kind of cleaning" className="mt-10 rounded-xl border border-border bg-white/80 p-6">
+          <p className="text-sm font-semibold">Sollos for your kind of cleaning</p>
+          <ul className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
+            {LANDING_PAGES.map((l) => (
+              <li key={l.slug}>
+                <Link href={`/${l.slug}`} className="font-medium text-foreground underline-offset-2 hover:underline">
+                  {l.navLabel}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </nav>
       </article>
 
       <HelpCta />

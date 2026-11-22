@@ -36,7 +36,7 @@ import { JsonLd } from "@/components/json-ld";
 import { MarketingFooter, MarketingHeader } from "@/components/marketing-chrome";
 import { BrowserFrame, PhoneFrame } from "@/components/marketing/device-frames";
 import { LANDING_PAGES } from "@/content/landing";
-import { PLANS, faqPageJsonLd, organizationJsonLd, softwareApplicationJsonLd } from "@/lib/seo";
+import { PLANS, faqPageJsonLd, organizationJsonLd, softwareApplicationJsonLd, websiteJsonLd } from "@/lib/seo";
 
 // Real screens of the app, captured from a seeded demo company ("Northbank
 // Cleaning Co.", every name invented) on a throwaway database — never from
@@ -51,10 +51,13 @@ import fieldTodayShot from "@/assets/landing/field-today.webp";
 import fieldJobShot from "@/assets/landing/field-job.webp";
 import fieldClockShot from "@/assets/landing/field-clock.webp";
 
-// Title and description come from the root layout; only the canonical is
-// page-specific. It can't live in the layout — every page would inherit it
-// and tell Google it's a duplicate of the homepage.
+// The title comes from the root layout. The canonical is page-specific: in
+// the layout every page would inherit it and tell Google it's a duplicate of
+// the homepage. The description is set here so the search snippet ends on
+// the trial offer (the layout's stays the default for pages without one).
 export const metadata = {
+  description:
+    "Run your cleaning company from one place: scheduling, invoicing, payroll and a phone app for your cleaners. Try Sollos 3 free for 14 days, no card needed.",
   alternates: { canonical: "/" },
 };
 
@@ -78,7 +81,7 @@ export default async function Home() {
     // Light only, on purpose: the product screenshots are the light theme,
     // and a dark page around them reads as two different products.
     <main className="relative isolate flex flex-1 flex-col overflow-x-clip bg-white text-zinc-900 [color-scheme:light]">
-      <JsonLd data={[organizationJsonLd(), softwareApplicationJsonLd(), faqPageJsonLd(FAQS)]} />
+      <JsonLd data={[websiteJsonLd(), organizationJsonLd(), softwareApplicationJsonLd(), faqPageJsonLd(FAQS)]} />
 
       <MarketingHeader />
 

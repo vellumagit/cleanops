@@ -12,9 +12,11 @@ import { JsonLd } from "@/components/json-ld";
 import { faqPageJsonLd, softwareApplicationJsonLd } from "@/lib/seo";
 
 export const metadata = {
-  title: "Pricing",
+  // "cleaning business software pricing" is what an owner comparing tools
+  // searches; plain "Pricing" told Google nothing about what is priced.
+  title: "Cleaning business software pricing",
   description:
-    "Simple, transparent pricing for Sollos 3. Start with a 14-day free trial — no credit card required.",
+    "Plans from $59 a month for up to 3 cleaners, with scheduling, invoicing, payroll and the field app included. Try it free for 14 days, no card required.",
   alternates: { canonical: "/pricing" },
 };
 

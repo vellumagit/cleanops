@@ -3,7 +3,7 @@ import type { HelpArticle } from "./types";
 export const article: HelpArticle = {
   slug: "field-app",
   title: "The field app: a cleaner's day",
-  blurb: "What your cleaners see on their phones: getting in, today's jobs, accepting shifts, the job screen, photos, checklists, tasks, chat, training and their profile.",
+  blurb: "What your cleaners see on their phones: today's jobs, accepting shifts, the job screen, photos, checklists, tasks, chat, training and their profile.",
   section: "The field app",
   paths: [
     "/field",

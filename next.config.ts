@@ -83,7 +83,27 @@ const securityHeaders = [
     : []),
 ];
 
+/**
+ * Crawlers that get the page's <title>, description and canonical in <head>
+ * instead of streamed in later (Next 16 streams metadata to everyone else).
+ *
+ * This is Next's own default list (node_modules/next/dist/shared/lib/router/
+ * utils/html-bots.js) plus the AI search crawlers it leaves out. Measured on
+ * 2026-11-21: GPTBot and PerplexityBot got a blog post with no title or
+ * canonical in the head at all, so ChatGPT search and Perplexity saw a page
+ * without its metadata. Setting this replaces the default rather than adding
+ * to it, so keep the first line in step with Next's list on upgrades.
+ */
+const HTML_LIMITED_BOTS = new RegExp(
+  [
+    "[\\w-]+-Google|Google-[\\w-]+|Chrome-Lighthouse|Slurp|DuckDuckBot|baiduspider|yandex|sogou|bitlybot|tumblr|vkShare|quora link preview|redditbot|ia_archiver|Bingbot|BingPreview|applebot|facebookexternalhit|facebookcatalog|Twitterbot|LinkedInBot|Slackbot|Discordbot|WhatsApp|SkypeUriPreview|Yeti|googleweblight",
+    "Googlebot|GPTBot|OAI-SearchBot|ChatGPT-User|PerplexityBot|Perplexity-User|ClaudeBot|Claude-User|Claude-SearchBot|anthropic-ai|CCBot|Amazonbot|cohere-ai|meta-externalagent|DuckAssistBot|MistralAI-User",
+  ].join("|"),
+  "i",
+);
+
 const nextConfig: NextConfig = {
+  htmlLimitedBots: HTML_LIMITED_BOTS,
   // Bake this build's identity into the client bundle. The update beacon
   // compares it against /api/version (which reports the RUNNING deploy) —
   // a stale tab's Save buttons carry dead server-action IDs that Next

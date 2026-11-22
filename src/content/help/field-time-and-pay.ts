@@ -3,7 +3,7 @@ import type { HelpArticle } from "./types";
 export const article: HelpArticle = {
   slug: "field-time-and-pay",
   title: "Clocking in, hours & pay (field app)",
-  blurb: "How cleaners clock in and out on a job, take breaks, work without signal, clock non-job time, and check their own hours and pay. Also what happens when someone forgets to clock out.",
+  blurb: "How cleaners clock in and out, take breaks, work without signal and check their own hours and pay, plus what happens when someone forgets to clock out.",
   section: "The field app",
   paths: ["/field/clock", "/field/hours", "/field/pay", "/field/shifts"],
   keywords: [

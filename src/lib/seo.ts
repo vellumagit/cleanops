@@ -37,6 +37,24 @@ export const PLANS = [
   { name: "Growth", price: "189", tagline: "For established cleaning operations.", cleaners: 25, texts: "1,500", description: "For established cleaning operations. Up to 25 cleaners." },
 ] as const;
 
+/**
+ * The site itself, homepage only. Google takes the name shown above a search
+ * result from this (otherwise it guesses, often "sollos3.com"). No
+ * SearchAction: the site has no search page for it to point at.
+ */
+export function websiteJsonLd() {
+  return {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    "@id": `${SITE_URL}/#website`,
+    name: "Sollos 3",
+    alternateName: ["Sollos", "sollos3.com"],
+    url: `${SITE_URL}/`,
+    inLanguage: "en",
+    publisher: { "@id": ORG_ID },
+  };
+}
+
 export function organizationJsonLd() {
   return {
     "@context": "https://schema.org",

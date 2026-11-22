@@ -126,7 +126,7 @@ export const LANDING_PAGES = [
     slug: "cleaning-scheduling-software",
     metaTitle: "Cleaning Scheduling Software for Recurring Jobs",
     metaDescription:
-      "Schedule recurring cleans, crews with staggered arrival times, checklists and last-minute coverage. Cleaners get their jobs on their phones. Free 14-day trial.",
+      "Schedule recurring cleans, staggered crew arrivals, checklists and last-minute coverage. Cleaners get their jobs on their phones. Free 14-day trial.",
     navLabel: "Cleaning scheduling software",
     kicker: "Cleaning scheduling software",
     h1: "Cleaning scheduling software built around recurring work",
@@ -307,7 +307,7 @@ export const LANDING_PAGES = [
     slug: "commercial-cleaning-software",
     metaTitle: "Commercial Cleaning & Janitorial Software",
     metaDescription:
-      "Janitorial and commercial cleaning software: signed service contracts, site checklists, crew clock-in with lateness flags, monthly billing and job profitability.",
+      "Janitorial and commercial cleaning software: service contracts, site checklists, crew clock-in with lateness flags, monthly billing and job profit.",
     navLabel: "Commercial & janitorial software",
     kicker: "Commercial cleaning & janitorial software",
     h1: "Commercial cleaning and janitorial software",

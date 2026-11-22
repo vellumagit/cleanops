@@ -21,7 +21,7 @@ import { breadcrumbJsonLd } from "@/lib/seo";
 export const metadata = {
   title: "Help guides",
   description:
-    "How Sollos 3 runs a cleaning company day to day: bookings and recurring schedules, checklists, leads, invoicing, timesheets and payroll, reports, website forms and the client portal.",
+    "How Sollos 3 runs a cleaning company day to day: bookings, recurring schedules, checklists, invoicing, timesheets and payroll, reports and the client portal.",
   alternates: { canonical: "/help" },
 };
 

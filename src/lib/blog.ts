@@ -90,6 +90,28 @@ export function plainText(value: string | null | undefined, max = 500): string |
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
+/**
+ * The search-result description for a post: its own meta description, else
+ * its excerpt, else the opening paragraphs cut at a word under `max`
+ * characters. Posts from Holo often arrive with neither field, and a page
+ * with no description lets Google pick any sentence it likes.
+ */
+export function postDescription(
+  post: Pick<BlogPost, "meta_description" | "excerpt" | "content_html">,
+  max = 155,
+): string | null {
+  const own = plainText(post.meta_description ?? post.excerpt, 300);
+  if (own) return own;
+  const paragraphs = [...(post.content_html ?? "").matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi)]
+    .map((m) => plainText(m[1], 2000))
+    .filter((t): t is string => Boolean(t));
+  const text = paragraphs.join(" ");
+  if (!text) return null;
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max - 1);
+  return `${cut.slice(0, cut.lastIndexOf(" ")).replace(/[\s,;:.&—–-]+$/, "")}…`;
+}
+
 /** "Best Cleaning Checklist 2026!" → "best-cleaning-checklist-2026". Null when nothing usable is left. */
 export function blogSlug(value: string | null | undefined): string | null {
   const slug = (value ?? "")
